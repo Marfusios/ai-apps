@@ -1,0 +1,58 @@
+# Local configuration and credentials; only empty example files are committed.
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!*.env.example
+keys.env
+credentials/
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local datasets, outputs, databases, and model artifacts.
+data/
+artifacts/
+downloads/
+outputs/
+model-cache/
+*.safetensors
+*.gguf
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+
+# Python environments and caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# JavaScript/TypeScript dependencies and build output.
+node_modules/
+.next/
+.nuxt/
+.turbo/
+.parcel-cache/
+dist/
+build/
+coverage/
+
+# Notebook checkpoints and local editor/OS settings.
+.ipynb_checkpoints/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
