@@ -8,7 +8,9 @@ There are no implemented applications yet. Create a scaffold with
 
 | App | Purpose | Status |
 | --- | --- | --- |
+| [Aviation Casebook](aviation-investigations/README.md) | Evidence-based search and comparison of NTSB investigations. | Design |
 <!-- app-catalog -->
 
-Status meanings: **Scaffold** (documentation/configuration only), **Experimental**
+Status meanings: **Scaffold** (starting documentation), **Design** (researched proposal,
+implementation pending), **Experimental**
 (runnable with limitations), and **Ready** (documented and covered by meaningful tests).

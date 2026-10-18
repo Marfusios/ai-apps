@@ -1,0 +1,261 @@
+{
+  "retrieved_on": "2026-10-16",
+  "source": "NTSB avall.zip, listed 2026-10-01; base snapshot only",
+  "archive_sha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+  "archive_bytes": 96583215,
+  "mdb_bytes": 561229824,
+  "profile": {
+    "counts": {
+      "events": 31303,
+      "aircraft": 31854,
+      "narratives": 28516,
+      "Findings": 73002,
+      "NTSB_Admin": 31303,
+      "engines": 28648,
+      "Events_Sequence": 66683,
+      "eADMSPUB_DataDictionary": 4574,
+      "Country": 289
+    },
+    "country_counts": [
+      [
+        "USA",
+        25407
+      ],
+      [
+        "BR",
+        509
+      ],
+      [
+        "AU",
+        383
+      ],
+      [
+        "GB",
+        361
+      ],
+      [
+        "MX",
+        294
+      ],
+      [
+        "CA",
+        293
+      ],
+      [
+        "DE",
+        202
+      ],
+      [
+        "CO",
+        202
+      ],
+      [
+        "FR",
+        201
+      ],
+      [
+        "ES",
+        170
+      ]
+    ],
+    "year_counts": [
+      [
+        "2008",
+        1892
+      ],
+      [
+        "2009",
+        1783
+      ],
+      [
+        "2010",
+        1786
+      ],
+      [
+        "2011",
+        1848
+      ],
+      [
+        "2012",
+        1834
+      ],
+      [
+        "2013",
+        1561
+      ],
+      [
+        "2014",
+        1534
+      ],
+      [
+        "2015",
+        1581
+      ],
+      [
+        "2016",
+        1662
+      ],
+      [
+        "2017",
+        1635
+      ],
+      [
+        "2018",
+        1686
+      ],
+      [
+        "2019",
+        1624
+      ],
+      [
+        "2020",
+        1395
+      ],
+      [
+        "2021",
+        1643
+      ],
+      [
+        "2022",
+        1687
+      ],
+      [
+        "2023",
+        1653
+      ],
+      [
+        "2024",
+        1669
+      ],
+      [
+        "2025",
+        1632
+      ],
+      [
+        "2026",
+        1198
+      ]
+    ],
+    "admin_status": {
+      "F": 4623,
+      "B": 25367,
+      "": 161,
+      "P": 1152
+    },
+    "narrative_coverage": {
+      "narr_accp": 24400,
+      "narr_accf": 25015,
+      "narr_cause": 24998,
+      "narr_inc": 0
+    },
+    "event_coverage": {
+      "dec_latitude": 27881,
+      "dec_longitude": 27882,
+      "wx_cond_basic": 25952,
+      "wx_temp": 31142,
+      "wx_dew_pt": 31142,
+      "wind_vel_kts": 20122,
+      "light_cond": 25621,
+      "ntsb_docket": 0
+    },
+    "aircraft_coverage": {
+      "date_last_insp": 20844,
+      "afm_hrs_last_insp": 8749,
+      "type_last_insp": 23506,
+      "far_part": 31155,
+      "type_fly": 25427,
+      "phase_flt_spec": 0
+    },
+    "finding_flags": {
+      "cm_inpc": {
+        "T": 61581,
+        "F": 11421
+      },
+      "cause_factor": {
+        "C": 37763,
+        "F": 5757,
+        " ": 8314,
+        "": 21168
+      }
+    },
+    "dictionary_selected": [
+      {
+        "table": "aircraft",
+        "column": "afm_hrs_last_insp",
+        "code_iaids": "",
+        "meaning": "",
+        "short_desc": "Airframe hours since last inspection",
+        "question_def": "The total number of operating hours accumulated on the aircraft airframe since the last inspection.",
+        "code meaning": ""
+      },
+      {
+        "table": "aircraft",
+        "column": "date_last_insp",
+        "code_iaids": "",
+        "meaning": "",
+        "short_desc": "Date of Last Inspection",
+        "question_def": "The calendar date of the most recent aircraft inspection in the format MM/DD/YYYY.",
+        "code meaning": ""
+      },
+      {
+        "table": "narratives",
+        "column": "narr_accf",
+        "code_iaids": "",
+        "meaning": "",
+        "short_desc": "Narrative summary released at completion of accident",
+        "question_def": "An updated narrative of the accident occurrences and details released with the final event report.",
+        "code meaning": ""
+      },
+      {
+        "table": "narratives",
+        "column": "narr_accp",
+        "code_iaids": "",
+        "meaning": "",
+        "short_desc": "Factual narrative",
+        "question_def": "A description of what occurred in chronological order, the circumstances leading to the accident, and the nature of the accident.  Includes details related to the terrain and  wreckage distribution if pertinent.  Includes point of departure, time of departure, intended destination, services obtained, and any other pertinent information.",
+        "code meaning": ""
+      },
+      {
+        "table": "narratives",
+        "column": "narr_cause",
+        "code_iaids": "",
+        "meaning": "",
+        "short_desc": "Probable cause narrative",
+        "question_def": "Includes a text summary statement of the probable cause findings included in the event investigation record. Not available until the final report is released.",
+        "code meaning": ""
+      },
+      {
+        "table": "narratives",
+        "column": "narr_inc",
+        "code_iaids": "",
+        "meaning": "",
+        "short_desc": "FAA Incident Narrative (8020-5).",
+        "question_def": "Not included in the NTSB database.",
+        "code meaning": ""
+      }
+    ],
+    "us_country_entries": [
+      {
+        "country_code": "USA",
+        "country_name": "United States"
+      }
+    ],
+    "multi_aircraft_events": 545,
+    "update_counts": {
+      "events": 139,
+      "aircraft": 139,
+      "narratives": 89,
+      "Findings": 209,
+      "NTSB_Admin": 139
+    }
+  },
+  "provisional_us_completed": {
+    "filter": "events.ev_country == USA AND NTSB_Admin.rec_stat == B AND nonblank narratives.narr_cause; status mapping requires formal verification",
+    "events": 24291,
+    "aircraft_narrative_rows": 24668,
+    "narrative_characters": 127522915,
+    "token_estimate_method": "characters / 4, not tokenizer-measured",
+    "estimated_tokens": 31880729,
+    "identical_factual_final_rows": 2086
+  }
+}

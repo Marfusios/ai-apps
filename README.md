@@ -8,8 +8,9 @@ tests, and setup instructions. Shared code is introduced when multiple apps need
 the same functionality. The repository does not require a particular cloud account,
 private network, or shared development server.
 
-**Status:** the repository foundation is ready. No application has been implemented
-yet. See the [application catalog](apps/README.md) as projects are added.
+**Status:** the first app, [Aviation Casebook](apps/aviation-investigations/README.md),
+has a researched implementation design. No application has been implemented yet.
+See the [application catalog](apps/README.md) as projects are added.
 
 ## Repository layout
 
