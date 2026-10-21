@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search and filters · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  .homes { display:flex; flex-direction:column; gap: 2.4rem; }
+  .hm-meta { display:flex; gap:1rem; align-items:baseline; justify-content:space-between; padding:.2rem 0 .6rem; }
+  .hm-meta h3 { margin:0; font-size:1.05rem; } .hm-meta p { margin:0; color:var(--text-secondary); font-size:.88rem; }
+  .pick { border:1px solid var(--border); border-radius:999px; padding:.3rem .9rem; font-size:.85rem; cursor:pointer; white-space:nowrap; background: var(--bg-secondary); }
+  .pick.selected { background: var(--accent); color:#fff; border-color: var(--accent); }
+
+  .sx { --paper:#F3EEE1; --raised:#FBF8F0; --ink:#1E2A36; --mute:#5D6670; --blue:#1F519A; --mag:#A0166C; --hair:rgba(31,81,154,.2); --tint:#E8E2CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px), var(--paper);
+    color:var(--ink); font-family:'B612',sans-serif; font-size:13px; line-height:1.45; border-radius:10px; overflow:hidden; position:relative; }
+  .sx * { box-sizing:border-box; }
+  .sx .bar { display:flex; align-items:center; gap:1.4rem; padding:11px 22px; border-bottom:2px solid var(--blue); position:relative; background: rgba(243,238,225,.92); z-index:2; }
+  .sx .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px; opacity:.7;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px) 0 0/100% 3px no-repeat,
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px) 0 0/100% 6px no-repeat; }
+  .sx .logo { font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--blue); display:flex; align-items:center; gap:8px; }
+  .sx .nav { display:flex; gap:1.1rem; } .sx .nav span { color:var(--mute); } .sx .nav .on { color:var(--ink); border-bottom:2px solid var(--blue); }
+  .sx .right { margin-left:auto; display:flex; gap:.9rem; align-items:center; }
+  .sx .trial { color:var(--mute); font-size:11.5px; } .sx .trial b { color:var(--mag); }
+  .sx .btn { border:1.5px solid var(--blue); color:var(--blue); padding:3px 11px; border-radius:999px; font-size:11.5px; }
+  .sx .eyebrow { font-size:11px; letter-spacing:.16em; color:var(--blue); font-weight:700; }
+  .sx h1 { font-family:'Source Serif 4',serif; font-weight:600; letter-spacing:-.01em; margin:.35rem 0 .5rem; line-height:1.08; }
+  .sx .lede { color:var(--mute); font-size:14px; max-width:46ch; }
+  .sx .ask { background:var(--raised); border:1.5px solid var(--blue); border-radius:14px; padding:12px 12px 10px 16px; box-shadow: 0 1px 0 rgba(31,81,154,.15), 0 10px 30px -18px rgba(30,42,54,.45); }
+  .sx .ask .ph { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:16px; min-height:44px; }
+  .sx .ask .acts { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .sx .ask .hint { color:var(--mute); font-size:11px; margin-right:auto; }
+  .sx .b-search { border:1.5px solid var(--blue); color:var(--blue); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
+  .sx .b-ai { background:var(--mag); color:#fff; padding:6px 14px; border-radius:999px; font-size:12px; font-weight:700; display:flex; gap:6px; align-items:center; }
+  .sx .b-ai small { font-weight:400; opacity:.85; }
+  .sx .ex { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .sx .ex span { border:1px solid var(--hair); background:rgba(251,248,240,.75); border-radius:999px; padding:3px 10px; font-size:11.5px; color:var(--ink); }
+  .sx .ex span::before { content:"↳ "; color:var(--blue); }
+  .sx .legend { position:absolute; right:22px; bottom:18px; background:rgba(251,248,240,.92); border:1px solid var(--blue); padding:8px 11px; font-size:10.5px; color:var(--ink); z-index:2; }
+  .sx .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:3px; }
+  .sx .no { font-family:'B612 Mono',monospace; font-weight:700; color:var(--blue); }
+  .sx .mut { color:var(--mute); }
+  .sr .sbox { display:flex; align-items:center; gap:8px; background:var(--raised); border:1.5px solid var(--blue); border-radius:12px; padding:7px 8px 7px 14px; }
+  .sr .sbox .txt { flex:1; font-family:'Source Serif 4',serif; font-size:16px; }
+  .sr .cnt { display:flex; align-items:baseline; gap:10px; margin:14px 0 4px; font-size:12px; color:var(--mute); }
+  .sr .cnt b { font-family:'Source Serif 4',serif; font-size:20px; color:var(--ink); font-weight:600; }
+  .sr .cnt .sort { margin-left:auto; color:var(--blue); }
+  .sr .chips { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 0; position:relative; }
+  .sr .chip { border:1px solid var(--blue); color:#fff; background:var(--blue); border-radius:6px; padding:2px 8px; font-size:11.5px; }
+  .sr .chip::after { content:"  ✕"; opacity:.75; }
+  .sr .chip.add { background:var(--raised); color:var(--blue); border-style:dashed; } .sr .chip.add::after { content:""; }
+  .sr .rr { border-top:1px solid var(--hair); padding:11px 2px 12px; }
+  .sr .rr .l1 { display:flex; align-items:baseline; gap:9px; flex-wrap:wrap; font-size:12.5px; }
+  .sr .rr .l1 .ac { font-weight:700; }
+  .sr .rr .l1 .cmp { margin-left:auto; font-size:11px; color:var(--blue); display:flex; gap:5px; align-items:center; }
+  .sr .rr .box { width:11px; height:11px; border:1.5px solid var(--blue); border-radius:2px; display:inline-block; }
+  .sr .rr .l2 { font-family:'B612 Mono',monospace; font-size:10.5px; color:var(--mute); margin:3px 0 5px; letter-spacing:.02em; }
+  .sr .rr .l2 .fat { color:var(--ink); font-weight:700; }
+  .sr .rr .l3 { font-family:'Source Serif 4',serif; font-size:13.5px; line-height:1.45; }
+  .sr .rr .l3 .lab { font-family:'B612',sans-serif; font-size:9px; letter-spacing:.14em; color:var(--mute); margin-right:6px; }
+  .sr .rr .l3 em { font-style:normal; background:rgba(31,81,154,.12); border-bottom:1.5px solid var(--blue); }
+  .sr .askai { display:flex; align-items:center; gap:10px; margin:12px 0 2px; padding:8px 12px; border:1px solid rgba(160,22,108,.35); border-radius:10px; font-size:12px; color:var(--ink); background:rgba(160,22,108,.03); }
+  .sr .askai .b-ai { margin-left:auto; }
+  .sr .pager { font-size:11.5px; color:var(--mute); border-top:1px solid var(--hair); padding-top:10px; display:flex; }
+  .sr .pager span { margin-left:auto; color:var(--blue); }
+
+  /* S1 chips + popover */
+  .s1 .col { max-width:680px; margin:0 auto; padding:22px 0 26px; position:relative; }
+  .s1 .pop { position:absolute; left:236px; top:106px; width:330px; z-index:5; background:var(--raised); border:1.5px solid var(--blue); border-radius:10px; box-shadow:0 18px 40px -18px rgba(30,42,54,.5); display:grid; grid-template-columns: 130px 1fr; overflow:hidden; font-size:12px; }
+  .s1 .pop .fl div { padding:6px 12px; color:var(--ink); } .s1 .pop .fl div.on { background:rgba(31,81,154,.1); color:var(--blue); font-weight:700; }
+  .s1 .pop .fl { border-right:1px solid var(--hair); padding:6px 0; }
+  .s1 .pop .fv { padding:10px 12px; }
+  .s1 .pop .fv .t { font-size:9.5px; letter-spacing:.14em; color:var(--blue); font-weight:700; margin-bottom:6px; }
+  .s1 .pop .fv label { display:flex; align-items:center; gap:7px; padding:3px 0; }
+  .s1 .pop .fv label i { width:11px; height:11px; border:1.5px solid var(--blue); border-radius:2px; }
+  .s1 .pop .fv label span { margin-left:auto; font-family:'B612 Mono',monospace; font-size:11px; color:var(--mute); }
+  .s1 .pop .fv .unk { color:var(--mute); }
+
+  /* S2 side facets */
+  .s2 .wrap { display:grid; grid-template-columns: 236px 1fr; gap:28px; padding:22px 26px 26px; }
+  .s2 .fac { font-size:11.5px; }
+  .s2 .fac .t { font-size:9.5px; letter-spacing:.14em; color:var(--ink); font-weight:700; margin:16px 0 6px; display:flex; }
+  .s2 .fac .t:first-child { margin-top:0; }
+  .s2 .fac .t span { margin-left:auto; color:var(--blue); font-weight:400; letter-spacing:0; }
+  .s2 .fb { display:grid; grid-template-columns: 1fr 34px; align-items:center; gap:2px 8px; padding:2px 0; position:relative; }
+  .s2 .fb .bar2 { position:absolute; left:0; top:3px; bottom:3px; background:rgba(31,81,154,.1); border-radius:2px; z-index:0; }
+  .s2 .fb .lbl { position:relative; z-index:1; padding:1px 6px; }
+  .s2 .fb .n { font-family:'B612 Mono',monospace; font-size:10.5px; color:var(--mute); text-align:right; }
+  .s2 .fb.on .bar2 { background:var(--blue); } .s2 .fb.on .lbl { color:#fff; font-weight:700; }
+  .s2 .hist { display:flex; align-items:flex-end; gap:2px; height:44px; margin-top:4px; }
+  .s2 .hist i { flex:1; background:rgba(31,81,154,.45); border-radius:1px 1px 0 0; }
+  .s2 .hist i.lag { background: repeating-linear-gradient(135deg, rgba(31,81,154,.6) 0 1.5px, transparent 1.5px 4px); }
+  .s2 .hx { display:flex; justify-content:space-between; font-family:'B612 Mono',monospace; font-size:9.5px; color:var(--mute); }
+  .s2 .more { margin-top:14px; color:var(--blue); }
+
+  /* S3 legend */
+  .s3 .col { max-width:740px; margin:0 auto; padding:22px 0 26px; }
+  .s3 .legend2 { margin-top:12px; border:1.5px solid var(--blue); background:rgba(251,248,240,.9); padding:10px 14px 12px; }
+  .s3 .legend2 .h { display:flex; font-size:9.5px; letter-spacing:.16em; color:var(--blue); font-weight:700; margin-bottom:4px; }
+  .s3 .legend2 .h span { margin-left:auto; letter-spacing:0; font-weight:400; }
+  .s3 .lr { display:grid; grid-template-columns: 104px 1fr; gap:10px; align-items:center; margin-top:8px; }
+  .s3 .lr .k { font-size:9.5px; letter-spacing:.14em; font-weight:700; color:var(--ink); }
+  .s3 .seg { display:flex; height:22px; border:1px solid var(--ink); border-radius:2px; overflow:hidden; font-size:10.5px; }
+  .s3 .seg span { display:flex; align-items:center; padding:0 6px; white-space:nowrap; overflow:hidden; border-left:1px solid rgba(30,42,54,.35); color:var(--ink); background:var(--raised); }
+  .s3 .seg span:first-child { border-left:0; }
+  .s3 .seg span b { font-family:'B612 Mono',monospace; font-weight:400; color:var(--mute); margin-left:5px; font-size:10px; }
+  .s3 .seg span.on { background:var(--blue); color:#fff; font-weight:700; } .s3 .seg span.on b { color:#cfe0ff; }
+  .s3 .seg span.t2 { background: repeating-linear-gradient(90deg, rgba(31,81,154,.07) 0 1px, transparent 1px 5px), var(--raised); }
+  .s3 .lnote { font-size:10.5px; color:var(--mute); margin-top:8px; }
+</style>
+
+<h2>Free search and filters: how should filtering look?</h2>
+<p class="subtitle">Checklist is noted for the wait. This is the free <b>Search</b> button: keywords and filters, no AI, no sign-in. Every number here is real: “carburetor icing” appears in 897 completed US investigations, 366 of them in the probable cause, and 58 of those in the initial climb.</p>
+
+<div class="homes">
+
+<!-- ============ S1 CHIPS ============ -->
+<div>
+  <div class="hm-meta"><div><h3>1 · Chips</h3><p>Filters live as chips under the search box; “+ Filter” opens a small panel with counts. The calmest; the page stays one reading column like the briefing sheet.</p></div><span class="pick" data-choice="filters-chips" onclick="toggleSelect(this)">Choose 1</span></div>
+  <div class="sx sr s1">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span class="on">Explore</span><span>Dashboard</span></div><div class="right"><span class="trial">AI searches left: <b>3 of 3</b></span><span class="btn">Sign in</span></div></div>
+    <div class="col">
+      <div class="sbox"><span class="txt">carburetor icing</span><span class="b-search">Search</span><span class="b-ai">Ask AI <small>· 3 free</small></span></div>
+      <div class="chips"><span class="chip">Mentioned in: probable cause</span><span class="chip">Phase: initial climb</span><span class="chip add">+ Filter</span></div>
+      <div class="pop">
+        <div class="fl"><div>Date</div><div>Location</div><div>Aircraft</div><div>Engine</div><div>Operation</div><div>Purpose</div><div>Weather</div><div>Light</div><div class="on">Injuries</div><div>Status</div></div>
+        <div class="fv"><div class="t">HIGHEST INJURY</div>
+          <label><i></i>None<span>26</span></label><label><i></i>Minor<span>15</span></label><label><i></i>Serious<span>12</span></label><label><i></i>Fatal<span>5</span></label><label class="unk"><i></i>Not reported<span>0</span></label></div>
+      </div>
+      <div class="cnt"><b>58</b> completed investigations<span class="sort">Newest first ▾</span></div>
+      <div class="rr"><div class="l1"><span class="no">ERA25LA016</span><span class="mut">16 Oct 2024</span><span class="ac">Piper PA-28-151</span><span class="mut">Newnan, GA</span><span class="cmp"><i class="box"></i>Compare</span></div>
+        <div class="l2">INITIAL CLIMB · FUEL RELATED · PART 91 PERSONAL · VMC DAY · NO INJURIES</div>
+        <div class="l3"><span class="lab">PROBABLE CAUSE</span>The pilot’s inadequate use of carburetor heat during the engine run-up, which resulted in a partial loss of power due to <em>carburetor icing</em> during takeoff.</div></div>
+      <div class="rr"><div class="l1"><span class="no">WPR24FA190</span><span class="mut">12 Jun 2024</span><span class="ac">Cessna 177B</span><span class="mut">Elk River, ID</span><span class="cmp"><i class="box"></i>Compare</span></div>
+        <div class="l2">INITIAL CLIMB · CFIT · PART 91 PERSONAL · VMC DAY · <span class="fat">FATAL</span></div>
+        <div class="l3"><span class="lab">PROBABLE CAUSE</span>The pilot’s failure to maintain clearance from terrain while climbing in mountainous terrain during moderately high density altitude conditions, and conditions conducive to severe <em>carburetor icing</em>.</div></div>
+      <div class="askai">Want these grouped and explained? Ask the AI the same question with these filters.<span class="b-ai">Ask AI <small>· 3 free</small></span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ S2 SIDE FACETS ============ -->
+<div>
+  <div class="hm-meta"><div><h3>2 · Facets with counts</h3><p>A filter column on the left where every value shows its count as a thin bar, so the spread itself teaches something (carb icing: overwhelmingly day VMC). Hatched years are still being investigated.</p></div><span class="pick selected" data-choice="filters-facets" onclick="toggleSelect(this)">Chosen · 2</span></div>
+  <div class="sx sr s2">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span class="on">Explore</span><span>Dashboard</span></div><div class="right"><span class="trial">AI searches left: <b>3 of 3</b></span><span class="btn">Sign in</span></div></div>
+    <div class="wrap">
+      <div class="fac">
+        <div class="t">MENTIONED IN<span>clear</span></div>
+        <div class="fb"><i class="bar2" style="width:100%"></i><span class="lbl">Anywhere in report</span><span class="n">193</span></div>
+        <div class="fb on"><i class="bar2" style="width:30%"></i><span class="lbl">Probable cause</span><span class="n">58</span></div>
+        <div class="t">PHASE<span>clear</span></div>
+        <div class="fb"><i class="bar2" style="width:100%"></i><span class="lbl">En route</span><span class="n">127</span></div>
+        <div class="fb"><i class="bar2" style="width:68%"></i><span class="lbl">Approach</span><span class="n">86</span></div>
+        <div class="fb on"><i class="bar2" style="width:46%"></i><span class="lbl">Initial climb</span><span class="n">58</span></div>
+        <div class="fb"><i class="bar2" style="width:42%"></i><span class="lbl">Maneuvering</span><span class="n">53</span></div>
+        <div class="fb"><i class="bar2" style="width:18%"></i><span class="lbl">Takeoff</span><span class="n">23</span></div>
+        <div class="fb"><i class="bar2" style="width:10%"></i><span class="lbl">Landing</span><span class="n">13</span></div>
+        <div class="fb"><i class="bar2" style="width:5%"></i><span class="lbl">Emergency descent</span><span class="n">6</span></div>
+        <div class="t">HIGHEST INJURY</div>
+        <div class="fb"><i class="bar2" style="width:100%"></i><span class="lbl">None</span><span class="n">26</span></div>
+        <div class="fb"><i class="bar2" style="width:58%"></i><span class="lbl">Minor</span><span class="n">15</span></div>
+        <div class="fb"><i class="bar2" style="width:46%"></i><span class="lbl">Serious</span><span class="n">12</span></div>
+        <div class="fb"><i class="bar2" style="width:19%"></i><span class="lbl">Fatal</span><span class="n">5</span></div>
+        <div class="t">CONDITIONS</div>
+        <div class="fb"><i class="bar2" style="width:100%"></i><span class="lbl">VMC</span><span class="n">57</span></div>
+        <div class="fb"><i class="bar2" style="width:2%"></i><span class="lbl">IMC</span><span class="n">1</span></div>
+        <div class="t">YEAR</div>
+        <div class="hist"><i style="height:25%"></i><i style="height:38%"></i><i style="height:25%"></i><i style="height:38%"></i><i style="height:75%"></i><i style="height:25%"></i><i style="height:12%"></i><i style="height:25%"></i><i style="height:25%"></i><i style="height:25%"></i><i style="height:100%"></i><i style="height:62%"></i><i style="height:38%"></i><i style="height:62%"></i><i style="height:38%"></i><i style="height:62%"></i><i class="lag" style="height:50%"></i><i class="lag" style="height:2%"></i><i class="lag" style="height:2%"></i></div>
+        <div class="hx"><span>2008</span><span>2026</span></div>
+        <div class="more">More filters: aircraft, engine, operation, purpose, light, location, date…</div>
+      </div>
+      <div>
+        <div class="sbox"><span class="txt">carburetor icing</span><span class="b-search">Search</span><span class="b-ai">Ask AI <small>· 3 free</small></span></div>
+        <div class="cnt"><b>58</b> completed investigations<span class="sort">Newest first ▾</span></div>
+        <div class="rr"><div class="l1"><span class="no">ERA25LA016</span><span class="mut">16 Oct 2024</span><span class="ac">Piper PA-28-151</span><span class="mut">Newnan, GA</span><span class="cmp"><i class="box"></i>Compare</span></div>
+          <div class="l2">INITIAL CLIMB · FUEL RELATED · VMC DAY · NO INJURIES</div>
+          <div class="l3">The pilot’s inadequate use of carburetor heat during the engine run-up, which resulted in a partial loss of power due to <em>carburetor icing</em> during takeoff.</div></div>
+        <div class="rr"><div class="l1"><span class="no">WPR24FA190</span><span class="mut">12 Jun 2024</span><span class="ac">Cessna 177B</span><span class="mut">Elk River, ID</span><span class="cmp"><i class="box"></i>Compare</span></div>
+          <div class="l2">INITIAL CLIMB · CFIT · VMC DAY · <span class="fat">FATAL</span></div>
+          <div class="l3">The pilot’s failure to maintain clearance from terrain while climbing in mountainous terrain during moderately high density altitude conditions, and conditions conducive to severe <em>carburetor icing</em>.</div></div>
+        <div class="rr"><div class="l1"><span class="no">WPR24LA154</span><span class="mut">16 May 2024</span><span class="ac">Cessna 172G</span><span class="mut">Lakeport, CA</span><span class="cmp"><i class="box"></i>Compare</span></div>
+          <div class="l2">INITIAL CLIMB · FUEL STARVATION · VMC DAY · NO INJURIES</div>
+          <div class="l3">The pilot’s inadequate use of carburetor heat, which resulted in a total loss of engine power shortly after takeoff due to fuel starvation as a result of <em>carburetor ice</em>.</div></div>
+        <div class="askai">Want these grouped and explained? Ask the AI with these filters.<span class="b-ai">Ask AI <small>· 3 free</small></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ S3 LEGEND ============ -->
+<div>
+  <div class="hm-meta"><div><h3>3 · Chart legend</h3><p>Filters drawn as a chart legend: each one is a single segmented scale bar. Click a segment to filter. Compact and very “chart”, and it shows the spread at a glance; small slices fold into “other”.</p></div><span class="pick" data-choice="filters-legend" onclick="toggleSelect(this)">Choose 3</span></div>
+  <div class="sx sr s3">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span class="on">Explore</span><span>Dashboard</span></div><div class="right"><span class="trial">AI searches left: <b>3 of 3</b></span><span class="btn">Sign in</span></div></div>
+    <div class="col">
+      <div class="sbox"><span class="txt">carburetor icing</span><span class="b-search">Search</span><span class="b-ai">Ask AI <small>· 3 free</small></span></div>
+      <div class="legend2">
+        <div class="h">FILTER BY<span style="color:var(--blue)">+ more filters</span></div>
+        <div class="lr"><span class="k">MENTIONED IN</span><div class="seg"><span class="on" style="width:30%">Probable cause<b>58</b></span><span style="width:70%">Elsewhere in the report only<b>135</b></span></div></div>
+        <div class="lr"><span class="k">PHASE</span><div class="seg"><span style="width:34.7%">En route<b>127</b></span><span style="width:23.5%">Approach<b>86</b></span><span class="on" style="width:15.8%">Init. climb<b>58</b></span><span style="width:14.5%">Maneuv.<b>53</b></span><span style="width:6.3%">T/O</span><span class="t2" style="width:5.2%"></span></div></div>
+        <div class="lr"><span class="k">INJURY</span><div class="seg"><span style="width:44.8%">None<b>26</b></span><span style="width:25.9%">Minor<b>15</b></span><span style="width:20.7%">Serious<b>12</b></span><span style="width:8.6%">Fatal</span></div></div>
+        <div class="lr"><span class="k">LIGHT</span><div class="seg"><span style="width:94.8%">Daylight<b>55</b></span><span class="t2" style="width:5.2%"></span></div></div>
+        <div class="lnote">Hover a slice for its count. Hatched slices group small values (landing, emergency descent; night, dusk).</div>
+      </div>
+      <div class="cnt"><b>58</b> completed investigations<span class="sort">Newest first ▾</span></div>
+      <div class="rr"><div class="l1"><span class="no">ERA25LA016</span><span class="mut">16 Oct 2024</span><span class="ac">Piper PA-28-151</span><span class="mut">Newnan, GA</span><span class="cmp"><i class="box"></i>Compare</span></div>
+        <div class="l2">INITIAL CLIMB · FUEL RELATED · PART 91 PERSONAL · VMC DAY · NO INJURIES</div>
+        <div class="l3"><span class="lab">PROBABLE CAUSE</span>The pilot’s inadequate use of carburetor heat during the engine run-up, which resulted in a partial loss of power due to <em>carburetor icing</em> during takeoff.</div></div>
+      <div class="rr"><div class="l1"><span class="no">ERA24LA135</span><span class="mut">9 Mar 2024</span><span class="ac">Cessna 172</span><span class="mut">Homestead, FL</span><span class="cmp"><i class="box"></i>Compare</span></div>
+        <div class="l2">INITIAL CLIMB · FUEL RELATED · PART 91 PERSONAL · VMC DAY · MINOR</div>
+        <div class="l3"><span class="lab">PROBABLE CAUSE</span>A loss of engine power due to <em>carburetor ice</em> as a result of the pilot’s failure to use carburetor heat in conditions conducive to the formation of <em>carburetor ice</em>.</div></div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>

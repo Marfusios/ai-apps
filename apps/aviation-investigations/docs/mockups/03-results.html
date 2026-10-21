@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI results · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  .homes { display:flex; flex-direction:column; gap: 2.4rem; }
+  .hm-meta { display:flex; gap:1rem; align-items:baseline; justify-content:space-between; padding:.2rem 0 .6rem; }
+  .hm-meta h3 { margin:0; font-size:1.05rem; } .hm-meta p { margin:0; color:var(--text-secondary); font-size:.88rem; }
+  .pick { border:1px solid var(--border); border-radius:999px; padding:.3rem .9rem; font-size:.85rem; cursor:pointer; white-space:nowrap; background: var(--bg-secondary); }
+  .pick.selected { background: var(--accent); color:#fff; border-color: var(--accent); }
+
+  .sx { --paper:#F3EEE1; --raised:#FBF8F0; --ink:#1E2A36; --mute:#5D6670; --blue:#1F519A; --mag:#A0166C; --hair:rgba(31,81,154,.2); --tint:#E8E2CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px), var(--paper);
+    color:var(--ink); font-family:'B612',sans-serif; font-size:13px; line-height:1.45; border-radius:10px; overflow:hidden; position:relative; }
+  .sx * { box-sizing:border-box; }
+  .sx .bar { display:flex; align-items:center; gap:1.4rem; padding:11px 22px; border-bottom:2px solid var(--blue); position:relative; background: rgba(243,238,225,.92); z-index:2; }
+  .sx .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px; opacity:.7;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px) 0 0/100% 3px no-repeat,
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px) 0 0/100% 6px no-repeat; }
+  .sx .logo { font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--blue); display:flex; align-items:center; gap:8px; }
+  .sx .nav { display:flex; gap:1.1rem; } .sx .nav span { color:var(--mute); } .sx .nav .on { color:var(--ink); border-bottom:2px solid var(--blue); }
+  .sx .right { margin-left:auto; display:flex; gap:.9rem; align-items:center; }
+  .sx .trial { color:var(--mute); font-size:11.5px; } .sx .trial b { color:var(--mag); }
+  .sx .btn { border:1.5px solid var(--blue); color:var(--blue); padding:3px 11px; border-radius:999px; font-size:11.5px; }
+  .sx .eyebrow { font-size:11px; letter-spacing:.16em; color:var(--blue); font-weight:700; }
+  .sx h1 { font-family:'Source Serif 4',serif; font-weight:600; letter-spacing:-.01em; margin:.35rem 0 .5rem; line-height:1.08; }
+  .sx .lede { color:var(--mute); font-size:14px; max-width:46ch; }
+  .sx .ask { background:var(--raised); border:1.5px solid var(--blue); border-radius:14px; padding:12px 12px 10px 16px; box-shadow: 0 1px 0 rgba(31,81,154,.15), 0 10px 30px -18px rgba(30,42,54,.45); }
+  .sx .ask .ph { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:16px; min-height:44px; }
+  .sx .ask .acts { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .sx .ask .hint { color:var(--mute); font-size:11px; margin-right:auto; }
+  .sx .b-search { border:1.5px solid var(--blue); color:var(--blue); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
+  .sx .b-ai { background:var(--mag); color:#fff; padding:6px 14px; border-radius:999px; font-size:12px; font-weight:700; display:flex; gap:6px; align-items:center; }
+  .sx .b-ai small { font-weight:400; opacity:.85; }
+  .sx .ex { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .sx .ex span { border:1px solid var(--hair); background:rgba(251,248,240,.75); border-radius:999px; padding:3px 10px; font-size:11.5px; color:var(--ink); }
+  .sx .ex span::before { content:"↳ "; color:var(--blue); }
+  .sx .legend { position:absolute; right:22px; bottom:18px; background:rgba(251,248,240,.92); border:1px solid var(--blue); padding:8px 11px; font-size:10.5px; color:var(--ink); z-index:2; }
+  .sx .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:3px; }
+  /* shared workspace parts */
+  .sx .bar .trial { margin-left:auto; } .sx .bar .right { margin-left:0; }
+  .sx .q { font-family:'Source Serif 4',serif; font-size:19px; line-height:1.3; margin:0 0 10px; }
+  .sx .q::before { content:"YOUR QUESTION"; display:block; font-family:'B612',sans-serif; font-size:10px; letter-spacing:.16em; color:var(--blue); font-weight:700; margin-bottom:4px; }
+  .sx .chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 14px; }
+  .sx .chip { border:1px solid var(--blue); color:var(--blue); background:rgba(251,248,240,.8); border-radius:6px; padding:2px 8px; font-size:11.5px; }
+  .sx .chip.ai { border-color:var(--mag); color:var(--mag); }
+  .sx .chip.ai::after { content:" ✎"; } .sx .chip.add { border-style:dashed; }
+  .sx .ai { border-left:3px solid var(--mag); padding:2px 0 2px 14px; margin:0 0 18px; }
+  .sx .ai .lbl { font-size:10px; letter-spacing:.16em; color:var(--mag); font-weight:700; }
+  .sx .ai p { font-family:'Source Serif 4',serif; font-size:14.5px; line-height:1.5; margin:4px 0 0; }
+  .sx .cite { font-family:'B612 Mono',monospace; font-size:11px; color:var(--blue); border-bottom:1px solid var(--blue); white-space:nowrap; }
+  .sx .g { display:inline-block; width:11px; height:11px; border-radius:50%; border:1.6px solid var(--mag); vertical-align:-1px; margin-right:7px; flex:none; }
+  .sx .g.f { background:var(--mag); } .sx .g.h { background:linear-gradient(90deg,var(--mag) 50%,transparent 50%); } .sx .g.d { border-style:dashed; }
+  .sx .grp { display:flex; align-items:center; font-weight:700; font-size:12px; margin:16px 0 7px; }
+  .sx .grp em { font-style:normal; font-weight:400; color:var(--mute); margin-left:6px; }
+  .sx .grp::after { content:""; flex:1; height:1px; background:var(--hair); margin-left:10px; }
+  .sx .card { background:var(--raised); border:1px solid var(--hair); border-radius:10px; padding:11px 14px 10px; margin-bottom:8px; }
+  .sx .card.dim { opacity:.62; border-style:dashed; }
+  .sx .ch { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .sx .no { font-family:'B612 Mono',monospace; font-weight:700; color:var(--blue); }
+  .sx .ac { font-weight:700; } .sx .mt { color:var(--mute); font-size:11.5px; }
+  .sx .cmp { margin-left:auto; font-size:11px; color:var(--blue); display:flex; align-items:center; gap:5px; }
+  .sx .box { width:11px; height:11px; border:1.5px solid var(--blue); border-radius:2px; display:inline-block; }
+  .sx .box.on { background:var(--blue); box-shadow: inset 0 0 0 2px var(--raised); }
+  .sx .why { color:var(--mag); font-size:12px; margin:5px 0 6px; }
+  .sx .why b { font-size:9.5px; letter-spacing:.14em; margin-right:6px; }
+  .sx .tm { font-family:'B612 Mono',monospace; font-size:10.5px; color:var(--mag); border:1px solid rgba(160,22,108,.35); border-radius:4px; padding:0 5px; margin-left:6px; white-space:nowrap; }
+  .sx blockquote { margin:0; padding:1px 0 1px 11px; border-left:2px solid rgba(30,42,54,.3); font-family:'Source Serif 4',serif; font-size:13.5px; line-height:1.45; }
+  .sx blockquote cite { display:block; font-family:'B612',sans-serif; font-style:normal; font-size:10px; letter-spacing:.12em; color:var(--mute); margin-top:3px; }
+  .sx .cf { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
+  .sx .cf svg { width:96px; height:28px; flex:none; }
+  .sx .ph { font-family:'B612 Mono',monospace; font-size:10px; color:var(--mute); letter-spacing:.04em; }
+  .sx .src { margin-left:auto; color:var(--blue); font-size:11.5px; }
+  .sx .src.search { color:var(--mute); } .sx .src.search u { color:var(--blue); text-decoration:none; border-bottom:1px dashed var(--blue); }
+  .sx .caution { font-size:11px; padding:1px 7px; border:1px solid rgba(30,42,54,.45); border-radius:4px;
+    background: repeating-linear-gradient(135deg, rgba(30,42,54,.13) 0 2px, transparent 2px 6px), var(--raised); }
+  .sx .gaps { font-size:12px; color:var(--mute); border-top:1px dashed var(--hair); padding-top:9px; margin-top:14px; }
+  .sx .gaps u { color:var(--blue); text-decoration:none; border-bottom:1px solid var(--blue); }
+  .sx .refine { display:flex; align-items:center; gap:8px; background:var(--raised); border:1.5px solid var(--blue); border-radius:12px; padding:8px 8px 8px 14px; margin-top:16px; }
+  .sx .refine .ph2 { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:14px; flex:1; }
+  .sx .refine .lbl2 { font-size:10px; letter-spacing:.14em; color:var(--blue); font-weight:700; white-space:nowrap; }
+
+  /* W1 briefing sheet */
+  .w1 .col { max-width:640px; margin:0 auto; padding:26px 0 70px; }
+  .w1 .tray { position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center; gap:12px; padding:9px 22px; background:var(--ink); color:#F3EEE1; font-size:12px; }
+  .w1 .tray .no { color:#9DBCF0; font-weight:400; } .w1 .tray .go { margin-left:auto; border:1.5px solid #F3EEE1; border-radius:999px; padding:2px 12px; font-weight:700; }
+  .w1 .note { position:absolute; right:22px; top:74px; width:150px; font-size:10.5px; color:var(--mute); border:1px dashed var(--hair); padding:7px 9px; background:rgba(251,248,240,.7); }
+
+  /* W2 reading desk */
+  .w2 .desk { display:grid; grid-template-columns: 0.95fr 1.25fr; min-height:600px; }
+  .w2 .left { padding:22px 20px 22px 24px; border-right:1px solid var(--hair); }
+  .w2 .q { font-size:16px; }
+  .w2 .ai p { font-size:13.5px; }
+  .w2 .row { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:8px; font-size:12px; border:1px solid transparent; }
+  .w2 .row.sel { background:var(--raised); border-color:var(--blue); box-shadow: inset 3px 0 0 var(--blue); }
+  .w2 .row .ac { font-weight:400; } .w2 .row .tm { margin-left:auto; }
+  .w2 .row.dim { opacity:.6; }
+  .w2 .right { background:rgba(251,248,240,.82); padding:22px 26px; }
+  .w2 .right .hd { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .w2 .right .hd .no { font-size:20px; }
+  .w2 .right .sub { color:var(--mute); font-size:12px; margin:2px 0 10px; }
+  .w2 .wx { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .w2 .wx span { font-family:'B612 Mono',monospace; font-size:10.5px; border:1px solid rgba(30,42,54,.3); border-radius:4px; padding:1px 6px; }
+  .w2 .big svg { width:100%; height:62px; display:block; }
+  .w2 h5 { margin:14px 0 4px; font-size:10px; letter-spacing:.16em; color:var(--ink); }
+  .w2 .pc { font-family:'Source Serif 4',serif; font-size:14px; line-height:1.5; margin:0; }
+  .w2 mark { background:rgba(31,81,154,.13); color:inherit; border-bottom:1.5px solid var(--blue); padding:0 1px; }
+  .w2 .aib { border:1px solid rgba(160,22,108,.4); border-radius:8px; padding:8px 11px; margin-top:12px; color:var(--mag); font-size:12px; }
+  .w2 .aib b { font-size:9.5px; letter-spacing:.14em; display:block; margin-bottom:3px; }
+  .w2 .aib span { color:var(--ink); }
+
+  /* W3 evidence board */
+  .w3 .top { display:grid; grid-template-columns: 1fr 1.1fr; gap:26px; padding:22px 26px 6px; align-items:start; }
+  .w3 .q { font-size:16px; } .w3 .ai { margin-bottom:6px; } .w3 .ai p { font-size:13.5px; }
+  .w3 .board { display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; padding:8px 26px 4px; }
+  .w3 .colh { display:flex; align-items:flex-start; font-weight:700; font-size:11.5px; line-height:1.25; padding:7px 2px 8px; border-top:2px solid var(--ink); min-height:44px; }
+  .w3 .colh em { font-style:normal; font-weight:400; color:var(--mute); margin-left:auto; padding-left:6px; }
+  .w3 .card { padding:9px 10px; }
+  .w3 .card .ac { display:block; font-size:12px; margin-top:2px; }
+  .w3 .card .mt { display:block; }
+  .w3 .card blockquote { font-size:12.5px; margin-top:6px; }
+  .w3 .card .tm { margin:6px 0 0; display:inline-block; }
+  .w3 .empty { border:1px dashed var(--hair); border-radius:10px; padding:10px; font-size:11.5px; color:var(--mute); }
+  .w3 .outside { margin:8px 26px 0; display:flex; gap:10px; align-items:center; font-size:12px; color:var(--mute); }
+  .w3 .bottom { padding:0 26px 22px; }
+</style>
+
+<h2>Results: how should an answer read?</h2>
+<p class="subtitle">The same search in all three: the instructor question from the design doc, after <b>Ask AI</b>. The cases and quotes are real NTSB text. The grouping and summary are illustrative, written by me as the AI would. Magenta marks anything the AI wrote or decided; ink is NTSB text.</p>
+
+<div class="homes">
+
+<!-- ============ W1 BRIEFING SHEET ============ -->
+<div>
+  <div class="hm-meta"><div><h3>1 · Briefing sheet</h3><p>One calm reading column, like a printed brief. Cases grouped by what investigators established. Citations open a side drawer; ticked cases collect in a compare tray at the bottom.</p></div><span class="pick selected" data-choice="results-briefing-sheet" onclick="toggleSelect(this)">Chosen · 1</span></div>
+  <div class="sx w1">
+    <div class="bar">
+      <div class="logo">AVIATION CASEBOOK</div>
+      <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+      <span class="trial">AI searches left: <b>2 of 3</b></span>
+      <div class="right"><span class="btn">Sign in</span></div>
+    </div>
+    <div class="note">Click any case number to open its report text in a drawer from the right, with the quoted passage highlighted.</div>
+    <div class="col">
+      <div class="q">Find completed investigations involving engine power loss shortly after maintenance. Separate confirmed mechanical failures from cases where investigators found no mechanical fault.</div>
+      <div class="chips"><span class="chip ai">“Shortly” = within 30 days or 10 flight hours</span><span class="chip">Completed investigations</span><span class="chip">United States · 2008–2026</span><span class="chip add">+ Filter</span></div>
+
+      <div class="ai"><div class="lbl">AI SUMMARY · CHECK THE CITED PASSAGES</div>
+        <p>Investigators tied one power loss directly to the maintenance: a cotter pin left out when the engine was reinstalled, 5.1 flight hours earlier <span class="cite">DFW08TA066</span>. In a second case they found a check valve fitted backwards, but engine tests ran normally either way, so it was not shown to cause the loss <span class="cite">MIA08LA156</span>. A third examination found nothing, and the cause stayed undetermined <span class="cite">DEN08LA103</span>.</p>
+      </div>
+
+      <div class="grp"><i class="g f"></i>Causal fault established <em>1 case</em></div>
+      <div class="card">
+        <div class="ch"><span class="no">DFW08TA066</span><span class="ac">Hughes OH-6A</span><span class="mt">Valentine, TX · 8 Feb 2008</span><span class="cmp"><i class="box on"></i>Compare</span></div>
+        <div class="why"><b>WHY IT MATCHED</b>Engine replaced shortly before; investigators cite the maintenance error.<span class="tm">5.1 FH</span></div>
+        <blockquote>“…the cotter pin that secured the nut was missing. The engine had been replaced 5.1 hours prior to the accident by a contract maintenance facility.”<cite>NTSB · ANALYSIS</cite></blockquote>
+        <div class="cf">
+          <svg viewBox="0 0 96 28"><path d="M2 25H94" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 25C8 25 10 17 18 17H58" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M58 17L64 25" fill="none" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="58" cy="17" r="2.6" fill="#1E2A36"/></svg>
+          <span class="ph">MANEUVERING · TOTAL POWER LOSS</span>
+          <span class="caution">Header and narrative disagree</span>
+          <span class="src">NTSB report ↗</span>
+        </div>
+      </div>
+
+      <div class="grp"><i class="g h"></i>Defect found, causal link not established <em>1 case</em></div>
+      <div class="card">
+        <div class="ch"><span class="no">MIA08LA156</span><span class="ac">Diamond DA20-C1</span><span class="mt">Peachtree City, GA · 1 Aug 2008</span><span class="cmp"><i class="box on"></i>Compare</span></div>
+        <div class="why"><b>WHY IT MATCHED</b>Test flight right after rudder maintenance.<span class="tm">1ST FLIGHT</span></div>
+        <blockquote>“…a check valve from the engine mechanical fuel pump return hose line back to the fuel tank was installed incorrectly (backwards).”<cite>NTSB · ANALYSIS</cite></blockquote>
+        <div class="cf">
+          <svg viewBox="0 0 96 28"><path d="M2 25H94" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 25C10 25 12 9 24 9H58C66 9 70 14 74 16" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M74 16L86 25" fill="none" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="74" cy="16" r="2.6" fill="#1E2A36"/></svg>
+          <span class="ph">BASE LEG · PARTIAL POWER LOSS</span>
+          <span class="src search">Report link pending · <u>Search NTSB ↗</u></span>
+        </div>
+      </div>
+
+      <div class="grp"><i class="g"></i>No fault identified <em>1 case</em></div>
+      <div class="card">
+        <div class="ch"><span class="no">DEN08LA103</span><span class="ac">Cessna A188B</span><span class="mt">Lyons, KS · 12 Jun 2008</span><span class="cmp"><i class="box"></i>Compare</span></div>
+        <div class="why"><b>WHY IT MATCHED</b>Maintenance and test flights after an engine problem 17 days earlier.<span class="tm">≤ 17 DAYS</span></div>
+        <blockquote>“The reason for the loss of engine power was not determined.”<cite>NTSB · ANALYSIS</cite></blockquote>
+      </div>
+
+      <div class="grp"><i class="g d"></i>Insufficient evidence <em>none</em></div>
+
+      <div class="gaps">Just outside your window: <span class="no">NYC08LA106</span>, fuel pump installed 12 flight hours and about two months earlier. <u>Include it</u> · Not placed: cases with no maintenance date in the report. <u>Show them</u></div>
+
+      <div class="refine"><span class="lbl2">REFINE</span><span class="ph2">e.g. only aeroplanes, not helicopters</span><span class="b-ai">Refine <small>· 2 left</small></span></div>
+    </div>
+    <div class="tray">Compare <span class="no">DFW08TA066</span><span class="no">MIA08LA156</span><span style="opacity:.7">2 of 4</span><span class="go">Compare →</span></div>
+  </div>
+</div>
+
+<!-- ============ W2 READING DESK ============ -->
+<div>
+  <div class="hm-meta"><div><h3>2 · Reading desk</h3><p>Answer and case list on the left; the selected case's report is always open on the right, scrolled to the quoted passage. Best for studying cases side by side with the source.</p></div><span class="pick" data-choice="results-reading-desk" onclick="toggleSelect(this)">Choose 2</span></div>
+  <div class="sx w2">
+    <div class="bar">
+      <div class="logo">AVIATION CASEBOOK</div>
+      <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+      <span class="trial">AI searches left: <b>2 of 3</b></span>
+      <div class="right"><span class="btn">Sign in</span></div>
+    </div>
+    <div class="desk">
+      <div class="left">
+        <div class="q">Engine power loss shortly after maintenance: confirmed failures vs no fault found.</div>
+        <div class="chips"><span class="chip ai">Within 30 days or 10 FH</span><span class="chip">Completed</span><span class="chip">US · 2008–2026</span></div>
+        <div class="ai"><div class="lbl">AI SUMMARY</div>
+          <p>One loss was tied to the maintenance itself <span class="cite">DFW08TA066</span>. One showed a defect that tests did not link to the loss <span class="cite">MIA08LA156</span>. One found no fault <span class="cite">DEN08LA103</span>.</p>
+        </div>
+        <div class="row sel"><i class="g f"></i><span class="no">DFW08TA066</span><span class="ac">Hughes OH-6A</span><span class="tm">5.1 FH</span></div>
+        <div class="row"><i class="g h"></i><span class="no">MIA08LA156</span><span class="ac">Diamond DA20-C1</span><span class="tm">1ST FLT</span></div>
+        <div class="row"><i class="g"></i><span class="no">DEN08LA103</span><span class="ac">Cessna A188B</span><span class="tm">≤ 17 D</span></div>
+        <div class="row dim"><i class="g f"></i><span class="no">NYC08LA106</span><span class="ac">Raytheon A36</span><span class="tm">12 FH · 2 MO</span></div>
+        <div class="gaps">Faded: outside your window. <u>Change window</u></div>
+        <div class="refine"><span class="ph2">Refine…</span><span class="b-ai">Refine <small>· 2 left</small></span></div>
+      </div>
+      <div class="right">
+        <div class="hd"><span class="no">DFW08TA066</span><span class="ac">Hughes OH-6A helicopter</span><span class="src">NTSB report ↗</span></div>
+        <div class="sub">Valentine, TX · 8 Feb 2008 · Part 91 public use · completed investigation</div>
+        <div class="wx"><span>VMC</span><span>DAYLIGHT</span><span>HOVER 30–50 FT AGL</span><span>INJURY: MINOR (HEADER)</span></div>
+        <div class="big"><svg viewBox="0 0 420 62"><path d="M4 52H416" stroke="#1F519A" stroke-width=".7" stroke-dasharray="3 3"/><text x="4" y="61" font-family="B612 Mono" font-size="8" fill="#5D6670">MARFA (MRF)</text><path d="M30 52C60 52 70 20 110 20H250" fill="none" stroke="#1F519A" stroke-width="1.6"/><path d="M250 20L300 52" fill="none" stroke="#1E2A36" stroke-width="1.4" stroke-dasharray="4 3"/><circle cx="250" cy="20" r="4" fill="#1E2A36"/><text x="150" y="13" font-family="B612 Mono" font-size="8.5" fill="#5D6670">MANEUVERING · HOVER</text><text x="258" y="24" font-family="B612 Mono" font-size="8.5" fill="#1E2A36">TOTAL POWER LOSS</text><text x="300" y="46" font-family="B612 Mono" font-size="8" fill="#5D6670">EMERGENCY DESCENT · HARD LANDING</text></svg></div>
+        <h5>PROBABLE CAUSE · NTSB</h5>
+        <p class="pc">The contract mechanic's failure to properly secure the castellated nut that attached the governor lever control rod to the idler bell crank. Contributing to the accident was the lack of maintenance oversight by the operator.</p>
+        <h5>ANALYSIS · NTSB</h5>
+        <p class="pc">…Further examination of the engine revealed that a castellated nut used to secure the governor lever control rod to the idler bell crank had come completely loose, and <mark>the cotter pin that secured the nut was missing. The engine had been replaced 5.1 hours prior to the accident</mark> by a contract maintenance facility. The mechanic stated that during the first engine run-up, he discovered an oil leak…</p>
+        <div class="caution" style="margin-top:12px; padding:6px 10px; font-size:11.5px">Data caution: the header says 8 Feb 2008 and a minor injury; the factual narrative says 9 February and serious injuries. Both are kept as published.</div>
+        <div class="aib"><b>AI READING OF THIS REPORT</b>Mechanical evidence: <span>causal fault established</span> · Maintenance: <span>attributed by investigators</span> · Timing: <span>5.1 flight hours</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ W3 EVIDENCE BOARD ============ -->
+<div>
+  <div class="hm-meta"><div><h3>3 · Evidence board</h3><p>The answer is the sorting itself: four columns for what investigators established, so the split is visible at a glance. Strongest for the instructor's "separate confirmed from not" question; stacks into sections on a phone.</p></div><span class="pick" data-choice="results-evidence-board" onclick="toggleSelect(this)">Choose 3</span></div>
+  <div class="sx w3">
+    <div class="bar">
+      <div class="logo">AVIATION CASEBOOK</div>
+      <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+      <span class="trial">AI searches left: <b>2 of 3</b></span>
+      <div class="right"><span class="btn">Sign in</span></div>
+    </div>
+    <div class="top">
+      <div><div class="q">Engine power loss shortly after maintenance: confirmed failures vs no fault found.</div>
+        <div class="chips"><span class="chip ai">“Shortly” = within 30 days or 10 FH</span><span class="chip">Completed</span><span class="chip">US · 2008–2026</span><span class="chip add">+ Filter</span></div></div>
+      <div class="ai"><div class="lbl">AI SUMMARY · CHECK THE CITED PASSAGES</div>
+        <p>Only one case shows investigators tying the power loss to the maintenance <span class="cite">DFW08TA066</span>. A defect alone was not enough to establish cause <span class="cite">MIA08LA156</span>, and one examination found nothing <span class="cite">DEN08LA103</span>.</p></div>
+    </div>
+    <div class="board">
+      <div><div class="colh"><i class="g f"></i>Causal fault established<em>1</em></div>
+        <div class="card"><span class="no">DFW08TA066</span><span class="ac">Hughes OH-6A</span><span class="mt">Valentine, TX · 2008</span>
+          <blockquote>“…the cotter pin that secured the nut was missing.”</blockquote><span class="tm">5.1 FH</span></div></div>
+      <div><div class="colh"><i class="g h"></i>Defect found, link not established<em>1</em></div>
+        <div class="card"><span class="no">MIA08LA156</span><span class="ac">Diamond DA20-C1</span><span class="mt">Peachtree City, GA · 2008</span>
+          <blockquote>“…installed incorrectly (backwards).”</blockquote><span class="tm">1ST FLIGHT</span></div></div>
+      <div><div class="colh"><i class="g"></i>No fault identified<em>1</em></div>
+        <div class="card"><span class="no">DEN08LA103</span><span class="ac">Cessna A188B</span><span class="mt">Lyons, KS · 2008</span>
+          <blockquote>“The reason for the loss of engine power was not determined.”</blockquote><span class="tm">≤ 17 DAYS</span></div></div>
+      <div><div class="colh"><i class="g d"></i>Insufficient evidence<em>0</em></div>
+        <div class="empty">No case in this search. Cases land here when the report conflicts with itself or says too little.</div></div>
+    </div>
+    <div class="outside"><span class="caution">Outside your window</span><span class="no">NYC08LA106</span> fuel pump, 12 FH · about 2 months <span class="cite" style="font-family:B612">Include</span></div>
+    <div class="bottom"><div class="refine"><span class="lbl2">REFINE</span><span class="ph2">e.g. only aeroplanes, not helicopters</span><span class="b-ai">Refine <small>· 2 left</small></span></div></div>
+  </div>
+</div>
+
+</div>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>

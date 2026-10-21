@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  .homes { display:flex; flex-direction:column; gap: 2.4rem; }
+  .hm-meta { display:flex; gap:1rem; align-items:baseline; justify-content:space-between; padding:.2rem 0 .6rem; }
+  .hm-meta h3 { margin:0; font-size:1.05rem; } .hm-meta p { margin:0; color:var(--text-secondary); font-size:.88rem; }
+  .pick { border:1px solid var(--border); border-radius:999px; padding:.3rem .9rem; font-size:.85rem; cursor:pointer; white-space:nowrap; background: var(--bg-secondary); }
+  .pick.selected { background: var(--accent); color:#fff; border-color: var(--accent); }
+
+  .sx { --paper:#F3EEE1; --raised:#FBF8F0; --ink:#1E2A36; --mute:#5D6670; --blue:#1F519A; --mag:#A0166C; --hair:rgba(31,81,154,.2); --tint:#E8E2CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px), var(--paper);
+    color:var(--ink); font-family:'B612',sans-serif; font-size:13px; line-height:1.45; border-radius:10px; overflow:hidden; position:relative; }
+  .sx * { box-sizing:border-box; }
+  .sx .bar { display:flex; align-items:center; gap:1.4rem; padding:11px 22px; border-bottom:2px solid var(--blue); position:relative; background: rgba(243,238,225,.92); z-index:2; }
+  .sx .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px; opacity:.7;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px) 0 0/100% 3px no-repeat,
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px) 0 0/100% 6px no-repeat; }
+  .sx .logo { font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--blue); display:flex; align-items:center; gap:8px; }
+  .sx .nav { display:flex; gap:1.1rem; } .sx .nav span { color:var(--mute); } .sx .nav .on { color:var(--ink); border-bottom:2px solid var(--blue); }
+  .sx .right { margin-left:auto; display:flex; gap:.9rem; align-items:center; }
+  .sx .trial { color:var(--mute); font-size:11.5px; } .sx .trial b { color:var(--mag); }
+  .sx .btn { border:1.5px solid var(--blue); color:var(--blue); padding:3px 11px; border-radius:999px; font-size:11.5px; }
+  .sx .eyebrow { font-size:11px; letter-spacing:.16em; color:var(--blue); font-weight:700; }
+  .sx h1 { font-family:'Source Serif 4',serif; font-weight:600; letter-spacing:-.01em; margin:.35rem 0 .5rem; line-height:1.08; }
+  .sx .lede { color:var(--mute); font-size:14px; max-width:46ch; }
+  .sx .ask { background:var(--raised); border:1.5px solid var(--blue); border-radius:14px; padding:12px 12px 10px 16px; box-shadow: 0 1px 0 rgba(31,81,154,.15), 0 10px 30px -18px rgba(30,42,54,.45); }
+  .sx .ask .ph { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:16px; min-height:44px; }
+  .sx .ask .acts { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .sx .ask .hint { color:var(--mute); font-size:11px; margin-right:auto; }
+  .sx .b-search { border:1.5px solid var(--blue); color:var(--blue); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
+  .sx .b-ai { background:var(--mag); color:#fff; padding:6px 14px; border-radius:999px; font-size:12px; font-weight:700; display:flex; gap:6px; align-items:center; }
+  .sx .b-ai small { font-weight:400; opacity:.85; }
+  .sx .ex { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .sx .ex span { border:1px solid var(--hair); background:rgba(251,248,240,.75); border-radius:999px; padding:3px 10px; font-size:11.5px; color:var(--ink); }
+  .sx .ex span::before { content:"↳ "; color:var(--blue); }
+  .sx .legend { position:absolute; right:22px; bottom:18px; background:rgba(251,248,240,.92); border:1px solid var(--blue); padding:8px 11px; font-size:10.5px; color:var(--ink); z-index:2; }
+  .sx .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:3px; }
+  .db .page { padding:22px 28px 28px; }
+  .db .ttl { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .db .ttl .t { font-family:'Source Serif 4',serif; font-weight:600; font-size:28px; line-height:1.1; }
+  .db .coh { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 16px; }
+  .db .coh span { border:1px solid var(--blue); border-radius:6px; padding:2px 8px; font-size:11.5px; color:var(--blue); }
+  .db .coh span.on { background:var(--blue); color:#fff; }
+  .db .coh span.off { border-style:dashed; }
+  .db .h5 { font-size:9.5px; letter-spacing:.16em; font-weight:700; color:var(--ink); margin:0 0 8px; display:flex; }
+  .db .h5 span { margin-left:auto; font-weight:400; letter-spacing:0; color:var(--mute); }
+  .db .panel { background:rgba(251,248,240,.82); border:1px solid var(--hair); border-radius:10px; padding:14px 16px; }
+  .db .fb { display:grid; grid-template-columns: 1fr 52px 40px; align-items:center; gap:0 6px; padding:1.5px 0; position:relative; font-size:11.5px; }
+  .db .fb .b { position:absolute; left:0; top:2px; bottom:2px; background:rgba(31,81,154,.12); border-radius:2px; }
+  .db .fb .l { position:relative; padding:1px 6px; }
+  .db .fb .n { font-family:'B612 Mono',monospace; font-size:10.5px; text-align:right; }
+  .db .fb .p { font-family:'B612 Mono',monospace; font-size:10px; color:var(--mute); text-align:right; }
+  .db .fb.unk .l { color:var(--mute); font-style:italic; }
+  .db .years { display:flex; align-items:flex-end; gap:4px; height:120px; }
+  .db .years .yb { flex:1; height:100%; display:flex; flex-direction:column; justify-content:flex-end; }
+  .db .years i { display:block; }
+  .db .years i.c { background:var(--blue); opacity:.8; }
+  .db .years i.o { background: repeating-linear-gradient(135deg, var(--blue) 0 1.5px, transparent 1.5px 4px); opacity:.6; border-top:1px solid rgba(31,81,154,.6); }
+  .db .yx { display:flex; gap:4px; margin-top:4px; }
+  .db .yx span { flex:1; font-family:'B612 Mono',monospace; font-size:8.5px; color:var(--mute); text-align:center; }
+  .db .lg { font-size:11px; color:var(--mute); margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; }
+  .db .lg i { display:inline-block; width:10px; height:10px; vertical-align:-1px; margin-right:5px; }
+  .db .cov div { display:flex; gap:10px; padding:6px 0; border-top:1px solid var(--hair); font-size:12px; }
+  .db .cov div:first-of-type { border-top:0; }
+  .db .cov div b { font-family:'B612 Mono',monospace; font-weight:400; font-size:11px; margin-left:auto; white-space:nowrap; }
+  .db .cov div.ai span { color:var(--mag); }
+  .db .note { font-size:11px; color:var(--mute); margin-top:12px; }
+
+  /* D1 atlas */
+  .a1 .map { position:relative; border:1px solid var(--hair); border-radius:10px; background:rgba(251,248,240,.55); overflow:hidden; }
+  .a1 .map canvas { display:block; width:100%; height:auto; }
+  .a1 .map .big { position:absolute; left:20px; top:16px; }
+  .a1 .map .big b { display:block; font-family:'Source Serif 4',serif; font-weight:600; font-size:40px; line-height:1; }
+  .a1 .map .big span { font-size:12px; color:var(--mute); }
+  .a1 .map .legend { position:absolute; right:14px; bottom:12px; background:rgba(251,248,240,.94); border:1px solid var(--blue); padding:7px 10px; font-size:10.5px; }
+  .a1 .map .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:2px; }
+  .a1 .row2 { display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-top:14px; }
+  .a1 .row4 { display:grid; grid-template-columns: repeat(2, 1fr); gap:14px; margin-top:14px; }
+
+  /* D2 questions */
+  .a2 .qs { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+  .a2 .qs .wide { grid-column: 1 / -1; }
+  .a2 .qq { font-family:'Source Serif 4',serif; font-weight:600; font-size:18px; line-height:1.2; margin:0 0 3px; }
+  .a2 .cap { font-size:12px; color:var(--mute); line-height:1.45; margin:0 0 10px; }
+  .a2 .cap b { color:var(--ink); font-weight:400; }
+  .a2 .smallmap canvas { display:block; width:100%; height:auto; opacity:.9; }
+</style>
+
+<h2>Dashboard: map first, or questions first?</h2>
+<p class="subtitle">Facets with counts are noted for search, and the dashboard reuses the same thin bars. Every number below is real, computed from the 24,291 completed US investigations. Every bar would open the matching cases in Explore. Nothing here ranks aircraft makers or turns counts into risk.</p>
+
+<div class="homes">
+
+<!-- ============ D1 ATLAS ============ -->
+<div>
+  <div class="hm-meta"><div><h3>1 · Atlas</h3><p>Leads with the map of where completed investigations happened, then the year chart showing which recent years are still open, then plain count panels and what's in the data.</p></div><span class="pick" data-choice="dashboard-atlas" onclick="toggleSelect(this)">Choose 1</span></div>
+  <div class="sx db a1">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span>Explore</span><span class="on">Dashboard</span></div><div class="right"><span class="btn">Sign in</span></div></div>
+    <div class="page">
+      <div class="ttl"><span class="t">The record</span></div>
+      <div class="coh"><span class="on">Completed investigations · 24,291</span><span class="off">+ Include 1,116 still open</span><span>United States</span><span>2008 – 2026</span><span>All aircraft ▾</span></div>
+      <div class="map">
+        <canvas class="dots" width="1000" height="637"></canvas>
+        <div class="big"><b>24,291</b><span>completed investigations, 2008 – 2026</span></div>
+        <div class="legend"><b>LEGEND</b>● one or more completed cases<br><span style="color:var(--mute)">Lower 48 shown · 13 cases lack coordinates</span></div>
+      </div>
+      <div class="panel" style="margin-top:14px"><div class="h5">INVESTIGATIONS BY YEAR<span>event year</span></div>
+        <div class="years" data-years></div><div class="yx" data-yx></div>
+        <div class="lg"><span><i style="background:#1F519A;opacity:.8"></i>Completed</span><span><i style="background:repeating-linear-gradient(135deg,#1F519A 0 1.5px,transparent 1.5px 4px)"></i>Still being investigated</span><span>Recent years fill in as reports are finished.</span></div></div>
+      <div class="row4">
+        <div class="panel"><div class="h5">PHASE OF THE DEFINING EVENT<span>of 24,291</span></div><div data-f="phase"></div></div>
+        <div class="panel"><div class="h5">HIGHEST INJURY<span>of 24,291</span></div><div data-f="inj"></div>
+          <div class="h5" style="margin-top:14px">CONDITIONS<span>of 24,291</span></div><div data-f="wx"></div></div>
+        <div class="panel"><div class="h5">AIRCRAFT CATEGORY<span>of 24,291</span></div><div data-f="cat"></div></div>
+        <div class="panel cov"><div class="h5">WHAT'S IN THE DATA<span>snapshot 1 Oct 2026</span></div>
+          <div>Probable cause text<b>24,291 · 100%</b></div>
+          <div>Event sequence (for flight profiles)<b>24,287 · 99.9%</b></div>
+          <div>Coordinates<b>24,278 · 99.9%</b></div>
+          <div>Raw METAR text<b>5,387 · 22%</b></div>
+          <div>Direct NTSB report links<b>mapping pending</b></div>
+          <div class="ai"><span>AI evidence classification</span><b>not used in these charts</b></div></div>
+      </div>
+      <div class="note">Counts are investigations, not rates. They say nothing about how many flights, hours or aircraft were flying.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ D2 QUESTIONS ============ -->
+<div>
+  <div class="hm-meta"><div><h3>2 · Questions</h3><p>Each panel is titled with a question an instructor might ask, answered by one factual sentence and its chart. Teaches how to read the data, including what it can't tell you. The map becomes one panel.</p></div><span class="pick selected" data-choice="dashboard-questions" onclick="toggleSelect(this)">Chosen · 2</span></div>
+  <div class="sx db a2">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span>Explore</span><span class="on">Dashboard</span></div><div class="right"><span class="btn">Sign in</span></div></div>
+    <div class="page">
+      <div class="ttl"><span class="t">The record, in questions</span></div>
+      <div class="coh"><span class="on">Completed investigations · 24,291</span><span class="off">+ Include 1,116 still open</span><span>United States</span><span>2008 – 2026</span><span>All aircraft ▾</span></div>
+      <div class="qs">
+        <div class="panel wide"><p class="qq">How complete is the recent record?</p>
+          <p class="cap">Investigations take time. <b>2025 has 758 completed of 1,176 events</b>, and 2026 only 270 of 870, so recent years look smaller than they will be.</p>
+          <div class="years" data-years style="height:96px"></div><div class="yx" data-yx></div></div>
+        <div class="panel"><p class="qq">When in the flight did it happen?</p>
+          <p class="cap">The defining event was during <b>landing in 7,849 cases (32%)</b>. That counts investigations, not risk per landing.</p><div data-f="phase"></div></div>
+        <div class="panel"><p class="qq">How serious were the outcomes?</p>
+          <p class="cap"><b>3,918 investigations (16%)</b> involved a fatality; more than half had no injuries.</p><div data-f="inj"></div>
+          <p class="qq" style="margin-top:16px">What was the weather?</p>
+          <p class="cap"><b>1,084 (4.5%)</b> were in instrument conditions.</p><div data-f="wx"></div></div>
+        <div class="panel"><p class="qq">What was flying?</p>
+          <p class="cap">Mostly airplanes; <b>2,335 helicopters (9.6%)</b>.</p><div data-f="cat"></div></div>
+        <div class="panel"><p class="qq">Where?</p>
+          <p class="cap">Lower 48 shown; Alaska and Hawaii follow. <b>13 cases</b> lack coordinates.</p><div class="smallmap"><canvas class="dots" width="1000" height="637"></canvas></div></div>
+        <div class="panel wide cov"><p class="qq">What can this data tell you?</p>
+          <div>Probable cause text for every case<b>24,291 · 100%</b></div>
+          <div>Raw METAR weather text<b>5,387 · 22%</b></div>
+          <div>How many flights or hours were flown (needed for any risk rate)<b>not in this data</b></div>
+          <div class="ai"><span>AI evidence classification</span><b>not used in these charts</b></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+
+<script>
+(function(){
+  var F = {
+    phase: [['Landing',7849],['En route',3896],['Maneuvering',3053],['Takeoff',2836],['Approach',2738],['Initial climb',2332],['Taxi',733],['Standing',406],['Emergency descent',267],['Unknown or other',181,1]],
+    inj: [['None',13637],['Minor',3718],['Serious',2944],['Fatal',3918],['Not reported',74,1]],
+    wx: [['VMC',22992],['IMC',1084],['Unknown',215,1]],
+    cat: [['Airplane',20842],['Helicopter',2335],['Glider',421],['Balloon',195],['Weight-shift',185],['Gyroplane',167],['Powered parachute',100],['Other or unknown',46,1]]
+  };
+  var T = 24291;
+  document.querySelectorAll('[data-f]').forEach(function(el){
+    var d = F[el.getAttribute('data-f')], max = Math.max.apply(null, d.map(function(r){return r[1];}));
+    el.innerHTML = d.map(function(r){
+      var pct = r[1]/T*100;
+      return '<div class="fb'+(r[2]?' unk':'')+'"><i class="b" style="width:'+(r[1]/max*100).toFixed(1)+'%"></i><span class="l">'+r[0]+'</span><span class="n">'+r[1].toLocaleString('en-US')+'</span><span class="p">'+(pct<1?pct.toFixed(1):Math.round(pct))+'%</span></div>';
+    }).join('');
+  });
+  var Y = [[2008,1708,1708],[2009,1602,1602],[2010,1556,1558],[2011,1608,1609],[2012,1574,1575],[2013,1312,1313],[2014,1314,1315],[2015,1311,1313],[2016,1340,1342],[2017,1331,1331],[2018,1348,1350],[2019,1302,1302],[2020,1138,1139],[2021,1214,1216],[2022,1270,1271],[2023,1213,1217],[2024,1122,1200],[2025,758,1176],[2026,270,870]];
+  document.querySelectorAll('[data-years]').forEach(function(el){
+    el.innerHTML = Y.map(function(y){ return '<div class="yb"><i class="o" style="height:'+((y[2]-y[1])/1708*100)+'%"></i><i class="c" style="height:'+(y[1]/1708*100)+'%"></i></div>'; }).join('');
+  });
+  document.querySelectorAll('[data-yx]').forEach(function(el){
+    el.innerHTML = Y.map(function(y){ return '<span>'+(y[0]%2===0?"'"+String(y[0]).slice(2):'')+'</span>'; }).join('');
+  });
+  if (window.CASE_DOTS) document.querySelectorAll('canvas.dots').forEach(function(c){
+    var d=window.CASE_DOTS, x=c.getContext('2d');
+    x.fillStyle='rgba(31,81,154,0.42)';
+    for(var i=0;i<d.p.length;i+=2){ x.beginPath(); x.arc(d.p[i], d.p[i+1], 1.15, 0, 6.283); x.fill(); }
+  });
+})();
+</script>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>

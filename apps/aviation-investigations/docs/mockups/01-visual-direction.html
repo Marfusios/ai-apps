@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visual direction · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+
+<style>
+  .dirs { display: flex; flex-direction: column; gap: 2.25rem; }
+  .dir { border-radius: 10px; overflow: hidden; cursor: pointer; outline: 2px solid transparent; outline-offset: 4px; transition: outline-color .15s; }
+  .dir.selected { outline-color: var(--accent); }
+  .dir-meta { display: flex; gap: 1rem; align-items: baseline; padding: .2rem 0 .6rem; }
+  .dir-meta .letter { font-weight: 700; font-size: 1.05rem; }
+  .dir-meta h3 { margin: 0; font-size: 1.05rem; }
+  .dir-meta p { margin: 0; color: var(--text-secondary); font-size: .88rem; }
+  .shared { margin-top: 2rem; }
+  .shared table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  .shared td, .shared th { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+
+  /* ---------- common app skeleton ---------- */
+  .app { font-size: 13px; line-height: 1.45; }
+  .app * { box-sizing: border-box; }
+  .app .bar { display: flex; align-items: center; gap: 1.4rem; padding: 10px 18px; }
+  .app .bar .nav { display: flex; gap: 1.1rem; }
+  .app .bar .right { margin-left: auto; display: flex; gap: .9rem; align-items: center; }
+  .app .body { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0; }
+  .app .col { padding: 16px 18px 20px; min-width: 0; }
+  .app .q { font-size: 16px; margin: 0 0 8px; }
+  .app .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .app .chip { padding: 2px 8px; font-size: 11.5px; }
+  .app .row { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 10px 0; }
+  .app .row .t1 { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+  .app .row .t2 { font-size: 12px; margin-top: 2px; }
+  .app .row .t3 { font-size: 12px; margin-top: 4px; }
+  .app .glyph { width: 14px; height: 14px; margin-top: 3px; }
+  .app .excerpt { margin: 10px 0 0; }
+  .app .src { font-size: 11px; margin-top: 6px; }
+  .app svg.profile { width: 100%; height: 92px; display: block; margin: 6px 0 4px; }
+
+  /* ---------- A · SECTIONAL ---------- */
+  .dir-a .app { --paper:#F3EEE1; --ink:#1E2A36; --blue:#1F519A; --mag:#A0166C; --mute:#5D6670; --tint:#E7E1CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.06) 0 1px, transparent 1px 48px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.06) 0 1px, transparent 1px 48px),
+      var(--paper);
+    color: var(--ink); font-family: 'B612', sans-serif; }
+  .dir-a .bar { border-bottom: 2px solid var(--blue);
+    background: linear-gradient(var(--paper), var(--paper)) padding-box,
+      repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 8px) border-box; position: relative; }
+  .dir-a .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px),
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px); background-size: 100% 3px, 100% 6px; background-repeat: no-repeat; opacity:.7; }
+  .dir-a .logo { font-weight: 700; letter-spacing: .14em; font-size: 12px; color: var(--blue); display:flex; align-items:center; gap:8px; }
+  .dir-a .nav span { color: var(--mute); } .dir-a .nav span.on { color: var(--ink); border-bottom: 2px solid var(--mag); }
+  .dir-a .right .trial { color: var(--mute); font-size: 11.5px; }
+  .dir-a .right .btn { border: 1.5px solid var(--blue); color: var(--blue); padding: 3px 10px; border-radius: 999px; font-size: 11.5px; }
+  .dir-a .body { margin-top: 8px; }
+  .dir-a .col + .col { border-left: 1px dashed rgba(31,81,154,.35); }
+  .dir-a .q { font-family: 'Source Serif 4', serif; font-size: 18px; }
+  .dir-a .chip { border: 1px solid var(--blue); color: var(--blue); border-radius: 999px; background: rgba(255,255,255,.5); }
+  .dir-a .chip.ai { border-color: var(--mag); color: var(--mag); }
+  .dir-a .ai-line { border-left: 3px solid var(--mag); padding: 4px 0 4px 10px; color: var(--mag); font-size: 12.5px; margin-bottom: 6px; }
+  .dir-a .row + .row { border-top: 1px solid rgba(31,81,154,.18); }
+  .dir-a .case { font-family: 'B612 Mono', monospace; font-weight: 700; color: var(--blue); }
+  .dir-a .meta { color: var(--mute); font-size: 12px; }
+  .dir-a .cls { font-size: 12px; font-weight: 700; }
+  .dir-a .tim { color: var(--mag); font-size: 12px; }
+  .dir-a h4 { margin: 0 0 2px; font-size: 11px; letter-spacing: .12em; color: var(--blue); font-weight: 700; }
+  .dir-a .excerpt { font-family: 'Source Serif 4', serif; font-size: 14px; line-height: 1.55; }
+  .dir-a mark { background: rgba(160,22,108,.12); color: inherit; border-bottom: 1.5px solid var(--mag); }
+  .dir-a .src { color: var(--mute); }
+
+  /* ---------- B · APPROACH PLATE ---------- */
+  .dir-b .app { --ink:#111; --mute:#666; --hair:#111; --mag:#C0177B; --orange:#FF5A1F; background:#fff; color:var(--ink); font-family:'IBM Plex Sans', sans-serif; border:1px solid #111; }
+  .dir-b .bar { border-bottom: 1px solid var(--hair); padding: 0; gap: 0; }
+  .dir-b .bar > * { padding: 9px 16px; }
+  .dir-b .logo { font-family:'IBM Plex Sans Condensed'; font-weight:700; letter-spacing:.06em; font-size: 14px; display:flex; gap:9px; align-items:center; border-right:1px solid var(--hair); }
+  .dir-b .logo i { width: 12px; height: 16px; background: var(--orange); display:inline-block; border-radius: 2px; }
+  .dir-b .nav { font-family:'IBM Plex Sans Condensed'; text-transform: uppercase; letter-spacing:.06em; font-size: 12px; }
+  .dir-b .nav span { color: var(--mute); } .dir-b .nav span.on { color: var(--ink); font-weight: 600; }
+  .dir-b .right { border-left:1px solid var(--hair); font-family:'IBM Plex Sans Condensed'; font-size: 12px; text-transform: uppercase; letter-spacing:.05em; }
+  .dir-b .right .btn { border:1px solid var(--ink); padding: 2px 9px; }
+  .dir-b .col + .col { border-left: 1px solid var(--hair); }
+  .dir-b .q { font-weight: 600; font-size: 16px; letter-spacing: -.005em; }
+  .dir-b .chip { border:1px solid var(--ink); font-family:'IBM Plex Sans Condensed'; text-transform: uppercase; letter-spacing:.04em; font-size: 11px; }
+  .dir-b .chip.ai { border-color: var(--mag); color: var(--mag); }
+  .dir-b .ai-line { color: var(--mag); font-size: 12.5px; margin-bottom: 6px; display:flex; gap:8px; }
+  .dir-b .ai-line::before { content:""; flex: 0 0 18px; height: 0; border-top: 2px solid var(--mag); margin-top: 9px; }
+  .dir-b .row { border-top: 1px solid var(--hair); }
+  .dir-b .case { font-family:'IBM Plex Mono'; font-weight:500; }
+  .dir-b .meta { color: var(--mute); font-size: 12px; }
+  .dir-b .cls { font-family:'IBM Plex Sans Condensed'; text-transform: uppercase; font-size: 11.5px; letter-spacing: .04em; font-weight: 600; }
+  .dir-b .tim { color: var(--mag); font-size: 12px; }
+  .dir-b .strip { display:grid; grid-template-columns: repeat(4, 1fr); border:1px solid var(--hair); margin-bottom: 8px; }
+  .dir-b .strip div { padding: 4px 7px; border-right: 1px solid var(--hair); min-width: 0; }
+  .dir-b .strip div:last-child { border-right: 0; }
+  .dir-b .strip b { display:block; font-family:'IBM Plex Sans Condensed'; font-size: 9.5px; letter-spacing:.08em; color: var(--mute); font-weight: 500; }
+  .dir-b .strip span { font-family:'IBM Plex Mono'; font-size: 11.5px; white-space: nowrap; }
+  .dir-b h4 { margin: 8px 0 2px; font-family:'IBM Plex Sans Condensed'; font-size: 10.5px; letter-spacing:.1em; color: var(--mute); font-weight: 600; text-transform: uppercase; }
+  .dir-b .excerpt { font-size: 13.5px; line-height: 1.55; }
+  .dir-b mark { background: none; box-shadow: inset 0 -2px 0 var(--mag); color: inherit; }
+  .dir-b .src { color: var(--mute); font-family:'IBM Plex Mono'; }
+
+  /* ---------- C · NIGHT OPS ---------- */
+  .dir-c .app { --bg:#0A0E13; --panel:#10171F; --line:#203040; --white:#E7EDF3; --mute:#7F8E9D; --cyan:#3CD2E5; --mag:#E24CD3; --amber:#F2B53F; --green:#45D38D;
+    background: var(--bg); color: var(--white); font-family: 'B612', sans-serif; }
+  .dir-c .bar { background: var(--panel); border-bottom: 1px solid var(--line); }
+  .dir-c .logo { font-family:'B612 Mono'; font-weight:700; letter-spacing:.12em; font-size: 12px; color: var(--white); }
+  .dir-c .logo em { color: var(--cyan); font-style: normal; }
+  .dir-c .nav span { color: var(--mute); font-size: 12px; } .dir-c .nav span.on { color: var(--cyan); }
+  .dir-c .right .trial { color: var(--mute); font-size: 11.5px; } .dir-c .right .trial b { color: var(--green); font-family:'B612 Mono'; }
+  .dir-c .right .btn { border:1px solid var(--cyan); color: var(--cyan); padding: 3px 10px; border-radius: 3px; font-size: 11.5px; }
+  .dir-c .col + .col { background: var(--panel); border-left: 1px solid var(--line); }
+  .dir-c .q { font-size: 15.5px; }
+  .dir-c .chip { border:1px solid var(--line); color: var(--cyan); border-radius: 3px; font-family:'B612 Mono'; font-size: 11px; }
+  .dir-c .chip.ai { color: var(--mag); border-color: rgba(226,76,211,.45); }
+  .dir-c .ai-line { color: var(--mag); font-size: 12.5px; margin-bottom: 6px; border-left: 2px solid var(--mag); padding-left: 9px; }
+  .dir-c .row + .row { border-top: 1px solid var(--line); }
+  .dir-c .case { font-family:'B612 Mono'; font-weight:700; color: var(--white); }
+  .dir-c .meta { color: var(--mute); font-size: 12px; }
+  .dir-c .cls { font-size: 12px; color: var(--white); }
+  .dir-c .tim { color: var(--mag); font-size: 12px; }
+  .dir-c .warn { color: var(--amber); font-size: 11.5px; }
+  .dir-c h4 { margin: 0 0 2px; font-size: 10.5px; letter-spacing:.12em; color: var(--mute); font-weight: 400; font-family:'B612 Mono'; }
+  .dir-c .excerpt { font-size: 13.5px; line-height: 1.6; color: #D5DDE5; }
+  .dir-c mark { background: rgba(226,76,211,.14); color: var(--white); border-bottom: 1px solid var(--mag); }
+  .dir-c .src { color: var(--mute); font-family:'B612 Mono'; }
+
+  @media (max-width: 820px) { .app .body { grid-template-columns: 1fr; } .app .col + .col { border-left: 0 !important; } .dir-b .strip { grid-template-columns: 1fr 1fr; } }
+</style>
+
+<h2>Which visual direction feels right for Aviation Casebook?</h2>
+<p class="subtitle">Same real search in each: "Engine power loss shortly after maintenance". All three use real NTSB data from the four seed cases. Click the one you like (or tell me what to mix).</p>
+
+<div class="dirs">
+
+<!-- ======================= A ======================= -->
+<div>
+  <div class="dir-meta"><span class="letter">A</span><div><h3>Sectional: the VFR chart</h3><p>Chart-paper cream, graticule grid, blue chart ink and magenta. Warm and instantly recognisable to any pilot. Feels like a study desk, not software.</p></div></div>
+  <div class="dir dir-a" data-choice="sectional" onclick="toggleSelect(this)"><div style="display:inline-block;margin:6px 0;padding:3px 10px;border-radius:999px;background:#1F519A;color:#fff;font:600 12px system-ui,sans-serif">Chosen</div>
+    <div class="app">
+      <div class="bar">
+        <div class="logo"><svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="7.5" fill="none" stroke="#1F519A" stroke-width="1.5"/><path d="M9 1.5v3M9 13.5v3M1.5 9h3M13.5 9h3" stroke="#1F519A" stroke-width="1.5"/><circle cx="9" cy="9" r="2" fill="#A0166C"/></svg>AVIATION CASEBOOK</div>
+        <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+        <div class="right"><span class="trial">3 free AI searches · subject to daily availability</span><span class="btn">Sign in</span></div>
+      </div>
+      <div class="body">
+        <div class="col">
+          <p class="q">Engine power loss shortly after maintenance: confirmed mechanical faults vs. none found</p>
+          <div class="chips"><span class="chip">Completed</span><span class="chip">US · 2008 →</span><span class="chip ai">"shortly" = ≤ 30 days or ≤ 10 flt hrs ✎</span></div>
+          <div class="ai-line">AI-derived · 4 examples found, not every matching investigation. Grouped by what investigators established.</div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="#1E2A36"/></svg><div>
+            <div class="t1"><span class="case">DFW08TA066</span><span>Hughes OH-6 · helicopter</span><span class="meta">08 FEB 2008 · Valentine, TX</span></div>
+            <div class="t2"><span class="cls">Causal fault established: maintenance</span> <span class="meta">· Maneuvering: total power loss · VMC day</span></div>
+            <div class="t3 tim">5.1 flight hours after engine replacement</div></div></div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.75" fill="none" stroke="#1E2A36" stroke-width="1.5"/><path d="M7 1.25a5.75 5.75 0 0 1 0 11.5z" fill="#1E2A36"/></svg><div>
+            <div class="t1"><span class="case">MIA08LA156</span><span>Diamond DA20-C1</span><span class="meta">01 AUG 2008 · Peachtree City, GA</span></div>
+            <div class="t2"><span class="cls">Defect found, causal link not established</span> <span class="meta">· Base leg: partial power loss</span></div>
+            <div class="t3 tim">First flight after rudder maintenance</div></div></div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.75" fill="none" stroke="#1E2A36" stroke-width="1.5"/></svg><div>
+            <div class="t1"><span class="case">DEN08LA103</span><span>Cessna A188B</span><span class="meta">12 JUN 2008 · Lyons, KS</span></div>
+            <div class="t2"><span class="cls">No fault identified: cause undetermined</span> <span class="meta">· Maneuvering: partial power loss</span></div>
+            <div class="t3 tim">Timing not quantified: "several days" after maintenance</div></div></div>
+        </div>
+        <div class="col">
+          <h4>EVIDENCE · DFW08TA066</h4>
+          <svg class="profile" viewBox="0 0 300 92" preserveAspectRatio="none">
+            <path d="M8 78 L60 30 L170 30" fill="none" stroke="#1F519A" stroke-width="1.6"/>
+            <path d="M170 30 L230 76" fill="none" stroke="#1F519A" stroke-width="1.6" stroke-dasharray="4 3"/>
+            <line x1="4" y1="80" x2="296" y2="80" stroke="#1E2A36" stroke-width="1"/>
+            <path d="M170 24 l5 6 -5 6 -5 -6z" fill="#A0166C"/>
+            <text x="150" y="16" font-size="9" fill="#A0166C" font-family="B612">Loss of power (total)</text>
+            <text x="236" y="72" font-size="9" fill="#1E2A36" font-family="B612">✕ terrain</text>
+            <text x="8" y="91" font-size="8" fill="#5D6670" font-family="B612 Mono">TAKEOFF</text><text x="120" y="91" font-size="8" fill="#5D6670" font-family="B612 Mono">MANEUVERING</text><text x="200" y="91" font-size="8" fill="#5D6670" font-family="B612 Mono">EMERG. DESCENT</text>
+          </svg>
+          <p class="excerpt">"…a castellated nut used to secure the governor lever control rod to the idler bell crank had come completely loose, and the cotter pin that secured the nut was missing. <mark>The engine had been replaced 5.1 hours prior to the accident</mark> by a contract maintenance facility."</p>
+          <div class="src">NTSB text · Analysis ¶1 · snapshot 2026-10-01 · <u>Open report ↗</u></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= B ======================= -->
+<div>
+  <div class="dir-meta"><span class="letter">B</span><div><h3>Approach plate: Jeppesen precision</h3><p>White paper, black hairlines, boxed briefing strips, condensed technical type. One orange (flight-recorder orange) for the brand, magenta for AI. The most minimal and modern of the three.</p></div></div>
+  <div class="dir dir-b" data-choice="approach-plate" onclick="toggleSelect(this)">
+    <div class="app">
+      <div class="bar">
+        <div class="logo"><i></i>AVIATION CASEBOOK</div>
+        <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+        <div class="right"><span>AI 3 / 3 free</span><span class="btn">Sign in</span></div>
+      </div>
+      <div class="body">
+        <div class="col">
+          <p class="q">Engine power loss shortly after maintenance: confirmed mechanical faults vs. none found</p>
+          <div class="chips"><span class="chip">Completed</span><span class="chip">US · 2008+</span><span class="chip ai">Shortly = ≤30 d / ≤10 h ✎</span></div>
+          <div class="ai-line">AI-derived · 4 examples found, not all matching investigations</div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="#111"/></svg><div>
+            <div class="t1"><span class="case">DFW08TA066</span><span>Hughes OH-6</span><span class="meta">2008-02-08 · Valentine TX</span></div>
+            <div class="t2"><span class="cls">Causal fault established · maintenance</span></div>
+            <div class="t3 tim">5.1 flight hours after engine replacement</div></div></div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.75" fill="none" stroke="#111" stroke-width="1.5"/><path d="M7 1.25a5.75 5.75 0 0 1 0 11.5z" fill="#111"/></svg><div>
+            <div class="t1"><span class="case">MIA08LA156</span><span>Diamond DA20-C1</span><span class="meta">2008-08-01 · Peachtree City GA</span></div>
+            <div class="t2"><span class="cls">Defect found · causal link not established</span></div>
+            <div class="t3 tim">First flight after rudder maintenance</div></div></div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.75" fill="none" stroke="#111" stroke-width="1.5"/></svg><div>
+            <div class="t1"><span class="case">DEN08LA103</span><span>Cessna A188B</span><span class="meta">2008-06-12 · Lyons KS</span></div>
+            <div class="t2"><span class="cls">No fault identified · cause undetermined</span></div>
+            <div class="t3 tim">Timing not quantified</div></div></div>
+        </div>
+        <div class="col">
+          <div class="strip">
+            <div><b>NTSB NO.</b><span>DFW08TA066</span></div><div><b>AIRCRAFT</b><span>OH-6 · HELI</span></div><div><b>PHASE</b><span>MANEUVERING</span></div><div><b>WX · LIGHT</b><span>VMC · DAY</span></div>
+          </div>
+          <h4>Profile</h4>
+          <svg class="profile" viewBox="0 0 300 92" preserveAspectRatio="none">
+            <path d="M8 78 L60 30 L170 30" fill="none" stroke="#111" stroke-width="1.4"/>
+            <path d="M170 30 L230 78" fill="none" stroke="#111" stroke-width="1.4" stroke-dasharray="4 3"/>
+            <line x1="4" y1="80" x2="296" y2="80" stroke="#111" stroke-width="1"/>
+            <path d="M170 25 l5 5 -5 5 -5 -5z" fill="#C0177B"/>
+            <text x="148" y="16" font-size="9" fill="#C0177B" font-family="IBM Plex Sans Condensed">LOSS OF POWER (TOTAL)</text>
+            <text x="234" y="72" font-size="9" fill="#111" font-family="IBM Plex Sans Condensed">TERRAIN</text>
+            <line x1="60" y1="80" x2="60" y2="84" stroke="#111"/><line x1="170" y1="80" x2="170" y2="84" stroke="#111"/>
+            <text x="8" y="91" font-size="8" fill="#666" font-family="IBM Plex Mono">TKOF</text><text x="100" y="91" font-size="8" fill="#666" font-family="IBM Plex Mono">MANEUVERING</text><text x="196" y="91" font-size="8" fill="#666" font-family="IBM Plex Mono">EMER DESC</text>
+          </svg>
+          <h4>NTSB · Analysis ¶1</h4>
+          <p class="excerpt">"…the cotter pin that secured the nut was missing. <mark>The engine had been replaced 5.1 hours prior to the accident</mark> by a contract maintenance facility."</p>
+          <div class="src">snapshot 2026-10-01 · report ↗</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= C ======================= -->
+<div>
+  <div class="dir-meta"><span class="letter">C</span><div><h3>Night ops: glass cockpit</h3><p>Dark panels, Airbus's B612 cockpit typeface, and avionics colour logic: cyan for what you set, magenta for computed (AI), amber for cautions, white for data. The most striking, but heavier for long reading.</p></div></div>
+  <div class="dir dir-c" data-choice="night-ops" onclick="toggleSelect(this)">
+    <div class="app">
+      <div class="bar">
+        <div class="logo">AVIATION<em>/</em>CASEBOOK</div>
+        <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+        <div class="right"><span class="trial">AI <b>3</b> free</span><span class="btn">Sign in</span></div>
+      </div>
+      <div class="body">
+        <div class="col">
+          <p class="q">Engine power loss shortly after maintenance: confirmed mechanical faults vs. none found</p>
+          <div class="chips"><span class="chip">COMPLETED</span><span class="chip">US 2008+</span><span class="chip ai">SHORTLY ≤30D/≤10H ✎</span></div>
+          <div class="ai-line">AI-derived · 4 examples found, not all matching investigations</div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="#E7EDF3"/></svg><div>
+            <div class="t1"><span class="case">DFW08TA066</span><span>Hughes OH-6</span><span class="meta">08 FEB 2008 · Valentine TX</span></div>
+            <div class="t2"><span class="cls">Causal fault established · maintenance</span></div>
+            <div class="t3 tim">5.1 FH after engine replacement</div><div class="warn">▲ Header and narrative dates disagree</div></div></div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.75" fill="none" stroke="#E7EDF3" stroke-width="1.5"/><path d="M7 1.25a5.75 5.75 0 0 1 0 11.5z" fill="#E7EDF3"/></svg><div>
+            <div class="t1"><span class="case">MIA08LA156</span><span>Diamond DA20-C1</span><span class="meta">01 AUG 2008 · Peachtree City GA</span></div>
+            <div class="t2"><span class="cls">Defect found · causal link not established</span></div>
+            <div class="t3 tim">First flight after rudder maintenance</div></div></div>
+          <div class="row"><svg class="glyph" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.75" fill="none" stroke="#E7EDF3" stroke-width="1.5"/></svg><div>
+            <div class="t1"><span class="case">DEN08LA103</span><span>Cessna A188B</span><span class="meta">12 JUN 2008 · Lyons KS</span></div>
+            <div class="t2"><span class="cls">No fault identified · cause undetermined</span></div>
+            <div class="t3 tim">Timing not quantified</div></div></div>
+        </div>
+        <div class="col">
+          <h4>EVIDENCE · DFW08TA066</h4>
+          <svg class="profile" viewBox="0 0 300 92" preserveAspectRatio="none">
+            <path d="M8 78 L60 30 L170 30" fill="none" stroke="#3CD2E5" stroke-width="1.6"/>
+            <path d="M170 30 L230 78" fill="none" stroke="#3CD2E5" stroke-width="1.6" stroke-dasharray="4 3"/>
+            <line x1="4" y1="80" x2="296" y2="80" stroke="#7F8E9D" stroke-width="1"/>
+            <path d="M170 25 l5 5 -5 5 -5 -5z" fill="#E24CD3"/>
+            <text x="146" y="16" font-size="9" fill="#E24CD3" font-family="B612 Mono">PWR LOSS TOTAL</text>
+            <text x="236" y="72" font-size="9" fill="#E7EDF3" font-family="B612 Mono">TERR</text>
+            <text x="8" y="91" font-size="8" fill="#7F8E9D" font-family="B612 Mono">TKOF</text><text x="100" y="91" font-size="8" fill="#7F8E9D" font-family="B612 Mono">MANEUVERING</text><text x="196" y="91" font-size="8" fill="#7F8E9D" font-family="B612 Mono">EMER DESC</text>
+          </svg>
+          <p class="excerpt">"…the cotter pin that secured the nut was missing. <mark>The engine had been replaced 5.1 hours prior to the accident</mark> by a contract maintenance facility."</p>
+          <div class="src">NTSB · ANALYSIS ¶1 · SNAP 2026-10-01 · REPORT ↗</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="shared">
+  <h3>Shared in every direction (pilot-native meaning, not decoration)</h3>
+  <table>
+    <tr><th>Magenta = AI-derived</th><td>The "magenta line" is what automation computes and pilots are trained to cross-check. Here, magenta always marks AI interpretation; NTSB text stays in plain ink.</td></tr>
+    <tr><th>Evidence glyphs</th><td>● causal fault established · ◐ defect found, causal link not established · ○ no fault identified · dashed ring = insufficient evidence. Always shown with words, never colour alone.</td></tr>
+    <tr><th>Flight profile</th><td>Each case's NTSB event sequence (phases plus the defining event) drawn like the profile view on an approach plate. Built from real data, not illustration.</td></tr>
+    <tr><th>Real conditions</th><td>VMC/IMC, light and wind, plus the raw METAR string where NTSB recorded one (about 1 in 4 US cases).</td></tr>
+  </table>
+</div>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>

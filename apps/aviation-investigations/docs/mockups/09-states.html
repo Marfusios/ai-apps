@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>States and copy · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  .homes { display:flex; flex-direction:column; gap: 2.4rem; }
+  .hm-meta { display:flex; gap:1rem; align-items:baseline; justify-content:space-between; padding:.2rem 0 .6rem; }
+  .hm-meta h3 { margin:0; font-size:1.05rem; } .hm-meta p { margin:0; color:var(--text-secondary); font-size:.88rem; }
+  .pick { border:1px solid var(--border); border-radius:999px; padding:.3rem .9rem; font-size:.85rem; cursor:pointer; white-space:nowrap; background: var(--bg-secondary); }
+  .pick.selected { background: var(--accent); color:#fff; border-color: var(--accent); }
+
+  .sx { --paper:#F3EEE1; --raised:#FBF8F0; --ink:#1E2A36; --mute:#5D6670; --blue:#1F519A; --mag:#A0166C; --hair:rgba(31,81,154,.2); --tint:#E8E2CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px), var(--paper);
+    color:var(--ink); font-family:'B612',sans-serif; font-size:13px; line-height:1.45; border-radius:10px; overflow:hidden; position:relative; }
+  .sx * { box-sizing:border-box; }
+  .sx .bar { display:flex; align-items:center; gap:1.4rem; padding:11px 22px; border-bottom:2px solid var(--blue); position:relative; background: rgba(243,238,225,.92); z-index:2; }
+  .sx .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px; opacity:.7;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px) 0 0/100% 3px no-repeat,
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px) 0 0/100% 6px no-repeat; }
+  .sx .logo { font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--blue); display:flex; align-items:center; gap:8px; }
+  .sx .nav { display:flex; gap:1.1rem; } .sx .nav span { color:var(--mute); } .sx .nav .on { color:var(--ink); border-bottom:2px solid var(--blue); }
+  .sx .right { margin-left:auto; display:flex; gap:.9rem; align-items:center; }
+  .sx .trial { color:var(--mute); font-size:11.5px; } .sx .trial b { color:var(--mag); }
+  .sx .btn { border:1.5px solid var(--blue); color:var(--blue); padding:3px 11px; border-radius:999px; font-size:11.5px; }
+  .sx .eyebrow { font-size:11px; letter-spacing:.16em; color:var(--blue); font-weight:700; }
+  .sx h1 { font-family:'Source Serif 4',serif; font-weight:600; letter-spacing:-.01em; margin:.35rem 0 .5rem; line-height:1.08; }
+  .sx .lede { color:var(--mute); font-size:14px; max-width:46ch; }
+  .sx .ask { background:var(--raised); border:1.5px solid var(--blue); border-radius:14px; padding:12px 12px 10px 16px; box-shadow: 0 1px 0 rgba(31,81,154,.15), 0 10px 30px -18px rgba(30,42,54,.45); }
+  .sx .ask .ph { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:16px; min-height:44px; }
+  .sx .ask .acts { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .sx .ask .hint { color:var(--mute); font-size:11px; margin-right:auto; }
+  .sx .b-search { border:1.5px solid var(--blue); color:var(--blue); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
+  .sx .b-ai { background:var(--mag); color:#fff; padding:6px 14px; border-radius:999px; font-size:12px; font-weight:700; display:flex; gap:6px; align-items:center; }
+  .sx .b-ai small { font-weight:400; opacity:.85; }
+  .sx .ex { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .sx .ex span { border:1px solid var(--hair); background:rgba(251,248,240,.75); border-radius:999px; padding:3px 10px; font-size:11.5px; color:var(--ink); }
+  .sx .ex span::before { content:"↳ "; color:var(--blue); }
+  .sx .legend { position:absolute; right:22px; bottom:18px; background:rgba(251,248,240,.92); border:1px solid var(--blue); padding:8px 11px; font-size:10.5px; color:var(--ink); z-index:2; }
+  .sx .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:3px; }
+  .states { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  .states .wide { grid-column: 1 / -1; }
+  .stt { padding:16px 18px 18px; }
+  .stt .when { font-size:9.5px; letter-spacing:.16em; font-weight:700; color:var(--blue); margin-bottom:10px; display:flex; gap:8px; }
+  .stt .when span { color:var(--mute); font-weight:400; letter-spacing:.04em; }
+  .stt .msg { background:var(--raised); border:1px solid var(--hair); border-radius:10px; padding:14px 16px; }
+  .stt .msg .hd { font-family:'Source Serif 4',serif; font-weight:600; font-size:18px; line-height:1.25; margin-bottom:4px; }
+  .stt .msg p { margin:4px 0 0; font-size:12.5px; line-height:1.5; }
+  .stt .msg .sub { color:var(--mute); font-size:11.5px; }
+  .stt .acts2 { display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; }
+  .stt .g-btn { display:inline-flex; align-items:center; gap:8px; border:1.5px solid var(--ink); border-radius:999px; padding:5px 14px; font-size:12px; font-weight:700; background:#fff; color:var(--ink); }
+  .stt .g-btn i { width:14px; height:14px; border-radius:50%; background: conic-gradient(#4285F4 0 25%, #34A853 0 50%, #FBBC05 0 75%, #EA4335 0); }
+  .stt .ln { color:var(--blue); font-size:12px; }
+  .stt .ts { display:flex; align-items:center; gap:10px; border:1px solid #c9c4b4; border-radius:4px; padding:9px 12px; background:#fafafa; font-size:12px; width:250px; margin-top:10px; }
+  .stt .ts i { width:18px; height:18px; border:2px solid #1F519A; border-top-color:transparent; border-radius:50%; }
+  .stt .ts span { margin-left:auto; font-size:9px; color:#888; }
+  .stt .ctr { display:flex; flex-direction:column; gap:7px; font-size:11.5px; }
+  .stt .ctr div { display:flex; align-items:center; gap:10px; }
+  .stt .ctr .k { width:150px; color:var(--mute); font-size:11px; }
+  .stt .ctr .v b { color:var(--mag); }
+  .stt .ctr .pill2 { border:1.5px solid var(--blue); color:var(--blue); border-radius:999px; padding:2px 10px; }
+  .stt .rest { border:1px solid rgba(30,42,54,.4); border-left:4px solid var(--ink); }
+  .stt .ops { border-left:4px solid var(--blue); }
+  .stt .chk { display:flex; gap:9px; align-items:flex-start; margin-top:12px; padding-top:10px; border-top:1px solid var(--hair); font-size:12px; }
+  .stt .chk i { width:13px; height:13px; border:1.5px solid var(--ink); border-radius:2px; flex:none; margin-top:2px; }
+  .stt .keep { margin-top:10px; font-size:11.5px; line-height:1.55; }
+  .stt .keep div { display:flex; gap:8px; } .stt .keep div::before { content:"·"; color:var(--blue); font-weight:700; }
+  .stt .variant { margin-top:8px; font-size:11px; color:var(--mute); border-top:1px dashed var(--hair); padding-top:6px; }
+  .stt .variant b { color:var(--ink); font-weight:400; }
+  .stt .sugg { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .stt .sugg span { border:1px solid var(--blue); color:var(--blue); border-radius:6px; padding:2px 8px; font-size:11.5px; }
+</style>
+
+<h2>Limits, sign-in and the awkward moments</h2>
+<p class="subtitle">The question-led dashboard is noted. These aren't options. Each panel shows one state the design says will happen, often, in the words I'd use. Small daily AI budget means "AI is unavailable today" is a normal state, not an error. Tell me what reads wrong.</p>
+
+<div class="states">
+
+  <div class="sx stt">
+    <div class="when">THE TRIAL COUNTER <span>header, right</span></div>
+    <div class="ctr">
+      <div><span class="k">Anonymous, fresh</span><span class="v">AI searches left: <b>3 of 3</b></span></div>
+      <div><span class="k">Anonymous, one left</span><span class="v">AI searches left: <b>1 of 3</b></span></div>
+      <div><span class="k">Trial used</span><span class="pill2">Sign in to keep asking</span></div>
+      <div><span class="k">Signed in</span><span class="v">AI today: <b>18 of 20</b></span></div>
+      <div><span class="k">Paused for everyone</span><span class="v" style="color:var(--mute)">AI back tomorrow</span></div>
+    </div>
+  </div>
+
+  <div class="sx stt">
+    <div class="when">FIRST ASK AI <span>anonymous, once</span></div>
+    <div class="msg">
+      <div class="hd">Quick check before your first AI search</div>
+      <p>Up to three free AI searches, subject to daily availability. Search, cases and comparisons never need this.</p>
+      <div class="ts"><i></i>Verifying…<span>Cloudflare</span></div>
+    </div>
+  </div>
+
+  <div class="sx stt">
+    <div class="when">TRIAL USED UP <span>only while signed-in capacity remains</span></div>
+    <div class="msg">
+      <div class="hd">That was your third free AI search.</div>
+      <p>Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.</p>
+      <div class="acts2"><span class="g-btn"><i></i>Continue with Google</span></div>
+      <p class="sub">Search, case pages, compare and the dashboard stay open without an account.</p>
+    </div>
+  </div>
+
+  <div class="sx stt">
+    <div class="when">AI PAUSED FOR TODAY <span>shared budget used up, anyone</span></div>
+    <div class="msg rest">
+      <div class="hd">AI search is done for today.</div>
+      <p>This beta runs on a small daily AI budget, and today's is used up. It resets at 00:00 UTC.</p>
+      <p>Everything else works: keyword search, every case, comparisons and printing.</p>
+      <div class="acts2"><span class="b-search">Search by keyword instead</span></div>
+    </div>
+  </div>
+
+  <div class="sx stt">
+    <div class="when">SIGN IN <span>dialog</span></div>
+    <div class="msg">
+      <div class="hd">Sign in to Aviation Casebook</div>
+      <div class="acts2" style="margin-top:8px"><span class="g-btn"><i></i>Continue with Google</span></div>
+      <div class="keep">
+        <div>We keep your Google account ID, email and name, and how many AI searches you've used.</div>
+        <div>Questions and answers are held for up to 24 hours to deliver them, then deleted.</div>
+        <div>Delete your account any time from Account.</div>
+      </div>
+      <p class="sub" style="margin-top:8px"><span class="ln">Privacy notice</span></p>
+    </div>
+  </div>
+
+  <div class="sx stt">
+    <div class="when">AFTER FIRST SIGN-IN <span>optional emails, separate and unticked</span></div>
+    <div class="msg">
+      <div class="hd">Welcome aboard.</div>
+      <p>You have 5 AI searches a day for your first three days, then 20.</p>
+      <div class="chk"><i></i><span>Email me new training cases occasionally. Optional. You'll confirm by email, and every message has a one-click unsubscribe.</span></div>
+      <div class="acts2"><span class="b-search">Continue</span></div>
+    </div>
+  </div>
+
+  <div class="sx stt">
+    <div class="when">OPERATIONAL QUESTION <span>static, no AI-written advice</span></div>
+    <div class="msg ops">
+      <div class="hd">This tool studies past investigations.</div>
+      <p>It can't help with a flight in progress or a maintenance decision. In flight, contact ATC. For airworthiness, use your aircraft's approved data and a certificated mechanic.</p>
+      <p class="sub">You can still look for past cases like yours:</p>
+      <div class="sugg"><span>Rough-running engine in cruise</span><span>Oil pressure loss</span></div>
+    </div>
+  </div>
+
+  <div class="sx stt">
+    <div class="when">SOMETHING FAILED <span>wording depends on whether cost was spent</span></div>
+    <div class="msg">
+      <div class="hd">The AI search didn't finish.</div>
+      <p>Something went wrong before an answer was ready.</p>
+      <div class="acts2"><span class="b-ai">Try again</span><span class="ln">Search by keyword instead</span></div>
+      <div class="variant">If nothing was spent: <b>This didn't use one of your searches.</b><br>If the AI had already started: <b>This counted as a search, because the AI work was already under way.</b></div>
+    </div>
+  </div>
+
+  <div class="sx stt wide">
+    <div class="when">NO RESULTS <span>free search</span></div>
+    <div class="msg">
+      <div class="hd">No completed investigations match all of this.</div>
+      <p>“carburetor icing” with Phase: Taxi and Fatal. Removing one filter would show:</p>
+      <div class="sugg"><span>without Fatal · 1 case</span><span>without Phase: Taxi · 102 cases</span><span>include open investigations</span></div>
+    </div>
+  </div>
+
+</div>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>

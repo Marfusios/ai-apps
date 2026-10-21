@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI progress · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  .homes { display:flex; flex-direction:column; gap: 2.4rem; }
+  .hm-meta { display:flex; gap:1rem; align-items:baseline; justify-content:space-between; padding:.2rem 0 .6rem; }
+  .hm-meta h3 { margin:0; font-size:1.05rem; } .hm-meta p { margin:0; color:var(--text-secondary); font-size:.88rem; }
+  .pick { border:1px solid var(--border); border-radius:999px; padding:.3rem .9rem; font-size:.85rem; cursor:pointer; white-space:nowrap; background: var(--bg-secondary); }
+  .pick.selected { background: var(--accent); color:#fff; border-color: var(--accent); }
+
+  .sx { --paper:#F3EEE1; --raised:#FBF8F0; --ink:#1E2A36; --mute:#5D6670; --blue:#1F519A; --mag:#A0166C; --hair:rgba(31,81,154,.2); --tint:#E8E2CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px), var(--paper);
+    color:var(--ink); font-family:'B612',sans-serif; font-size:13px; line-height:1.45; border-radius:10px; overflow:hidden; position:relative; }
+  .sx * { box-sizing:border-box; }
+  .sx .bar { display:flex; align-items:center; gap:1.4rem; padding:11px 22px; border-bottom:2px solid var(--blue); position:relative; background: rgba(243,238,225,.92); z-index:2; }
+  .sx .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px; opacity:.7;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px) 0 0/100% 3px no-repeat,
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px) 0 0/100% 6px no-repeat; }
+  .sx .logo { font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--blue); display:flex; align-items:center; gap:8px; }
+  .sx .nav { display:flex; gap:1.1rem; } .sx .nav span { color:var(--mute); } .sx .nav .on { color:var(--ink); border-bottom:2px solid var(--blue); }
+  .sx .right { margin-left:auto; display:flex; gap:.9rem; align-items:center; }
+  .sx .trial { color:var(--mute); font-size:11.5px; } .sx .trial b { color:var(--mag); }
+  .sx .btn { border:1.5px solid var(--blue); color:var(--blue); padding:3px 11px; border-radius:999px; font-size:11.5px; }
+  .sx .eyebrow { font-size:11px; letter-spacing:.16em; color:var(--blue); font-weight:700; }
+  .sx h1 { font-family:'Source Serif 4',serif; font-weight:600; letter-spacing:-.01em; margin:.35rem 0 .5rem; line-height:1.08; }
+  .sx .lede { color:var(--mute); font-size:14px; max-width:46ch; }
+  .sx .ask { background:var(--raised); border:1.5px solid var(--blue); border-radius:14px; padding:12px 12px 10px 16px; box-shadow: 0 1px 0 rgba(31,81,154,.15), 0 10px 30px -18px rgba(30,42,54,.45); }
+  .sx .ask .ph { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:16px; min-height:44px; }
+  .sx .ask .acts { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .sx .ask .hint { color:var(--mute); font-size:11px; margin-right:auto; }
+  .sx .b-search { border:1.5px solid var(--blue); color:var(--blue); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
+  .sx .b-ai { background:var(--mag); color:#fff; padding:6px 14px; border-radius:999px; font-size:12px; font-weight:700; display:flex; gap:6px; align-items:center; }
+  .sx .b-ai small { font-weight:400; opacity:.85; }
+  .sx .ex { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .sx .ex span { border:1px solid var(--hair); background:rgba(251,248,240,.75); border-radius:999px; padding:3px 10px; font-size:11.5px; color:var(--ink); }
+  .sx .ex span::before { content:"↳ "; color:var(--blue); }
+  .sx .legend { position:absolute; right:22px; bottom:18px; background:rgba(251,248,240,.92); border:1px solid var(--blue); padding:8px 11px; font-size:10.5px; color:var(--ink); z-index:2; }
+  .sx .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:3px; }
+  .sx .q { font-family:'Source Serif 4',serif; font-size:17px; line-height:1.3; margin:0 0 10px; }
+  .sx .q::before { content:"YOUR QUESTION"; display:block; font-family:'B612',sans-serif; font-size:10px; letter-spacing:.16em; color:var(--blue); font-weight:700; margin-bottom:4px; }
+  .sx .chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 6px; }
+  .sx .chip { border:1px solid var(--blue); color:var(--blue); border-radius:6px; padding:2px 8px; font-size:11.5px; }
+  .sx .chip.ai { border-color:var(--mag); color:var(--mag); }
+  .pg { min-height: 400px; }
+  .pg .col { max-width:640px; margin:0 auto; padding:26px 0 30px; }
+  .pg .note { font-size:11.5px; color:var(--mute); margin-top:12px; }
+  .pg .cancel { color:var(--blue); border-bottom:1px solid var(--blue); }
+
+  /* P1 route */
+  .p1 svg { width:100%; height:auto; display:block; margin-top:14px; }
+  .p1 .now { font-family:'Source Serif 4',serif; font-size:16px; margin-top:4px; }
+  .p1 .now b { color:var(--mag); font-weight:600; }
+
+  /* P2 checklist */
+  .p2 .ck { margin-top:16px; background:var(--raised); border:1.5px solid var(--ink); border-radius:6px; overflow:hidden; }
+  .p2 .ck .h { background:var(--ink); color:#F3EEE1; font-size:10.5px; letter-spacing:.18em; font-weight:700; padding:6px 14px; display:flex; }
+  .p2 .ck .h span { margin-left:auto; font-weight:400; letter-spacing:.1em; opacity:.8; }
+  .p2 .ck .r { display:flex; align-items:baseline; gap:8px; padding:8px 14px; font-family:'B612 Mono',monospace; font-size:12.5px; border-top:1px solid var(--hair); }
+  .p2 .ck .r:first-of-type { border-top:0; }
+  .p2 .ck .r .lead { flex:1; border-bottom:1.5px dotted rgba(30,42,54,.4); transform:translateY(-4px); }
+  .p2 .ck .r .res { font-weight:700; }
+  .p2 .ck .r.done .res { color:var(--ink); } .p2 .ck .r.done .res::after { content:"  ✓"; color:var(--mag); }
+  .p2 .ck .r.cur { background:rgba(160,22,108,.06); } .p2 .ck .r.cur .res { color:var(--mag); }
+  .p2 .ck .r.todo { color:#8a9096; }
+
+  /* P3 magenta line */
+  .p3 .line { height:2px; background:linear-gradient(90deg, var(--mag) 0 62%, rgba(160,22,108,.18) 62%); margin:16px 0 10px; position:relative; }
+  .p3 .line::after { content:""; position:absolute; left:62%; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--mag); transform:translateX(-4px); }
+  .p3 .st { font-size:12.5px; color:var(--ink); display:flex; gap:10px; }
+  .p3 .st b { color:var(--mag); }
+  .p3 .st span { margin-left:auto; color:var(--mute); }
+  .p3 .sk { margin-top:18px; }
+  .p3 .sk .gh { display:flex; align-items:center; gap:8px; margin:14px 0 8px; }
+  .p3 .sk .gh i { width:11px; height:11px; border-radius:50%; border:1.6px dashed rgba(160,22,108,.45); }
+  .p3 .sk .gh s, .p3 .sk .cd s { display:block; height:8px; border-radius:4px; background:rgba(30,42,54,.09); text-decoration:none; }
+  .p3 .sk .cd { background:rgba(251,248,240,.7); border:1px solid var(--hair); border-radius:10px; padding:12px 14px; margin-bottom:8px; }
+  .p3 .sk .cd s + s { margin-top:8px; }
+
+  /* shared fallback */
+  .fb { margin-top:2.4rem; }
+  .fb .sx { padding:20px 26px; }
+  .fb .msg { border:1px solid rgba(30,42,54,.45); border-radius:8px; padding:10px 14px; font-size:12.5px; line-height:1.5;
+    background: repeating-linear-gradient(135deg, rgba(30,42,54,.08) 0 2px, transparent 2px 7px), var(--raised); }
+  .fb .msg b { display:block; font-size:10px; letter-spacing:.16em; margin-bottom:2px; }
+</style>
+
+<h2>While the AI works: what should the wait look like?</h2>
+<p class="subtitle">Strips are noted for comparing. An AI search runs four fixed stages and can take up to a minute. By design nothing it writes is shown until every quote has been checked against the NTSB text, so this is the screen people stare at. Each mockup is caught at stage 3 of 4.</p>
+
+<div class="homes">
+
+<!-- ============ P1 ROUTE ============ -->
+<div>
+  <div class="hm-meta"><div><h3>1 · Route</h3><p>The four stages drawn as waypoints on a magenta course line, the way a flight plan shows on a chart. Legs flown are solid; the aircraft sits at the current fix.</p></div><span class="pick" data-choice="progress-route" onclick="toggleSelect(this)">Choose 1</span></div>
+  <div class="sx pg p1">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span class="on">Explore</span><span>Dashboard</span></div><div class="right"><span class="trial">AI searches left: <b>2 of 3</b></span><span class="btn">Sign in</span></div></div>
+    <div class="col">
+      <div class="q">Find completed investigations involving engine power loss shortly after maintenance. Separate confirmed mechanical failures from cases where investigators found no mechanical fault.</div>
+      <div class="chips"><span class="chip ai">“Shortly” = within 30 days or 10 flight hours ✎</span><span class="chip">Completed</span><span class="chip">US · 2008–2026</span></div>
+      <svg viewBox="0 0 640 96">
+        <path d="M40 40H246" stroke="#A0166C" stroke-width="3"/>
+        <path d="M246 40H420" stroke="#A0166C" stroke-width="3"/>
+        <path d="M420 40H600" stroke="#A0166C" stroke-width="2" stroke-dasharray="6 6" opacity=".45"/>
+        <g fill="#FBF8F0" stroke="#1E2A36" stroke-width="1.6">
+          <path d="M40 31l9 15h-18z"/>
+          <path d="M240 34h12l6 6-6 6h-12l-6-6z"/>
+          <circle cx="420" cy="40" r="9"/>
+          <path d="M600 31l9 15h-18z"/>
+        </g>
+        <g fill="#A0166C"><path d="M40 35l4 7h-8z"/><circle cx="246" cy="40" r="2.5"/></g>
+        <g transform="translate(420 40) rotate(90)"><path d="M0-13l2.4 6v4l8 4.5v2.5l-8-2v5.5l2.8 2.2v2l-5.2-1.4-5.2 1.4v-2l2.8-2.2v-5.5l-8 2v-2.5l8-4.5v-4z" fill="#1E2A36"/></g>
+        <g font-family="B612" font-size="10.5" font-weight="700" text-anchor="middle" fill="#1E2A36">
+          <text x="40" y="70">CHECK</text><text x="246" y="70">SEARCH</text><text x="420" y="70" fill="#A0166C">WRITE</text><text x="600" y="70" fill="#8a9096">VERIFY</text>
+        </g>
+        <g font-family="B612 Mono" font-size="9.5" text-anchor="middle" fill="#5D6670">
+          <text x="40" y="85">in scope</text><text x="246" y="85">6 cases · 12 passages</text><text x="420" y="85" fill="#A0166C">writing…</text><text x="600" y="85">every quote</text>
+        </g>
+      </svg>
+      <div class="now"><b>Writing the answer</b> from 12 NTSB passages in 6 cases.</div>
+      <div class="note">Nothing is shown until each quote matches the report text word for word. Up to a minute. <span class="cancel">Cancel</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ P2 CHECKLIST ============ -->
+<div>
+  <div class="hm-meta"><div><h3>2 · Checklist</h3><p>The stages as a challenge-and-response checklist, read top to bottom with dotted leaders, exactly like the cards in a cockpit. Each line fills in its real result as it completes.</p></div><span class="pick selected" data-choice="progress-checklist" onclick="toggleSelect(this)">Chosen · 2</span></div>
+  <div class="sx pg p2">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span class="on">Explore</span><span>Dashboard</span></div><div class="right"><span class="trial">AI searches left: <b>2 of 3</b></span><span class="btn">Sign in</span></div></div>
+    <div class="col">
+      <div class="q">Find completed investigations involving engine power loss shortly after maintenance. Separate confirmed mechanical failures from cases where investigators found no mechanical fault.</div>
+      <div class="chips"><span class="chip ai">“Shortly” = within 30 days or 10 flight hours ✎</span><span class="chip">Completed</span><span class="chip">US · 2008–2026</span></div>
+      <div class="ck">
+        <div class="h">ANSWER CHECKLIST<span>0:14</span></div>
+        <div class="r done">Question<span class="lead"></span><span class="res">IN SCOPE</span></div>
+        <div class="r done">Search 24,291 investigations<span class="lead"></span><span class="res">6 CASES · 12 PASSAGES</span></div>
+        <div class="r cur">Write answer<span class="lead"></span><span class="res">IN PROGRESS</span></div>
+        <div class="r todo">Verify every quote<span class="lead"></span><span class="res">—</span></div>
+      </div>
+      <div class="note">Nothing is shown until each quote matches the report text word for word. Up to a minute. <span class="cancel">Cancel</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ P3 MAGENTA LINE ============ -->
+<div>
+  <div class="hm-meta"><div><h3>3 · Magenta line</h3><p>The quietest: one thin magenta line grows under the question with a single status line, while the page sketches where the case groups will land.</p></div><span class="pick" data-choice="progress-magenta-line" onclick="toggleSelect(this)">Choose 3</span></div>
+  <div class="sx pg p3">
+    <div class="bar"><div class="logo">AVIATION CASEBOOK</div><div class="nav"><span class="on">Explore</span><span>Dashboard</span></div><div class="right"><span class="trial">AI searches left: <b>2 of 3</b></span><span class="btn">Sign in</span></div></div>
+    <div class="col">
+      <div class="q">Find completed investigations involving engine power loss shortly after maintenance. Separate confirmed mechanical failures from cases where investigators found no mechanical fault.</div>
+      <div class="chips"><span class="chip ai">“Shortly” = within 30 days or 10 flight hours ✎</span><span class="chip">Completed</span><span class="chip">US · 2008–2026</span></div>
+      <div class="line"></div>
+      <div class="st"><b>Writing the answer</b> from 12 passages in 6 cases · step 3 of 4<span>Cancel</span></div>
+      <div class="sk">
+        <div class="gh"><i></i><s style="width:180px"></s></div>
+        <div class="cd"><s style="width:40%"></s><s style="width:85%"></s><s style="width:70%"></s></div>
+        <div class="gh"><i></i><s style="width:240px"></s></div>
+        <div class="cd"><s style="width:35%"></s><s style="width:80%"></s></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="fb">
+  <div class="hm-meta"><div><h3>Same in every option · when the check fails</h3><p>No retry loop, by design. The summary is withheld and the cases still come back, plainly labelled. Not a choice, just showing it.</p></div></div>
+  <div class="sx">
+    <div class="msg"><b>SUMMARY WITHHELD</b>The AI's summary didn't pass the citation check, so it isn't shown. Below are the 6 cases it found, with their NTSB text. You can still open, compare and print them.</div>
+  </div>
+</div>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  .homes { display:flex; flex-direction:column; gap: 2.4rem; }
+  .hm-meta { display:flex; gap:1rem; align-items:baseline; justify-content:space-between; padding:.2rem 0 .6rem; }
+  .hm-meta h3 { margin:0; font-size:1.05rem; } .hm-meta p { margin:0; color:var(--text-secondary); font-size:.88rem; }
+  .pick { border:1px solid var(--border); border-radius:999px; padding:.3rem .9rem; font-size:.85rem; cursor:pointer; white-space:nowrap; background: var(--bg-secondary); }
+  .pick.selected { background: var(--accent); color:#fff; border-color: var(--accent); }
+
+  .sx { --paper:#F3EEE1; --raised:#FBF8F0; --ink:#1E2A36; --mute:#5D6670; --blue:#1F519A; --mag:#A0166C; --hair:rgba(31,81,154,.2); --tint:#E8E2CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px), var(--paper);
+    color:var(--ink); font-family:'B612',sans-serif; font-size:13px; line-height:1.45; border-radius:10px; overflow:hidden; position:relative; }
+  .sx * { box-sizing:border-box; }
+  .sx .bar { display:flex; align-items:center; gap:1.4rem; padding:11px 22px; border-bottom:2px solid var(--blue); position:relative; background: rgba(243,238,225,.92); z-index:2; }
+  .sx .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px; opacity:.7;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px) 0 0/100% 3px no-repeat,
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px) 0 0/100% 6px no-repeat; }
+  .sx .logo { font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--blue); display:flex; align-items:center; gap:8px; }
+  .sx .nav { display:flex; gap:1.1rem; } .sx .nav span { color:var(--mute); } .sx .nav .on { color:var(--ink); border-bottom:2px solid var(--blue); }
+  .sx .right { margin-left:auto; display:flex; gap:.9rem; align-items:center; }
+  .sx .trial { color:var(--mute); font-size:11.5px; } .sx .trial b { color:var(--mag); }
+  .sx .btn { border:1.5px solid var(--blue); color:var(--blue); padding:3px 11px; border-radius:999px; font-size:11.5px; }
+  .sx .eyebrow { font-size:11px; letter-spacing:.16em; color:var(--blue); font-weight:700; }
+  .sx h1 { font-family:'Source Serif 4',serif; font-weight:600; letter-spacing:-.01em; margin:.35rem 0 .5rem; line-height:1.08; }
+  .sx .lede { color:var(--mute); font-size:14px; max-width:46ch; }
+  .sx .ask { background:var(--raised); border:1.5px solid var(--blue); border-radius:14px; padding:12px 12px 10px 16px; box-shadow: 0 1px 0 rgba(31,81,154,.15), 0 10px 30px -18px rgba(30,42,54,.45); }
+  .sx .ask .ph { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:16px; min-height:44px; }
+  .sx .ask .acts { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .sx .ask .hint { color:var(--mute); font-size:11px; margin-right:auto; }
+  .sx .b-search { border:1.5px solid var(--blue); color:var(--blue); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
+  .sx .b-ai { background:var(--mag); color:#fff; padding:6px 14px; border-radius:999px; font-size:12px; font-weight:700; display:flex; gap:6px; align-items:center; }
+  .sx .b-ai small { font-weight:400; opacity:.85; }
+  .sx .ex { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .sx .ex span { border:1px solid var(--hair); background:rgba(251,248,240,.75); border-radius:999px; padding:3px 10px; font-size:11.5px; color:var(--ink); }
+  .sx .ex span::before { content:"↳ "; color:var(--blue); }
+  .sx .legend { position:absolute; right:22px; bottom:18px; background:rgba(251,248,240,.92); border:1px solid var(--blue); padding:8px 11px; font-size:10.5px; color:var(--ink); z-index:2; }
+  .sx .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:3px; }
+  .sx .no { font-family:'B612 Mono',monospace; font-weight:700; color:var(--blue); }
+  .sx .g { display:inline-block; width:11px; height:11px; border-radius:50%; border:1.6px solid var(--mag); vertical-align:-1px; flex:none; }
+  .sx .g.f { background:var(--mag); } .sx .g.h { background:linear-gradient(90deg,var(--mag) 50%,transparent 50%); } .sx .g.d { border-style:dashed; }
+  .sx .mono { font-family:'B612 Mono',monospace; font-size:11px; }
+  .sx .mut { color:var(--mute); }
+  .sx .magv { color:var(--mag); }
+  .sx .caution { font-size:10.5px; padding:0 6px; border:1px solid rgba(30,42,54,.45); border-radius:4px; white-space:nowrap;
+    background: repeating-linear-gradient(135deg, rgba(30,42,54,.12) 0 2px, transparent 2px 6px), var(--raised); }
+  .cp .page { padding:22px 26px 26px; }
+  .cp .back { color:var(--blue); font-size:12px; }
+  .cp .ttl { display:flex; align-items:flex-end; gap:16px; margin:6px 0 4px; flex-wrap:wrap; }
+  .cp .ttl .t { font-family:'Source Serif 4',serif; font-weight:600; font-size:26px; line-height:1.1; }
+  .cp .ttl .tools { margin-left:auto; display:flex; gap:8px; font-size:11.5px; }
+  .cp .ttl .tools span { border:1.5px solid var(--blue); color:var(--blue); border-radius:999px; padding:2px 11px; }
+  .cp .from { color:var(--mute); font-size:12px; margin-bottom:16px; }
+  .cp .from i { font-family:'Source Serif 4',serif; color:var(--ink); }
+  .cp .same { margin-top:14px; font-size:12px; color:var(--mute); border-top:1px dashed var(--hair); padding-top:9px; }
+  .cp .same b { color:var(--ink); font-weight:400; }
+  .cp .key { margin-top:6px; font-size:11px; color:var(--mute); }
+  .cp .key i { font-style:normal; color:var(--mag); }
+
+  /* C1 flight strips */
+  .c1 .cols, .c1 .strip { display:grid; grid-template-columns: 30px 1.15fr 1.15fr 1.25fr 0.95fr 1fr 1.35fr; }
+  .c1 .cols div { font-size:9.5px; letter-spacing:.14em; font-weight:700; color:var(--blue); padding:0 10px 5px; }
+  .c1 .strip { background:var(--raised); border:1px solid rgba(30,42,54,.4); border-radius:3px; margin-bottom:9px; box-shadow: 0 1px 0 rgba(30,42,54,.12); }
+  .c1 .strip > div { padding:8px 10px; border-left:1px solid rgba(30,42,54,.22); font-size:12px; line-height:1.4; }
+  .c1 .strip > .tab { border-left:0; background:var(--tint); display:flex; align-items:center; justify-content:center; padding:0; border-radius:3px 0 0 3px; }
+  .c1 .strip .pc { grid-column: 2 / -1; border-top:1px dashed rgba(30,42,54,.25); font-family:'Source Serif 4',serif; font-size:13px; padding:6px 10px 7px; display:flex; gap:10px; align-items:baseline; }
+  .c1 .strip .pc .lab { font-family:'B612',sans-serif; font-size:9px; letter-spacing:.14em; color:var(--mute); flex:none; }
+  .c1 .strip .pc .src { margin-left:auto; font-family:'B612',sans-serif; font-size:11px; color:var(--blue); white-space:nowrap; }
+  .c1 .big { font-family:'B612 Mono',monospace; font-weight:700; font-size:15px; color:var(--mag); display:block; }
+  .c1 svg { width:100%; height:26px; display:block; }
+  .c1 .ac { font-weight:700; display:block; }
+  .c1 .x { float:right; color:var(--mute); font-size:11px; }
+
+  /* C2 side by side */
+  .c2 .grid { display:grid; grid-template-columns: 118px repeat(4, 1fr); border-top:2px solid var(--ink); }
+  .c2 .grid > div { padding:9px 11px; border-bottom:1px solid var(--hair); font-size:12px; line-height:1.4; }
+  .c2 .grid > .rl { font-size:9.5px; letter-spacing:.14em; font-weight:700; color:var(--ink); padding-top:11px; }
+  .c2 .grid > .rl.ai { color:var(--mag); }
+  .c2 .grid > .hd { background:var(--raised); }
+  .c2 .grid > .hd .ac { font-weight:700; display:block; margin-top:2px; }
+  .c2 .grid > .hd .x { float:right; color:var(--mute); }
+  .c2 .grid > .pcc { font-family:'Source Serif 4',serif; font-size:13px; }
+  .c2 svg { width:100%; height:30px; display:block; }
+  .c2 .big { font-family:'B612 Mono',monospace; font-weight:700; font-size:14px; color:var(--mag); display:block; }
+  .c2 .toggle { display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--ink); }
+  .c2 .toggle i { width:26px; height:14px; border-radius:999px; background:var(--blue); position:relative; display:inline-block; }
+  .c2 .toggle i::after { content:""; position:absolute; right:2px; top:2px; width:10px; height:10px; border-radius:50%; background:#fff; }
+</style>
+
+<h2>Compare: how should up to four cases sit next to each other?</h2>
+<p class="subtitle">The drawer is noted as <b>story order</b>. Here are the four real seed cases compared. Ink is NTSB data, magenta is AI-extracted. Values that are the same in every case collapse into one line at the bottom instead of repeating.</p>
+
+<div class="homes">
+
+<!-- ============ C1 FLIGHT STRIPS ============ -->
+<div>
+  <div class="hm-meta"><div><h3>1 · Flight strips</h3><p>Each case is a strip, like an ATC flight progress strip, stacked so the same field lines up down the page. Easy to scan one question ("how long since maintenance?") across all four. Sortable.</p></div><span class="pick selected" data-choice="compare-strips" onclick="toggleSelect(this)">Chosen · 1</span></div>
+  <div class="sx cp c1">
+    <div class="bar">
+      <div class="logo">AVIATION CASEBOOK</div>
+      <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+      <div class="right"><span class="trial">AI searches left: <b>2 of 3</b></span><span class="btn">Sign in</span></div>
+    </div>
+    <div class="page">
+      <span class="back">← Back to results</span>
+      <div class="ttl"><span class="t">Comparing 4 cases</span><span class="tools"><span>Sort: flight hours since maintenance ▾</span><span>Print for class</span><span>Copy link</span></span></div>
+      <div class="from">From your search <i>“engine power loss shortly after maintenance”</i></div>
+
+      <div class="cols"><div></div><div>CASE</div><div>WHEN · WHERE</div><div>FLIGHT</div><div>CONDITIONS</div><div style="color:var(--mag)">SINCE MAINT.</div><div style="color:var(--mag)">ESTABLISHED</div></div>
+
+      <div class="strip">
+        <div class="tab"><i class="g h"></i></div>
+        <div><span class="x">✕</span><span class="no">MIA08LA156</span><span class="ac">Diamond DA-20-C1</span><span class="mono mut">N227RD</span></div>
+        <div>1 Aug 2008<br>Peachtree City, GA<br><span class="mut">Part 91 · test flight</span></div>
+        <div><svg viewBox="0 0 120 26"><path d="M2 23H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 23C12 23 14 6 28 6H76C86 6 90 12 94 14" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M94 14L106 23" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="94" cy="14" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">BASE LEG · PARTIAL LOSS</span></div>
+        <div class="mono">VMC · DAY<br>BKN 3100<br>10 SM</div>
+        <div><span class="big">1ST FLT</span><span class="magv">after rudder maintenance</span></div>
+        <div class="magv"><b>Defect, link not established</b><br>Check valve fitted backwards; tests ran normally</div>
+        <div class="pc"><span class="lab">PROBABLE CAUSE</span>A partial loss of engine power for undetermined reasons.<span class="src">Search NTSB ↗</span></div>
+      </div>
+
+      <div class="strip">
+        <div class="tab"><i class="g f"></i></div>
+        <div><span class="x">✕</span><span class="no">DFW08TA066</span><span class="ac">Hughes OH-6</span><span class="mono mut">N66372 · HELI</span></div>
+        <div>8 Feb 2008 <span class="caution">conflict</span><br>Valentine, TX<br><span class="mut">Part 91 · public use</span></div>
+        <div><svg viewBox="0 0 120 26"><path d="M2 23H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 23C10 23 12 8 24 8H64C72 8 76 16 82 16H90" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M90 16L97 23" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="90" cy="16" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">HOVER · TOTAL LOSS</span></div>
+        <div class="mono">VMC · DAY<br>CLEAR<br>10 SM</div>
+        <div><span class="big">5.1 FH</span><span class="magv">after engine replacement</span></div>
+        <div class="magv"><b>Causal fault established</b><br>Cotter pin left out at reassembly</div>
+        <div class="pc"><span class="lab">PROBABLE CAUSE</span>The contract mechanic's failure to properly secure the castellated nut… lack of maintenance oversight by the operator.<span class="src">NTSB report ↗</span></div>
+      </div>
+
+      <div class="strip">
+        <div class="tab"><i class="g f"></i></div>
+        <div><span class="x">✕</span><span class="no">NYC08LA106</span><span class="ac">Raytheon A36</span><span class="mono mut">N36GJ</span></div>
+        <div>20 Feb 2008<br>Pahokee, FL<br><span class="mut">Part 91 · personal</span></div>
+        <div><svg viewBox="0 0 120 26"><path d="M2 23H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 23C12 23 16 5 32 5H80" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M80 5L104 23" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="80" cy="5" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">CRUISE · TOTAL LOSS</span></div>
+        <div class="mono">VMC · DAY<br>FEW · 080/12<br>10 SM</div>
+        <div><span class="big">12 FH</span><span class="magv">~2 months after fuel-pump install</span></div>
+        <div class="magv"><b>Fault contributed</b><br>Corroded fuel pump; cause was the decision to depart</div>
+        <div class="pc"><span class="lab">PROBABLE CAUSE</span>The pilot's decision to depart with a known deficiency with the engine… Contributing… the failure of the engine-driven fuel pump.<span class="src">NTSB report ↗</span></div>
+      </div>
+
+      <div class="strip">
+        <div class="tab"><i class="g"></i></div>
+        <div><span class="x">✕</span><span class="no">DEN08LA103</span><span class="ac">Cessna A188B</span><span class="mono mut">N9639G</span></div>
+        <div>12 Jun 2008<br>Lyons, KS<br><span class="mut">Part 137 · aerial application</span></div>
+        <div><svg viewBox="0 0 120 26"><path d="M2 23H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 23C12 23 16 9 30 9H58" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M58 9L84 23" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="58" cy="9" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">MANEUVERING · PARTIAL</span></div>
+        <div class="mono">VMC · DAY<br>CLEAR · 330/03<br>10 SM</div>
+        <div><span class="big">≤ 17 D</span><span class="magv">exact maintenance date not stated</span></div>
+        <div class="magv"><b>No fault identified</b><br>Cause undetermined</div>
+        <div class="pc"><span class="lab">PROBABLE CAUSE</span>the loss of engine power for undetermined reasons. A contributing factor was the dirt embankment.<span class="src">Search NTSB ↗</span></div>
+      </div>
+
+      <div class="same">Same in all four: <b>VMC</b> · <b>daylight</b> · <b>substantial damage</b> · <b>no fatalities</b> · <b>completed investigations</b></div>
+      <div class="key">Strip tab = what investigators established (<i>AI-classified</i>). Sorted by flight hours since maintenance; cases without hours go last rather than being converted from days.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ C2 SIDE BY SIDE ============ -->
+<div>
+  <div class="hm-meta"><div><h3>2 · Side by side</h3><p>One column per case with labelled rows, the classic product-comparison layout. Reads well down each case; a switch hides rows that are identical. On a phone it becomes swipeable cards.</p></div><span class="pick" data-choice="compare-side-by-side" onclick="toggleSelect(this)">Choose 2</span></div>
+  <div class="sx cp c2">
+    <div class="bar">
+      <div class="logo">AVIATION CASEBOOK</div>
+      <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+      <div class="right"><span class="trial">AI searches left: <b>2 of 3</b></span><span class="btn">Sign in</span></div>
+    </div>
+    <div class="page">
+      <span class="back">← Back to results</span>
+      <div class="ttl"><span class="t">Comparing 4 cases</span><span class="tools"><span class="toggle" style="border:0;padding:0"><i></i>Only differences</span><span>Print for class</span><span>Copy link</span></span></div>
+      <div class="from">From your search <i>“engine power loss shortly after maintenance”</i></div>
+
+      <div class="grid">
+        <div class="rl"></div>
+        <div class="hd"><span class="x">✕</span><span class="no">DFW08TA066</span><span class="ac">Hughes OH-6</span><span class="mono mut">HELICOPTER</span></div>
+        <div class="hd"><span class="x">✕</span><span class="no">MIA08LA156</span><span class="ac">Diamond DA-20-C1</span><span class="mono mut">AIRPLANE</span></div>
+        <div class="hd"><span class="x">✕</span><span class="no">DEN08LA103</span><span class="ac">Cessna A188B</span><span class="mono mut">AIRPLANE</span></div>
+        <div class="hd"><span class="x">✕</span><span class="no">NYC08LA106</span><span class="ac">Raytheon A36</span><span class="mono mut">AIRPLANE</span></div>
+
+        <div class="rl">FLIGHT</div>
+        <div><svg viewBox="0 0 120 30"><path d="M2 27H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 27C10 27 12 9 24 9H64C72 9 76 18 82 18H90" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M90 18L97 27" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="90" cy="18" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">HOVER · TOTAL LOSS</span></div>
+        <div><svg viewBox="0 0 120 30"><path d="M2 27H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 27C12 27 14 7 28 7H76C86 7 90 14 94 16" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M94 16L106 27" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="94" cy="16" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">BASE LEG · PARTIAL</span></div>
+        <div><svg viewBox="0 0 120 30"><path d="M2 27H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 27C12 27 16 10 30 10H58" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M58 10L84 27" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="58" cy="10" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">MANEUVERING · PARTIAL</span></div>
+        <div><svg viewBox="0 0 120 30"><path d="M2 27H118" stroke="#1F519A" stroke-width=".6" stroke-dasharray="2 2"/><path d="M2 27C12 27 16 6 32 6H80" fill="none" stroke="#1F519A" stroke-width="1.4"/><path d="M80 6L104 27" stroke="#1E2A36" stroke-width="1.2" stroke-dasharray="2 1.6"/><circle cx="80" cy="6" r="2.8" fill="#1E2A36"/></svg><span class="mono mut">CRUISE · TOTAL LOSS</span></div>
+
+        <div class="rl">WHEN · WHERE</div>
+        <div>8 Feb 2008 <span class="caution">conflict</span><br>Valentine, TX</div>
+        <div>1 Aug 2008<br>Peachtree City, GA</div>
+        <div>12 Jun 2008<br>Lyons, KS</div>
+        <div>20 Feb 2008<br>Pahokee, FL</div>
+
+        <div class="rl">OPERATION</div>
+        <div>Part 91 · public use</div>
+        <div>Part 91 · test flight</div>
+        <div>Part 137 · aerial application</div>
+        <div>Part 91 · personal</div>
+
+        <div class="rl ai">SINCE MAINT.</div>
+        <div><span class="big">5.1 FH</span><span class="magv">engine replacement</span></div>
+        <div><span class="big">1ST FLT</span><span class="magv">rudder maintenance</span></div>
+        <div><span class="big">≤ 17 D</span><span class="magv">date not stated</span></div>
+        <div><span class="big">12 FH</span><span class="magv">~2 months, fuel pump</span></div>
+
+        <div class="rl ai">ESTABLISHED</div>
+        <div class="magv"><i class="g f"></i> <b>Causal fault</b><br>Cotter pin left out</div>
+        <div class="magv"><i class="g h"></i> <b>Defect, no link</b><br>Check valve backwards</div>
+        <div class="magv"><i class="g"></i> <b>No fault found</b><br>Undetermined</div>
+        <div class="magv"><i class="g f"></i> <b>Fault contributed</b><br>Corroded fuel pump</div>
+
+        <div class="rl">PROBABLE CAUSE</div>
+        <div class="pcc">The contract mechanic's failure to properly secure the castellated nut…</div>
+        <div class="pcc">A partial loss of engine power for undetermined reasons.</div>
+        <div class="pcc">the loss of engine power for undetermined reasons…</div>
+        <div class="pcc">The pilot's decision to depart with a known deficiency with the engine…</div>
+
+        <div class="rl">SOURCE</div>
+        <div style="color:var(--blue)">NTSB report ↗</div>
+        <div class="mut">Search NTSB ↗</div>
+        <div class="mut">Search NTSB ↗</div>
+        <div style="color:var(--blue)">NTSB report ↗</div>
+      </div>
+      <div class="same">Hidden, same in all four: <b>VMC</b> · <b>daylight</b> · <b>substantial damage</b> · <b>no fatalities</b> · <b>completed investigations</b></div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>

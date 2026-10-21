@@ -3,8 +3,11 @@
 **Draft, updated 2026-10-21.** Initial data research: 2026-10-16. Design only;
 the application is not built. Tracing/evaluation decision: self-hosted Langfuse.
 Working assumptions: English-first public beta, all completed US investigations
-as the eventual scope, and a **$25/month OpenAI ceiling**. These are proposed
-defaults pending owner feedback, not deployed limits.
+as the eventual scope, and a **$100/month AI-provider ceiling**, set by the owner
+on 2026-10-21 while $200 of Anthropic credits are available. These are proposed
+defaults pending owner feedback, not deployed limits. Language-model calls start
+on the Anthropic API, behind a provider interface that operators can switch to
+OpenAI at deployment (§9). Embeddings stay on OpenAI.
 
 Build a small TypeScript application that finds relevant investigations, explains
 why they match, and compares supporting evidence. Start with the 2008-onward
@@ -21,9 +24,10 @@ dashboard. The first implementation should be a complete, small vertical slice.
 | UI | Tailwind CSS, shadcn/ui, Lucide icons, Recharts | Restrained visual system, accessible components, simple charts |
 | Backend | Fastify, Zod contracts, OpenAPI | Small explicit API; shared types plus runtime validation |
 | Authentication | Better Auth + Google OIDC + database sessions | Avoid writing OAuth/session cryptography ourselves |
-| Relational data | PostgreSQL + Drizzle queries/migrations | Identity, quotas, consent, ingestion state, canonical cases |
+| Relational data | PostgreSQL + Drizzle queries/migrations | Identity, quotas, ingestion state, canonical cases; consent records later |
 | Search | Elasticsearch 9.x Basic + official JS client | Keywords, filters, aggregations, and vector search |
-| AI | Official OpenAI TypeScript SDK, Responses API, embeddings endpoint | Direct control over schemas, prompts, tokens, and accounting |
+| Language models | Official Anthropic TypeScript SDK (Messages API) behind an app-owned provider interface; an OpenAI Responses API adapter only when a switch is needed (§9) | Direct control over schemas, prompts, tokens, and accounting; provider chosen by deployment configuration |
+| Embeddings | Official OpenAI TypeScript SDK, embeddings endpoint | Anthropic offers no embedding model; pinned to the index version, independent of the language-model provider |
 | Jobs | Separate TypeScript worker from the same codebase/image | Imports do not block the HTTP process; no broker needed initially |
 | Public access | Docker Compose + Cloudflare Tunnel + Turnstile | Suitable for one Linux host |
 | Observability | Self-hosted Langfuse + OpenTelemetry-backed TypeScript integration | Existing AI dashboard for traces, usage, latency, and scores |
@@ -39,6 +43,8 @@ Pin compatible versions, including the Zod/Fastify adapter, when implementing.
 Prefer the explicit frontend/backend split for learning. Next.js is a reasonable
 alternative if server rendering and indexed public case pages become priorities;
 the initial search interface does not need its rendering/cache conventions.
+A client-rendered beta is acceptable; case and filter URLs must survive direct
+navigation and refresh.
 Use one application package with `web/`, `server/`, `worker/`, `shared/`, `tests/`,
 `evals/`, and `fixtures/`. Application orchestration remains plain TypeScript;
 LangChain/LangGraph are not required for version one. The app needs no Redis,
@@ -67,6 +73,20 @@ Include keyword/filter browsing, natural-language search, case details, comparis
 of up to four cases, citations, three anonymous AI requests, Google sign-in, and
 a basic corpus dashboard. Ordinary browsing requires neither an LLM nor login.
 Saved collections and generated lesson packs can follow.
+
+A **brief** is one question plus at most three **Refine this search** steps, not an
+open chat. Each refinement is another metered AI request through the full
+admission, scope, retrieval, and validation pipeline; anonymous trial requests
+count across the sequence. The client sends only the brief ID and one bounded
+refinement: a Zod discriminated union of free `text`, an allowlisted
+`interpretation` edit, or a validated `filters` edit
+([interface design](UI_DESIGN.md) §4.3).
+The server keeps a bounded representation of the search intent, including any
+clarified meaning of “shortly,” plus validated filters and earlier case IDs. It
+treats that intent as untrusted input in every scope check and retrieves afresh
+rather than automatically restricting a refinement to earlier results. Earlier
+generated answers never become evidence. Briefs expire within the 24-hour
+processing window.
 
 Filters: completion, date, location/state, aircraft category/make/model, engine
 type, FAR part, flight purpose, flight phase, VMC/IMC/unknown, light, and injuries.
@@ -149,14 +169,31 @@ The pipeline:
    reprocessed. Version citation text independently of normalized search text;
    specify the offset unit and retain a deterministic mapping between the two.
 
+Use the event-level `ntsb_no` as the public case key and URL (`/cases/SEA08LA057`);
+keep `ev_id` internal. All 31,303 event-level numbers in the inspected snapshot are
+populated and unique; enforce that invariant during import. Multiaircraft events
+carry suffixed aircraft numbers (`SEA08LA057A`, `SEA08LA057B`). Resolve them
+through the parent event relationship, not by stripping a trailing letter, and
+preserve aircraft attribution on narratives, findings, and report links.
+
 The numeric CAROL report ID is not `ev_id`; `ntsb_docket` is entirely empty in the
-inspected snapshot. Resolve and verify report links from source metadata. Start
-with database text and official PDF links. Full PDF/docket extraction can wait.
+inspected snapshot, and the MDB contains no other report identifier. The four seed
+IDs were matched individually. For the bulk mapping, use the official Aviation
+Search JSON (or CSV) export, which [NTSB documents](https://www.ntsb.gov/news/press-releases/Pages/NR07172023.aspx)
+as including report and docket links. Verify a fresh export's field names, limits,
+and completeness first; do not hard-code an assumed field name. Match case/aircraft
+numbers and dates to imported records, keep potentially several reports per event,
+record the mapping source and retrieval date, and partition exports by date if
+needed. Start with database text and official PDF links. Full PDF/docket
+extraction can wait.
 PDF citations need real page/version information; MDB citations use source
 sections/paragraphs without invented PDF pages. Build clickable URLs from a fixed
 HTTPS host/path template and a validated, resolved report ID; never directly render
 an arbitrary source/model URL. Label captured source revisions because the official
-latest-report link can subsequently change.
+latest-report link can subsequently change. When no report ID is resolved, show
+the copyable case number, “Direct report link unavailable,” and a link to official
+[Aviation Search](https://my.ntsb.gov/aviation) labelled as a search, not as the
+report. Do not construct prefilled search URLs until their format is verified.
 
 Use monthly full snapshots for reconciliation. Weekly filenames repeat; version
 them by retrieval timestamp/hash. Verify whether updates contain full cases or
@@ -171,7 +208,7 @@ Suggested PostgreSQL groups:
 | --- | --- |
 | Corpus | Cases, aircraft, source sections/revisions, findings, assertions, ingestion runs |
 | Identity | Better Auth user/account/session/verification tables |
-| Product | Saved case collections; separate email-consent records |
+| Product | Later: saved case collections and separate email-consent records |
 | Controls | Usage buckets, cost ledger, reservations, concurrency leases, short-lived idempotent results |
 
 Use a dedicated application database and separate restricted runtime, ingestion,
@@ -225,7 +262,10 @@ This Basic-compatible approach does not need ELSER, ML nodes, additional plugins
 `semantic_text`, Elasticsearch inference endpoints, or licensed native RRF. Use
 [explicit vector mappings](https://www.elastic.co/docs/solutions/search/vector)
 and check deployment features against the [subscription matrix](https://www.elastic.co/subscriptions).
-OpenAI embedding calls happen in application/worker code.
+OpenAI embedding calls happen in application/worker code. The embedding model is
+part of the index version: changing it, including to another vendor, means a full
+reindex and a retrieval benchmark. Changing the language-model provider (§9) does
+not touch embeddings.
 
 The online pipeline is fixed:
 
@@ -276,7 +316,7 @@ also treats retrieved content/model output as untrusted.
 | Input | JSON only; bounded body, 1,500-character question, limited filter/case arrays/history; reject unknown fields |
 | Scope | Enum: `case_search`, `case_comparison`, `corpus_statistics`, `needs_clarification`, `out_of_scope`, `operational_advice` |
 | Topic | Historical case study and evidence-supported explanations; decline unrelated coding, finance, travel, prompt/key disclosure |
-| History | Recheck each turn; only short server-owned history and validated IDs; never accept client system/developer messages |
+| History | Recheck each refinement; only the server-owned brief (bounded intent, validated filters/IDs); never accept client system/developer messages or earlier answers as evidence |
 | Retrieval | Fixed read queries over public aviation indices; no arbitrary URLs, browsing, scripts, shell, uploads, or generic SQL |
 | Output | Allowlisted case/citation IDs; HTML-encoded text; no model-generated active HTML, images, scripts, or arbitrary links |
 | Uncertainty | Insufficient evidence/verifier failure returns abstention or case cards |
@@ -286,11 +326,17 @@ Moderation is content-safety screening, not topic detection. Evaluate it on
 aviation queries so references to fatalities are not automatically treated as
 abusive. If included, screen user input and treat it as an additional layer.
 
-[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
-enforce shape, not truth. Validate with Zod, handle incomplete/refused responses,
-and verify semantics separately. Follow OpenAI's
-[trusted/untrusted input separation](https://developers.openai.com/api/docs/guides/agent-builder-safety);
-use the SDK directly, not the Agent Builder product.
+Structured outputs enforce shape, not truth. Both providers support them:
+[Anthropic](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+through `output_config.format`, and
+[OpenAI](https://developers.openai.com/api/docs/guides/structured-outputs). Validate
+with Zod again in app code. Handle refusals (`stop_reason: "refusal"` on
+Anthropic), truncation (`max_tokens`) and unparsed output as failed stages, and
+verify semantics separately. Server-owned instructions go only in the
+provider's privileged channel (the Anthropic system prompt, or the OpenAI
+developer message). Questions and passages go in the user turn as delimited,
+untrusted data. Use the SDKs directly, with no agent frameworks or hosted agent
+products.
 
 Tests must include a recipe hidden in an aviation story, encoded off-topic input,
 fake source IDs, “ignore instructions,” malicious text inside a narrative, topic
@@ -323,7 +369,23 @@ this budget, not abuse-proof availability.
 
 Use a random signed HttpOnly trial cookie backed by a database record, not a
 browser-only counter. After three requests, explain the limit and offer Google
-sign-in while keeping browsing available.
+sign-in while keeping browsing available. A live brief can move to the new
+account at sign-in. Each step keeps the billing principal it was admitted under
+(later refinements bill the account), and only read ownership moves, atomically
+and once
+([interface design](UI_DESIGN.md) §5, "Signing in mid-brief").
+
+Describe the offer as “Up to three free AI searches, subject to daily availability.”
+Pacing makes the anonymous allowance small. With $80 spread over a fresh 30-day
+month, roughly $2.67/day is interactive and $0.67/day anonymous. With the default
+Opus answer model (§9), that is about 7 anonymous requests, or 2 complete trials,
+a day. Exhausted capacity is therefore a normal
+state, not an edge case. Offer “Sign in to continue” only while authenticated
+capacity remains; when the global allowance is exhausted, say AI search is
+temporarily unavailable and keep keyword search, case reading, and deterministic
+comparison usable. Signing in never implies a guaranteed allocation. The anonymous
+share and new-account allowance are runtime configuration; other limits start as
+typed, centralized defaults.
 
 Better Auth manages authorization-code login, state/PKCE, and sessions. Request
 only `openid email profile`; require verified email. Use Google provider **`sub`**
@@ -343,8 +405,12 @@ Keep [Better Auth security checks](https://better-auth.com/docs/reference/securi
 enabled and configure its [auth rate limiter](https://better-auth.com/docs/concepts/rate-limit).
 That limiter does not replace application AI quotas.
 
-Login email serves account operation. Training-case updates require a **separate,
-unchecked opt-in**, consent text/version/time, confirmation, and unsubscribe.
+Login email serves account operation only. **The first release sends no
+training-case or marketing email and collects no opt-in.** That waits for an
+email provider. Email/password accounts with email verification, alongside
+Google, are planned for the same later step. When email updates arrive, they
+require a **separate, unchecked opt-in**, consent text/version/time,
+confirmation, and unsubscribe.
 Google login must not silently subscribe users to marketing. This conservative
 design follows the [Czech privacy authority's guidance](https://uoou.gov.cz/index.php/profesional/qa-otazky-a-odpovedi/obchodni-sdeleni).
 Publish a privacy/contact notice before collecting real users.
@@ -379,6 +445,9 @@ fixtures have a separate lifecycle. See the [capture and retention policy](OBSER
 Cloudflare is the outer traffic filter. Validate Turnstile server-side, checking
 success and expected hostname/action; tokens expire after five minutes and are
 single-use. Challenge anonymous AI use and suspicious authenticated activity.
+The public site key is server runtime configuration returned by a typed, allowlisted
+`GET /api/config`, so one image serves every environment; render the widget
+explicitly after that config loads. Nothing in that response affects quota checks.
 See [Turnstile verification](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).
 
 Trust `CF-Connecting-IP` only through the controlled tunnel/proxy path. Never accept
@@ -435,62 +504,196 @@ Do not rely on provider dashboard budgets as an instantaneous hard cutoff.
 Bound timeouts/tokens/context/concurrency and disable automatic SDK retries
 initially; ambiguous retries must not multiply unaccounted charges.
 
-## 9. Model choices and cost envelope
+## 9. Model providers, choices and cost envelope
 
-These are candidates to evaluate, not benchmark results. Published prices checked
-2026-10-16; verify account access and current pricing when implementing.
+### Provider switching
 
-| Stage | Candidate | USD / million tokens |
+Language-model calls (scope/plan, compose, check) go through an app-owned
+provider interface. Anthropic is the first and initially only implementation. An
+OpenAI Responses API adapter is designed for but built only when a switch is
+actually needed. Each stage call takes a typed input and returns:
+
+- a Zod-validated object
+- normalized usage: input, output including reasoning, cache-write and
+  cache-read tokens
+- the provider, model and prompt version
+
+Prompts are versioned per provider and model.
+
+- **Who switches:** operators only, through deployment configuration
+  (`AI_LLM_PROVIDER`, plus per-stage model variables) and a restart. It is
+  never visible to or selectable by users.
+- **No routing:** there is no per-request routing or automatic failover between
+  providers. One process uses one provider, so the cost gate prices exactly the
+  allowlisted models.
+- **Before enabling:** a provider/model combination must pass the §12 evaluation
+  gates on the same versioned dataset, and its price/cap rows must exist in the
+  allowlist. The startup check refuses to enable AI otherwise.
+- **Live briefs:** a brief records the provider and model of each step. A
+  refinement after a switch simply runs on the new provider; earlier answers
+  were never evidence.
+- **Embeddings are independent.** Anthropic offers no embedding model, so
+  embeddings stay on OpenAI `text-embedding-3-small` whichever language-model
+  provider runs. Switching the language-model provider therefore needs no
+  reindex. Changing the embedding model or vendor is a separate, index-versioned
+  rebuild (§5). The app needs an Anthropic key for language models and an
+  OpenAI key for embeddings.
+
+### Candidate models
+
+These are candidates to evaluate, not benchmark results. Published prices were
+checked on 2026-10-21; verify account access and current pricing when
+implementing.
+
+| Stage | Anthropic (default) | USD / million tokens (input / output) |
 | --- | --- | --- |
-| Scope/plan and output check | [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) | $0.20 input / $1.20 output |
-| Evidence comparison | [GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini), snapshot `gpt-5.4-mini-2026-03-17` | $0.75 input / $4.50 output |
-| Embeddings | [text-embedding-3-small](https://developers.openai.com/api/docs/models/text-embedding-3-small) | $0.02 input |
-| Offline quality challenger | [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) | $2 input / $12 output |
+| Scope/plan | `claude-haiku-5-5`, thinking disabled, effort `low` | $0.10 / $0.50 (prompts ≤100K tokens) |
+| Evidence comparison | `claude-opus-5-5`, effort `low` (thinking cannot be disabled) | $4 / $20 |
+| Output check | `claude-haiku-5-5`, effort `low` | $0.10 / $0.50 |
+| Cheaper answer candidates | `claude-sonnet-5-5` / `claude-haiku-5-5` | $2 / $10 and $0.10 / $0.50 |
+| Embeddings | OpenAI `text-embedding-3-small` | $0.02 input |
 
-Example token budget: scope 1,000 input/120 output ($0.000344), answer 8,000/1,200
-($0.0114), verification 10,000/200 ($0.00224), embedding 200 ($0.000004).
-Total **about $0.014/request**, or $14/1,000. This excludes retries, ingestion,
-evaluations, taxes, and hosting. Meter all billable output, including reasoning.
-Built-in web/file-search tools and their fees are unnecessary.
+The OpenAI candidates for a future adapter remain GPT-5.6 Luna for scope and
+check ($0.20 / $1.20) and `gpt-5.4-mini-2026-03-17` for comparison
+($0.75 / $4.50).
 
-Proposed per-request hard caps: scope 2,000 input/300 output, answer 12,000/2,000,
-verification 14,000/300, embedding 1,000 input tokens. Reserve **$0.03/request**
-conservatively using worst applicable/uncached prices. Use the correct tokenizer;
-characters alone do not bound tokens. Minimal/disabled reasoning is preferred if
-evaluation permits; output caps must include reasoning tokens. Recalculate the
-reservation whenever model, price, token caps, or retry policy changes.
+`claude-opus-5-5` is the default answer model. The cheaper Sonnet and Haiku
+candidates run in the same evaluation. **The owner chooses the production answer
+model from those results, together with the budget below.** Choosing a cheaper
+model is a product decision, not an automatic downgrade.
 
-At startup, compute worst-case cost from an allowlisted model/price/cap table and
-refuse to enable AI if it exceeds the reservation or pricing is unknown. Cache
-write premiums and retry allowances must be included. Low output caps can truncate
-verification; measure abstention/truncation rather than treating it as good quality.
+### Example cost per request
 
-Split $25/month into **$20 interactive + $5 indexing/evaluation**, with **$1/day**
-as an upper interactive daily bound. Pace the daily allowance using the lower of
-that bound and remaining interactive money divided by remaining calendar days;
-cap anonymous spending at 25% of the resulting allowance. $20 covers roughly
-1,400 typical responses under the example,
-not a guaranteed allocation; abuse and unresolved reservations reduce it.
+Claude tokenizers can count noticeably more tokens than OpenAI's for the same
+text. Plan with 1.3× the earlier OpenAI estimates until `count_tokens`
+measurements replace them. Example request:
+
+| Stage | Tokens (input / output) | Cost |
+| --- | --- | --- |
+| Scope | 1,300 / 160 | $0.0002 |
+| Answer | 10,400 / 2,360, including about 800 thinking tokens | $0.089 on Opus 5.5 |
+| Check | 13,000 / 260 | $0.0014 |
+| Embedding | — | ~$0 |
+
+Total per request:
+
+| Answer model | Typical | Hard-cap reservation |
+| --- | --- | --- |
+| Opus 5.5 | about $0.09 | $0.14 |
+| Sonnet 5.5 | about $0.046 | $0.07 |
+| Haiku 5.5 | about $0.004 | $0.01 |
+
+These exclude ingestion, evaluations, taxes and hosting. Meter all billable
+output, including thinking. Built-in web or file tools are unnecessary.
+
+**Hard caps,** in provider tokens:
+
+| Stage | Input | Output |
+| --- | --- | --- |
+| Scope | 2,600 | 400 |
+| Answer | 16,000 | 3,000, including thinking |
+| Check | 18,000 | 600, including thinking |
+| Embedding | 1,000 | — |
+
+Context assembly bounds input with the provider's tokenizer: Anthropic
+`messages.countTokens`, or a measured margin. Characters alone do not bound
+tokens.
+
+**Prompt caching:** only the frozen system prefix of each stage is cached, with
+the 5-minute TTL and at most 4,000 tokens. The reservation is the **sum over all
+stages** of each stage's hard-cap cost at the worst applicable price, plus the
+cache-write premium on its cached prefix:
+
+| Answer model | Uncached sum | Answer-prefix premium | Haiku scope and check prefixes | Total | Reservation |
+| --- | --- | --- | --- | --- | --- |
+| Opus 5.5 | $0.1266 | 4,000 × $1/M = $0.004 | $0.0002 | about $0.131 | $0.14 |
+| Sonnet 5.5 | $0.0646 | 4,000 × $0.50/M = $0.002 | $0.0002 | about $0.067 | $0.07 |
+| Haiku 5.5 | $0.0057 | $0.0001 | $0.0002 | about $0.006 | $0.01 |
+
+Recalculate whenever a model, price, cap, TTL, cached-prefix size or retry policy
+changes.
+
+At startup, compute this per-request sum from the allowlisted
+provider/model/price/cap table. Refuse to enable AI if the sum exceeds the
+configured reservation, or if any reachable model's pricing is unknown. A
+per-stage check is not enough. Low output caps can truncate verification; measure abstention and
+truncation rather than treating them as good quality.
+
+### Anthropic call settings
+
+- Construct the client with `maxRetries: 0` and a per-request `timeout` (in
+  milliseconds) inside each stage's deadline.
+- Use `messages.parse` with `output_config.format` built from the stage's Zod
+  schema.
+- Check `stop_reason` before reading content: `refusal`, `max_tokens` or a null
+  `parsed_output` fails the stage.
+- Settle from `usage` (`input_tokens`, `output_tokens`,
+  `cache_creation_input_tokens`, `cache_read_input_tokens`).
+- Cache the frozen system prompt. Low traffic means cache hits will be rare, so
+  do not budget on them.
+- No assistant prefill, sampling parameters, server tools or Files API.
+- Anthropic recommends server-side refusal fallbacks (`fallbacks: "default"`)
+  for Opus. Keep them off until the cost gate prices every permitted fallback
+  target and settles both attempts from `usage.iterations`. Until then a refusal
+  is a failed stage that returns case cards.
+
+### Budget
+
+Split $100/month into **$80 interactive + $20 indexing/evaluation**, with
+**$3/day** as an upper interactive daily bound. The owner set $100 while the $200
+Anthropic credit lasts. Revisit it when the credit runs out; all of these are
+runtime configuration. The indexing/evaluation share covers embedding passes and
+budgeted evaluation runs: one 100-question run with the Opus answer model costs
+about $9. Pace the daily allowance using the lower of
+that bound and remaining interactive money divided by remaining calendar days.
+Cap anonymous spending at 25% of the resulting allowance.
+
+What $80 covers depends on the answer model:
+
+| Answer model | Typical answers per month | Anonymous searches per day |
+| --- | --- | --- |
+| Opus 5.5 | about 890 (about 30 per day) | about 7 (2 complete trials) |
+| Sonnet 5.5 | about 1,700 | about 14 |
+| Haiku 5.5 | far more; per-user limits bind first | per-user and network limits bind first |
+
+None of these is a guaranteed allocation; abuse and unresolved reservations reduce
+them. Opus 5.5 stays the default answer model. The owner picks the production
+model from the evaluation results (§12).
+
 Compute remaining money after subtracting settled charges and the full amount of
-all unsettled/uncertain reservations. Pacing must never make those funds available
-again merely because a request or lease expired.
+all unsettled or uncertain reservations. Pacing must never make those funds
+available again merely because a request or lease expired.
 
 The provisional corpus has approximately 31.9 million tokens before deduplication
 and overlap: roughly **$0.64 for one embedding pass** at the stated price. This
 is a character-based estimate, not a measured token bill. Bulk LLM extraction is
 separate and can cost far more. Start with a capped maintenance-related sample,
-retain unprocessed values, and expand only after quality/cost measurements.
+retain unprocessed values, and expand only after quality and cost measurements.
 
-Set Responses `store: false`, avoid provider background execution, and send only
-bounded questions/public evidence. This is not zero retention; the
-[OpenAI data-controls documentation](https://developers.openai.com/api/docs/guides/your-data)
-describes separate abuse-monitoring and other retention. Disclose actual processing.
+### Data handling
+
+Send only bounded questions and public evidence. Do not use provider-side
+storage features:
+
+- **Anthropic:** the Messages API holds no conversation state for the app; do not
+  use Files, Batches or Managed Agents for user content.
+- **OpenAI adapter:** `store: false`, and no background execution.
+- **Embeddings:** inputs are the question text and public passages.
+
+This is not zero retention. Each provider retains API data under its own terms;
+see the [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data)
+and Anthropic's current commercial data-retention terms. Zero data retention
+requires a separate agreement. Verify the terms before launch and disclose the
+actual processing.
 
 ## 10. Interface and dashboard direction
 
-Use warm off-white surfaces, dark navy text, restrained teal accents, fine borders,
-generous spacing, and a locally served readable font. Evidence dominates the page;
-avoid decorative cockpit graphics and endless chat bubbles.
+The [interface design](UI_DESIGN.md) defines the visual language, every screen,
+states and copy, night mode, phone layout, print, and accessibility. It supersedes
+earlier visual notes here. In short: chart paper surfaces, ink for NTSB text, chart
+blue for anything clickable, magenta only for AI output, and self-hosted B612 and
+Source Serif 4. Evidence dominates the page; avoid decorative cockpit graphics and
+endless chat bubbles.
 
 Desktop: compact header with Explore/Dashboard, question box and example prompts,
 filter chips, results, evidence drawer, and a four-case comparison tray. Mobile:
@@ -498,7 +701,8 @@ accessible filter/evidence drawers and stacked comparison cards. Support keyboar
 focus, screen readers, contrast, reduced motion, and labels beyond color.
 
 Each case shows number, date, aircraft, location, why it matched, evidence category,
-source excerpt, completion status, and original-report link. Citations open exact
+source excerpt, completion status, and source provenance: the direct report link
+when resolved, otherwise the labelled search fallback from §4. Citations open exact
 sections with context. Distinguish NTSB text from application interpretation. Show
 actual coverage/freshness, trial balance, and useful loading, empty, limit, and error
 states. The user should never need to understand embeddings to judge an answer.
@@ -528,15 +732,18 @@ flowchart LR
     T --> A[Fastify API and built React assets]
     A --> P[(Application PostgreSQL database)]
     A --> E[(Aviation search indices)]
-    A --> O[OpenAI API]
+    A --> M[Language-model API: Anthropic first, OpenAI optional]
+    A --> V[OpenAI embeddings API]
     N[NTSB sources] --> W[Restricted ingestion worker]
     W --> P
     W --> E
-    W --> O
+    W --> M
+    W --> V
     A -. Sanitized telemetry .-> L[Private Langfuse dashboard and storage]
     W -. Sanitized telemetry .-> L
     R[TypeScript experiment runner] --> E
-    R --> O
+    R --> M
+    R --> V
     R --> P
     R -. Traces and evaluation scores .-> L
 ```
@@ -603,7 +810,9 @@ not a guarantee of no vulnerabilities. The Langfuse additions postdate the Octob
 review and must be included in the implementation review.
 
 Block public launch on unresolved critical/high issues, failed auth/origin/budget
-tests, or evidence-classification failures. Build a 60–100-question set, split by
+tests, or evidence-classification failures. Run the same gates for every
+provider/model combination before operators can enable it (§9), and record which
+combination produced each score. Build a 60–100-question set, split by
 case to prevent overlapping-chunk leakage. Include confirmed faults, negative
 examinations, noncausal defects, unknowns, pilot beliefs, timing ambiguity,
 multiaircraft cases, negation, and attacks. Have an instructor/analyst adjudicate
@@ -628,7 +837,7 @@ Proposed targets to measure:
 Network-independent tests run in CI. Prepared-dataset ("offline") evaluations can
 call real models: run them only as explicit, budgeted jobs, recording dataset,
 corpus, prompt, model, evaluator, and code versions. Missing/failed required scores
-must fail the release gate. Background production judges use the same $5/month
+must fail the release gate. Background production judges use the same $20/month
 indexing/evaluation allocation and shared paid-call gate; Langfuse cost charts do
 not enforce the app's spending limit. Aim for
 subsecond cached browsing and roughly ten-second AI responses, then measure on
@@ -638,17 +847,18 @@ the target host; these are targets, not observed benchmarks.
 
 | Milestone | Deliverable | Exit condition |
 | --- | --- | --- |
-| 1. Data and keyword search | TypeScript importer, canonical schema, 2008+ US slice, filters, case page | Completion mapping/counts/joins verified; no LLM needed |
+| 1. Data and keyword search | TypeScript importer, canonical schema, 2008+ US slice, report-link mapping, minimal UI on the final design system (keyword search, filters, results, case page) | Completion mapping/counts/joins/report links verified; no LLM needed |
 | 2. Evidence retrieval | Chunks, embeddings, application RRF, cited comparison, Langfuse traces and TypeScript experiments | Seed cases correct; baseline/holdout scores recorded; telemetry capture checked |
-| 3. Interface | Search workspace, evidence drawer, comparison, basic dashboard | Instructor can find and verify a case independently |
-| 4. Public-beta controls | Google login, trial, consent, Turnstile, atomic quotas/spend, bounded production evaluation | Adversarial/auth/concurrency and telemetry privacy/retention tests pass privately |
+| 3. Complete search and evidence workspace | AI answers and refinements, evidence drawer, comparison, basic dashboard | Instructor can find and verify a case independently |
+| 4. Public-beta controls | Google login, trial, privacy notice, Turnstile, atomic quotas/spend, bounded production evaluation | Adversarial/auth/concurrency and telemetry privacy/retention tests pass privately |
 | 5. Review and launch | Claude code/config review, fixes, restore drill, tunnel/domain | Launch gates pass; enable a small public beta |
-| 6. Extend coverage | Historical sources, Enterprise API, reviewed enrichment | Coverage and quality remain explicit |
+| 6. Extend coverage | Historical sources, reviewed enrichment | Coverage and quality remain explicit |
 
 First slice: import the four seed cases, index their sections, answer the motivating
 question, and click every evidence reference. Expand the corpus before advanced
-dashboard graphics. Prioritize the Enterprise API transition by its deadline even
-if historical backfill or advanced features slip.
+dashboard graphics. Start the Enterprise API access/schema investigation alongside
+milestone 1 and deliver its adapter before the April 5, 2027 transition, even if
+historical backfill or advanced features slip.
 
 ## 14. Decisions and remaining verification
 
@@ -658,11 +868,13 @@ Promptfoo dependency in version one. Plain TypeScript orchestration remains.
 
 Defaults awaiting feedback: monthly budget and breadth of initial coverage.
 Technical unknowns: completion codes, historical schemas, partial-update semantics,
-Enterprise API access/pagination, actual model availability, evaluated quality,
+Aviation Search export fields/limits for report links, Enterprise API
+access/pagination, actual model availability, evaluated quality,
 and measured Langfuse resource/retention behavior on the deployment host.
 These are implementation tasks, not concealed assumptions of production readiness.
 
 Before implementing public login/access, configure Google OAuth for the final
-origin, Turnstile, an app-specific OpenAI project/key, restricted database/search
+origin, Turnstile, an app-specific Anthropic workspace/key, an app-specific OpenAI
+project/key for embeddings, restricted database/search
 credentials, and a privacy/contact notice. Environment configuration keeps the app
 reproducible without any particular private network or shared secrets file.

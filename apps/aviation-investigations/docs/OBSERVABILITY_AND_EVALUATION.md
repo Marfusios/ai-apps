@@ -3,8 +3,9 @@
 **Decision, 2026-10-21.** Use self-hosted **Langfuse** for the developer dashboard,
 tracing, scores, datasets, and experiments. Implement aviation-specific evaluators
 in TypeScript. Keep Vitest, Fastify injection tests, and Playwright for ordinary
-software behavior. This describes planned work; nothing is deployed or instrumented
-yet. See the [implementation design](DESIGN.md) for the application and launch gates.
+software behavior. A shared Langfuse v4 service exists with separate development
+and production projects; the application is not implemented or instrumented yet.
+See the [implementation design](DESIGN.md) for the application and launch gates.
 
 Use Langfuse's existing UI. Jaeger and a custom Jaeger dashboard/plugin are outside
 the first release. Promptfoo is optional future tooling if a concrete need emerges;
@@ -193,8 +194,8 @@ monitoring scores cannot retroactively protect an answer already shown to a user
   retention design update and matching privacy notice.
 - **One spending boundary.** The PostgreSQL ledger remains authoritative. All
   experiments and background model judges reserve/settle spend through the shared
-  gate and consume the proposed $5/month indexing/evaluation allocation. Enforce the
-  overall $25 ceiling and global concurrency. Sampling and Langfuse cost charts do
+  gate and consume the proposed $20/month indexing/evaluation allocation. Enforce the
+  overall $100 ceiling and global concurrency. Sampling and Langfuse cost charts do
   not authorize spending or replace reconciliation. Missing usage remains unknown.
 - **Evaluator execution.** Keep provider credentials in the application/evaluation
   worker, not in autonomous Langfuse judge configurations for version one. A direct
@@ -218,6 +219,13 @@ Use Compose project `ai-observability` to group its services; avoid fixed global
 container names. The aviation app connects through configuration and remains
 runnable with tracing disabled. Its README will document a portable local
 observability option when implementation begins; no private host is required.
+
+The shared deployment runs Langfuse v4 on its event-based ingestion path; legacy
+`trace-create`/`generation-create` ingestion is rejected. Pin a compatible
+OpenTelemetry-based TypeScript SDK, check the instance's published
+`/api/openapi.yaml`, and verify one small trace and experiment early in milestone 2.
+Its 30-day trace limit is applied by a scheduled cleanup job using the public
+deletion API; deletion is asynchronous. [v4 migration](https://langfuse.com/integrations/native/opentelemetry/migration-to-v4).
 
 Langfuse's current architecture includes web/worker services, PostgreSQL,
 ClickHouse, Redis/Valkey, and S3-compatible object storage. It cannot use our

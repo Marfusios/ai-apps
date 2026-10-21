@@ -8,6 +8,8 @@ analysts exploring similar events.
 
 - [Implementation design](docs/DESIGN.md): TypeScript stack, retrieval, UI,
   authentication, cost controls, deployment, and delivery milestones.
+- [Interface design](docs/UI_DESIGN.md): visual language, screens, states and
+  copy, night mode, phone layout, print, and accessibility.
 - [Tracing and evaluation](docs/OBSERVABILITY_AND_EVALUATION.md): Langfuse dashboard,
   TypeScript experiments, development/production workflows, and privacy boundaries.
 - [Data assessment](docs/DATA_REVIEW.md): measured archive contents, schema traps,
@@ -21,8 +23,9 @@ The initial slice is completed US investigations from 2008 onward. Earlier recor
 need additional source adapters; the UI must show actual coverage. Findings and
 generated interpretations will be distinguishable and linked to NTSB evidence.
 
-The proposed app uses React/Vite, Fastify, PostgreSQL, Elasticsearch, the OpenAI
-API, and self-hosted Langfuse for tracing and evaluations. Custom TypeScript
+The proposed app uses React/Vite, Fastify, PostgreSQL, Elasticsearch, the Anthropic
+API for language models (switchable to OpenAI at deployment), OpenAI embeddings,
+and self-hosted Langfuse for tracing and evaluations. Custom TypeScript
 evaluators complement Vitest and other software tests. Langfuse supplies the
 developer UI; Jaeger/custom dashboard work and Promptfoo are not initial dependencies.
 

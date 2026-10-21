@@ -85,6 +85,26 @@ spans, duplicate instrumentation, cross-project/feedback access, deletion across
 tracing stores and exports, budget enforcement for judges, and behavior during
 Langfuse outages. Missing evaluation results must not silently pass release gates.
 
+Later clarifications on the same date are also outside the October 16 reviews:
+report-link mapping from Aviation Search exports, brief refinements with
+server-owned intent, and the runtime `GET /api/config` endpoint replacing a
+build-time Turnstile site key. The implementation review must cover them.
+
+The 2026-10-21 interface and provider decisions are also unreviewed:
+
+- Language models move to Anthropic behind a deployment-time provider interface,
+  with OpenAI kept for embeddings. This means two provider keys, per-request
+  reservations of $0.14 (Opus answer model) instead of $0.03, and a $100 monthly
+  ceiling instead of $25.
+- A public AI-availability endpoint.
+- Moving an anonymous brief to a new account at sign-in.
+- Brief-only AI content: AI output appears only inside the viewer's own live
+  brief.
+
+The implementation review must cover these. It must check in particular that no
+reachable model, including any refusal-fallback target, lacks an allowlisted
+price.
+
 ## Required implementation review before launch
 
 Review a fixed code commit and deployment configuration with Claude Fable or Opus,

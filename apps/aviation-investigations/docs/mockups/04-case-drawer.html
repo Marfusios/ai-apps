@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case drawer · Casebook mockup</title>
+<style>
+  :root { --bg:#f5f5f7; --bg-secondary:#fff; --border:#d1d1d6; --text-primary:#1d1d1f; --text-secondary:#6e6e73; --accent:#1F519A; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .mk-top { padding:12px 24px; border-bottom:1px solid var(--border); background:var(--bg-secondary); font-size:.85rem; color:var(--text-secondary); display:flex; gap:16px; flex-wrap:wrap; }
+  .mk-top a { color:var(--accent); }
+  main { max-width:1180px; margin:0 auto; padding:24px 16px 48px; }
+  h2 { font-size:1.5rem; font-weight:600; margin:0 0 .5rem; }
+  .subtitle { color:var(--text-secondary); margin:0 0 1.5rem; }
+</style></head><body>
+<div class="mk-top"><a href="index.html">All mockups</a><span>Working mockup from the 2026-10-21 design session. The chosen option is marked; <a href="../UI_DESIGN.md">UI_DESIGN.md</a> is the specification.</span></div>
+<main>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  .homes { display:flex; flex-direction:column; gap: 2.4rem; }
+  .hm-meta { display:flex; gap:1rem; align-items:baseline; justify-content:space-between; padding:.2rem 0 .6rem; }
+  .hm-meta h3 { margin:0; font-size:1.05rem; } .hm-meta p { margin:0; color:var(--text-secondary); font-size:.88rem; }
+  .pick { border:1px solid var(--border); border-radius:999px; padding:.3rem .9rem; font-size:.85rem; cursor:pointer; white-space:nowrap; background: var(--bg-secondary); }
+  .pick.selected { background: var(--accent); color:#fff; border-color: var(--accent); }
+
+  .sx { --paper:#F3EEE1; --raised:#FBF8F0; --ink:#1E2A36; --mute:#5D6670; --blue:#1F519A; --mag:#A0166C; --hair:rgba(31,81,154,.2); --tint:#E8E2CC;
+    background:
+      repeating-linear-gradient(0deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(90deg, rgba(31,81,154,.055) 0 1px, transparent 1px 56px), var(--paper);
+    color:var(--ink); font-family:'B612',sans-serif; font-size:13px; line-height:1.45; border-radius:10px; overflow:hidden; position:relative; }
+  .sx * { box-sizing:border-box; }
+  .sx .bar { display:flex; align-items:center; gap:1.4rem; padding:11px 22px; border-bottom:2px solid var(--blue); position:relative; background: rgba(243,238,225,.92); z-index:2; }
+  .sx .bar::after { content:""; position:absolute; left:0; right:0; bottom:-8px; height:6px; opacity:.7;
+    background: repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 9px) 0 0/100% 3px no-repeat,
+                repeating-linear-gradient(90deg, var(--blue) 0 1px, transparent 1px 45px) 0 0/100% 6px no-repeat; }
+  .sx .logo { font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--blue); display:flex; align-items:center; gap:8px; }
+  .sx .nav { display:flex; gap:1.1rem; } .sx .nav span { color:var(--mute); } .sx .nav .on { color:var(--ink); border-bottom:2px solid var(--blue); }
+  .sx .right { margin-left:auto; display:flex; gap:.9rem; align-items:center; }
+  .sx .trial { color:var(--mute); font-size:11.5px; } .sx .trial b { color:var(--mag); }
+  .sx .btn { border:1.5px solid var(--blue); color:var(--blue); padding:3px 11px; border-radius:999px; font-size:11.5px; }
+  .sx .eyebrow { font-size:11px; letter-spacing:.16em; color:var(--blue); font-weight:700; }
+  .sx h1 { font-family:'Source Serif 4',serif; font-weight:600; letter-spacing:-.01em; margin:.35rem 0 .5rem; line-height:1.08; }
+  .sx .lede { color:var(--mute); font-size:14px; max-width:46ch; }
+  .sx .ask { background:var(--raised); border:1.5px solid var(--blue); border-radius:14px; padding:12px 12px 10px 16px; box-shadow: 0 1px 0 rgba(31,81,154,.15), 0 10px 30px -18px rgba(30,42,54,.45); }
+  .sx .ask .ph { font-family:'Source Serif 4',serif; font-style:italic; color:#7b828a; font-size:16px; min-height:44px; }
+  .sx .ask .acts { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .sx .ask .hint { color:var(--mute); font-size:11px; margin-right:auto; }
+  .sx .b-search { border:1.5px solid var(--blue); color:var(--blue); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
+  .sx .b-ai { background:var(--mag); color:#fff; padding:6px 14px; border-radius:999px; font-size:12px; font-weight:700; display:flex; gap:6px; align-items:center; }
+  .sx .b-ai small { font-weight:400; opacity:.85; }
+  .sx .ex { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .sx .ex span { border:1px solid var(--hair); background:rgba(251,248,240,.75); border-radius:999px; padding:3px 10px; font-size:11.5px; color:var(--ink); }
+  .sx .ex span::before { content:"↳ "; color:var(--blue); }
+  .sx .legend { position:absolute; right:22px; bottom:18px; background:rgba(251,248,240,.92); border:1px solid var(--blue); padding:8px 11px; font-size:10.5px; color:var(--ink); z-index:2; }
+  .sx .legend b { display:block; letter-spacing:.14em; color:var(--blue); font-size:9.5px; margin-bottom:3px; }
+  /* briefing sheet behind the drawer (dimmed) */
+  .dw { height: 1180px; }
+  .dw .col { max-width:600px; margin:0 0 0 28px; padding:24px 0; }
+  .dw .shade { position:absolute; inset:46px 0 0 0; background:rgba(30,42,54,.16); z-index:3; }
+  .sx .q { font-family:'Source Serif 4',serif; font-size:17px; line-height:1.3; margin:0 0 10px; }
+  .sx .chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 14px; }
+  .sx .chip { border:1px solid var(--blue); color:var(--blue); border-radius:6px; padding:2px 8px; font-size:11.5px; }
+  .sx .chip.ai { border-color:var(--mag); color:var(--mag); }
+  .sx .aisum { border-left:3px solid var(--mag); padding:2px 0 2px 14px; margin:0 0 16px; font-family:'Source Serif 4',serif; font-size:14px; line-height:1.5; }
+  .sx .g { display:inline-block; width:11px; height:11px; border-radius:50%; border:1.6px solid var(--mag); vertical-align:-1px; margin-right:7px; flex:none; }
+  .sx .g.f { background:var(--mag); } .sx .g.h { background:linear-gradient(90deg,var(--mag) 50%,transparent 50%); }
+  .sx .grp { display:flex; align-items:center; font-weight:700; font-size:12px; margin:14px 0 7px; }
+  .sx .kc { background:var(--raised); border:1px solid var(--hair); border-radius:10px; padding:11px 14px; margin-bottom:8px; font-size:12px; }
+  .sx .kc.open { border-color:var(--blue); box-shadow: inset 3px 0 0 var(--blue); }
+  .sx .no { font-family:'B612 Mono',monospace; font-weight:700; color:var(--blue); }
+
+  /* the drawer */
+  .dr { position:absolute; top:46px; right:0; bottom:0; width:58%; min-width:470px; z-index:4; background:var(--raised);
+        border-left:2px solid var(--blue); box-shadow:-30px 0 60px -30px rgba(30,42,54,.55); display:flex; flex-direction:column; }
+  .dr .tb { display:flex; align-items:center; gap:14px; padding:9px 24px; border-bottom:1px solid var(--hair); font-size:11.5px; color:var(--blue); background:rgba(243,238,225,.6); }
+  .dr .tb .x { font-size:15px; line-height:1; color:var(--ink); }
+  .dr .tb .nav2 { color:var(--mute); } .dr .tb .sp { margin-left:auto; }
+  .dr .tb .pill { border:1.5px solid var(--blue); border-radius:999px; padding:2px 10px; }
+  .dr .body { padding:22px 30px 26px; overflow:hidden; }
+  .dr .eb { display:flex; align-items:center; gap:10px; font-size:11px; }
+  .dr .eb .no { font-size:13px; letter-spacing:.04em; }
+  .dr .st { font-size:9.5px; letter-spacing:.14em; font-weight:700; border:1px solid var(--ink); border-radius:3px; padding:1px 5px; }
+  .dr .tt { font-family:'Source Serif 4',serif; font-weight:600; font-size:26px; line-height:1.12; letter-spacing:-.01em; margin:8px 0 6px; }
+  .dr .meta { color:var(--mute); font-size:12.5px; }
+  .dr .meta b { color:var(--ink); font-weight:400; }
+  .dr .verdict { display:inline-flex; align-items:center; margin-top:12px; padding:4px 11px 4px 9px; border:1px solid rgba(160,22,108,.45); border-radius:999px; color:var(--mag); font-size:12px; font-weight:700; }
+  .dr .verdict small { font-weight:400; margin-left:8px; opacity:.85; font-size:10px; letter-spacing:.12em; }
+  .dr .caution { margin-top:14px; font-size:12px; line-height:1.45; padding:8px 12px; border:1px solid rgba(30,42,54,.45); border-radius:6px;
+        background: repeating-linear-gradient(135deg, rgba(30,42,54,.1) 0 2px, transparent 2px 7px), var(--raised); }
+  .dr .caution b { font-size:9.5px; letter-spacing:.14em; display:block; margin-bottom:1px; }
+  .dr .sec { margin-top:24px; }
+  .dr .sh { display:flex; align-items:center; gap:8px; font-size:10px; letter-spacing:.16em; font-weight:700; margin-bottom:9px; }
+  .dr .sh::after { content:""; flex:1; height:1px; background:var(--hair); }
+  .dr .sh .tag { order:2; font-size:9px; letter-spacing:.12em; color:var(--mute); font-weight:400; }
+  .dr .sh .tag.ai { color:var(--mag); }
+  .dr svg.prof { width:100%; height:auto; display:block; }
+  .dr .wxline { margin-top:10px; font-size:12.5px; line-height:1.7; }
+  .dr .wxline .v { font-family:'B612 Mono',monospace; font-size:11.5px; background:rgba(31,81,154,.07); border-radius:3px; padding:1px 5px; }
+  .dr .wxline .n { color:var(--mute); font-size:11.5px; display:block; line-height:1.4; margin-top:2px; }
+  .dr .pc { font-family:'Source Serif 4',serif; font-size:15.5px; line-height:1.5; margin:0; }
+  .dr .finds { margin-top:10px; }
+  .dr .finds div { padding:6px 0; border-top:1px solid var(--hair); font-size:12.5px; }
+  .dr .finds .cz { font-size:9px; letter-spacing:.12em; font-weight:700; border:1px solid var(--ink); border-radius:3px; padding:0 4px; margin-right:8px; vertical-align:1px; }
+  .dr .aibox { border:1px solid rgba(160,22,108,.35); background:rgba(160,22,108,.035); border-radius:10px; padding:4px 14px; }
+  .dr .aibox div { padding:7px 0; border-top:1px solid rgba(160,22,108,.15); font-size:13px; line-height:1.4; }
+  .dr .aibox div:first-child { border-top:0; }
+  .dr .aibox .k { display:block; font-size:9.5px; letter-spacing:.14em; color:var(--mag); font-weight:700; margin-bottom:1px; }
+  .dr .aibox .jump { color:var(--blue); font-size:11px; white-space:nowrap; }
+  .dr .psg { font-family:'Source Serif 4',serif; font-size:14.5px; line-height:1.6; margin:0; color:#6b737b; }
+  .dr .psg mark { color:var(--ink); background:rgba(31,81,154,.12); border-bottom:1.5px solid var(--blue); padding:1px 2px; }
+  .dr .more { display:inline-block; margin-top:6px; color:var(--blue); font-size:12px; }
+  .dr .foot2 { margin-top:24px; padding-top:12px; border-top:1px solid var(--hair); font-size:11.5px; color:var(--mute); line-height:1.6; }
+  .dr .foot2 .src { color:var(--blue); font-weight:700; }
+
+  /* variant 2 extras */
+  .dr .spec { margin-top:4px; }
+  .dr .spec div { display:flex; gap:16px; padding:7px 0; border-top:1px solid var(--hair); font-size:12.5px; }
+  .dr .spec div:first-child { border-top:0; }
+  .dr .spec .k { color:var(--mute); width:120px; flex:none; }
+  .dr .spec .k small { display:block; font-size:10px; }
+  .dr .acc { border-top:1px solid var(--hair); padding:10px 0; font-size:13px; display:flex; }
+  .dr .acc span { margin-left:auto; color:var(--blue); }
+  .dr .acc:last-of-type { border-bottom:1px solid var(--hair); }
+</style>
+
+<h2>Case drawer: how should a case read when you open it?</h2>
+<p class="subtitle">Opened from the briefing sheet by clicking <b>DFW08TA066</b>. Every value is from the real NTSB record, including its genuine date and injury conflict. Single column in both, no side-by-side panels. Same pieces, different order.</p>
+
+<div class="homes">
+
+<!-- ============ D1 CASE FILE (story order) ============ -->
+<div>
+  <div class="hm-meta"><div><h3>1 · Story order</h3><p>Reads like a briefing: what happened, the flight, conditions, what investigators established, then why the AI matched it and the exact passage.</p></div><span class="pick selected" data-choice="drawer-story" onclick="toggleSelect(this)">Chosen · 1</span></div>
+  <div class="sx dw">
+    <div class="bar">
+      <div class="logo">AVIATION CASEBOOK</div>
+      <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+      <div class="right"><span class="trial">AI searches left: <b>2 of 3</b></span><span class="btn">Sign in</span></div>
+    </div>
+    <div class="col">
+      <div class="q">Find completed investigations involving engine power loss shortly after maintenance…</div>
+      <div class="chips"><span class="chip ai">“Shortly” = within 30 days or 10 flight hours ✎</span><span class="chip">Completed</span></div>
+      <div class="aisum">Investigators tied one power loss directly to the maintenance <span class="no">DFW08TA066</span>. In a second case…</div>
+      <div class="grp"><i class="g f"></i>Causal fault established</div>
+      <div class="kc open"><span class="no">DFW08TA066</span> · Hughes OH-6 · Valentine, TX</div>
+      <div class="grp"><i class="g h"></i>Defect found, causal link not established</div>
+      <div class="kc"><span class="no">MIA08LA156</span> · Diamond DA20-C1 · Peachtree City, GA</div>
+    </div>
+    <div class="shade"></div>
+
+    <div class="dr">
+      <div class="tb"><span class="x">✕</span><span class="nav2">‹ 1 of 3 ›</span><span class="sp">+ Compare</span><span class="pill">Open full page ↗</span></div>
+      <div class="body">
+        <div class="eb"><span class="no">DFW08TA066</span><span class="st">COMPLETED</span><span style="color:var(--mute)">Accident</span></div>
+        <div class="tt">Hughes OH-6 helicopter, total power loss in a hover near Valentine, Texas</div>
+        <div class="meta"><b>8 Feb 2008</b> · Part 91 public use · Substantial damage · <b>1 minor injury</b></div>
+        <div class="verdict"><i class="g f"></i>Causal fault established<small>AI CLASSIFIED</small></div>
+        <div class="caution"><b>DATA CAUTION</b>The record header says 8 February and a minor injury; the factual narrative says 9 February and serious injuries. Both are shown as published.</div>
+
+        <div class="sec"><div class="sh">THE FLIGHT<span class="tag">NTSB EVENT SEQUENCE</span></div>
+          <svg class="prof" viewBox="0 0 480 104">
+            <path d="M8 72H472" stroke="#1F519A" stroke-width=".8" stroke-dasharray="3 3"/>
+            <path d="M14 72C44 72 56 26 100 26H250C276 26 288 56 316 56H372" fill="none" stroke="#1F519A" stroke-width="1.8"/>
+            <path d="M372 56L392 72" fill="none" stroke="#1E2A36" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <circle cx="372" cy="56" r="5" fill="#1E2A36"/><circle cx="372" cy="56" r="9" fill="none" stroke="#1E2A36" stroke-width=".8"/>
+            <path d="M387 67l10 10M397 67l-10 10" stroke="#1E2A36" stroke-width="1.5"/>
+            <circle cx="14" cy="72" r="3" fill="#1F519A"/>
+            <text x="372" y="40" text-anchor="middle" font-family="B612" font-size="10.5" font-weight="700" fill="#1E2A36">Total power loss</text>
+            <text x="14" y="90" font-family="B612 Mono" font-size="9" fill="#5D6670">MARFA · MRF</text>
+            <text x="316" y="90" text-anchor="middle" font-family="B612 Mono" font-size="9" fill="#5D6670">MANEUVERING</text>
+            <text x="316" y="101" text-anchor="middle" font-family="B612 Mono" font-size="8.5" fill="#5D6670">HOVER 30–50 FT AGL</text>
+            <text x="420" y="90" text-anchor="middle" font-family="B612 Mono" font-size="9" fill="#5D6670">EMERG. DESCENT</text>
+            <text x="420" y="101" text-anchor="middle" font-family="B612 Mono" font-size="8.5" fill="#5D6670">HIT TERRAIN</text>
+          </svg>
+          <div class="wxline"><span class="v">VMC</span> · <span class="v">DAYLIGHT</span> · <span class="v">CLEAR</span> · <span class="v">10 SM</span> · <span class="v">ALTIMETER 30.22</span>
+            <span class="n">Observed at Marfa (MRF), 40 nm from the site, 11:15 local. No METAR text on record.</span></div>
+        </div>
+
+        <div class="sec"><div class="sh">WHAT INVESTIGATORS ESTABLISHED<span class="tag">NTSB</span></div>
+          <p class="pc">The contract mechanic's failure to properly secure the castellated nut that attached the governor lever control rod to the idler bell crank. Contributing to the accident was the lack of maintenance oversight by the operator.</p>
+          <div class="finds"><div><span class="cz">CAUSE</span>Maintenance/inspections: incorrect service or maintenance</div><div><span class="cz">CAUSE</span>Rotorcraft flight control: incorrect use or operation</div></div>
+        </div>
+
+        <div class="sec"><div class="sh">WHY IT'S IN YOUR RESULTS<span class="tag ai">AI READING · CHECK THE PASSAGE</span></div>
+          <div class="aibox">
+            <div><span class="k">TIMING</span>5.1 flight hours after the engine was replaced. <span class="jump">passage ↓</span></div>
+            <div><span class="k">MAINTENANCE</span>Investigators attribute the loss to the reassembly: a missing cotter pin. <span class="jump">passage ↓</span></div>
+          </div>
+        </div>
+
+        <div class="sec"><div class="sh">CITED PASSAGE<span class="tag">NTSB · ANALYSIS</span></div>
+          <p class="psg">…Further examination of the engine revealed that a castellated nut used to secure the governor lever control rod to the idler bell crank had come completely loose, and <mark>the cotter pin that secured the nut was missing. The engine had been replaced 5.1 hours prior to the accident</mark> by a contract maintenance facility. The mechanic stated that during the first engine run-up, he discovered an oil leak…</p>
+          <span class="more">Read the full analysis</span>
+        </div>
+
+        <div class="foot2"><span class="src">NTSB final report (PDF) ↗</span><br>Data snapshot 1 Oct 2026 · Aviation Casebook is not an NTSB service</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ D2 EVIDENCE FIRST ============ -->
+<div>
+  <div class="hm-meta"><div><h3>2 · Evidence first</h3><p>Starts with why you're here: the passage and the AI's reading. Case facts follow as a tidy spec sheet, and the full report sections fold open below.</p></div><span class="pick" data-choice="drawer-evidence-first" onclick="toggleSelect(this)">Choose 2</span></div>
+  <div class="sx dw">
+    <div class="bar">
+      <div class="logo">AVIATION CASEBOOK</div>
+      <div class="nav"><span class="on">Explore</span><span>Dashboard</span></div>
+      <div class="right"><span class="trial">AI searches left: <b>2 of 3</b></span><span class="btn">Sign in</span></div>
+    </div>
+    <div class="col">
+      <div class="q">Find completed investigations involving engine power loss shortly after maintenance…</div>
+      <div class="chips"><span class="chip ai">“Shortly” = within 30 days or 10 flight hours ✎</span><span class="chip">Completed</span></div>
+      <div class="aisum">Investigators tied one power loss directly to the maintenance <span class="no">DFW08TA066</span>. In a second case…</div>
+      <div class="grp"><i class="g f"></i>Causal fault established</div>
+      <div class="kc open"><span class="no">DFW08TA066</span> · Hughes OH-6 · Valentine, TX</div>
+      <div class="grp"><i class="g h"></i>Defect found, causal link not established</div>
+      <div class="kc"><span class="no">MIA08LA156</span> · Diamond DA20-C1 · Peachtree City, GA</div>
+    </div>
+    <div class="shade"></div>
+
+    <div class="dr">
+      <div class="tb"><span class="x">✕</span><span class="nav2">‹ 1 of 3 ›</span><span class="sp">+ Compare</span><span class="pill">Open full page ↗</span></div>
+      <div class="body">
+        <div class="eb"><span class="no">DFW08TA066</span><span class="st">COMPLETED</span><span style="color:var(--mute)">8 Feb 2008 · Valentine, TX</span></div>
+        <div class="tt">Hughes OH-6 helicopter, total power loss in a hover</div>
+        <div class="verdict" style="margin-top:4px"><i class="g f"></i>Causal fault established<small>AI CLASSIFIED</small></div>
+
+        <div class="sec" style="margin-top:18px"><div class="sh">CITED PASSAGE<span class="tag">NTSB · ANALYSIS</span></div>
+          <p class="psg">…had come completely loose, and <mark>the cotter pin that secured the nut was missing. The engine had been replaced 5.1 hours prior to the accident</mark> by a contract maintenance facility…</p>
+          <div class="aibox" style="margin-top:12px">
+            <div><span class="k">TIMING · AI</span>5.1 flight hours after the engine was replaced.</div>
+            <div><span class="k">MAINTENANCE · AI</span>Investigators attribute the loss to the reassembly: a missing cotter pin.</div>
+          </div>
+        </div>
+
+        <div class="sec"><div class="sh">PROBABLE CAUSE<span class="tag">NTSB</span></div>
+          <p class="pc">The contract mechanic's failure to properly secure the castellated nut that attached the governor lever control rod to the idler bell crank. Contributing to the accident was the lack of maintenance oversight by the operator.</p>
+        </div>
+
+        <div class="sec"><div class="sh">CASE FACTS<span class="tag">NTSB RECORD</span></div>
+          <svg class="prof" viewBox="0 0 480 80" style="margin-bottom:6px">
+            <path d="M8 56H472" stroke="#1F519A" stroke-width=".8" stroke-dasharray="3 3"/>
+            <path d="M14 56C44 56 56 18 100 18H250C276 18 288 42 316 42H372" fill="none" stroke="#1F519A" stroke-width="1.8"/>
+            <path d="M372 42L392 56" fill="none" stroke="#1E2A36" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <circle cx="372" cy="42" r="5" fill="#1E2A36"/>
+            <text x="372" y="28" text-anchor="middle" font-family="B612" font-size="10.5" font-weight="700" fill="#1E2A36">Total power loss</text>
+            <text x="14" y="74" font-family="B612 Mono" font-size="9" fill="#5D6670">MARFA · MRF</text>
+            <text x="316" y="74" text-anchor="middle" font-family="B612 Mono" font-size="9" fill="#5D6670">MANEUVERING</text>
+            <text x="424" y="74" text-anchor="middle" font-family="B612 Mono" font-size="9" fill="#5D6670">EMERG. DESCENT</text>
+          </svg>
+          <div class="spec">
+            <div><span class="k">Date</span><span>8 Feb 2008 <span class="caution" style="margin:0 0 0 6px; padding:0 6px; display:inline; font-size:11px">narrative says 9 Feb</span></span></div>
+            <div><span class="k">Aircraft</span><span>Hughes OH-6 · helicopter · N66372</span></div>
+            <div><span class="k">Operation</span><span>Part 91 public use · Customs and Border Protection</span></div>
+            <div><span class="k">Phase</span><span>Maneuvering, hover 30–50 ft AGL</span></div>
+            <div><span class="k">Conditions</span><span>VMC · daylight · clear · 10 SM · altimeter 30.22<br><span style="color:var(--mute); font-size:11.5px">Observed at MRF, 40 nm away. No METAR text on record.</span></span></div>
+            <div><span class="k">Injuries</span><span>1 minor <span class="caution" style="margin:0 0 0 6px; padding:0 6px; display:inline; font-size:11px">narrative says serious</span></span></div>
+            <div><span class="k">Damage</span><span>Substantial</span></div>
+          </div>
+        </div>
+
+        <div class="sec"><div class="sh">FULL REPORT TEXT<span class="tag">NTSB</span></div>
+          <div class="acc">Analysis<span>▸</span></div>
+          <div class="acc">Factual narrative<span>▸</span></div>
+          <div class="acc">Findings (2 causes)<span>▸</span></div>
+        </div>
+
+        <div class="foot2"><span class="src">NTSB final report (PDF) ↗</span> · snapshot 1 Oct 2026 · not an NTSB service</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+</main>
+<script>function toggleSelect(){}</script>
+</body></html>
