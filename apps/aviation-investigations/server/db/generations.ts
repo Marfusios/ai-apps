@@ -1,24 +1,77 @@
 /**
  * Dataset generations and manifests (amendment A6). The active manifest names the
  * generation and the two search indices built for it; the API pins every request to
- * it. `publishManifest` flips it atomically; `pruneGenerations` removes old ones.
+ * it. Status changes happen only in the migrator-owned database functions of
+ * migration 0003 (`publish_manifest`, `prune_generation`, `record_verification`,
+ * `seal_generation`), which share one advisory lock with verification.
  */
-import { desc, eq, inArray, sql } from 'drizzle-orm';
-import type { Db, DbOrTx } from './client.js';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { and, eq, gt, isNull, or, sql, type SQL } from 'drizzle-orm';
+import type { Db, DbOrTx, Schema } from './client.js';
+import * as schema from './schema/index.js';
 import {
-  caseAircraft,
-  caseEngines,
-  caseFindings,
-  caseSectionSources,
-  caseSections,
-  caseSequence,
-  cases,
-  codeDictionary,
   datasetGenerations,
   datasetManifests,
-  quarantine,
+  generationPins,
   type GenerationStatus,
+  type VerificationStatus,
 } from './schema/index.js';
+
+/** Advisory lock shared by verification, publication and pruning (also in migration 0003). */
+export const LIFECYCLE_LOCK_KEY = 7_311_905_022;
+
+/**
+ * Version of the generation verifier (`worker/ingest/verify.ts`). Bump it whenever its
+ * checks change: publication requires a successful verification by this version.
+ */
+export const VERIFIER_VERSION = 'verify-v2';
+
+/** A refusal or conflict raised by a lifecycle function, with its SQLSTATE. */
+export class LifecycleError extends Error {
+  readonly code: string | undefined;
+  constructor(message: string, code: string | undefined, cause?: unknown) {
+    super(message, { cause });
+    this.name = 'LifecycleError';
+    this.code = code;
+  }
+}
+
+/** Unwrap Drizzle's query error into the database message (never the query parameters). */
+export function lifecycleError(err: unknown): unknown {
+  const cause = (err as { cause?: unknown }).cause;
+  const pg = (cause instanceof Error ? cause : err) as Error & { code?: string };
+  if (pg instanceof Error && typeof pg.code === 'string') return new LifecycleError(pg.message, pg.code, err);
+  return err;
+}
+
+async function call(db: DbOrTx | NodePgDatabase<Schema>, query: SQL): Promise<Record<string, unknown>[]> {
+  try {
+    return (await db.execute(query)).rows as Record<string, unknown>[];
+  } catch (err) {
+    throw lifecycleError(err);
+  }
+}
+
+/**
+ * Run `fn` on one dedicated connection that holds the lifecycle advisory lock for its
+ * whole duration (session level, so a transaction started inside `fn` takes its
+ * snapshot only after the lock is held).
+ */
+export async function withLifecycleLock<T>(
+  db: Db,
+  fn: (q: NodePgDatabase<Schema>, client: import('pg').PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await db.$client.connect();
+  let locked = false;
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [LIFECYCLE_LOCK_KEY]);
+    locked = true;
+    return await fn(drizzle({ client, schema }), client);
+  } finally {
+    if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]).catch(() => undefined);
+    client.release();
+  }
+}
 
 export interface ActiveManifest {
   generationId: number;
@@ -29,6 +82,8 @@ export interface ActiveManifest {
   mappingVersion: string;
   mappingVerified: boolean;
   citationTextVersion: string;
+  verificationStatus: VerificationStatus | null;
+  verifierVersion: string | null;
 }
 
 /** The active manifest with its generation's versions, or null before the first publish. */
@@ -43,6 +98,8 @@ export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | nu
       mappingVersion: datasetGenerations.mappingVersion,
       mappingVerified: datasetGenerations.mappingVerified,
       citationTextVersion: datasetGenerations.citationTextVersion,
+      verificationStatus: datasetGenerations.verificationStatus,
+      verifierVersion: datasetGenerations.verifierVersion,
     })
     .from(datasetManifests)
     .innerJoin(datasetGenerations, eq(datasetGenerations.id, datasetManifests.generationId))
@@ -51,21 +108,15 @@ export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | nu
   return { ...row, publishedAt: row.publishedAt as Date };
 }
 
-/** Elasticsearch index names: lower-case, no path or wildcard characters. */
+/** Elasticsearch index names: lower-case, no path or wildcard characters (checked again in SQL). */
 const INDEX_NAME = /^[a-z0-9][a-z0-9._-]{0,254}$/;
-const PUBLISHABLE: readonly GenerationStatus[] = ['verified', 'published', 'retired'];
-
-/** Serializes publish and prune; readers are not blocked. */
-async function lockManifests(tx: DbOrTx): Promise<void> {
-  await tx.execute(sql`lock table dataset_manifests in share row exclusive mode`);
-}
 
 /**
- * Make `generationId` the active dataset with the given indices, in one transaction:
- * the previous active manifest is deactivated and its generation becomes `retired`;
- * this generation's manifest is created or updated, activated, and the generation
- * becomes `published`. Only a verified (or previously published) generation can be
- * published. Re-publishing an older generation is a rollback.
+ * Make `generationId` the active dataset with the given indices, atomically
+ * (`publish_manifest`): the previous active generation becomes `retired`, this one
+ * `published`. Requires the generation's latest verification to be ok and made by
+ * the current `VERIFIER_VERSION`, also when re-publishing a retired generation
+ * (rollback).
  */
 export async function publishManifest(
   db: Db,
@@ -76,109 +127,110 @@ export async function publishManifest(
   for (const name of [casesIndex, passagesIndex]) {
     if (!INDEX_NAME.test(name)) throw new Error(`invalid index name: ${JSON.stringify(name)}`);
   }
-  return db.transaction(async (tx) => {
-    await lockManifests(tx);
-    const [gen] = await tx
-      .select({ id: datasetGenerations.id, status: datasetGenerations.status })
-      .from(datasetGenerations)
-      .where(eq(datasetGenerations.id, generationId))
-      .for('update');
-    if (!gen) throw new Error(`generation ${generationId} does not exist`);
-    if (!PUBLISHABLE.includes(gen.status)) {
-      throw new Error(`generation ${generationId} is ${gen.status}; only a verified generation can be published`);
-    }
-    const previous = await tx
-      .update(datasetManifests)
-      .set({ active: false })
-      .where(sql`${datasetManifests.active} and ${datasetManifests.generationId} <> ${generationId}`)
-      .returning({ generationId: datasetManifests.generationId });
-    if (previous.length > 0) {
-      await tx
-        .update(datasetGenerations)
-        .set({ status: 'retired' })
-        .where(inArray(datasetGenerations.id, previous.map((p) => p.generationId)));
-    }
-    const now = new Date();
-    await tx
-      .insert(datasetManifests)
-      .values({ generationId, casesIndex, passagesIndex, publishedAt: now, active: true })
-      .onConflictDoUpdate({
-        target: datasetManifests.generationId,
-        set: { casesIndex, passagesIndex, publishedAt: now, active: true },
-      });
-    await tx.update(datasetGenerations).set({ status: 'published' }).where(eq(datasetGenerations.id, generationId));
-    const active = await getActiveManifest(tx);
-    if (!active || active.generationId !== generationId) throw new Error('manifest activation failed');
-    return active;
-  });
+  await call(db, sql`select publish_manifest(${generationId}, ${casesIndex}, ${passagesIndex}, ${VERIFIER_VERSION})`);
+  const active = await getActiveManifest(db);
+  if (!active || active.generationId !== generationId) throw new Error('manifest activation failed');
+  return active;
+}
+
+export interface PruneOptions {
+  /** Published generations to retain, newest publication first; the active one is always among them. */
+  keep?: number;
+  /** Never-published generations are kept this long after sealing or their latest verification (default 24). */
+  graceHours?: number;
 }
 
 export interface PruneReport {
-  /** Generations kept because they are among the last `keep` published (active first). */
-  kept: number[];
+  /** Retained by publication: the active generation and the next most recently published. */
+  retained: number[];
   deleted: number[];
-}
-
-/** Child-first delete order for one generation's rows. */
-const DELETE_ORDER = [
-  caseSectionSources,
-  caseSections,
-  caseEngines,
-  caseFindings,
-  caseSequence,
-  caseAircraft,
-  cases,
-  codeDictionary,
-  quarantine,
-] as const;
-
-/** Delete every row of one generation, then the generation itself. */
-async function deleteGeneration(tx: DbOrTx, generationId: number): Promise<void> {
-  for (const table of DELETE_ORDER) await tx.delete(table).where(eq(table.generationId, generationId));
-  await tx.delete(datasetManifests).where(eq(datasetManifests.generationId, generationId));
-  await tx.delete(datasetGenerations).where(eq(datasetGenerations.id, generationId));
+  /** Candidates left in place because a pin protects them. */
+  skippedPinned: number[];
 }
 
 /**
- * Keep the last `keep` published generations (by publish time; the active one is
- * always kept) and delete `failed` generations and every other generation older than
- * all kept ones. Generations newer than the oldest kept one that were never published
- * (loaded or verified, awaiting indices) are left alone. Before anything is published
- * only `failed` generations are deleted.
+ * Retention by publication, not by id: keep the last `keep` published generations by
+ * `published_at` (the active one first) and delete every other published or retired
+ * generation. Never-published generations are deleted when `failed`, or when sealed
+ * and unverified/verified for longer than the grace period (counted from the seal,
+ * i.e. the load's commit, or the latest verification), so a slow load committing
+ * late or a generation awaiting its indices is kept. `loading`, active and pinned
+ * generations are never deleted. Runs under the lifecycle lock; each deletion is one
+ * `prune_generation` call.
  */
-export async function pruneGenerations(db: Db, keep = 2): Promise<PruneReport> {
+export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise<PruneReport> {
+  const keep = opts.keep ?? 2;
+  const graceHours = opts.graceHours ?? 24;
   if (!Number.isInteger(keep) || keep < 1) throw new Error('keep must be a positive integer');
-  return db.transaction(async (tx) => {
-    // Deletes and their per-row foreign-key checks use the generation and key indexes.
-    await tx.execute(sql`set local enable_seqscan = off`);
-    await lockManifests(tx);
-    const published = await tx
-      .select({ generationId: datasetManifests.generationId })
-      .from(datasetManifests)
-      .where(sql`${datasetManifests.publishedAt} is not null`)
-      .orderBy(desc(datasetManifests.active), desc(datasetManifests.publishedAt), desc(datasetManifests.generationId))
-      .limit(keep);
-    const kept = published.map((p) => p.generationId);
-    const oldestKept = kept.length > 0 ? Math.min(...kept) : null;
-    const all = await tx
-      .select({ id: datasetGenerations.id, status: datasetGenerations.status })
-      .from(datasetGenerations)
-      .orderBy(datasetGenerations.id)
-      .for('update');
-    const deleted = all
-      .filter((g) => !kept.includes(g.id) && g.status !== 'published')
-      .filter((g) => g.status === 'failed' || (oldestKept !== null && g.id < oldestKept))
-      .map((g) => g.id);
-    for (const id of deleted) await deleteGeneration(tx, id);
-    return { kept, deleted };
+  if (!(graceHours >= 0)) throw new Error('graceHours must be zero or positive');
+  return withLifecycleLock(db, async (q) => {
+    const generations = await call(
+      q,
+      sql`select g.id::int as id, g.status, m.published_at is not null as was_published, coalesce(m.active, false) as active,
+            exists (select 1 from generation_pins p where p.generation_id = g.id
+              and (p.pinned_until is null or p.pinned_until > now())) as pinned,
+            greatest(g.sealed_at, g.verified_at) < now() - make_interval(secs => ${graceHours * 3600}) as past_grace
+          from dataset_generations g left join dataset_manifests m on m.generation_id = g.id
+          order by m.active desc nulls last, m.published_at desc nulls last, g.id`,
+    );
+    const published = generations.filter((g) => g.was_published === true);
+    const retained = published.slice(0, keep).map((g) => Number(g.id));
+    const deleted: number[] = [];
+    const skippedPinned: number[] = [];
+    const candidates = generations
+      .filter((g) => !retained.includes(Number(g.id)) && g.active !== true && g.status !== 'loading')
+      .filter((g) => g.was_published === true || g.status === 'failed' || g.past_grace === true)
+      .map((g) => ({ id: Number(g.id), pinned: g.pinned === true }))
+      .sort((a, b) => a.id - b.id);
+    for (const c of candidates) {
+      if (c.pinned) {
+        skippedPinned.push(c.id);
+        continue;
+      }
+      await call(q, sql`select prune_generation(${c.id})`);
+      deleted.push(c.id);
+    }
+    return { retained, deleted, skippedPinned };
   });
+}
+
+/** Protect a generation from pruning (e.g. for a live brief), until `until` or `unpinGeneration`. */
+export async function pinGeneration(db: DbOrTx, generationId: number, reason: string, until: Date | null = null): Promise<void> {
+  await db
+    .insert(generationPins)
+    .values({ generationId, reason, pinnedUntil: until })
+    .onConflictDoUpdate({ target: [generationPins.generationId, generationPins.reason], set: { pinnedUntil: until } });
+}
+
+export async function unpinGeneration(db: DbOrTx, generationId: number, reason: string): Promise<boolean> {
+  const removed = await db
+    .delete(generationPins)
+    .where(and(eq(generationPins.generationId, generationId), eq(generationPins.reason, reason)))
+    .returning({ generationId: generationPins.generationId });
+  return removed.length > 0;
+}
+
+/** Pins in force for a generation. */
+export async function activePins(db: DbOrTx, generationId: number): Promise<{ reason: string; pinnedUntil: Date | null }[]> {
+  return db
+    .select({ reason: generationPins.reason, pinnedUntil: generationPins.pinnedUntil })
+    .from(generationPins)
+    .where(
+      and(
+        eq(generationPins.generationId, generationId),
+        or(isNull(generationPins.pinnedUntil), gt(generationPins.pinnedUntil, sql`now()`)),
+      ),
+    );
 }
 
 export interface GenerationSummary {
   id: number;
   status: GenerationStatus;
   createdAt: Date;
+  sealedAt: Date | null;
+  verificationStatus: VerificationStatus | null;
   verifiedAt: Date | null;
+  verifierVersion: string | null;
   archiveSha256: string;
   mappingVersion: string;
   mappingVerified: boolean;
@@ -189,12 +241,15 @@ export interface GenerationSummary {
 }
 
 export async function listGenerations(db: DbOrTx): Promise<GenerationSummary[]> {
-  const rows = await db
+  return db
     .select({
       id: datasetGenerations.id,
       status: datasetGenerations.status,
       createdAt: datasetGenerations.createdAt,
+      sealedAt: datasetGenerations.sealedAt,
+      verificationStatus: datasetGenerations.verificationStatus,
       verifiedAt: datasetGenerations.verifiedAt,
+      verifierVersion: datasetGenerations.verifierVersion,
       archiveSha256: datasetGenerations.archiveSha256,
       mappingVersion: datasetGenerations.mappingVersion,
       mappingVerified: datasetGenerations.mappingVerified,
@@ -206,5 +261,4 @@ export async function listGenerations(db: DbOrTx): Promise<GenerationSummary[]> 
     .from(datasetGenerations)
     .leftJoin(datasetManifests, eq(datasetManifests.generationId, datasetGenerations.id))
     .orderBy(datasetGenerations.id);
-  return rows;
 }

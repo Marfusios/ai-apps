@@ -740,7 +740,7 @@ interface RowText {
 }
 
 /** Whitespace-insensitive identity of a canonical text: runs of whitespace -> one space, trimmed. */
-function whitespaceKey(text: string): string {
+export function whitespaceKey(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 

@@ -1,21 +1,37 @@
 /**
  * Generation verification (amendment A6). `verifyCorpus` checks generic invariants of
- * one loaded generation, compares its counts with the normalization stats and the
- * extraction manifest, optionally checks a snapshot verification profile, and then
- * marks the generation `verified` (or `failed`). Its report file holds aggregate
- * counts only: no case numbers, keys or text.
+ * one sealed generation, re-derives every section's citation text from its exported
+ * sources with the normalization code itself, compares counts with the normalization
+ * stats and the extraction manifest, optionally checks a snapshot profile, and records
+ * the outcome through `record_verification`. It holds the lifecycle lock and reads in
+ * one REPEATABLE READ snapshot, so publication and pruning cannot interleave. Its
+ * report file holds aggregate counts only: no case numbers, keys or text.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { and, eq, sql, type SQL } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { z } from 'zod';
-import type { Db } from '../../server/db/client.js';
-import { caseSections, datasetGenerations, type GenerationStatus } from '../../server/db/schema/index.js';
+import type { Db, Schema } from '../../server/db/client.js';
+import { LifecycleError, VERIFIER_VERSION, lifecycleError, withLifecycleLock } from '../../server/db/generations.js';
+import {
+  caseSections,
+  datasetGenerations,
+  type GenerationStatus,
+  type SourceForm,
+  type VerificationStatus,
+} from '../../server/db/schema/index.js';
+import { PHASE_GROUPS } from '../../shared/codes.js';
 import { COMPLETION_MAPPING_V1, completionClassOf, type CompletionMapping } from '../../shared/completion.js';
+import { toCitationText } from './citation-text.js';
 import type { ExtractManifest } from './extract.js';
 import type { GenerationStats } from './load.js';
-import { analyzeCorpus, sectionRevisionId } from './load.js';
+import { analyzeCorpus, reconstructSource, sectionRevisionId } from './load.js';
+import { whitespaceKey } from './normalize.js';
+
+export { VERIFIER_VERSION } from '../../server/db/generations.js';
 
 const APP_DIR = resolve(fileURLToPath(import.meta.url), '../../..');
 export const DEFAULT_VERIFY_DIR = join(APP_DIR, 'data', 'work');
@@ -36,10 +52,21 @@ export interface ProfileResult {
 
 export interface VerifyReport {
   generationId: number;
+  /** Every check (and the profile, if any) passed. */
   ok: boolean;
   /** Generation status before and after verification. */
   statusBefore: GenerationStatus;
   status: GenerationStatus;
+  /**
+   * The generation changed while it was being verified; nothing was recorded and
+   * `status` is the status read at the start. Run verification again.
+   */
+  conflict: boolean;
+  /** Latest recorded verification outcome (unchanged on conflict). */
+  verificationStatus: VerificationStatus | null;
+  verifierVersion: string;
+  /** sha256 of the report file, as recorded on the generation. */
+  reportSha256: string;
   checkedAt: string;
   /** Planner statistics were refreshed before checking. */
   analyzed: boolean;
@@ -88,16 +115,19 @@ export interface VerifyOptions {
   outDir?: string;
   /** A profile to check (its archive hash must match), `null` for none; default: the committed profile for the archive. */
   profile?: VerifyProfile | null;
+  /** Test seam: runs after the checks, before the outcome is recorded. */
+  beforeRecord?: () => Promise<void> | void;
 }
 
 type Row = Record<string, unknown>;
+type Queryable = NodePgDatabase<Schema>;
 
-async function rows(db: Db, query: SQL): Promise<Row[]> {
+async function rows(db: Queryable, query: SQL): Promise<Row[]> {
   const result = await db.execute(query);
   return result.rows as Row[];
 }
 
-async function scalar(db: Db, query: SQL): Promise<number> {
+async function scalar(db: Queryable, query: SQL): Promise<number> {
   const [row] = await rows(db, query);
   const value = row ? Object.values(row)[0] : null;
   return Number(value ?? 0);
@@ -109,6 +139,11 @@ async function scalar(db: Db, query: SQL): Promise<number> {
  * verified generation never depends on the schema alone.
  */
 function invariantQueries(g: number, citationTextVersion: string, mappingVersion: string, runId: number): [string, SQL][] {
+  const phaseOrder = `{${PHASE_GROUPS.join(',')}}`;
+  /** Distinct phase groups of the matching sequence rows, in flight order (`orderPhaseGroups`). */
+  const sequencePhases = (filter: SQL) =>
+    sql`coalesce((select array_agg(d.p order by array_position(${phaseOrder}::text[], d.p))
+          from (select distinct q.phase_group as p from case_sequence q where ${filter}) d), '{}'::text[])`;
   return [
     ['ntsb_no_nonblank', sql`select count(*) from cases where generation_id = ${g} and (ntsb_no = '' or ntsb_no ~ '^\\s|\\s$')`],
     ['ntsb_no_unique', sql`select count(*) - count(distinct ntsb_no) from cases where generation_id = ${g}`],
@@ -192,13 +227,33 @@ function invariantQueries(g: number, citationTextVersion: string, mappingVersion
           where s.generation_id = ${g} and (x.match <> 'exact' or x.transformed_from_html <> s.transformed_from_html)`,
     ],
     [
-      'source_text_reconstructs_to_sha256',
-      sql`select count(*) from case_section_sources x
-          join case_sections s on s.generation_id = x.generation_id and s.section_id = x.section_id
-          where x.generation_id = ${g} and encode(sha256(convert_to(case x.source_form
-            when 'stored' then x.source_text
-            when 'canonical_crlf' then replace(s.text, E'\\n', E'\\r\\n')
-            else s.text end, 'UTF8')), 'hex') is distinct from x.source_sha256`,
+      'section_key_matches_scope',
+      sql`select count(*) from case_sections where generation_id = ${g} and not coalesce(
+            (scope = 'aircraft' and section_key = kind || '/aircraft-' || aircraft_key)
+            or (scope = 'event' and section_key ~ ('^' || kind || '/event-[1-9][0-9]*$')), false)`,
+    ],
+    [
+      'event_defining_phases',
+      sql`select count(*) from cases c where c.generation_id = ${g} and c.defining_phase_groups is distinct from
+          coalesce((select array_agg(d.grp order by d.first_key) from (
+            select a.defining_phase_group as grp, min(a.aircraft_key) as first_key from case_aircraft a
+            where a.generation_id = c.generation_id and a.ntsb_no = c.ntsb_no and a.defining_phase_group is not null
+            group by 1) d), '{}'::text[])`,
+    ],
+    [
+      'event_sequence_phases',
+      sql`select count(*) from cases c where c.generation_id = ${g} and c.sequence_phase_groups is distinct from
+          ${sequencePhases(sql`q.generation_id = c.generation_id and q.ntsb_no = c.ntsb_no`)}`,
+    ],
+    [
+      'aircraft_sequence_phases',
+      sql`select count(*) from case_aircraft a where a.generation_id = ${g} and a.sequence_phase_groups is distinct from
+          ${sequencePhases(sql`q.generation_id = a.generation_id and q.ntsb_no = a.ntsb_no and q.aircraft_key = a.aircraft_key`)}`,
+    ],
+    [
+      'generation_run_succeeded',
+      sql`select count(*) from dataset_generations g where g.id = ${g} and not exists (
+            select 1 from ingestion_runs r where r.id = g.ingestion_run_id and r.status = 'succeeded')`,
     ],
     [
       'answer_eligible_rule',
@@ -241,7 +296,7 @@ function invariantQueries(g: number, citationTextVersion: string, mappingVersion
 }
 
 /** Aggregate measures; the names match `NormalizeStats` where both exist. */
-async function measure(db: Db, g: number): Promise<Record<string, number>> {
+async function measure(db: Queryable, g: number): Promise<Record<string, number>> {
   const [c] = await rows(
     db,
     sql`select
@@ -395,7 +450,7 @@ function sameMapping(a: CompletionMapping, b: CompletionMapping): boolean {
  * for a version defined in code, equal that definition.
  */
 async function completionMismatches(
-  db: Db,
+  db: Queryable,
   g: number,
   mappingVersion: string,
   stats: GenerationStats,
@@ -426,39 +481,146 @@ function checkProfile(profile: VerifyProfile, counts: Record<string, number>): P
   return { name: profile.name, ok: mismatches.length === 0, mismatches };
 }
 
-function nextStatus(current: GenerationStatus, ok: boolean): GenerationStatus {
-  if (current === 'published' || current === 'retired') return current; // never demote a live or previous generation
-  return ok ? 'verified' : 'failed';
+export interface SourceRowForCheck {
+  sourceForm: SourceForm;
+  sourceText: string | null;
+  sourceSha256: string;
+  match: 'exact' | 'whitespace';
+  transformedFromHtml: boolean;
+}
+
+export interface SourceProblems {
+  /** The exported text cannot be rebuilt, or does not hash to `source_sha256`. */
+  hash: boolean;
+  /** Its canonical citation text does not stand in the claimed relation to the section text. */
+  derivation: boolean;
+  /** `transformed_from_html` differs from what the citation normalizer reports. */
+  htmlFlag: boolean;
+}
+
+function sha256Hex(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
 /**
- * Verify generation `generationId` and record the outcome: `loading`/`verified`/`failed`
- * become `verified` when every check passes and `failed` otherwise; a `published` or
- * `retired` generation keeps its status (its `verified_at` is refreshed on success).
- * Writes `<outDir>/verify-gen-<id>.json` (aggregate counts only).
+ * Check one narrative source against its section with the normalization code itself:
+ * rebuild the exported text, hash it, apply `toCitationText` (CITATION_TEXT_VERSION)
+ * and require `exact` sources to produce the section text and `whitespace` sources a
+ * text that differs from it only in whitespace.
+ */
+export function sourceProblems(sectionText: string, src: SourceRowForCheck): SourceProblems {
+  let source: string;
+  try {
+    source = reconstructSource(sectionText, src.sourceForm, src.sourceText);
+  } catch {
+    return { hash: true, derivation: true, htmlFlag: true };
+  }
+  const hash = sha256Hex(source) !== src.sourceSha256;
+  const citation = toCitationText(source);
+  const derivation =
+    src.match === 'exact'
+      ? citation.text !== sectionText
+      : citation.text === sectionText || whitespaceKey(citation.text) !== whitespaceKey(sectionText);
+  return { hash, derivation, htmlFlag: citation.transformedFromHtml !== src.transformedFromHtml };
+}
+
+/** Rows per page when streaming sources (bounded memory). */
+const SOURCE_PAGE = 2000;
+
+/** Stream every source of generation `g` (keyset pages) and count the problems. */
+async function checkSources(q: Queryable, g: number): Promise<Record<keyof SourceProblems, number>> {
+  const totals = { hash: 0, derivation: 0, htmlFlag: 0 };
+  let after: { sectionId: string; key: number } | null = null;
+  for (;;) {
+    const page: Row[] = await rows(
+      q,
+      sql`select x.section_id, x.source_aircraft_key, x.source_form, x.source_text, x.source_sha256, x.match,
+            x.transformed_from_html, s.text
+          from case_section_sources x
+          join case_sections s on s.generation_id = x.generation_id and s.section_id = x.section_id
+          where x.generation_id = ${g}
+            ${after ? sql`and (x.section_id, x.source_aircraft_key) > (${after.sectionId}, ${after.key})` : sql``}
+          order by x.section_id, x.source_aircraft_key
+          limit ${SOURCE_PAGE}`,
+    );
+    for (const r of page) {
+      const p = sourceProblems(String(r.text), {
+        sourceForm: r.source_form as SourceForm,
+        sourceText: (r.source_text as string | null) ?? null,
+        sourceSha256: String(r.source_sha256),
+        match: r.match as 'exact' | 'whitespace',
+        transformedFromHtml: r.transformed_from_html === true,
+      });
+      if (p.hash) totals.hash += 1;
+      if (p.derivation) totals.derivation += 1;
+      if (p.htmlFlag) totals.htmlFlag += 1;
+    }
+    if (page.length < SOURCE_PAGE) return totals;
+    const last = page[page.length - 1] as Row;
+    after = { sectionId: String(last.section_id), key: Number(last.source_aircraft_key) };
+  }
+}
+
+function isConflict(err: unknown): boolean {
+  return err instanceof LifecycleError && err.code === '40001';
+}
+
+/**
+ * Verify generation `generationId` and record the outcome with `record_verification`:
+ * a never-published generation becomes `verified` or `failed`; a `published` or
+ * `retired` one keeps its status. Either way the latest outcome, time, verifier
+ * version and report hash are stored, and publication requires that outcome to be ok
+ * with the current `VERIFIER_VERSION`. Runs under the lifecycle lock in one
+ * REPEATABLE READ transaction; if the generation changed meanwhile, nothing is
+ * recorded and the report says `conflict`. Writes `<outDir>/verify-gen-<id>.json`
+ * (aggregate counts only); its sha256 is the recorded report hash.
  */
 export async function verifyCorpus(db: Db, generationId: number, opts: VerifyOptions = {}): Promise<VerifyReport> {
-  const [gen] = await db.select().from(datasetGenerations).where(eq(datasetGenerations.id, generationId));
+  const analyzed = await analyzeCorpus(db).then(
+    () => true,
+    () => false,
+  );
+  return withLifecycleLock(db, async (q, client) => {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    try {
+      const report = await verifyInSnapshot(q, generationId, opts, analyzed);
+      if (report.conflict) await client.query('ROLLBACK');
+      else await client.query('COMMIT');
+      return report;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    }
+  });
+}
+
+async function verifyInSnapshot(q: Queryable, generationId: number, opts: VerifyOptions, analyzed: boolean): Promise<VerifyReport> {
+  const [gen] = await q.select().from(datasetGenerations).where(eq(datasetGenerations.id, generationId));
   if (!gen) throw new Error(`generation ${generationId} does not exist`);
+  if (gen.status === 'loading') throw new Error(`generation ${generationId} is still loading`);
   const stats = gen.stats as GenerationStats;
   const manifest = gen.extractManifest as ExtractManifest;
   const profile = opts.profile === undefined ? findProfile(gen.archiveSha256) : opts.profile;
   if (profile && profile.archiveSha256 !== gen.archiveSha256) {
     throw new Error(`profile ${profile.name} describes a different archive than generation ${generationId}`);
   }
-  const analyzed = await analyzeCorpus(db).then(
-    () => true,
-    () => false,
-  );
 
   const checks: VerifyCheck[] = [];
-  for (const [name, query] of invariantQueries(generationId, gen.citationTextVersion, gen.mappingVersion, gen.ingestionRunId)) {
-    const failures = await scalar(db, query);
+  const push = (name: string, failures: number): void => {
     checks.push({ name, failures, ok: failures === 0 });
+  };
+  for (const [name, query] of invariantQueries(generationId, gen.citationTextVersion, gen.mappingVersion, gen.ingestionRunId)) {
+    push(name, await scalar(q, query));
   }
 
+  // Citation text must follow from the exported sources (same code as normalization).
+  const sourceTotals = await checkSources(q, generationId);
+  push('source_text_reconstructs_to_sha256', sourceTotals.hash);
+  push('source_derives_section_text', sourceTotals.derivation);
+  push('source_html_flag', sourceTotals.htmlFlag);
+
   // Revision ids are recomputed with the loader's own function (no text needed).
-  const revisions = await db
+  const revisions = await q
     .select({
       ntsbNo: caseSections.ntsbNo,
       sectionKey: caseSections.sectionKey,
@@ -468,34 +630,77 @@ export async function verifyCorpus(db: Db, generationId: number, opts: VerifyOpt
     })
     .from(caseSections)
     .where(eq(caseSections.generationId, generationId));
-  const badRevisions = revisions.filter((r) => sectionRevisionId(r.ntsbNo, r.sectionKey, r.sha256, r.version) !== r.revisionId).length;
-  checks.push({ name: 'section_revision_id', failures: badRevisions, ok: badRevisions === 0 });
+  push(
+    'section_revision_id',
+    revisions.filter((r) => sectionRevisionId(r.ntsbNo, r.sectionKey, r.sha256, r.version) !== r.revisionId).length,
+  );
 
-  checks.push({ name: 'completion_class_matches_mapping', ...(await completionMismatches(db, generationId, gen.mappingVersion, stats)) });
+  push('completion_class_matches_mapping', (await completionMismatches(q, generationId, gen.mappingVersion, stats)).failures);
 
-  const counts = await measure(db, generationId);
+  const counts = await measure(q, generationId);
   const mismatches = reconcile(counts, stats, manifest);
-  checks.push({ name: 'counts_match_normalization_and_source', failures: mismatches.length, ok: mismatches.length === 0 });
+  push('counts_match_normalization_and_source', mismatches.length);
 
   const profileResult = profile ? checkProfile(profile, counts) : null;
-
   const ok = checks.every((c) => c.ok) && (profileResult?.ok ?? true);
-  const status = nextStatus(gen.status, ok);
-  const now = new Date();
-  await db
-    .update(datasetGenerations)
-    .set(ok ? { status, verifiedAt: now } : { status })
-    .where(and(eq(datasetGenerations.id, generationId), eq(datasetGenerations.status, gen.status)));
+  const checkedAt = new Date();
 
   const outDir = opts.outDir ?? DEFAULT_VERIFY_DIR;
   mkdirSync(outDir, { recursive: true });
   const reportPath = join(outDir, `verify-gen-${generationId}.json`);
-  const report: VerifyReport = {
+  const file = `${JSON.stringify(
+    {
+      generationId,
+      verifierVersion: VERIFIER_VERSION,
+      ok,
+      verifiedStatus: gen.status,
+      checkedAt: checkedAt.toISOString(),
+      analyzed,
+      versions: {
+        mapping: gen.mappingVersion,
+        mappingVerified: gen.mappingVerified,
+        citationText: gen.citationTextVersion,
+        fieldNormalization: gen.fieldNormalizationVersion,
+      },
+      checks,
+      counts,
+      countMismatches: mismatches,
+      profile: profileResult,
+    },
+    null,
+    2,
+  )}\n`;
+  writeFileSync(reportPath, file);
+  const reportSha256 = sha256Hex(file);
+
+  await opts.beforeRecord?.();
+  let status: GenerationStatus = gen.status;
+  let verificationStatus: VerificationStatus | null = gen.verificationStatus;
+  let conflict = false;
+  try {
+    const [row] = await rows(
+      q,
+      sql`select record_verification(${generationId}, ${gen.status}, ${ok}, ${VERIFIER_VERSION}, ${reportSha256}) as status`,
+    ).catch((err: unknown) => {
+      throw lifecycleError(err);
+    });
+    status = row?.status as GenerationStatus;
+    verificationStatus = ok ? 'ok' : 'failed';
+  } catch (err) {
+    if (!isConflict(err)) throw err;
+    conflict = true;
+  }
+
+  return {
     generationId,
     ok,
     statusBefore: gen.status,
     status,
-    checkedAt: now.toISOString(),
+    conflict,
+    verificationStatus,
+    verifierVersion: VERIFIER_VERSION,
+    reportSha256,
+    checkedAt: checkedAt.toISOString(),
     analyzed,
     versions: {
       mapping: gen.mappingVersion,
@@ -508,7 +713,4 @@ export async function verifyCorpus(db: Db, generationId: number, opts: VerifyOpt
     profile: profileResult,
     reportPath,
   };
-  const { reportPath: _omit, ...file } = report;
-  writeFileSync(reportPath, `${JSON.stringify({ ...file, countMismatches: mismatches }, null, 2)}\n`);
-  return report;
 }

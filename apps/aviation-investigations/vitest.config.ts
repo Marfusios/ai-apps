@@ -14,6 +14,8 @@ export default defineConfig({
           name: 'integration',
           include: ['tests/integration/**/*.test.ts'],
           globalSetup: ['tests/integration/global-setup.ts'],
+          // Test files share the aviation_test database and reset it between tests.
+          fileParallelism: false,
           testTimeout: 60_000,
           hookTimeout: 60_000,
         },

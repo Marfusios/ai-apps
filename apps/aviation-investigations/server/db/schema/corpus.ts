@@ -31,12 +31,18 @@ export const RUN_STATUSES = ['running', 'succeeded', 'failed'] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
 /**
- * `loading`: rows committed, invariants not yet verified. `verified`: `verifyCorpus`
- * passed. `failed`: verification failed. `published`: the active manifest points at
- * it. `retired`: published earlier, replaced by a newer manifest.
+ * Generation lifecycle. `loading`: open for corpus writes, only inside the load
+ * transaction. `loaded`: sealed at the end of that transaction, not yet verified.
+ * `verified` / `failed`: the latest verification of a never-published generation.
+ * `published`: the active manifest points at it. `retired`: published earlier and
+ * replaced. Only `loading` accepts corpus writes (database triggers); every change
+ * after insertion goes through the migrator-owned functions in migration 0003.
  */
-export const GENERATION_STATUSES = ['loading', 'verified', 'failed', 'published', 'retired'] as const;
+export const GENERATION_STATUSES = ['loading', 'loaded', 'verified', 'failed', 'published', 'retired'] as const;
 export type GenerationStatus = (typeof GENERATION_STATUSES)[number];
+/** Latest verification outcome, kept apart from publication status. */
+export const VERIFICATION_STATUSES = ['ok', 'failed'] as const;
+export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
 
 export const COMPLETION_CLASSES = ['completed', 'in_progress', 'status_unknown', 'other_status'] as const;
 export const SECTION_KINDS = ['factual', 'analysis', 'probable_cause'] as const;
@@ -102,8 +108,15 @@ export const datasetGenerations = pgTable(
     citationTextVersion: text('citation_text_version').notNull(),
     fieldNormalizationVersion: text('field_normalization_version').notNull(),
     status: text('status', { enum: GENERATION_STATUSES }).notNull(),
+    /** Start of the load transaction. */
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    /** When the load sealed it (just before commit); retention grace counts from here. */
+    sealedAt: timestamp('sealed_at', { withTimezone: true, mode: 'date' }),
+    /** Latest verification: outcome, time, verifier version and sha256 of its report file. */
+    verificationStatus: text('verification_status', { enum: VERIFICATION_STATUSES }),
     verifiedAt: timestamp('verified_at', { withTimezone: true, mode: 'date' }),
+    verifierVersion: text('verifier_version'),
+    verificationReportSha256: text('verification_report_sha256'),
     /** Normalization stats and loaded row counts; aggregate counts only. */
     stats: jsonb('stats').notNull(),
   },
@@ -111,6 +124,18 @@ export const datasetGenerations = pgTable(
     unique('dataset_generations_run_unique').on(t.ingestionRunId),
     check('dataset_generations_status_check', sql`${t.status} in (${inList(GENERATION_STATUSES)})`),
     check('dataset_generations_archive_check', sql`${t.archiveSha256} ~ ${sql.raw(SHA256_HEX)}`),
+    check('dataset_generations_sealed_check', sql`(${t.status} = 'loading') = (${t.sealedAt} is null)`),
+    check(
+      'dataset_generations_verification_check',
+      sql`(${t.verificationStatus} is null) = (${t.verifiedAt} is null)
+        and (${t.verificationStatus} is null) = (${t.verifierVersion} is null)
+        and (${t.verificationStatus} is null) = (${t.verificationReportSha256} is null)
+        and (${t.verificationStatus} is null or ${t.verificationStatus} in (${inList(VERIFICATION_STATUSES)}))
+        and (${t.verificationReportSha256} is null or ${t.verificationReportSha256} ~ ${sql.raw(SHA256_HEX)})
+        and (${t.status} <> 'verified' or ${t.verificationStatus} = 'ok')
+        and (${t.status} <> 'failed' or ${t.verificationStatus} = 'failed')
+        and (${t.status} not in ('loading', 'loaded') or ${t.verificationStatus} is null)`,
+    ),
   ],
 );
 
@@ -215,7 +240,12 @@ export const cases = pgTable(
     check('cases_ntsb_no_check', sql`${t.ntsbNo} <> '' and ${t.ntsbNo} !~ '^\\s|\\s$'`),
     check('cases_ev_id_check', sql`${t.evId} <> '' and ${t.evId} !~ '^\\s|\\s$'`),
     check('cases_is_us_check', sql`${t.isUs} = coalesce(${t.country} = 'USA', false)`),
-    check('cases_location_check', sql`(${t.latitude} is null) = (${t.longitude} is null)`),
+    check(
+      'cases_location_check',
+      sql`(${t.latitude} is null) = (${t.longitude} is null)
+        and (${t.latitude} is null or ${t.latitude} between -90 and 90)
+        and (${t.longitude} is null or ${t.longitude} between -180 and 180)`,
+    ),
     check('cases_completion_class_check', sql`${t.completionClass} in (${inList(COMPLETION_CLASSES)})`),
     check(
       'cases_completed_with_cause_check',
@@ -380,6 +410,8 @@ export const caseSections = pgTable(
   },
   (t) => [
     primaryKey({ name: 'case_sections_pk', columns: [t.generationId, t.sectionId] }),
+    // Target of the sources' composite foreign key (section and case together).
+    unique('case_sections_case_unique').on(t.generationId, t.sectionId, t.ntsbNo),
     unique('case_sections_revision_unique').on(t.revisionId, t.generationId),
     index('case_sections_case_idx').on(t.ntsbNo, t.aircraftKey, t.generationId),
     foreignKey({
@@ -398,6 +430,11 @@ export const caseSections = pgTable(
       sql`${t.sectionKey} ~ '^(factual|analysis|probable_cause)/(aircraft|event)-[0-9]+$' and split_part(${t.sectionKey}, '/', 1) = ${t.kind}`,
     ),
     check('case_sections_kind_check', sql`${t.kind} in (${inList(SECTION_KINDS)})`),
+    check(
+      'case_sections_key_scope_check',
+      sql`(${t.scope} = 'aircraft' and ${t.sectionKey} = ${t.kind} || '/aircraft-' || ${t.aircraftKey})
+        or (${t.scope} = 'event' and ${t.sectionKey} ~ ('^' || ${t.kind} || '/event-[1-9][0-9]*$'))`,
+    ),
     check(
       'case_sections_scope_check',
       sql`(${t.scope} = 'aircraft' and ${t.aircraftKey} is not null and ${t.sourceAircraftKeys} = array[${t.aircraftKey}]) or (${t.scope} = 'event' and ${t.aircraftKey} is null and cardinality(${t.sourceAircraftKeys}) >= 1)`,
@@ -427,17 +464,17 @@ export const caseSectionSources = pgTable(
   (t) => [
     primaryKey({ name: 'case_section_sources_pk', columns: [t.generationId, t.sectionId, t.sourceAircraftKey] }),
     index('case_section_sources_aircraft_idx').on(t.ntsbNo, t.sourceAircraftKey, t.generationId),
+    // Composite with ntsb_no: a source belongs to a section of its own case.
     foreignKey({
       name: 'case_section_sources_section_fk',
-      columns: [t.generationId, t.sectionId],
-      foreignColumns: [caseSections.generationId, caseSections.sectionId],
+      columns: [t.generationId, t.sectionId, t.ntsbNo],
+      foreignColumns: [caseSections.generationId, caseSections.sectionId, caseSections.ntsbNo],
     }),
     foreignKey({
       name: 'case_section_sources_aircraft_fk',
       columns: [t.generationId, t.ntsbNo, t.sourceAircraftKey],
       foreignColumns: [caseAircraft.generationId, caseAircraft.ntsbNo, caseAircraft.aircraftKey],
     }),
-    check('case_section_sources_case_check', sql`left(${t.sectionId}, length(${t.ntsbNo}) + 1) = ${t.ntsbNo} || ':'`),
     check('case_section_sources_match_check', sql`${t.match} in (${inList(SOURCE_MATCHES)})`),
     check(
       'case_section_sources_form_check',
@@ -488,6 +525,26 @@ export const quarantine = pgTable(
   (t) => [
     primaryKey({ name: 'quarantine_pk', columns: [t.generationId, t.entryNo] }),
     check('quarantine_action_check', sql`${t.action} in (${inList(QUARANTINE_ACTIONS)})`),
+  ],
+);
+
+/**
+ * Generations that pruning must keep (e.g. referenced by live briefs). A pin with a
+ * null `pinned_until` holds until removed; an expired pin no longer protects.
+ */
+export const generationPins = pgTable(
+  'generation_pins',
+  {
+    generationId: bigint('generation_id', { mode: 'number' })
+      .notNull()
+      .references(() => datasetGenerations.id),
+    reason: text('reason').notNull(),
+    pinnedUntil: timestamp('pinned_until', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: 'generation_pins_pk', columns: [t.generationId, t.reason] }),
+    check('generation_pins_reason_check', sql`${t.reason} ~ '\\S' and length(${t.reason}) <= 200`),
   ],
 );
 

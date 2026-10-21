@@ -4,6 +4,7 @@ import { listGenerations } from '../server/db/generations.js';
 import { workerConfig } from './config.js';
 import { extractArchive, isTerminating } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
+import { STALE_RUN_MINUTES, failStaleRuns, listRunningRuns } from './ingest/runs.js';
 import { readProfile, verifyCorpus, type VerifyReport } from './ingest/verify.js';
 
 const USAGE = [
@@ -12,6 +13,7 @@ const USAGE = [
   '  worker load --from <extractDir>',
   '  worker verify --generation <id> [--profile <file>]',
   '  worker generations',
+  '  worker fail-stale-runs --older-than-minutes <n>',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -34,7 +36,7 @@ function printLoad(r: LoadReport): void {
   const s = r.stats;
   const lines: [string, string | number][] = [
     ['run', r.runId],
-    ['generation', `${r.generationId} (status loading; next: pnpm worker verify --generation ${r.generationId})`],
+    ['generation', `${r.generationId} (sealed, status loaded; next: pnpm worker verify --generation ${r.generationId})`],
     ['events', s.events],
     ['US events', s.usEvents],
     ['multi-aircraft events', s.multiAircraftEvents],
@@ -53,7 +55,8 @@ function printLoad(r: LoadReport): void {
 }
 
 function printVerify(r: VerifyReport): void {
-  console.log(`generation ${r.generationId}: ${r.ok ? 'verified' : 'FAILED'} (status ${r.statusBefore} -> ${r.status})`);
+  const outcome = r.conflict ? 'CONFLICT (generation changed during verification; nothing recorded, run again)' : r.ok ? 'verified' : 'FAILED';
+  console.log(`generation ${r.generationId}: ${outcome} (status ${r.statusBefore} -> ${r.status}, verifier ${r.verifierVersion})`);
   for (const c of r.checks) console.log(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.name}${c.ok ? '' : ` (${c.failures})`}`);
   if (r.profile) {
     console.log(`profile ${r.profile.name}: ${r.profile.ok ? 'ok' : 'MISMATCH'}`);
@@ -114,18 +117,38 @@ async function main(argv: string[]): Promise<number> {
     const profile = values.profile ? readProfile(values.profile) : undefined;
     const report = await withDb((db) => verifyCorpus(db, id, profile ? { profile } : {}));
     printVerify(report);
-    return report.ok ? 0 : 1;
+    return report.ok && !report.conflict ? 0 : 1;
   }
   if (command === 'generations') {
     parseArgs({ args: rest, options: {}, strict: true });
-    const list = await withDb((db) => listGenerations(db));
+    const [list, running] = await withDb((db) => Promise.all([listGenerations(db), listRunningRuns(db)]));
     if (list.length === 0) console.log('no generations');
     for (const g of list) {
       const manifest = g.publishedAt ? ` published ${g.publishedAt.toISOString()}${g.active ? ' ACTIVE' : ''}` : '';
+      const verification = g.verificationStatus
+        ? `verification ${g.verificationStatus} (${g.verifierVersion}) ${g.verifiedAt?.toISOString() ?? ''}`
+        : 'not verified';
       console.log(
-        `${g.id}\t${g.status}\tcreated ${g.createdAt.toISOString()}\tevents ${g.events ?? '?'}\tarchive ${g.archiveSha256.slice(0, 12)}\tmapping ${g.mappingVersion}${g.mappingVerified ? '' : ' (unverified)'}\tcitation ${g.citationTextVersion}${manifest}`,
+        `${g.id}\t${g.status}\tsealed ${g.sealedAt?.toISOString() ?? '-'}\t${verification}\tevents ${g.events ?? '?'}\tarchive ${g.archiveSha256.slice(0, 12)}\tmapping ${g.mappingVersion}${g.mappingVerified ? '' : ' (unverified)'}\tcitation ${g.citationTextVersion}${manifest}`,
       );
     }
+    for (const run of running) {
+      const stale = run.ageMinutes >= STALE_RUN_MINUTES;
+      console.log(
+        `run ${run.id} running since ${run.startedAt.toISOString()} (${run.ageMinutes} min)${stale ? ' STALE: close with pnpm worker fail-stale-runs --older-than-minutes <n>' : ''}`,
+      );
+    }
+    return 0;
+  }
+  if (command === 'fail-stale-runs') {
+    const { values } = parseArgs({ args: rest, options: { 'older-than-minutes': { type: 'string' } }, strict: true });
+    const minutes = Number(values['older-than-minutes']);
+    if (!values['older-than-minutes'] || !Number.isSafeInteger(minutes) || minutes < 1) {
+      console.error(USAGE);
+      return 2;
+    }
+    const ids = await withDb((db) => failStaleRuns(db, minutes));
+    console.log(ids.length === 0 ? 'no stale runs' : `marked failed: ${ids.join(', ')}`);
     return 0;
   }
   console.error(USAGE);
