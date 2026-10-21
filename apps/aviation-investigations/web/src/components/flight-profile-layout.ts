@@ -89,6 +89,27 @@ export interface ProfileLabel {
   text: string;
 }
 
+export interface Box {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface DefiningMark {
+  x: number;
+  y: number;
+  impact: boolean;
+  /** Event label (full frames), centred on `labelX` with its baseline at `labelY`. */
+  label: string;
+  labelX: number;
+  labelY: number;
+  /** Approximate extent of the label text. */
+  labelBox: Box;
+  /** A leader from the label down to the ring, when the label had to be lifted. */
+  leader: { y1: number; y2: number } | null;
+}
+
 export interface ProfileLayout {
   frame: ProfileFrame;
   /** Blue, solid: the flight up to the defining event (or all of it). */
@@ -96,7 +117,7 @@ export interface ProfileLayout {
   /** Ink, dashed: after the defining event; null when nothing follows it. */
   after: string | null;
   origin: { x: number; y: number } | null;
-  defining: { x: number; y: number; label: string; labelX: number; impact: boolean } | null;
+  defining: DefiningMark | null;
   impacts: { x: number; y: number }[];
   labels: ProfileLabel[];
 }
@@ -104,6 +125,27 @@ export interface ProfileLayout {
 const round = (n: number): number => Math.round(n * 10) / 10;
 const MONO_ADVANCE = 0.6;
 const SANS_ADVANCE = 0.62;
+/** Baseline of the defining label above the line or dot beneath it. */
+const LABEL_LIFT = 13;
+/** Ring radius around the defining dot, full frames. */
+export const RING_RADIUS = 7.5;
+
+type Point = readonly [x: number, y: number];
+
+/**
+ * The highest point (smallest y) of a polyline within [left, right]. Segments are
+ * straight lines or curves with horizontal end tangents, which never leave the
+ * box of their two end points, so the end points bound them.
+ */
+function highestOver(points: readonly Point[], left: number, right: number): number {
+  let top = Infinity;
+  for (let i = 1; i < points.length; i++) {
+    const [x1, y1] = points[i - 1]!;
+    const [x2, y2] = points[i]!;
+    if (Math.max(x1, x2) >= left && Math.min(x1, x2) <= right) top = Math.min(top, y1, y2);
+  }
+  return top;
+}
 
 function truncate(text: string, maxChars: number): string {
   if (maxChars < 2) return '';
@@ -149,10 +191,17 @@ export function layoutProfile(steps: readonly FlightProfileStep[], frame: Profil
   let cx = origin ? origin.x : anchor(0).a;
   let cy = origin ? origin.y : anchor(0).y;
   let flown = `M${round(cx)} ${round(cy)}`;
+  const knots: Point[] = [[cx, cy]];
   for (let i = 0; i <= lastFlown; i++) {
     const { a, b, y: sy } = anchor(i);
-    if (a !== cx || sy !== cy) flown += curve(cx, cy, a, sy);
-    if (b !== a) flown += `H${round(b)}`;
+    if (a !== cx || sy !== cy) {
+      flown += curve(cx, cy, a, sy);
+      knots.push([a, sy]);
+    }
+    if (b !== a) {
+      flown += `H${round(b)}`;
+      knots.push([b, sy]);
+    }
     cx = b;
     cy = sy;
   }
@@ -161,17 +210,16 @@ export function layoutProfile(steps: readonly FlightProfileStep[], frame: Profil
   let defining: ProfileLayout['defining'] = null;
   if (definingIndex !== -1) {
     const step = steps[definingIndex]!;
-    const label = truncate(step.eventLabel, Math.floor((width - 8) / (frame.eventSize * SANS_ADVANCE || 1)));
-    const half = (label.length * frame.eventSize * SANS_ADVANCE) / 2;
-    const labelX = round(Math.min(Math.max(cx, half + 2), width - half - 2));
-    defining = { x: round(cx), y: round(cy), label, labelX, impact: step.impact };
+    const afterKnots: Point[] = [[cx, cy]];
     if (definingIndex < steps.length - 1) {
       after = `M${round(cx)} ${round(cy)}`;
       for (let j = definingIndex + 1; j < steps.length; j++) {
-        const s = steps[j]!;
-        after += `L${round(slotStart(j) + unit / 2)} ${y(s)}`;
+        const point: Point = [slotStart(j) + unit / 2, y(steps[j]!)];
+        after += `L${round(point[0])} ${round(point[1])}`;
+        afterKnots.push(point);
       }
     }
+    defining = definingMark(frame, step, cx, cy, [knots, afterKnots]);
   }
 
   const impacts = steps.flatMap((s, i) => {
@@ -209,6 +257,43 @@ export function layoutProfile(steps: readonly FlightProfileStep[], frame: Profil
   }
 
   return { frame, flown, after, origin, defining, impacts, labels };
+}
+
+/**
+ * Places the defining event's label centred over its dot. When a line within the
+ * label's width rises above the dot (a descent or impact into the defining event,
+ * or a climb after it), the label is lifted above that line and a leader joins it
+ * to the ring, so text never crosses the profile.
+ */
+function definingMark(
+  frame: ProfileFrame,
+  step: FlightProfileStep,
+  x: number,
+  y: number,
+  lines: readonly (readonly Point[])[],
+): DefiningMark {
+  const advance = frame.eventSize * SANS_ADVANCE;
+  const label = advance > 0 ? truncate(step.eventLabel, Math.floor((frame.width - 8) / advance)) : '';
+  const half = (label.length * advance) / 2;
+  const labelX = Math.min(Math.max(x, half + 2), frame.width - half - 2);
+  const top = Math.min(y, ...lines.map((line) => highestOver(line, labelX - half, labelX + half)));
+  const labelY = Math.max(frame.eventSize, top - LABEL_LIFT);
+  const lifted = labelY < y - LABEL_LIFT;
+  return {
+    x: round(x),
+    y: round(y),
+    impact: step.impact,
+    label,
+    labelX: round(labelX),
+    labelY: round(labelY),
+    labelBox: {
+      x1: round(labelX - half),
+      y1: round(labelY - frame.eventSize * 0.8),
+      x2: round(labelX + half),
+      y2: round(labelY + frame.eventSize * 0.25),
+    },
+    leader: lifted && label ? { y1: round(labelY + 4), y2: round(y - RING_RADIUS - 1.5) } : null,
+  };
 }
 
 /** "Schematic flight profile, not to scale: …" with every step in words. */

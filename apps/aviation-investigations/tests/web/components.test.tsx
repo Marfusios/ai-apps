@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBlock } from '../../web/src/components/AiBlock';
 import { AiChip, aiLabel } from '../../web/src/components/AiChip';
 import { Button } from '../../web/src/components/Button';
@@ -10,6 +10,8 @@ import { Footer } from '../../web/src/components/Footer';
 import { Header } from '../../web/src/components/Header';
 import { StatusBadge } from '../../web/src/components/StatusBadge';
 import { ThemeSwitch } from '../../web/src/components/ThemeSwitch';
+import { TimingChip } from '../../web/src/components/TimingChip';
+import { localIsoDate } from '../../web/src/lib/format';
 import printCss from '../../web/src/styles/print.css?raw';
 import tokensCss from '../../web/src/styles/tokens.css?raw';
 import { cssBlock, cssVar } from './helpers';
@@ -45,8 +47,10 @@ describe('EvidenceGlyph', () => {
   });
 
   it('marks the verdict pill as AI classified', () => {
-    render(<EvidenceGlyph kind="no_fault" variant="pill" />);
+    const { container } = render(<EvidenceGlyph kind="causal" variant="pill" />);
     expect(isPerceivable(screen.getByText('AI classified'))).toBe(true);
+    // UI_DESIGN §2.4: "● Causal fault established · AI CLASSIFIED" (caps set by CSS).
+    expect(container.textContent).toBe('Causal fault established · AI classified');
   });
 });
 
@@ -79,7 +83,32 @@ describe('AI labels', () => {
 
   it('AiBlock always renders its AI label', () => {
     render(<AiBlock label="Summary · check the cited passages">Text</AiBlock>);
-    expect(screen.getByRole('heading').textContent).toBe('AI · Summary · check the cited passages');
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('AI · Summary · check the cited passages');
+  });
+
+  it('AiBlock label can take the heading level of its page', () => {
+    render(
+      <AiBlock label="AI summary" as="h3">
+        Text
+      </AiBlock>,
+    );
+    expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('AI summary');
+  });
+
+  it('a standalone TimingChip shows its AI label', () => {
+    render(<TimingChip>5.1 FH</TimingChip>);
+    expect(isPerceivable(screen.getByText('AI'))).toBe(true);
+    expect(screen.getByText('5.1 FH').className).toContain('font-mono');
+  });
+
+  it('a TimingChip inside an AI-labelled line drops its own AI cell', () => {
+    const { container } = render(
+      <p>
+        <span>Why it matched</span> Test flight after maintenance. <TimingChip labelled={false}>1ST FLIGHT</TimingChip>
+      </p>,
+    );
+    expect(screen.queryByText('AI')).toBeNull();
+    expect(container.textContent).toBe('Why it matched Test flight after maintenance. 1ST FLIGHT');
   });
 });
 
@@ -181,6 +210,8 @@ describe('DataCaution', () => {
       </>,
     );
     expect(screen.getAllByText('Data caution')).toHaveLength(3);
+    // Labels are at least the 9.5px label size (UI_DESIGN §2.3).
+    for (const label of screen.getAllByText('Data caution')) expect(label.closest('.text-micro')).not.toBeNull();
     expect(container.querySelectorAll('.hatch')).toHaveLength(3);
     expect(screen.getByText('AI')).toBeTruthy();
     expect(screen.getByRole('note').textContent).toContain('The header and narrative disagree.');
@@ -201,6 +232,23 @@ describe('Button', () => {
 });
 
 describe('frame', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('prints the local date, not the UTC date', () => {
+    expect(localIsoDate(new Date(2026, 9, 22, 23, 59))).toBe('2026-10-22');
+    expect(localIsoDate(new Date(2026, 0, 1, 0, 1))).toBe('2026-01-01');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 22, 23, 59));
+    const { container } = render(
+      <MemoryRouter>
+        <Footer snapshotDate={null} />
+      </MemoryRouter>,
+    );
+    expect(container.querySelectorAll('footer p')[1]?.textContent).toBe(
+      'Not an NTSB service · Source: NTSB · printed 22 OCT 2026',
+    );
+  });
+
   it('footer reads as UI_DESIGN §3 with the snapshot date', () => {
     const { container } = render(
       <MemoryRouter>
@@ -223,6 +271,8 @@ describe('frame', () => {
     const [desktopNav] = screen.getAllByRole('navigation', { name: 'Main' });
     expect(within(desktopNav!).getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBe('page');
     expect(within(desktopNav!).getByRole('link', { name: 'Explore' }).getAttribute('aria-current')).toBeNull();
+    // 44px targets on touch tablets, where the desktop nav shows.
+    expect(within(desktopNav!).getByRole('link', { name: 'Explore' }).className).toContain('pointer-coarse:min-h-11');
     expect(screen.getByText('AI searches left: 3 of 3')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Sign in' }).length).toBeGreaterThan(0);
   });

@@ -6,6 +6,7 @@ import {
   profileCaption,
   type FlightProfileSize,
   type FlightProfileStep,
+  RING_RADIUS,
   type ProfileLayout,
 } from './flight-profile-layout';
 
@@ -103,14 +104,22 @@ function ProfileSvg({ layout, name, className }: { layout: ProfileLayout; name: 
           <circle
             cx={defining.x}
             cy={defining.y}
-            r={full ? 7.5 : 4.4}
+            r={full ? RING_RADIUS : 4.4}
             className="fill-none stroke-ink"
             strokeWidth={full ? 0.8 : 0.7}
           />
-          {full && (
+          {full && defining.leader && (
+            <path
+              d={`M${defining.x} ${defining.leader.y1}V${defining.leader.y2}`}
+              className="fill-none stroke-rule"
+              strokeWidth={0.8}
+              data-mark="leader"
+            />
+          )}
+          {full && defining.label && (
             <text
               x={defining.labelX}
-              y={defining.y - 13}
+              y={defining.labelY}
               textAnchor="middle"
               fontSize={frame.eventSize}
               strokeWidth={3}

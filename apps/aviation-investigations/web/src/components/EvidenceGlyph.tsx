@@ -52,7 +52,7 @@ export interface EvidenceGlyphProps {
   kind: EvidenceKind;
   /**
    * `inline` (default): glyph and words, for group headings and lists.
-   * `pill`: the verdict pill, "● Causal fault established · AI CLASSIFIED".
+   * `pill`: the verdict pill, "● Causal fault established · AI CLASSIFIED" (§2.4).
    */
   variant?: 'inline' | 'pill';
   className?: string;
@@ -71,7 +71,8 @@ export function EvidenceGlyph({ kind, variant = 'inline', className }: EvidenceG
       >
         <GlyphMark kind={kind} />
         <span>{words}</span>
-        <span className="ml-1 text-micro font-normal tracking-caps uppercase">AI classified</span>
+        <span className="font-normal">{' · '}</span>
+        <span className="text-micro font-normal tracking-caps uppercase">AI classified</span>
       </span>
     );
   }

@@ -98,7 +98,7 @@ export function Header({ aiCounter, auth }: HeaderProps) {
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return cx(
-    'border-b-2 pb-px',
+    'inline-flex items-center border-b-2 pb-px pointer-coarse:min-h-11',
     isActive ? 'border-blue text-ink' : 'border-transparent text-muted hover:text-ink',
   );
 }

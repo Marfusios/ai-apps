@@ -28,8 +28,8 @@ export function DataCaution({ children, variant = 'box', label, ai = false, clas
           className,
         )}
       >
-        <span className="text-[8.5px] font-bold tracking-caps uppercase">{text}</span>
-        {aiTag && <span className="text-[8.5px]">{aiTag}</span>}
+        <span className="text-micro font-bold tracking-caps uppercase">{text}</span>
+        {aiTag && <span className="text-micro">{aiTag}</span>}
         <span>{children}</span>
       </span>
     );
@@ -37,7 +37,7 @@ export function DataCaution({ children, variant = 'box', label, ai = false, clas
   return (
     <div
       role="note"
-      className={cx('hatch rounded-chip border border-caution-edge px-3 py-2 text-[12px] leading-[1.45] text-ink', className)}
+      className={cx('hatch rounded-chip border border-caution-edge px-3 py-2 text-ui text-ink', className)}
     >
       <p className="flex gap-2 text-micro font-bold tracking-caps uppercase">
         <span>{text}</span>

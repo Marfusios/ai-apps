@@ -18,6 +18,7 @@ import { MonoChip } from '../components/MonoChip';
 import { Placard } from '../components/Placard';
 import { StatusBadge } from '../components/StatusBadge';
 import { ThemeSwitch } from '../components/ThemeSwitch';
+import { TimingChip } from '../components/TimingChip';
 
 const noop = (): void => {};
 
@@ -85,7 +86,7 @@ export function ComponentGallery() {
         switch; the panels below are pinned.
       </p>
 
-      <Section title="Header" flush>
+      <Section title="Header" flush stack>
         <Header
           aiCounter={
             <>
@@ -192,10 +193,17 @@ export function ComponentGallery() {
         <div className="flex flex-wrap gap-2">
           <AiChip onEdit={noop}>&ldquo;Shortly&rdquo; = within 30 days or 10 flight hours</AiChip>
           <AiChip label="AI suggested">Helicopters only</AiChip>
-          <AiChip font="mono">5.1 FH</AiChip>
-          <AiChip font="mono">1ST FLIGHT</AiChip>
-          <AiChip font="mono">≤ 17 DAYS</AiChip>
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <TimingChip>5.1 FH</TimingChip>
+          <TimingChip>1ST FLIGHT</TimingChip>
+          <TimingChip>≤ 17 DAYS</TimingChip>
+          <span className="text-meta text-muted">standalone timing chips keep the AI cell</span>
+        </div>
+        <p className="mt-3 text-ui text-magenta">
+          <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">Why it matched</span>
+          Test flight right after rudder maintenance. <TimingChip labelled={false}>1ST FLIGHT</TimingChip>
+        </p>
         <AiBlock label="AI summary · check the cited passages" className="mt-4">
           <p>
             Investigators tied one power loss directly to the maintenance: a cotter pin left out when the engine was
@@ -293,12 +301,22 @@ export function ComponentGallery() {
   );
 }
 
-function Section({ title, note, flush = false, children }: { title: string; note?: string; flush?: boolean; children: ReactNode }) {
+interface SectionProps {
+  title: string;
+  note?: string;
+  /** No inner padding, for full-bleed components. */
+  flush?: boolean;
+  /** One full-width panel per theme instead of two side by side. */
+  stack?: boolean;
+  children: ReactNode;
+}
+
+function Section({ title, note, flush = false, stack = false, children }: SectionProps) {
   return (
     <section className="mt-10">
       <h2 className="font-serif text-question font-semibold">{title}</h2>
       {note && <p className="mt-0.5 text-meta text-muted">{note}</p>}
-      <div className="mt-3 grid gap-4 lg:grid-cols-2">
+      <div className={stack ? 'mt-3 grid gap-4' : 'mt-3 grid gap-4 lg:grid-cols-2'}>
         <ThemePanel theme="day" flush={flush}>
           {children}
         </ThemePanel>
@@ -336,7 +354,7 @@ function SampleCard() {
       <p className="mt-1.5 mb-1.5 text-ui text-magenta">
         <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">Why it matched</span>
         Engine replaced shortly before; investigators cite the maintenance error.{' '}
-        <AiChip font="mono">5.1 FH</AiChip>
+        <TimingChip labelled={false}>5.1 FH</TimingChip>
       </p>
       <blockquote className="border-l-2 border-rule py-px pl-[11px] font-serif text-[13.5px] leading-[1.45]">
         &ldquo;&hellip;the cotter pin that secured the nut was missing. The engine had been replaced 5.1 hours prior to

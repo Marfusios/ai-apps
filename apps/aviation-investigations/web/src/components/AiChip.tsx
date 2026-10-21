@@ -17,23 +17,21 @@ export interface AiChipProps {
   label?: string;
   /** Makes the chip a button with the ✎ edit mark (interpretation chips). */
   onEdit?: () => void;
-  /** `mono` for extracted values such as timing chips (`5.1 FH`). */
-  font?: 'sans' | 'mono';
   className?: string;
 }
 
 /**
- * Magenta chip for anything the AI wrote or decided: interpretation chips,
- * suggested readings and timing values. The AI label is part of the chip and
- * cannot be turned off.
+ * Magenta chip for anything the AI wrote or decided: interpretation chips and
+ * suggested readings. The AI label is part of the chip and cannot be turned off.
+ * Timing values use TimingChip.
  */
-export function AiChip({ children, label, onEdit, font = 'sans', className }: AiChipProps) {
+export function AiChip({ children, label, onEdit, className }: AiChipProps) {
   const body = (
     <>
       <span className="flex items-center border-r border-magenta-soft px-1.5 text-micro font-bold tracking-caps uppercase">
         {aiLabel(label)}
       </span>
-      <span className={cx('px-2 py-0.5', font === 'mono' && 'font-mono tracking-mono')}>
+      <span className="px-2 py-0.5">
         {children}
         {onEdit && (
           <>

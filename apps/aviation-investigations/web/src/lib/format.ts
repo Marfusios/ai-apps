@@ -10,3 +10,9 @@ export function formatChartDate(iso: string): string {
   if (!match || !month) return iso;
   return `${match[3]} ${month} ${match[1]}`;
 }
+
+/** Today's date (or `date`) in the viewer's time zone, as `YYYY-MM-DD`. */
+export function localIsoDate(date: Date = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}

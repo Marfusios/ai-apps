@@ -6,7 +6,15 @@ exports[`FlightProfile > is deterministic 1`] = `
   "defining": {
     "impact": false,
     "label": "Loss of engine power (total)",
+    "labelBox": {
+      "x1": 210.5,
+      "x2": 392.8,
+      "y1": 17.5,
+      "y2": 28.5,
+    },
     "labelX": 301.6,
+    "labelY": 25.9,
+    "leader": null,
     "x": 301.6,
     "y": 38.9,
   },

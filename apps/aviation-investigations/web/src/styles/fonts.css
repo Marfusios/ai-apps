@@ -1,16 +1,18 @@
 /*
- * Self-hosted fonts, Latin subset, WOFF2 only (UI_DESIGN §2.3). The files come
- * from the @fontsource packages; their own stylesheets would also ship WOFF
- * fallbacks and, for Source Serif 4, Cyrillic, Greek and Vietnamese subsets, so
- * the faces are declared here. No runtime requests go to Google Fonts.
- * SIL OFL notices: licenses/fonts.txt in the build output.
+ * Self-hosted fonts, Latin subset, WOFF2 only (UI_DESIGN §2.3), declared here
+ * instead of importing the @fontsource stylesheets. Those stylesheets would make
+ * the build emit WOFF fallback files and, for Source Serif 4, Cyrillic, Greek and
+ * Vietnamese files that a Latin-only site never uses. The URLs below point into
+ * the packages; Vite resolves them and emits hashed copies into the build.
+ * No runtime requests go to Google Fonts. The SIL OFL notices are written to
+ * licenses/fonts.txt in the build output (web/vite/plugins.ts).
  */
 @font-face {
   font-family: "B612";
   font-style: normal;
   font-display: swap;
   font-weight: 400;
-  src: url("../../../node_modules/@fontsource/b612/files/b612-latin-400-normal.woff2") format("woff2");
+  src: url("@fontsource/b612/files/b612-latin-400-normal.woff2") format("woff2");
 }
 
 @font-face {
@@ -18,7 +20,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 700;
-  src: url("../../../node_modules/@fontsource/b612/files/b612-latin-700-normal.woff2") format("woff2");
+  src: url("@fontsource/b612/files/b612-latin-700-normal.woff2") format("woff2");
 }
 
 @font-face {
@@ -26,7 +28,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 400;
-  src: url("../../../node_modules/@fontsource/b612-mono/files/b612-mono-latin-400-normal.woff2") format("woff2");
+  src: url("@fontsource/b612-mono/files/b612-mono-latin-400-normal.woff2") format("woff2");
 }
 
 @font-face {
@@ -34,7 +36,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 700;
-  src: url("../../../node_modules/@fontsource/b612-mono/files/b612-mono-latin-700-normal.woff2") format("woff2");
+  src: url("@fontsource/b612-mono/files/b612-mono-latin-700-normal.woff2") format("woff2");
 }
 
 /* Source Serif 4: variable weight and optical size. */
@@ -43,7 +45,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 200 900;
-  src: url("../../../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-opsz-normal.woff2") format("woff2-variations");
+  src: url("@fontsource-variable/source-serif-4/files/source-serif-4-latin-opsz-normal.woff2") format("woff2-variations");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
@@ -52,6 +54,6 @@
   font-style: italic;
   font-display: swap;
   font-weight: 200 900;
-  src: url("../../../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-opsz-italic.woff2") format("woff2-variations");
+  src: url("@fontsource-variable/source-serif-4/files/source-serif-4-latin-opsz-italic.woff2") format("woff2-variations");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
