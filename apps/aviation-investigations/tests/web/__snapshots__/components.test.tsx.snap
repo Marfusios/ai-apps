@@ -1,0 +1,53 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`print > print stylesheet hides graticule 1`] = `
+"@media print {
+  :root,
+  [data-theme] {
+    color-scheme: light;
+    --paper: #FFFFFF;
+    --raised: #FFFFFF;
+    --tint: #E8E2CC;
+    --ink: #1E2A36;
+    --muted: #58616B;
+    --blue: #1F519A;
+    --on-blue: #FFFFFF;
+    --magenta: #1E2A36;
+    --on-magenta: #FFFFFF;
+    --hairline: rgba(31, 81, 154, .20);
+    --hatch: rgba(30, 42, 54, .13);
+    --magenta-soft: rgba(30, 42, 54, .45);
+    --magenta-wash: transparent;
+    --blue-wash: rgba(31, 81, 154, .12);
+    --rule: rgba(30, 42, 54, .30);
+    --caution-edge: rgba(30, 42, 54, .45);
+    --shade: transparent;
+    --header-bg: #FFFFFF;
+    --grid: transparent;
+    --graticule: none;
+    --header-rule: #1E2A36;
+    --tick: #1E2A36;
+    --tick-opacity: .7;
+    --bezel: none;
+    --placard: transparent;
+    --placard-ink: initial;
+    --placard-border: none;
+    --placard-highlight: none;
+    --placard-pad: 0;
+  }
+
+  html,
+  body,
+  .paper {
+    background: #FFFFFF none;
+  }
+
+  .card {
+    break-inside: avoid;
+  }
+
+  [data-print="hide"] {
+    display: none !important;
+  }
+}"
+`;

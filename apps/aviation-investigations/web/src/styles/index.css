@@ -1,0 +1,88 @@
+@import "tailwindcss";
+@import "./tokens.css";
+@import "./base.css";
+@import "./print.css";
+
+/*
+ * The Tailwind theme is the Sectional design system and nothing else: the default
+ * palette, type scale and breakpoints are cleared so a stray `bg-gray-100` or
+ * `md:` fails to generate instead of drifting from the spec.
+ */
+@theme {
+  --color-*: initial;
+  --font-*: initial;
+  --text-*: initial;
+  --breakpoint-*: initial;
+
+  --font-sans: "B612", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "B612 Mono", ui-monospace, monospace;
+  --font-serif: "Source Serif 4 Variable", Georgia, serif;
+
+  /* UI_DESIGN §2.3, desktop. */
+  --text-micro: 9.5px;
+  --text-micro--line-height: 1.35;
+  --text-label: 10.5px;
+  --text-label--line-height: 1.4;
+  --text-meta: 11.5px;
+  --text-meta--line-height: 1.4;
+  --text-ui: 12.5px;
+  --text-ui--line-height: 1.4;
+  --text-body: 13.5px;
+  --text-body--line-height: 1.5;
+  --text-quote: 14.5px;
+  --text-quote--line-height: 1.5;
+  --text-lead: 15.5px;
+  --text-lead--line-height: 1.5;
+  --text-question: 18px;
+  --text-question--line-height: 1.3;
+  --text-headline: 26px;
+  --text-headline--line-height: 1.12;
+  --text-display: 34px;
+  --text-display--line-height: 1.08;
+
+  --tracking-caps: .14em;
+  --tracking-label: .16em;
+  --tracking-mono: .04em;
+  --tracking-headline: -.01em;
+
+  --radius-badge: 3px;
+  --radius-tag: 4px;
+  --radius-chip: 6px;
+  --radius-card: 10px;
+  --radius-box: 14px;
+
+  --container-reading: 640px;
+  --container-case: 680px;
+  --container-page: 1180px;
+
+  /* UI_DESIGN §6: phone below 640px, tablet 640–1023px, desktop from 1024px. */
+  --breakpoint-sm: 640px;
+  --breakpoint-lg: 1024px;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-raised: var(--raised);
+  --color-tint: var(--tint);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-blue: var(--blue);
+  --color-on-blue: var(--on-blue);
+  --color-magenta: var(--magenta);
+  --color-on-magenta: var(--on-magenta);
+  --color-hairline: var(--hairline);
+  --color-hatch: var(--hatch);
+  --color-magenta-soft: var(--magenta-soft);
+  --color-magenta-wash: var(--magenta-wash);
+  --color-blue-wash: var(--blue-wash);
+  --color-tray: var(--tray);
+  --color-tray-ink: var(--tray-ink);
+  --color-tray-accent: var(--tray-accent);
+  --color-placard: var(--placard);
+  --color-rule: var(--rule);
+  --color-caution-edge: var(--caution-edge);
+  --color-shade: var(--shade);
+  --color-header: var(--header-bg);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+}

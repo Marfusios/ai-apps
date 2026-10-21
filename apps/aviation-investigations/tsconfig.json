@@ -13,5 +13,16 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["server", "worker", "shared", "scripts", "tests", "evals", "vitest.config.ts"]
+  "include": [
+    "server",
+    "worker",
+    "shared",
+    "scripts",
+    "tests",
+    "evals",
+    "vitest.config.ts",
+    "vite.config.ts",
+    "web/vite"
+  ],
+  "exclude": ["tests/web"]
 }

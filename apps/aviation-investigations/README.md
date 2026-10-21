@@ -52,8 +52,8 @@ Requires Node 24 (see `.node-version`) and pnpm via corepack.
 ```sh
 corepack enable
 pnpm install
-pnpm test            # offline unit tests
-pnpm typecheck
+pnpm test            # offline unit and web component tests
+pnpm typecheck       # server/worker and web projects
 ```
 
 `pnpm test:integration` runs the integration project and needs the local
@@ -112,3 +112,32 @@ quarantine report instead of coercing them. Citation text is the narrative as
 exported with CRLF converted to LF; narratives containing HTML are converted to
 text (`CITATION_TEXT_VERSION`) and the original is kept. Completion uses the
 provisional, unverified `COMPLETION_MAPPING_V1` (status `B` is completed).
+
+### Web client
+
+`web/` is a React 19 single-page app built with Vite, React Router, TanStack Query
+and Tailwind CSS 4. It implements the "Sectional" design system from
+[UI_DESIGN.md](docs/UI_DESIGN.md) §2: tokens in `web/src/styles/tokens.css` (day on
+`:root`, night "Panel" on `[data-theme="night"]`), mapped into the Tailwind theme in
+`web/src/styles/index.css`, which clears Tailwind's default palette, type scale and
+breakpoints. Components never use raw colours. Pages are placeholders until the
+API exists.
+
+```sh
+pnpm dev:web          # Vite dev server; /api is proxied to the API server
+pnpm build:web        # production build into dist/web
+pnpm test:web         # component tests (jsdom, offline)
+```
+
+`WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
+`http://localhost:3000`) are read from the process environment by `vite.config.ts`
+only; they are not `VITE_`-prefixed, so they never reach browser code. In
+development, `/dev/components` shows every component in both themes; production
+builds leave it out.
+
+Fonts (B612, B612 Mono, Source Serif 4) are self-hosted Latin-subset WOFF2 files
+from the `@fontsource` packages; the build writes their SIL OFL notices to
+`dist/web/licenses/fonts.txt`. The theme follows `prefers-color-scheme` until the
+user picks Day or Night, and the choice is kept in `localStorage`. A small inline
+script in `web/index.html` applies it before first paint; its CSP hash is in
+`web/src/csp-hashes.ts`, and the build fails if the two disagree.
