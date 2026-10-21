@@ -24,7 +24,7 @@ Fill the other fields:
 - caseNumbers: NTSB numbers written in the question, such as DFW08TA066. Never invent one.
 - ambiguity: the reading of one vague term. With case_search, give the single default reading you applied; with needs_clarification, give two or three candidates. timing_window values are days and/or flight hours such as 30d_or_10h, 7d or 10h, or first_flight. aircraft_category and phase values are the codes above. failure_type values are snake_case labels such as total_power_loss or partial_power_loss.
 
-Prefer case_search with a default reading over needs_clarification; for "shortly after maintenance" the default is 30d_or_10h. For out_of_scope and operational_advice, return empty filters and terms and no other fields.`;
+Prefer case_search with a default reading over needs_clarification; for "shortly after maintenance" the default is 30d_or_10h. For out_of_scope and operational_advice, set mechanicalCause to false, return empty filters and terms, and omit ambiguity and caseNumbers.`;
 
 /** The user turn: delimited, untrusted data only. */
 export function renderScopeUser(input: ScopeInput): string {

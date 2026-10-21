@@ -35,6 +35,12 @@ export interface StageUsage {
   cacheReadTokens: number;
 }
 
+/**
+ * Non-fatal findings for logs and traces. `cache_write_over_prefix_max`: the provider
+ * wrote more cache tokens than `CACHED_PREFIX_MAX`, the size the reservation assumes.
+ */
+export type StageWarning = 'cache_write_over_prefix_max';
+
 export interface StageResult<T> {
   output: T;
   usage: StageUsage;
@@ -42,11 +48,18 @@ export interface StageResult<T> {
   model: string;
   promptVersion: string;
   stopReason: string;
+  warnings: StageWarning[];
 }
 
 export interface StageCtx {
+  /**
+   * Must be bound to the stage's deadline, e.g.
+   * `AbortSignal.any([request.signal, AbortSignal.timeout(stageBudgetMs)])`. The SDK's
+   * per-request `timeout` only covers waiting for response headers; this signal also
+   * ends a stalled body read. Adapters add their own `timeoutMs` bound as a backstop.
+   */
   signal: AbortSignal;
-  /** Per-request timeout in milliseconds, inside the stage's deadline. */
+  /** Budget for the whole stage call in milliseconds (token count plus generation). */
   timeoutMs: number;
   /** Hard caps; never above `STAGE_CAPS` for the stage. */
   maxInputTokens: number;
@@ -298,9 +311,21 @@ export type CheckInput = z.infer<typeof CheckInputSchema>;
 
 // ---------------------------------------------------------------------------
 
+export interface StageInputs {
+  scope: ScopeInput;
+  compose: ComposeInput;
+  check: CheckInput;
+}
+
 export interface LlmProvider {
   readonly name: LlmProviderName;
   readonly models: StageModels;
+  /**
+   * Input tokens the stage call would be billed for, counted with exactly the request
+   * the stage would send (system prompt, user turn, output schema, thinking). Free but
+   * rate-limited. Every stage call also counts first and refuses input above its cap.
+   */
+  countInputTokens<S extends LlmStage>(stage: S, input: StageInputs[S], ctx: StageCtx): Promise<number>;
   scope(input: ScopeInput, ctx: StageCtx): Promise<StageResult<ScopeOutput>>;
   compose(input: ComposeInput, ctx: StageCtx): Promise<StageResult<ComposeOutput>>;
   check(input: CheckInput, ctx: StageCtx): Promise<StageResult<CheckOutput>>;
@@ -314,8 +339,10 @@ export type StageErrorCategory =
   | 'truncated'
   /** Missing, unparseable or schema-invalid output, or an unexpected stop reason. */
   | 'invalid_output'
-  /** The provider reported more input tokens than the stage cap. */
+  /** The counted (before sending; billing `none`) or reported (after; billed) input is above the stage cap. */
   | 'cap_exceeded'
+  /** The pre-send token count failed; nothing was generated. */
+  | 'count_failed'
   /** The server-built input or context broke a bound; nothing was sent. */
   | 'invalid_input'
   | 'rate_limited'
@@ -343,6 +370,8 @@ export interface StageErrorInfo {
   /** Refusal category from `stop_details`; the explanation text is not kept. */
   refusalCategory?: string | null;
   status?: number;
+  /** The pre-send token count, when one was made. */
+  countedInputTokens?: number;
   cause?: unknown;
 }
 
@@ -357,6 +386,7 @@ export class StageError extends Error {
   readonly stopReason: string | null;
   readonly refusalCategory: string | null;
   readonly status: number | null;
+  readonly countedInputTokens: number | null;
 
   constructor(
     readonly category: StageErrorCategory,
@@ -371,5 +401,6 @@ export class StageError extends Error {
     this.stopReason = info.stopReason ?? null;
     this.refusalCategory = info.refusalCategory ?? null;
     this.status = info.status ?? null;
+    this.countedInputTokens = info.countedInputTokens ?? null;
   }
 }

@@ -1,12 +1,13 @@
 /**
  * Deterministic provider for tests (`AI_LLM_PROVIDER=fake`, NODE_ENV=test only).
- * It applies the same input bounds, context caps and output schemas as the real
- * adapter, so a pipeline test fails where production would.
+ * It applies the same input bounds, context caps, pre-send token cap and output
+ * schemas as the real adapter, so a pipeline test fails where production would.
  */
 import type { z } from 'zod';
-import { CHECK_PROMPT_VERSION } from './prompts/check.v1.js';
-import { COMPOSE_PROMPT_VERSION } from './prompts/compose.v1.js';
-import { SCOPE_PROMPT_VERSION } from './prompts/scope.v1.js';
+import { CACHED_PREFIX_MAX } from './pricing.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v1.js';
+import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v1.js';
+import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v1.js';
 import {
   CheckInputSchema,
   CheckOutputSchema,
@@ -28,42 +29,50 @@ import {
   type StageBilling,
   type StageCtx,
   type StageErrorCategory,
+  type StageInputs,
   type StageModels,
   type StageResult,
   type StageUsage,
 } from './provider.js';
 
-export const DEFAULT_FAKE_MODELS: StageModels = {
+export const DEFAULT_FAKE_MODELS: StageModels = Object.freeze({
   scope: 'claude-haiku-5-5',
   answer: 'claude-opus-5-5',
   check: 'claude-haiku-5-5',
-};
+});
 
-export const DEFAULT_FAKE_USAGE: StageUsage = {
+export const DEFAULT_FAKE_USAGE: Readonly<StageUsage> = Object.freeze({
   inputTokens: 1_000,
   outputTokens: 100,
   cacheWriteTokens: 0,
   cacheReadTokens: 0,
-};
+});
+
+/** What one call produces: an output (with optional usage) or a `StageError`. */
+export type FakeResult<O> =
+  | { output: O; usage?: Partial<StageUsage> }
+  | { fail: StageErrorCategory; billing?: StageBilling; refusalCategory?: string };
 
 /**
  * One scripted call:
- * - `{ output }` returns it (validated against the stage's output schema);
- * - `{ fail }` throws that `StageError`;
- * - `{ hang: true }` waits until the signal aborts or `timeoutMs` passes, then fails with `timeout`;
- * - a function computes the output from the input.
+ * - a `FakeResult`;
+ * - `{ hang: true }`: wait until the signal aborts or `timeoutMs` passes, then fail with `timeout`;
+ * - a function of the input that returns a `FakeResult`.
  */
 export type FakeStep<I, O> =
-  | { output: O; usage?: Partial<StageUsage> }
-  | { fail: StageErrorCategory; billing?: StageBilling; refusalCategory?: string }
+  | FakeResult<O>
   | { hang: true }
-  | ((input: I, ctx: StageCtx) => O | Promise<O>);
+  | ((input: I, ctx: StageCtx) => FakeResult<O> | Promise<FakeResult<O>>);
 
 /** A single step repeats for every call; an array is consumed in order and must not run out. */
 export type FakeSteps<I, O> = FakeStep<I, O> | FakeStep<I, O>[];
 
+export type FakeCounts = { [S in LlmStage]?: number | ((input: StageInputs[S]) => number) };
+
 export interface FakeScript {
   models?: StageModels;
+  /** Token counts per stage; the default is ceil(characters / 4) of system prompt plus user turn. */
+  counts?: FakeCounts;
   scope?: FakeSteps<ScopeInput, ScopeOutput>;
   compose?: FakeSteps<ComposeInput, ComposeOutput>;
   check?: FakeSteps<CheckInput, CheckOutput>;
@@ -75,90 +84,159 @@ export interface FakeCall {
 }
 
 export interface FakeProvider extends LlmProvider {
-  /** Every call that passed input validation, in order. */
+  /** Every stage call that passed input validation and the token cap, in order. */
   readonly calls: readonly FakeCall[];
 }
 
 const BILLED_ON_FAILURE: readonly StageErrorCategory[] = ['refusal', 'truncated', 'invalid_output', 'cap_exceeded'];
 const UNCERTAIN_ON_FAILURE: readonly StageErrorCategory[] = ['timeout', 'network', 'provider_error', 'unexpected'];
 
+const freshUsage = (over?: Partial<StageUsage>): StageUsage => ({ ...DEFAULT_FAKE_USAGE, ...over });
+
 function defaultBilling(category: StageErrorCategory): StageBilling {
-  if (BILLED_ON_FAILURE.includes(category)) return { kind: 'usage', usage: { ...DEFAULT_FAKE_USAGE } };
+  if (BILLED_ON_FAILURE.includes(category)) return { kind: 'usage', usage: freshUsage() };
   if (UNCERTAIN_ON_FAILURE.includes(category)) return { kind: 'uncertain' };
   return { kind: 'none' };
 }
 
-function waitForAbort(ctx: StageCtx): Promise<void> {
+function waitForAbort(signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(done, ctx.timeoutMs);
-    ctx.signal.addEventListener('abort', done, { once: true });
-    function done() {
-      clearTimeout(timer);
-      ctx.signal.removeEventListener('abort', done);
-      resolve();
-    }
+    if (signal.aborted) resolve();
+    else signal.addEventListener('abort', () => resolve(), { once: true });
   });
 }
 
+interface FakeStageSpec<I, O> {
+  name: LlmStage;
+  promptVersion: string;
+  system: string;
+  render: (input: I) => string;
+  input: z.ZodType<I>;
+  output: z.ZodType<O>;
+  steps: FakeSteps<I, O> | undefined;
+  count: number | ((input: I) => number) | undefined;
+}
+
 export function createFakeProvider(script: FakeScript = {}): FakeProvider {
-  const models = script.models ?? DEFAULT_FAKE_MODELS;
+  const models = { ...(script.models ?? DEFAULT_FAKE_MODELS) };
   const calls: FakeCall[] = [];
 
-  function stage<I, O>(
-    name: LlmStage,
-    promptVersion: string,
-    inputSchema: z.ZodType<I>,
-    outputSchema: z.ZodType<O>,
-    steps: FakeSteps<I, O> | undefined,
-  ) {
-    const queue = Array.isArray(steps) ? [...steps] : undefined;
-    const model = models[STAGE_ROLE[name]];
-    const fail = (category: StageErrorCategory, billing: StageBilling, refusalCategory?: string) =>
-      new StageError(category, { stage: name, provider: 'fake', model, promptVersion, billing, refusalCategory });
+  function stage<I, O>(spec: FakeStageSpec<I, O>) {
+    const queue = Array.isArray(spec.steps) ? [...spec.steps] : undefined;
+    const model = models[STAGE_ROLE[spec.name]];
+    const meta = { stage: spec.name, provider: 'fake', model, promptVersion: spec.promptVersion } as const;
+    const fail = (
+      category: StageErrorCategory,
+      billing: StageBilling,
+      extra?: { refusalCategory?: string; countedInputTokens?: number },
+    ) => new StageError(category, { ...meta, billing, ...extra });
 
-    return async (rawInput: I, ctx: StageCtx): Promise<StageResult<O>> => {
-      if (!isValidStageCtx(name, ctx)) throw fail('invalid_input', { kind: 'none' });
-      const parsed = inputSchema.safeParse(rawInput);
+    function prepare(rawInput: I, ctx: StageCtx): { input: I; tokens: number } {
+      if (!isValidStageCtx(spec.name, ctx)) throw fail('invalid_input', { kind: 'none' });
+      const parsed = spec.input.safeParse(rawInput);
       if (!parsed.success) throw fail('invalid_input', { kind: 'none' });
       if (ctx.signal.aborted) throw fail('timeout', { kind: 'none' });
+      const c = spec.count;
+      const tokens =
+        typeof c === 'number'
+          ? c
+          : typeof c === 'function'
+            ? c(parsed.data)
+            : Math.ceil((spec.system.length + spec.render(parsed.data).length) / 4);
+      return { input: parsed.data, tokens };
+    }
 
-      let step: FakeStep<I, O> | undefined;
+    function nextStep(): FakeStep<I, O> {
       if (queue) {
-        step = queue.shift();
-        if (step === undefined) throw new Error(`Fake provider: no scripted ${name} step left`);
-      } else {
-        step = steps as FakeStep<I, O> | undefined;
-        if (step === undefined) throw new Error(`Fake provider: no ${name} step scripted`);
+        const step = queue.shift();
+        if (step === undefined) throw new Error(`Fake provider: no scripted ${spec.name} step left`);
+        return step;
       }
-      calls.push({ stage: name, input: parsed.data });
+      if (spec.steps === undefined) throw new Error(`Fake provider: no ${spec.name} step scripted`);
+      return spec.steps as FakeStep<I, O>;
+    }
 
-      let output: unknown;
-      let usage = DEFAULT_FAKE_USAGE;
-      if (typeof step === 'function') {
-        output = await step(parsed.data, ctx);
-        if (ctx.signal.aborted) throw fail('timeout', { kind: 'uncertain' });
-      } else if ('fail' in step) {
-        throw fail(step.fail, step.billing ?? defaultBilling(step.fail), step.refusalCategory);
-      } else if ('hang' in step) {
-        await waitForAbort(ctx);
-        throw fail('timeout', { kind: 'uncertain' });
-      } else {
-        output = step.output;
-        usage = { ...DEFAULT_FAKE_USAGE, ...step.usage };
+    async function run(rawInput: I, ctx: StageCtx): Promise<StageResult<O>> {
+      const { input, tokens } = prepare(rawInput, ctx);
+      const counted = { countedInputTokens: tokens };
+      if (tokens > ctx.maxInputTokens) throw fail('cap_exceeded', { kind: 'none' }, counted);
+      const step = nextStep();
+      calls.push({ stage: spec.name, input });
+      const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(ctx.timeoutMs)]);
+
+      if ('hang' in step) {
+        await waitForAbort(signal);
+        throw fail('timeout', { kind: 'uncertain' }, counted);
+      }
+      const result = typeof step === 'function' ? await step(input, ctx) : step;
+      if (signal.aborted) throw fail('timeout', { kind: 'uncertain' }, counted);
+      if ('fail' in result) {
+        const billing = result.billing ?? defaultBilling(result.fail);
+        throw fail(result.fail, billing, { ...counted, refusalCategory: result.refusalCategory });
       }
 
-      const valid = outputSchema.safeParse(output);
-      if (!valid.success) throw fail('invalid_output', { kind: 'usage', usage });
-      return { output: valid.data, usage, provider: 'fake', model, promptVersion, stopReason: 'end_turn' };
-    };
+      const usage = freshUsage(result.usage);
+      const valid = spec.output.safeParse(result.output);
+      if (!valid.success) throw fail('invalid_output', { kind: 'usage', usage }, counted);
+      return {
+        output: valid.data,
+        usage,
+        provider: 'fake',
+        model,
+        promptVersion: spec.promptVersion,
+        stopReason: 'end_turn',
+        warnings: usage.cacheWriteTokens > CACHED_PREFIX_MAX ? ['cache_write_over_prefix_max'] : [],
+      };
+    }
+
+    return { run, countInputTokens: async (rawInput: I, ctx: StageCtx) => prepare(rawInput, ctx).tokens };
   }
+
+  const scope = stage({
+    name: 'scope',
+    promptVersion: SCOPE_PROMPT_VERSION,
+    system: SCOPE_SYSTEM,
+    render: renderScopeUser,
+    input: ScopeInputSchema,
+    output: ScopeOutputSchema,
+    steps: script.scope,
+    count: script.counts?.scope,
+  });
+  const compose = stage({
+    name: 'compose',
+    promptVersion: COMPOSE_PROMPT_VERSION,
+    system: COMPOSE_SYSTEM,
+    render: renderComposeUser,
+    input: ComposeInputSchema,
+    output: ComposeOutputSchema,
+    steps: script.compose,
+    count: script.counts?.compose,
+  });
+  const check = stage({
+    name: 'check',
+    promptVersion: CHECK_PROMPT_VERSION,
+    system: CHECK_SYSTEM,
+    render: renderCheckUser,
+    input: CheckInputSchema,
+    output: CheckOutputSchema,
+    steps: script.check,
+    count: script.counts?.check,
+  });
+  const counters = {
+    scope: scope.countInputTokens,
+    compose: compose.countInputTokens,
+    check: check.countInputTokens,
+  };
 
   return {
     name: 'fake',
-    models: { ...models },
+    models,
     calls,
-    scope: stage('scope', SCOPE_PROMPT_VERSION, ScopeInputSchema, ScopeOutputSchema, script.scope),
-    compose: stage('compose', COMPOSE_PROMPT_VERSION, ComposeInputSchema, ComposeOutputSchema, script.compose),
-    check: stage('check', CHECK_PROMPT_VERSION, CheckInputSchema, CheckOutputSchema, script.check),
+    countInputTokens<S extends LlmStage>(name: S, input: StageInputs[S], ctx: StageCtx): Promise<number> {
+      return (counters[name] as (i: StageInputs[S], c: StageCtx) => Promise<number>)(input, ctx);
+    },
+    scope: scope.run,
+    compose: compose.run,
+    check: check.run,
   };
 }

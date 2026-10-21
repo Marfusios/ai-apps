@@ -153,11 +153,14 @@ object with normalized usage (input, output including thinking, cache write, cac
 read), provider, model and prompt version. The OpenAI adapter is not built yet.
 
 Anthropic calls use `messages.parse` with structured outputs, effort `low`, no
-retries, a per-request timeout, a cached system prompt, and no prefill, sampling
-parameters or refusal fallbacks. Thinking is disabled on Haiku 5.5, turned off with
-`between_tools` on Sonnet 5.5, and cannot be disabled on Opus 5.5. A refusal,
-`max_tokens`, unparsed output or reported input above the stage cap fails the
-stage with a `StageError` that says whether the call was billed.
+retries, a cached system prompt, and no prefill, sampling parameters or refusal
+fallbacks. Thinking is disabled on Haiku 5.5, turned off with `between_tools` on
+Sonnet 5.5, and cannot be disabled on Opus 5.5. Each stage first counts its input
+with `messages.countTokens` on the identical request (`countInputTokens` exposes the
+same count for evidence packing) and sends nothing above the stage cap. The whole
+call is bounded by the caller's deadline signal and the stage's `timeoutMs`. A
+refusal, `max_tokens`, unparsed output, a failed count or input above the cap fails
+the stage with a `StageError` that says whether the call was billed.
 
 `pricing.ts` holds the allowlisted prices, the hard token caps per stage and the
 per-request reservations ($0.14 Opus, $0.07 Sonnet, $0.01 Haiku answer model).

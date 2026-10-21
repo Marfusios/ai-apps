@@ -7,10 +7,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { PHASE_GROUPS } from '../../shared/codes.js';
-import { createFakeProvider } from '../../server/ai/fake.js';
-import { STAGE_CAPS } from '../../server/ai/pricing.js';
+import { createFakeProvider, DEFAULT_FAKE_USAGE } from '../../server/ai/fake.js';
+import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v1.js';
-import { COMPOSE_SYSTEM } from '../../server/ai/prompts/compose.v1.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v1.js';
 import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v1.js';
 import {
   CheckOutputSchema,
@@ -134,16 +134,24 @@ function errorResponse(status: number, type: string): Response {
 
 type Reply = Response | ((body: Body, signal: AbortSignal | null | undefined) => Promise<Response>);
 
-/** A real SDK client whose `fetch` records each request body and returns `reply`. */
-function stubClient(reply: Reply) {
+const COUNT_PATH = '/v1/messages/count_tokens';
+
+/**
+ * A real SDK client whose `fetch` records each request body. Token counts get
+ * `count` (a number of input tokens, or a reply); messages get `reply`.
+ */
+function stubClient(reply: Reply, count: number | Reply = 1_000) {
   const bodies: Body[] = [];
-  const fetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  const countBodies: Body[] = [];
+  const fetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const body = JSON.parse(String(init?.body)) as Body;
-    bodies.push(body);
-    return typeof reply === 'function' ? reply(body, init?.signal) : reply.clone();
+    const isCount = String(url).endsWith(COUNT_PATH);
+    (isCount ? countBodies : bodies).push(body);
+    const r = isCount ? (typeof count === 'number' ? jsonResponse(200, { input_tokens: count }) : count) : reply;
+    return typeof r === 'function' ? r(body, init?.signal) : r.clone();
   };
   const client = new Anthropic({ apiKey: 'test-key', baseURL: 'https://api.invalid', maxRetries: 0, fetch });
-  return { client, bodies };
+  return { client, bodies, countBodies };
 }
 
 /** A fetch that never answers; it rejects like undici when the SDK aborts it. */
@@ -153,9 +161,19 @@ function hang(_body: Body, signal: AbortSignal | null | undefined): Promise<Resp
   });
 }
 
-function provider(reply: Reply, models: StageModels = DEFAULT_MODELS) {
-  const { client, bodies } = stubClient(reply);
-  return { p: createAnthropicProvider({ models, client }), client, bodies };
+/** Headers arrive, then the body never finishes and ignores aborts. */
+function stalledBody(): Promise<Response> {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"id":"msg_'));
+    },
+  });
+  return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }));
+}
+
+function provider(reply: Reply, models: StageModels = DEFAULT_MODELS, count: number | Reply = 1_000) {
+  const { client, bodies, countBodies } = stubClient(reply, count);
+  return { p: createAnthropicProvider({ models, client }), client, bodies, countBodies };
 }
 
 const ctx = (stage: LlmStage, signal = new AbortController().signal, timeoutMs = 5_000) =>
@@ -184,8 +202,8 @@ describe('Anthropic adapter requests', () => {
   it('sends structured output, effort low, a cached system prompt and the stage output cap', async () => {
     const { p, client, bodies } = provider(jsonResponse(200, messageJson(JSON.stringify(scopeOutput))));
     const parse = vi.spyOn(client.messages, 'parse');
-    const signal = new AbortController().signal;
-    await p.scope(scopeInput, stageCtx('scope', signal, 7_000));
+    const caller = new AbortController();
+    await p.scope(scopeInput, stageCtx('scope', caller.signal, 7_000));
 
     const body = bodies[0]!;
     expect(body.model).toBe(HAIKU);
@@ -196,7 +214,14 @@ describe('Anthropic adapter requests', () => {
     expect(outputConfig.effort).toBe('low');
     expect(outputConfig.format.type).toBe('json_schema');
     expect(outputConfig.format.schema.additionalProperties).toBe(false);
-    expect(parse.mock.calls[0]![1]).toEqual({ timeout: 7_000, signal, maxRetries: 0 });
+    // The timeout is what remains of the stage budget; the signal follows the caller's.
+    const options = parse.mock.calls[0]![1] as { timeout: number; signal: AbortSignal; maxRetries: number };
+    expect(options.maxRetries).toBe(0);
+    expect(options.timeout).toBeGreaterThan(6_000);
+    expect(options.timeout).toBeLessThanOrEqual(7_000);
+    expect(options.signal.aborted).toBe(false);
+    caller.abort();
+    expect(options.signal.aborted).toBe(true);
   });
 
   it('max_tokens equals each stage output cap and the system prompt is that stage prompt', async () => {
@@ -283,6 +308,7 @@ describe('Anthropic adapter results', () => {
       model: HAIKU,
       promptVersion: 'scope.v1',
       stopReason: 'end_turn',
+      warnings: [],
     });
   });
 
@@ -379,13 +405,13 @@ describe('Anthropic adapter failures', () => {
   });
 
   it('does not call the API when the signal is already aborted', async () => {
-    const { p, bodies } = provider(hang);
+    const { p, bodies, countBodies } = provider(hang);
     const controller = new AbortController();
     controller.abort();
     const err = await stageError(p.check(checkInput, ctx('check', controller.signal)));
     expect(err.category).toBe('timeout');
     expect(err.billing).toEqual({ kind: 'none' });
-    expect(bodies).toHaveLength(0);
+    expect([bodies.length, countBodies.length]).toEqual([0, 0]);
   });
 
   it('maps HTTP errors to categories and billing', async () => {
@@ -412,7 +438,7 @@ describe('Anthropic adapter failures', () => {
   });
 
   it('rejects contexts above the stage caps and unbounded input without calling the API', async () => {
-    const { p, bodies } = provider(jsonResponse(200, messageJson(JSON.stringify(scopeOutput))));
+    const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson(JSON.stringify(scopeOutput))));
     const over = { ...ctx('scope'), maxOutputTokens: STAGE_CAPS.scope.output + 1 };
     expect((await stageError(p.scope(scopeInput, over))).category).toBe('invalid_input');
     const overInput = { ...ctx('scope'), maxInputTokens: STAGE_CAPS.scope.input + 1 };
@@ -429,7 +455,8 @@ describe('Anthropic adapter failures', () => {
       ],
     };
     expect((await stageError(p.compose(tooMany, ctx('compose')))).category).toBe('invalid_input');
-    expect(bodies).toHaveLength(0);
+    expect((await stageError(p.countInputTokens('compose', tooMany, ctx('compose')))).category).toBe('invalid_input');
+    expect([bodies.length, countBodies.length]).toEqual([0, 0]);
   });
 
   it('refuses models outside the allowlist and a missing key', () => {
@@ -439,6 +466,116 @@ describe('Anthropic adapter failures', () => {
     expect(() => create({ scope: 'gpt-5.6-luna' })).toThrow(/not an allowlisted Anthropic model/);
     expect(() => createAnthropicProvider({ models: DEFAULT_MODELS })).toThrow(/ANTHROPIC_API_KEY/);
     expect(createAnthropicProvider({ apiKey: 'k', models: DEFAULT_MODELS }).models).toEqual(DEFAULT_MODELS);
+  });
+});
+
+describe('token counting and input caps', () => {
+  it('counts with exactly the request the stage sends, minus max_tokens', async () => {
+    const reply = jsonResponse(200, messageJson(JSON.stringify(composeOutput)));
+    const { p, bodies, countBodies } = provider(reply, DEFAULT_MODELS, 12_345);
+    expect(await p.countInputTokens('compose', composeInput, ctx('compose'))).toBe(12_345);
+    expect(bodies).toHaveLength(0);
+    await p.compose(composeInput, ctx('compose'));
+    expect(countBodies).toHaveLength(2);
+    expect(countBodies[1]).toEqual(countBodies[0]);
+    const { max_tokens: maxTokens, ...sent } = bodies[0]!;
+    expect(maxTokens).toBe(STAGE_CAPS.answer.output);
+    expect(countBodies[0]).toEqual(sent);
+  });
+
+  it('an over-cap compose input throws cap_exceeded without generating', async () => {
+    const { p, client, bodies, countBodies } = provider(
+      jsonResponse(200, messageJson(JSON.stringify(composeOutput))),
+      DEFAULT_MODELS,
+      STAGE_CAPS.answer.input + 1,
+    );
+    const parse = vi.spyOn(client.messages, 'parse');
+    const err = await stageError(p.compose(composeInput, ctx('compose')));
+    expect(err.category).toBe('cap_exceeded');
+    expect(err.billing).toEqual({ kind: 'none' });
+    expect(err.countedInputTokens).toBe(STAGE_CAPS.answer.input + 1);
+    expect(countBodies).toHaveLength(1);
+    expect(bodies).toHaveLength(0);
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it('an input exactly at the cap proceeds', async () => {
+    const { p, bodies } = provider(
+      jsonResponse(200, messageJson(JSON.stringify(composeOutput))),
+      DEFAULT_MODELS,
+      STAGE_CAPS.answer.input,
+    );
+    expect((await p.compose(composeInput, ctx('compose'))).output).toEqual(composeOutput);
+    expect(bodies).toHaveLength(1);
+  });
+
+  it('a failed count fails the stage with count_failed and sends nothing else', async () => {
+    const reply = jsonResponse(200, messageJson(JSON.stringify(scopeOutput)));
+    for (const count of [errorResponse(429, 'rate_limit_error'), errorResponse(500, 'api_error'), jsonResponse(200, {})]) {
+      const { p, bodies } = provider(reply, DEFAULT_MODELS, count);
+      const err = await stageError(p.scope(scopeInput, ctx('scope')));
+      expect([err.category, err.billing.kind]).toEqual(['count_failed', 'none']);
+      expect(bodies).toHaveLength(0);
+    }
+  });
+
+  it('a count cut off by the deadline is a timeout that was not billed', async () => {
+    const { p, bodies } = provider(jsonResponse(200, messageJson('{}')), DEFAULT_MODELS, hang);
+    const err = await stageError(p.scope(scopeInput, ctx('scope', new AbortController().signal, 30)));
+    expect([err.category, err.billing.kind]).toEqual(['timeout', 'none']);
+    expect(bodies).toHaveLength(0);
+  });
+
+  it('still fails a billed call whose reported input exceeds the cap (backstop)', async () => {
+    const usage = { ...USAGE, input_tokens: 2_000, cache_creation_input_tokens: 500, cache_read_input_tokens: 200 };
+    const reply = jsonResponse(200, messageJson(JSON.stringify(scopeOutput), { usage }));
+    const { p } = provider(reply, DEFAULT_MODELS, 2_500);
+    const err = await stageError(p.scope(scopeInput, ctx('scope')));
+    expect([err.category, err.billing.kind, err.countedInputTokens]).toEqual(['cap_exceeded', 'usage', 2_500]);
+  });
+});
+
+describe('stage deadline', () => {
+  it('ends a body that stalls after the headers within the stage budget', async () => {
+    const { p } = provider(stalledBody);
+    const started = Date.now();
+    // The caller's signal never aborts: the adapter's own timeoutMs bound must hold.
+    const err = await stageError(p.scope(scopeInput, ctx('scope', new AbortController().signal, 80)));
+    expect(err.category).toBe('timeout');
+    expect(err.billing).toEqual({ kind: 'uncertain' });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('ends a stalled body when the caller aborts', async () => {
+    const { p } = provider(stalledBody);
+    const controller = new AbortController();
+    const pending = p.check(checkInput, ctx('check', controller.signal, 60_000));
+    setTimeout(() => controller.abort(), 20);
+    expect((await stageError(pending)).category).toBe('timeout');
+  });
+});
+
+describe('cached prefix', () => {
+  it('each system prompt plus its output schema stays under CACHED_PREFIX_MAX tokens', async () => {
+    for (const [stage, system] of [
+      ['scope', SCOPE_SYSTEM],
+      ['compose', COMPOSE_SYSTEM],
+      ['check', CHECK_SYSTEM],
+    ] as const) {
+      const { p, bodies } = provider(jsonResponse(200, messageJson(JSON.stringify(OUTPUT_FOR[stage]))));
+      await runStage(p, stage);
+      const schema = JSON.stringify((bodies[0]!.output_config as { format: unknown }).format);
+      // chars / 3 over-estimates tokens for English text and JSON.
+      expect(Math.ceil((system.length + schema.length) / 3)).toBeLessThan(CACHED_PREFIX_MAX);
+    }
+  });
+
+  it('warns, without failing, when the provider writes more cache than CACHED_PREFIX_MAX', async () => {
+    const over = { ...USAGE, cache_creation_input_tokens: CACHED_PREFIX_MAX + 1, input_tokens: 10 };
+    const reply = jsonResponse(200, messageJson(JSON.stringify(composeOutput), { usage: over }));
+    const result = await provider(reply).p.compose(composeInput, ctx('compose'));
+    expect(result.warnings).toEqual(['cache_write_over_prefix_max']);
+    expect(result.output).toEqual(composeOutput);
   });
 });
 
@@ -518,14 +655,51 @@ describe('fake provider', () => {
   it('scripts failures, timeouts and schema violations as StageErrors', async () => {
     const fake = createFakeProvider({
       compose: [{ fail: 'refusal' }, { hang: true }, { output: { ...composeOutput, extra: true } as ComposeOutput }],
-      check: (input) => ({ supported: input.claims.length === 1, problems: [] }),
+      check: (input) => ({
+        output: { supported: input.claims.length === 1, problems: [] },
+        usage: { outputTokens: 3 },
+      }),
     });
     const refusal = await stageError(fake.compose(composeInput, ctx('compose')));
     expect([refusal.category, refusal.billing.kind]).toEqual(['refusal', 'usage']);
     const timeout = await stageError(fake.compose(composeInput, ctx('compose', new AbortController().signal, 20)));
     expect([timeout.category, timeout.billing.kind]).toEqual(['timeout', 'uncertain']);
     expect((await stageError(fake.compose(composeInput, ctx('compose')))).category).toBe('invalid_output');
-    expect((await fake.check(checkInput, ctx('check'))).output.supported).toBe(true);
+    const checked = await fake.check(checkInput, ctx('check'));
+    expect(checked.output.supported).toBe(true);
+    expect(checked.usage.outputTokens).toBe(3);
+  });
+
+  it('counts tokens deterministically and refuses over-cap input before a step runs', async () => {
+    const fake = createFakeProvider({
+      compose: { output: composeOutput },
+      counts: { check: 42, scope: (input) => input.question.length },
+    });
+    const defaultCount = await fake.countInputTokens('compose', composeInput, ctx('compose'));
+    expect(defaultCount).toBe(Math.ceil((COMPOSE_SYSTEM.length + renderComposeUser(composeInput).length) / 4));
+    expect(await fake.countInputTokens('compose', composeInput, ctx('compose'))).toBe(defaultCount);
+    expect(await fake.countInputTokens('check', checkInput, ctx('check'))).toBe(42);
+    expect(await fake.countInputTokens('scope', scopeInput, ctx('scope'))).toBe(scopeInput.question.length);
+
+    const overCap = createFakeProvider({ compose: [{ output: composeOutput }], counts: { compose: 16_001 } });
+    const err = await stageError(overCap.compose(composeInput, ctx('compose')));
+    expect([err.category, err.billing.kind, err.countedInputTokens]).toEqual(['cap_exceeded', 'none', 16_001]);
+    expect(overCap.calls).toHaveLength(0);
+  });
+
+  it('returns a fresh usage object on every call and keeps the default frozen', async () => {
+    const fake = createFakeProvider({ check: { output: checkOutput } });
+    const first = await fake.check(checkInput, ctx('check'));
+    first.usage.inputTokens = 999_999;
+    const second = await fake.check(checkInput, ctx('check'));
+    expect(second.usage).toEqual(DEFAULT_FAKE_USAGE);
+    expect(second.usage).not.toBe(first.usage);
+    expect(Object.isFrozen(DEFAULT_FAKE_USAGE)).toBe(true);
+    const failed = createFakeProvider({ check: { fail: 'truncated' } });
+    const e1 = await stageError(failed.check(checkInput, ctx('check')));
+    const e2 = await stageError(failed.check(checkInput, ctx('check')));
+    expect(e1.billing).toEqual(e2.billing);
+    expect(e1.billing).not.toBe(e2.billing);
   });
 
   it('applies the same input bounds as the real adapter', async () => {
