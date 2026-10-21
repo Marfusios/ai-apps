@@ -1,7 +1,9 @@
 import { parseArgs } from 'node:util';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations } from '../server/db/generations.js';
+import { createEsClient } from '../server/search/es.js';
 import { workerConfig } from './config.js';
+import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
 import { extractArchive, isTerminating } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
 import { readProfile, verifyCorpus, type VerifyReport } from './ingest/verify.js';
@@ -12,6 +14,7 @@ const USAGE = [
   '  worker load --from <extractDir>',
   '  worker verify --generation <id> [--profile <file>]',
   '  worker generations',
+  '  worker index cases --generation <id>',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -67,6 +70,25 @@ function printVerify(r: VerifyReport): void {
   console.log(`report: ${r.reportPath}`);
 }
 
+function printIndex(r: IndexReport): void {
+  const lines: [string, string | number][] = [
+    ['index', r.index],
+    ['alias', `${r.alias} -> ${r.index}`],
+    ['previous indices (kept)', r.previousIndices.join(', ') || 'none'],
+    ['generation', r.generationId],
+    ['version', `${r.version} (${r.fingerprint.slice(0, 12)})`],
+    ['documents (US events)', r.documents],
+    ['aircraft', r.aircraft],
+    ['answer-eligible', r.answerEligible],
+    ['multi-aircraft events (aircraft facets overlap)', r.multiAircraftEvents],
+    ['events with several defining phases', r.eventsWithSeveralDefiningPhases],
+    ['events without a defining phase', r.eventsWithoutDefiningPhase],
+    ['unparsed defining-event labels', r.unparsedEventLabels],
+    ['duration', `${(r.durationMs / 1000).toFixed(1)} s`],
+  ];
+  for (const [k, v] of lines) console.log(`${k}: ${v}`);
+}
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   if (command === 'extract') {
@@ -115,6 +137,26 @@ async function main(argv: string[]): Promise<number> {
     const report = await withDb((db) => verifyCorpus(db, id, profile ? { profile } : {}));
     printVerify(report);
     return report.ok ? 0 : 1;
+  }
+  if (command === 'index') {
+    const [target, ...args] = rest;
+    const { values } = parseArgs({ args, options: { generation: { type: 'string' } }, strict: true });
+    const id = Number(values.generation);
+    if (target !== 'cases' || !values.generation || !Number.isSafeInteger(id) || id < 1) {
+      console.error(USAGE);
+      return 2;
+    }
+    const config = workerConfig().elasticsearch;
+    const es = createEsClient(config, 'write', { requestTimeoutMs: 120_000 });
+    try {
+      const report = await withDb((db) =>
+        rebuildCasesIndex(es, db, { generationId: id, prefix: config.indexPrefix, log: (m) => console.error(m) }),
+      );
+      printIndex(report);
+    } finally {
+      await es.close();
+    }
+    return 0;
   }
   if (command === 'generations') {
     parseArgs({ args: rest, options: {}, strict: true });

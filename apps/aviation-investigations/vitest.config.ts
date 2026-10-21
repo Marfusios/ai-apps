@@ -14,6 +14,8 @@ export default defineConfig({
           name: 'integration',
           include: ['tests/integration/**/*.test.ts'],
           globalSetup: ['tests/integration/global-setup.ts'],
+          // The files share aviation_test and the aviation-test-* indices; some reset them.
+          fileParallelism: false,
           testTimeout: 60_000,
           hookTimeout: 60_000,
         },
