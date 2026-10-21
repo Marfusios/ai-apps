@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { eq, getTableColumns, getTableName, sql } from 'drizzle-orm';
+import { and, eq, getTableColumns, getTableName, sql } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { Db, DbOrTx } from '../../server/db/client.js';
@@ -579,6 +579,11 @@ export interface LoadOptions {
   mapping?: CompletionMapping;
   /** Cases per transaction step (each table then inserts at most BATCH_ROWS rows per statement). */
   casesPerStep?: number;
+  /**
+   * Test seam: runs inside the load transaction after every insert, the run's
+   * `succeeded` record and the seal, just before commit. A throw rolls everything back.
+   */
+  beforeCommit?: () => Promise<void> | void;
 }
 
 const MAX_ERROR_CHARS = 2000;
@@ -618,7 +623,12 @@ async function startRun(db: Db, archiveSha256: string | null, mapping: Completio
   return run.id;
 }
 
-/** Run `fn` under a new ingestion run; the run ends `succeeded` or `failed` (with a safe error text). */
+/**
+ * Run `fn` under a new ingestion run. `fn` records `succeeded` inside the generation
+ * transaction; when it throws, nothing it wrote was committed and the run is marked
+ * `failed` here (only while still `running`). The original error is always rethrown,
+ * even if recording the failure fails.
+ */
 async function withRun(
   db: Db,
   archiveSha256: string | null,
@@ -627,37 +637,36 @@ async function withRun(
 ): Promise<LoadReport> {
   const started = Date.now();
   const runId = await startRun(db, archiveSha256, mapping);
+  let report: Omit<LoadReport, 'runId' | 'durationMs' | 'analyzed'>;
   try {
-    const report = await fn(runId);
-    await db
-      .update(ingestionRuns)
-      .set({ status: 'succeeded', finishedAt: new Date(), counts: { generationId: report.generationId, rows: report.rows } })
-      .where(eq(ingestionRuns.id, runId));
-    // Best effort: the generation is committed whether or not statistics refresh.
-    const analyzed = await analyzeCorpus(db).then(
-      () => true,
-      () => false,
-    );
-    return { ...report, runId, analyzed, durationMs: Date.now() - started };
+    report = await fn(runId);
   } catch (err) {
-    await db
-      .update(ingestionRuns)
-      .set({ status: 'failed', finishedAt: new Date(), error: describeLoadError(err) })
-      .where(eq(ingestionRuns.id, runId));
+    try {
+      await db
+        .update(ingestionRuns)
+        .set({ status: 'failed', finishedAt: new Date(), error: describeLoadError(err) })
+        .where(and(eq(ingestionRuns.id, runId), eq(ingestionRuns.status, 'running')));
+    } catch {
+      // The run stays 'running'; `worker fail-stale-runs` closes it later.
+    }
     throw err;
   }
+  // Best effort: the generation is committed whether or not statistics refresh.
+  const analyzed = await analyzeCorpus(db).then(
+    () => true,
+    () => false,
+  );
+  return { ...report, runId, analyzed, durationMs: Date.now() - started };
 }
 
 /**
- * Refresh planner statistics of the corpus tables. A new generation's
- * `generation_id` is unknown to the previous statistics, so queries on it (verification
- * first) would otherwise be planned as if it were empty.
+ * Refresh planner statistics of the corpus tables (`analyze_corpus()`, owned by the
+ * migrator). A new generation's `generation_id` is unknown to the previous
+ * statistics, so queries on it (verification first) would otherwise be planned as
+ * if it were empty.
  */
 export async function analyzeCorpus(db: DbOrTx): Promise<void> {
-  await db.execute(
-    sql`analyze dataset_generations, cases, case_aircraft, case_engines, case_findings, case_sequence,
-        case_sections, case_section_sources, code_dictionary, quarantine`,
-  );
+  await db.execute(sql`select analyze_corpus()`);
 }
 
 function emptyCounts(): RowCounts {
@@ -701,8 +710,10 @@ function quarantineRow(generationId: number, runId: number, entryNo: number, q: 
 }
 
 /**
- * Write one new generation in a single transaction. The generation starts as
- * `loading` (rows committed, not yet verified); `verifyCorpus` promotes it.
+ * Write one new generation in a single transaction: insert it as `loading`, insert
+ * every row, record the run as `succeeded` (with its counts) and seal the generation
+ * (`loaded`), then commit. After the seal the database rejects any further write to
+ * its rows; `verifyCorpus` takes it from there.
  */
 async function writeGeneration(
   db: Db,
@@ -775,6 +786,14 @@ async function writeGeneration(
     if (mismatched.length > 0) {
       throw new Error(`inserted row counts differ from the plan: ${mismatched.map((t) => `${t} ${inserted[t]}/${planned.rows[t]}`).join(', ')}`);
     }
+    const finished = await tx
+      .update(ingestionRuns)
+      .set({ status: 'succeeded', finishedAt: new Date(), counts: { generationId: id, rows: inserted } })
+      .where(and(eq(ingestionRuns.id, runId), eq(ingestionRuns.status, 'running')))
+      .returning({ id: ingestionRuns.id });
+    if (finished.length !== 1) throw new Error(`ingestion run ${runId} is no longer running`);
+    await tx.execute(sql`select seal_generation(${id})`);
+    await opts.beforeCommit?.();
     return id;
   });
 
