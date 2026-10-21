@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { Client } from '@elastic/elasticsearch';
 import pg from 'pg';
+import { createDb, type Db } from '../../server/db/client.js';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 
 const APP_DIR = resolve(fileURLToPath(import.meta.url), '../../..');
@@ -28,9 +29,26 @@ export function testPool(role: 'app' | 'migrator' | 'ingest' = 'app'): pg.Pool {
   return new pg.Pool({ connectionString: testDbUrl(role), max: 2 });
 }
 
-/** Placeholder until Drizzle arrives (Task 5); returns a pool for aviation_test. */
-export function testDb(): pg.Pool {
-  return testPool('app');
+/** Drizzle on aviation_test as the given role; close with `closeDb`. */
+export function testDb(role: 'app' | 'migrator' | 'ingest' = 'app'): Db {
+  return createDb(testDbUrl(role), { max: 2, applicationName: `aviation-test-${role}` });
+}
+
+/** Every table of the corpus schema, for resetting aviation_test between tests. */
+const CORPUS_TABLES = [
+  'quarantine', 'code_dictionary', 'case_section_sources', 'case_sections', 'case_sequence',
+  'case_findings', 'case_engines', 'case_aircraft', 'cases', 'dataset_manifests',
+  'dataset_generations', 'ingestion_runs',
+];
+
+/** Empty the corpus tables of aviation_test (migrator role; identities restart at 1). */
+export async function resetCorpus(): Promise<void> {
+  const pool = testPool('migrator');
+  try {
+    await pool.query(`TRUNCATE ${CORPUS_TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY`);
+  } finally {
+    await pool.end();
+  }
 }
 
 function esClient(apiKey: string | undefined): Client {

@@ -13,5 +13,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["server", "worker", "shared", "scripts", "tests", "evals", "vitest.config.ts"]
+  "include": ["server", "worker", "shared", "scripts", "tests", "evals", "vitest.config.ts", "drizzle.config.ts"]
 }

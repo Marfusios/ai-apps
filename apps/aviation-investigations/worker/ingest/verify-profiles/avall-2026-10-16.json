@@ -1,0 +1,17 @@
+{
+  "name": "avall-2026-10-16",
+  "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+  "description": "NTSB avall.zip retrieved 2026-10-16 (docs/data-profile-2026-10-16.json). Event, US, multi-aircraft and cohort counts from the implementation plan (Task 5, gate G2); US status counts from amendment A5.",
+  "expected": {
+    "events": 31303,
+    "uniqueNtsbNo": 31303,
+    "usEvents": 25407,
+    "multiAircraftEvents": 545,
+    "answerEligibleUs": 24291,
+    "completedWithoutCauseUs": 2,
+    "usRawStatus.B": 24293,
+    "usRawStatus.P": 1040,
+    "usRawStatus.F": 18,
+    "usRawStatus.(blank)": 56
+  }
+}
