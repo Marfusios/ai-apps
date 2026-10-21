@@ -18,16 +18,24 @@ let dir: string;
 let log: string;
 const IMAGE = `sha256:${'0'.repeat(64)}`;
 
+const CID = 'ab'.repeat(32);
 const FAKE = `#!/bin/sh
 echo "$@" >> "$FAKE_DOCKER_LOG"
 case "$1" in
   image) echo ${IMAGE}; exit 0;;
-  rm) if [ -n "$FAKE_RM_FAIL" ]; then echo boom >&2; exit 1; fi; exit 0;;
-  run)
+  create)
+    if [ -n "$FAKE_CREATE_SLEEP" ]; then sleep "$FAKE_CREATE_SLEEP"; fi
+    echo ${CID}; exit 0;;
+  rm)
+    if [ -n "$FAKE_RM_SLEEP" ]; then sleep "$FAKE_RM_SLEEP"; fi
+    if [ -n "$FAKE_RM_FAIL" ]; then echo boom >&2; echo "rm-failed" >> "$FAKE_DOCKER_LOG"; exit 1; fi
+    echo "rm-done" >> "$FAKE_DOCKER_LOG"; exit 0;;
+  start)
     case "$FAKE_RUN" in
       hang) exec sleep 30;;
       flood) exec yes aaaaaaaaaaaaaaaaaaaaaaaaaaaa;;
       stderr) echo id; echo "page read failed at offset 123 secret-value" >&2; exit 0;;
+      fail) echo "page read failed at offset 123 secret-value" >&2; exit 3;;
       *) echo id; exit 0;;
     esac;;
 esac
@@ -46,7 +54,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 afterEach(() => {
-  for (const k of ['FAKE_RUN', 'FAKE_RM_FAIL']) delete process.env[k];
+  for (const k of ['FAKE_RUN', 'FAKE_RM_FAIL', 'FAKE_RM_SLEEP', 'FAKE_CREATE_SLEEP']) delete process.env[k];
   rmSync(log, { force: true });
 });
 process.env.FAKE_DOCKER_LOG = '';
@@ -62,13 +70,13 @@ describe('runContainer cleanup', () => {
   it('removes the container and awaits it after a timeout', async () => {
     process.env.FAKE_RUN = 'hang';
     await expect(runContainer({ ...base, sink: sink(), timeoutMs: 300 })).rejects.toThrow(/timed out/);
-    expect(logText()).toMatch(/rm -f aviation-extract-/);
+    expect(logText()).toMatch(/rm -f [0-9a-f]{64}/);
   });
 
   it('removes the container when output exceeds the cap', async () => {
     process.env.FAKE_RUN = 'flood';
     await expect(runContainer({ ...base, sink: sink(), maxBytes: 2000 })).rejects.toThrow(/exceeds/);
-    expect(logText()).toMatch(/rm -f aviation-extract-/);
+    expect(logText()).toMatch(/rm -f [0-9a-f]{64}/);
   });
 
   it('reports a failed removal and keeps tracking the container until it succeeds', async () => {
@@ -80,6 +88,32 @@ describe('runContainer cleanup', () => {
     expect(await removeAllContainers()).toEqual([]);
     expect(await removeAllContainers()).toEqual([]);
   }, 30_000);
+});
+
+describe('runContainer lifecycle', () => {
+  it('removes the container explicitly after a successful run', async () => {
+    await runContainer({ ...base, sink: sink() });
+    expect(logText()).toMatch(/create --name aviation-extract-/);
+    expect(logText()).not.toMatch(/--rm/);
+    expect(logText()).toMatch(/rm -f [0-9a-f]{64}/);
+    expect(logText()).toMatch(/rm-done/);
+  });
+
+  it('waits for an in-flight create, removes the returned id and never starts it', async () => {
+    process.env.FAKE_CREATE_SLEEP = '1';
+    await expect(runContainer({ ...base, sink: sink(), timeoutMs: 200 })).rejects.toThrow(/timed out/);
+    const text = logText();
+    expect(text).toMatch(/rm -f [0-9a-f]{64}/);
+    expect(text).not.toMatch(/start -a/);
+    expect(text).toMatch(/rm-done/);
+  });
+
+  it('does not echo raw stderr on a nonzero exit', async () => {
+    process.env.FAKE_RUN = 'fail';
+    const err = await runContainer({ ...base, sink: sink() }).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/exited with 3 \(diagnostics: page-read=1\)/);
+    expect((err as Error).message).not.toMatch(/secret-value/);
+  });
 });
 
 describe('runMdbExport stderr', () => {

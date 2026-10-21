@@ -121,6 +121,12 @@ export function projectCsv(
     relax_column_count: false,
     skip_empty_lines: false,
     max_record_size: MAX_RECORD_BYTES,
+    // Field count is enforced while parsing: max_record_size only counts field
+    // contents, so a stream of empty fields would otherwise buffer without bound.
+    cast: (value, context) => {
+      if (context.index >= MAX_COLUMNS) throw new Error(`${table}: more than ${MAX_COLUMNS} fields in a record`);
+      return value;
+    },
   });
   const selector = new Transform({
     objectMode: true,

@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { extractArchive } from './ingest/extract.js';
+import { extractArchive, isTerminating } from './ingest/extract.js';
 
 const USAGE = 'usage: worker extract --archive <zip> --sha256 <hex> --out <dir>';
 
@@ -30,8 +30,12 @@ async function main(argv: string[]): Promise<number> {
 }
 
 main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
+  (code) => {
+    if (!isTerminating()) process.exit(code);
+  },
   (err: unknown) => {
+    // A signal handler owns the exit (it waits for container removal and sets the code).
+    if (isTerminating()) return;
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   },

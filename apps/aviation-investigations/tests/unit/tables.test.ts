@@ -62,7 +62,24 @@ describe('projectCsv hardening', () => {
 
   it('rejects a header with too many columns', async () => {
     const cols = Array.from({ length: MAX_COLUMNS + 1 }, (_, i) => `c${i}`).join(',');
-    await expect(project('ct_seqevt', `${cols}\n`)).rejects.toThrow(/too many columns/);
+    await expect(project('ct_seqevt', `${cols}\n`)).rejects.toThrow(/more than 256 fields/);
+  });
+
+  it('rejects too many fields before any newline arrives', async () => {
+    let pushed = 0;
+    async function* commas() {
+      yield Buffer.from('ev_id');
+      for (;;) {
+        pushed += 1024;
+        yield Buffer.alloc(1024, 0x2c);
+        if (pushed > 8 * 1024 * 1024) return; // safety stop: parser must fail long before this
+      }
+    }
+    const err = await pipeline(Readable.from(commas()), ...projectCsv('ct_seqevt'), async (src: AsyncIterable<unknown>) => {
+      for await (const _ of src) void _;
+    }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(pushed).toBeLessThan(256 * 1024);
   });
 
   it('rejects an empty stream (no header)', async () => {

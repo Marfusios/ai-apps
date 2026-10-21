@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createWriteStream, rmSync } from 'node:fs';
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -24,9 +24,8 @@ export const MDB_EXPORT_FLAGS = [
   '-X', '"',
 ] as const;
 
-/** Sandbox for every container run. The root is read-only and nothing is writable. */
+/** Sandbox for every container (removal is explicit, never `--rm`). The root is read-only and nothing is writable. */
 export const SANDBOX_FLAGS = [
-  '--rm',
   '--network', 'none',
   '--read-only',
   '--cap-drop', 'ALL',
@@ -88,43 +87,77 @@ function dockerCall(args: readonly string[], timeoutMs = DOCKER_CALL_TIMEOUT_MS)
   });
 }
 
-/**
- * Remove a container and confirm it is gone. A container still being created may
- * not exist yet, so "no such container" only counts after a repeat attempt.
- */
-export async function forceRemove(name: string): Promise<void> {
-  let absentSeen = 0;
+/** Remove a container by its known ID and confirm it is gone. */
+export async function forceRemove(id: string): Promise<void> {
   let last = '';
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const r = await dockerCall(['rm', '-f', name]);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await dockerCall(['rm', '-f', id]);
     if (r.code === 0) return;
-    if (!r.timedOut && /no such container/i.test(r.stderr)) {
-      absentSeen += 1;
-      if (absentSeen >= 2) return;
-    } else {
-      last = r.timedOut ? 'timed out' : `exit ${String(r.code)}`;
-    }
+    // The ID was returned by `docker create`, so "no such container" means it is already gone.
+    if (!r.timedOut && /no such container/i.test(r.stderr)) return;
+    last = r.timedOut ? 'timed out' : `exit ${String(r.code)}`;
     await sleep(300);
   }
-  throw new Error(`could not confirm removal of container ${name} (${last || 'unknown'})`);
+  throw new Error(`could not confirm removal of container ${id.slice(0, 12)} (${last})`);
 }
 
 interface Live {
-  child: ReturnType<typeof spawn>;
+  name: string;
+  id: string | null;
+  child: ChildProcess | null;
+  creating: Promise<DockerResult> | null;
   cleanup: Promise<void> | null;
 }
 /** Containers whose removal has not been confirmed, keyed by name. */
 const live = new Map<string, Live>();
 
-/** Kill and remove every container still tracked; returns failures. */
+let terminating = false;
+/** True once a termination signal started shutdown; no new containers are started. */
+export function isTerminating(): boolean {
+  return terminating;
+}
+export function beginShutdown(): void {
+  terminating = true;
+}
+/** Test seam. */
+export function resetShutdown(): void {
+  terminating = false;
+}
+
+const CONTAINER_ID = /^[0-9a-f]{64}$/;
+
+/**
+ * One memoised cancellation and removal path per container. Kills the client, waits
+ * for an in-flight `docker create` to finish, then removes the returned ID. If the
+ * creation outcome is uncertain it fails (the identity stays tracked); it never
+ * reports success without a confirmed removal.
+ */
+function ensureCleanup(entry: Live): Promise<void> {
+  entry.cleanup ??= (async () => {
+    entry.child?.kill('SIGKILL');
+    const created = await entry.creating;
+    if (!entry.id && created && created.code !== 0 && !created.timedOut) return; // creation definitively failed
+    if (!entry.id) {
+      await dockerCall(['rm', '-f', entry.name]).catch(() => undefined); // best effort by name
+      throw new Error(`creation of container ${entry.name} is uncertain; check "docker ps -a"`);
+    }
+    await forceRemove(entry.id);
+  })();
+  // A failed cleanup may be retried by a later call.
+  entry.cleanup.catch(() => {
+    entry.cleanup = null;
+  });
+  return entry.cleanup;
+}
+
+/** Cancel and remove every tracked container, awaiting confirmation; returns failures. */
 export async function removeAllContainers(): Promise<string[]> {
   const failures: string[] = [];
   await Promise.all(
-    [...live.entries()].map(async ([name, l]) => {
-      l.child.kill('SIGKILL');
+    [...live.values()].map(async (entry) => {
       try {
-        await forceRemove(name);
-        live.delete(name);
+        await ensureCleanup(entry);
+        live.delete(entry.name);
       } catch (e) {
         failures.push(e instanceof Error ? e.message : String(e));
       }
@@ -142,32 +175,20 @@ export interface ContainerRun {
   maxBytes?: number;
 }
 
-/**
- * Run one sandboxed container (argument array, no shell). On timeout, output-cap
- * breach or stream failure the container is force-removed and the removal awaited;
- * a failed removal is reported in the error and the container stays tracked.
- */
-export function runContainer(run: ContainerRun): Promise<{ stderr: string }> {
-  const name = `aviation-extract-${randomBytes(6).toString('hex')}`;
-  const args = ['run', '--name', name, ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command];
-  const maxBytes = run.maxBytes ?? Number.POSITIVE_INFINITY;
+function startAttached(
+  entry: Live,
+  run: ContainerRun,
+  abort: (e: Error) => void,
+): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(dockerCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const entry: Live = { child, cleanup: null };
-    live.set(name, entry);
+    const child = spawn(dockerCommand, ['start', '-a', entry.id as string], { stdio: ['ignore', 'pipe', 'pipe'] });
+    entry.child = child;
     let stderr = '';
-    let failure: Error | null = null;
-    const abort = (e: Error): void => {
-      if (failure) return;
-      failure = e;
-      child.kill('SIGKILL');
-      entry.cleanup = forceRemove(name);
-      entry.cleanup.catch(() => undefined);
-    };
     child.stderr.on('data', (d: Buffer) => {
       if (stderr.length < 65536) stderr += d.toString('utf8');
     });
     let total = 0;
+    const maxBytes = run.maxBytes ?? Number.POSITIVE_INFINITY;
     const cap = new Transform({
       transform(chunk: Buffer, _e, cb) {
         total += chunk.length;
@@ -177,29 +198,66 @@ export function runContainer(run: ContainerRun): Promise<{ stderr: string }> {
     });
     const done = run.sink ? pipeline(child.stdout, cap, run.sink) : (child.stdout.resume(), Promise.resolve());
     done.catch((e: unknown) => abort(e instanceof Error ? e : new Error(String(e))));
-    const timer = setTimeout(() => abort(new Error(`container timed out after ${run.timeoutMs} ms`)), run.timeoutMs);
-    const finish = async (code: number | null, spawnError?: Error): Promise<void> => {
-      clearTimeout(timer);
-      await done.catch(() => undefined);
-      if (spawnError) abort(spawnError);
-      let cleanupError = '';
-      if (entry.cleanup) {
-        try {
-          await entry.cleanup;
-          live.delete(name);
-        } catch (e) {
-          cleanupError = `; cleanup failed: ${e instanceof Error ? e.message : String(e)}`;
-        }
-      } else {
-        live.delete(name); // --rm removes a container that ran to completion
-      }
-      if (failure) reject(new Error(`${(failure as Error).message}${cleanupError}`));
-      else if (code !== 0) reject(new Error(`container exited with ${String(code)}: ${stderr.trim().slice(0, 500)}`));
-      else resolvePromise({ stderr });
-    };
-    child.on('error', (e) => void finish(null, e));
-    child.on('close', (code) => void finish(code));
+    child.on('error', reject);
+    child.on('close', (code) => void done.catch(() => undefined).then(() => resolvePromise({ code, stderr })));
   });
+}
+
+/**
+ * Run one sandboxed container (argument array, no shell): `docker create` returns the
+ * container ID, `docker start -a` streams its output, and `docker rm -f <id>` always
+ * removes it afterwards, awaited, on success and on every failure path. Timeout,
+ * output-cap breach, stream failure and signals all go through the same cleanup.
+ */
+export async function runContainer(run: ContainerRun): Promise<{ stderr: string }> {
+  if (terminating) throw new Error('cancelled by signal');
+  const name = `aviation-extract-${randomBytes(6).toString('hex')}`;
+  const entry: Live = { name, id: null, child: null, creating: null, cleanup: null };
+  live.set(name, entry);
+  let failure: Error | null = null;
+  const abort = (e: Error): void => {
+    if (failure) return;
+    failure = e;
+    void ensureCleanup(entry).catch(() => undefined);
+  };
+  const timer = setTimeout(() => abort(new Error(`container timed out after ${run.timeoutMs} ms`)), run.timeoutMs);
+  let code: number | null = null;
+  let stderr = '';
+  let started = false;
+  try {
+    entry.creating = dockerCall(
+      ['create', '--name', name, ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command],
+      DOCKER_CALL_TIMEOUT_MS,
+    );
+    const created = await entry.creating;
+    const id = created.stdout.trim();
+    if (created.code === 0 && CONTAINER_ID.test(id)) entry.id = id;
+    if (entry.id && !failure && !terminating) {
+      started = true;
+      ({ code, stderr } = await startAttached(entry, run, abort));
+    } else if (!entry.id) {
+      abort(new Error(`docker create failed (${created.timedOut ? 'timed out' : `exit ${String(created.code)}`})`));
+    }
+  } catch (e) {
+    abort(e instanceof Error ? e : new Error(String(e)));
+  }
+  clearTimeout(timer);
+  if (!started) (run.sink as Writable | null)?.destroy?.();
+  let cleanupError = '';
+  try {
+    await ensureCleanup(entry);
+    live.delete(name);
+  } catch (e) {
+    cleanupError = `; cleanup failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  if (!failure && terminating) failure = new Error('cancelled by signal');
+  if (failure) throw new Error(`${(failure as Error).message}${cleanupError}`);
+  if (code !== 0) {
+    const diag = summarizeStderr(stderr);
+    throw new Error(`container exited with ${String(code)}${diag ? ` (diagnostics: ${diag})` : ''}${cleanupError}`);
+  }
+  if (cleanupError) throw new Error(`container finished${cleanupError}`);
+  return { stderr };
 }
 
 function mdbMount(mdbPath: string): string[] {
@@ -332,6 +390,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     if (!published) rmSync(dest, { recursive: true, force: true });
   };
   const onSignal = (sig: NodeJS.Signals): void => {
+    beginShutdown();
     void removeAllContainers().then((failures) => {
       cleanup();
       for (const f of failures) console.error(f);
