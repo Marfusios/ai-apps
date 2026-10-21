@@ -566,32 +566,73 @@ export function verificationReportPath(outDir: string, generationId: number, rep
   return join(outDir, `verify-gen-${generationId}-${reportSha256}.json`);
 }
 
+/** File operations of the report writer; replaceable in tests to inject short writes and failures. */
+export interface ReportFileOps {
+  /** Write up to `length` bytes of `buffer` from `offset`; returns the bytes written. */
+  write(fd: number, buffer: Buffer, offset: number, length: number): number;
+  fsync(fd: number): void;
+  close(fd: number): void;
+  rename(from: string, to: string): void;
+}
+
+const NODE_FILE_OPS: ReportFileOps = {
+  write: (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length),
+  fsync: (fd) => fsyncSync(fd),
+  close: (fd) => closeSync(fd),
+  rename: (from, to) => renameSync(from, to),
+};
+
 /**
- * Write a report under its content-addressed name: a private temporary file in the
- * same directory, flushed to disk, then renamed into place (atomic on one file
- * system). An existing file of that name already holds exactly this content.
+ * Write a report under its content-addressed name `verify-gen-<id>-<sha256>.json`,
+ * where the hash is of the UTF-8 bytes written. The bytes go to a private temporary
+ * file in the same directory, in a loop until every byte is written (a short write
+ * is continued, no progress is an error), are flushed, read back and compared with
+ * the hash, and only then renamed into place (atomic on one file system). Any
+ * failure removes the temporary file and publishes nothing. An existing file of the
+ * target name already holds exactly these bytes.
  */
-function writeReportAtomically(outDir: string, generationId: number, reportSha256: string, content: string): string {
+export function writeReportAtomically(
+  outDir: string,
+  generationId: number,
+  content: string,
+  ops: ReportFileOps = NODE_FILE_OPS,
+): { path: string; sha256: string } {
+  const bytes = Buffer.from(content, 'utf8');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
   mkdirSync(outDir, { recursive: true });
-  const target = verificationReportPath(outDir, generationId, reportSha256);
+  const target = verificationReportPath(outDir, generationId, sha256);
   const temp = `${target}.tmp-${randomBytes(6).toString('hex')}`;
-  const fd = openSync(temp, 'wx', 0o644);
+  let published = false;
   try {
-    writeSync(fd, content);
-    fsyncSync(fd);
-  } catch (err) {
-    closeSync(fd);
-    rmSync(temp, { force: true });
-    throw err;
+    const fd = openSync(temp, 'wx', 0o644);
+    let failure: unknown = null;
+    try {
+      let offset = 0;
+      while (offset < bytes.length) {
+        const written = ops.write(fd, bytes, offset, bytes.length - offset);
+        if (!Number.isInteger(written) || written <= 0 || written > bytes.length - offset) {
+          throw new Error(`report write made no progress at byte ${offset} of ${bytes.length}`);
+        }
+        offset += written;
+      }
+      ops.fsync(fd);
+    } catch (err) {
+      failure = err;
+    }
+    try {
+      ops.close(fd);
+    } catch (err) {
+      failure ??= err;
+    }
+    if (failure !== null) throw failure;
+    const onDisk = createHash('sha256').update(readFileSync(temp)).digest('hex');
+    if (onDisk !== sha256) throw new Error('report file on disk does not match its content hash');
+    ops.rename(temp, target);
+    published = true;
+    return { path: target, sha256 };
+  } finally {
+    if (!published) rmSync(temp, { force: true });
   }
-  closeSync(fd);
-  try {
-    renameSync(temp, target);
-  } catch (err) {
-    rmSync(temp, { force: true });
-    throw err;
-  }
-  return target;
 }
 
 function isConflict(err: unknown): boolean {
@@ -701,10 +742,9 @@ async function verifyInSnapshot(q: Queryable, generationId: number, opts: Verify
     null,
     2,
   )}\n`;
-  const reportSha256 = sha256Hex(file);
   // Content-addressed and written atomically before the hash is recorded: an attempt
   // that fails later leaves at most an unreferenced report, never a damaged one.
-  const reportPath = writeReportAtomically(outDir, generationId, reportSha256, file);
+  const { path: reportPath, sha256: reportSha256 } = writeReportAtomically(outDir, generationId, file);
 
   await opts.beforeRecord?.();
   let status: GenerationStatus = gen.status;
