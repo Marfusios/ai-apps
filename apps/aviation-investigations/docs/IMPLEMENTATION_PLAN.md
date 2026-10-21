@@ -908,3 +908,162 @@ Behaviour:
 - [ ] Fix findings. Re-run `pnpm test`, `pnpm test:integration`, the Playwright tests and `python3 scripts/check_repo.py`.
 - [ ] Update `SECURITY_REVIEW.md` with the reviewer model, commit and findings.
 - [ ] Write the morning report: data, embeddings, Elasticsearch composition, costs and open items.
+
+---
+
+## Amendments after review gate G0 (GPT-6-Astra, 2026-10-21)
+
+Astra reviewed the data tasks against the raw exports before implementation. These
+amendments are binding and override the task text above where they differ.
+
+1. **Explicit allowlists and keys (T3/T4/T5).**
+   - Every table lists its columns explicitly, including identity, ordering and
+     revision fields.
+   - Before loading, assert that required columns are present and that
+     composite keys are unique:
+     - events: `ev_id`
+     - aircraft: `ev_id` + `aircraft_key`
+     - engines: `ev_id` + `aircraft_key` + `eng_no`
+     - narratives: `ev_id` + `aircraft_key`
+     - findings: `ev_id` + `aircraft_key` + `finding_no`
+     - events_sequence: `ev_id` + `aircraft_key` + `occurrence_no`
+2. **Country (T7/T9/T10).**
+   - One canonical `country` keyword (`ev_country` as published, e.g. `USA`)
+     appears in both projections.
+   - Passage construction enforces US membership.
+   - Retrieval filters `country: 'USA'`.
+   - Tests cover a US hit and the exclusion of a foreign case.
+3. **Passage attribution (T4/T9/T10/T16).**
+   - Sections come per narrative row (`ev_id`, `aircraft_key`). A section text
+     repeated identically across one event's aircraft is stored once as
+     **event-scoped**; otherwise it is **aircraft-scoped** to that row's
+     aircraft.
+   - An aircraft-scoped passage copies only its own aircraft's nested filter
+     fields and builds its header from that aircraft only.
+   - An event-scoped passage in a multi-aircraft event never satisfies an
+     aircraft-specific filter. Retrieval excludes it whenever an aircraft
+     filter is active, and it can never ground an aircraft-specific claim.
+   - Each aircraft's own probable cause is attached.
+   - Fixtures `SEA08LA057` (different defining phases per aircraft) and
+     `DCA25MA108` (duplicated narratives covering both aircraft) are required.
+4. **Quote provenance (T16).**
+   - Validation follows the chain case → aircraft/scope → section id +
+     revision hash → passage → quote.
+   - It returns resolved UTF-16 citation spans through a whitespace-normalization
+     offset map. Empty quotes are rejected, and a repeated match uses the first
+     occurrence inside the cited passage and records that.
+   - The semantic check enumerates every claim type: classifications, timing,
+     attribution, summary sentences and "why" text.
+5. **Completion mapping (T4/T5).**
+   - Empirical check of the snapshot, US records:
+
+     | Status | Probable cause | Count |
+     | --- | --- | --- |
+     | `B` | present | 24,291 |
+     | `B` | absent | 2 |
+     | `P` | absent | 1,040 |
+     | `F` | absent | 18 |
+     | blank | absent | 56 |
+
+   - `COMPLETION_MAPPING_V1` becomes `{ version: 'v1-empirical', verified: false,
+     completedStatuses: ['B'] }`. `verified` stays `false` until the mapping is
+     confirmed with NTSB metadata.
+   - The answer-eligible cohort is a **provisional development cohort** while
+     unverified. Production launch is blocked until `verified: true`; this is
+     recorded as an owner/launch item.
+   - Completion status stays independent of probable-cause availability.
+6. **Dataset generations (T5/T7/T9).**
+   - Every load writes a new `generation_id`. Section rows are immutable
+     revisions, never updated in place.
+   - A generation is loaded and verified fully before it is published.
+     Obsolete child rows belong to old generations and are never mutated.
+   - Composite foreign keys apply within a generation.
+   - A failed run leaves the active generation untouched.
+   - `dataset_manifests(generation_id, cases_index, passages_index, published_at, active)`
+     is flipped atomically only after both indices for that generation are built
+     and verified.
+   - The API reads the active manifest and pins each request (and each brief)
+     to it.
+   - The previous generation is kept for live citations; generations older than
+     the last two are pruned.
+7. **Indexing spend (T9).** T9 builds the shared ledger foundation that T15
+   extends:
+   - `cost_ledger` and `reservations` tables, with category
+     `indexing|evaluation|interactive`.
+   - Each embedding batch's maximum cost is reserved before dispatch; batch
+     tokens are counted exactly with `cl100k_base`.
+   - Each retry attempt is accounted for separately, and an uncertain attempt
+     settles at its reservation.
+   - Indexing and evaluation share the $20 allowance.
+8. **Scalar contracts (T3/T4).**
+   - `mdb-export` uses `-D %Y-%m-%d -T %Y-%m-%dT%H:%M:%S`. Dates are parsed
+     without inventing time zones.
+   - Blanks become `null` before any numeric conversion.
+   - Each flag's actual vocabulary is decoded: `defining_ev` `0`/`1`,
+     `afm_hrs_since` `Y`/`N`, and `cm_inpc` `T`/`F`/blank. JavaScript
+     truthiness is never used on source strings, and neither is
+     `Number('')`.
+   - 75 US events have no coordinates; their `location` is `null`.
+9. **Narrative markup (T4).**
+   - Keep the original `source_text`. The citation `text` is canonical text
+     produced by a deterministic HTML-to-text step (`CITATION_TEXT_VERSION =
+     'v1'`).
+   - That step preserves inline word continuity (`o<span>ne</span>` → `one`),
+     maps block boundaries to newlines, decodes entities and converts CRLF to
+     LF. It records which sections were transformed.
+   - Required real fixtures: `CEN24FA064`, `ERA24LA303`, `WPR26LA114`.
+10. **Embedding cache key (T9).** The key is sha256 of the exact embedding input
+    (header plus text), the model, the dimensions and
+    `EMBEDDING_INPUT_TEMPLATE_VERSION`. The citation-text hash stays separate,
+    and a header change invalidates the cache. 652 cause texts are shared across
+    events.
+11. **Evidence packing (T10).**
+    - Mandatory probable-cause passages count inside the limits from the start
+      and are deduplicated.
+    - The packed bundle must respect 6 cases, 12 passages and the compose input
+      cap (16,000 tokens, measured).
+    - Fewer, well-supported cases are preferred over six thin ones. The default
+      is at most 3 passages per case, the cause included.
+12. **Analyzers (T7/T9).**
+    - A custom `aviation_english` analyzer: standard tokenizer → lowercase →
+      english possessive stemmer → a stop filter using the English list
+      **minus** negations (`no`, `not`, `nor`, `none`, `never`, `without`) →
+      english stemmer.
+    - The search analyzer is the same plus `synonym_graph` placed **before**
+      stemming.
+    - `stall` and `spin` are never synonyms.
+    - Token-stream tests via `_analyze` cover negation, multiword synonyms,
+      stemming and quoted phrases.
+13. **Retrieval evaluation (T10).**
+    - Separate stages:
+      1. A case-candidate stage: unique cases with bounded overfetch (100
+         passages per channel → deduplicated cases).
+      2. Then packing.
+    - Report case Recall@20 on candidates, and evidence coverage on the final
+      bundle.
+    - Build a held-out silver set of at least 40 questions covering negation,
+      causal uncertainty, maintenance timing and multi-aircraft cases. Labels are
+      derived from structured fields and keyword criteria and are marked for
+      expert adjudication. The 4 seed cases alone never lock defaults.
+14. **Facet semantics (T7/T8/T13).**
+    - Every facet and dashboard count is a count of distinct events, using
+      `reverse_nested` for aircraft facets.
+    - The Phase facet and the dashboard use the **defining event's** phase
+      group.
+    - Multi-aircraft overlap is stated wherever aircraft facets can sum to more
+      than the total.
+    - Clicking a dashboard bar reproduces its count in Explore.
+15. **Extraction limits (T3).**
+    - Streamed byte limits per table.
+    - A per-process deadline.
+    - Container cleanup.
+    - Bounded CSV record and field sizes (parser `max_record_size`).
+    - Counts are parsed records, never physical lines.
+16. **Oversized units (T9).**
+    - A probable cause over 800 tokens, or a single sentence over 800 tokens,
+      is split at the nearest clause or whitespace boundary into marked
+      continuation passages.
+    - Nothing is ever silently truncated, and the cases this affects are
+      reported.
+    - The cost report counts header and overlap tokens, and each input is
+      limited to 8,192 tokens.
