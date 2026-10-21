@@ -560,3 +560,31 @@ export const GENERATION_TABLES = [
   codeDictionary,
   quarantine,
 ] as const;
+
+export const REPORT_LINK_SOURCES = ['seed', 'aviation_search_export'] as const;
+export type ReportLinkSource = (typeof REPORT_LINK_SOURCES)[number];
+
+/**
+ * External NTSB report-ID mapping. Not a sealed corpus table: it changes on its own
+ * cycle (Aviation Search exports), so it has no generation. `ntsb_no` is validated
+ * against the latest verified generation at import time. `report_id` is the numeric
+ * CAROL id (not `ev_id`).
+ */
+export const reportLinks = pgTable(
+  'report_links',
+  {
+    ntsbNo: text('ntsb_no').notNull(),
+    aircraftNtsbNo: text('aircraft_ntsb_no'),
+    reportId: text('report_id').notNull(),
+    source: text('source', { enum: REPORT_LINK_SOURCES }).notNull(),
+    sourceFileSha256: text('source_file_sha256').notNull(),
+    retrievedAt: timestamp('retrieved_at', { withTimezone: true, mode: 'date' }).notNull(),
+    importedAt: timestamp('imported_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('report_links_uq').on(t.ntsbNo, t.aircraftNtsbNo, t.reportId).nullsNotDistinct(),
+    index('report_links_ntsb_no_idx').on(t.ntsbNo),
+    check('report_links_report_id_check', sql`${t.reportId} ~ '^[0-9]{1,9}$'`),
+    check('report_links_sha_check', sql`${t.sourceFileSha256} ~ '^[0-9a-f]{64}$'`),
+  ],
+);

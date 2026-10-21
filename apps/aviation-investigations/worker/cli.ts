@@ -1,7 +1,9 @@
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations } from '../server/db/generations.js';
 import { workerConfig } from './config.js';
+import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
 import { extractArchive, isTerminating } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
 import { STALE_RUN_MINUTES, failStaleRuns, listRunningRuns } from './ingest/runs.js';
@@ -12,6 +14,7 @@ const USAGE = [
   '  worker extract --archive <zip> --sha256 <hex> --out <dir>',
   '  worker load --from <extractDir>',
   '  worker verify --generation <id> [--profile <file>]',
+  '  worker report-links --seed | --export <file>',
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
 ].join('\n');
@@ -70,6 +73,14 @@ function printVerify(r: VerifyReport): void {
   console.log(`report: ${r.reportPath}`);
 }
 
+function printLinks(r: ImportReport): void {
+  console.log(`report links (${r.source}, ${r.layout}) against generation ${r.generationId}`);
+  console.log(`  file sha256 ${r.sourceFileSha256}, retrieved ${r.retrievedAt.toISOString()}`);
+  console.log(`  rows ${r.rows}, matched ${r.matched}, inserted ${r.inserted}, already present ${r.alreadyPresent}`);
+  for (const u of r.unmatched) console.log(`  unmatched ${u.ntsbNo} -> ${u.reportId} (${u.reason})`);
+  for (const i of r.invalid) console.log(`  invalid row ${i.row}: ${i.reason}`);
+}
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   if (command === 'extract') {
@@ -118,6 +129,18 @@ async function main(argv: string[]): Promise<number> {
     const report = await withDb((db) => verifyCorpus(db, id, profile ? { profile } : {}));
     printVerify(report);
     return report.ok && !report.conflict ? 0 : 1;
+  }
+  if (command === 'report-links') {
+    const { values } = parseArgs({ args: rest, options: { seed: { type: 'boolean' }, export: { type: 'string' } }, strict: true });
+    if (!!values.seed === !!values.export) {
+      console.error(USAGE);
+      return 2;
+    }
+    const file = values.export;
+    const seedFile = fileURLToPath(new URL('../fixtures/report-links-seed.json', import.meta.url));
+    const report = await withDb((db) => (file ? importAviationSearchExport(db, file) : importSeedLinks(db, seedFile)));
+    printLinks(report);
+    return report.unmatched.length || report.invalid.length ? 1 : 0;
   }
   if (command === 'generations') {
     parseArgs({ args: rest, options: {}, strict: true });

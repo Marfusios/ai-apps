@@ -1,0 +1,10 @@
+{
+  "source": "manual verification 2026-10-16",
+  "retrievedAt": "2026-10-16T00:00:00Z",
+  "links": [
+    { "ntsbNo": "DFW08TA066", "reportId": "67493" },
+    { "ntsbNo": "DEN08LA103", "reportId": "68245" },
+    { "ntsbNo": "MIA08LA156", "reportId": "68586" },
+    { "ntsbNo": "NYC08LA106", "reportId": "67552" }
+  ]
+}
