@@ -52,9 +52,21 @@ export function completionClassOf(
   return 'status_unknown';
 }
 
-/** Answer-eligible: completed and nonblank probable-cause text. US scope is enforced separately. */
-export function isAnswerEligible(c: { readonly completionClass: CompletionClass; readonly hasProbableCause: boolean }): boolean {
+/** Completed status and nonblank probable-cause text, in any country. */
+export function isCompletedWithCause(c: {
+  readonly completionClass: CompletionClass;
+  readonly hasProbableCause: boolean;
+}): boolean {
   return c.completionClass === 'completed' && c.hasProbableCause;
+}
+
+/** The answer cohort: US events that are completed with probable-cause text. */
+export function isAnswerEligible(c: {
+  readonly isUs: boolean;
+  readonly completionClass: CompletionClass;
+  readonly hasProbableCause: boolean;
+}): boolean {
+  return c.isUs && isCompletedWithCause(c);
 }
 
 /** The answer cohort is provisional while the mapping is unverified. */

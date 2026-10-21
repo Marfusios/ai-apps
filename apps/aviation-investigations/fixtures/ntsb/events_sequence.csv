@@ -13,6 +13,8 @@ ev_id,aircraft_key,occurrence_no,occurrence_code,occurrence_description,phase_no
 20080812X01234,1,1,507342,Approach-VFR pattern base Loss of engine power (partial),507,342,1,2020-09-25T18:05:31
 20080812X01234,1,2,600440,Emergency descent Off-field or emergency landing,600,440,0,2020-09-25T18:05:31
 20080812X01234,1,3,552470,Landing-landing roll Collision with terr/obj (non-CFIT) ,552,470,0,2020-09-25T18:05:31
+20141012X30001,1,1,402250,Enroute-cruise Midair collision,402,250,1,2020-09-25T15:09:31
+20141012X30001,2,1,350250,Initial climb Midair collision,350,250,1,2020-09-25T15:09:31
 20181104X01658,1,1,400120,Enroute Controlled flight into terr/obj (CFIT),400,120,1,2020-09-25T13:38:53
 20200824X42853,1,1,400342,Enroute Loss of engine power (partial),400,342,1,2021-02-02T19:11:55
 20200824X42853,1,6,551300,Landing-flare/touchdown Runway excursion,551,300,0,2021-02-02T19:11:55

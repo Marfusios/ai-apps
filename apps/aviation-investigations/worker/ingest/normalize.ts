@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { parse } from 'csv-parse';
 import {
   decodeFlag,
   orderPhaseGroups,
@@ -18,12 +17,13 @@ import {
   completionClassOf,
   isAnswerEligible,
   isCohortProvisional,
+  isCompletedWithCause,
   type CompletionClass,
   type CompletionMapping,
 } from '../../shared/completion.js';
 import { CITATION_TEXT_VERSION, toCitationText, type CitationText } from './citation-text.js';
 import { blankToNull, parseDecimal, parseInteger, parseIsoDate, parseIsoDateTime } from './scalars.js';
-import { TABLE_NAMES, TABLE_SPECS, type TableName } from './tables.js';
+import { TABLE_NAMES, TABLE_SPECS, boundedCsvParser, utf8Validator, type TableName } from './tables.js';
 
 export { CITATION_TEXT_VERSION, TEXT_NORMALIZATION_VERSION } from './citation-text.js';
 
@@ -60,38 +60,57 @@ export const NARRATIVE_KINDS: readonly (readonly ['narr_accp' | 'narr_accf' | 'n
   ['narr_cause', 'probable_cause'],
 ];
 
-export interface CanonicalSection {
-  /** Unique within a case: `<kind>/event` or `<kind>/aircraft-<key>`. */
-  key: string;
-  kind: SectionKind;
-  /**
-   * `event` when the identical source text was recorded for every aircraft of a
-   * multi-aircraft event (stored once); otherwise `aircraft`, attributed to its row.
-   */
-  scope: SectionScope;
-  /** Null for event scope. */
-  aircraftKey: number | null;
-  /** Aircraft whose narrative row carried this text. */
-  aircraftKeys: number[];
-  /** Canonical citation text (`CITATION_TEXT_VERSION`). */
-  text: string;
-  /** sha256 hex of `text` (UTF-8). */
-  sha256: string;
+/** One narrative row behind a section: provenance only, never attribution. */
+export interface SectionSourceRow {
+  aircraftKey: number;
   /** The narrative field exactly as exported. */
   sourceText: string;
   sourceSha256: string;
   transformedFromHtml: boolean;
+  /**
+   * `exact`: this row's canonical text equals the section text; `whitespace`: equal
+   * only after collapsing whitespace runs to one space and trimming.
+   */
+  match: 'exact' | 'whitespace';
+  lastChangedAt: string | null;
+}
+
+export interface CanonicalSection {
+  /** Unique within a case: `<kind>/aircraft-<key>` or `<kind>/event-<n>` (n from 1, by lowest source aircraft). */
+  key: string;
+  kind: SectionKind;
+  /**
+   * `aircraft` only in single-aircraft events. In a multi-aircraft event every
+   * narrative section is `event`-scoped: which row carried a text says nothing
+   * about which aircraft it describes (owner ruling, fix round 1 of amendment A3).
+   */
+  scope: SectionScope;
+  /** The aircraft of a single-aircraft event; null for event scope. */
+  aircraftKey: number | null;
+  /** Aircraft whose narrative rows carried this text (provenance only). */
+  sourceAircraftKeys: number[];
+  /** Canonical citation text (`CITATION_TEXT_VERSION`) of the lowest source aircraft's row. */
+  text: string;
+  /** sha256 hex of `text` (UTF-8). */
+  sha256: string;
+  /** Source of the row `text` comes from (the lowest source aircraft). */
+  sourceText: string;
+  sourceSha256: string;
+  transformedFromHtml: boolean;
+  /** Every contributing row, ascending aircraft key. */
+  sources: SectionSourceRow[];
   citationTextVersion: string;
   /** Latest `narratives.lchg_date` of the rows behind the section. */
   lastChangedAt: string | null;
 }
 
 export interface CanonicalEngine {
-  engNo: number | null;
+  engNo: number;
   /** `eng_type` code (REC, TP, TF, ...). */
   engType: string | null;
   /** `carb_fuel_injection` code (CARB, FINJ). */
   carbFuelInjection: string | null;
+  lastChangedAt: string | null;
 }
 
 export interface CanonicalSequenceEvent {
@@ -113,11 +132,19 @@ export interface CanonicalFinding {
   aircraftKey: number;
   findingNo: number;
   code: string | null;
+  /**
+   * `finding_description` verbatim. Its trailing "- C" / "- F" text must never be
+   * turned into a cause or contributing label (DATA_REVIEW: `cm_inpc` merges causal
+   * and contributing findings and nothing in the data separates them).
+   */
   description: string | null;
   /** `cm_inpc`: T -> true, F -> false, blank -> null. Cause and contributing findings are not distinguished. */
   inProbableCause: boolean | null;
-  /** Deprecated `cause_factor` code (C, F), kept raw. */
-  causeFactor: string | null;
+  /**
+   * Deprecated `cause_factor` exactly as exported (C, F, a single space, ...); empty -> null.
+   * Kept for provenance only: it must never become a cause or contributing label.
+   */
+  causeFactorRaw: string | null;
   categoryNo: string | null;
   subcategoryNo: string | null;
   sectionNo: string | null;
@@ -151,14 +178,16 @@ export interface CanonicalAircraft {
   /** `afm_hrs_since` Y/N as recorded; its meaning is unverified (the dictionary lists ACCI/INSP). */
   afmHrsSince: boolean | null;
   acftYear: number | null;
+  lastChangedAt: string | null;
   engines: CanonicalEngine[];
+  /** This aircraft's single defining sequence row; null when none or when flags conflict. */
   definingEvent: CanonicalSequenceEvent | null;
-  /** Phase group of this aircraft's defining event. */
+  /** Phase group of `definingEvent`. */
   definingPhaseGroup: PhaseGroup | null;
-  phaseGroups: PhaseGroup[];
-  hasProbableCause: boolean;
-  /** Key of this aircraft's probable-cause section (aircraft- or event-scoped). */
-  probableCauseSectionKey: string | null;
+  /** More than one of this aircraft's sequence rows has `defining_ev = 1`. */
+  definingEventConflict: boolean;
+  /** Every phase group in this aircraft's sequence, in flight order. */
+  sequencePhaseGroups: PhaseGroup[];
 }
 
 export interface CanonicalEventFields {
@@ -219,10 +248,13 @@ export interface CanonicalCase {
   sections: CanonicalSection[];
   findings: CanonicalFinding[];
   sequence: CanonicalSequenceEvent[];
-  /** Defining-event phase of the lowest aircraft key that has a defining event. */
-  definingPhaseGroup: PhaseGroup | null;
+  /**
+   * Distinct defining-event phase groups of the aircraft, in aircraft-key order
+   * (amendment A14). Empty when no aircraft has a single defining event.
+   */
+  definingPhaseGroups: PhaseGroup[];
   /** Every phase group in the sequence, in flight order. */
-  phaseGroups: PhaseGroup[];
+  sequencePhaseGroups: PhaseGroup[];
   /** `NTSB_Admin.rec_stat`, trimmed; null when blank or the admin row is missing. */
   rawStatus: string | null;
   approvalDate: string | null;
@@ -231,7 +263,9 @@ export interface CanonicalCase {
   completionMappingVersion: string;
   /** At least one nonblank probable-cause section (canonical text). */
   hasProbableCause: boolean;
-  /** Completed and has probable cause. US membership is enforced separately. */
+  /** Completed status with probable-cause text, any country. */
+  completedWithCause: boolean;
+  /** `isUs && completedWithCause`: the (provisional) answer cohort. */
   answerEligible: boolean;
   /** sha256 hex over this case's projected source rows; changes exactly when they change. */
   sourceRevision: string;
@@ -247,11 +281,12 @@ export type QuarantineReason =
   | 'coordinate_out_of_range'
   | 'coordinate_incomplete'
   | 'unknown_flag'
-  | 'multiple_defining_events';
+  | 'conflicting_defining_events'
+  | 'tag_like_text_after_html';
 
 export interface QuarantineRow {
   table: TableName;
-  /** Source key, e.g. `ev_id=...,aircraft_key=1,finding_no=2`. */
+  /** Canonical source key, e.g. `ev_id=...,aircraft_key=1,finding_no=2`; raw spellings for invalid keys. */
   key: string;
   column: string | null;
   reason: QuarantineReason;
@@ -265,13 +300,25 @@ export interface QuarantineRow {
 export interface NormalizeStats {
   events: number;
   usEvents: number;
+  multiAircraftEvents: number;
   aircraft: number;
   sections: number;
   eventScopedSections: number;
+  eventScopedSectionsByKind: Record<SectionKind, number>;
+  /** Narrative rows merged into a section whose text differs from theirs only in whitespace. */
+  whitespaceMergedRows: number;
   htmlTransformedSections: number;
-  answerEligible: number;
-  answerEligibleUs: number;
+  /** HTML-transformed sections whose text still contains something tag-like (kept literally). */
+  htmlTagLikeSections: number;
+  completedWithCause: number;
   completedWithoutCause: number;
+  answerEligibleUs: number;
+  completedWithoutCauseUs: number;
+  /** Events whose aircraft have more than one distinct defining phase group. */
+  eventsWithSeveralDefiningPhases: number;
+  /** Aircraft with conflicting defining flags. */
+  definingConflicts: number;
+  quarantineByReason: Partial<Record<QuarantineReason, number>>;
 }
 
 export interface NormalizeResult {
@@ -307,15 +354,15 @@ type AnyRow = Readonly<Record<string, string>>;
 // ---------------------------------------------------------------------------
 // Keys
 
-type KeyKind = 'id' | 'int' | 'optional-int';
+type KeyKind = 'id' | 'int';
 type KeyedTable = Exclude<TableName, 'ct_seqevt' | 'eadmspub_datadictionary'>;
 
-/** Composite keys from amendment A1 (plus `ntsb_admin.ev_id`). */
+/** Composite keys from amendment A1 (plus `ntsb_admin.ev_id`). Every part is required. */
 const KEY_COLUMNS: Readonly<Record<KeyedTable, readonly (readonly [string, KeyKind])[]>> = {
   events: [['ev_id', 'id']],
   ntsb_admin: [['ev_id', 'id']],
   aircraft: [['ev_id', 'id'], ['aircraft_key', 'int']],
-  engines: [['ev_id', 'id'], ['aircraft_key', 'int'], ['eng_no', 'optional-int']],
+  engines: [['ev_id', 'id'], ['aircraft_key', 'int'], ['eng_no', 'int']],
   narratives: [['ev_id', 'id'], ['aircraft_key', 'int']],
   findings: [['ev_id', 'id'], ['aircraft_key', 'int'], ['finding_no', 'int']],
   events_sequence: [['ev_id', 'id'], ['aircraft_key', 'int'], ['occurrence_no', 'int']],
@@ -323,37 +370,48 @@ const KEY_COLUMNS: Readonly<Record<KeyedTable, readonly (readonly [string, KeyKi
 
 interface KeyedRow {
   row: AnyRow;
+  /** Trimmed `ev_id`. */
   evId: string;
+  /** Parsed `aircraft_key`; 0 for event-level tables. */
   aircraftKey: number;
-  /** Third key part (eng_no, finding_no, occurrence_no) when present. */
+  /** Parsed third key part (eng_no, finding_no, occurrence_no), null when the table has none. */
   sub: number | null;
+  /**
+   * Canonical key built from the typed tuple the joins use (`aircraft_key=1` for
+   * `'1'` and `'01'`); duplicate detection uses it too.
+   */
   key: string;
+  /** Raw spellings, for diagnostics only. */
+  sourceKey: string;
 }
 
 const NON_NEGATIVE_INT = /^\d+$/;
 
-function keyOf(table: KeyedTable, row: AnyRow): { ok: true; keyed: KeyedRow } | { ok: false; key: string; column: string; value: string } {
-  const parts: string[] = [];
-  const values: (string | number | null)[] = [];
+function keyOf(
+  table: KeyedTable,
+  row: AnyRow,
+): { ok: true; keyed: KeyedRow } | { ok: false; sourceKey: string; column: string; value: string } {
+  const canonical: string[] = [];
+  const source: string[] = [];
+  const values: (string | number)[] = [];
   let bad: { column: string; value: string } | null = null;
   for (const [column, kind] of KEY_COLUMNS[table]) {
     const raw = row[column] ?? '';
     const value = raw.trim();
-    parts.push(`${column}=${value}`);
-    if (kind === 'id') {
-      if (value === '' && !bad) bad = { column, value: raw };
+    source.push(`${column}=${JSON.stringify(raw)}`);
+    if (kind === 'id' && value !== '') {
       values.push(value);
-    } else if (value === '' && kind === 'optional-int') {
-      values.push(null);
-    } else if (NON_NEGATIVE_INT.test(value) && Number.isSafeInteger(Number(value))) {
-      values.push(Number(value));
-    } else {
-      if (!bad) bad = { column, value: raw };
-      values.push(null);
+      canonical.push(`${column}=${value}`);
+    } else if (kind === 'int' && NON_NEGATIVE_INT.test(value) && Number.isSafeInteger(Number(value))) {
+      const n = Number(value);
+      values.push(n);
+      canonical.push(`${column}=${n}`);
+    } else if (!bad) {
+      bad = { column, value: raw };
     }
   }
-  const key = parts.join(',');
-  if (bad) return { ok: false, key, ...bad };
+  const sourceKey = source.join(',');
+  if (bad) return { ok: false, sourceKey, ...bad };
   return {
     ok: true,
     keyed: {
@@ -361,7 +419,8 @@ function keyOf(table: KeyedTable, row: AnyRow): { ok: true; keyed: KeyedRow } | 
       evId: values[0] as string,
       aircraftKey: typeof values[1] === 'number' ? values[1] : 0,
       sub: typeof values[2] === 'number' ? values[2] : null,
-      key,
+      key: canonical.join(','),
+      sourceKey,
     },
   };
 }
@@ -393,19 +452,26 @@ function indexRows(
   problems: string[],
 ): KeyedRow[] {
   const out: KeyedRow[] = [];
-  const counts = new Map<string, number>();
+  const byKey = new Map<string, string[]>();
   for (const row of rows) {
     const k = keyOf(table, row);
     if (!k.ok) {
-      if (table === 'events') problems.push(`events: blank or invalid ${k.column} (${k.key})`);
-      else structural.add(table, k.key, k.column, 'invalid_key', 'row_excluded', k.value, `key column ${k.column} is blank or not an integer`);
+      if (table === 'events') problems.push(`events: blank or invalid ${k.column} (${k.sourceKey})`);
+      else {
+        structural.add(table, k.sourceKey, k.column, 'invalid_key', 'row_excluded', k.value, `key column ${k.column} is blank or not a non-negative integer`);
+      }
       continue;
     }
-    counts.set(k.keyed.key, (counts.get(k.keyed.key) ?? 0) + 1);
+    const spellings = byKey.get(k.keyed.key);
+    if (spellings) spellings.push(k.keyed.sourceKey);
+    else byKey.set(k.keyed.key, [k.keyed.sourceKey]);
     out.push(k.keyed);
   }
-  for (const [key, n] of counts) {
-    if (n > 1) problems.push(`${table}: duplicate key ${key} (${n} rows)`);
+  for (const [key, spellings] of byKey) {
+    if (spellings.length < 2) continue;
+    const distinct = [...new Set(spellings)];
+    const detail = distinct.length > 1 ? `; source keys: ${distinct.join(' | ')}` : '';
+    problems.push(`${table}: duplicate key ${key} (${spellings.length} rows${detail})`);
   }
   return out;
 }
@@ -431,6 +497,11 @@ function compareStrings(a: string, b: string): number {
 
 // ---------------------------------------------------------------------------
 // Field readers
+
+/** Verbatim value; only the empty field (NULL in the export) becomes null. */
+function rawOrNull(raw: string | undefined): string | null {
+  return raw === undefined || raw === '' ? null : raw;
+}
 
 /** Codes: trimmed and upper-cased (`Unk` -> `UNK`, `BUS ` -> `BUS`), blank -> null. */
 function code(raw: string | undefined): string | null {
@@ -661,20 +732,35 @@ function eventFields(r: FieldReader): CanonicalEventFields {
   };
 }
 
-interface SectionSource {
+interface RowText {
   aircraftKey: number;
   source: string;
   citation: CitationText;
   lastChangedAt: string | null;
 }
 
+/** Whitespace-insensitive identity of a canonical text: runs of whitespace -> one space, trimmed. */
+function whitespaceKey(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** Something that still looks like a tag in converted text (kept literally by `htmlToText`). */
+const TAG_LIKE = /<\/?[A-Za-z][^<>\s]*(?:\s[^<>]*)?>/;
+
 /**
- * One section per narrative row and kind. A source text recorded identically for
- * every aircraft of a multi-aircraft event is stored once with event scope
- * (amendment A3); everything else is attributed to its row's aircraft. Blank text
- * (also after HTML conversion, e.g. `<br /><br />`) produces no section.
+ * Narrative sections. In a single-aircraft event each nonblank narrative is an
+ * aircraft-scoped section. In a multi-aircraft event every section is event-scoped:
+ * rows whose canonical texts are equal after collapsing whitespace become one section
+ * (text from the lowest aircraft, every row kept as provenance), and texts that
+ * genuinely differ become separate event-scoped variants. Blank text (also after
+ * HTML conversion, e.g. `<br /><br />`) produces no section.
  */
-function buildSections(narratives: readonly KeyedRow[], aircraftKeys: readonly number[], lastChanged: Map<KeyedRow, string | null>): CanonicalSection[] {
+function buildSections(
+  narratives: readonly KeyedRow[],
+  multiAircraft: boolean,
+  lastChanged: Map<KeyedRow, string | null>,
+  notes: Notes,
+): CanonicalSection[] {
   const sections: CanonicalSection[] = [];
   const cache = new Map<string, CitationText>();
   const citationOf = (source: string): CitationText => {
@@ -686,35 +772,55 @@ function buildSections(narratives: readonly KeyedRow[], aircraftKeys: readonly n
     return c;
   };
   for (const [column, kind] of NARRATIVE_KINDS) {
-    const entries: SectionSource[] = [];
+    const entries: RowText[] = [];
     for (const n of narratives) {
       const source = n.row[column] ?? '';
       if (source.trim() === '') continue;
       const citation = citationOf(source);
       if (citation.text.trim() === '') continue;
+      if (citation.transformedFromHtml) {
+        const tag = TAG_LIKE.exec(citation.text);
+        if (tag) {
+          notes.add('narratives', n.key, column, 'tag_like_text_after_html', 'value_kept', null, `tag-like text kept literally after HTML conversion: ${truncate(tag[0])}`);
+        }
+      }
       entries.push({ aircraftKey: n.aircraftKey, source, citation, lastChangedAt: lastChanged.get(n) ?? null });
     }
-    const first = entries[0];
-    if (!first) continue;
-    const eventScoped =
-      aircraftKeys.length >= 2 && entries.length === aircraftKeys.length && entries.every((e) => e.source === first.source);
-    // Event scope requires byte-identical sources, so the first entry stands for all of them.
-    const make = (head: SectionSource, scope: SectionScope, covered: readonly SectionSource[]): CanonicalSection => ({
-      key: scope === 'event' ? `${kind}/event` : `${kind}/aircraft-${head.aircraftKey}`,
-      kind,
-      scope,
-      aircraftKey: scope === 'event' ? null : head.aircraftKey,
-      aircraftKeys: covered.map((e) => e.aircraftKey),
-      text: head.citation.text,
-      sha256: sha256(head.citation.text),
-      sourceText: head.source,
-      sourceSha256: sha256(head.source),
-      transformedFromHtml: head.citation.transformedFromHtml,
-      citationTextVersion: CITATION_TEXT_VERSION,
-      lastChangedAt: maxString(covered.map((e) => e.lastChangedAt)),
-    });
-    if (eventScoped) sections.push(make(first, 'event', entries));
-    else for (const e of entries) sections.push(make(e, 'aircraft', [e]));
+    // Entries are in ascending aircraft-key order, so each group's first entry is its lowest aircraft.
+    const groups = new Map<string, RowText[]>();
+    for (const e of entries) {
+      const k = multiAircraft ? whitespaceKey(e.citation.text) : `aircraft-${e.aircraftKey}`;
+      const group = groups.get(k);
+      if (group) group.push(e);
+      else groups.set(k, [e]);
+    }
+    let variant = 0;
+    for (const group of groups.values()) {
+      const head = group[0] as RowText;
+      variant += 1;
+      sections.push({
+        key: multiAircraft ? `${kind}/event-${variant}` : `${kind}/aircraft-${head.aircraftKey}`,
+        kind,
+        scope: multiAircraft ? 'event' : 'aircraft',
+        aircraftKey: multiAircraft ? null : head.aircraftKey,
+        sourceAircraftKeys: group.map((e) => e.aircraftKey),
+        text: head.citation.text,
+        sha256: sha256(head.citation.text),
+        sourceText: head.source,
+        sourceSha256: sha256(head.source),
+        transformedFromHtml: head.citation.transformedFromHtml,
+        sources: group.map((e) => ({
+          aircraftKey: e.aircraftKey,
+          sourceText: e.source,
+          sourceSha256: sha256(e.source),
+          transformedFromHtml: e.citation.transformedFromHtml,
+          match: e.citation.text === head.citation.text ? 'exact' : 'whitespace',
+          lastChangedAt: e.lastChangedAt,
+        })),
+        citationTextVersion: CITATION_TEXT_VERSION,
+        lastChangedAt: maxString(group.map((e) => e.lastChangedAt)),
+      });
+    }
   }
   return sections;
 }
@@ -784,15 +890,17 @@ export function normalizeCorpus(tables: RawTables, options: NormalizeOptions = {
         afmHrsLastInsp: r.decimal('afm_hrs_last_insp'),
         afmHrsSince: r.flag('afm_hrs_since'),
         acftYear: r.integer('acft_year'),
+        lastChangedAt: r.dateTime('lchg_date'),
       };
     });
 
     const engines = engineRows.map((e) => {
       const r = new FieldReader(notes, 'engines', e.key, e.row);
       const engine: CanonicalEngine = {
-        engNo: e.sub,
+        engNo: e.sub as number,
         engType: code(r.raw('eng_type')),
         carbFuelInjection: code(r.raw('carb_fuel_injection')),
+        lastChangedAt: r.dateTime('lchg_date'),
       };
       return { aircraftKey: e.aircraftKey, engine };
     });
@@ -806,9 +914,9 @@ export function normalizeCorpus(tables: RawTables, options: NormalizeOptions = {
         aircraftKey: f.aircraftKey,
         findingNo: f.sub as number,
         code: blankToNull(r.raw('finding_code')),
-        description: blankToNull(r.raw('finding_description')),
+        description: rawOrNull(r.raw('finding_description')),
         inProbableCause: r.flag('cm_inpc'),
-        causeFactor: code(r.raw('cause_factor')),
+        causeFactorRaw: rawOrNull(r.raw('cause_factor')),
         categoryNo: blankToNull(r.raw('category_no')),
         subcategoryNo: blankToNull(r.raw('subcategory_no')),
         sectionNo: blankToNull(r.raw('section_no')),
@@ -834,38 +942,41 @@ export function normalizeCorpus(tables: RawTables, options: NormalizeOptions = {
       };
     });
 
-    const aircraftKeys = aircraftBase.map((a) => a.aircraftKey);
-    const sections = buildSections(narrativeRows, aircraftKeys, narrativeChanged);
+    const sections = buildSections(narrativeRows, aircraftBase.length > 1, narrativeChanged, notes);
 
     const aircraft: CanonicalAircraft[] = aircraftBase.map((a) => {
       const own = sequence.filter((s) => s.aircraftKey === a.aircraftKey);
       const defining = own.filter((s) => s.isDefining === true);
-      if (defining.length > 1) {
+      const conflict = defining.length > 1;
+      if (conflict) {
         notes.add(
           'events_sequence',
           `ev_id=${evId},aircraft_key=${a.aircraftKey}`,
           'defining_ev',
-          'multiple_defining_events',
-          'value_kept',
+          'conflicting_defining_events',
+          'value_nulled',
           null,
-          `${defining.length} defining events; the lowest occurrence_no is used`,
+          `occurrences ${defining.map((d) => d.occurrenceNo).join(', ')} all have defining_ev = 1; no defining event is chosen`,
         );
       }
-      const definingEvent = defining[0] ?? null;
-      const cause = sections.find(
-        (s) => s.kind === 'probable_cause' && (s.scope === 'event' || s.aircraftKey === a.aircraftKey),
-      );
+      const definingEvent = defining.length === 1 ? (defining[0] as CanonicalSequenceEvent) : null;
       return {
         ...a,
         engines: engines.filter((e) => e.aircraftKey === a.aircraftKey).map((e) => e.engine),
         definingEvent,
         definingPhaseGroup: definingEvent?.phaseGroup ?? null,
-        phaseGroups: orderPhaseGroups(own.map((s) => s.phaseGroup)),
-        hasProbableCause: cause !== undefined,
-        probableCauseSectionKey: cause?.key ?? null,
+        definingEventConflict: conflict,
+        sequencePhaseGroups: orderPhaseGroups(own.map((s) => s.phaseGroup)),
       };
     });
 
+    const definingPhaseGroups: PhaseGroup[] = [];
+    for (const a of aircraft) {
+      if (a.definingPhaseGroup !== null && !definingPhaseGroups.includes(a.definingPhaseGroup)) {
+        definingPhaseGroups.push(a.definingPhaseGroup);
+      }
+    }
+    const isUs = country === 'USA';
     const hasProbableCause = sections.some((s) => s.kind === 'probable_cause');
     const completionClass = completionClassOf(rawStatus, mapping);
 
@@ -887,54 +998,71 @@ export function normalizeCorpus(tables: RawTables, options: NormalizeOptions = {
       ntsbNo,
       evId,
       country,
-      isUs: country === 'USA',
+      isUs,
       fields,
       location: loc,
       aircraft,
       sections,
       findings,
       sequence,
-      definingPhaseGroup: aircraft.find((a) => a.definingPhaseGroup !== null)?.definingPhaseGroup ?? null,
-      phaseGroups: orderPhaseGroups(sequence.map((s) => s.phaseGroup)),
+      definingPhaseGroups,
+      sequencePhaseGroups: orderPhaseGroups(sequence.map((s) => s.phaseGroup)),
       rawStatus,
       approvalDate,
       adminLastChangedAt,
       completionClass,
       completionMappingVersion: mapping.version,
       hasProbableCause,
-      answerEligible: isAnswerEligible({ completionClass, hasProbableCause }),
+      completedWithCause: isCompletedWithCause({ completionClass, hasProbableCause }),
+      answerEligible: isAnswerEligible({ isUs, completionClass, hasProbableCause }),
       sourceRevision: revision.digest('hex'),
     });
   }
 
-  const sections = cases.flatMap((c) => c.sections);
+  const quarantine = [...notes.rows, ...structural.rows];
   return {
     cases,
-    quarantine: [...notes.rows, ...structural.rows],
+    quarantine,
     completionMapping: mapping,
     cohortProvisional: isCohortProvisional(mapping),
     citationTextVersion: CITATION_TEXT_VERSION,
     fieldNormalizationVersion: FIELD_NORMALIZATION_VERSION,
     codeLabels: resolveCodeLabels(tables.eadmspub_datadictionary as readonly DictionaryCodeRow[] | undefined),
-    stats: {
-      events: cases.length,
-      usEvents: cases.filter((c) => c.isUs).length,
-      aircraft: cases.reduce((n, c) => n + c.aircraft.length, 0),
-      sections: sections.length,
-      eventScopedSections: sections.filter((s) => s.scope === 'event').length,
-      htmlTransformedSections: sections.filter((s) => s.transformedFromHtml).length,
-      answerEligible: cases.filter((c) => c.answerEligible).length,
-      answerEligibleUs: cases.filter((c) => c.answerEligible && c.isUs).length,
-      completedWithoutCause: cases.filter((c) => c.completionClass === 'completed' && !c.hasProbableCause).length,
-    },
+    stats: computeStats(cases, quarantine),
+  };
+}
+
+function computeStats(cases: readonly CanonicalCase[], quarantine: readonly QuarantineRow[]): NormalizeStats {
+  const sections = cases.flatMap((c) => c.sections);
+  const eventScoped = sections.filter((s) => s.scope === 'event');
+  const byKind: Record<SectionKind, number> = { factual: 0, analysis: 0, probable_cause: 0 };
+  for (const s of eventScoped) byKind[s.kind] += 1;
+  const byReason: Partial<Record<QuarantineReason, number>> = {};
+  for (const q of quarantine) byReason[q.reason] = (byReason[q.reason] ?? 0) + 1;
+  const completedWithoutCause = cases.filter((c) => c.completionClass === 'completed' && !c.hasProbableCause);
+  return {
+    events: cases.length,
+    usEvents: cases.filter((c) => c.isUs).length,
+    multiAircraftEvents: cases.filter((c) => c.aircraft.length > 1).length,
+    aircraft: cases.reduce((n, c) => n + c.aircraft.length, 0),
+    sections: sections.length,
+    eventScopedSections: eventScoped.length,
+    eventScopedSectionsByKind: byKind,
+    whitespaceMergedRows: sections.reduce((n, s) => n + s.sources.filter((r) => r.match === 'whitespace').length, 0),
+    htmlTransformedSections: sections.filter((s) => s.sources.some((r) => r.transformedFromHtml)).length,
+    htmlTagLikeSections: sections.filter((s) => s.sources.some((r) => r.transformedFromHtml) && TAG_LIKE.test(s.text)).length,
+    completedWithCause: cases.filter((c) => c.completedWithCause).length,
+    completedWithoutCause: completedWithoutCause.length,
+    answerEligibleUs: cases.filter((c) => c.answerEligible).length,
+    completedWithoutCauseUs: completedWithoutCause.filter((c) => c.isUs).length,
+    eventsWithSeveralDefiningPhases: cases.filter((c) => c.definingPhaseGroups.length > 1).length,
+    definingConflicts: cases.reduce((n, c) => n + c.aircraft.filter((a) => a.definingEventConflict).length, 0),
+    quarantineByReason: byReason,
   };
 }
 
 // ---------------------------------------------------------------------------
 // Reading projected CSVs
-
-/** Upper bound for one CSV record while reading (largest observed narrative row is ~80k characters per field). */
-export const READ_MAX_RECORD_SIZE = 8 * 1024 * 1024;
 
 function checkHeader(table: TableName, header: readonly string[]): string[] {
   const allowed = new Set<string>(TABLE_SPECS[table].columns);
@@ -952,26 +1080,38 @@ function checkHeader(table: TableName, header: readonly string[]): string[] {
   return [...header];
 }
 
+/**
+ * Read one projected CSV with the extraction's guards (`tables.ts`): fatal UTF-8
+ * validation, bounded record size and field count, equal field counts, and a
+ * required header row (a header-only table is fine).
+ */
 async function readTableFile(table: TableName, file: string): Promise<AnyRow[]> {
   const rows: AnyRow[] = [];
+  const state: { header: string[] | null } = { header: null };
   try {
     await pipeline(
       createReadStream(file),
-      parse({
-        bom: true,
-        columns: (header: string[]) => checkHeader(table, header),
-        relax_column_count: false,
-        skip_empty_lines: false,
-        max_record_size: READ_MAX_RECORD_SIZE,
-      }),
-      async function collect(source: AsyncIterable<AnyRow>) {
-        for await (const row of source) rows.push(row);
+      utf8Validator(),
+      boundedCsvParser(table),
+      async function collect(source: AsyncIterable<string[]>) {
+        for await (const record of source) {
+          if (state.header === null) {
+            state.header = checkHeader(table, record);
+            continue;
+          }
+          const row: Record<string, string> = {};
+          state.header.forEach((column, i) => {
+            row[column] = record[i] ?? '';
+          });
+          rows.push(row);
+        }
       },
     );
   } catch (err) {
     if (err instanceof NormalizationError) throw err;
     throw new Error(`${table}: cannot read ${file}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
+  if (state.header === null) throw new NormalizationError([`${table}: ${file} has no header row`]);
   return rows;
 }
 

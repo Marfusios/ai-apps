@@ -58,6 +58,14 @@ describe('toCitationText', () => {
     });
   });
 
+  it('leaves no carriage return: CR CR LF and lone CR (seen in the source) become line feeds', () => {
+    // Real narratives contain `\r\r\n` (a single CRLF pass would leave a CRLF behind) and
+    // table cells separated by a lone `\r`.
+    expect(toCitationText('originated from.\r\r\n \r\r\nThe aircraft').text).toBe('originated from.\n\n \n\nThe aircraft');
+    expect(toCitationText('Date\rDiscrepancy\rCorrective action').text).toBe('Date\nDiscrepancy\nCorrective action');
+    expect(toCitationText('<p>A\r\r\nB\rC</p>').text).toBe('A\n\nB\nC');
+  });
+
   it('keeps plain pseudo-tags verbatim', () => {
     const source = 'replied, "whiskey alpha we are just <unintelligible>."';
     expect(toCitationText(source)).toEqual({ text: source, transformedFromHtml: false });

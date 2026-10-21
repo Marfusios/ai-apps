@@ -1,31 +1,30 @@
 /**
  * Build the committed NTSB test fixtures (run manually; tests only read the output).
  *
- *   pnpm fixtures:build --json data/research
- *   pnpm fixtures:build --csv data/work/<extraction-dir>
+ *   pnpm fixtures:build --from data/work/<extraction-dir> [--out fixtures]
  *
- * `--json` reads research exports named `<table>.json` (arrays of objects with
- * mdb-export's default `MM/DD/YY HH:MM:SS` dates, converted here to the ISO form
- * the extraction writes). `--csv` reads a Task 3 extraction directory of projected
- * CSVs. Optional: `--out <dir>` (default `fixtures`).
+ * `--from` is a Task 3 extraction directory of projected CSVs (allowlisted columns,
+ * ISO dates, narratives with their original CRLF). It is read with the same guarded
+ * reader the loader uses (`readProjectedTables`).
  *
  * Writes:
- * - `<out>/ntsb/<table>.csv`: the rows of the events in `FIXTURE_CASES`, projected
- *   to the `TABLE_SPECS` allowlist (no owner/operator fields, no `lchg_userid`), in
- *   source order. Tables absent from the source (the research JSON has no engines,
- *   ct_seqevt or dictionary export) are skipped and reported.
+ * - `<out>/ntsb/<table>.csv` for events, aircraft, engines, narratives, findings,
+ *   events_sequence and ntsb_admin: the rows of the events in `FIXTURE_CASES`, every
+ *   value byte-for-byte as extracted, in source order, `TABLE_SPECS` columns only
+ *   (no owner/operator fields, no `lchg_userid`). The output is read back and
+ *   compared with the selected source rows before the script reports success.
  * - `<out>/ntsb-malformed/{duplicate-key,invalid-values}/<table>.csv`: small
  *   synthetic sets defined below.
  *
- * The fixture rows are public NTSB records (US government works). Large source
- * files stay in the ignored `data/` directory.
+ * The fixture rows are public NTSB records (US government works). The extraction
+ * itself stays in the ignored `data/` directory. `fixtures/.gitattributes` keeps Git
+ * from rewriting the CRLF inside quoted narrative fields.
  */
-import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import { parseArgs } from 'node:util';
-import { parse } from 'csv-parse';
 import { stringify } from 'csv-stringify/sync';
+import { readProjectedTables } from '../worker/ingest/normalize.js';
 import { TABLE_NAMES, TABLE_SPECS, type TableName } from '../worker/ingest/tables.js';
 
 /** Fixture events by public case number, with the reason each is included. */
@@ -34,8 +33,9 @@ const FIXTURE_CASES: Readonly<Record<string, string>> = {
   MIA08LA156: 'seed case: defect without an established causal link',
   DEN08LA103: 'seed case: undetermined cause, negative examination',
   NYC08LA106: 'seed case: fuel-pump failure contributed',
-  SEA08LA057: 'two aircraft with different defining phases; identical factual text',
-  DCA25MA108: 'two aircraft with duplicated analysis and cause narratives',
+  SEA08LA057: 'two aircraft, different defining phases; causes differ only in trailing CRLFs',
+  DCA25MA108: 'two aircraft with identical analysis and cause narratives',
+  WPR15FA010: 'two aircraft; the cause names the Savannah pilot and is recorded on the Cessna row too',
   CEN24FA064: 'HTML probable cause',
   ERA24LA303: 'HTML probable cause with a word split across spans',
   WPR26LA114: 'HTML probable cause with a leading <br />',
@@ -51,42 +51,9 @@ const PER_EVENT_TABLES: readonly TableName[] = [
   'events', 'aircraft', 'engines', 'narratives', 'findings', 'events_sequence', 'ntsb_admin',
 ];
 
-/** Columns that hold mdb-export date/time values. */
-const DATE_COLUMNS: Readonly<Partial<Record<TableName, readonly string[]>>> = {
-  events: ['ev_date', 'lchg_date'],
-  aircraft: ['date_last_insp'],
-  narratives: ['lchg_date'],
-  findings: ['lchg_date'],
-  events_sequence: ['lchg_date'],
-  ntsb_admin: ['approval_date', 'lchg_date'],
-};
-
 type Row = Record<string, string>;
 
-const US_DATE = /^(\d{2})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
-/** Two-digit years up to this value are 20xx. The archive starts in 2008; older values are inspection dates. */
-const TWO_DIGIT_YEAR_PIVOT = 30;
-
-function isoFromUsDate(value: string, where: string): string {
-  if (value === '') return '';
-  const m = US_DATE.exec(value);
-  if (!m) throw new Error(`${where}: unexpected date format`);
-  const [, mo, d, yy, h, mi, s] = m;
-  const year = Number(yy) <= TWO_DIGIT_YEAR_PIVOT ? 2000 + Number(yy) : 1900 + Number(yy);
-  return `${year}-${mo}-${d}T${h}:${mi}:${s}`;
-}
-
-function project(table: TableName, row: Row, convertDates: boolean): Row {
-  const out: Row = {};
-  for (const column of TABLE_SPECS[table].columns) {
-    const value = row[column];
-    if (typeof value !== 'string') throw new Error(`${table}: source row lacks column "${column}"`);
-    out[column] = convertDates && DATE_COLUMNS[table]?.includes(column) ? isoFromUsDate(value, `${table}.${column}`) : value;
-  }
-  return out;
-}
-
-function writeTable(dir: string, table: TableName, rows: readonly Row[]): void {
+function writeTable(dir: string, table: TableName, rows: readonly Readonly<Row>[]): void {
   mkdirSync(dir, { recursive: true });
   const columns = [...TABLE_SPECS[table].columns];
   const csv = stringify(
@@ -96,43 +63,33 @@ function writeTable(dir: string, table: TableName, rows: readonly Row[]): void {
   writeFileSync(join(dir, `${table}.csv`), csv);
 }
 
-async function readCsv(file: string): Promise<Row[]> {
-  const rows: Row[] = [];
-  await pipeline(createReadStream(file), parse({ bom: true, columns: true }), async function (source: AsyncIterable<Row>) {
-    for await (const r of source) rows.push(r);
-  });
-  return rows;
-}
-
-async function loadSource(kind: 'json' | 'csv', dir: string, table: TableName): Promise<Row[] | null> {
-  const file = join(dir, `${table}.${kind}`);
-  if (!existsSync(file)) return null;
-  if (kind === 'csv') return readCsv(file);
-  const data: unknown = JSON.parse(readFileSync(file, 'utf8'));
-  if (!Array.isArray(data)) throw new Error(`${file}: expected a JSON array`);
-  return data as Row[];
-}
-
-async function buildRealFixtures(kind: 'json' | 'csv', sourceDir: string, outDir: string): Promise<void> {
-  const events = await loadSource(kind, sourceDir, 'events');
-  if (!events) throw new Error(`events.${kind} not found in the source directory`);
+async function buildRealFixtures(sourceDir: string, outDir: string): Promise<void> {
+  const source = (await readProjectedTables(sourceDir)) as unknown as Partial<Record<TableName, readonly Readonly<Row>[]>>;
+  const events = source.events ?? [];
   const wanted = new Set(Object.keys(FIXTURE_CASES));
-  const evIds = new Set<string>();
-  for (const e of events) if (wanted.has(e.ntsb_no ?? '')) evIds.add(e.ev_id ?? '');
-  const found = new Set(events.filter((e) => evIds.has(e.ev_id ?? '')).map((e) => e.ntsb_no));
-  const missing = [...wanted].filter((no) => !found.has(no));
+  const selectedEvents = events.filter((e) => wanted.has(e.ntsb_no ?? ''));
+  const missing = [...wanted].filter((no) => !selectedEvents.some((e) => e.ntsb_no === no));
   if (missing.length > 0) throw new Error(`fixture events not in source: ${missing.join(', ')}`);
+  const evIds = new Set(selectedEvents.map((e) => e.ev_id ?? ''));
 
+  const written: Partial<Record<TableName, readonly Readonly<Row>[]>> = {};
   for (const table of PER_EVENT_TABLES) {
-    const rows = table === 'events' ? events : await loadSource(kind, sourceDir, table);
-    if (!rows) {
-      console.log(`${table}: not in source, skipped`);
-      continue;
-    }
-    const selected = rows.filter((r) => evIds.has(r.ev_id ?? '')).map((r) => project(table, r, kind === 'json'));
+    const rows = source[table];
+    if (!rows) throw new Error(`${table}.csv not in the extraction directory`);
+    const selected = rows.filter((r) => evIds.has(r.ev_id ?? ''));
     writeTable(join(outDir, 'ntsb'), table, selected);
+    written[table] = selected;
     console.log(`${table}: ${selected.length} rows`);
   }
+
+  // Read the fixtures back with the loader's reader and require exact equality.
+  const reread = (await readProjectedTables(join(outDir, 'ntsb'))) as unknown as Partial<Record<TableName, readonly Readonly<Row>[]>>;
+  for (const table of PER_EVENT_TABLES) {
+    if (JSON.stringify(reread[table]) !== JSON.stringify(written[table])) {
+      throw new Error(`${table}: fixture does not read back identically`);
+    }
+  }
+  console.log('fixtures read back identically');
 }
 
 /** A synthetic row: every allowlisted column blank, then the given values. */
@@ -203,15 +160,12 @@ function buildSyntheticFixtures(outDir: string): void {
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
-    options: { json: { type: 'string' }, csv: { type: 'string' }, out: { type: 'string', default: 'fixtures' } },
+    options: { from: { type: 'string' }, out: { type: 'string', default: 'fixtures' } },
     strict: true,
   });
-  if (Boolean(values.json) === Boolean(values.csv)) {
-    throw new Error('usage: build-fixtures (--json <research dir> | --csv <extraction dir>) [--out <dir>]');
-  }
+  if (!values.from) throw new Error('usage: build-fixtures --from <extraction dir> [--out <dir>]');
   const outDir = resolve(values.out);
-  if (values.json) await buildRealFixtures('json', resolve(values.json), outDir);
-  else if (values.csv) await buildRealFixtures('csv', resolve(values.csv), outDir);
+  await buildRealFixtures(resolve(values.from), outDir);
   buildSyntheticFixtures(outDir);
 }
 

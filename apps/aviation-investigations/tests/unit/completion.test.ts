@@ -5,6 +5,7 @@ import {
   completionClassOf,
   isAnswerEligible,
   isCohortProvisional,
+  isCompletedWithCause,
   type CompletionMapping,
 } from '../../shared/completion.js';
 
@@ -65,21 +66,39 @@ describe('completionClassOf', () => {
   });
 });
 
+describe('isCompletedWithCause', () => {
+  it('completed B with cause is completed with cause', () => {
+    expect(isCompletedWithCause({ completionClass: completionClassOf('B'), hasProbableCause: true })).toBe(true);
+  });
+
+  it('B without cause stays completed but not completed with cause', () => {
+    const completionClass = completionClassOf('B');
+    expect(completionClass).toBe('completed');
+    expect(isCompletedWithCause({ completionClass, hasProbableCause: false })).toBe(false);
+  });
+
+  it('a cause alone does not make a non-completed record qualify', () => {
+    for (const completionClass of ['other_status', 'in_progress', 'status_unknown'] as const) {
+      expect(isCompletedWithCause({ completionClass, hasProbableCause: true })).toBe(false);
+    }
+  });
+});
+
 describe('isAnswerEligible', () => {
-  it('completed B with cause is answer-eligible', () => {
-    expect(isAnswerEligible({ completionClass: completionClassOf('B'), hasProbableCause: true })).toBe(true);
+  it('completed B with cause in the US is answer-eligible', () => {
+    expect(isAnswerEligible({ isUs: true, completionClass: completionClassOf('B'), hasProbableCause: true })).toBe(true);
   });
 
   it('B without cause stays completed but not eligible', () => {
-    const completionClass = completionClassOf('B');
-    expect(completionClass).toBe('completed');
-    expect(isAnswerEligible({ completionClass, hasProbableCause: false })).toBe(false);
+    expect(isAnswerEligible({ isUs: true, completionClass: completionClassOf('B'), hasProbableCause: false })).toBe(false);
   });
 
-  it('a cause alone does not make a non-completed record eligible', () => {
-    expect(isAnswerEligible({ completionClass: 'other_status', hasProbableCause: true })).toBe(false);
-    expect(isAnswerEligible({ completionClass: 'in_progress', hasProbableCause: true })).toBe(false);
-    expect(isAnswerEligible({ completionClass: 'status_unknown', hasProbableCause: true })).toBe(false);
+  it('a non-US completed record with cause is not eligible', () => {
+    expect(isAnswerEligible({ isUs: false, completionClass: 'completed', hasProbableCause: true })).toBe(false);
+  });
+
+  it('a US record outside the completed set is not eligible', () => {
+    expect(isAnswerEligible({ isUs: true, completionClass: 'other_status', hasProbableCause: true })).toBe(false);
   });
 });
 

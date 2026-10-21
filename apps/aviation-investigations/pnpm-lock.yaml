@@ -176,10 +176,10 @@ importers:
         specifier: ^6.9.0
         version: 6.9.0
       entities:
-        specifier: ^8.1.0
+        specifier: 8.1.0
         version: 8.1.0
       htmlparser2:
-        specifier: ^12.0.0
+        specifier: 12.0.0
         version: 12.0.0
       pg:
         specifier: ^8.23.1

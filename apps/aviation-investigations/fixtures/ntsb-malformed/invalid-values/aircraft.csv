@@ -1,3 +1,3 @@
-ev_id,aircraft_key,ntsb_no,regis_no,acft_make,acft_model,acft_series,acft_category,far_part,type_fly,damage,homebuilt,num_eng,date_last_insp,afm_hrs,afm_hrs_last_insp,afm_hrs_since,acft_year
-SYN00BAD01,1,SYN00BAD01,,,,,,,,,,,,,,U,
-SYN00BAD02,1,SYN00BAD02,,,,,,,,,,,,,,,
+ev_id,aircraft_key,ntsb_no,regis_no,acft_make,acft_model,acft_series,acft_category,far_part,type_fly,damage,homebuilt,num_eng,date_last_insp,afm_hrs,afm_hrs_last_insp,afm_hrs_since,acft_year,lchg_date
+SYN00BAD01,1,SYN00BAD01,,,,,,,,,,,,,,U,,
+SYN00BAD02,1,SYN00BAD02,,,,,,,,,,,,,,,,

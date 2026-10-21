@@ -101,6 +101,26 @@ export function utf8Validator(): Transform {
 }
 
 /**
+ * Bounded RFC 4180 parser emitting string arrays (the header is the first record):
+ * record size capped at `MAX_RECORD_BYTES`, field count at `MAX_COLUMNS`, and every
+ * record must have the header's field count. Put `utf8Validator()` in front of it.
+ */
+export function boundedCsvParser(table: TableName): Transform {
+  return parse({
+    bom: true,
+    relax_column_count: false,
+    skip_empty_lines: false,
+    max_record_size: MAX_RECORD_BYTES,
+    // Field count is enforced while parsing: max_record_size only counts field
+    // contents, so a stream of empty fields would otherwise buffer without bound.
+    cast: (value, context) => {
+      if (context.index >= MAX_COLUMNS) throw new Error(`${table}: more than ${MAX_COLUMNS} fields in a record`);
+      return value;
+    },
+  });
+}
+
+/**
  * Value contract for the exported CSV: mdb-export writes NULL as an empty, unquoted
  * field, and the round trip through the parser makes NULL and the empty string
  * identical. Loaders must treat an empty field as NULL for non-text columns and may
@@ -116,18 +136,7 @@ export function projectCsv(
 ): [Transform, Transform, Transform, Transform] {
   const wanted: readonly string[] = TABLE_SPECS[table].columns;
   let indices: number[] | null = null;
-  const parser = parse({
-    bom: true,
-    relax_column_count: false,
-    skip_empty_lines: false,
-    max_record_size: MAX_RECORD_BYTES,
-    // Field count is enforced while parsing: max_record_size only counts field
-    // contents, so a stream of empty fields would otherwise buffer without bound.
-    cast: (value, context) => {
-      if (context.index >= MAX_COLUMNS) throw new Error(`${table}: more than ${MAX_COLUMNS} fields in a record`);
-      return value;
-    },
-  });
+  const parser = boundedCsvParser(table);
   const selector = new Transform({
     objectMode: true,
     transform(row: string[], _enc, cb) {
