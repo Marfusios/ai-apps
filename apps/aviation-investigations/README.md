@@ -141,3 +141,28 @@ from the `@fontsource` packages; the build writes their SIL OFL notices to
 user picks Day or Night, and the choice is kept in `localStorage`. A small inline
 script in `web/index.html` applies it before first paint; its CSP hash is in
 `web/src/csp-hashes.ts`, and the build fails if the two disagree.
+
+### Language-model provider
+
+`server/ai/` holds the provider interface (`provider.ts`) that the scope, compose
+and check stages call, the Anthropic adapter (`anthropic.ts`), a deterministic fake
+for tests (`fake.ts`, allowed only with `NODE_ENV=test`) and versioned prompts
+(`prompts/*.v1.ts`). Each stage validates its bounded input, sends the question and
+passages as delimited untrusted data in the user turn, and returns a Zod-validated
+object with normalized usage (input, output including thinking, cache write, cache
+read), provider, model and prompt version. The OpenAI adapter is not built yet.
+
+Anthropic calls use `messages.parse` with structured outputs, effort `low`, no
+retries, a per-request timeout, a cached system prompt, and no prefill, sampling
+parameters or refusal fallbacks. Thinking is disabled on Haiku 5.5, turned off with
+`between_tools` on Sonnet 5.5, and cannot be disabled on Opus 5.5. A refusal,
+`max_tokens`, unparsed output or reported input above the stage cap fails the
+stage with a `StageError` that says whether the call was billed.
+
+`pricing.ts` holds the allowlisted prices, the hard token caps per stage and the
+per-request reservations ($0.14 Opus, $0.07 Sonnet, $0.01 Haiku answer model).
+`startupAiCheck(config)` enables AI only when the provider has an adapter, its keys
+are set, every reachable model is priced and the worst-case request (all stages at
+their caps plus cache-write premiums) fits the reservation. Change a price, cap or
+model only together with the expected sums in `tests/unit/pricing.test.ts`.
+Adapter tests run the real SDK client against a stubbed `fetch`; nothing is sent.
