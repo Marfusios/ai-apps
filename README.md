@@ -9,7 +9,9 @@ the same functionality. The repository does not require a particular cloud accou
 private network, or shared development server.
 
 **Status:** the first app, [Aviation Casebook](apps/aviation-investigations/README.md),
-has a researched implementation design. No application has been implemented yet.
+has a researched implementation design, including a
+[Langfuse tracing and evaluation plan](apps/aviation-investigations/docs/OBSERVABILITY_AND_EVALUATION.md).
+No application has been implemented yet.
 See the [application catalog](apps/README.md) as projects are added.
 
 ## Repository layout

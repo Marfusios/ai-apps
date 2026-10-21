@@ -1,6 +1,7 @@
 # Aviation Casebook: implementation design
 
-**Draft, 2026-10-16.** Design and data research only; the application is not built.
+**Draft, updated 2026-10-21.** Initial data research: 2026-10-16. Design only;
+the application is not built. Tracing/evaluation decision: self-hosted Langfuse.
 Working assumptions: English-first public beta, all completed US investigations
 as the eventual scope, and a **$25/month OpenAI ceiling**. These are proposed
 defaults pending owner feedback, not deployed limits.
@@ -25,7 +26,9 @@ dashboard. The first implementation should be a complete, small vertical slice.
 | AI | Official OpenAI TypeScript SDK, Responses API, embeddings endpoint | Direct control over schemas, prompts, tokens, and accounting |
 | Jobs | Separate TypeScript worker from the same codebase/image | Imports do not block the HTTP process; no broker needed initially |
 | Public access | Docker Compose + Cloudflare Tunnel + Turnstile | Suitable for one Linux host |
-| Tests | Vitest, Fastify injection tests, Playwright, retrieval evaluations | Evidence accuracy, auth, quotas, and user journeys |
+| Observability | Self-hosted Langfuse + OpenTelemetry-backed TypeScript integration | Existing AI dashboard for traces, usage, latency, and scores |
+| AI evaluations | Langfuse experiments + custom TypeScript evaluators | Versioned datasets, retrieval/classification metrics, and regression comparisons |
+| Software tests | Vitest, Fastify injection tests, Playwright | Deterministic logic, auth, quotas, and user journeys |
 
 Node 24 is supported in the [Node release schedule](https://github.com/nodejs/Release).
 Fastify documents [TypeScript](https://fastify.dev/docs/latest/Reference/TypeScript/)
@@ -37,8 +40,15 @@ Prefer the explicit frontend/backend split for learning. Next.js is a reasonable
 alternative if server rendering and indexed public case pages become priorities;
 the initial search interface does not need its rendering/cache conventions.
 Use one application package with `web/`, `server/`, `worker/`, `shared/`, `tests/`,
-and `fixtures/`. No agent framework, Redis, Kafka, graph database, or microservices
-are necessary for version one. Keep repository tooling framework-neutral.
+`evals/`, and `fixtures/`. Application orchestration remains plain TypeScript;
+LangChain/LangGraph are not required for version one. The app needs no Redis,
+Kafka, or graph database; the separate Langfuse deployment has its own storage
+dependencies. Keep repository tooling framework-neutral.
+
+Use Langfuse's dashboard and experiment runner. No Jaeger plugin/custom AI dashboard
+is planned, and Promptfoo is optional future tooling rather than a first-release
+dependency. The [tracing and evaluation guide](OBSERVABILITY_AND_EVALUATION.md)
+defines instrumentation, development experiments, production assessment, and hosting.
 
 ## 2. First-release behavior
 
@@ -359,6 +369,11 @@ deletion without retaining the email/profile and reattaches the existing usage o
 re-registration. Document this pseudonymous retention and preserve its counters
 during key rotation; do not cascade-delete it with the account.
 
+Langfuse production traces follow the 30-day content-free metadata limit. Questions
+and answers remain outside telemetry by default; asynchronous evaluation uses only
+the existing 24-hour temporary-processing window. Public/synthetic benchmark
+fixtures have a separate lifecycle. See the [capture and retention policy](OBSERVABILITY_AND_EVALUATION.md#privacy-retention-cost-and-availability).
+
 ## 8. Abuse controls and atomic accounting
 
 Cloudflare is the outer traffic filter. Validate Turnstile server-side, checking
@@ -518,6 +533,12 @@ flowchart LR
     W --> P
     W --> E
     W --> O
+    A -. Sanitized telemetry .-> L[Private Langfuse dashboard and storage]
+    W -. Sanitized telemetry .-> L
+    R[TypeScript experiment runner] --> E
+    R --> O
+    R --> P
+    R -. Traces and evaluation scores .-> L
 ```
 
 Use a multi-stage non-root image. Fastify serves built Vite assets and `/api/*`
@@ -526,10 +547,17 @@ groups clear `app`, `ingest`, and one-shot `extract` services. Avoid global `con
 multiple checkouts can coexist. Offer a reproducible local service profile with
 pinned PostgreSQL/Elasticsearch and configurable connections to existing services.
 
-Only the application is tunnel-exposed. Elasticsearch, Kibana, PostgreSQL, worker,
-admin, and metrics routes remain private. Use an isolated container connector for
-production and publish no app port; loopback access is a development option. Test
-origin restrictions externally and from co-resident containers.
+Run Langfuse as separate reusable infrastructure under Compose project
+`ai-observability`, with isolated projects/credentials and its own resource budget.
+The experiment runner invokes the same application functions and cost gate; its
+provider calls remain metered. Tracing exports are asynchronous and best-effort.
+The [hosting plan](OBSERVABILITY_AND_EVALUATION.md#prompt-management-and-hosting)
+lists Langfuse's additional services and portable configuration.
+
+Only the application is tunnel-exposed. Elasticsearch, Kibana, PostgreSQL, workers,
+Langfuse, admin, and metrics routes remain private. Use an isolated container
+connector for production and publish no app port; loopback access is a development
+option. Test origin restrictions externally and from co-resident containers.
 Direct/LAN access must not become an alternate trusted-header path. Set the final
 hostname with `APP_URL`; keep machine-specific addresses/tunnel secrets outside Git.
 
@@ -558,13 +586,21 @@ default email/prompt logging. Document single-host downtime, rollback, and recov
 
 ## 12. Security review and evaluation gates
 
+Use Langfuse for traces, datasets, experiments, and scores; custom TypeScript
+evaluators run in our controlled script/worker process. Ordinary software tests
+remain separate. [The evaluation guide](OBSERVABILITY_AND_EVALUATION.md) explains
+unit tests, component/end-to-end evaluations, human/model scoring, and production
+sampling. Scores are assessments from a named evaluator, not automatic proof of
+correctness. Inline answer checks and PostgreSQL spend enforcement remain in the API.
+
 [Independent design review](SECURITY_REVIEW.md) is separate from implementation
 review. Before public launch, ask **Claude Fable or Opus** to review a fixed code
 commit and configuration: auth/cookies, every paid-call path, quota races, proxy
 trust, output rendering, permissions, dependencies, and containers/tunnel. Use
 synthetic credentials and public fixtures; record actual reviewer model and fixes.
 Test findings, and review changes after the reviewed commit. A model review is
-not a guarantee of no vulnerabilities.
+not a guarantee of no vulnerabilities. The Langfuse additions postdate the October 16
+review and must be included in the implementation review.
 
 Block public launch on unresolved critical/high issues, failed auth/origin/budget
 tests, or evidence-classification failures. Build a 60–100-question set, split by
@@ -589,7 +625,12 @@ Proposed targets to measure:
 - Test cross-user caches/idempotency/sessions, XSS, CSRF, OAuth redirects,
   unsafe source redirects, and malicious retrieved text.
 
-Offline tests run in CI. Live evaluations are explicit and budgeted. Aim for
+Network-independent tests run in CI. Prepared-dataset ("offline") evaluations can
+call real models: run them only as explicit, budgeted jobs, recording dataset,
+corpus, prompt, model, evaluator, and code versions. Missing/failed required scores
+must fail the release gate. Background production judges use the same $5/month
+indexing/evaluation allocation and shared paid-call gate; Langfuse cost charts do
+not enforce the app's spending limit. Aim for
 subsecond cached browsing and roughly ten-second AI responses, then measure on
 the target host; these are targets, not observed benchmarks.
 
@@ -598,9 +639,9 @@ the target host; these are targets, not observed benchmarks.
 | Milestone | Deliverable | Exit condition |
 | --- | --- | --- |
 | 1. Data and keyword search | TypeScript importer, canonical schema, 2008+ US slice, filters, case page | Completion mapping/counts/joins verified; no LLM needed |
-| 2. Evidence retrieval | Chunks, embeddings, application RRF, cited comparison | Seed cases correct; holdout results recorded |
+| 2. Evidence retrieval | Chunks, embeddings, application RRF, cited comparison, Langfuse traces and TypeScript experiments | Seed cases correct; baseline/holdout scores recorded; telemetry capture checked |
 | 3. Interface | Search workspace, evidence drawer, comparison, basic dashboard | Instructor can find and verify a case independently |
-| 4. Public-beta controls | Google login, trial, consent, Turnstile, atomic quotas/spend | Adversarial/auth/concurrency tests pass privately |
+| 4. Public-beta controls | Google login, trial, consent, Turnstile, atomic quotas/spend, bounded production evaluation | Adversarial/auth/concurrency and telemetry privacy/retention tests pass privately |
 | 5. Review and launch | Claude code/config review, fixes, restore drill, tunnel/domain | Launch gates pass; enable a small public beta |
 | 6. Extend coverage | Historical sources, Enterprise API, reviewed enrichment | Coverage and quality remain explicit |
 
@@ -611,9 +652,14 @@ if historical backfill or advanced features slip.
 
 ## 14. Decisions and remaining verification
 
+Accepted tooling: Langfuse's existing UI for observability/evaluations, custom
+TypeScript evaluation rules, and Vitest for ordinary tests. No Jaeger UI work or
+Promptfoo dependency in version one. Plain TypeScript orchestration remains.
+
 Defaults awaiting feedback: monthly budget and breadth of initial coverage.
 Technical unknowns: completion codes, historical schemas, partial-update semantics,
-Enterprise API access/pagination, actual model availability, and evaluated quality.
+Enterprise API access/pagination, actual model availability, evaluated quality,
+and measured Langfuse resource/retention behavior on the deployment host.
 These are implementation tasks, not concealed assumptions of production readiness.
 
 Before implementing public login/access, configure Google OAuth for the final

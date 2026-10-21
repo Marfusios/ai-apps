@@ -61,9 +61,29 @@ The reviewer suggested four non-blocking clarifications. The final document adds
   deletion and re-registration for the quota window plus 7 days.
 - Daily pacing subtracts the full value of unsettled/uncertain reservations.
 
-Those final clarifications were added after the follow-up review, so its hash
-identifies the preceding draft, not the final document. Both reviews cover design
-only; they cannot replace tests of the eventual implementation.
+Those clarifications were added after the follow-up review, so its hash identifies
+the preceding draft, not the current document. Both reviews cover design only;
+they cannot replace tests of the eventual implementation.
+
+## Design addendum, 2026-10-21
+
+The design now selects self-hosted Langfuse for tracing and evaluations, with
+custom TypeScript evaluators. This addition and the
+[tracing/evaluation guide](OBSERVABILITY_AND_EVALUATION.md) were **not covered by the
+October 16 Claude reviews**. No new independent review or implementation test is
+claimed by this documentation update.
+
+The new design requires private dashboard access, server-side project credentials,
+production metadata-only capture, filtering before export, bounded retention,
+feedback ownership checks, and best-effort telemetry export. Experiments and
+background judges use the existing paid-call gate; PostgreSQL accounting and inline
+answer verification remain authoritative. Provider keys stay out of autonomous
+Langfuse judge configurations in version one.
+
+The implementation review must verify those controls, including secrets in error
+spans, duplicate instrumentation, cross-project/feedback access, deletion across
+tracing stores and exports, budget enforcement for judges, and behavior during
+Langfuse outages. Missing evaluation results must not silently pass release gates.
 
 ## Required implementation review before launch
 
