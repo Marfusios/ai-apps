@@ -69,6 +69,11 @@ export interface ProjectionCounter {
 }
 
 /**
+ * Value contract for the exported CSV: mdb-export writes NULL as an empty, unquoted
+ * field, and the round trip through the parser makes NULL and the empty string
+ * identical. Loaders must treat an empty field as NULL for non-text columns and may
+ * do so for text columns too.
+ *
  * Streaming CSV (RFC 4180) projection: [parser, selector, serializer]. The header
  * row is mapped to the allowlist; a missing allowlisted column is an error.
  */

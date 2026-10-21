@@ -1,15 +1,23 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
-import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { createWriteStream, existsSync, rmSync } from 'node:fs';
+import { chmod, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { Writable } from 'node:stream';
+import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { DEFAULT_LIMITS, extractMember, verifyArchive } from './archive.js';
 import { TABLE_NAMES, TABLE_SPECS, projectFile, type TableName } from './tables.js';
 
 export const EXTRACT_IMAGE = 'aviation-extract:mdbtools-1.0.0';
 export const EXPORT_TIMEOUT_MS = 10 * 60 * 1000;
+/** Per-table cap on bytes accepted from the container's stdout. */
+export const MAX_TABLE_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** Names of running containers, so a signal handler can kill them. */
+const running = new Set<string>();
+function killRunning(): void {
+  for (const name of running) spawnSync('docker', ['kill', name], { stdio: 'ignore' });
+}
 
 /** mdb-export options: unambiguous ISO-8601 dates, RFC 4180 quoting (quotes doubled). */
 export const MDB_EXPORT_FLAGS = [
@@ -44,6 +52,7 @@ function runContainer(
   command: readonly string[],
   sink: NodeJS.WritableStream | null,
   timeoutMs: number,
+  maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<ContainerResult> {
   const name = `aviation-extract-${randomBytes(6).toString('hex')}`;
   const args = ['run', '--name', name, ...SANDBOX_FLAGS, ...mounts, EXTRACT_IMAGE, ...command];
@@ -54,18 +63,32 @@ function runContainer(
     child.stderr.on('data', (d: Buffer) => {
       if (stderr.length < 4096) stderr += d.toString('utf8');
     });
-    const done = sink ? pipeline(child.stdout, sink) : (child.stdout.resume(), Promise.resolve());
-    done.catch(() => undefined);
-    const timer = setTimeout(() => {
-      timedOut = true;
+    running.add(name);
+    const kill = (): void => {
       spawn('docker', ['kill', name], { stdio: 'ignore' }).on('error', () => undefined);
       child.kill('SIGKILL');
+    };
+    let total = 0;
+    const cap = new Transform({
+      transform(chunk: Buffer, _e, cb) {
+        total += chunk.length;
+        if (total > maxBytes) return cb(new Error(`container output exceeds ${maxBytes} bytes`));
+        cb(null, chunk);
+      },
+    });
+    const done = sink ? pipeline(child.stdout, cap, sink) : (child.stdout.resume(), Promise.resolve());
+    done.catch(kill);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
     }, timeoutMs);
     child.on('error', (e) => {
+      running.delete(name);
       clearTimeout(timer);
       reject(e);
     });
     child.on('close', (code) => {
+      running.delete(name);
       clearTimeout(timer);
       done.then(
         () => {
@@ -115,6 +138,7 @@ export async function runMdbExport(mdbPath: string, outDir: string): Promise<Rec
       ['mdb-export', ...MDB_EXPORT_FLAGS, '/in/avall.mdb', table],
       sink,
       EXPORT_TIMEOUT_MS,
+      MAX_TABLE_BYTES,
     );
     result[table] = file;
   }
@@ -139,22 +163,44 @@ export interface ExtractOptions {
 
 /**
  * Verify, unpack, export in the sandbox, project to allowlisted columns, delete the
- * raw export, and write manifest.json. Returns the manifest.
+ * raw export, and write manifest.json. Projected files are built in `.partial/` and
+ * moved into place (manifest last) only after everything succeeded. Returns the manifest.
  */
 export async function extractArchive(opts: ExtractOptions): Promise<ExtractManifest> {
   const startedAt = new Date().toISOString();
   const out = resolve(opts.out);
   const raw = join(out, 'raw');
-  const archive = await verifyArchive(opts.archive, opts.sha256);
-  await mkdir(raw, { recursive: true, mode: 0o755 });
-  await chmod(raw, 0o755);
+  const partial = join(out, '.partial');
+  if (existsSync(join(out, 'manifest.json'))) {
+    throw new Error('output directory already holds a completed extraction (manifest.json); use a new directory');
+  }
+  const cleanup = (): void => {
+    rmSync(raw, { recursive: true, force: true });
+    rmSync(partial, { recursive: true, force: true });
+  };
+  // Leftovers from an interrupted run, including projected files without a manifest.
+  cleanup();
+  for (const t of TABLE_NAMES) rmSync(join(out, `${t}.csv`), { force: true });
+
+  const onSignal = (sig: NodeJS.Signals): void => {
+    killRunning();
+    cleanup();
+    process.exit(sig === 'SIGINT' ? 130 : 143);
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  const moved: string[] = [];
   try {
+    const archive = await verifyArchive(opts.archive, opts.sha256);
+    await mkdir(raw, { recursive: true, mode: 0o755 });
+    await chmod(raw, 0o755);
+    await mkdir(partial, { mode: 0o700 });
     const mdb = await extractMember(opts.archive, 'avall.mdb', raw, DEFAULT_LIMITS);
     const version = await mdbtoolsVersion(mdb);
     const rawCsv = await runMdbExport(mdb, raw);
     const tables: ExtractManifest['tables'] = {};
     for (const table of TABLE_NAMES) {
-      const target = join(out, `${table}.csv`);
+      const target = join(partial, `${table}.csv`);
       const rows = await projectFile(table, rawCsv[table], target);
       tables[table] = {
         rows,
@@ -173,11 +219,19 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
       startedAt,
       finishedAt: new Date().toISOString(),
     };
-    await writeFile(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(join(partial, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+    for (const file of [...TABLE_NAMES.map((t) => `${t}.csv`), 'manifest.json']) {
+      await rename(join(partial, file), join(out, file));
+      moved.push(file);
+    }
+    await rm(partial, { recursive: true, force: true });
     return manifest;
   } catch (err) {
-    await rm(raw, { recursive: true, force: true });
+    cleanup();
+    for (const f of moved) rmSync(join(out, f), { force: true });
     throw err;
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
   }
 }
-
