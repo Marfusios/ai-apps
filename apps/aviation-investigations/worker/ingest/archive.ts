@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { rm, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { open, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -79,6 +79,11 @@ export async function extractMember(
   }
   const zf = await openZip(zipPath);
   const target = join(outDir, member);
+  // Exclusive create: if the file already exists this call neither writes nor deletes it.
+  const handle = await open(target, 'wx', 0o644).catch((err: unknown) => {
+    zf.close();
+    throw err;
+  });
   try {
     if (zf.entryCount !== 1) throw new Error(`archive must contain exactly one entry, found ${zf.entryCount}`);
     const entry = await new Promise<yauzl.Entry>((resolve, reject) => {
@@ -106,9 +111,10 @@ export async function extractMember(
         cb(null, chunk);
       },
     });
-    await pipeline(input, guard, createWriteStream(target, { flags: 'wx', mode: 0o644 }));
+    await pipeline(input, guard, handle.createWriteStream());
     return target;
   } catch (err) {
+    await handle.close().catch(() => undefined);
     await rm(target, { force: true });
     throw err;
   } finally {

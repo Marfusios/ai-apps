@@ -43,13 +43,14 @@ describe('extract image', () => {
     writeFileSync(zipPath, buf);
     const sha256 = createHash('sha256').update(buf).digest('hex');
     const out = join(dir, 'run');
-    mkdirSync(out);
     await expect(extractArchive({ archive: zipPath, sha256, out })).rejects.toThrow();
-    expect(readdirSync(out)).toEqual([]);
-    // Again on the same directory: no EEXIST from earlier leftovers.
-    await expect(extractArchive({ archive: zipPath, sha256, out })).rejects.toThrow(/exited with/);
+    expect(existsSync(out)).toBe(false);
+    expect(readdirSync(dir).filter((f) => f.startsWith('run'))).toEqual([]);
+    // Same path again works because nothing was left behind; an existing path is refused untouched.
+    await expect(extractArchive({ archive: zipPath, sha256, out })).rejects.toThrow(/exited with|diagnostics/);
+    mkdirSync(out);
     writeFileSync(join(out, 'manifest.json'), '{}');
-    await expect(extractArchive({ archive: zipPath, sha256, out })).rejects.toThrow(/manifest/);
-    expect(existsSync(join(out, 'raw'))).toBe(false);
+    await expect(extractArchive({ archive: zipPath, sha256, out })).rejects.toThrow(/already exists/);
+    expect(readdirSync(out)).toEqual(['manifest.json']);
   });
 });
