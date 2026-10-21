@@ -17,19 +17,26 @@
     "worker": "tsx worker/cli.ts",
     "dev:server": "tsx watch server/main.ts",
     "dev:web": "vite",
-    "build": "vite build && tsc -p tsconfig.server.json"
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "extract:image": "docker build -t aviation-extract:mdbtools-1.0.0 docker/extract"
   },
   "dependencies": {
     "@elastic/elasticsearch": "^9.5.1",
+    "csv-parse": "^7.0.3",
+    "csv-stringify": "^6.9.0",
     "pg": "^8.23.1",
+    "yauzl": "^3.4.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "yazl": "^3.3.1"
   }
 }
