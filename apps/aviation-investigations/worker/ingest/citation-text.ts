@@ -5,7 +5,9 @@ import { Parser } from 'htmlparser2';
  * Canonical citation text (amendment A9). Version both constants together with any
  * change to the rules below: stored hashes, passages and quote offsets depend on them.
  *
- * Plain text: unchanged except CRLF -> LF.
+ * Plain text: unchanged except line ends: CRLF -> LF, then any remaining CR -> LF.
+ * The source has `\r\r\n` and lone `\r` cell separators besides CRLF, and a single
+ * CRLF pass would turn `\r\r\n` back into a CRLF.
  * Text that looks like HTML (see `looksLikeHtml`): converted by `htmlToText`.
  */
 export const CITATION_TEXT_VERSION = 'v1';
@@ -36,11 +38,12 @@ export function looksLikeHtml(source: string): boolean {
 
 export function toCitationText(source: string): CitationText {
   if (looksLikeHtml(source)) return { text: htmlToText(source), transformedFromHtml: true };
-  return { text: crlfToLf(source), transformedFromHtml: false };
+  return { text: normalizeLineEnds(source), transformedFromHtml: false };
 }
 
-function crlfToLf(s: string): string {
-  return s.replace(/\r\n/g, '\n');
+/** CRLF and lone CR to LF (`\r\r\n` -> `\n\n`). */
+export function normalizeLineEnds(s: string): string {
+  return s.replace(/\r\n?/g, '\n');
 }
 
 /** Elements whose start or end is a line boundary. */
@@ -68,7 +71,7 @@ const STRAY_CLOSE = /^<\/([A-Za-z][^\s/>]*)\s*>/;
  *   element with value-less attributes such as `<a few miles>`, an unmatched
  *   closing tag of an unknown element) stays as literal source text, so no words are
  *   lost; comments, doctype and processing instructions are removed;
- * - CRLF becomes LF and leading/trailing ASCII whitespace is trimmed.
+ * - line ends are normalized like plain text and leading/trailing ASCII whitespace is trimmed.
  */
 export function htmlToText(source: string): string {
   let out = '';
@@ -187,5 +190,5 @@ export function htmlToText(source: string): string {
   parser.end();
   gapTo(source.length);
   flushText();
-  return crlfToLf(out).replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+  return normalizeLineEnds(out).replace(/^[ \t\n]+|[ \t\n]+$/g, '');
 }

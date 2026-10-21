@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CODE_LABELS,
   FLAG_VOCABULARY,
+  NOT_RECORDED_LABEL,
   NOT_REPORTED_LABEL,
   PHASE_GROUPS,
   PHASE_LABEL,
@@ -129,7 +130,12 @@ describe('code labels', () => {
     );
     expect(codeLabel('light_cond', 'DAYL')).toBe('Day');
     expect(codeLabel('light_cond', 'NDRK')).toBe('Night, dark');
-    expect(codeLabel('light_cond', null)).toBe(NOT_REPORTED_LABEL);
+  });
+
+  it('keeps light NR and blank light in different buckets', () => {
+    expect(codeLabel('light_cond', 'NR')).toBe(NOT_REPORTED_LABEL);
+    expect(codeLabel('light_cond', null)).toBe(NOT_RECORDED_LABEL);
+    expect(codeLabel('light_cond', '  ')).toBe('Not recorded');
   });
 
   it('labels basic weather; the source spells unknown as Unk', () => {

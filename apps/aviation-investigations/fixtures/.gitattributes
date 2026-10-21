@@ -1,0 +1,3 @@
+# Fixture CSVs keep the CRLF that real narratives contain inside quoted fields;
+# the repository default (text=auto eol=lf) would rewrite them.
+*.csv -text

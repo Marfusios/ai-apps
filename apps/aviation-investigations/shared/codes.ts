@@ -136,8 +136,17 @@ export function decodeFlag(column: FlagColumn, raw: string | null | undefined): 
 export type LabelledColumn = 'ev_highest_injury' | 'light_cond' | 'wx_cond_basic';
 export type CodeLabels = Readonly<Record<LabelledColumn, Readonly<Record<string, string>>>>;
 
-/** Label for a blank code: the field was not filled in. */
+/** Label for a blank injury or weather code, and for the light code `NR`. */
 export const NOT_REPORTED_LABEL = 'Not reported';
+/** Label for a blank light code, kept apart from the explicit `NR` (Not reported) bucket. */
+export const NOT_RECORDED_LABEL = 'Not recorded';
+
+/** Display label of a blank (NULL) code per column. */
+export const BLANK_CODE_LABEL: Readonly<Record<LabelledColumn, string>> = {
+  ev_highest_injury: NOT_REPORTED_LABEL,
+  light_cond: NOT_RECORDED_LABEL,
+  wx_cond_basic: NOT_REPORTED_LABEL,
+};
 
 /**
  * Product labels for the codes observed in the snapshot (verified against the
@@ -159,10 +168,10 @@ export const DEFAULT_CODE_LABELS: CodeLabels = {
   wx_cond_basic: { VMC: 'VMC', IMC: 'IMC', UNK: 'Unknown' },
 };
 
-/** Display label: the mapped label, `Not reported` for blank, else the raw code itself. */
+/** Display label: the mapped label, `BLANK_CODE_LABEL` for blank, else the raw code itself. */
 export function codeLabel(column: LabelledColumn, code: string | null, labels: CodeLabels = DEFAULT_CODE_LABELS): string {
   const key = (code ?? '').trim().toUpperCase();
-  if (key === '') return NOT_REPORTED_LABEL;
+  if (key === '') return BLANK_CODE_LABEL[column];
   const map = labels[column];
   return Object.hasOwn(map, key) ? (map[key] as string) : (code ?? '').trim();
 }
