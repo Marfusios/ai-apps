@@ -67,3 +67,31 @@ environment and from explicit dotenv files listed in `AVIATION_ENV_FILES`
 process values win over files, and only the variable names in `.env.example`
 are read from them. The dotenv parser does no shell expansion or command
 substitution. Keep real values in ignored files such as `.env.local`.
+
+### Local services
+
+`compose.yaml` (Compose project `ai-aviation`) runs pinned PostgreSQL 17.6 and
+Elasticsearch 9.5.5 (single node, security on, 2 GB heap, ML disabled). Both
+bind to loopback only; HTTP TLS is disabled for this local profile. Ports come
+from `POSTGRES_PORT` (default 55432) and `ELASTICSEARCH_PORT` (default 59200).
+
+```sh
+pnpm services:up      # generate bootstrap passwords, start services, wait until healthy
+pnpm services:setup   # create database roles, Elasticsearch roles, and scoped API keys
+pnpm test:integration
+pnpm services:down    # stop; data volumes are kept
+```
+
+Secrets are generated on first run into the ignored `.env.local` (mode 0600),
+which `services:up` also passes to Compose via `--env-file`. Values are never
+printed. `services:setup` is idempotent and writes:
+
+- `DATABASE_URL` (`aviation_app`), `DATABASE_MIGRATOR_URL` (`aviation_migrator`,
+  owns the schema) and `DATABASE_INGEST_URL` (`aviation_ingest`) for the
+  `aviation` database; integration tests use `aviation_test` with the same roles.
+  Default privileges give both runtime roles SELECT on future tables; migrations
+  grant DML explicitly.
+- `ELASTICSEARCH_READ_API_KEY` (read-only on `aviation-*`, for the HTTP process)
+  and `ELASTICSEARCH_WRITE_API_KEY` (ingestion; `aviation-*` only).
+
+Integration tests create only `aviation-test-*` indices and clean them up.

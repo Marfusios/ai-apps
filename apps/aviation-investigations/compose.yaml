@@ -1,0 +1,54 @@
+# Local development services. Start with `pnpm services:up`, which generates
+# ELASTIC_PASSWORD and POSTGRES_PASSWORD in the ignored .env.local and passes it
+# to Compose with --env-file. Ports are configurable and bound to loopback only.
+# Elasticsearch HTTP TLS is disabled for this local profile only.
+name: ai-aviation
+
+services:
+  postgres:
+    image: postgres:17.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run pnpm services:up}
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.ml.enabled: "false"
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?run pnpm services:up}
+      ES_JAVA_OPTS: -Xms2g -Xmx2g
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-59200}:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -s -u "elastic:$$ELASTIC_PASSWORD" http://localhost:9200/_cluster/health
+          | grep -Eq '"status":"(green|yellow)"'
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+volumes:
+  postgres-data:
+  elasticsearch-data:

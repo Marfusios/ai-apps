@@ -11,16 +11,22 @@
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "typecheck": "tsc --noEmit",
+    "services:up": "tsx scripts/services.ts up",
+    "services:down": "tsx scripts/services.ts down",
+    "services:setup": "tsx scripts/services-setup.ts",
     "worker": "tsx worker/cli.ts",
     "dev:server": "tsx watch server/main.ts",
     "dev:web": "vite",
     "build": "vite build && tsc -p tsconfig.server.json"
   },
   "dependencies": {
+    "@elastic/elasticsearch": "^9.5.1",
+    "pg": "^8.23.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",

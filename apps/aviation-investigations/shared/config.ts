@@ -15,9 +15,11 @@ const envSchema = z.object({
   APP_URL: str('http://localhost:3000'),
   PORT: int(3000).pipe(z.number().min(0).max(65535)),
   DATABASE_URL: str(),
+  DATABASE_MIGRATOR_URL: str(),
+  DATABASE_INGEST_URL: str(),
   POSTGRES_PORT: int(55432),
   ELASTICSEARCH_PORT: int(59200),
-  ELASTICSEARCH_URL: str('https://localhost:59200'),
+  ELASTICSEARCH_URL: str('http://localhost:59200'),
   ELASTICSEARCH_API_KEY: str(),
   ELASTICSEARCH_READ_API_KEY: str(),
   ELASTICSEARCH_WRITE_API_KEY: str(),
@@ -72,6 +74,8 @@ export interface AppConfig {
   appUrl: string;
   port: number;
   databaseUrl?: string;
+  databaseMigratorUrl?: string;
+  databaseIngestUrl?: string;
   postgresPort: number;
   elasticsearch: {
     url: string;
@@ -168,6 +172,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     appUrl: e.APP_URL,
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
+    databaseMigratorUrl: e.DATABASE_MIGRATOR_URL,
+    databaseIngestUrl: e.DATABASE_INGEST_URL,
     postgresPort: e.POSTGRES_PORT,
     elasticsearch: {
       url: e.ELASTICSEARCH_URL,

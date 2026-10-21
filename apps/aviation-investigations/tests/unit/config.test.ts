@@ -104,7 +104,7 @@ describe('loadConfig', () => {
       globalConcurrency: 2,
     });
     expect(c.ai.llmProvider).toBe('anthropic');
-    expect(c.elasticsearch.url).toBe('https://localhost:59200');
+    expect(c.elasticsearch.url).toBe('http://localhost:59200');
   });
 
   it('does not leak values in validation errors', () => {
