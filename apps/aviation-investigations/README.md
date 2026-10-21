@@ -95,3 +95,20 @@ printed. `services:setup` is idempotent and writes:
   and `ELASTICSEARCH_WRITE_API_KEY` (ingestion; `aviation-*` only).
 
 Integration tests create only `aviation-test-*` indices and clean them up.
+
+### NTSB fixtures and normalization
+
+`fixtures/ntsb/` holds the projected-CSV rows of 15 public NTSB events (US
+government works) from the 2026-10-16 `avall.zip` snapshot: the four seed cases,
+multi-aircraft, HTML-narrative, non-US and P/blank/B-without-cause examples.
+`fixtures/ntsb-malformed/` is synthetic. `pnpm fixtures:build --json <dir>` (research
+JSON exports) or `--csv <dir>` (an extraction directory) regenerates both; the
+event list and the reason for each is in `scripts/build-fixtures.ts`.
+
+`worker/ingest/normalize.ts` turns projected tables into canonical cases. It fails
+on missing columns, duplicate composite keys and blank or duplicate case numbers,
+and lists value-level problems (invalid coordinates, unknown flag values) in a
+quarantine report instead of coercing them. Citation text is the narrative as
+exported with CRLF converted to LF; narratives containing HTML are converted to
+text (`CITATION_TEXT_VERSION`) and the original is kept. Completion uses the
+provisional, unverified `COMPLETION_MAPPING_V1` (status `B` is completed).

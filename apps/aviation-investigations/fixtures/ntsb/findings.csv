@@ -1,0 +1,70 @@
+ev_id,aircraft_key,finding_no,finding_code,finding_description,category_no,subcategory_no,section_no,subsection_no,modifier_no,cause_factor,lchg_date,cm_inpc
+20080107X00026,1,1,0204151045,Personnel issues-Action/decision-Info processing/decision-Identification/recognition-Pilot of other aircraft - C,02,04,15,10,45,C,2020-09-25T18:05:31,T
+20080107X00026,2,1,0204151044,Personnel issues-Action/decision-Info processing/decision-Identification/recognition-Pilot - C,02,04,15,10,44,C,2020-09-25T18:05:31,T
+20080213X00185,1,1,0104670011,Aircraft-Aircraft propeller/rotor-Rotorcraft flight control-(general)-Incorrect use/operation - C,01,04,67,00,11,C,2020-09-25T18:04:02,T
+20080213X00185,1,2,0101050013,Aircraft-Aircraft handling/service-Maintenance/inspections-(general)-Incorrect service/maintenance - C,01,01,05,00,13,C,2020-09-25T18:04:02,T
+20080321X00364,1,1,0204152044,Personnel issues-Action/decision-Info processing/decision-Decision making/judgment-Pilot - C,02,04,15,20,44,C,2020-09-25T18:07:03,T
+20080321X00364,1,2,0102282206,Aircraft-Aircraft systems-Fuel system-Fuel pumps-Fatigue/wear/corrosion - F,01,02,28,22,06,F,2020-09-25T18:07:03,T
+20080624X00896,1,1,0105000002,Aircraft-Aircraft power plant-(general)-(general)-Malfunction - C,01,05,00,00,02,C,2020-09-25T18:05:31,T
+20080624X00896,1,2,0500000000,Not determined-Not determined-(general)-(general)-Unknown/Not determined - C,05,00,00,00,00,C,2020-09-25T18:05:31,T
+20080624X00896,1,3,0302101591,Environmental issues-Physical environment-Terrain-Rough terrain-Contributed to outcome - F,03,02,10,15,91,F,2020-09-25T18:05:31,T
+20080812X01234,1,1,0500000000,Not determined-Not determined-(general)-(general)-Unknown/Not determined - C,05,00,00,00,00,C,2020-09-25T18:05:31,T
+20080812X01234,1,2,0302101591,Environmental issues-Physical environment-Terrain-Rough terrain-Contributed to outcome ,03,02,10,15,91, ,2020-09-25T18:05:31,F
+20181104X01658,1,1,0204103044,Personnel issues-Action/decision-Action-Lack of action-Pilot - C,02,04,10,30,44,C,2020-09-25T13:38:53,T
+20181104X01658,1,2,0106201220,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Altitude-Not attained/maintained - C,01,06,20,12,20,C,2020-09-25T13:38:53,T
+20181104X01658,1,3,0303602082,Environmental issues-Conditions/weather/phenomena-Light condition-Dark-Effect on operation - C,03,03,60,20,82,C,2020-09-25T13:38:53,T
+20181104X01658,1,4,0302101087,Environmental issues-Physical environment-Terrain-Mountainous/hilly terrain-Awareness of condition - F,03,02,10,10,87,F,2020-09-25T13:38:53,T
+20181104X01658,1,5,0302101091,Environmental issues-Physical environment-Terrain-Mountainous/hilly terrain-Contributed to outcome - F,03,02,10,10,91,F,2020-09-25T13:38:53,T
+20181104X01658,1,6,0204152044,Personnel issues-Action/decision-Info processing/decision-Decision making/judgment-Pilot - F,02,04,15,20,44,F,2020-09-25T13:38:53,T
+20181104X01658,1,7,0102344410,Aircraft-Aircraft systems-Navigation system-Ground proximity system-Not used/operated - F,01,02,34,44,10,F,2020-09-25T13:38:53,T
+20200824X42853,1,1,0105853001,Aircraft-Aircraft power plant-Engine (reciprocating)-Recip eng cyl section-Failure - C,01,05,85,30,01,C,2021-02-02T19:11:55,T
+20231214193525,1,2,0206304044,Personnel issues-Task performance-Use of equip/info-Aircraft control-Pilot,02,06,30,40,44,,2026-09-08T18:00:00,T
+20231214193525,1,1,0106202320,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Lateral/bank control-Not attained/maintained,01,06,20,23,20,,2026-09-08T18:00:00,T
+20231214193525,1,5,0106202220,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Pitch control-Not attained/maintained,01,06,20,22,20,,2026-09-08T18:00:00,T
+20231214193525,1,6,0106203720,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Descent rate-Not attained/maintained,01,06,20,37,20,,2026-09-08T18:00:00,T
+20231214193525,1,3,0202202544,Personnel issues-Psychological-Perception/orientation/illusion-Spatial disorientation-Pilot,02,02,20,25,44,,2026-09-08T18:00:00,T
+20231214193525,1,4,0204101044,Personnel issues-Action/decision-Action-Incorrect action selection-Pilot,02,04,10,10,44,,2026-09-08T18:00:00,T
+20231214193525,1,7,0206353831,Personnel issues-Task performance-Communication (personnel)-Issuing instructions-ATC personnel,02,06,35,38,31,,2026-09-08T18:00:00,T
+20231214193525,1,8,0202301544,Personnel issues-Psychological-Cognitive limitation-Cognitive overload-Pilot,02,02,30,15,44,,2026-09-08T18:00:00,F
+20240712194679,1,1,0104611101,Aircraft-Aircraft propeller/rotor-Propeller system-Propeller blade section-Failure,01,04,61,11,01,,2026-05-13T18:00:13,T
+20240712194679,1,2,0500000000,Not determined-Not determined-(general)-(general)-Unknown/Not determined,05,00,00,00,00,,2026-05-13T18:00:13,T
+20250130199620,1,1,0401102570,Organizational issues-Development-Design-Policy/procedure development-FAA/Regulator,04,01,10,25,70,,2026-02-17T20:08:55,T
+20250130199620,1,6,0301401091,Environmental issues-Operating environment-Air traffic/operating proc-Airway/route system procedure-Contributed to outcome,03,01,40,10,91,,2026-02-17T20:08:55,T
+20250130199620,1,2,0403402070,Organizational issues-Support/oversight/monitoring-Enforcement-Regulatory requirements-FAA/Regulator,04,03,40,20,70,,2026-02-17T20:08:55,T
+20250130199620,1,3,0403201570,Organizational issues-Support/oversight/monitoring-Oversight-Oversight of operation-FAA/Regulator,04,03,20,15,70,,2026-02-17T20:08:55,T
+20250130199620,1,4,0402101562,Organizational issues-Management-Policy/procedure-Adequacy of policy/proc-ATC,04,02,10,15,62,,2026-02-17T20:08:55,T
+20250130199620,1,5,0202152045,Personnel issues-Psychological-Attention/monitoring-Task monitoring/vigilance-Pilot of other aircraft,02,02,15,20,45,,2026-02-17T20:08:55,T
+20250130199620,1,7,0202154531,Personnel issues-Psychological-Attention/monitoring-Monitoring environment-ATC personnel,02,02,15,45,31,,2026-02-17T20:08:55,T
+20250130199620,1,8,0206402531,Personnel issues-Task performance-Workload management-Task overload-ATC personnel,02,06,40,25,31,,2026-02-17T20:08:55,T
+20250130199620,1,9,0402101062,Organizational issues-Management-Policy/procedure-Availability of policy/proc-ATC,04,02,10,10,62,,2026-02-17T20:08:55,T
+20250130199620,1,10,0403201073,Organizational issues-Support/oversight/monitoring-Oversight-Oversight of personnel-Other institution/organization,04,03,20,10,73,,2026-02-17T20:08:55,T
+20250130199620,1,11,0403202573,Organizational issues-Support/oversight/monitoring-Oversight-Equipment monitoring-Other institution/organization,04,03,20,25,73,,2026-02-17T20:08:55,T
+20250130199620,1,12,0102000008,Aircraft-Aircraft systems-(general)-(general)-Capability exceeded,01,02,00,00,08,,2026-02-17T20:08:55,T
+20250130199620,1,13,0301405091,Environmental issues-Operating environment-Air traffic/operating proc-Terminal arrival procedure-Contributed to outcome,03,01,40,50,91,,2026-02-17T20:08:55,T
+20250130199620,1,14,0301407091,Environmental issues-Operating environment-Air traffic/operating proc-Traffic congestion-Contributed to outcome,03,01,40,70,91,,2026-02-17T20:08:55,T
+20250130199620,1,15,0403501573,Organizational issues-Support/oversight/monitoring-Safety programs-Adequacy of safety program-Other institution/organization,04,03,50,15,73,,2026-02-17T20:08:55,T
+20250130199620,1,16,0403501570,Organizational issues-Support/oversight/monitoring-Safety programs-Adequacy of safety program-FAA/Regulator,04,03,50,15,70,,2026-02-17T20:08:55,T
+20250130199620,1,17,0402502070,Organizational issues-Management-Communication (organizational)-Between groups/organizations-FAA/Regulator,04,02,50,20,70,,2026-02-17T20:08:55,T
+20250130199620,1,18,0303602091,Environmental issues-Conditions/weather/phenomena-Light condition-Dark-Contributed to outcome,03,03,60,20,91,,2026-02-17T20:08:55,F
+20250130199620,2,1,0401102570,Organizational issues-Development-Design-Policy/procedure development-FAA/Regulator,04,01,10,25,70,,2026-02-17T20:08:55,T
+20250130199620,2,2,0301401091,Environmental issues-Operating environment-Air traffic/operating proc-Airway/route system procedure-Contributed to outcome,03,01,40,10,91,,2026-02-17T20:08:55,T
+20250130199620,2,3,0403402070,Organizational issues-Support/oversight/monitoring-Enforcement-Regulatory requirements-FAA/Regulator,04,03,40,20,70,,2026-02-17T20:08:55,T
+20250130199620,2,4,0403201570,Organizational issues-Support/oversight/monitoring-Oversight-Oversight of operation-FAA/Regulator,04,03,20,15,70,,2026-02-17T20:08:55,T
+20250130199620,2,5,0402101562,Organizational issues-Management-Policy/procedure-Adequacy of policy/proc-ATC,04,02,10,15,62,,2026-02-17T20:08:55,T
+20250130199620,2,19,0202152036,Personnel issues-Psychological-Attention/monitoring-Task monitoring/vigilance-Flight crew,02,02,15,20,36,,2026-02-17T20:08:55,T
+20250130199620,2,18,0202154531,Personnel issues-Psychological-Attention/monitoring-Monitoring environment-ATC personnel,02,02,15,45,31,,2026-02-17T20:08:55,T
+20250130199620,2,17,0206402531,Personnel issues-Task performance-Workload management-Task overload-ATC personnel,02,06,40,25,31,,2026-02-17T20:08:55,T
+20250130199620,2,8,0402101062,Organizational issues-Management-Policy/procedure-Availability of policy/proc-ATC,04,02,10,10,62,,2026-02-17T20:08:55,T
+20250130199620,2,15,0403201073,Organizational issues-Support/oversight/monitoring-Oversight-Oversight of personnel-Other institution/organization,04,03,20,10,73,,2026-02-17T20:08:55,T
+20250130199620,2,16,0403202573,Organizational issues-Support/oversight/monitoring-Oversight-Equipment monitoring-Other institution/organization,04,03,20,25,73,,2026-02-17T20:08:55,T
+20250130199620,2,9,0102000008,Aircraft-Aircraft systems-(general)-(general)-Capability exceeded,01,02,00,00,08,,2026-02-17T20:08:55,T
+20250130199620,2,10,0301405091,Environmental issues-Operating environment-Air traffic/operating proc-Terminal arrival procedure-Contributed to outcome,03,01,40,50,91,,2026-02-17T20:08:55,T
+20250130199620,2,11,0301407091,Environmental issues-Operating environment-Air traffic/operating proc-Traffic congestion-Contributed to outcome,03,01,40,70,91,,2026-02-17T20:08:55,T
+20250130199620,2,12,0403501573,Organizational issues-Support/oversight/monitoring-Safety programs-Adequacy of safety program-Other institution/organization,04,03,50,15,73,,2026-02-17T20:08:55,T
+20250130199620,2,13,0403501570,Organizational issues-Support/oversight/monitoring-Safety programs-Adequacy of safety program-FAA/Regulator,04,03,50,15,70,,2026-02-17T20:08:55,T
+20250130199620,2,14,0402502070,Organizational issues-Management-Communication (organizational)-Between groups/organizations-FAA/Regulator,04,02,50,20,70,,2026-02-17T20:08:55,T
+20250130199620,2,20,0303602091,Environmental issues-Conditions/weather/phenomena-Light condition-Dark-Contributed to outcome,03,03,60,20,91,,2026-02-17T20:08:55,F
+20260302202583,1,3,0102322101,Aircraft-Aircraft systems-Landing gear system-Nose/tail gear attach section-Failure,01,02,32,21,01,,2026-04-30T18:00:17,F
+20260302202583,1,2,0102322027,Aircraft-Aircraft systems-Landing gear system-Nose/tail landing gear-Not installed/available,01,02,32,20,27,,2026-04-30T18:00:17,T
+20260302202583,1,1,0206304044,Personnel issues-Task performance-Use of equip/info-Aircraft control-Pilot,02,06,30,40,44,,2026-04-30T18:00:17,T
+20260302202583,1,4,0102324299,Aircraft-Aircraft systems-Landing gear system-Brake-Not specified,01,02,32,42,99,,2026-04-30T18:00:17,T

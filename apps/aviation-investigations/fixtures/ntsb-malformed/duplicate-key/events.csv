@@ -1,0 +1,2 @@
+ev_id,ntsb_no,ev_type,ev_date,ev_dow,ev_time,ev_tmzn,ev_city,ev_state,ev_country,ev_year,ev_month,dec_latitude,dec_longitude,light_cond,sky_cond_nonceil,sky_nonceil_ht,sky_ceil_ht,sky_cond_ceil,vis_sm,wx_temp,wx_dew_pt,wind_dir_deg,wind_dir_ind,wind_vel_kts,wind_vel_ind,gust_ind,gust_kts,altimeter,wx_dens_alt,wx_int_precip,wx_cond_basic,metar,ev_highest_injury,inj_f_grnd,inj_m_grnd,inj_s_grnd,inj_tot_f,inj_tot_m,inj_tot_n,inj_tot_s,inj_tot_t,lchg_date
+SYN00DUP01,SYN00DUP01,ACC,2008-01-15T00:00:00,,,,,,USA,2008,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

@@ -18,12 +18,15 @@
     "dev:server": "tsx watch server/main.ts",
     "dev:web": "vite",
     "build": "vite build && tsc -p tsconfig.server.json",
-    "extract:image": "docker build -t aviation-extract:mdbtools-1.0.0 docker/extract"
+    "extract:image": "docker build -t aviation-extract:mdbtools-1.0.0 docker/extract",
+    "fixtures:build": "tsx scripts/build-fixtures.ts"
   },
   "dependencies": {
     "@elastic/elasticsearch": "^9.5.1",
     "csv-parse": "^7.0.3",
     "csv-stringify": "^6.9.0",
+    "entities": "^8.1.0",
+    "htmlparser2": "^12.0.0",
     "pg": "^8.23.1",
     "yauzl": "^3.4.0",
     "zod": "^4.6.7"

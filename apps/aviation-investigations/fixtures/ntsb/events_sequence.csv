@@ -1,0 +1,28 @@
+ev_id,aircraft_key,occurrence_no,occurrence_code,occurrence_description,phase_no,eventsoe_no,defining_ev,lchg_date
+20080107X00026,1,1,550250,Landing Midair collision,550,250,1,2020-09-25T18:05:31
+20080107X00026,2,1,350250,Initial climb Midair collision,350,250,1,2020-09-25T18:05:31
+20080213X00185,1,1,450341,Maneuvering Loss of engine power (total),450,341,1,2020-09-25T18:04:02
+20080213X00185,1,2,600470,Emergency descent Collision with terr/obj (non-CFIT) ,600,470,0,2020-09-25T18:04:02
+20080321X00364,1,1,402341,Enroute-cruise Loss of engine power (total),402,341,1,2020-09-25T18:07:03
+20080321X00364,1,2,600440,Emergency descent Off-field or emergency landing,600,440,0,2020-09-25T18:07:03
+20080321X00364,1,3,551096,Landing-flare/touchdown Nose over/nose down,551,096,0,2020-09-25T18:07:03
+20080624X00896,1,1,450342,Maneuvering Loss of engine power (partial),450,342,1,2020-09-25T18:05:31
+20080624X00896,1,2,600440,Emergency descent Off-field or emergency landing,600,440,0,2020-09-25T18:05:31
+20080624X00896,1,3,550470,Landing Collision with terr/obj (non-CFIT) ,550,470,0,2020-09-25T18:05:31
+20081219X16534,1,1,300333,Takeoff Flight control sys malf/fail,300,333,1,2020-11-03T20:28:02
+20080812X01234,1,1,507342,Approach-VFR pattern base Loss of engine power (partial),507,342,1,2020-09-25T18:05:31
+20080812X01234,1,2,600440,Emergency descent Off-field or emergency landing,600,440,0,2020-09-25T18:05:31
+20080812X01234,1,3,552470,Landing-landing roll Collision with terr/obj (non-CFIT) ,552,470,0,2020-09-25T18:05:31
+20181104X01658,1,1,400120,Enroute Controlled flight into terr/obj (CFIT),400,120,1,2020-09-25T13:38:53
+20200824X42853,1,1,400342,Enroute Loss of engine power (partial),400,342,1,2021-02-02T19:11:55
+20200824X42853,1,6,551300,Landing-flare/touchdown Runway excursion,551,300,0,2021-02-02T19:11:55
+20200824X42853,1,5,552470,Landing-landing roll Collision with terr/obj (non-CFIT) ,552,470,0,2021-02-02T19:11:55
+20221128106375,1,1,990337,Unknown Aircraft structural failure,990,337,1,2022-11-28T19:52:40
+20230314106898,1,1,550230,Landing Loss of control on ground,550,230,1,2023-04-07T18:00:00
+20231214193525,1,2,501240,Approach-IFR initial approach Loss of control in flight,501,240,1,2026-09-08T18:00:00
+20240712194679,1,1,402338,Enroute-cruise Part(s) separation from AC,402,338,1,2026-05-13T18:00:13
+20250130199620,1,1,500250,Approach Midair collision,500,250,1,2026-02-17T20:08:55
+20250130199620,2,1,400250,Enroute Midair collision,400,250,1,2026-02-17T20:08:55
+20260302202583,1,3,100080,Prior to flight Ground handling event,100,080,0,2026-04-30T18:00:17
+20260302202583,1,4,100338,Prior to flight Part(s) separation from AC,100,338,0,2026-04-30T18:00:17
+20260302202583,1,2,552096,Landing-landing roll Nose over/nose down,552,096,1,2026-04-30T18:00:17

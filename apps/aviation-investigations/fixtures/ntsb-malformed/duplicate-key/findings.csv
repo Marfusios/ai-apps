@@ -1,0 +1,4 @@
+ev_id,aircraft_key,finding_no,finding_code,finding_description,category_no,subcategory_no,section_no,subsection_no,modifier_no,cause_factor,lchg_date,cm_inpc
+SYN00DUP01,1,1,,,,,,,,,,T
+SYN00DUP01,1,2,,,,,,,,,,T
+SYN00DUP01,1,2,,,,,,,,,,F

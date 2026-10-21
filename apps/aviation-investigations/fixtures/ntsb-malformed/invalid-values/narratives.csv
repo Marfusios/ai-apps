@@ -1,0 +1,2 @@
+ev_id,aircraft_key,narr_accp,narr_accf,narr_cause,lchg_date
+SYN00BAD01,1,,,Synthetic narrative for a malformed-row test; not an NTSB record.,
