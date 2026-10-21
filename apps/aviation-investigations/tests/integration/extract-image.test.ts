@@ -1,11 +1,30 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import yazl from 'yazl';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EXTRACT_IMAGE, extractArchive, mdbtoolsVersion, runMdbExport } from '../../worker/ingest/extract.js';
+import {
+  EXTRACT_IMAGE,
+  extractArchive,
+  mdbtoolsVersion,
+  removeAllContainers,
+  resolveImageId,
+  runContainer,
+  runMdbExport,
+  setDockerCommand,
+} from '../../worker/ingest/extract.js';
 
 // Needs Docker. mdbtools cannot create MDB files, so no synthetic database is
 // exported here; the full export is covered by the manual real-archive run.
@@ -52,5 +71,84 @@ describe('extract image', () => {
     writeFileSync(join(out, 'manifest.json'), '{}');
     await expect(extractArchive({ archive: zipPath, sha256, out })).rejects.toThrow(/already exists/);
     expect(readdirSync(out)).toEqual(['manifest.json']);
+  });
+});
+
+describe('container cleanup against the real daemon', () => {
+  // Passes every call to the real docker CLI and logs it. With LOSE_CREATE_ID set,
+  // `docker create` really creates the container but then exits 1 without printing
+  // the ID, as when the CLI loses its connection after the daemon accepted the request.
+  let wrapper: string;
+  let wrapperLog: string;
+  beforeAll(() => {
+    wrapper = join(dir, 'docker-wrapper');
+    wrapperLog = join(dir, 'docker-wrapper.log');
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh
+echo "$@" >> "${'$'}WRAPPER_LOG"
+if [ "$1" = create ] && [ -n "${'$'}LOSE_CREATE_ID" ]; then
+  id=$(docker "$@" 2>/dev/null)
+  echo "server-created $id" >> "${'$'}WRAPPER_LOG"
+  echo "error during connect: unexpected EOF" >&2
+  exit 1
+fi
+exec docker "$@"
+`,
+    );
+    chmodSync(wrapper, 0o755);
+  });
+
+  const listed = (name: string) =>
+    spawnSync('docker', ['ps', '-a', '-q', '--filter', `name=^/?${name}$`], { encoding: 'utf8' }).stdout.trim();
+  const createdName = () =>
+    /create --name (aviation-extract-[0-9a-f]+)/.exec(readFileSync(wrapperLog, 'utf8'))?.[1] ?? 'missing';
+  async function viaWrapper(env: Record<string, string>, body: () => Promise<unknown>): Promise<string> {
+    rmSync(wrapperLog, { force: true });
+    Object.assign(process.env, { WRAPPER_LOG: wrapperLog, ...env });
+    setDockerCommand(wrapper);
+    try {
+      return await body().then(
+        () => 'resolved',
+        (e: Error) => e.message,
+      );
+    } finally {
+      setDockerCommand('docker');
+      for (const k of ['WRAPPER_LOG', ...Object.keys(env)]) delete process.env[k];
+    }
+  }
+
+  it('removes a container the daemon created when docker create exits 1 without an ID', async () => {
+    const image = await resolveImageId();
+    const msg = await viaWrapper({ LOSE_CREATE_ID: '1' }, () =>
+      runContainer({ image, mounts: [], command: ['true'], sink: null, timeoutMs: 60_000 }),
+    );
+    const name = createdName();
+    const log = readFileSync(wrapperLog, 'utf8');
+    expect(log).toMatch(/server-created [0-9a-f]{64}/); // the orphan really existed
+    expect(msg).toMatch(/docker create failed \(exit 1\)/);
+    expect(msg).not.toMatch(/cleanup failed/);
+    expect(log).toContain(`rm -f ${name}\n`);
+    expect(log).not.toMatch(/^start /m);
+    expect(listed(name)).toBe('');
+    expect(await removeAllContainers()).toEqual([]);
+  });
+
+  it('removes the container when the output file fails to open while docker create is pending', async () => {
+    const image = await resolveImageId();
+    const msg = await viaWrapper({}, () =>
+      runContainer({
+        image,
+        mounts: [],
+        command: ['true'],
+        sink: createWriteStream(join(dir, 'missing-dir', 'events.csv'), { flags: 'wx', mode: 0o600 }),
+        timeoutMs: 60_000,
+      }),
+    );
+    const name = createdName();
+    expect(msg).toMatch(/ENOENT/);
+    expect(readFileSync(wrapperLog, 'utf8')).not.toMatch(/^start /m);
+    expect(listed(name)).toBe('');
+    expect(await removeAllContainers()).toEqual([]);
   });
 });

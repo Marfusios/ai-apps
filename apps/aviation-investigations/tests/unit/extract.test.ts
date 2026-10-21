@@ -1,4 +1,14 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,9 +23,12 @@ import {
   setDockerCommand,
   summarizeStderr,
 } from '../../worker/ingest/extract.js';
+import { TABLE_NAMES } from '../../worker/ingest/tables.js';
 
 let dir: string;
 let log: string;
+let bin: string;
+let state: string;
 const IMAGE = `sha256:${'0'.repeat(64)}`;
 
 const CID = 'ab'.repeat(32);
@@ -25,11 +38,20 @@ case "$1" in
   image) echo ${IMAGE}; exit 0;;
   create)
     if [ -n "$FAKE_CREATE_SLEEP" ]; then sleep "$FAKE_CREATE_SLEEP"; fi
+    case "$FAKE_CREATE" in
+      # The daemon created the container, then the CLI lost its connection: exit 1, no ID.
+      lost) echo "$3" >> "$FAKE_STATE"; echo "error during connect: unexpected EOF" >&2; exit 1;;
+      # Rejected, nothing created.
+      refused) echo "error during connect: unexpected EOF" >&2; exit 1;;
+    esac
     echo ${CID}; exit 0;;
   rm)
     if [ -n "$FAKE_RM_SLEEP" ]; then sleep "$FAKE_RM_SLEEP"; fi
     if [ -n "$FAKE_RM_FAIL" ]; then echo boom >&2; echo "rm-failed" >> "$FAKE_DOCKER_LOG"; exit 1; fi
+    if [ -f "$FAKE_STATE" ]; then grep -vx -- "$3" "$FAKE_STATE" > "$FAKE_STATE.tmp"; mv "$FAKE_STATE.tmp" "$FAKE_STATE"; fi
     echo "rm-done" >> "$FAKE_DOCKER_LOG"; exit 0;;
+  ps)
+    if [ -f "$FAKE_STATE" ]; then cat "$FAKE_STATE"; fi; exit 0;;
   start)
     case "$FAKE_RUN" in
       hang) exec sleep 30;;
@@ -43,10 +65,12 @@ esac
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'extract-unit-'));
-  const bin = join(dir, 'docker');
+  bin = join(dir, 'docker');
   writeFileSync(bin, FAKE);
   chmodSync(bin, 0o755);
   log = join(dir, 'docker.log');
+  state = join(dir, 'containers.state');
+  process.env.FAKE_STATE = state;
   setDockerCommand(bin);
 });
 afterAll(() => {
@@ -54,8 +78,11 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 afterEach(() => {
-  for (const k of ['FAKE_RUN', 'FAKE_RM_FAIL', 'FAKE_RM_SLEEP', 'FAKE_CREATE_SLEEP']) delete process.env[k];
+  for (const k of ['FAKE_RUN', 'FAKE_RM_FAIL', 'FAKE_RM_SLEEP', 'FAKE_CREATE_SLEEP', 'FAKE_CREATE']) {
+    delete process.env[k];
+  }
   rmSync(log, { force: true });
+  rmSync(state, { force: true });
 });
 process.env.FAKE_DOCKER_LOG = '';
 beforeAll(() => {
@@ -64,6 +91,9 @@ beforeAll(() => {
 
 const sink = () => new Writable({ write: (_c, _e, cb) => cb() });
 const logText = () => (existsSync(log) ? readFileSync(log, 'utf8') : '');
+/** Containers the fake daemon still holds, one name per line. */
+const stateText = () => (existsSync(state) ? readFileSync(state, 'utf8').trim() : '');
+const message = async (p: Promise<unknown>) => ((await p.then(() => null, (e: Error) => e)) as Error).message;
 const base = { image: IMAGE, mounts: [], command: ['mdb-export'], timeoutMs: 5000 };
 
 describe('runContainer cleanup', () => {
@@ -113,6 +143,106 @@ describe('runContainer lifecycle', () => {
     const err = await runContainer({ ...base, sink: sink() }).catch((e: Error) => e);
     expect((err as Error).message).toMatch(/exited with 3 \(diagnostics: page-read=1\)/);
     expect((err as Error).message).not.toMatch(/secret-value/);
+  });
+});
+
+describe('output sink failures', () => {
+  it('routes a sink error raised while docker create is pending through cleanup (injected ENOSPC)', async () => {
+    process.env.FAKE_CREATE_SLEEP = '1';
+    const s = sink();
+    setTimeout(() => s.destroy(Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })), 100);
+    await expect(runContainer({ ...base, sink: s })).rejects.toThrow(/ENOSPC/);
+    const text = logText();
+    expect(text).toMatch(/rm -f [0-9a-f]{64}/);
+    expect(text).toMatch(/rm-done/);
+    expect(text).not.toMatch(/start -a/);
+    expect(await removeAllContainers()).toEqual([]);
+  });
+
+  it('routes an output-file open failure raised while docker create is pending through cleanup', async () => {
+    process.env.FAKE_CREATE_SLEEP = '1';
+    const s = createWriteStream(join(dir, 'missing-dir', 'events.csv'), { flags: 'wx', mode: 0o600 });
+    await expect(runContainer({ ...base, sink: s })).rejects.toThrow(/ENOENT/);
+    const text = logText();
+    expect(text).toMatch(/rm -f [0-9a-f]{64}/);
+    expect(text).toMatch(/rm-done/);
+    expect(text).not.toMatch(/start -a/);
+    expect(await removeAllContainers()).toEqual([]);
+  });
+
+  it.skipIf(!existsSync('/dev/full'))('removes the container when writing the output fails mid-stream', async () => {
+    await expect(runContainer({ ...base, sink: createWriteStream('/dev/full') })).rejects.toThrow(/ENOSPC/);
+    const text = logText();
+    expect(text).toMatch(/start -a/);
+    expect(text).toMatch(/rm -f [0-9a-f]{64}/);
+    expect(text).toMatch(/rm-done/);
+    expect(await removeAllContainers()).toEqual([]);
+  });
+
+  it('runMdbExport opens the output file before creating a container and never overwrites it', async () => {
+    const out = join(dir, 'exp-exists');
+    mkdirSync(out);
+    writeFileSync(join(out, `${TABLE_NAMES[0]}.csv`), 'keep');
+    await expect(runMdbExport(join(dir, 'x.mdb'), out)).rejects.toThrow(/EEXIST/);
+    expect(logText()).not.toMatch(/^create /m);
+    expect(readFileSync(join(out, `${TABLE_NAMES[0]}.csv`), 'utf8')).toBe('keep');
+  });
+});
+
+describe('uncertain container creation', () => {
+  const createdName = () => /create --name (aviation-extract-[0-9a-f]+)/.exec(logText())?.[1] ?? 'missing';
+
+  it('reconciles by name when the daemon created the container but the CLI exited 1 without an ID', async () => {
+    process.env.FAKE_CREATE = 'lost';
+    const msg = await message(runContainer({ ...base, sink: sink() }));
+    expect(msg).toMatch(/docker create failed \(exit 1\)/);
+    expect(msg).not.toMatch(/cleanup failed/);
+    const name = createdName();
+    const text = logText();
+    expect(text).toContain(`rm -f ${name}\n`);
+    expect(text).toContain(`ps -a --filter name=^/?${name}$`);
+    expect(text).not.toMatch(/start -a/);
+    expect(stateText()).toBe(''); // no orphan left in the daemon
+    expect(await removeAllContainers()).toEqual([]);
+  });
+
+  it('keeps tracking and reports a container whose absence it cannot confirm', async () => {
+    process.env.FAKE_CREATE = 'lost';
+    process.env.FAKE_RM_FAIL = '1';
+    const msg = await message(runContainer({ ...base, sink: sink() }));
+    const name = createdName();
+    expect(msg).toMatch(/docker create failed \(exit 1\); cleanup failed: .*could not confirm/);
+    expect(msg).toContain(name);
+    expect(stateText()).toBe(name);
+    const failures = await removeAllContainers();
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain(name);
+    delete process.env.FAKE_RM_FAIL;
+    expect(await removeAllContainers()).toEqual([]);
+    expect(stateText()).toBe('');
+    expect(await removeAllContainers()).toEqual([]);
+  }, 30_000);
+
+  it('confirms absence by name when docker create failed and nothing was created', async () => {
+    process.env.FAKE_CREATE = 'refused';
+    const msg = await message(runContainer({ ...base, sink: sink() }));
+    expect(msg).toMatch(/docker create failed \(exit 1\)/);
+    expect(msg).not.toMatch(/cleanup failed/);
+    expect(logText()).toMatch(/^ps -a --filter name=/m);
+    expect(await removeAllContainers()).toEqual([]);
+  });
+
+  it('needs no reconciliation when the docker CLI could not be started at all', async () => {
+    setDockerCommand(join(dir, 'no-such-docker'));
+    let msg: string;
+    try {
+      msg = await message(runContainer({ ...base, sink: sink() }));
+    } finally {
+      setDockerCommand(bin);
+    }
+    expect(msg).toMatch(/docker create failed/);
+    expect(msg).not.toMatch(/cleanup failed/);
+    expect(await removeAllContainers()).toEqual([]);
   });
 });
 

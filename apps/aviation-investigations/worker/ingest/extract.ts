@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { createWriteStream, rmSync } from 'node:fs';
-import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
+import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -13,8 +13,11 @@ export const EXTRACT_IMAGE = 'aviation-extract:mdbtools-1.0.0';
 export const EXPORT_TIMEOUT_MS = 10 * 60 * 1000;
 /** Per-table cap on bytes accepted from the container's stdout. */
 export const MAX_TABLE_BYTES = 2 * 1024 * 1024 * 1024;
-/** Bound for every `docker rm -f` / `docker image inspect` call. */
+/** Bound for every `docker create` / `docker rm -f` / `docker ps` / `docker image inspect` call. */
 export const DOCKER_CALL_TIMEOUT_MS = 15_000;
+/** Reconciling a container by name: at most this many rm + ps rounds, this far apart. */
+export const RECONCILE_ROUNDS = 4;
+export const RECONCILE_DELAY_MS = 500;
 
 /** mdb-export options: unambiguous ISO-8601 dates, RFC 4180 quoting (quotes doubled). */
 export const MDB_EXPORT_FLAGS = [
@@ -57,6 +60,8 @@ interface DockerResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** False only when the docker executable itself could not be started (no request was sent). */
+  spawned: boolean;
 }
 
 /** Run a short docker CLI call with a hard timeout; never rejects on a nonzero exit. */
@@ -78,11 +83,12 @@ function dockerCall(args: readonly string[], timeoutMs = DOCKER_CALL_TIMEOUT_MS)
     }, timeoutMs);
     child.on('error', (e) => {
       clearTimeout(timer);
-      resolvePromise({ code: null, stdout, stderr: stderr || e.message, timedOut });
+      // A spawn failure leaves the child without a pid: the CLI never ran.
+      resolvePromise({ code: null, stdout, stderr: stderr || e.message, timedOut, spawned: child.pid !== undefined });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolvePromise({ code, stdout, stderr, timedOut });
+      resolvePromise({ code, stdout, stderr, timedOut, spawned: true });
     });
   });
 }
@@ -101,12 +107,46 @@ export async function forceRemove(id: string): Promise<void> {
   throw new Error(`could not confirm removal of container ${id.slice(0, 12)} (${last})`);
 }
 
+/**
+ * Remove a container known only by its unique name and confirm it is absent. Used
+ * when `docker create` gave no confirmed ID: the daemon may still have created it
+ * (for example when the CLI lost its connection or was killed after submitting).
+ * Each round runs `docker rm -f <name>` and then lists `docker ps -a` by exact name;
+ * absence must be seen in two consecutive rounds, so a creation that lands late is
+ * removed by the next round. Bounded by RECONCILE_ROUNDS and the per-call timeout.
+ */
+export async function reconcileByName(name: string): Promise<void> {
+  let absentRounds = 0;
+  let last = 'not checked';
+  for (let round = 0; round < RECONCILE_ROUNDS; round++) {
+    if (round > 0) await sleep(RECONCILE_DELAY_MS);
+    await dockerCall(['rm', '-f', name]);
+    // Anchored filter (optional leading slash, as stored by older daemons) plus an exact comparison here.
+    const ps = await dockerCall(['ps', '-a', '--filter', `name=^/?${name}$`, '--format', '{{.Names}}']);
+    if (ps.code !== 0 || ps.timedOut) {
+      absentRounds = 0;
+      last = ps.timedOut ? 'docker ps timed out' : `docker ps exit ${String(ps.code)}`;
+      continue;
+    }
+    const listed = ps.stdout.split(/[\n,]/).some((n) => n.trim().replace(/^\//, '') === name);
+    if (listed) {
+      absentRounds = 0;
+      last = 'still listed';
+      continue;
+    }
+    if (++absentRounds >= 2) return;
+  }
+  throw new Error(`could not confirm that container ${name} is absent (${last}); check "docker ps -a --filter name=${name}"`);
+}
+
 interface Live {
   name: string;
   id: string | null;
   child: ChildProcess | null;
   creating: Promise<DockerResult> | null;
   cleanup: Promise<void> | null;
+  /** Set once cleanup has begun; the container must then never be started. */
+  cancelled: boolean;
 }
 /** Containers whose removal has not been confirmed, keyed by name. */
 const live = new Map<string, Live>();
@@ -126,22 +166,29 @@ export function resetShutdown(): void {
 
 const CONTAINER_ID = /^[0-9a-f]{64}$/;
 
+/** The container ID confirmed by a finished `docker create`, or null. */
+function createdId(created: DockerResult | null): string | null {
+  const id = created?.stdout.trim() ?? '';
+  return created?.code === 0 && CONTAINER_ID.test(id) ? id : null;
+}
+
 /**
  * One memoised cancellation and removal path per container. Kills the client, waits
- * for an in-flight `docker create` to finish, then removes the returned ID. If the
- * creation outcome is uncertain it fails (the identity stays tracked); it never
- * reports success without a confirmed removal.
+ * for an in-flight `docker create` to finish, then removes the returned ID. Without
+ * a confirmed ID the creation is uncertain (a nonzero exit does not prove the daemon
+ * created nothing), so the container is reconciled by its unique name. Only a docker
+ * CLI that never started proves that nothing was submitted. A cleanup that cannot be
+ * confirmed fails and the entry stays tracked; success is never reported without it.
  */
 function ensureCleanup(entry: Live): Promise<void> {
+  entry.cancelled = true;
   entry.cleanup ??= (async () => {
     entry.child?.kill('SIGKILL');
     const created = await entry.creating;
-    if (!entry.id && created && created.code !== 0 && !created.timedOut) return; // creation definitively failed
-    if (!entry.id) {
-      await dockerCall(['rm', '-f', entry.name]).catch(() => undefined); // best effort by name
-      throw new Error(`creation of container ${entry.name} is uncertain; check "docker ps -a"`);
-    }
-    await forceRemove(entry.id);
+    entry.id ??= createdId(created);
+    if (entry.id) return forceRemove(entry.id);
+    if (!created?.spawned) return; // `docker create` was never issued or its CLI never ran
+    await reconcileByName(entry.name);
   })();
   // A failed cleanup may be retried by a later call.
   entry.cleanup.catch(() => {
@@ -170,7 +217,8 @@ export interface ContainerRun {
   image: string;
   mounts: readonly string[];
   command: readonly string[];
-  sink: NodeJS.WritableStream | null;
+  /** Receives stdout. runContainer owns it from the call on: it is destroyed on every failure path. */
+  sink: Writable | null;
   timeoutMs: number;
   maxBytes?: number;
 }
@@ -207,12 +255,18 @@ function startAttached(
  * Run one sandboxed container (argument array, no shell): `docker create` returns the
  * container ID, `docker start -a` streams its output, and `docker rm -f <id>` always
  * removes it afterwards, awaited, on success and on every failure path. Timeout,
- * output-cap breach, stream failure and signals all go through the same cleanup.
+ * output-cap breach, stream or sink failure (also while `docker create` is still
+ * pending) and signals all go through the same cleanup. A create that ends without
+ * a confirmed ID is reconciled by the container's unique name (reconcileByName).
  */
 export async function runContainer(run: ContainerRun): Promise<{ stderr: string }> {
-  if (terminating) throw new Error('cancelled by signal');
+  const { sink } = run;
+  if (terminating) {
+    sink?.destroy();
+    throw new Error('cancelled by signal');
+  }
   const name = `aviation-extract-${randomBytes(6).toString('hex')}`;
-  const entry: Live = { name, id: null, child: null, creating: null, cleanup: null };
+  const entry: Live = { name, id: null, child: null, creating: null, cleanup: null, cancelled: false };
   live.set(name, entry);
   let failure: Error | null = null;
   const abort = (e: Error): void => {
@@ -220,19 +274,22 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
     failure = e;
     void ensureCleanup(entry).catch(() => undefined);
   };
+  // Attached before the first await: the sink can fail (open error, ENOSPC) while
+  // `docker create` is still pending, and that must take the shared cleanup path
+  // instead of becoming an unhandled 'error' event. It stays attached for late errors.
+  sink?.on('error', (e: Error) => abort(e));
+  entry.creating = dockerCall(
+    ['create', '--name', name, ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command],
+    DOCKER_CALL_TIMEOUT_MS,
+  );
   const timer = setTimeout(() => abort(new Error(`container timed out after ${run.timeoutMs} ms`)), run.timeoutMs);
   let code: number | null = null;
   let stderr = '';
   let started = false;
   try {
-    entry.creating = dockerCall(
-      ['create', '--name', name, ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command],
-      DOCKER_CALL_TIMEOUT_MS,
-    );
     const created = await entry.creating;
-    const id = created.stdout.trim();
-    if (created.code === 0 && CONTAINER_ID.test(id)) entry.id = id;
-    if (entry.id && !failure && !terminating) {
+    entry.id ??= createdId(created);
+    if (entry.id && !failure && !terminating && !entry.cancelled) {
       started = true;
       ({ code, stderr } = await startAttached(entry, run, abort));
     } else if (!entry.id) {
@@ -242,7 +299,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
     abort(e instanceof Error ? e : new Error(String(e)));
   }
   clearTimeout(timer);
-  if (!started) (run.sink as Writable | null)?.destroy?.();
+  if (!started || failure) sink?.destroy();
   let cleanupError = '';
   try {
     await ensureCleanup(entry);
@@ -275,6 +332,7 @@ export async function resolveImageId(image = EXTRACT_IMAGE): Promise<string> {
 }
 
 export async function mdbtoolsVersion(mdbPath: string, imageId?: string): Promise<string> {
+  const image = imageId ?? (await resolveImageId());
   const chunks: Buffer[] = [];
   const sink = new Writable({
     write(c: Buffer, _e, cb) {
@@ -283,7 +341,7 @@ export async function mdbtoolsVersion(mdbPath: string, imageId?: string): Promis
     },
   });
   await runContainer({
-    image: imageId ?? (await resolveImageId()),
+    image,
     mounts: mdbMount(mdbPath),
     command: ['mdb-export', '--version'],
     sink,
@@ -327,11 +385,13 @@ export async function runMdbExport(
   for (const table of TABLE_NAMES) {
     if (!SAFE_TABLE.test(table)) throw new Error('invalid table name');
     const file = join(outDir, `${table}.csv`);
+    // Open (exclusive create) before any container exists, so an open failure needs no cleanup.
+    const handle = await open(file, 'wx', 0o600);
     const { stderr } = await runContainer({
       image,
       mounts: mdbMount(mdbPath),
       command: ['mdb-export', ...MDB_EXPORT_FLAGS, '/in/avall.mdb', table],
-      sink: createWriteStream(file, { flags: 'wx', mode: 0o600 }),
+      sink: handle.createWriteStream(),
       timeoutMs: EXPORT_TIMEOUT_MS,
       maxBytes: MAX_TABLE_BYTES,
     });
