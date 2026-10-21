@@ -44,3 +44,26 @@ aggregate observations and public source links belong in the documentation.
 
 This is an independent educational project, not an NTSB service or a source of
 operational flight or maintenance instructions.
+
+## Setup
+
+Requires Node 24 (see `.node-version`) and pnpm via corepack.
+
+```sh
+corepack enable
+pnpm install
+pnpm test            # offline unit tests
+pnpm typecheck
+```
+
+`pnpm test:integration` runs the integration project and needs the local
+services described later in this README.
+
+### Configuration
+
+Copy variable names from `.env.example`. Configuration comes from the process
+environment and from explicit dotenv files listed in `AVIATION_ENV_FILES`
+(comma-separated, absolute or app-relative, highest priority first). Nonempty
+process values win over files, and only the variable names in `.env.example`
+are read from them. The dotenv parser does no shell expansion or command
+substitution. Keep real values in ignored files such as `.env.local`.
