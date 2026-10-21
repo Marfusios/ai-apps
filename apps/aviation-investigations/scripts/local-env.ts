@@ -27,7 +27,9 @@ export function writeLocal(values: Record<string, string>): void {
 
 /** Return existing values; generate and persist random ones for missing names. */
 export function ensureSecrets(names: readonly string[]): Record<string, string> {
+  // Nonempty process values win over the file, matching the project rule.
   const have = readLocal(names);
+  for (const n of names) if (process.env[n]) have[n] = process.env[n]!;
   const added: Record<string, string> = {};
   for (const n of names) if (!have[n]) added[n] = randomBytes(24).toString('hex');
   if (Object.keys(added).length) writeLocal(added);
