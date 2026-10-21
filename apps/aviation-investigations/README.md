@@ -178,7 +178,9 @@ pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running b
   whitespace variants whitespace-equivalently, what its sources produce. It also
   reconciles stored counts with the normalization stats and with every source row
   in the extraction manifest. The outcome is recorded with the verifier version and
-  the sha256 of `data/work/verify-gen-<id>.json`, which holds aggregate counts only.
+  the sha256 of its report, written atomically under the content-addressed name
+  `data/work/verify-gen-<id>-<sha256>.json` before the hash is recorded (a failed
+  attempt never replaces the recorded report). Reports hold aggregate counts only.
   If the generation changed meanwhile, nothing is recorded and the command reports
   a conflict. Snapshot-specific expectations live in `worker/ingest/verify-profiles/`
   and apply automatically to the archive whose hash they name.
@@ -192,5 +194,8 @@ pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running b
   ones. Never-published generations are deleted when `failed`, or when they were
   sealed or last verified more than 24 hours ago (configurable), so a load that
   committed late or a generation awaiting its indices stays. `loading`, active and
-  pinned generations are never deleted: `pinGeneration`/`unpinGeneration` manage
-  `generation_pins` (for example for generations live briefs cite).
+  pinned generations are never deleted: `pinGeneration`/`unpinGeneration` write
+  `generation_pins` (for example for generations live briefs cite) only through
+  `pin_generation`/`unpin_generation`, which take the lifecycle lock, so a pin
+  renewed during pruning either protects the generation or fails because pruning
+  removed it first.

@@ -138,6 +138,8 @@ export interface PruneOptions {
   keep?: number;
   /** Never-published generations are kept this long after sealing or their latest verification (default 24). */
   graceHours?: number;
+  /** Test seam: runs under the lifecycle lock after planning, before any deletion. */
+  afterPlan?: (candidates: number[]) => Promise<void> | void;
 }
 
 export interface PruneReport {
@@ -182,6 +184,7 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
       .filter((g) => g.was_published === true || g.status === 'failed' || g.past_grace === true)
       .map((g) => ({ id: Number(g.id), pinned: g.pinned === true }))
       .sort((a, b) => a.id - b.id);
+    await opts.afterPlan?.(candidates.filter((c) => !c.pinned).map((c) => c.id));
     for (const c of candidates) {
       if (c.pinned) {
         skippedPinned.push(c.id);
@@ -194,20 +197,19 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
   });
 }
 
-/** Protect a generation from pruning (e.g. for a live brief), until `until` or `unpinGeneration`. */
+/**
+ * Protect a generation from pruning (e.g. for a live brief), until `until` or
+ * `unpinGeneration`; creating and renewing pins both go through `pin_generation`,
+ * which takes the lifecycle lock. While pruning runs it waits, and fails with "does
+ * not exist" if pruning removed the generation meanwhile.
+ */
 export async function pinGeneration(db: DbOrTx, generationId: number, reason: string, until: Date | null = null): Promise<void> {
-  await db
-    .insert(generationPins)
-    .values({ generationId, reason, pinnedUntil: until })
-    .onConflictDoUpdate({ target: [generationPins.generationId, generationPins.reason], set: { pinnedUntil: until } });
+  await call(db, sql`select pin_generation(${generationId}, ${reason}, ${until ? until.toISOString() : null}::timestamptz)`);
 }
 
 export async function unpinGeneration(db: DbOrTx, generationId: number, reason: string): Promise<boolean> {
-  const removed = await db
-    .delete(generationPins)
-    .where(and(eq(generationPins.generationId, generationId), eq(generationPins.reason, reason)))
-    .returning({ generationId: generationPins.generationId });
-  return removed.length > 0;
+  const [row] = await call(db, sql`select unpin_generation(${generationId}, ${reason}) as removed`);
+  return row?.removed === true;
 }
 
 /** Pins in force for a generation. */

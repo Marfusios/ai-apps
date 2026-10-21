@@ -7,8 +7,8 @@
  * one REPEATABLE READ snapshot, so publication and pruning cannot interleave. Its
  * report file holds aggregate counts only: no case numbers, keys or text.
  */
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq, sql, type SQL } from 'drizzle-orm';
@@ -111,11 +111,11 @@ export function findProfile(archiveSha256: string, dir: string = PROFILES_DIR): 
 }
 
 export interface VerifyOptions {
-  /** Directory for `verify-gen-<id>.json` (default `data/work`). */
+  /** Directory for `verify-gen-<id>-<sha256>.json` (default `data/work`). */
   outDir?: string;
   /** A profile to check (its archive hash must match), `null` for none; default: the committed profile for the archive. */
   profile?: VerifyProfile | null;
-  /** Test seam: runs after the checks, before the outcome is recorded. */
+  /** Test seam: runs after the checks and the report file are written, before the outcome is recorded. */
   beforeRecord?: () => Promise<void> | void;
 }
 
@@ -561,6 +561,39 @@ async function checkSources(q: Queryable, g: number): Promise<Record<keyof Sourc
   }
 }
 
+/** Report file of a verification: `verify-gen-<id>-<sha256 of its content>.json`. */
+export function verificationReportPath(outDir: string, generationId: number, reportSha256: string): string {
+  return join(outDir, `verify-gen-${generationId}-${reportSha256}.json`);
+}
+
+/**
+ * Write a report under its content-addressed name: a private temporary file in the
+ * same directory, flushed to disk, then renamed into place (atomic on one file
+ * system). An existing file of that name already holds exactly this content.
+ */
+function writeReportAtomically(outDir: string, generationId: number, reportSha256: string, content: string): string {
+  mkdirSync(outDir, { recursive: true });
+  const target = verificationReportPath(outDir, generationId, reportSha256);
+  const temp = `${target}.tmp-${randomBytes(6).toString('hex')}`;
+  const fd = openSync(temp, 'wx', 0o644);
+  try {
+    writeSync(fd, content);
+    fsyncSync(fd);
+  } catch (err) {
+    closeSync(fd);
+    rmSync(temp, { force: true });
+    throw err;
+  }
+  closeSync(fd);
+  try {
+    renameSync(temp, target);
+  } catch (err) {
+    rmSync(temp, { force: true });
+    throw err;
+  }
+  return target;
+}
+
 function isConflict(err: unknown): boolean {
   return err instanceof LifecycleError && err.code === '40001';
 }
@@ -572,7 +605,7 @@ function isConflict(err: unknown): boolean {
  * version and report hash are stored, and publication requires that outcome to be ok
  * with the current `VERIFIER_VERSION`. Runs under the lifecycle lock in one
  * REPEATABLE READ transaction; if the generation changed meanwhile, nothing is
- * recorded and the report says `conflict`. Writes `<outDir>/verify-gen-<id>.json`
+ * recorded and the report says `conflict`. Writes `<outDir>/verify-gen-<id>-<sha256>.json`
  * (aggregate counts only); its sha256 is the recorded report hash.
  */
 export async function verifyCorpus(db: Db, generationId: number, opts: VerifyOptions = {}): Promise<VerifyReport> {
@@ -646,8 +679,6 @@ async function verifyInSnapshot(q: Queryable, generationId: number, opts: Verify
   const checkedAt = new Date();
 
   const outDir = opts.outDir ?? DEFAULT_VERIFY_DIR;
-  mkdirSync(outDir, { recursive: true });
-  const reportPath = join(outDir, `verify-gen-${generationId}.json`);
   const file = `${JSON.stringify(
     {
       generationId,
@@ -670,8 +701,10 @@ async function verifyInSnapshot(q: Queryable, generationId: number, opts: Verify
     null,
     2,
   )}\n`;
-  writeFileSync(reportPath, file);
   const reportSha256 = sha256Hex(file);
+  // Content-addressed and written atomically before the hash is recorded: an attempt
+  // that fails later leaves at most an unreferenced report, never a damaged one.
+  const reportPath = writeReportAtomically(outDir, generationId, reportSha256, file);
 
   await opts.beforeRecord?.();
   let status: GenerationStatus = gen.status;

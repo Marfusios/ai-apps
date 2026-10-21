@@ -263,6 +263,65 @@ describe('pruning', () => {
   });
 });
 
+describe('pins', () => {
+  async function waitForLockWaiter(): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      if ((await count(migrator, sql`select count(*) from pg_locks where locktype = 'advisory' and not granted`)) > 0) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('no session is waiting for the lifecycle lock');
+  }
+
+  it('are written only through the locked database functions', async () => {
+    const g = await loaded();
+    for (const statement of [
+      sql`insert into generation_pins (generation_id, reason) values (${g}, 'direct')`,
+      sql`update generation_pins set pinned_until = null`,
+      sql`delete from generation_pins`,
+    ]) {
+      expect(await sqlState(ingest.execute(statement))).toBe('42501');
+      expect(await sqlState(app.execute(statement))).toBe('42501');
+    }
+    expect(await sqlState(app.execute(sql`select pin_generation(${g}, 'x', null)`))).toBe('42501');
+    await expect(pinGeneration(ingest, 999, 'brief')).rejects.toThrow(/generation 999 does not exist/);
+    await pinGeneration(ingest, g, 'brief');
+    expect(await activePins(app, g)).toEqual([{ reason: 'brief', pinnedUntil: null }]);
+    expect(await unpinGeneration(ingest, g, 'brief')).toBe(true);
+    expect(await unpinGeneration(ingest, g, 'brief')).toBe(false);
+  });
+
+  it('a renewal racing pruning either protects the generation or fails because pruning won', async () => {
+    const [g1, g2, g3] = [await verified(), await verified(), await verified()];
+    for (const g of [g1, g2, g3]) await publish(g as number);
+    // Renewed before pruning plans: the pin protects.
+    await pinGeneration(ingest, g1 as number, 'brief', new Date(Date.now() - 1000));
+    await pinGeneration(ingest, g1 as number, 'brief', null);
+    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1] });
+
+    // Expired again; pruning plans to delete g1 and a renewal arrives meanwhile. The
+    // renewal waits for the lifecycle lock, pruning deletes, and the renewal fails cleanly.
+    await pinGeneration(ingest, g1 as number, 'brief', new Date(Date.now() - 1000));
+    let renewal: Promise<unknown> = Promise.resolve();
+    const report = await pruneGenerations(ingest, {
+      keep: 1,
+      afterPlan: async (candidates) => {
+        expect(candidates).toEqual([g1]);
+        renewal = pinGeneration(ingest, g1 as number, 'brief', null).then(
+          () => 'pinned',
+          (e: unknown) => e,
+        );
+        await waitForLockWaiter();
+      },
+    });
+    expect(report).toEqual({ retained: [g3], deleted: [g1], skippedPinned: [] });
+    const outcome = await renewal;
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toMatch(/generation \d+ does not exist/);
+    expect(await count(ingest, sql`select count(*) from generation_pins`)).toBe(0);
+    expect((await listGenerations(app)).map((g) => g.id)).toEqual([g3]);
+  });
+});
+
 describe('ingestion runs', () => {
   it('lists running runs and closes stale ones', async () => {
     const [old] = await ingest

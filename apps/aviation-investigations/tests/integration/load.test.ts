@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
@@ -125,7 +125,7 @@ describe('corpus load', () => {
     expect(verified?.verifiedAt).toBeInstanceOf(Date);
 
     // The report file holds aggregate counts only, and its hash is recorded.
-    expect(v.reportPath).toBe(join(reportDir, `verify-gen-${r.generationId}.json`));
+    expect(v.reportPath).toBe(join(reportDir, `verify-gen-${r.generationId}-${v.reportSha256}.json`));
     const file = readFileSync(v.reportPath, 'utf8');
     expect(sha256(file)).toBe(v.reportSha256);
     expect(verified?.verificationReportSha256).toBe(v.reportSha256);
@@ -438,6 +438,32 @@ describe('verification', () => {
     expect(v).toMatchObject({ ok: true, conflict: true, statusBefore: 'loaded', status: 'loaded', verificationStatus: null });
     const [gen] = await ingest.select().from(datasetGenerations).where(eq(datasetGenerations.id, g));
     expect(gen).toMatchObject({ status: 'failed', verifierVersion: 'other' });
+  });
+
+  it('keeps the recorded report when a later verification fails after writing its own', async () => {
+    const { generationId: g } = await loadFromExtract(ingest, fixtureDir);
+    const outDir = mkdtempSync(join(tmpdir(), 'aviation-verify-reports-'));
+    tempDirs.push(outDir);
+    const first = await verifyCorpus(ingest, g, { outDir, profile: null });
+    expect(first.ok).toBe(true);
+    const injected = new Error('injected after the report was written');
+    const err = await verifyCorpus(ingest, g, {
+      outDir,
+      profile: null,
+      beforeRecord: () => {
+        throw injected;
+      },
+    }).catch((e: unknown) => e);
+    expect(err).toBe(injected);
+    // The database still points at the first report, which is intact.
+    const [gen] = await ingest.select().from(datasetGenerations).where(eq(datasetGenerations.id, g));
+    expect(gen?.verificationReportSha256).toBe(first.reportSha256);
+    expect(sha256(readFileSync(first.reportPath, 'utf8'))).toBe(first.reportSha256);
+    // The failed attempt left only its own, unreferenced, complete report.
+    const files = readdirSync(outDir).sort();
+    expect(files).toHaveLength(2);
+    expect(files.every((f) => /^verify-gen-\d+-[0-9a-f]{64}\.json$/.test(f))).toBe(true);
+    for (const f of files) expect(sha256(readFileSync(join(outDir, f), 'utf8'))).toBe(f.slice(-69, -5));
   });
 
   it('re-verification of a published generation keeps its status and records the outcome', async () => {
