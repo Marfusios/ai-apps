@@ -78,9 +78,9 @@ export type Symptom = (typeof SYMPTOMS)[number];
 export const FAILURE_TYPES = ['total_power_loss', 'partial_power_loss', 'rough_running', 'failure_to_climb'] as const;
 export type FailureType = (typeof FAILURE_TYPES)[number];
 /**
- * The reader's words for each failure type (chips, readings, the chip editor). The
- * server's templates (server/briefs/clarify.ts `FAILURE_TYPE_LABEL`) must say the same;
- * a unit test holds them together.
+ * The reader's words for each failure type: the one table that the server's templates
+ * (interpretation chips and clarification readings in server/briefs/clarify.ts, step
+ * origins in server/routes/briefs.ts) and the web client's chip editor use.
  */
 export const FAILURE_TYPE_LABELS: Readonly<Record<FailureType, string>> = {
   total_power_loss: 'Total loss of engine power',

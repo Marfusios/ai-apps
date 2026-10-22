@@ -5,8 +5,6 @@ import {
   CaseContextResponseSchema,
   ChecklistSchema,
   ComposeOutputSchema,
-  FAILURE_TYPES,
-  FAILURE_TYPE_LABELS,
   CreateBriefRequestSchema,
   RefinementRequestSchema,
   ScopeReplySchema,
@@ -14,7 +12,6 @@ import {
 } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
-import { FAILURE_TYPE_LABEL } from '../../server/briefs/clarify.js';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies.js';
 import { matchQuote } from '../../server/briefs/validate.js';
 import { MockBriefs, MOCK_MIDAIR_QUESTION, MOCK_SEED_QUESTION, RESULT_SAMPLES, SCOPE_REPLY_SAMPLES, midairAnswer, seedAnswer } from '../../web/mock/briefs.js';
@@ -95,10 +92,6 @@ describe('checklist interpretation (UI_DESIGN §4.4: the chips stay on top while
     expect(ChecklistSchema.safeParse({ question: 'in_scope', interpretation }).success).toBe(true);
     expect(ChecklistSchema.safeParse({ question: 'in_scope', interpretation: { ...interpretation, text: 'free text' } }).success).toBe(false);
     expect(ChecklistSchema.safeParse({ question: 'in_scope', interpretation: { ...interpretation, filters: { completion: ['any'] } } }).success).toBe(false);
-  });
-
-  it('the failure-type words in the contract are the server templates', () => {
-    for (const f of FAILURE_TYPES) expect(FAILURE_TYPE_LABELS[f]).toBe(FAILURE_TYPE_LABEL[f]);
   });
 });
 

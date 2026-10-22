@@ -45,6 +45,7 @@ import {
   CaseContextResponseSchema,
   ChecklistSchema,
   CreateBriefRequestSchema,
+  FAILURE_TYPE_LABELS,
   MAX_BRIEF_STEPS,
   RefinementRequestSchema,
   StartBriefResponseSchema,
@@ -75,7 +76,7 @@ import {
 import type { EvidenceDataset } from '../briefs/evidence.js';
 import { MAX_QUERY_INPUT_TOKENS, QueryTooLongError, queryEmbeddingInput } from '../ai/embeddings.js';
 import { countTokens } from '../ai/tokens.js';
-import { FAILURE_TYPE_LABEL, FIRST_FLIGHT_LABEL, interpretationChips, timingWindowLabel } from '../briefs/clarify.js';
+import { FIRST_FLIGHT_LABEL, interpretationChips, isFailureType, timingWindowLabel } from '../briefs/clarify.js';
 import type { LlmProvider } from '../ai/provider.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { retryAfterSeconds, sendGateRefusal } from '../identity/gate.js';
@@ -322,8 +323,8 @@ function originOf(step: StepRow): BriefStepResponse['origin'] {
             ? c.value === true
               ? FIRST_FLIGHT_LABEL
               : 'Any flight after maintenance'
-            : typeof c.value === 'string' && c.value in FAILURE_TYPE_LABEL
-              ? FAILURE_TYPE_LABEL[c.value as keyof typeof FAILURE_TYPE_LABEL]
+            : typeof c.value === 'string' && isFailureType(c.value)
+              ? FAILURE_TYPE_LABELS[c.value]
               : 'Reading changed';
       return { kind: 'interpretation', label };
     }
