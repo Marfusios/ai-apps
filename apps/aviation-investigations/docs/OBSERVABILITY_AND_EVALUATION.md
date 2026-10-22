@@ -262,3 +262,15 @@ No dependency installation, migrations, or service deployment is part of this do
 
 These additions postdate the initial Claude review; see the
 [review scope addendum](SECURITY_REVIEW.md#design-addendum-2026-10-21).
+
+## Implemented tracing
+
+`server/observability/tracing.ts` exports spans over OTLP/HTTP to
+`<LANGFUSE_BASE_URL>/api/public/otel/v1/traces` with the project keys, using a bounded
+batch processor (256 queued spans, short export timeout). `startTracing` does nothing
+unless `AVIATION_TRACING_ENABLED=true` and the base URL and both keys are set, and never
+falls back to a hosted service. Export errors are swallowed into a counter.
+`stageSpan(name, attrs, fn)` accepts only the closed `AllowedAttrs` set; a runtime guard
+in `server/observability/attributes.ts` drops unknown keys, strings over 64 characters
+and anything containing whitespace, and replaces unsafe span names. Brief ids appear only
+as a salted hash (`hashBrief`). `scripts/trace-smoke.ts` sends one synthetic span by hand.
