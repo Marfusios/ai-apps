@@ -107,7 +107,7 @@ export function createHandlers({
     }
   };
   const admit = <T,>(reply: MockReply<T>): Response => {
-    if (reply.status < 300) admitted(reply.status === 202);
+    if (reply.status < 300 && !reply.replayed) admitted(reply.status === 202);
     return briefReply(reply);
   };
   return [

@@ -15,7 +15,12 @@
  * - "compare" with case numbers: a comparison reply;
  * - "soon after": a clarification with two readings;
  * - "no match": the answer model's explicit abstention (no retrieved case supports the question);
+ * - "midair": an "Examples found" answer about two-aircraft events (SEA08LA057, WPR15FA010),
+ *   whose evidence is event-scoped, with two adjacent case citations in the summary;
  * - "nothing": no results.
+ *
+ * Once the scope row is done, a running step's checklist carries the step's readings and
+ * filters (`checklist.interpretation`), as the finished result does.
  */
 import {
   type BriefFilters,
@@ -247,6 +252,51 @@ export function seedNoMatch(filters: BriefFilters = {}): Extract<BriefResult, { 
   };
 }
 
+// ---------------------------------------------------------------------------
+// Two-aircraft events: every narrative is event-scoped, so the evidence is the event's and
+// no glyph is assigned (UI_DESIGN §4.3 "Multi-aircraft events").
+
+export const MOCK_MIDAIR_QUESTION = 'Midair collisions after departing from a fly-in';
+
+export function midairAnswer(filters: BriefFilters = {}): Extract<BriefResult, { kind: 'answer' }> {
+  const card = (ntsbNo: string, why: string, quotes: readonly string[]): CaseCard => ({
+    ...plainCard(ntsbNo),
+    reading: {
+      glyph: null,
+      why,
+      timing: [],
+      quotes: quotes.map((q) => quote(ntsbNo, 'analysis', q)),
+      evidence: { scope: 'event', multiAircraft: true },
+      criteria: [],
+    },
+  });
+  return {
+    kind: 'answer',
+    interpretations: [],
+    filters,
+    grouping: 'examples',
+    summary: [
+      { kind: 'text', text: 'In both events one airplane departed from a fly-in while another was in the traffic pattern, and the airplanes collided ' },
+      { kind: 'case', ntsbNo: 'SEA08LA057', unconfirmed: false },
+      { kind: 'case', ntsbNo: 'WPR15FA010', unconfirmed: false },
+      { kind: 'text', text: '. In one, a witness had warned the departing pilot that an airplane was landing ' },
+      { kind: 'case', ntsbNo: 'SEA08LA057', unconfirmed: false },
+      { kind: 'text', text: '.' },
+    ],
+    groups: [{ kind: 'examples', caseNumbers: ['SEA08LA057', 'WPR15FA010'] }],
+    cases: [
+      card('SEA08LA057', 'A departing airplane took off into the path of an airplane landing at the same fly-in.', [
+        'The witness was flying above the airport and advised the departing pilot that an airplane was landing.',
+        'The airplanes collided shortly thereafter.',
+      ]),
+      card('WPR15FA010', 'Two airplanes departing a fly-in collided while one tried to join up with the other.', [
+        "The evidence indicated that the Savannah pilot attempted a join-up maneuver without maintaining adequate awareness of the Cessna's position.",
+      ]),
+    ],
+    gaps: [],
+  };
+}
+
 /** The same brief with its summary withheld: the cards only. */
 export function seedWithheld(filters: BriefFilters = {}): Extract<BriefResult, { kind: 'withheld' }> {
   return {
@@ -272,6 +322,7 @@ export const RESULT_SAMPLES = {
   answer: seedAnswer(),
   withheld: seedWithheld(),
   noMatch: seedNoMatch(),
+  midair: midairAnswer(),
   noResults: { kind: 'no_results', interpretations: INTERPRETATIONS, filters: { category: ['BALL'], injury: ['FATL'] } },
   failedCounted: { kind: 'failed', countedAsSearch: true },
   failedFree: { kind: 'failed', countedAsSearch: false },
@@ -282,7 +333,7 @@ export const RESULT_SAMPLES = {
 // ---------------------------------------------------------------------------
 // The in-memory server
 
-type Variant = 'answer' | 'withheld' | 'no_match' | 'no_results';
+type Variant = 'answer' | 'withheld' | 'no_match' | 'no_results' | 'midair';
 
 interface MockStep {
   n: number;
@@ -304,7 +355,8 @@ interface MockBrief {
   keys: Map<string, number>;
 }
 
-export type MockReply<T> = { status: number; body: T | ErrorResponse | null };
+/** `replayed`: the idempotency key was seen before, so nothing new ran and nothing is spent. */
+export type MockReply<T> = { status: number; body: T | ErrorResponse | null; replayed?: boolean };
 
 const STAGES: Checklist[] = [
   { question: 'in_scope' },
@@ -322,6 +374,7 @@ function scopeOf(question: string, filters: BriefFilters): { reply: ScopeReply |
   if (/soon after/.test(q)) return { reply: SCOPE_REPLY_SAMPLES.clarification, variant: null };
   if (/\bnothing\b/.test(q)) return { reply: null, variant: 'no_results' };
   if (/\bno match\b/.test(q)) return { reply: null, variant: 'no_match' };
+  if (/\bmidair\b/.test(q)) return { reply: null, variant: 'midair' };
   return { reply: null, variant: /withheld/.test(q) ? 'withheld' : 'answer' };
 }
 
@@ -336,6 +389,8 @@ export interface MockBriefsOptions {
 
 export class MockBriefs {
   private readonly briefs = new Map<string, MockBrief>();
+  /** Create requests by idempotency key: a retry with the same key and question replays (DESIGN §8). */
+  private readonly created = new Map<string, string>();
   private seq = 0;
   private readonly pollsToFinish: number;
   private readonly now: () => Date;
@@ -361,11 +416,17 @@ export class MockBriefs {
   }
 
   create(body: CreateBriefRequest): MockReply<StartBriefResponse> {
+    const earlier = this.briefs.get(this.created.get(body.idempotencyKey) ?? '');
+    if (earlier) {
+      if (earlier.question !== body.question) return error(409, 'conflict', 'This request key was used for another question.');
+      return { ...this.start(earlier, earlier.steps[0]!), replayed: true };
+    }
     const brief: MockBrief = { id: this.newId(), question: body.question, createdAt: this.now(), steps: [], keys: new Map() };
     const step = this.stepFor(1, body.question, { kind: 'question' }, body.filters ?? {});
     brief.steps.push(step);
     brief.keys.set(body.idempotencyKey, 1);
     this.briefs.set(brief.id, brief);
+    this.created.set(body.idempotencyKey, brief.id);
     return this.start(brief, step);
   }
 
@@ -373,7 +434,7 @@ export class MockBriefs {
     const brief = this.briefs.get(id);
     if (!brief) return NOT_FOUND();
     const replayed = brief.keys.get(body.idempotencyKey);
-    if (replayed !== undefined) return this.start(brief, brief.steps[replayed - 1]!);
+    if (replayed !== undefined) return { ...this.start(brief, brief.steps[replayed - 1]!), replayed: true };
     if (brief.steps.length >= MAX_BRIEF_STEPS) {
       return error(409, 'refinement_limit', 'This brief has used its three refinements. Start a new search to keep going.');
     }
@@ -414,18 +475,26 @@ export class MockBriefs {
     if (this.stageOf(s) !== 'done') return undefined;
     if (s.variant === 'withheld') return seedWithheld(s.filters);
     if (s.variant === 'no_match') return seedNoMatch(s.filters);
-    if (s.variant === 'no_results') return { kind: 'no_results', interpretations: INTERPRETATIONS, filters: s.filters };
+    if (s.variant === 'no_results') return { kind: 'no_results', ...this.contextOf(s) };
+    if (s.variant === 'midair') return midairAnswer(s.filters);
     return seedAnswer(s.filters);
+  }
+
+  /** The readings and filters of a search step, as its result and its checklist carry them. */
+  private contextOf(s: MockStep): NonNullable<Checklist['interpretation']> {
+    return { interpretations: s.variant === 'midair' ? [] : [...INTERPRETATIONS], filters: s.filters };
   }
 
   private checklistOf(s: MockStep): Checklist {
     if (s.reply) return {};
     const stage = this.stageOf(s);
+    // The scope row is done from the first read on, so the chips can stay on top.
+    const interpretation = this.contextOf(s);
     if (stage === 'done') {
-      if (s.variant === 'no_results') return { question: 'in_scope', searched: { cases: 0, passages: 0 } };
-      return { ...STAGES[2]!, verified: s.variant === 'withheld' ? 'withheld' : 'passed' };
+      if (s.variant === 'no_results') return { question: 'in_scope', interpretation, searched: { cases: 0, passages: 0 } };
+      return { ...STAGES[2]!, interpretation, verified: s.variant === 'withheld' ? 'withheld' : 'passed' };
     }
-    return STAGES[Math.min(s.polls, 2)]!;
+    return { ...STAGES[Math.min(s.polls, 2)]!, interpretation };
   }
 
   /** `GET /api/briefs/:id?step=n`: each poll of a running step moves it one stage on. */

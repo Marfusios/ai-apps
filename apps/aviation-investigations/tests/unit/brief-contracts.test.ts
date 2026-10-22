@@ -3,7 +3,10 @@ import {
   BriefResultSchema,
   BriefStepResponseSchema,
   CaseContextResponseSchema,
+  ChecklistSchema,
   ComposeOutputSchema,
+  FAILURE_TYPES,
+  FAILURE_TYPE_LABELS,
   CreateBriefRequestSchema,
   RefinementRequestSchema,
   ScopeReplySchema,
@@ -11,9 +14,10 @@ import {
 } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
+import { FAILURE_TYPE_LABEL } from '../../server/briefs/clarify.js';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies.js';
 import { matchQuote } from '../../server/briefs/validate.js';
-import { MockBriefs, MOCK_SEED_QUESTION, RESULT_SAMPLES, SCOPE_REPLY_SAMPLES, seedAnswer } from '../../web/mock/briefs.js';
+import { MockBriefs, MOCK_MIDAIR_QUESTION, MOCK_SEED_QUESTION, RESULT_SAMPLES, SCOPE_REPLY_SAMPLES, midairAnswer, seedAnswer } from '../../web/mock/briefs.js';
 import cases from '../../web/mock/cases.json' with { type: 'json' };
 
 const CASES = cases as unknown as Record<string, CaseDetail>;
@@ -81,6 +85,23 @@ describe('brief request contracts', () => {
   });
 });
 
+describe('checklist interpretation (UI_DESIGN §4.4: the chips stay on top while the step runs)', () => {
+  it('is optional, strict, and carries server chips and validated filters only', () => {
+    expect(ChecklistSchema.safeParse({ question: 'in_scope' }).success).toBe(true);
+    const interpretation = {
+      interpretations: [{ field: 'timing_window', value: { days: 30, flightHours: 10 }, label: 'Within 30 days or 10 flight hours', pinned: false }],
+      filters: { category: ['HELI'] },
+    };
+    expect(ChecklistSchema.safeParse({ question: 'in_scope', interpretation }).success).toBe(true);
+    expect(ChecklistSchema.safeParse({ question: 'in_scope', interpretation: { ...interpretation, text: 'free text' } }).success).toBe(false);
+    expect(ChecklistSchema.safeParse({ question: 'in_scope', interpretation: { ...interpretation, filters: { completion: ['any'] } } }).success).toBe(false);
+  });
+
+  it('the failure-type words in the contract are the server templates', () => {
+    for (const f of FAILURE_TYPES) expect(FAILURE_TYPE_LABELS[f]).toBe(FAILURE_TYPE_LABEL[f]);
+  });
+});
+
 describe('mock briefs (web/mock/briefs.ts)', () => {
   it('every sample satisfies the contracts', () => {
     for (const [name, r] of Object.entries(RESULT_SAMPLES)) expect(BriefResultSchema.safeParse(r).success, name).toBe(true);
@@ -88,8 +109,7 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
   });
 
   it('every quote is its section text at its span, and passes the quote rule', () => {
-    const answer = seedAnswer();
-    for (const card of answer.cases) {
+    for (const card of [...seedAnswer().cases, ...midairAnswer().cases]) {
       for (const q of card.reading?.quotes ?? []) {
         const section = CASES[card.case.ntsbNo]!.sections.find((s) => `${card.case.ntsbNo}:${s.key}` === q.sectionId)!;
         expect(section.text.slice(q.span.start, q.span.end)).toBe(q.text);
@@ -98,6 +118,23 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
         expect(m).toMatchObject({ ok: true, span: q.span });
       }
     }
+  });
+
+  it('a two-aircraft answer: event-scoped evidence, no glyph, and two adjacent citations', () => {
+    const mock = new MockBriefs({ pollsToFinish: 1 });
+    const started = StartBriefResponseSchema.parse(mock.create({ question: MOCK_MIDAIR_QUESTION, idempotencyKey: 'key-midair-1' }).body);
+    mock.read(started.briefId);
+    const result = BriefStepResponseSchema.parse(mock.read(started.briefId).body).result;
+    expect(result).toMatchObject({ kind: 'answer', grouping: 'examples', interpretations: [], groups: [{ kind: 'examples' }] });
+    if (result?.kind !== 'answer') throw new Error('expected an answer');
+    expect(result.summary.slice(0, 3).map((x) => x.kind)).toEqual(['text', 'case', 'case']);
+    for (const card of result.cases) {
+      expect(card.case.aircraft).toHaveLength(2);
+      expect(card.reading).toMatchObject({ glyph: null, evidence: { scope: 'event', multiAircraft: true } });
+      for (const q of card.reading?.quotes ?? []) expect(q).toMatchObject({ scope: 'event', aircraftKey: null });
+    }
+    const context = CaseContextResponseSchema.parse(mock.context(started.briefId, 1, 'SEA08LA057').body);
+    expect(context.passages[0]!.highlights).toHaveLength(2);
   });
 
   it('a running brief moves one checklist row per poll, then answers', () => {
@@ -109,8 +146,10 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
     for (let i = 0; i < 5; i++) {
       const r = BriefStepResponseSchema.parse(mock.read(s.briefId).body);
       stages.push(r.stage);
+      // The scope row is done on every read, so the readings and filters ride along.
+      expect(r.checklist.interpretation).toEqual({ interpretations: seedAnswer().interpretations, filters: {} });
       if (r.stage === 'done') {
-        expect(r.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 9 }, written: true, verified: 'passed' });
+        expect(r.checklist).toMatchObject({ question: 'in_scope', searched: { cases: 4, passages: 9 }, written: true, verified: 'passed' });
         expect(r.result?.kind).toBe('answer');
       }
     }
