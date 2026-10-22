@@ -40,7 +40,8 @@ function readStep(params: URLSearchParams): number | null {
 
 /**
  * Brief expired (UI_DESIGN §5): the server keeps nothing to restore. If this page still
- * holds the question in memory, [Ask again] refills the box; nothing is in browser storage.
+ * holds the question in memory, [Ask again] refills the box; the question is never in
+ * browser storage.
  */
 function Expired({ id }: { id: string }) {
   const remembered = rememberedQuestion(id);

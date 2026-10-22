@@ -14,8 +14,9 @@ export function Privacy() {
       </p>
       <h2>On your device</h2>
       <p>
-        If you choose Day or Night, that choice is kept in your browser’s local storage on this device only. Nothing else
-        is stored in your browser.
+        If you choose Day or Night, that choice is kept in your browser’s local storage on this device only. If an AI
+        search gets no reply, this tab’s session storage keeps a one-way hash of the request and a random retry key, so
+        trying again within 24 hours isn’t counted twice.
       </p>
       <h2>On our servers</h2>
       <p>
