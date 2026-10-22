@@ -7,7 +7,8 @@
  * USD `numeric(12,6)`. Budgets are counted by `accounting_day`, the UTC day a
  * reservation was made, so a request admitted before midnight stays in that day's
  * and month's totals however late it settles. Grants, row-level security, guard
- * triggers and the pruning function are in migration 0008.
+ * triggers and the pruning function are in migration 0008; migration 0009 limits
+ * aviation_ingest to indexing and evaluation rows and adds `spend_totals()`.
  */
 import { sql } from 'drizzle-orm';
 import {
@@ -184,6 +185,11 @@ export const reservations = pgTable(
         and (${t.status} = 'open') = (${t.uncertain} is null)
         and (${t.chargedUsd} is null or ${t.chargedUsd} >= 0)
         and (${t.status} <> 'expired_charged' or (${t.chargedUsd} >= ${t.usd} and ${t.uncertain}))`,
+    ),
+    // An uncertain settlement is charged at least the full reservation, never less.
+    check(
+      'reservations_uncertain_check',
+      sql`${t.status} <> 'settled' or not ${t.uncertain} or ${t.chargedUsd} >= ${t.usd}`,
     ),
     check('reservations_quota_check', sql`not ${t.quotaCounted} or ${t.category} = 'interactive'`),
     check('reservations_lease_check', sql`${t.leaseExpiresAt} > ${t.createdAt}`),

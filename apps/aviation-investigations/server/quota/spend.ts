@@ -7,7 +7,7 @@
  * with the total monthly budget. Each retry attempt is its own reservation.
  */
 import { sql } from 'drizzle-orm';
-import type { Db } from '../db/client.js';
+import type { Db, DbOrTx } from '../db/client.js';
 import { nextMonthStart, utcDay } from './buckets.js';
 import {
   budgetMicros,
@@ -18,6 +18,7 @@ import {
   toMicros,
 } from './pacing.js';
 import { LEASE_TTL_MS, QuotaInputError, SPEND_LOCK_KEY, type QuotaBudgets } from './policy.js';
+import { isLockTimeout, setLockTimeout } from './locks.js';
 import { settleReservation, type SettleResult, type SpendUsage } from './settle.js';
 
 export type IngestionCategory = 'indexing' | 'evaluation';
@@ -52,13 +53,16 @@ export interface SpendReservation {
   leaseExpiresAt: Date;
 }
 
-export interface SpendRefusal {
-  ok: false;
-  /** `category_cap`: the indexing/evaluation allowance; `monthly_budget`: the total budget. */
-  reason: 'category_cap' | 'monthly_budget';
-  remainingUsd: number;
-  retryAt: Date;
-}
+export type SpendRefusal =
+  | {
+      ok: false;
+      /** `category_cap`: the indexing/evaluation allowance; `monthly_budget`: the total budget. */
+      reason: 'category_cap' | 'monthly_budget';
+      remainingUsd: number;
+      retryAt: Date;
+    }
+  /** A lock wait timed out (2 s); nothing was reserved. Retry later. */
+  | { ok: false; reason: 'busy' };
 
 const MAX_TTL_MS = 15 * 60_000;
 const STAGE = /^[a-z][a-z0-9_]{0,39}$/;
@@ -84,36 +88,50 @@ export async function reserveSpend(db: Db, a: ReserveSpendInput): Promise<SpendR
   const now = a.now ?? new Date();
   const amount = toMicros(a.usd);
   const leaseExpiresAt = new Date(now.getTime() + (a.ttlMs ?? LEASE_TTL_MS));
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${SPEND_LOCK_KEY})`);
-    const snap = await spendSnapshot(tx, now);
-    const remaining = remainingCategoryMicros(snap, a.category, a.budgets);
-    if (amount > remaining) {
-      const categoryLeft = budgetMicros(a.budgets.ingestionMonthlyUsd) - snap.ingestionMonth;
-      return {
-        ok: false,
-        reason: amount > categoryLeft ? 'category_cap' : 'monthly_budget',
-        remainingUsd: microsToUsd(remaining),
-        retryAt: nextMonthStart(now),
-      };
-    }
-    const res = await tx.execute(sql`
-      INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day,
-        provider, model, stage, request_id, created_at)
-      VALUES (${a.category}, 'system', NULL, ${microsToNumeric(amount)}::numeric, 'open', ${leaseExpiresAt},
-        ${utcDay(now)}::date, ${a.request.provider}, ${a.request.model}, ${a.request.stage}, ${a.request.requestId ?? null},
-        ${now})
-      RETURNING id, fencing_token::text AS fencing_token`);
-    const row = res.rows[0] as { id: number; fencing_token: string };
+  try {
+    return await db.transaction((tx) => reserveInTransaction(tx, a, amount, now, leaseExpiresAt));
+  } catch (err) {
+    if (isLockTimeout(err)) return { ok: false, reason: 'busy' };
+    throw err;
+  }
+}
+
+async function reserveInTransaction(
+  tx: DbOrTx,
+  a: ReserveSpendInput,
+  amount: number,
+  now: Date,
+  leaseExpiresAt: Date,
+): Promise<SpendReservation | SpendRefusal> {
+  await setLockTimeout(tx);
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${SPEND_LOCK_KEY})`);
+  const snap = await spendSnapshot(tx, now);
+  const remaining = remainingCategoryMicros(snap, a.category, a.budgets);
+  if (amount > remaining) {
+    const categoryLeft = budgetMicros(a.budgets.ingestionMonthlyUsd) - snap.ingestionMonth;
     return {
-      ok: true,
-      reservationId: Number(row.id),
-      fencingToken: row.fencing_token,
-      usd: microsToUsd(amount),
-      category: a.category,
-      leaseExpiresAt,
+      ok: false,
+      reason: amount > categoryLeft ? 'category_cap' : 'monthly_budget',
+      remainingUsd: microsToUsd(remaining),
+      retryAt: nextMonthStart(now),
     };
-  });
+  }
+  const res = await tx.execute(sql`
+    INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day,
+      provider, model, stage, request_id, created_at)
+    VALUES (${a.category}, 'system', NULL, ${microsToNumeric(amount)}::numeric, 'open', ${leaseExpiresAt},
+      ${utcDay(now)}::date, ${a.request.provider}, ${a.request.model}, ${a.request.stage}, ${a.request.requestId ?? null},
+      ${now})
+    RETURNING id, fencing_token::text AS fencing_token`);
+  const row = res.rows[0] as { id: string; fencing_token: string };
+  return {
+    ok: true,
+    reservationId: Number(row.id),
+    fencingToken: row.fencing_token,
+    usd: microsToUsd(amount),
+    category: a.category,
+    leaseExpiresAt,
+  };
 }
 
 /** Settle an indexing or evaluation reservation; same semantics as `settle`. */

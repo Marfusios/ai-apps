@@ -5,8 +5,8 @@
 -- idempotency records, trial identities, abuse records and reservations, and appends
 -- to the ledger. aviation_ingest meters indexing and evaluation spend: it creates and
 -- settles reservations and appends ledger lines of those categories only (row-level
--- security), reads all spend for the shared monthly totals, and operates the kill
--- switch. Neither role can update or delete ledger lines or delete reservations;
+-- security) and operates the kill switch. (Migration 0009 also limits its reads to
+-- those categories; cross-category totals come from spend_totals(), sums only.) Neither role can update or delete ledger lines or delete reservations;
 -- retention runs only through prune_controls(). The table owner bypasses row-level
 -- security but not the guard triggers.
 
@@ -160,7 +160,9 @@ REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE
   "cost_ledger", "ai_switch"
   FROM aviation_app;
 --> statement-breakpoint
--- aviation_ingest never sees who used the AI.
+-- aviation_ingest gets no access to quota, trial or abuse records. (Its read access to
+-- interactive reservations and ledger lines, which carry principal HMACs, is removed
+-- in migration 0009.)
 REVOKE ALL ON TABLE "usage_buckets", "leases", "idempotency", "trial_identities", "abuse_records" FROM aviation_ingest;
 --> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE ON TABLE "reservations" TO aviation_ingest;

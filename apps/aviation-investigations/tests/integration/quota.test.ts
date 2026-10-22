@@ -29,10 +29,10 @@ import {
   type QuotaPolicy,
   type SpendReservation,
 } from '../../server/quota/index.js';
-import { principalHash } from '../../server/quota/policy.js';
+import { SPEND_LOCK_KEY, principalHash } from '../../server/quota/policy.js';
 import { loadConfig } from '../../shared/config.js';
 import { sqlState } from './corpus-helpers.js';
-import { resetControls, testDb, testDbUrl } from './helpers.js';
+import { resetControls, testDb, testDbUrl, testPool } from './helpers.js';
 
 const POLICY = quotaPolicy({
   ai: loadConfig({ env: {}, files: [] }).ai,
@@ -141,8 +141,48 @@ describe('admission is atomic', () => {
     const trial = await newTrial(2);
     const results = await Promise.all([admit(trial, { db: wide }), admit(trial, { db: wide })]);
     expect(results.filter((r) => r.ok)).toHaveLength(1);
-    expect(results.find((r) => !r.ok)).toMatchObject({ ok: false });
+    expect(results.find((r) => !r.ok)).toEqual({ ok: false, reason: 'concurrency' });
     expect(await trialUsed(trial)).toBe(3);
+  });
+
+  it('a request in flight is reported as concurrency, not as the quota it holds', async () => {
+    const opts = { policy: POLICY, reservationUsd: RESERVATION };
+    const trial = await newTrial(2);
+    const last = admitted(await admit(trial));
+    expect(await admit(trial, { now: at(T0, 5_000) })).toEqual({ ok: false, reason: 'concurrency' });
+    expect(await aiStatus(app, trial, { ...opts, now: at(T0, 5_000) })).toEqual({
+      state: 'available',
+      remaining: { kind: 'trial', left: 0, limit: 3 },
+    });
+    // Off-topic: the search comes back.
+    await releaseQuota(app, last, last.fencingToken, { policy: POLICY, now: at(T0, 6_000) });
+    await settle(app, last, 0.0002, last.fencingToken, at(T0, 7_000));
+    expect(await aiStatus(app, trial, { ...opts, now: at(T0, 8_000) })).toEqual({
+      state: 'available',
+      remaining: { kind: 'trial', left: 1, limit: 3 },
+    });
+    // Counted: only now is the trial used up.
+    const counted = admitted(await admit(trial, { now: at(T0, MIN) }));
+    expect(await aiStatus(app, trial, { ...opts, now: at(T0, MIN + 1_000) })).toMatchObject({ state: 'available' });
+    await settle(app, counted, 0.09, counted.fencingToken, at(T0, MIN + 20_000));
+    expect(await admit(trial, { now: at(T0, 2 * MIN) })).toEqual({ ok: false, reason: 'trial_exhausted' });
+    expect(await aiStatus(app, trial, { ...opts, now: at(T0, 2 * MIN) })).toMatchObject({
+      state: 'signed_in_only',
+      reason: 'trial_used',
+    });
+
+    // The same for an account at its daily cap.
+    const p = account('busy-new', at(T0, -DAY));
+    for (let i = 0; i < 4; i++) {
+      const a = admitted(await admit(p, { now: at(T0, i * MIN) }));
+      await settle(app, a, 0.01, a.fencingToken, at(T0, i * MIN + 1_000));
+    }
+    const fifth = admitted(await admit(p, { now: at(T0, 4 * MIN) }));
+    expect(await admit(p, { now: at(T0, 4 * MIN + 1_000) })).toEqual({ ok: false, reason: 'concurrency' });
+    expect(await aiStatus(app, p, { ...opts, now: at(T0, 4 * MIN + 1_000) })).toMatchObject({ state: 'available' });
+    await settle(app, fifth, 0.01, fifth.fencingToken, at(T0, 4 * MIN + 2_000));
+    expect(await admit(p, { now: at(T0, 5 * MIN) })).toMatchObject({ ok: false, reason: 'daily_cap' });
+    expect(await aiStatus(app, p, { ...opts, now: at(T0, 5 * MIN) })).toMatchObject({ state: 'paused', reason: 'daily_cap' });
   });
 
   it('the last trial search goes to one request even when concurrency limits would allow more', async () => {
@@ -207,7 +247,8 @@ describe('admission is atomic', () => {
         if (!r.ok || r.replay) continue;
         admittedCount++;
         if (round % 2 === 1) {
-          expect(await releaseQuota(wide, r, r.fencingToken, at(now, 100))).toEqual({ released: true });
+          const release = await releaseQuota(wide, r, r.fencingToken, { policy: POLICY, now: at(now, 100) });
+          expect(release).toEqual({ released: true });
           released++;
         }
         // Sweeps two minutes ahead race with settlements of the same and other reservations.
@@ -447,7 +488,10 @@ describe('settlement', () => {
       reason: 'stale_token',
       status: 'open',
     });
-    expect(await releaseQuota(app, a, randomUUID(), at(T0, 5_000))).toEqual({ released: false, reason: 'stale_token' });
+    expect(await releaseQuota(app, a, randomUUID(), { policy: POLICY, now: at(T0, 5_000) })).toEqual({
+      released: false,
+      reason: 'stale_token',
+    });
     // A replay of the same request never carries the token.
     const replay = await admit(p, { key, now: at(T0, 6_000) });
     expect(replay).toMatchObject({ ok: true, replay: true, reservationId: a.reservationId });
@@ -592,8 +636,8 @@ describe('principal quotas and rate limits', () => {
     // Off-topic reply: the admission took a search; releasing gives it back, the attempt stays.
     const a = admitted(await admit(trial, { now: minuteEnd }));
     expect(await trialUsed(trial)).toBe(1);
-    expect(await releaseQuota(app, a, a.fencingToken, at(minuteEnd, 2_000))).toEqual({ released: true });
-    expect(await releaseQuota(app, a, a.fencingToken, at(minuteEnd, 2_500))).toEqual({
+    expect(await releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(minuteEnd, 2_000) })).toEqual({ released: true });
+    expect(await releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(minuteEnd, 2_500) })).toEqual({
       released: false,
       reason: 'already_released',
     });
@@ -604,15 +648,36 @@ describe('principal quotas and rate limits', () => {
     expect(attempts.rows).toEqual([{ attempts: 2 }, { attempts: 1 }]);
     // The scope call still cost money.
     expect(await settle(app, a, 0.0002, a.fencingToken, at(minuteEnd, 3_000))).toMatchObject({ ok: true });
-    expect(await releaseQuota(app, a, a.fencingToken, at(minuteEnd, 4_000))).toEqual({ released: false, reason: 'not_open' });
+    expect(await releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(minuteEnd, 4_000) })).toEqual({
+      released: false,
+      reason: 'not_open',
+    });
 
     // An account's release restores its daily and monthly count.
     const p = account('released');
     const b = admitted(await admit(p, { now: at(T0, HOUR) }));
-    await releaseQuota(app, b, b.fencingToken, at(T0, HOUR + 1_000));
+    await releaseQuota(app, b, b.fencingToken, { policy: POLICY, now: at(T0, HOUR + 1_000) });
     await settle(app, b, 0.0002, b.fencingToken, at(T0, HOUR + 2_000));
     const status = await aiStatus(app, p, { policy: POLICY, reservationUsd: RESERVATION, now: at(T0, HOUR + 3_000) });
     expect(status.remaining).toEqual({ kind: 'account', leftToday: 20, limitToday: 20, leftThisMonth: 150, limitThisMonth: 150 });
+  });
+
+  it('releaseQuota refuses an admission whose principal does not match its reservation', async () => {
+    const [mine, other] = await Promise.all([newTrial(), newTrial(1)]);
+    const a = admitted(await admit(mine));
+    const opts = { policy: POLICY, now: at(T0, 1_000) };
+    // Another trial's id under this reservation's hash, or the wrong principal kind.
+    await expect(releaseQuota(app, { ...a, principal: other }, a.fencingToken, opts)).rejects.toThrow(/does not match/);
+    await expect(
+      releaseQuota(app, { ...a, principal: account('x') }, a.fencingToken, opts),
+    ).rejects.toThrow(/does not match/);
+    await expect(
+      releaseQuota(app, { ...a, principal: other, principalHash: principalHash(POLICY, other) }, a.fencingToken, opts),
+    ).rejects.toThrow(/does not match/);
+    expect(await trialUsed(other)).toBe(1);
+    expect(await trialUsed(mine)).toBe(1);
+    expect(await releaseQuota(app, a, a.fencingToken, opts)).toEqual({ released: true });
+    expect(await trialUsed(mine)).toBe(0);
   });
 
   it('network backstop: 10 anonymous attempts an hour per network, signed-in users counted apart', async () => {
@@ -799,6 +864,57 @@ describe('indexing and evaluation spend', () => {
   });
 });
 
+describe('lock timeouts', () => {
+  /** Run `fn` while another session holds a lock taken by `lockSql` (released afterwards). */
+  async function whileLocked<T>(lockSql: string, params: unknown[], fn: () => Promise<T>): Promise<T> {
+    const pool = testPool('migrator');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(lockSql, params);
+      return await fn();
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+      await pool.end();
+    }
+  }
+
+  it('a lock wait over 2 s fails closed as busy and changes nothing', async () => {
+    const trial = await newTrial();
+    const request = { provider: 'openai', model: 'text-embedding-3-small', stage: 'embed' };
+    const started = Date.now();
+    const [admission, spend] = await whileLocked('SELECT pg_advisory_xact_lock($1)', [SPEND_LOCK_KEY], () =>
+      Promise.all([
+        admit(trial),
+        reserveSpend(ingest, { category: 'indexing', usd: 0.5, request, budgets: BUDGETS, now: T0 }),
+      ]),
+    );
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_900);
+    expect(admission).toEqual({ ok: false, reason: 'busy' });
+    if (admission.ok) throw new Error('unreachable');
+    expect(rejectionStatus(admission)).toBe(503);
+    expect(spend).toEqual({ ok: false, reason: 'busy' });
+    // Rolled back: no reservation, no attempt, no search used.
+    const counts = await migrator.execute(sql`
+      SELECT (SELECT count(*)::int FROM reservations) AS reservations,
+        (SELECT coalesce(sum(attempts), 0)::int FROM usage_buckets) AS attempts`);
+    expect(counts.rows).toEqual([{ reservations: 0, attempts: 0 }]);
+    expect(await trialUsed(trial)).toBe(0);
+    admitted(await admit(trial));
+  });
+
+  it('settlement waiting on a locked reservation returns busy and leaves it open', async () => {
+    const a = admitted(await admit(account('u')));
+    const r = await whileLocked('SELECT 1 FROM reservations WHERE id = $1 FOR UPDATE', [a.reservationId], () =>
+      settle(app, a, 0.05, a.fencingToken, at(T0, 5_000)),
+    );
+    expect(r).toEqual({ ok: false, reason: 'busy' });
+    expect(await ledger(a.reservationId)).toEqual([]);
+    expect(await settle(app, a, 0.05, a.fencingToken, at(T0, 6_000))).toMatchObject({ ok: true, chargedUsd: 0.05 });
+  });
+});
+
 describe('roles and guards', () => {
   it('the ledger is append-only and each role writes only its own spend', async () => {
     const a = admitted(await admit(account('u')));
@@ -824,6 +940,20 @@ describe('roles and guards', () => {
     await expect(settleReservation(ingest, b.reservationId, 0, b.fencingToken, at(T0, 3_000))).rejects.toThrow(
       /Unknown reservation/,
     );
+    // aviation_ingest sees no interactive rows (principal HMACs, fencing tokens), only sums.
+    expect(
+      (await ingest.execute(sql`SELECT count(*)::int AS n FROM reservations WHERE category = 'interactive'`)).rows,
+    ).toEqual([{ n: 0 }]);
+    expect((await ingest.execute(sql`SELECT count(*)::int AS n FROM cost_ledger`)).rows).toEqual([{ n: 0 }]);
+    expect(await remainingCategoryUsd(ingest, 'interactive', T0, BUDGETS)).toBeCloseTo(80 - 0.05 - RESERVATION, 6);
+    expect(await sqlState(ingest.execute(sql`SELECT spend_totals(current_date)`))).toBeUndefined();
+    // An uncertain settlement can never charge less than the reservation.
+    expect(
+      await sqlState(
+        app.execute(sql`UPDATE reservations SET status = 'settled', settled_at = now(), charged_usd = 0.01, uncertain = true
+          WHERE id = ${b.reservationId}`),
+      ),
+    ).toBe('23514');
     // Even the schema owner cannot rewrite spend or reopen a reservation.
     expect(await sqlState(migrator.execute(sql`UPDATE cost_ledger SET usd = 0`))).toBe('55000');
     expect(await sqlState(migrator.execute(sql`DELETE FROM cost_ledger`))).toBe('55000');

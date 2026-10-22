@@ -14,6 +14,7 @@ import { sql } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../db/client.js';
 import type { ReservationStatus } from '../db/schema/index.js';
 import { microsToNumeric, microsToUsd, toMicros } from './pacing.js';
+import { isLockTimeout, setLockTimeout } from './locks.js';
 import { QuotaInputError } from './policy.js';
 
 /** One priced call. `usd` comes from `stageCostUsd`/`embeddingCostUsd`. */
@@ -43,7 +44,12 @@ export type SettleResult =
       status: ReservationStatus;
       /** For `lease_expired`: the full reservation, charged now. */
       chargedUsd?: number;
-    };
+    }
+  /**
+   * A lock wait timed out (2 s) and nothing changed: the reservation stays open and
+   * still counts in full. Retry while the lease lasts; otherwise expiry charges it.
+   */
+  | { ok: false; reason: 'busy' };
 
 const STAGE = /^[a-z][a-z0-9_]{0,39}$/;
 const MAX_LINES = 50;
@@ -193,26 +199,32 @@ export async function settleReservation(
   fencingToken: string,
   now: Date = new Date(),
 ): Promise<SettleResult> {
-  return db.transaction(async (tx) => {
-    const row = await lockReservation(tx, reservationId);
-    if (row.fencing_token !== fencingToken) return { ok: false, reason: 'stale_token', status: row.status };
-    if (row.status !== 'open') return { ok: false, reason: 'not_open', status: row.status };
-    if (now.getTime() >= Number(row.lease_expires_ms)) {
-      const full = Number(row.usd_micros);
-      const charged = await close(
-        tx,
-        row,
-        'expired_charged',
-        [{ micros: full, provider: row.provider, model: row.model, stage: 'lease_expired', tokens: null, uncertain: true }],
-        true,
-        now,
-      );
-      return { ok: false, reason: 'lease_expired', status: 'expired_charged', chargedUsd: microsToUsd(charged) };
-    }
-    const { lines, uncertain } = ledgerLines(usage, row);
-    const charged = await close(tx, row, 'settled', lines, uncertain, now);
-    return { ok: true, chargedUsd: microsToUsd(charged), uncertain };
-  });
+  try {
+    return await db.transaction(async (tx): Promise<SettleResult> => {
+      await setLockTimeout(tx);
+      const row = await lockReservation(tx, reservationId);
+      if (row.fencing_token !== fencingToken) return { ok: false, reason: 'stale_token', status: row.status };
+      if (row.status !== 'open') return { ok: false, reason: 'not_open', status: row.status };
+      if (now.getTime() >= Number(row.lease_expires_ms)) {
+        const full = Number(row.usd_micros);
+        const charged = await close(
+          tx,
+          row,
+          'expired_charged',
+          [{ micros: full, provider: row.provider, model: row.model, stage: 'lease_expired', tokens: null, uncertain: true }],
+          true,
+          now,
+        );
+        return { ok: false, reason: 'lease_expired', status: 'expired_charged', chargedUsd: microsToUsd(charged) };
+      }
+      const { lines, uncertain } = ledgerLines(usage, row);
+      const charged = await close(tx, row, 'settled', lines, uncertain, now);
+      return { ok: true, chargedUsd: microsToUsd(charged), uncertain };
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) return { ok: false, reason: 'busy' };
+    throw err;
+  }
 }
 
 /** Settle an admitted interactive request. `'uncertain'` charges the full reservation. */

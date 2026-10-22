@@ -298,20 +298,24 @@ Adapter tests run the real SDK client against a stubbed `fetch`; nothing is sent
 
 `server/quota/` meters every paid call (DESIGN §7–§9). Its tables are in
 `server/db/schema/controls.ts`; grants, row-level security, guard triggers and
-retention are in migration 0008.
+retention are in migrations 0008 and 0009.
 
 - **Admission.** `admitPaidRequest` runs one short transaction before any provider
   call. It checks the kill switch, locks the principal, network and global usage
   buckets in a fixed key order, and checks idempotency: keys are scoped to the
   principal, the same key and canonical request hash (`canonicalRequestHash`) replays
   the original admission, and the same key with another body is a 409 conflict. Then
-  come the attempt rate limits, the monthly and paced daily budgets, the principal's
-  quota, the anonymous share and the in-flight limits. An admitted request reserves
+  come the attempt rate limits and the monthly and paced daily budgets. A principal
+  whose previous request is still in flight gets `concurrency` (never a quota verdict
+  that request may still change); otherwise its quota, the anonymous share and the
+  total in-flight limits follow. An admitted request reserves
   its maximum cost, takes one unit of quota and gets a 90-second lease with a fencing
   token. Rejections: `trial_exhausted`, `daily_cap`, `monthly_cap`,
   `anonymous_share_exhausted`, `global_paused` (`daily_budget`, `monthly_budget`,
-  `maintenance`), `rate_limited` (with `retryAt`), `concurrency` and
-  `idempotency_conflict`.
+  `maintenance`), `rate_limited` (with `retryAt`), `concurrency`,
+  `idempotency_conflict`, and `busy`. Lock waits in admission, settlement and spend
+  reservation are bounded at 2 seconds; a timeout rolls back and returns `busy`
+  (503, fail closed).
 - **Limits.** A trial has 3 searches and lasts 30 days. Signed-in users get 20 a day
   and 150 a month, 5 a day during their first 3 days. Attempts are limited to 2 a
   minute anonymously and 5 signed in, and per network identity and class to 10 an
@@ -336,17 +340,21 @@ retention are in migration 0008.
   (`remainingCategoryUsd`), and every category is bounded by the $100 total.
 - **Identities.** Only HMACs are stored: trial ids and Google issuer and `sub` under
   `IDENTITY_HMAC_SECRET`, network identities under `IP_HMAC_SECRET`. Both are required
-  (at least 32 characters), and AI stays off without them. An account's quota key is
+  (at least 32 characters; `pnpm services:setup` generates them into `.env.local`),
+  and AI stays off without them. An account's quota key is
   the anti-abuse HMAC(issuer, sub), so its usage survives account deletion and
   returns on re-registration.
 - **Roles.** `aviation_app` admits and settles interactive requests; it cannot change
-  or delete ledger lines or flip the kill switch. `aviation_ingest` reserves and
-  settles indexing and evaluation spend only (row-level security), reads all spend
-  for the shared totals, and cannot see who used the AI. Triggers stop every role,
+  or delete ledger lines or flip the kill switch. `aviation_ingest` reads, reserves
+  and settles indexing and evaluation spend only (row-level security). It gets the
+  cross-category monthly totals for the shared budget from `spend_totals()`, which
+  returns sums only, and has no access to interactive rows (principal HMACs, fencing
+  tokens) or to quota, trial and abuse records. Triggers stop every role,
   the schema owner included, from rewriting ledger lines or reopening a reservation.
 - **Status and retention.** `aiStatus` returns `available`, `signed_in_only` or
   `paused`, a coarse reason, a retry time only when it is known, and the principal's
-  own remaining searches, never amounts. `pruneControls` deletes idempotency records
+  own remaining searches, never amounts. While a request of the principal is in
+  flight, only global pauses are reported. `pruneControls` deletes idempotency records
   after 24 hours, buckets and anti-abuse records after their window plus 7 days, trial
   identities after 30 days, and ledger lines and closed reservations after 90 days.
 

@@ -15,6 +15,7 @@ import {
   QuotaConfigError,
   QuotaInputError,
   accountIdentityHash,
+  assertPolicy,
   canonicalRequestHash,
   networkHash,
   principalHash,
@@ -185,6 +186,22 @@ describe('policy and hashing', () => {
       /IDENTITY_HMAC_SECRET/,
     );
     expect(() => quotaPolicy({ ai: config.ai, auth: { identityHmacSecret: 'i'.repeat(32) } })).toThrow(/IP_HMAC_SECRET/);
+  });
+
+  it('fails closed on empty or short secrets, also in policies built by hand', () => {
+    for (const secrets of [
+      { identity: '', network: 'n'.repeat(32) },
+      { identity: 'i'.repeat(32), network: 'n'.repeat(31) },
+    ]) {
+      const handBuilt = { ...policy, secrets };
+      expect(() => assertPolicy(handBuilt)).toThrow(QuotaConfigError);
+    }
+    const emptyIdentity = { ...policy, secrets: { ...policy.secrets, identity: '' } };
+    expect(() => principalHash(emptyIdentity, { kind: 'trial', id: TRIAL_ID })).toThrow(QuotaConfigError);
+    const emptyNetwork = { ...policy, secrets: { ...policy.secrets, network: '' } };
+    expect(() => networkHash(emptyNetwork, '203.0.113.0')).toThrow(QuotaConfigError);
+    expect(() => accountIdentityHash('', 'https://accounts.google.com', '1')).toThrow(QuotaConfigError);
+    expect(() => assertPolicy(policy)).not.toThrow();
   });
 
   it('hashes principals and networks with keyed HMACs', () => {

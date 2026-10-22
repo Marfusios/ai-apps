@@ -85,16 +85,19 @@ export class UnknownPrincipalError extends Error {
   override readonly name = 'UnknownPrincipalError';
 }
 
-const MIN_SECRET_LENGTH = 32;
+/** Minimum HMAC key length; shorter or missing keys keep AI off (fail closed). */
+export const MIN_SECRET_LENGTH = 32;
 
-/** Build the policy from configuration. Throws (AI stays off) when a secret is missing. */
+const validSecret = (s: unknown): s is string => typeof s === 'string' && s.length >= MIN_SECRET_LENGTH;
+
+/** Build the policy from configuration. Throws (AI stays off) when a secret is missing or short. */
 export function quotaPolicy(config: Pick<AppConfig, 'ai' | 'auth'>): QuotaPolicy {
   const identity = config.auth.identityHmacSecret;
   const network = config.auth.ipHmacSecret;
-  if (!identity || identity.length < MIN_SECRET_LENGTH) {
+  if (!validSecret(identity)) {
     throw new QuotaConfigError(`IDENTITY_HMAC_SECRET must be set (at least ${MIN_SECRET_LENGTH} characters)`);
   }
-  if (!network || network.length < MIN_SECRET_LENGTH) {
+  if (!validSecret(network)) {
     throw new QuotaConfigError(`IP_HMAC_SECRET must be set (at least ${MIN_SECRET_LENGTH} characters)`);
   }
   const l = config.ai.limits;
@@ -116,8 +119,11 @@ export function quotaPolicy(config: Pick<AppConfig, 'ai' | 'auth'>): QuotaPolicy
   return policy;
 }
 
-/** Throws when budgets or limits are inconsistent. */
+/** Throws when a secret is missing or short, or budgets or limits are inconsistent. */
 export function assertPolicy(p: QuotaPolicy): void {
+  if (!validSecret(p.secrets.identity) || !validSecret(p.secrets.network)) {
+    throw new QuotaConfigError(`Both HMAC secrets must have at least ${MIN_SECRET_LENGTH} characters`);
+  }
   const b = p.budgets;
   for (const [name, v] of Object.entries(b)) {
     if (!Number.isFinite(v) || v < 0) throw new QuotaConfigError(`Budget ${name} must be a non-negative number`);
@@ -149,7 +155,9 @@ export type Principal =
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SAFE_LABEL = /^[\x21-\x7e]{1,255}$/;
 
+/** Refuses empty or short keys at every use, also for policies built without `quotaPolicy`. */
 function hmac(secret: string, message: string): string {
+  if (!validSecret(secret)) throw new QuotaConfigError(`HMAC secrets need at least ${MIN_SECRET_LENGTH} characters`);
   return createHmac('sha256', secret).update(message, 'utf8').digest('hex');
 }
 

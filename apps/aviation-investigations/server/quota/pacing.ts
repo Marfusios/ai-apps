@@ -12,10 +12,10 @@
  * Today's charges and open reservations are then spent against it, so pacing does
  * not count today's spend twice. Unspent allowance rolls into later days.
  */
-import { sql, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/client.js';
 import type { SpendCategory } from '../db/schema/index.js';
-import { monthStart, nextMonthStart, nextUtcMidnight, utcDay } from './buckets.js';
+import { nextMonthStart, nextUtcMidnight, utcDay } from './buckets.js';
 import { QuotaInputError, type QuotaBudgets } from './policy.js';
 
 const MICROS = 1_000_000;
@@ -88,30 +88,13 @@ export interface SpendSnapshot {
   totalMonth: number;
 }
 
-/** One consistent read (single statement) of this month's spend. */
+/**
+ * One consistent read of this month's spend through `spend_totals()` (migration 0009):
+ * a single statement that returns sums only, so aviation_ingest can see the shared
+ * totals without reading interactive rows.
+ */
 export async function spendSnapshot(db: DbOrTx, now: Date): Promise<SpendSnapshot> {
-  const from = utcDay(monthStart(now));
-  const to = utcDay(nextMonthStart(now));
-  const today = utcDay(now);
-  const micros = (filter: SQL) =>
-    sql`(coalesce(sum(usd) FILTER (WHERE ${filter}), 0) * 1000000)::bigint`;
-  const res = await db.execute(sql`
-    WITH spend AS (
-      SELECT category, principal_kind, accounting_day, usd, false AS open FROM cost_ledger
-        WHERE accounting_day >= ${from}::date AND accounting_day < ${to}::date
-      UNION ALL
-      SELECT category, principal_kind, accounting_day, usd, true AS open FROM reservations
-        WHERE status = 'open' AND accounting_day >= ${from}::date AND accounting_day < ${to}::date
-    )
-    SELECT
-      ${micros(sql`category = 'interactive' AND accounting_day < ${today}::date AND NOT open`)} AS settled_before,
-      ${micros(sql`category = 'interactive' AND accounting_day < ${today}::date AND open`)} AS open_before,
-      ${micros(sql`category = 'interactive' AND accounting_day = ${today}::date`)} AS today,
-      ${micros(sql`category = 'interactive' AND accounting_day = ${today}::date AND principal_kind = 'trial'`)} AS anon_today,
-      ${micros(sql`category = 'interactive'`)} AS interactive_month,
-      ${micros(sql`category IN ('indexing', 'evaluation')`)} AS ingestion_month,
-      ${micros(sql`true`)} AS total_month
-    FROM spend`);
+  const res = await db.execute(sql`SELECT * FROM spend_totals(${utcDay(now)}::date)`);
   const row = res.rows[0] as Record<string, string>;
   const n = (k: string) => Number(row[k]);
   return {

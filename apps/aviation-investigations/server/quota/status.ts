@@ -2,6 +2,11 @@
  * Coarse AI availability for `GET /api/ai/status` (UI_DESIGN §5): a state, a reason,
  * a retry time only when it is known, and the principal's own remaining searches.
  * It never reveals budget amounts. Reads only; admission makes the binding decision.
+ *
+ * Same rule as admission: while one of the principal's requests is in flight, its own
+ * verdicts (`trial_used`, `daily_cap`, `monthly_cap`, `anonymous_share`) wait for that
+ * request, which may still give its search back; only global pauses are reported.
+ * `remaining` already counts the in-flight request.
  */
 import { sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/client.js';
@@ -36,6 +41,13 @@ export interface AiStatusOptions {
   /** The per-request reservation; "available" means one more request fits. */
   reservationUsd: number;
   now?: Date;
+}
+
+async function hasRequestInFlight(db: DbOrTx, pHash: string, now: Date): Promise<boolean> {
+  const res = await db.execute(sql`
+    SELECT EXISTS (SELECT 1 FROM leases WHERE principal_hash = ${pHash} AND released_at IS NULL AND expires_at > ${now})
+      AS in_flight`);
+  return (res.rows[0] as { in_flight: boolean }).in_flight === true;
 }
 
 async function remainingFor(
@@ -97,6 +109,9 @@ export async function aiStatus(db: DbOrTx, principal: Principal | null, opts: Ai
     now,
   );
   if (!budget.ok) return status('paused', budget.pause, budget.retryAt);
+  if (principal !== null && (await hasRequestInFlight(db, principalHash(opts.policy, principal), now))) {
+    return status('available');
+  }
 
   if (remaining.kind === 'account') {
     if (remaining.leftThisMonth === 0) return status('paused', 'monthly_cap', nextMonthStart(now));
