@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations } from '../server/db/generations.js';
+import { readAiSwitch, setAiSwitch } from '../server/quota/switch.js';
 import { workerConfig } from './config.js';
 import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
 import { extractArchive, isTerminating } from './ingest/extract.js';
@@ -18,6 +19,7 @@ const USAGE = [
   '  worker report-links --export <file> --case-col <name> (--id-col <name> | --url-col <name>) [--aircraft-col <name>] [--date-col <name>] --retrieved-at <ISO date>',
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
+  '  worker ai-switch [--on | --off --note <text>]',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -208,6 +210,23 @@ async function main(argv: string[]): Promise<number> {
     }
     const ids = await withDb((db) => failStaleRuns(db, minutes));
     console.log(ids.length === 0 ? 'no stale runs' : `marked failed: ${ids.join(', ')}`);
+    return 0;
+  }
+  if (command === 'ai-switch') {
+    const { values } = parseArgs({
+      args: rest,
+      options: { on: { type: 'boolean' }, off: { type: 'boolean' }, note: { type: 'string' } },
+      strict: true,
+    });
+    if ((values.on && values.off) || (values.note !== undefined && !values.off)) {
+      console.error(USAGE);
+      return 2;
+    }
+    const state = await withDb((db) =>
+      values.on || values.off ? setAiSwitch(db, values.on === true, values.note ?? null) : readAiSwitch(db),
+    );
+    const note = state.note ? ` (${state.note})` : '';
+    console.log(`interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`);
     return 0;
   }
   console.error(USAGE);

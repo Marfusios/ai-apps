@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { Client } from '@elastic/elasticsearch';
 import pg from 'pg';
 import { createDb, type Db } from '../../server/db/client.js';
+import { CONTROL_TABLES } from '../../server/db/schema/index.js';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 
 const APP_DIR = resolve(fileURLToPath(import.meta.url), '../../..');
@@ -46,6 +47,17 @@ export async function resetCorpus(): Promise<void> {
   const pool = testPool('migrator');
   try {
     await pool.query(`TRUNCATE ${CORPUS_TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY`);
+  } finally {
+    await pool.end();
+  }
+}
+
+/** Empty the cost-control tables of aviation_test and re-enable the kill switch (migrator role; TRUNCATE bypasses the guards). */
+export async function resetControls(): Promise<void> {
+  const pool = testPool('migrator');
+  try {
+    await pool.query(`TRUNCATE ${CONTROL_TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY`);
+    await pool.query(`UPDATE ai_switch SET enabled = true, note = NULL, updated_at = now() WHERE id = 1`);
   } finally {
     await pool.end();
   }

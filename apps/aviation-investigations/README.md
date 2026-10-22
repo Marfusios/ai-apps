@@ -293,3 +293,67 @@ are set, every reachable model is priced and the worst-case request (all stages 
 their caps plus cache-write premiums) fits the reservation. Change a price, cap or
 model only together with the expected sums in `tests/unit/pricing.test.ts`.
 Adapter tests run the real SDK client against a stubbed `fetch`; nothing is sent.
+
+### Cost gate and quotas
+
+`server/quota/` meters every paid call (DESIGN §7–§9). Its tables are in
+`server/db/schema/controls.ts`; grants, row-level security, guard triggers and
+retention are in migration 0008.
+
+- **Admission.** `admitPaidRequest` runs one short transaction before any provider
+  call. It checks the kill switch, locks the principal, network and global usage
+  buckets in a fixed key order, and checks idempotency: keys are scoped to the
+  principal, the same key and canonical request hash (`canonicalRequestHash`) replays
+  the original admission, and the same key with another body is a 409 conflict. Then
+  come the attempt rate limits, the monthly and paced daily budgets, the principal's
+  quota, the anonymous share and the in-flight limits. An admitted request reserves
+  its maximum cost, takes one unit of quota and gets a 90-second lease with a fencing
+  token. Rejections: `trial_exhausted`, `daily_cap`, `monthly_cap`,
+  `anonymous_share_exhausted`, `global_paused` (`daily_budget`, `monthly_budget`,
+  `maintenance`), `rate_limited` (with `retryAt`), `concurrency` and
+  `idempotency_conflict`.
+- **Limits.** A trial has 3 searches and lasts 30 days. Signed-in users get 20 a day
+  and 150 a month, 5 a day during their first 3 days. Attempts are limited to 2 a
+  minute anonymously and 5 signed in, and per network identity and class to 10 an
+  hour and 20 a day anonymously, 30 an hour and 100 a day signed in. One request per
+  principal, two in total and one anonymous request can be in flight.
+- **Quota units.** The unit is taken at admission, so concurrent requests can never
+  both use the last trial search. `releaseQuota` gives it back for a reply that must
+  not count (off-topic, operational, nothing spent); the attempt still counts.
+  `recordAttempt` counts an attempt that makes no paid call.
+- **Settlement.** `settle` (interactive) and `settleSpend` (indexing, evaluation) need
+  the reservation's fencing token and a live lease. They charge the reported usage,
+  optionally itemized by provider, model, stage and token counts, or the full
+  reservation when the usage is uncertain. A lease that runs out first is charged in
+  full and never refunded (`expireLeases` sweeps; a late settlement is refused). Expiry
+  frees the concurrency slot, not the money.
+- **Budgets.** Spend is the append-only `cost_ledger` plus the full amount of every
+  open reservation, counted by the UTC day the reservation was made. The daily
+  interactive allowance is fixed at the start of each UTC day: the lower of $3 and
+  (interactive budget − earlier charges − still-open earlier reservations) / days left
+  in the month (`dailyAllowanceUsd`). Anonymous trials may use 25% of it. Indexing and
+  evaluation reserve with `reserveSpend` against their shared $20 month
+  (`remainingCategoryUsd`), and every category is bounded by the $100 total.
+- **Identities.** Only HMACs are stored: trial ids and Google issuer and `sub` under
+  `IDENTITY_HMAC_SECRET`, network identities under `IP_HMAC_SECRET`. Both are required
+  (at least 32 characters), and AI stays off without them. An account's quota key is
+  the anti-abuse HMAC(issuer, sub), so its usage survives account deletion and
+  returns on re-registration.
+- **Roles.** `aviation_app` admits and settles interactive requests; it cannot change
+  or delete ledger lines or flip the kill switch. `aviation_ingest` reserves and
+  settles indexing and evaluation spend only (row-level security), reads all spend
+  for the shared totals, and cannot see who used the AI. Triggers stop every role,
+  the schema owner included, from rewriting ledger lines or reopening a reservation.
+- **Status and retention.** `aiStatus` returns `available`, `signed_in_only` or
+  `paused`, a coarse reason, a retry time only when it is known, and the principal's
+  own remaining searches, never amounts. `pruneControls` deletes idempotency records
+  after 24 hours, buckets and anti-abuse records after their window plus 7 days, trial
+  identities after 30 days, and ledger lines and closed reservations after 90 days.
+
+The kill switch pauses interactive AI only:
+
+```sh
+pnpm worker ai-switch                        # show it
+pnpm worker ai-switch --off --note "<why>"   # pause (reason: maintenance)
+pnpm worker ai-switch --on
+```
