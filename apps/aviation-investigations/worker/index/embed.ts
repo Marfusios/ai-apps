@@ -32,34 +32,42 @@
  *
  * `createFakeEmbedder` is deterministic (a hash-seeded unit vector per input) and
  * free; tests and offline runs use it.
+ *
+ * The single request, its decoding, the limits and the errors are shared with the
+ * API's query embedder and live in `server/ai/embeddings.ts`.
  */
 import { createHash } from 'node:crypto';
-import OpenAI, { APIConnectionError, APIError } from 'openai';
+import OpenAI, { APIError } from 'openai';
+import {
+  EMBEDDING_LIMITS,
+  EmbeddingRequestError,
+  ResponseShapeError,
+  billedTokens,
+  checkBatch,
+  classifyFailure,
+  decodeEmbeddingResponse,
+  describeProviderError,
+  embeddingUsd,
+  requestEmbeddings,
+  type Embedder,
+  type ResponseProblem,
+} from '../../server/ai/embeddings.js';
 import { embeddingPrice } from '../../server/ai/pricing.js';
-import { MAX_INPUT_TOKENS } from './passages.js';
-import { ceilUsd, type SpendGate } from './spend-gate.js';
-import { countTokens } from './tokens.js';
+import { ceilUsd, type SpendCategory, type SpendGate } from './spend-gate.js';
 
-export interface EmbedResult {
-  /** One vector per input, in input order. */
-  vectors: Float32Array[];
-  /** Billed input tokens. */
-  tokens: number;
-}
-
-export interface Embedder {
-  readonly model: string;
-  readonly dims: number;
-  /** Price per million input tokens (0 for the fake embedder). */
-  readonly usdPerMillionTokens: number;
-  embed(texts: string[]): Promise<EmbedResult>;
-}
-
-export const EMBEDDING_LIMITS = Object.freeze({
-  maxInputs: 96,
-  maxBatchTokens: 250_000,
-  maxInputTokens: MAX_INPUT_TOKENS,
-});
+// The request core and the `Embedder` interface live in `server/ai/embeddings.ts`
+// (the API embeds queries with them); re-exported here for the worker and its tests.
+export {
+  EMBEDDING_LIMITS,
+  EmbeddingRequestError,
+  checkBatch,
+  embeddingUsd,
+  providerErrorInfo,
+  type EmbedResult,
+  type Embedder,
+  type ProviderErrorInfo,
+  type ResponseProblem,
+} from '../../server/ai/embeddings.js';
 
 /** Input price per million tokens from the shared price table (`server/ai/pricing.ts`); throws for unpriced models. */
 export function embeddingUsdPerMillion(model: string): number {
@@ -69,33 +77,9 @@ export function embeddingUsdPerMillion(model: string): number {
 /** Reservations cover the exact token count with this margin. */
 export const RESERVATION_SAFETY_FACTOR = 1.1;
 
-export function embeddingUsd(tokens: number, usdPerMillionTokens: number): number {
-  return (tokens * usdPerMillionTokens) / 1_000_000;
-}
-
 /** The reservation for one attempt at a batch of `tokens` tokens. */
 export function reservationUsd(tokens: number, usdPerMillionTokens: number): number {
   return ceilUsd(embeddingUsd(tokens, usdPerMillionTokens) * RESERVATION_SAFETY_FACTOR);
-}
-
-/** Validate a batch against `EMBEDDING_LIMITS`; returns its exact token count. */
-export function checkBatch(texts: readonly string[]): number {
-  if (texts.length === 0 || texts.length > EMBEDDING_LIMITS.maxInputs) {
-    throw new Error(`an embedding request holds 1..${EMBEDDING_LIMITS.maxInputs} inputs, not ${texts.length}`);
-  }
-  let total = 0;
-  texts.forEach((t, i) => {
-    const n = countTokens(t);
-    if (n === 0) throw new Error(`embedding input ${i} is empty`);
-    if (n > EMBEDDING_LIMITS.maxInputTokens) {
-      throw new Error(`embedding input ${i} has ${n} tokens; the limit is ${EMBEDDING_LIMITS.maxInputTokens}`);
-    }
-    total += n;
-  });
-  if (total > EMBEDDING_LIMITS.maxBatchTokens) {
-    throw new Error(`an embedding request holds at most ${EMBEDDING_LIMITS.maxBatchTokens} tokens, not ${total}`);
-  }
-  return total;
 }
 
 /**
@@ -122,67 +106,7 @@ export function batchByLimits<T>(items: readonly T[], tokensOf: (item: T) => num
 }
 
 // ---------------------------------------------------------------------------
-// Errors (metadata only)
-
-/** What is kept of a provider failure: values that look like identifiers, nothing else. */
-export interface ProviderErrorInfo {
-  /** HTTP status, when the provider answered. */
-  status?: number;
-  /** Provider error code such as `rate_limit_exceeded`. */
-  code?: string;
-  requestId?: string;
-  /** `connection` (no response), `api` (an HTTP error response) or `other`. */
-  kind: 'connection' | 'api' | 'other';
-}
-
-const SAFE_CODE = /^[a-z0-9_.-]{1,64}$/i;
-const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{1,100}$/;
-
-export function providerErrorInfo(err: unknown): ProviderErrorInfo {
-  if (err instanceof APIConnectionError) return { kind: 'connection' };
-  if (err instanceof APIError) {
-    const info: ProviderErrorInfo = { kind: 'api' };
-    if (typeof err.status === 'number') info.status = err.status;
-    if (typeof err.code === 'string' && SAFE_CODE.test(err.code)) info.code = err.code;
-    if (typeof err.requestID === 'string' && SAFE_REQUEST_ID.test(err.requestID)) info.requestId = err.requestID;
-    return info;
-  }
-  return { kind: 'other' };
-}
-
-function describeInfo(i: ProviderErrorInfo): string {
-  if (i.kind === 'connection') return 'connection failed or timed out';
-  if (i.kind === 'other') return 'unexpected client error';
-  return `HTTP ${i.status ?? 'error'}${i.code ? ` ${i.code}` : ''}${i.requestId ? ` (request ${i.requestId})` : ''}`;
-}
-
-/** A failed embedding request. Holds sanitized metadata and deliberately no `cause`. */
-export class EmbeddingRequestError extends Error {
-  readonly status: number | undefined;
-  readonly code: string | undefined;
-  readonly requestId: string | undefined;
-  constructor(
-    message: string,
-    readonly attempts: number,
-    info: ProviderErrorInfo,
-  ) {
-    super(message);
-    this.name = 'EmbeddingRequestError';
-    this.status = info.status;
-    this.code = info.code;
-    this.requestId = info.requestId;
-  }
-}
-
-/** Fixed categories of a malformed successful response; messages never quote the response. */
-export type ResponseProblem = 'invalid_response_shape' | 'count_mismatch' | 'index_out_of_range' | 'dimension_mismatch' | 'invalid_vector';
-
-class ResponseShapeError extends Error {
-  constructor(readonly problem: ResponseProblem) {
-    super(problem);
-    this.name = 'ResponseShapeError';
-  }
-}
+// Errors
 
 /** The provider asked for a wait longer than the run may sleep: rerun after `retryAt`. */
 export class EmbeddingDeferredError extends Error {
@@ -207,6 +131,8 @@ export interface OpenAIEmbedderConfig {
   gate: SpendGate;
   /** Reservation purpose recorded with every attempt (an id, no content). */
   purpose: string;
+  /** Spend category of every reservation (default `indexing`; the retrieval evaluation uses `evaluation`). */
+  category?: SpendCategory;
   maxAttempts?: number;
   /** First local backoff delay; doubled per attempt (default 1 s). */
   baseDelayMs?: number;
@@ -222,26 +148,6 @@ export interface OpenAIEmbedderConfig {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   log?: (message: string) => void;
-}
-
-interface Failure {
-  /** `rejected`: certainly not processed (settle at 0); `uncertain`: may have been billed. */
-  kind: 'rejected' | 'uncertain';
-  retryable: boolean;
-  info: ProviderErrorInfo;
-}
-
-function classify(err: unknown): Failure {
-  const info = providerErrorInfo(err);
-  if (info.kind === 'connection') return { kind: 'uncertain', retryable: true, info };
-  if (info.kind === 'api' && info.status !== undefined) {
-    const s = info.status;
-    if (s === 408) return { kind: 'uncertain', retryable: true, info };
-    if (s === 429) return { kind: 'rejected', retryable: info.code !== 'insufficient_quota', info };
-    if (s >= 500) return { kind: 'uncertain', retryable: true, info };
-    if (s >= 400) return { kind: 'rejected', retryable: false, info };
-  }
-  return { kind: 'uncertain', retryable: false, info };
 }
 
 /** A provider-requested wait (`retry-after-ms`, or `Retry-After` in seconds or as an HTTP date), in ms. */
@@ -290,45 +196,6 @@ export function rateLimitWaitMs(headers: Headers | undefined, batchTokens: numbe
   return waits.length > 0 ? Math.max(...waits) : undefined;
 }
 
-function decodeVector(b64: unknown, dims: number): Float32Array {
-  if (typeof b64 !== 'string') throw new ResponseShapeError('invalid_response_shape');
-  const buf = Buffer.from(b64, 'base64');
-  if (buf.byteLength !== dims * 4) throw new ResponseShapeError('dimension_mismatch');
-  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  const out = new Float32Array(dims);
-  let norm = 0;
-  for (let i = 0; i < dims; i += 1) {
-    const v = view.getFloat32(i * 4, true);
-    if (!Number.isFinite(v)) throw new ResponseShapeError('invalid_vector');
-    out[i] = v;
-    norm += v * v;
-  }
-  if (!(norm > 0)) throw new ResponseShapeError('invalid_vector');
-  return out;
-}
-
-/** Vectors of a successful response in input order; throws `ResponseShapeError` for anything unexpected. */
-function decodeResponse(body: unknown, count: number, dims: number): Float32Array[] {
-  const items = (body as { data?: unknown } | null)?.data;
-  if (typeof body !== 'object' || body === null || !Array.isArray(items)) throw new ResponseShapeError('invalid_response_shape');
-  if (items.length !== count) throw new ResponseShapeError('count_mismatch');
-  const vectors = new Array<Float32Array>(count);
-  for (const item of items as unknown[]) {
-    if (typeof item !== 'object' || item === null) throw new ResponseShapeError('invalid_response_shape');
-    const index = (item as { index?: unknown }).index;
-    if (typeof index !== 'number' || !Number.isInteger(index)) throw new ResponseShapeError('invalid_response_shape');
-    if (index < 0 || index >= count || vectors[index]) throw new ResponseShapeError('index_out_of_range');
-    vectors[index] = decodeVector((item as { embedding?: unknown }).embedding, dims);
-  }
-  return vectors;
-}
-
-/** Billed prompt tokens, when the response reports them as a non-negative integer. */
-function billedTokens(body: unknown): number | undefined {
-  const t = (body as { usage?: { prompt_tokens?: unknown } } | null)?.usage?.prompt_tokens;
-  return typeof t === 'number' && Number.isSafeInteger(t) && t >= 0 ? t : undefined;
-}
-
 export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
   const price = embeddingUsdPerMillion(cfg.model);
   if (!cfg.apiKey) throw new Error('OPENAI_API_KEY is not set');
@@ -374,14 +241,14 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
       const reserve = reservationUsd(tokens, price);
       for (let attempt = 1; ; attempt += 1) {
         await waitUntil(notBefore, notBeforeReason);
-        const reservation = await cfg.gate.reserve({ category: 'indexing', usd: reserve, purpose: cfg.purpose });
+        const reservation = await cfg.gate.reserve({ category: cfg.category ?? 'indexing', usd: reserve, purpose: cfg.purpose });
         let response: Awaited<ReturnType<typeof requestEmbeddings>>;
         try {
           response = await requestEmbeddings(client, cfg.model, cfg.dims, texts);
         } catch (err) {
-          const f = classify(err);
+          const f = classifyFailure(err);
           await cfg.gate.settle(reservation, f.kind === 'rejected' ? { usd: 0 } : 'uncertain');
-          const what = describeInfo(f.info);
+          const what = describeProviderError(f.info);
           if (!f.retryable || attempt >= maxAttempts) {
             throw new EmbeddingRequestError(`embedding request failed after ${attempt} attempt(s): ${what}`, attempt, f.info);
           }
@@ -408,7 +275,7 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
         if (wait !== undefined) deferUntil(now() + wait, 'the provider rate limit');
         let vectors: Float32Array[];
         try {
-          vectors = decodeResponse(data, texts.length, cfg.dims);
+          vectors = decodeEmbeddingResponse(data, texts.length, cfg.dims);
         } catch (err) {
           await cfg.gate.settle(reservation, outcome);
           // A fixed category only: never a value from the response or a decoder message.
@@ -420,13 +287,6 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
       }
     },
   };
-}
-
-async function requestEmbeddings(client: OpenAI, model: string, dims: number, texts: string[]) {
-  const { data, response } = await client.embeddings
-    .create({ model, input: texts, dimensions: dims, encoding_format: 'base64' })
-    .withResponse();
-  return { data, headers: response.headers };
 }
 
 // ---------------------------------------------------------------------------

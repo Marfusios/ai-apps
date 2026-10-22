@@ -383,6 +383,66 @@ pnpm worker index passages --generation <id> --confirm-cost  # paid: OPENAI_API_
 Integration test files run one at a time: they share `aviation_test` and the
 `aviation-test-*` indices, and some of them reset both.
 
+### Evidence retrieval (hybrid search)
+
+`server/search/hybrid.ts` retrieves the evidence an AI brief is written from
+(DESIGN §5; amendments A2, A3, A11, A13). It reads the passages index the active
+manifest names and refuses (`RetrievalUnavailableError`) when there is none, or when
+the index `_meta` names another generation, index version, embedding model or
+dimension count. There is no keyword-only fallback for AI answers.
+
+- **One filter.** `compileFilters` (in `server/search/filters.ts`, the compiler
+  keyword search uses too) always adds `country: USA` and `answer_eligible: true`.
+  With any aircraft facet it adds `aircraft_specific: true` and one nested aircraft
+  clause, so an event-scoped passage of a multi-aircraft event never satisfies an
+  aircraft filter. The BM25 query, the kNN prefilter and the evidence fetch use the
+  same clauses.
+- **Stage 1, case candidates.** The question is embedded once
+  (`queryEmbeddingInput`, template `query-v1`: whitespace collapsed, no header, at
+  most 1,000 tokens). BM25 (`multi_match` over `text`) and kNN (`num_candidates` =
+  4 × k) each return `perChannel` passages (50 live; the evaluation also runs 100).
+  Reciprocal rank fusion in TypeScript (`sum 1/(60 + rank)`) and deduplication to
+  cases at their best passage give the case ranking.
+- **Stage 2, packing** (`server/search/evidence.ts`). At most 6 cases, 12 passages,
+  3 passages per case and 10,000 passage-text tokens. Each selected case gets its
+  2 best retrieved passages (a retrieved cause counts) and every probable-cause
+  passage it has under the filters, which always counts toward the limits; the
+  lowest-ranked other passages are dropped first, and free room is filled in fused
+  order. `RETRIEVAL_DEFAULTS` holds every value; all are starting points for review
+  gate G5.
+- **Cost.** Retrieval embeds through the `Embedder` it is given and reports the
+  query embedding's model, billed tokens and USD. It never reserves money: an AI
+  request's admission reservation covers one query embedding, and its settlement
+  adds the reported `embed` line (`createOpenAIQueryEmbedder` makes one attempt;
+  a `QueryEmbeddingError` says whether it was billed).
+
+The retrieval evaluation measures case Recall@20 on the stage 1 ranking and evidence
+coverage on the packed bundle, for BM25 alone, kNN alone and the hybrid, at 50 and
+100 passages per channel:
+
+```sh
+pnpm eval:retrieval:silver --dry-run          # derive the silver set from the active generation (DATABASE_URL)
+pnpm eval:retrieval:silver                    # write evals/retrieval/dataset.json; --check compares instead
+pnpm eval:retrieval                           # plan only: question count, tokens, estimated cost
+pnpm eval:retrieval --confirm-cost            # embed the questions (about $0.00002) and write data/work/eval-retrieval-<UTC>.json
+pnpm eval:retrieval --fake-embedder           # free pipeline check; vector and hybrid numbers mean nothing
+```
+
+Both commands take `--env-files a,b` (otherwise `AVIATION_ENV_FILES`, otherwise
+`.env.local`). `eval:retrieval` evaluates the active manifest's passages index or
+`--passages-index <name>`, takes `--sizes`, `--split dev|holdout` and `--out-dir`,
+and meters the embeddings on the ledger under `evaluation` (`DATABASE_INGEST_URL`).
+The report holds every ranking, bundle and Elasticsearch body, query vectors elided.
+
+The silver set (`evals/retrieval/dataset.json`) has public NTSB case numbers derived
+by committed rules (`evals/retrieval/questions.ts`): structured fields plus explicit
+PostgreSQL regular expressions over one section at a time, each recorded as
+`derivation.rule` and `derivation.criteria` for an expert to re-check. Every label is
+`pending-expert`. A case several rules derive stays with the first question
+(`derivation.sharedWith` in the others), so splits are held out by case; questions
+are split into `dev` and `holdout`, stratified by primary tag. A unit test fails when
+`dataset.json` no longer matches the rules.
+
 ### Web client
 
 `web/` is a React 19 single-page app built with Vite, React Router, TanStack Query

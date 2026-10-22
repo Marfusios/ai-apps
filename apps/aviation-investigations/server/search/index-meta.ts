@@ -13,6 +13,9 @@ export interface IndexMeta {
   fingerprint: string | null;
   generationId: number | null;
   buildId: string | null;
+  /** Passages indices: the embedding model and dimensions the vectors were built with. */
+  embeddingModel: string | null;
+  embeddingDims: number | null;
 }
 
 export class IndexMetaError extends Error {
@@ -44,11 +47,14 @@ export async function readIndexMeta(es: Client, index: string): Promise<IndexMet
   }
   const meta = found[index]?.mappings?._meta ?? {};
   const generation = meta.generation_id;
+  const dims = meta.embedding_dims;
   return {
     index,
     indexVersion: str(meta.index_version),
     fingerprint: str(meta.fingerprint),
     generationId: typeof generation === 'number' && Number.isSafeInteger(generation) ? generation : null,
     buildId: str(meta.build_id),
+    embeddingModel: str(meta.embedding_model),
+    embeddingDims: typeof dims === 'number' && Number.isSafeInteger(dims) && dims > 0 ? dims : null,
   };
 }

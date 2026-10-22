@@ -90,6 +90,13 @@ function esClient(apiKey: string | undefined): Client {
   });
 }
 
+/** An API key of the test environment, for child processes that read ELASTICSEARCH_*_API_KEY. */
+export function testEsApiKey(access: 'read' | 'write'): string {
+  const key = testVar(access === 'read' ? 'TEST_ELASTICSEARCH_READ_API_KEY' : 'TEST_ELASTICSEARCH_WRITE_API_KEY');
+  if (!key) throw new Error('Elasticsearch keys missing; run pnpm services:setup');
+  return key;
+}
+
 /** Client using the test environment's WRITE key (aviation-test-* only). */
 export function testEs(): Client {
   return esClient(testVar('TEST_ELASTICSEARCH_WRITE_API_KEY'));

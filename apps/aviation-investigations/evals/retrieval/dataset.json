@@ -1,0 +1,2937 @@
+{
+  "version": "silver-v1",
+  "description": "Silver retrieval set (amendment A13): public NTSB case numbers derived from structured fields and explicit keyword rules (derivation.criteria, compiled by evals/retrieval/silver.ts). Every label awaits expert adjudication. Splits are held out by case. Rebuild with pnpm eval:retrieval:silver.",
+  "adjudication": "pending-expert",
+  "source": {
+    "generationId": 1,
+    "answerEligibleCases": 24291,
+    "builder": "evals/retrieval/build-silver.ts",
+    "rulesSha256": "e64f6c3bfbfef9236f1b050c4eac310bf621b9da40bd45111c5b724b5b3935ed"
+  },
+  "limits": {
+    "minExpected": 1,
+    "maxExpected": 20
+  },
+  "questions": [
+    {
+      "id": "seed-2008-power-loss-after-maintenance",
+      "question": "Find 2008 investigations involving engine power loss shortly after maintenance, an overhaul or a part replacement.",
+      "tags": [
+        "seed",
+        "maintenance_timing"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2008
+      },
+      "expected": [
+        "ANC08LA063",
+        "ANC08LA113",
+        "DFW08TA066",
+        "ERA09LA015",
+        "LAX08LA142",
+        "LAX08LA221",
+        "LAX08LA269",
+        "LAX08LA292",
+        "NYC08LA106",
+        "NYC08LA202",
+        "SEA08FA071"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008, where the probable cause or analysis matches /loss of (engine )?power|lost (engine )?power|engine (lost power|stopped)/ and the analysis matches /(maintenance|overhaul|installed|replaced|inspection)[^.]{0,120}\\y(\\d+(\\.\\d+)?|one|two|three|several|few) (flight )?(hours|days|weeks|months) (prior to|before) the accident/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2008
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "loss of (engine )?power|lost (engine )?power|engine (lost power|stopped)"
+            },
+            {
+              "in": [
+                "analysis"
+              ],
+              "pattern": "(maintenance|overhaul|installed|replaced|inspection)[^.]{0,120}\\y(\\d+(\\.\\d+)?|one|two|three|several|few) (flight )?(hours|days|weeks|months) (prior to|before) the accident"
+            }
+          ]
+        },
+        "note": "The motivating question (DESIGN §2) in 2008: a power loss plus an analysis sentence that dates maintenance, an overhaul, an installation or an inspection before the accident. Includes DFW08TA066 and NYC08LA106. Check that the dated work concerns the failed system.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "seed-2008-unexplained-after-maintenance",
+      "question": "Which 2008 engine power losses followed maintenance or test flights but stayed unexplained, with examinations finding no anomalies?",
+      "tags": [
+        "seed",
+        "causal_uncertainty",
+        "negation"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2008
+      },
+      "expected": [
+        "DEN08LA103",
+        "ERA09LA096",
+        "MIA08LA156",
+        "WPR09LA009"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008, where the probable cause matches /loss of (engine )?power for (undetermined|unknown) reasons/ and the analysis or factual narrative matches /maintenance|test flight/ and the analysis matches /no (mechanical )?(anomalies|discrepancies|problems)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2008
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loss of (engine )?power for (undetermined|unknown) reasons"
+            },
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "maintenance|test flight"
+            },
+            {
+              "in": [
+                "analysis"
+              ],
+              "pattern": "no (mechanical )?(anomalies|discrepancies|problems)"
+            }
+          ]
+        },
+        "note": "Undetermined power loss, maintenance or test flights mentioned, and a negative finding in the analysis. Includes DEN08LA103 and MIA08LA156. Check that the maintenance preceded the accident flight.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-carb-heat-alaska",
+      "question": "In Alaska, which carburetor icing accidents happened because the pilot did not use carburetor heat?",
+      "tags": [
+        "negation"
+      ],
+      "filters": {
+        "state": [
+          "AK"
+        ]
+      },
+      "expected": [
+        "ANC08CA121",
+        "ANC09LA036",
+        "ANC10LA061",
+        "ANC10TA017",
+        "ANC12CA072",
+        "ANC13CA044",
+        "ANC13LA008",
+        "ANC15CA064",
+        "ANC15LA005",
+        "ANC15LA046",
+        "ANC16CA056",
+        "ANC18LA080",
+        "ANC20CA016",
+        "ANC20CA030",
+        "ANC22LA049",
+        "ANC22LA064",
+        "ANC23LA062"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases in AK, where the probable cause matches /carburetor ic/ and the probable cause or analysis matches /(did not|failure to|failed to|not) (use|apply|activate)[^.]{0,30}carburetor heat/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "states": [
+            "AK"
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "carburetor ic"
+            },
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "(did not|failure to|failed to|not) (use|apply|activate)[^.]{0,30}carburetor heat"
+            }
+          ]
+        },
+        "note": "Carburetor ice in the probable cause and a negated use of carburetor heat in the cause or analysis.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-stall-warning-silent",
+      "question": "Between 2008 and 2014, find stall accidents where the stall warning did not sound or was not working.",
+      "tags": [
+        "negation"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2014
+      },
+      "expected": [
+        "CEN12FA570",
+        "CEN13LA249",
+        "DCA12IA141",
+        "DEN08LA125",
+        "ERA09CA363",
+        "ERA10LA085",
+        "ERA11FA222",
+        "WPR09CA106",
+        "WPR10LA115",
+        "WPR10LA242",
+        "WPR11FA316",
+        "WPR12FA059",
+        "WPR12FA123",
+        "WPR12LA418"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2014, where the analysis or factual narrative matches /(did not|didn.t|never|was not|wasn.t) (hear|sound|activate|work)[^.]{0,30}stall warning|stall warning[^.]{0,40}(did not|didn.t|never|was not|wasn.t|failed to) (sound|activate|work|function|operate)|no stall warning/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2014
+          ],
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "(did not|didn.t|never|was not|wasn.t) (hear|sound|activate|work)[^.]{0,30}stall warning|stall warning[^.]{0,40}(did not|didn.t|never|was not|wasn.t|failed to) (sound|activate|work|function|operate)|no stall warning"
+            }
+          ]
+        },
+        "note": "A negated stall warning in the narrative. Check that a stall was part of the accident sequence.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-gear-warning-silent",
+      "question": "Landing gear accidents where the gear warning horn did not sound.",
+      "tags": [
+        "negation"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN09CA260",
+        "CEN11IA179",
+        "CEN20CA363",
+        "CEN23LA407",
+        "CEN25LA016",
+        "ERA11LA231",
+        "ERA15LA058",
+        "ERA15LA202",
+        "ERA17LA033",
+        "ERA20CA125",
+        "ERA23LA154",
+        "ERA26LA057",
+        "GAA19CA398",
+        "WPR11LA378",
+        "WPR25LA122"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /gear/ and the analysis or factual narrative matches /(gear|landing gear) warning (horn |system |light )?(did not|didn.t|never|was not|wasn.t|failed to) (sound|activate|work|function|operate|illuminate)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "gear"
+            },
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "(gear|landing gear) warning (horn |system |light )?(did not|didn.t|never|was not|wasn.t|failed to) (sound|activate|work|function|operate|illuminate)"
+            }
+          ]
+        },
+        "note": "Gear in the probable cause and a gear warning that did not sound or work in the narrative.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-no-shoulder-harness",
+      "question": "Accidents where an occupant was not wearing the available shoulder harness.",
+      "tags": [
+        "negation"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC14FA068",
+        "ANC18FA044",
+        "CEN12FA616",
+        "CEN17FA196",
+        "CEN17LA043",
+        "ERA21LA383",
+        "WPR17FA008"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause or analysis matches /(not|without) (wearing|using|use)[^.]{0,25}shoulder harness|shoulder harness[^.]{0,30}(was not|were not) (worn|used)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "(not|without) (wearing|using|use)[^.]{0,25}shoulder harness|shoulder harness[^.]{0,30}(was not|were not) (worn|used)"
+            }
+          ]
+        },
+        "note": "A negated shoulder harness use in the cause or analysis.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-helicopter-elt-silent",
+      "question": "Helicopter accidents where the emergency locator transmitter did not activate.",
+      "tags": [
+        "negation"
+      ],
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "expected": [
+        "ANC10LA020",
+        "CEN10FA509",
+        "WPR16FA040"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category HELI, where the analysis or factual narrative matches /ELT[^.]{0,40}(did not|didn.t|failed to) activate/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "HELI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "ELT[^.]{0,40}(did not|didn.t|failed to) activate"
+            }
+          ]
+        },
+        "note": "Single helicopter; the narrative says the ELT did not activate.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-runway-lights-off",
+      "question": "Accidents where the runway lights were off, had not been activated, or were not working.",
+      "tags": [
+        "negation"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC12CA019",
+        "ANC23LA022",
+        "CEN09FA601",
+        "CEN12LA109",
+        "CEN13FA085",
+        "CEN13LA377",
+        "DCA18IA081",
+        "DCA19FA089",
+        "ERA09FA039",
+        "ERA10FA024",
+        "ERA15CA065",
+        "ERA15CA157",
+        "ERA19FA070",
+        "ERA22LA031",
+        "ERA23LA094",
+        "WPR24FA002"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the analysis or factual narrative matches /runway (edge )?lights[^.]{0,60}(were not|was not|weren.t|had not been|were off|inoperative)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "runway (edge )?lights[^.]{0,60}(were not|was not|weren.t|had not been|were off|inoperative)"
+            }
+          ]
+        },
+        "note": "Negated or inoperative runway lights in the narrative. Check that the lighting mattered to the accident.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-no-weather-briefing",
+      "question": "Fatal accidents in instrument conditions from 2015 to 2020 where the pilot did not obtain a weather briefing.",
+      "tags": [
+        "negation"
+      ],
+      "filters": {
+        "injury": [
+          "FATL"
+        ],
+        "yearFrom": 2015,
+        "yearTo": 2020
+      },
+      "expected": [
+        "CEN16FA042",
+        "CEN19FA021",
+        "CEN19FA120",
+        "CEN19FA177",
+        "CEN19FA247",
+        "CEN19FA332",
+        "CEN20LA127",
+        "ERA15FA144",
+        "ERA15FA220",
+        "ERA17FA241",
+        "ERA18FA022",
+        "ERA18FA030",
+        "ERA18FA127",
+        "ERA18FA197",
+        "ERA18LA119",
+        "ERA19FA234",
+        "WPR17FA045",
+        "WPR18FA073",
+        "WPR19FA103"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2015 to 2020 with highest injury FATL, where the probable cause matches /instrument meteorological|IMC/ and the probable cause or analysis matches /did not (obtain|receive|request)[^.]{0,30}(weather )?briefing|no (record|evidence) of (a|the pilot obtaining|him obtaining) [^.]{0,30}briefing/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2015,
+            2020
+          ],
+          "injury": [
+            "FATL"
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "instrument meteorological|IMC"
+            },
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "did not (obtain|receive|request)[^.]{0,30}(weather )?briefing|no (record|evidence) of (a|the pilot obtaining|him obtaining) [^.]{0,30}briefing"
+            }
+          ]
+        },
+        "note": "Instrument conditions in the probable cause and no weather briefing obtained (or no record of one) in the cause or analysis.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-fuel-not-checked",
+      "question": "Fuel exhaustion accidents from 2016 to 2018 where the pilot did not check or verify the fuel on board.",
+      "tags": [
+        "negation"
+      ],
+      "filters": {
+        "yearFrom": 2016,
+        "yearTo": 2018
+      },
+      "expected": [
+        "ANC16LA029",
+        "CEN16LA090",
+        "CEN16LA112",
+        "CEN16LA225",
+        "CEN16LA314",
+        "CEN17LA356",
+        "CEN18LA300",
+        "GAA17CA305",
+        "GAA18CA149",
+        "GAA18CA330",
+        "GAA19CA070",
+        "WPR17LA018",
+        "WPR18FA249",
+        "WPR18LA199"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2016 to 2018, where the probable cause matches /fuel exhaustion/ and the probable cause or analysis matches /(did not|failed to|not) (visually )?(check|verify|confirm|inspect|monitor)[^.]{0,40}fuel/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2016,
+            2018
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "fuel exhaustion"
+            },
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "(did not|failed to|not) (visually )?(check|verify|confirm|inspect|monitor)[^.]{0,40}fuel"
+            }
+          ]
+        },
+        "note": "Fuel exhaustion in the probable cause and a negated fuel check in the cause or analysis.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-helicopter-uncertificated-pilot",
+      "question": "Helicopter accidents where the pilot did not hold a pilot certificate.",
+      "tags": [
+        "negation",
+        "operational"
+      ],
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "expected": [
+        "CEN12CA647",
+        "CEN12LA669",
+        "CEN19FA276",
+        "CEN23FA183",
+        "ERA12LA541",
+        "ERA16LA330",
+        "ERA18LA082",
+        "ERA21LA295",
+        "ERA23LA233",
+        "ERA25LA160",
+        "GAA16CA290",
+        "GAA18CA250",
+        "WPR19TA245",
+        "WPR20TA039"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category HELI, where the probable cause or analysis matches /did not (hold|possess|have) (a|any) (valid |current )?(pilot|airman) certificate|was not (a )?certificated pilot|non-?certificated pilot|did not hold a pilot|no (pilot|rotorcraft) certificate/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "HELI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "did not (hold|possess|have) (a|any) (valid |current )?(pilot|airman) certificate|was not (a )?certificated pilot|non-?certificated pilot|did not hold a pilot|no (pilot|rotorcraft) certificate"
+            }
+          ]
+        },
+        "note": "Single helicopter; the cause or analysis says the pilot held no pilot certificate. Check student or expired certificates.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "neg-helicopter-no-anomalies",
+      "question": "Helicopter engine power losses from 2008 to 2015 where examination found no anomalies and the reason stayed undetermined.",
+      "tags": [
+        "negation",
+        "causal_uncertainty"
+      ],
+      "filters": {
+        "category": [
+          "HELI"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2015
+      },
+      "expected": [
+        "CEN09CA257",
+        "CEN11LA356",
+        "ERA11LA175",
+        "LAX08LA139"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2015 with a single aircraft with an aircraft of category HELI, where the probable cause matches /loss of (engine )?power for (undetermined|unknown) reasons/ and the analysis or factual narrative matches /no (evidence of )?(pre-?(impact|accident) )?(mechanical )?(anomalies|malfunctions|discrepancies)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2015
+          ],
+          "categoryAny": [
+            "HELI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loss of (engine )?power for (undetermined|unknown) reasons"
+            },
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "no (evidence of )?(pre-?(impact|accident) )?(mechanical )?(anomalies|malfunctions|discrepancies)"
+            }
+          ]
+        },
+        "note": "Single helicopter, undetermined power loss, and a negative examination in the narrative.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-inflight-fire",
+      "question": "In-flight fires from 2008 to 2014 whose origin investigators could not determine.",
+      "tags": [
+        "causal_uncertainty"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2014
+      },
+      "expected": [
+        "CEN09LA594",
+        "CEN11LA350",
+        "CEN12FA395",
+        "CEN12LA652",
+        "CEN13LA561",
+        "CEN14FA389",
+        "CEN14LA021",
+        "CEN14LA504",
+        "CHI08LA169",
+        "ERA09FA248",
+        "ERA09LA231",
+        "ERA11FA312",
+        "ERA12FA412",
+        "WPR09LA247",
+        "WPR09LA361",
+        "WPR10LA128",
+        "WPR10LA308",
+        "WPR12LA292",
+        "WPR12LA414",
+        "WPR14FA258"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2014, where the probable cause matches /in-?flight fire|fire in flight/ and the probable cause matches /undetermined|could not be determined|unknown|unable to be determined/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2014
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "in-?flight fire|fire in flight"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "undetermined|could not be determined|unknown|unable to be determined"
+            }
+          ]
+        },
+        "note": "An in-flight fire and an undetermined element in the probable cause. Check that the undetermined part is the fire origin.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-incapacitation",
+      "question": "Accidents where the pilot was probably incapacitated but the reason could not be determined.",
+      "tags": [
+        "causal_uncertainty"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN09FA610",
+        "CEN10LA463",
+        "CEN11FA259",
+        "CEN18FA400",
+        "CEN22FA021",
+        "CEN24FA089",
+        "ERA11LA234",
+        "ERA12FA465",
+        "ERA12LA364",
+        "ERA13FA349",
+        "ERA14LA415",
+        "ERA17FA131",
+        "ERA17FA172",
+        "ERA23FA256",
+        "WPR09LA032",
+        "WPR15LA242",
+        "WPR21LA082",
+        "WPR21LA350",
+        "WPR25FA062"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /incapacitat/ and the probable cause matches /undetermined|unknown|could not be determined/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "incapacitat"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "undetermined|unknown|could not be determined"
+            }
+          ]
+        },
+        "note": "Incapacitation and an undetermined or unknown element in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-inflight-breakup",
+      "question": "In-flight breakups where investigators could not determine why the structure failed.",
+      "tags": [
+        "causal_uncertainty"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC21FA015",
+        "CEN10FA291",
+        "CEN17FA248",
+        "CEN23FA204",
+        "ERA20FA074",
+        "WPR09FA104",
+        "WPR12FA180",
+        "WPR16FA054",
+        "WPR17FA117",
+        "WPR17FA151",
+        "WPR18LA177",
+        "WPR23MA113"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /in-?flight (breakup|break-up|structural failure)/ and the probable cause matches /undetermined|could not be determined|unknown/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "in-?flight (breakup|break-up|structural failure)"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "undetermined|could not be determined|unknown"
+            }
+          ]
+        },
+        "note": "An in-flight breakup or structural failure and an undetermined element in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-helicopter-tail-rotor",
+      "question": "Helicopter accidents involving the tail rotor where the reason for the failure or loss of control was undetermined.",
+      "tags": [
+        "causal_uncertainty",
+        "mechanical"
+      ],
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "expected": [
+        "ANC15LA073",
+        "ANC24LA013",
+        "CEN09CA584",
+        "CEN10IA314",
+        "CEN11LA315",
+        "CEN13FA192",
+        "CEN14FA193",
+        "CEN15LA379",
+        "CEN15LA412",
+        "CEN18LA069",
+        "DFW08LA100",
+        "ERA15LA374",
+        "ERA16LA030",
+        "ERA16LA054",
+        "LAX08LA183",
+        "WPR10FA440",
+        "WPR14FA137",
+        "WPR21LA183",
+        "WPR26LA062"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category HELI, where the probable cause matches /tail rotor/ and the probable cause matches /undetermined|unknown reasons|could not be determined/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "HELI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "tail rotor"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "undetermined|unknown reasons|could not be determined"
+            }
+          ]
+        },
+        "note": "Single helicopter; tail rotor and an undetermined element in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-carb-ice-likely",
+      "question": "Engine power losses that investigators attributed only probably or likely to carburetor icing.",
+      "tags": [
+        "causal_uncertainty"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN12LA015",
+        "CEN13LA068",
+        "ERA10LA294",
+        "ERA14FA350",
+        "WPR12LA228",
+        "WPR14CA197"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /carburetor ic/ and the probable cause matches /\\y(likely|possibl[ey]|probabl[ey]|most likely)\\y/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "carburetor ic"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "\\y(likely|possibl[ey]|probabl[ey]|most likely)\\y"
+            }
+          ]
+        },
+        "note": "Carburetor ice qualified as likely or possible in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-fuel-contamination-suspected",
+      "question": "Unexplained engine power losses where fuel contamination was considered but not confirmed as the cause.",
+      "tags": [
+        "causal_uncertainty",
+        "negation"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC23LA080",
+        "CEN09CA064",
+        "CEN09CA295",
+        "CEN09CA347",
+        "CEN10LA432",
+        "CEN19LA222",
+        "CEN22LA115",
+        "ERA09LA264",
+        "ERA10FA364",
+        "ERA10LA314",
+        "ERA10LA424",
+        "ERA10LA463",
+        "ERA12LA034",
+        "ERA24LA082",
+        "ERA24LA361",
+        "MIA08LA041",
+        "MIA08LA083",
+        "NYC08LA142"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /loss of (engine )?power for (undetermined|unknown) reasons/ and the analysis matches /contaminat/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loss of (engine )?power for (undetermined|unknown) reasons"
+            },
+            {
+              "in": [
+                "analysis"
+              ],
+              "pattern": "contaminat"
+            }
+          ]
+        },
+        "note": "Undetermined power loss with contamination discussed in the analysis. Check that contamination was examined, not just mentioned.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-loss-of-control-undetermined",
+      "question": "Accidents in 2008 and 2009 where the airplane or helicopter went out of control for reasons that could not be determined.",
+      "tags": [
+        "causal_uncertainty"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2009
+      },
+      "expected": [
+        "CEN09FA012",
+        "CEN09LA281",
+        "CEN09LA312",
+        "CEN09LA573",
+        "CEN10FA063",
+        "DFW08FA111",
+        "DFW08FA218",
+        "DFW08LA081",
+        "DFW08LA105",
+        "MIA08LA105",
+        "MIA08LA138",
+        "NYC08FA148",
+        "NYC08FA239",
+        "NYC08FA319",
+        "NYC08LA259",
+        "WPR09LA149",
+        "WPR09LA264"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2009, where the probable cause matches /loss of (aircraft )?control for (undetermined|unknown) reasons/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2009
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loss of (aircraft )?control for (undetermined|unknown) reasons"
+            }
+          ]
+        },
+        "note": "The probable cause names a loss of control for undetermined or unknown reasons.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "unc-wreckage-not-recovered-water",
+      "question": "Accidents over water from 2020 to 2022 where the wreckage was not recovered and the cause stayed undetermined.",
+      "tags": [
+        "causal_uncertainty"
+      ],
+      "filters": {
+        "yearFrom": 2020,
+        "yearTo": 2022
+      },
+      "expected": [
+        "ANC21LA018",
+        "ANC21LA020",
+        "CEN21LA321",
+        "CEN21LA395",
+        "DCA20LA138",
+        "ERA20LA134",
+        "ERA21LA123",
+        "ERA21LA141",
+        "ERA22FA405",
+        "WPR20LA131",
+        "WPR21FA175",
+        "WPR21LA061",
+        "WPR22FA044",
+        "WPR22LA371",
+        "WPR23FA007",
+        "WPR23FA044"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2020 to 2022, where the probable cause matches /undetermined|could not be determined/ and the analysis or factual narrative matches /(wreckage|airplane|helicopter|engine)[^.]{0,40}(was|were|has|have) not (been )?(recovered|located|found)/ and the analysis or factual narrative matches /ocean|gulf|lake|\\ybay\\y|\\ysea\\y|water/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2020,
+            2022
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "undetermined|could not be determined"
+            },
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "(wreckage|airplane|helicopter|engine)[^.]{0,40}(was|were|has|have) not (been )?(recovered|located|found)"
+            },
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "ocean|gulf|lake|\\ybay\\y|\\ysea\\y|water"
+            }
+          ]
+        },
+        "note": "Undetermined cause, unrecovered wreckage and water in the narrative. Check that the wreckage went into water.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-inspected-within-3-days",
+      "question": "Accidents from 2015 to 2017 caused by maintenance errors on aircraft that had been inspected within the previous three days.",
+      "tags": [
+        "maintenance_timing"
+      ],
+      "filters": {
+        "yearFrom": 2015,
+        "yearTo": 2017
+      },
+      "expected": [
+        "CEN15FA269",
+        "CEN15LA140",
+        "CEN15LA270",
+        "CEN16FA146",
+        "CEN17FA139",
+        "ERA15IA198",
+        "ERA16LA145",
+        "ERA17LA122",
+        "WPR15FA158",
+        "WPR15LA153",
+        "WPR15LA159",
+        "WPR15LA167",
+        "WPR15LA235",
+        "WPR16IA100",
+        "WPR17LA042",
+        "WPR18LA018"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2015 to 2017 with an aircraft inspected at most 3 days before the event, where the probable cause matches /maintenance personnel|mechanic|improper(ly)? (maintenance|install|secur|torqu|assembl|rig)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2015,
+            2017
+          ],
+          "inspectedWithinDays": 3,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance personnel|mechanic|improper(ly)? (maintenance|install|secur|torqu|assembl|rig)"
+            }
+          ]
+        },
+        "note": "Structured: last inspection date at most 3 days before the event; the probable cause blames maintenance. The inspection is the recorded one, not necessarily the faulty work (DESIGN §3).",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-within-5-hours-of-inspection",
+      "question": "Accidents blamed on maintenance errors within 5 flight hours of the aircraft's last inspection.",
+      "tags": [
+        "maintenance_timing"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC16LA021",
+        "CEN11LA669",
+        "CEN14FA468",
+        "CEN15FA141",
+        "ERA11FA458",
+        "ERA14CA191",
+        "ERA14LA257",
+        "ERA16FA084",
+        "ERA23FA382",
+        "LAX08LA063",
+        "NYC08CA132",
+        "SEA08IA217",
+        "WPR10CA398",
+        "WPR10LA252",
+        "WPR24LA198"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with an aircraft at most 5 airframe hours past its last inspection, where the probable cause matches /maintenance personnel|mechanic|improper(ly)? (maintenance|install|secur|torqu|assembl|rig)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "hoursSinceInspectionMax": 5,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance personnel|mechanic|improper(ly)? (maintenance|install|secur|torqu|assembl|rig)"
+            }
+          ]
+        },
+        "note": "Structured: airframe hours minus hours at last inspection at most 5; the probable cause blames maintenance.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-overhaul-recent-2008-2014",
+      "question": "Engine failures between 2008 and 2014 that occurred within 20 operating hours after an overhaul.",
+      "tags": [
+        "maintenance_timing",
+        "mechanical"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2014
+      },
+      "expected": [
+        "ANC13LA059",
+        "CEN09LA051",
+        "CEN10LA433",
+        "CEN12IA096",
+        "CEN13LA152",
+        "ERA09IA499",
+        "ERA09LA269",
+        "ERA09LA296",
+        "ERA10FA409",
+        "ERA12LA575",
+        "ERA13IA313",
+        "ERA13LA398",
+        "LAX08LA274",
+        "WPR09LA454"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2014, where the analysis or factual narrative matches /overhaul[^.]{0,100}\\y([0-9]|1[0-9])(\\.\\d+)? (flight |tach |hobbs |operating )?hours (before|prior to|earlier|since)/ and the probable cause matches /loss of engine power|power loss|engine failure|failure of the/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2014
+          ],
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "overhaul[^.]{0,100}\\y([0-9]|1[0-9])(\\.\\d+)? (flight |tach |hobbs |operating )?hours (before|prior to|earlier|since)"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loss of engine power|power loss|engine failure|failure of the"
+            }
+          ]
+        },
+        "note": "An overhaul sentence with fewer than 20 hours before or since, and a power loss or failure in the probable cause. Check that the overhauled part is the failed one.",
+        "sharedWith": [
+          {
+            "ntsbNo": "NYC08LA106",
+            "keptIn": "seed-2008-power-loss-after-maintenance"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-overhaul-recent-2015-2026",
+      "question": "Since 2015, which power losses or component failures came less than 20 hours after the engine or part was overhauled?",
+      "tags": [
+        "maintenance_timing",
+        "mechanical"
+      ],
+      "filters": {
+        "yearFrom": 2015,
+        "yearTo": 2026
+      },
+      "expected": [
+        "ANC19LA016",
+        "CEN15LA336",
+        "CEN18LA159",
+        "CEN19LA156",
+        "ERA20LA278",
+        "ERA22LA097",
+        "ERA22LA345",
+        "ERA23LA202",
+        "ERA24LA222",
+        "WPR17LA172",
+        "WPR19LA160",
+        "WPR19LA187",
+        "WPR20LA136",
+        "WPR20LA144"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2015 to 2026, where the analysis or factual narrative matches /overhaul[^.]{0,100}\\y([0-9]|1[0-9])(\\.\\d+)? (flight |tach |hobbs |operating )?hours (before|prior to|earlier|since)/ and the probable cause matches /loss of engine power|power loss|engine failure|failure of the/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2015,
+            2026
+          ],
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "overhaul[^.]{0,100}\\y([0-9]|1[0-9])(\\.\\d+)? (flight |tach |hobbs |operating )?hours (before|prior to|earlier|since)"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loss of engine power|power loss|engine failure|failure of the"
+            }
+          ]
+        },
+        "note": "As mt-overhaul-recent-2008-2014, for 2015 onwards.",
+        "sharedWith": [
+          {
+            "ntsbNo": "WPR15LA153",
+            "keptIn": "mt-inspected-within-3-days"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-first-flight-after-maintenance-2008-2014",
+      "question": "Accidents from 2008 to 2014 on the first flight after maintenance, an overhaul or a repair, where the maintenance was implicated.",
+      "tags": [
+        "maintenance_timing"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2014
+      },
+      "expected": [
+        "CEN13LA321",
+        "CEN14LA336",
+        "CHI08MA270",
+        "ERA12IA237",
+        "ERA13CA375",
+        "WPR09LA097",
+        "WPR09LA197",
+        "WPR10LA165",
+        "WPR13LA290",
+        "WPR14LA323"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2014, where the analysis or factual narrative matches /first flight (after|following|since) (the |its )?(maintenance|annual|inspection|overhaul|installation|repair|restoration|engine)/ and the probable cause matches /maintenance|mechanic|install/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2014
+          ],
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "first flight (after|following|since) (the |its )?(maintenance|annual|inspection|overhaul|installation|repair|restoration|engine)"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance|mechanic|install"
+            }
+          ]
+        },
+        "note": "A \"first flight after/since maintenance\" sentence and maintenance in the probable cause.",
+        "sharedWith": [
+          {
+            "ntsbNo": "ERA11FA458",
+            "keptIn": "mt-within-5-hours-of-inspection"
+          }
+        ]
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-first-flight-after-maintenance-2015-2026",
+      "question": "Since 2015, which accidents happened on the first flight after work on the aircraft, with the work cited in the probable cause?",
+      "tags": [
+        "maintenance_timing"
+      ],
+      "filters": {
+        "yearFrom": 2015,
+        "yearTo": 2026
+      },
+      "expected": [
+        "CEN15LA138",
+        "CEN20LA384",
+        "CEN21LA057",
+        "CEN21LA243",
+        "CEN22FA419",
+        "CEN22LA322",
+        "CEN24LA378",
+        "ERA21LA246",
+        "ERA22LA275",
+        "ERA23FA033",
+        "ERA23LA225",
+        "WPR15LA229",
+        "WPR17LA164",
+        "WPR21LA072"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2015 to 2026, where the analysis or factual narrative matches /first flight (after|following|since) (the |its )?(maintenance|annual|inspection|overhaul|installation|repair|restoration|engine)/ and the probable cause matches /maintenance|mechanic|install/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2015,
+            2026
+          ],
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "first flight (after|following|since) (the |its )?(maintenance|annual|inspection|overhaul|installation|repair|restoration|engine)"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance|mechanic|install"
+            }
+          ]
+        },
+        "note": "As mt-first-flight-after-maintenance-2008-2014, for 2015 onwards.",
+        "sharedWith": [
+          {
+            "ntsbNo": "CEN17FA139",
+            "keptIn": "mt-inspected-within-3-days"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-maintenance-within-30-days",
+      "question": "Accidents caused by faulty maintenance that had been done within the 30 days before the accident.",
+      "tags": [
+        "maintenance_timing"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN12LA077",
+        "CEN14LA048",
+        "CEN14LA331",
+        "CEN14LA357",
+        "CEN18LA230",
+        "CEN20LA148",
+        "CEN24LA337",
+        "ERA11FA406",
+        "ERA12FA056",
+        "ERA15LA263",
+        "ERA19LA030",
+        "ERA21LA006",
+        "ERA21LA328",
+        "ERA22LA194",
+        "ERA24FA266",
+        "ERA25LA030",
+        "WPR10FA264",
+        "WPR20LA187",
+        "WPR24LA135"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the analysis or factual narrative matches /(maintenance|repair|replaced|installed|overhaul)[^.]{0,80}\\y([1-9]|[12][0-9]|30) days (before|prior to) the accident/ and the probable cause matches /maintenance personnel|mechanic|improper(ly)? (maintenance|install)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "analysis",
+                "factual"
+              ],
+              "pattern": "(maintenance|repair|replaced|installed|overhaul)[^.]{0,80}\\y([1-9]|[12][0-9]|30) days (before|prior to) the accident"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance personnel|mechanic|improper(ly)? (maintenance|install)"
+            }
+          ]
+        },
+        "note": "A narrative sentence dating maintenance 1 to 30 days before the accident and maintenance blamed in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mt-inspected-within-30-days-power-loss",
+      "question": "In 2008 and 2009, engine power losses linked to maintenance on aircraft inspected within the previous 30 days.",
+      "tags": [
+        "maintenance_timing"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2009
+      },
+      "expected": [
+        "CEN10LA036",
+        "CHI08LA166",
+        "DEN08LA138",
+        "ERA09FA343",
+        "ERA09FA355",
+        "ERA09LA446",
+        "ERA10LA021",
+        "MIA08LA169",
+        "NYC08LA137",
+        "NYC08LA213",
+        "SEA08LA155",
+        "WPR09CA064",
+        "WPR09LA048",
+        "WPR09LA196"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2009 with an aircraft inspected at most 30 days before the event, where the probable cause matches /loss of engine power|power loss/ and the probable cause matches /maintenance personnel|mechanic|improper(ly)? (maintenance|install)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2009
+          ],
+          "inspectedWithinDays": 30,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loss of engine power|power loss"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance personnel|mechanic|improper(ly)? (maintenance|install)"
+            }
+          ]
+        },
+        "note": "Structured: last inspection at most 30 days before; power loss and a maintenance fault in the probable cause. The inspection is the recorded one, not necessarily the faulty work (DESIGN §3).",
+        "sharedWith": [
+          {
+            "ntsbNo": "LAX08LA221",
+            "keptIn": "seed-2008-power-loss-after-maintenance"
+          },
+          {
+            "ntsbNo": "WPR09LA197",
+            "keptIn": "mt-first-flight-after-maintenance-2008-2014"
+          }
+        ]
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-helicopter-and-airplane",
+      "question": "Collisions or near collisions between a helicopter and an airplane.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC23LA071",
+        "CEN09LA149",
+        "CEN18LA087",
+        "DCA25MA108",
+        "ERA09MA447",
+        "ERA11FA101",
+        "ERA15FA025",
+        "ERA15LA115",
+        "ERA17LA332",
+        "OPS10IA132",
+        "OPS10IA163",
+        "OPS24LA011",
+        "WPR12LA109",
+        "WPR14LA313",
+        "WPR22FA001",
+        "WPR23LA041"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft with aircraft of every category HELI, AIR, where the probable cause matches /collision|see and avoid|separation/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "categoriesAll": [
+            "HELI",
+            "AIR"
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "collision|see and avoid|separation"
+            }
+          ]
+        },
+        "note": "Structured: a helicopter and an airplane in one event; collision, see-and-avoid or separation in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-glider-and-another-aircraft",
+      "question": "Accidents involving a glider and another aircraft, such as tow plane mishaps or collisions.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN10FA115",
+        "CEN10LA459",
+        "CEN12LA553",
+        "CEN24LA110",
+        "DEN08LA137",
+        "ERA10LA345",
+        "ERA14LA341",
+        "ERA15LA022",
+        "LAX08LA254",
+        "WPR10FA068",
+        "WPR10LA294",
+        "WPR12LA250",
+        "WPR21LA040"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft with aircraft of every category GLI.",
+        "criteria": {
+          "minAircraft": 2,
+          "categoriesAll": [
+            "GLI"
+          ]
+        },
+        "note": "Structured only: an event with a glider and at least one other aircraft.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-formation-flight",
+      "question": "Collisions between aircraft flying in formation.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN10FA011",
+        "CEN11LA573",
+        "CEN14LA036",
+        "CEN19IA234",
+        "CEN21LA336",
+        "ERA13LA022",
+        "ERA17FA143",
+        "ERA20LA247",
+        "ERA22FA318",
+        "GAA15CA157",
+        "WPR12CA005",
+        "WPR17LA209",
+        "WPR18LA003",
+        "WPR18LA144",
+        "WPR23LA129"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft, where the probable cause matches /formation/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "formation"
+            }
+          ]
+        },
+        "note": "Several aircraft and formation flight in the probable cause.",
+        "sharedWith": [
+          {
+            "ntsbNo": "ERA09MA447",
+            "keptIn": "ma-helicopter-and-airplane"
+          },
+          {
+            "ntsbNo": "ERA15FA025",
+            "keptIn": "ma-helicopter-and-airplane"
+          },
+          {
+            "ntsbNo": "OPS24LA011",
+            "keptIn": "ma-helicopter-and-airplane"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-taxi-collision-atc",
+      "question": "Ground collisions between aircraft while taxiing where air traffic control instructions played a part.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC09LA004",
+        "DCA23LA125",
+        "GAA19CA079",
+        "OPS08IA010",
+        "OPS09IA007",
+        "OPS15IA011",
+        "WPR14LA025",
+        "WPR15LA154"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft, where the probable cause matches /taxi/ and the probable cause matches /controller|tower/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "taxi"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "controller|tower"
+            }
+          ]
+        },
+        "note": "Several aircraft; taxiing and a controller or tower in the probable cause.",
+        "sharedWith": [
+          {
+            "ntsbNo": "ERA20LA247",
+            "keptIn": "ma-formation-flight"
+          }
+        ]
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-two-helicopters",
+      "question": "Accidents and collisions involving two helicopters.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN20FA012",
+        "CEN23FA333",
+        "DCA17IA202",
+        "DCA20IA034",
+        "DCA20IA081",
+        "DEN08MA116",
+        "WPR13GA044",
+        "WPR23FA302",
+        "WPR23LA045",
+        "WPR24LA302",
+        "WPR26LA083"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft where every aircraft is HELI.",
+        "criteria": {
+          "minAircraft": 2,
+          "categoryEvery": "HELI"
+        },
+        "note": "Structured only: an event whose aircraft are all helicopters, at least two.",
+        "sharedWith": [
+          {
+            "ntsbNo": "ERA13LA022",
+            "keptIn": "ma-formation-flight"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-runway-incursion",
+      "question": "Between 2008 and 2016, runway incursions where an aircraft was cleared onto or across a runway another aircraft was using.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2016
+      },
+      "expected": [
+        "OPS08IA015",
+        "OPS09IA006",
+        "OPS09IA009",
+        "OPS10IA020",
+        "OPS11IA552",
+        "OPS11IA673",
+        "OPS12IA041",
+        "OPS15IA017",
+        "OPS16IA009",
+        "OPS17IA008",
+        "SEA08FA116",
+        "WPR16LA185"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2016 with at least 2 aircraft, where the probable cause matches /runway/ and the probable cause matches /incursion|clearance|cleared|line up and wait|position and hold/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2016
+          ],
+          "minAircraft": 2,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "runway"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "incursion|clearance|cleared|line up and wait|position and hold"
+            }
+          ]
+        },
+        "note": "Several aircraft; runway and a clearance or incursion in the probable cause. Includes incidents (no collision).",
+        "sharedWith": [
+          {
+            "ntsbNo": "OPS09IA007",
+            "keptIn": "ma-taxi-collision-atc"
+          },
+          {
+            "ntsbNo": "OPS15IA011",
+            "keptIn": "ma-taxi-collision-atc"
+          }
+        ]
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-agricultural-firefighting",
+      "question": "Collisions between aircraft working together on agricultural application or firefighting missions.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN11LA099",
+        "CEN11LA296",
+        "CEN12FA312",
+        "CEN12LA323",
+        "CEN21LA161",
+        "CEN23LA197",
+        "CEN24FA221",
+        "CEN24FA260",
+        "DCA25LA117",
+        "DFW08LA089",
+        "ENG24LA012",
+        "ERA22FA338",
+        "WPR11CA252",
+        "WPR16FA148",
+        "WPR19FA145",
+        "WPR20LA246",
+        "WPR24FA201"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft, where the probable cause or analysis or factual narrative matches /fire ?fight|firefighting|aerial application|agricultural/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "text": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis",
+                "factual"
+              ],
+              "pattern": "fire ?fight|firefighting|aerial application|agricultural"
+            }
+          ]
+        },
+        "note": "Several aircraft; firefighting or agricultural work in any section.",
+        "sharedWith": [
+          {
+            "ntsbNo": "DCA17IA202",
+            "keptIn": "ma-two-helicopters"
+          },
+          {
+            "ntsbNo": "WPR23FA302",
+            "keptIn": "ma-two-helicopters"
+          }
+        ]
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-alaska",
+      "question": "Accidents in Alaska from 2008 to 2016 that involved more than one aircraft.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {
+        "state": [
+          "AK"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2016
+      },
+      "expected": [
+        "ANC08LA106",
+        "ANC09LA011",
+        "ANC10LA094",
+        "ANC11FA062",
+        "ANC11FA071",
+        "ANC11FA091",
+        "ANC15FA009",
+        "ANC15LA033",
+        "ANC16FA052",
+        "ANC16FA061",
+        "OPS10IA196",
+        "OPS11IA653"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2016 in AK with at least 2 aircraft.",
+        "criteria": {
+          "states": [
+            "AK"
+          ],
+          "years": [
+            2008,
+            2016
+          ],
+          "minAircraft": 2
+        },
+        "note": "Structured only: Alaska, 2008 to 2016, at least two aircraft.",
+        "sharedWith": [
+          {
+            "ntsbNo": "ANC09LA004",
+            "keptIn": "ma-taxi-collision-atc"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-traffic-pattern-midair",
+      "question": "Midair collisions in the airport traffic pattern from 2012 to 2018.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {
+        "yearFrom": 2012,
+        "yearTo": 2018
+      },
+      "expected": [
+        "CEN13LA506",
+        "CEN17FA063",
+        "CEN18LA298",
+        "ERA13LA054",
+        "ERA14FA459",
+        "ERA15LA084",
+        "ERA16FA312",
+        "ERA18LA109",
+        "ERA18LA268",
+        "GAA17CA223",
+        "GAA18CA017",
+        "GAA19CA068",
+        "WPR13FA296"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2012 to 2018 with at least 2 aircraft, where the probable cause matches /midair|mid-air|see and avoid/ and the probable cause or analysis matches /traffic pattern/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2012,
+            2018
+          ],
+          "minAircraft": 2,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "midair|mid-air|see and avoid"
+            },
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "traffic pattern"
+            }
+          ]
+        },
+        "note": "Several aircraft; midair or see-and-avoid in the probable cause and the traffic pattern in the cause or analysis.",
+        "sharedWith": [
+          {
+            "ntsbNo": "ANC15LA033",
+            "keptIn": "ma-alaska"
+          },
+          {
+            "ntsbNo": "ANC16FA052",
+            "keptIn": "ma-alaska"
+          },
+          {
+            "ntsbNo": "CEN18LA087",
+            "keptIn": "ma-helicopter-and-airplane"
+          },
+          {
+            "ntsbNo": "ERA13LA022",
+            "keptIn": "ma-formation-flight"
+          },
+          {
+            "ntsbNo": "ERA15FA025",
+            "keptIn": "ma-helicopter-and-airplane"
+          },
+          {
+            "ntsbNo": "ERA15LA115",
+            "keptIn": "ma-helicopter-and-airplane"
+          },
+          {
+            "ntsbNo": "WPR18LA003",
+            "keptIn": "ma-formation-flight"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-skydiving",
+      "question": "Accidents between aircraft during skydiving or parachute operations.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN09LA555",
+        "CEN10LA099",
+        "CEN21FA215",
+        "CEN22FA081",
+        "ERA11FA468",
+        "WPR09CA017",
+        "WPR18LA071",
+        "WPR24FA309"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft, where the probable cause or analysis matches /parachut|skydiv/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "text": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "parachut|skydiv"
+            }
+          ]
+        },
+        "note": "Several aircraft; parachute or skydiving in the cause or analysis.",
+        "sharedWith": [
+          {
+            "ntsbNo": "CEN12LA553",
+            "keptIn": "ma-glider-and-another-aircraft"
+          },
+          {
+            "ntsbNo": "CEN13LA506",
+            "keptIn": "ma-traffic-pattern-midair"
+          },
+          {
+            "ntsbNo": "CEN14LA036",
+            "keptIn": "ma-formation-flight"
+          },
+          {
+            "ntsbNo": "DEN08LA137",
+            "keptIn": "ma-glider-and-another-aircraft"
+          },
+          {
+            "ntsbNo": "WPR10FA068",
+            "keptIn": "ma-glider-and-another-aircraft"
+          },
+          {
+            "ntsbNo": "WPR21LA040",
+            "keptIn": "ma-glider-and-another-aircraft"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "ma-balloon-and-another-aircraft",
+      "question": "Accidents involving a hot air balloon and another aircraft.",
+      "tags": [
+        "multi_aircraft"
+      ],
+      "filters": {},
+      "expected": [
+        "DCA18IA264",
+        "GAA18CA016",
+        "WPR12CA163"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft with aircraft of every category BALL.",
+        "criteria": {
+          "minAircraft": 2,
+          "categoriesAll": [
+            "BALL"
+          ]
+        },
+        "note": "Structured only: a balloon and at least one other aircraft in one event.",
+        "sharedWith": [
+          {
+            "ntsbNo": "GAA15CA157",
+            "keptIn": "ma-formation-flight"
+          }
+        ]
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-crankshaft-fatigue",
+      "question": "Crankshaft fatigue fractures that caused engine failures between 2008 and 2012.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2012
+      },
+      "expected": [
+        "ANC12LA058",
+        "CEN09LA447",
+        "CEN09LA494",
+        "CEN10FA521",
+        "CEN11FA202",
+        "CEN12LA309",
+        "DEN08LA163",
+        "ERA10LA159",
+        "ERA11FA078",
+        "ERA11IA521",
+        "ERA12IA158",
+        "ERA12LA574",
+        "LAX08LA153",
+        "NYC08LA280",
+        "SEA08LA156",
+        "WPR13LA052"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2012, where the probable cause matches /crankshaft/ and the probable cause matches /fatigue/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2012
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "crankshaft"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "fatigue"
+            }
+          ]
+        },
+        "note": "Crankshaft and fatigue in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-water-in-fuel",
+      "question": "Engine power losses in 2008 and 2009 caused by water in the fuel.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2009
+      },
+      "expected": [
+        "ANC09CA091",
+        "CEN09LA597",
+        "DEN08LA121",
+        "DEN08LA150",
+        "ERA10LA059",
+        "LAX08CA094",
+        "MIA08LA197",
+        "WPR09LA021",
+        "WPR10LA083"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2009, where the probable cause matches /water (contamination|in the fuel|contaminat)|fuel contaminated with water|water-contaminated/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2009
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "water (contamination|in the fuel|contaminat)|fuel contaminated with water|water-contaminated"
+            }
+          ]
+        },
+        "note": "Water contamination of fuel in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-helicopter-carburetor-icing",
+      "question": "Helicopter accidents caused by carburetor icing.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "expected": [
+        "CEN10CA317",
+        "CEN11LA648",
+        "CEN12LA230",
+        "CEN19FA009",
+        "ERA13LA118",
+        "NYC08LA078",
+        "WPR09LA161",
+        "WPR10LA420",
+        "WPR12LA029",
+        "WPR17FA047"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category HELI, where the probable cause matches /carburetor ic/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "HELI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "carburetor ic"
+            }
+          ]
+        },
+        "note": "Single helicopter; carburetor ice in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-weight-shift-wing-failure",
+      "question": "Weight-shift-control trike accidents where the wing failed or separated.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {
+        "category": [
+          "WSFT"
+        ]
+      },
+      "expected": [
+        "ANC23FA003",
+        "CEN21LA023",
+        "ERA17FA265",
+        "ERA24FA395",
+        "WPR09LA386",
+        "WPR10FA211",
+        "WPR10LA353",
+        "WPR11FA225",
+        "WPR12LA442",
+        "WPR14LA104",
+        "WPR18LA121"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category WSFT, where the probable cause matches /wing/ and the probable cause matches /fail|fractur|separat/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "WSFT"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "wing"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "fail|fractur|separat"
+            }
+          ]
+        },
+        "note": "Single weight-shift aircraft; wing and a failure, fracture or separation in the probable cause.",
+        "sharedWith": [
+          {
+            "ntsbNo": "CEN14LA336",
+            "keptIn": "mt-first-flight-after-maintenance-2008-2014"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-cotter-pin-safety-wire",
+      "question": "Maintenance errors where a cotter pin or safety wire was missing or not installed.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN12LA525",
+        "CEN13LA212",
+        "CEN14LA174",
+        "CEN16LA033",
+        "DCA12CA042",
+        "ERA12LA141",
+        "ERA13LA148",
+        "ERA16FA248",
+        "ERA16LA153",
+        "ERA21LA222",
+        "ERA23LA144",
+        "WPR14LA084",
+        "WPR17LA114",
+        "WPR19LA065"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /cotter pin|safety wire|safety-wire/ and the probable cause matches /maintenance|mechanic|install/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "cotter pin|safety wire|safety-wire"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance|mechanic|install"
+            }
+          ]
+        },
+        "note": "Cotter pin or safety wire with maintenance or installation in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-oil-cap-unsecured",
+      "question": "Accidents where an oil filler cap or dipstick was left loose or unsecured, leading to oil loss.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN10CA549",
+        "CEN13LA072",
+        "CEN14CA106",
+        "CEN19LA206",
+        "CEN19TA293",
+        "CEN20CA331",
+        "CEN20LA014",
+        "CHI08CA217",
+        "DFW08CA147",
+        "ERA22FA076",
+        "GAA16CA317",
+        "GAA19CA549",
+        "WPR14LA100",
+        "WPR18LA101",
+        "WPR24LA098"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /oil (filler )?cap|dipstick/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "oil (filler )?cap|dipstick"
+            }
+          ]
+        },
+        "note": "Oil cap or dipstick in the probable cause.",
+        "sharedWith": [
+          {
+            "ntsbNo": "WPR09LA197",
+            "keptIn": "mt-first-flight-after-maintenance-2008-2014"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-control-rigging",
+      "question": "Accidents caused by flight controls or trim that were rigged or connected incorrectly.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {},
+      "expected": [
+        "ANC08CA043",
+        "ANC14FA050",
+        "CEN15IA079",
+        "CEN19LA219",
+        "CEN24LA115",
+        "DCA15FA085",
+        "DCA20IA014",
+        "ERA13LA229",
+        "ERA14LA015",
+        "ERA16LA191",
+        "ERA17FA148",
+        "ERA17FA339",
+        "ERA17LA324",
+        "ERA20CA246",
+        "ERA21FA224",
+        "ERA23LA002",
+        "ERA26LA009"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /revers|rigg/ and the probable cause matches /flight control|aileron|elevator|rudder|trim/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "revers|rigg"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "flight control|aileron|elevator|rudder|trim"
+            }
+          ]
+        },
+        "note": "Reversed or rigging and a flight control surface in the probable cause.",
+        "sharedWith": [
+          {
+            "ntsbNo": "CHI08MA270",
+            "keptIn": "mt-first-flight-after-maintenance-2008-2014"
+          }
+        ]
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "mech-loose-fitting",
+      "question": "Engine problems caused by a loose B-nut, fuel line or oil line fitting after maintenance.",
+      "tags": [
+        "mechanical"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN19LA048",
+        "CEN25LA165",
+        "ENG23LA031",
+        "ERA10LA100",
+        "ERA15LA294",
+        "ERA18FA138",
+        "WPR14LA118",
+        "WPR14LA251",
+        "WPR14LA374",
+        "WPR24LA093"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /b-nut|fitting|fuel line|oil line/ and the probable cause matches /loose|not (properly )?(tightened|torqued|secured|safetied)/ and the probable cause matches /maintenance|mechanic|install/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "b-nut|fitting|fuel line|oil line"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "loose|not (properly )?(tightened|torqued|secured|safetied)"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "maintenance|mechanic|install"
+            }
+          ]
+        },
+        "note": "A fitting or line, a loose or untorqued condition, and maintenance in the probable cause.",
+        "sharedWith": [
+          {
+            "ntsbNo": "CEN20LA148",
+            "keptIn": "mt-maintenance-within-30-days"
+          },
+          {
+            "ntsbNo": "CEN24LA337",
+            "keptIn": "mt-maintenance-within-30-days"
+          },
+          {
+            "ntsbNo": "LAX08LA269",
+            "keptIn": "seed-2008-power-loss-after-maintenance"
+          },
+          {
+            "ntsbNo": "WPR14LA323",
+            "keptIn": "mt-first-flight-after-maintenance-2008-2014"
+          }
+        ]
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-balloon-power-lines",
+      "question": "Hot air balloon flights from 2015 to 2020 that contacted power lines or wires.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "category": [
+          "BALL"
+        ],
+        "yearFrom": 2015,
+        "yearTo": 2020
+      },
+      "expected": [
+        "CEN16LA352",
+        "CEN17CA013",
+        "CEN17LA118",
+        "ERA15LA319",
+        "ERA18LA116",
+        "ERA20LA094",
+        "GAA15LA195",
+        "GAA17CA262",
+        "GAA20CA037",
+        "WPR19LA104",
+        "WPR20CA050",
+        "WPR21LA074"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2015 to 2020 with a single aircraft with an aircraft of category BALL, where the probable cause matches /power ?line|wire/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2015,
+            2020
+          ],
+          "categoryAny": [
+            "BALL"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "power ?line|wire"
+            }
+          ]
+        },
+        "note": "Single balloon; power line or wire in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-density-altitude-colorado",
+      "question": "Colorado accidents from 2008 to 2015 where high density altitude reduced aircraft performance.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "state": [
+          "CO"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2015
+      },
+      "expected": [
+        "CEN09CA505",
+        "CEN11CA325",
+        "CEN11CA678",
+        "CEN12FA572",
+        "CEN12LA668",
+        "CEN13FA327",
+        "CEN13LA199",
+        "CEN13LA358",
+        "CEN14FA328",
+        "CEN14FA414",
+        "CEN16FA034",
+        "DEN08IA130",
+        "DEN08LA118"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2015 in CO, where the probable cause matches /density altitude/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "states": [
+            "CO"
+          ],
+          "years": [
+            2008,
+            2015
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "density altitude"
+            }
+          ]
+        },
+        "note": "Colorado; density altitude in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-helicopter-bird-strike",
+      "question": "Helicopter bird strikes between 2008 and 2022.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "category": [
+          "HELI"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2022
+      },
+      "expected": [
+        "ANC16CA051",
+        "CEN09MA117",
+        "CEN13TA535",
+        "CEN15CA039",
+        "CEN18FA033",
+        "CEN22LA057",
+        "ERA09IA186",
+        "ERA11CA012",
+        "ERA12LA379",
+        "ERA14CA009",
+        "ERA23LA044",
+        "GAA19CA124",
+        "GAA19CA168",
+        "WPR19CA052",
+        "WPR23LA066"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2022 with a single aircraft with an aircraft of category HELI, where the probable cause matches /\\ybird|\\ygeese|\\yvulture|\\yhawk|\\yduck/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2022
+          ],
+          "categoryAny": [
+            "HELI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "\\ybird|\\ygeese|\\yvulture|\\yhawk|\\yduck"
+            }
+          ]
+        },
+        "note": "Single helicopter; a bird in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-gyroplane-oscillation",
+      "question": "Gyroplane accidents involving pilot-induced oscillation, porpoising or rotor blade flapping.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "category": [
+          "GYRO"
+        ]
+      },
+      "expected": [
+        "CEN16LA347",
+        "WPR22FA184"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category GYRO, where the probable cause matches /porpois|pilot-induced|oscillat|teeter|blade flap|rotor (blade )?flap|retreating blade/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "GYRO"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "porpois|pilot-induced|oscillat|teeter|blade flap|rotor (blade )?flap|retreating blade"
+            }
+          ]
+        },
+        "note": "Single gyroplane; oscillation, porpoising or blade flapping in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-agricultural-wire-strike-texas",
+      "question": "Agricultural application flights in Texas that hit wires or power lines.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "state": [
+          "TX"
+        ]
+      },
+      "expected": [
+        "CEN09CA339",
+        "CEN09LA023",
+        "CEN10CA553",
+        "CEN11CA330",
+        "CEN11LA571",
+        "CEN16LA139",
+        "CEN16LA161",
+        "CEN16LA181",
+        "CEN19TA131",
+        "CEN20LA442",
+        "CEN22FA288",
+        "CEN22LA248",
+        "DEN08LA077",
+        "GAA19CA270",
+        "GAA19CA277",
+        "GAA19CA354",
+        "GAA19CA453",
+        "GAA20CA033"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases in TX with an aircraft flying for purpose AAPL, where the probable cause matches /wire|power line/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "states": [
+            "TX"
+          ],
+          "purposeAny": [
+            "AAPL"
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "wire|power line"
+            }
+          ]
+        },
+        "note": "Texas; an aircraft on an aerial application flight; wire or power line in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-glider-winch-launch",
+      "question": "Glider accidents during winch launches.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "category": [
+          "GLI"
+        ]
+      },
+      "expected": [
+        "CEN09LA278",
+        "CEN09LA353",
+        "CEN12LA605",
+        "CEN21LA226",
+        "ERA12LA455",
+        "WPR13FA300",
+        "WPR15FA144",
+        "WPR18FA178"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category GLI, where the probable cause or analysis matches /winch/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "GLI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "winch"
+            }
+          ]
+        },
+        "note": "Single glider; winch in the cause or analysis.",
+        "sharedWith": []
+      },
+      "split": "holdout",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-helicopter-mast-bumping",
+      "question": "Helicopter accidents involving mast bumping.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "expected": [
+        "ANC24FA063",
+        "CEN11FA422",
+        "CEN11GA020",
+        "CEN12FA001",
+        "CEN17FA012",
+        "CEN24FA248",
+        "ERA13FA070",
+        "ERA18LA020",
+        "ERA21FA317",
+        "WPR10LA138",
+        "WPR13FA417",
+        "WPR16FA130",
+        "WPR16LA188",
+        "WPR19FA109",
+        "WPR21FA300",
+        "WPR23LA313"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with a single aircraft with an aircraft of category HELI, where the probable cause matches /mast bump/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "categoryAny": [
+            "HELI"
+          ],
+          "maxAircraft": 1,
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "mast bump"
+            }
+          ]
+        },
+        "note": "Single helicopter; mast bumping in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-amphibian-gear-down-water",
+      "question": "Amphibious floatplanes that landed on water with the landing gear extended.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {},
+      "expected": [
+        "CEN20CA254",
+        "CEN23LA298",
+        "CEN24LA109",
+        "CEN25LA008",
+        "ERA09CA545",
+        "ERA13CA416",
+        "ERA17CA236",
+        "ERA20CA187",
+        "ERA20CA257",
+        "ERA21LA114",
+        "ERA24LA155",
+        "ERA26LA002",
+        "GAA18CA388",
+        "GAA19CA108",
+        "WPR24FA285"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases, where the probable cause matches /amphib|float/ and the probable cause matches /landing gear|wheels/ and the probable cause matches /water/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "amphib|float"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "landing gear|wheels"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "water"
+            }
+          ]
+        },
+        "note": "Amphibian or floats, landing gear or wheels, and water in the probable cause. Check that the gear was extended.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    },
+    {
+      "id": "op-structural-icing",
+      "question": "Accidents from 2008 to 2015 caused by airframe or structural icing.",
+      "tags": [
+        "operational"
+      ],
+      "filters": {
+        "yearFrom": 2008,
+        "yearTo": 2015
+      },
+      "expected": [
+        "ANC09LA038",
+        "ANC12CA016",
+        "ANC14CA010",
+        "CEN09CA136",
+        "CEN09FA135",
+        "CEN09LA206",
+        "CEN10FA114",
+        "CEN10LA090",
+        "CEN11CA135",
+        "CEN11FA144",
+        "CEN13CA005",
+        "CEN13FA130",
+        "CEN14FA009",
+        "CEN15FA119",
+        "DCA15MA029",
+        "ERA11LA099",
+        "ERA14FA112",
+        "NYC08FA139",
+        "WPR11FA228",
+        "WPR13FA072"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2015, where the probable cause matches /structural ic(e|ing)|airframe ic(e|ing)/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "years": [
+            2008,
+            2015
+          ],
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "structural ic(e|ing)|airframe ic(e|ing)"
+            }
+          ]
+        },
+        "note": "Structural or airframe ice in the probable cause.",
+        "sharedWith": []
+      },
+      "split": "dev",
+      "adjudication": "pending-expert"
+    }
+  ]
+}

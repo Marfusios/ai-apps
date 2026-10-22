@@ -23,13 +23,14 @@ import { createHash } from 'node:crypto';
 import type { CaseRecord, CaseRecordAircraft, SectionKind } from '../../server/db/queries/case-records.js';
 import { PHASE_GROUPS, PHASE_LABEL, orderPhaseGroups, type PhaseGroup } from '../../shared/codes.js';
 import { CHUNKER_VERSION, DEFAULT_CHUNK_OPTIONS, chunkSectionDetailed, type ChunkStats, type PassageDraft } from './chunk.js';
+import { MAX_EMBEDDING_INPUT_TOKENS } from '../../server/ai/embeddings.js';
 import { countTokens } from './tokens.js';
 
 /** Bump whenever the header or the way it joins the text changes: it invalidates every cached embedding. */
 export const EMBEDDING_INPUT_TEMPLATE_VERSION = 'input-v1';
 
 /** Hard limit of one embedding input (`text-embedding-3-*`). */
-export const MAX_INPUT_TOKENS = 8_192;
+export const MAX_INPUT_TOKENS = MAX_EMBEDDING_INPUT_TOKENS;
 
 export const SECTION_LABEL: Readonly<Record<SectionKind, string>> = {
   factual: 'Factual narrative',
