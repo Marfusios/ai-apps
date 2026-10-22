@@ -65,7 +65,7 @@ import {
 } from '../../shared/contracts/briefs.js';
 import type { Db } from '../db/client.js';
 import { stageCostUsd, STAGE_CAPS } from '../ai/pricing.js';
-import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v4.js';
+import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v5.js';
 import {
   StageError,
   stageCtx,

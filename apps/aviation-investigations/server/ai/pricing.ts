@@ -84,8 +84,8 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  *   every bound 6,556 plus 1,500 for thinking (Opus cannot turn it off) → 9,000; a check
  *   listing a problem for each of 100 claims 2,414 → 3,000.
  *
- * With the `compose.v4` and `check.v3` prompts the preflight measures the answer's fixed
- * part at 4,746 and its synthetic full bundle at 22,286, and the check's fixed part at
+ * With the `compose.v5` and `check.v3` prompts the preflight measures the answer's fixed
+ * part at 4,752 and its synthetic full bundle at 22,292, and the check's fixed part at
  * 1,961 and its synthetic full bundle at 27,356: all well within the caps.
  */
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
@@ -97,7 +97,7 @@ export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; rea
 
 /**
  * Largest frozen prefix any stage caches (5-minute TTL): its system prompt with the
- * structured-output schema, measured at 4,622 tokens (`compose.v4`, the preflight).
+ * structured-output schema, measured at 4,628 tokens (`compose.v5`, the preflight).
  */
 export const CACHED_PREFIX_MAX = 5_500;
 

@@ -29,7 +29,7 @@ import { PHASE_GROUPS } from '../shared/codes.js';
 import { MAX_QUERY_INPUT_TOKENS } from '../server/ai/embeddings.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../server/ai/pricing.js';
 import { renderCheckUser } from '../server/ai/prompts/check.v3.js';
-import { renderComposeUser } from '../server/ai/prompts/compose.v4.js';
+import { renderComposeUser } from '../server/ai/prompts/compose.v5.js';
 import { renderScopeUser } from '../server/ai/prompts/scope.v2.js';
 import {
   AIRCRAFT_CATEGORY_CODES,

@@ -36,10 +36,13 @@
  * insensitive); `DCA25MA108A/B` names both aircraft numbers. Quotes are exempt: they
  * are verified passage text.
  *
- * **Summary sentences** (server/briefs/sentences.ts, split conservatively: when in doubt,
- * split). Each must end with the `[[case:…]]` markers of the cases it is about,
- * immediately before or after its final punctuation: a sentence without one fails
- * `uncited_summary`, one with a marker anywhere else `misplaced_citation`.
+ * **Summary sentences** (server/briefs/sentences.ts, fail closed: when in doubt, split or
+ * withhold). The summary must be plain one-line text (`summary_format`). Each sentence
+ * must end with the `[[case:…]]` markers of the cases it is about, immediately before or
+ * after its final punctuation: a sentence without one fails `uncited_summary`, one with a
+ * marker anywhere else `misplaced_citation`, and one with a `.`, `!` or `?` inside it
+ * that is neither a declared abbreviation context nor a decimal point
+ * `ambiguous_boundary`.
  *
  * **Passage aliases in prose** (`alias_in_text`): the summary, `why` lines and gap notes
  * may not name a passage alias the model was shown (an allowlist key such as `P3`)
@@ -49,7 +52,7 @@
  */
 import { createHash } from 'node:crypto';
 import { ComposeOutputSchema, type ComposeOutput, type GlyphKind } from '../../shared/contracts/briefs.js';
-import { citationPlacement, splitSentences } from './sentences.js';
+import { ambiguousBoundary, citationPlacement, splitSentences, summaryFormatProblem } from './sentences.js';
 
 export const QUOTE_MATCH_RULE_VERSION = 'quote-ws-v2';
 /** A quote has at least this many whitespace-separated words after normalization. */
@@ -143,6 +146,8 @@ export const VALIDATION_CODES = [
   'marker_unknown_case',
   'uncited_summary',
   'misplaced_citation',
+  'ambiguous_boundary',
+  'summary_format',
   'unallowlisted_case_number',
   'markup_or_link',
   'alias_in_text',
@@ -539,9 +544,10 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     });
   });
 
-  // Summary: markers name used cases, and every sentence ends with the markers of the
-  // cases it is about, immediately before or after its final punctuation; a marker
-  // anywhere else is an ambiguous boundary (server/briefs/sentences.ts).
+  // Summary: plain one-line text; markers name used cases; every sentence ends with the
+  // markers of the cases it is about, immediately before or after its final punctuation,
+  // and holds no other sentence end (server/briefs/sentences.ts).
+  if (summaryFormatProblem(c.summary)) fail('summary_format', 'summary');
   const markers = summaryMarkers(c.summary);
   if (markers === null) fail('bad_marker', 'summary');
   else {
@@ -550,6 +556,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
       const placement = citationPlacement(sentence);
       if (placement === 'misplaced') fail('misplaced_citation', `summary.${si}`);
       else if (placement === 'uncited') fail('uncited_summary', `summary.${si}`);
+      if (ambiguousBoundary(sentence)) fail('ambiguous_boundary', `summary.${si}`);
     });
   }
 

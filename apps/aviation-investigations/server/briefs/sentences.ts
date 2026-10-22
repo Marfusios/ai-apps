@@ -1,79 +1,118 @@
 /**
- * Sentence splitting for generated summaries, shared by the validator (every sentence
- * must end with the markers of the cases it is about) and the check input (one claim per
- * sentence).
+ * Sentence splitting and citation checks for generated summaries, shared by the validator
+ * (every sentence must end with the markers of the cases it is about) and the check input
+ * (one claim per sentence).
  *
- * **When in doubt, split.** Splitting too often can only withhold a summary: a fragment
- * without its own marker fails `uncited_summary`. Merging two sentences would let an
- * uncited one borrow the other's citation, past the deterministic citation check. So:
+ * **Fail closed.** Splitting too often can only withhold a summary: a fragment without its
+ * own marker fails `uncited_summary`. Merging two sentences would let an uncited one
+ * borrow the other's citation, past the deterministic citation check. So anything unusual
+ * withholds:
  *
- * - A sentence ends at `.`, `!` or `?`, with any closing quotes or parentheses after it,
- *   followed by whitespace or the end of the text, and after any `[[case:…]]` markers
- *   that follow the punctuation. Markers after the last sentence's punctuation stay with
- *   it ("…was bad. [[case:B]]" at the end of the text is one sentence).
- * - A period right after a marker always ends the sentence ("…overhaul [[case:A]]. 3…").
- * - Otherwise a period is not a sentence end only after a recognised abbreviation followed
- *   by a token that cannot start a new sentence there (`CONTEXTS`): "No."/"Nos." before a
- *   number, "approx."/"ca." before a number, "Mr."/"Mrs."/"Ms." before a capitalised name,
- *   "U.S." before a lower-case word or "Code", "U.S.C." before a number or "§", and
- *   "e.g."/"i.e." before a lower-case word. Nothing else: a unit ("1,000 ft."), a time
- *   ("1430 hrs."), a place or company abbreviation ("St.", "Inc."), a title other than
- *   those, an initial, or any period before a lower-case word or a number ends the
- *   sentence there, so a summary that uses them mid-sentence is withheld (the compose
- *   prompt asks for words written out).
+ * 1. `summaryFormatProblem`: a summary is plain text on one line. Controls, format and
+ *    other invisible characters, any line break, sentence terminators other than `.`, `!`
+ *    and `?` (such as "…", "。" or "‽"), Markdown and decoration, emoji and HTML entities
+ *    fail it (`summary_format`).
+ * 2. `splitSentences`: a sentence ends at a run of `.`, `!` or `?` ("..." and "?!" are
+ *    one end), with any closing quotation marks or parenthesis after it (`"`, `'`, `”`,
+ *    `’`, `)`), followed by whitespace or the end of the text, and after any `[[case:…]]`
+ *    markers that follow the punctuation; markers after the last sentence's punctuation
+ *    stay with it. A period does not end a sentence only in a declared context
+ *    (`DECLARED`): a recognised abbreviation as a whole word, followed by whitespace and a
+ *    token that cannot start a new sentence there ("No. 2", "approx. 5", "Mr. Smith",
+ *    "U.S. operator", "49 U.S.C. 1154", "e.g. a school"). Nothing else: a unit
+ *    ("1,000 ft."), a time ("1430 hrs."), "St.", "Inc.", "a.m.", an initial, or a period
+ *    before a lower-case word or a number ends the sentence there.
+ * 3. `citationPlacement`: a sentence's markers must all be at its end, immediately before
+ *    or after its final punctuation (`misplaced_citation` otherwise).
+ * 4. `ambiguousBoundary`: no `.`, `!` or `?` may remain inside a sentence (its final
+ *    punctuation aside) except a declared context or a decimal point between digits
+ *    ("5.1"), so a terminator glued to whatever follows it (".3 people", ".Three", ".*",
+ *    ".¹", ".—", ".,") withholds (`ambiguous_boundary`).
  *
- * `citationPlacement` then requires a sentence's markers at its end, immediately before
- * or after its final punctuation; a marker anywhere else is an ambiguous boundary
- * (`misplaced_citation` in the validator).
+ * The declared contexts are the accepted residual: a sentence that really ends with one
+ * of them ("Was anyone hurt? No. 3 passengers were injured") merges with the next one,
+ * and the checker then judges the merged claim whole (DESIGN §5, SECURITY_REVIEW).
+ *
+ * Every function here runs in time linear in the text (times the bounded number of
+ * markers), whatever its runs of whitespace or dots: a 1,500-character summary of any
+ * shape validates in milliseconds (tests/unit/summary-corpus.test.ts).
  */
 
 const MARKER = /\[\[case:[A-Za-z0-9]+\]\]/;
-/** Zero or more case markers, each after optional whitespace. */
-const MARKERS = String.raw`(?:\s*\[\[case:[A-Za-z0-9]+\]\])*`;
-/** Final punctuation, with any closing quotation marks or parentheses after it. */
-const END = String.raw`[.!?]["'”’)]*`;
+const MARKERS_G = /\[\[case:[A-Za-z0-9]+\]\]/g;
+const EXACT_MARKER = /^\[\[case:[A-Za-z0-9]+\]\]$/;
 
-/** A candidate sentence end: the punctuation, the markers after it, then whitespace or the end of the text. */
-const BOUNDARY = new RegExp(String.raw`(${END})(${MARKERS})(?:\s+(?=\S)|\s*$)`, 'g');
-
-/** Text ending in a case marker: a period after it closes a cited sentence. */
-const AFTER_MARKER = /\[\[case:[A-Za-z0-9]+\]\]\s*$/;
+const TERMINATORS = '.!?';
+/** Closing quotation marks and parenthesis that belong to the sentence they follow. */
+const CLOSERS = `"')”’`;
 
 /**
- * The only periods that do not end a sentence: after `word` (the text just before the
- * period, case-sensitive), when the next token matches `next`. Each is a context where a
- * new sentence cannot start.
+ * What a plain one-line summary never needs, and what could hide or fake a sentence end:
+ * controls (any line break, tab or NUL included), format and other default-ignorable
+ * (invisible) characters, line and paragraph separators, the object replacement and
+ * replacement characters; sentence terminators other than `.`, `!` and `?` (the Greek
+ * question mark and "…" included); Markdown and decoration (`* _ ~ | [ ] { }`, guillemets,
+ * low-9 and reversed quotation marks, corner brackets, daggers, bullets, superscripts);
+ * emoji and other pictographs; HTML entities. English quotation marks (`"`, `'`, `“`, `”`,
+ * `‘`, `’`) are allowed: an opening one glued to a terminator fails `ambiguousBoundary`.
  */
-const CONTEXTS: readonly { word: RegExp; next: RegExp }[] = [
+const UNPLAIN =
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\uFFFC\uFFFD\u037E\u2026*_~|\[\]{}\u00AB\u00BB\u2039\u203A\u201E\u201A\u201B\u201F\u300C\u300D\u300E\u300F\u2020\u2021\u2022\u2023\u2043\u25E6\u00B2\u00B3\u00B9\u2070-\u209F\p{Extended_Pictographic}]|(?![.!?])\p{Sentence_Terminal}|&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);/u;
+
+/** True when the summary is not plain one-line text (`UNPLAIN`); leading and trailing whitespace and case markers aside. */
+export function summaryFormatProblem(summary: string): boolean {
+  return UNPLAIN.test(summary.replace(MARKERS_G, ' ').trim());
+}
+
+/**
+ * A candidate sentence end: the punctuation (matched once, from the start of its run, so a
+ * long run of dots costs linear time), the markers after it, then whitespace or the end
+ * of the text.
+ */
+const BOUNDARY = /(?<![.!?])(?=([.!?]+["')”’]*))\1((?:\s*\[\[case:[A-Za-z0-9]+\]\])*)(?:\s+(?=\S)|\s*$)/g;
+
+/**
+ * The only periods that are not sentence ends, each a recognised abbreviation as a whole
+ * word (case-sensitive) followed by whitespace and a token that cannot start a new
+ * sentence there. All the dots of a matched word are declared ("U.S.C.").
+ */
+const DECLARED: readonly RegExp[] = [
   // "the No. 2 engine", "cylinders Nos. 3 and 4".
-  { word: /^Nos?$/, next: /^\d/ },
+  /(?<![\p{L}\p{N}.])Nos?\.(?=\s+[0-9])/gu,
   // "approx. 5 minutes", "ca. 1990".
-  { word: /^(?:approx|Approx|ca)$/, next: /^\d/ },
+  /(?<![\p{L}\p{N}.])(?:approx|Approx|ca)\.(?=\s+[0-9])/gu,
   // "Mr. Smith". ("Dr." is left out: it also abbreviates "Drive", which can end a sentence.)
-  { word: /^(?:Mr|Mrs|Ms)$/, next: /^\p{Lu}\p{Ll}/u },
+  /(?<![\p{L}\p{N}.])(?:Mr|Mrs|Ms)\.(?=\s+\p{Lu}\p{Ll})/gu,
   // "the U.S. operator", "the U.S. Code".
-  { word: /^U\.S$/, next: /^(?:\p{Ll}|Code\b)/u },
+  /(?<![\p{L}\p{N}.])U\.S\.(?=\s+(?:\p{Ll}|Code(?![\p{L}\p{N}])))/gu,
   // "49 U.S.C. 1154(b)", "U.S.C. § 1154".
-  { word: /^U\.S\.C$/, next: /^(?:\d|§)/ },
+  /(?<![\p{L}\p{N}.])U\.S\.C\.(?=\s+(?:[0-9]|§))/gu,
   // "e.g. a flight school", "i.e. the left magneto".
-  { word: /^(?:e\.g|i\.e)$/, next: /^\p{Ll}/u },
+  /(?<![\p{L}\p{N}.])(?:e\.g|i\.e)\.(?=\s+\p{Ll})/gu,
 ];
 
-function abbreviationContinues(before: string, next: string): boolean {
-  const word = /(?:^|[^A-Za-z.])([A-Za-z.]+)$/.exec(before)?.[1] ?? '';
-  return CONTEXTS.some((c) => c.word.test(word) && c.next.test(next));
+/** The positions of every period of `text` that belongs to a declared context. */
+function declaredPeriods(text: string): Set<number> {
+  const out = new Set<number>();
+  for (const re of DECLARED) {
+    for (const m of text.matchAll(re)) {
+      for (let i = 0; i < m[0].length; i += 1) if (m[0][i] === '.') out.add((m.index ?? 0) + i);
+    }
+  }
+  return out;
 }
 
 /** The sentences of `text`, trimmed, markers kept with the sentence they end. */
 export function splitSentences(text: string): string[] {
+  const declared = declaredPeriods(text);
   const out: string[] = [];
   let start = 0;
   for (const m of text.matchAll(BOUNDARY)) {
     const at = m.index ?? 0;
     const end = m[1]!;
     const markers = m[2] ?? '';
-    const before = text.slice(start, at);
-    if (end === '.' && markers === '' && !AFTER_MARKER.test(before) && abbreviationContinues(before, text.slice(at + m[0].length))) continue;
+    // A declared context's period, followed only by whitespace, continues the sentence.
+    if (end === '.' && markers === '' && declared.has(at)) continue;
     const stop = at + end.length + markers.length;
     const sentence = text.slice(start, stop).trim();
     if (sentence !== '') out.push(sentence);
@@ -84,17 +123,60 @@ export function splitSentences(text: string): string[] {
   return out;
 }
 
-/** A sentence's body, the markers before its final punctuation, the punctuation and the markers after it. */
-const PLACEMENT = new RegExp(String.raw`^([\s\S]*?)(${MARKERS})\s*(${END})?(${MARKERS})\s*$`);
+/**
+ * A sentence without what may end it, scanned from the end: the markers after its final
+ * punctuation, the closers and the punctuation (a run of `.`, `!` and `?`), and the
+ * markers before it. `cited`: at least one marker was there.
+ */
+function bodyOf(sentence: string): { body: string; cited: boolean } {
+  let rest = sentence.trimEnd();
+  let cited = false;
+  const dropMarkers = () => {
+    while (rest.endsWith(']]')) {
+      const at = rest.lastIndexOf('[[case:');
+      if (at < 0 || !EXACT_MARKER.test(rest.slice(at))) return;
+      rest = rest.slice(0, at).trimEnd();
+      cited = true;
+    }
+  };
+  dropMarkers();
+  let j = rest.length;
+  while (j > 0 && CLOSERS.includes(rest[j - 1]!)) j -= 1;
+  let k = j;
+  while (k > 0 && TERMINATORS.includes(rest[k - 1]!)) k -= 1;
+  // Closers without punctuation before them stay in the body.
+  if (k < j) rest = rest.slice(0, k).trimEnd();
+  dropMarkers();
+  return { body: rest, cited };
+}
 
 /**
  * Where a sentence's case markers are: all at its end, immediately before or after its
- * final punctuation (`cited`); nowhere (`uncited`); or anywhere else, mid-sentence
- * (`misplaced`), whether or not it also ends with one.
+ * final punctuation (`cited`; the last sentence of the text may have no punctuation);
+ * nowhere (`uncited`); or anywhere else (`misplaced`): mid-sentence, whether or not the
+ * sentence also ends with one, or after a "sentence" with no word in it ("…. [[case:…]].").
  */
 export function citationPlacement(sentence: string): 'cited' | 'uncited' | 'misplaced' {
-  const m = PLACEMENT.exec(sentence);
-  if (!m) return 'misplaced';
-  if (MARKER.test(m[1] ?? '')) return 'misplaced';
-  return (m[2] ?? '') + (m[4] ?? '') === '' ? 'uncited' : 'cited';
+  const { body, cited } = bodyOf(sentence);
+  if (MARKER.test(body) || (cited && !/[\p{L}\p{N}]/u.test(body))) return 'misplaced';
+  return cited ? 'cited' : 'uncited';
+}
+
+const isDigit = (c: string | undefined) => c !== undefined && c >= '0' && c <= '9';
+
+/**
+ * True when a `.`, `!` or `?` remains inside the sentence, its final punctuation aside,
+ * other than a declared context's period or a decimal point between two digits ("5.1"):
+ * a boundary the splitter could not see.
+ */
+export function ambiguousBoundary(sentence: string): boolean {
+  const { body } = bodyOf(sentence);
+  const declared = declaredPeriods(body);
+  for (let i = 0; i < body.length; i += 1) {
+    const c = body[i]!;
+    if (!TERMINATORS.includes(c)) continue;
+    if (c === '.' && (declared.has(i) || (isDigit(body[i - 1]) && isDigit(body[i + 1])))) continue;
+    return true;
+  }
+  return false;
 }

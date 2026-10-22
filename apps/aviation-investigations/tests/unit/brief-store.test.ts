@@ -5,16 +5,16 @@ describe('storable: diagnostics jsonb accepts', () => {
   it('replaces NUL and unpaired surrogates in strings and keys, keeps everything else', () => {
     const input = {
       summary: 'Power\u0000lost [[case:DFW08TA066]].',
-      pairs: 'A whole emoji 😀 stays.',
+      pairs: 'A whole emoji \u{1F600} stays.',
       lone: ['high \uD800 alone', 'low \uDC00 alone', 'reversed \uDE00\uD83D'],
       ['key\u0000']: { nested: ['\u0000', 1, true, null, 2.5] },
       count: 3,
     };
     expect(storable(input)).toEqual({
-      summary: 'Power�lost [[case:DFW08TA066]].',
-      pairs: 'A whole emoji 😀 stays.',
-      lone: ['high � alone', 'low � alone', 'reversed ��'],
-      ['key�']: { nested: ['�', 1, true, null, 2.5] },
+      summary: 'Power\uFFFDlost [[case:DFW08TA066]].',
+      pairs: 'A whole emoji \u{1F600} stays.',
+      lone: ['high \uFFFD alone', 'low \uFFFD alone', 'reversed \uFFFD\uFFFD'],
+      ['key\uFFFD']: { nested: ['\uFFFD', 1, true, null, 2.5] },
       count: 3,
     });
     // The result survives a JSON round trip without any escape jsonb refuses.

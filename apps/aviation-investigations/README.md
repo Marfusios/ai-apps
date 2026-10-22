@@ -919,7 +919,7 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    retrieved passage and all its probable-cause passages. A violation fails the step;
    nothing is dropped or cut.
 3. **Compose** (35 s): the full input is counted with the provider's own counter;
-   above the answer input cap (28,000 tokens; a synthetic full bundle measures 22,286,
+   above the answer input cap (28,000 tokens; a synthetic full bundle measures 22,292,
    DESIGN §9) the candidates are packed again under a smaller budget, and the re-packed
    bundle is checked like the first. The compose and check stages read passages under short
    aliases (`P1`..`P12`, `aliases.ts`): a 64-character passage id costs about 42 tokens
@@ -940,14 +940,18 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    recorded; every claim cites passages of its own case; every summary sentence ends
    with the `[[case:…]]` markers of the cases it is about, immediately before or after
    its final punctuation (`uncited_summary` without one, `misplaced_citation` with one
-   mid-sentence). Sentences are split conservatively (`sentences.ts`), because a
-   split can only withhold while a merge could let an uncited sentence borrow a
-   citation: a sentence ends at `.`, `!` or `?` (with any closing quote or parenthesis)
-   before whitespace or the end of the text, markers after the punctuation included,
-   and a period is not an end only in a few explicit contexts ("No. 2", "approx. 5",
-   "Mr. Smith", "U.S. operator", "49 U.S.C. 1154", "e.g. a school"), so "1,000 ft.",
-   "2 hrs." or "St. Louis" mid-sentence withholds the summary (the compose prompt asks
-   for words written out); each stated
+   mid-sentence). The summary check fails closed (`sentences.ts`), because a split can
+   only withhold while a merge could let an uncited sentence borrow a citation: the
+   summary must be plain one-line text, with no control or invisible characters, line
+   breaks, other scripts' sentence ends or "…", Markdown or decoration, emoji or HTML
+   entities (`summary_format`); a sentence ends at a run of `.`, `!` or `?` (with any
+   closing quote or parenthesis) before whitespace or the end of the text, markers
+   after the punctuation included, and a period is not an end only in six declared
+   contexts ("No. 2", "approx. 5", "Mr. Smith", "U.S. operator", "49 U.S.C. 1154",
+   "e.g. a school", an accepted residual); no other `.`, `!` or `?` may remain inside a
+   sentence except a decimal point (`ambiguous_boundary`), so "1,000 ft.", "St. Louis",
+   "a.m." or ".3" withholds the summary (the compose prompt asks for words written out);
+   each stated
    chronology fact (flight hours, calendar days, which flight, wording) cites its own
    passages, with one decimal place for flight hours and whole days; every
    NTSB-number-shaped token in generated text must be allowlisted). Then the reader's

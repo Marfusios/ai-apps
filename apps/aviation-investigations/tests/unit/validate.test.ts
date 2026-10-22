@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { ComposeOutput } from '../../shared/contracts/briefs.js';
-import { citationPlacement, splitSentences } from '../../server/briefs/sentences.js';
+import { ambiguousBoundary, citationPlacement, splitSentences, summaryFormatProblem } from '../../server/briefs/sentences.js';
 import {
   QUOTE_MATCH_RULE_VERSION,
   QUOTE_MAX_SOURCE,
@@ -310,7 +310,8 @@ describe('validateComposition', () => {
     expect(summaryMarkers('A [[case:DFW08TA066]] and [[case:DEN08LA103]].')).toEqual(['DFW08TA066', 'DEN08LA103']);
     expect(summaryMarkers('A [[case:DFW08TA066] b')).toBeNull();
     expect(summaryMarkers('A [[case:<b>x</b>]]')).toBeNull();
-    expect(check(composition({ summary: 'Broken [ [case:DFW08TA066]] marker.' }))).toEqual(['bad_marker']);
+    // A broken marker is also unplain text (a stray bracket).
+    expect(check(composition({ summary: 'Broken [ [case:DFW08TA066]] marker.' }))).toEqual(['summary_format', 'bad_marker']);
     const other = composition();
     other.cases = [other.cases[0]!];
     other.groups = [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }];
@@ -448,6 +449,102 @@ describe('sentence splitting', () => {
     }
   });
 
+  it('a declared context merges only before its own next token', () => {
+    for (const [text, first] of [
+      // "No."/"Nos." need a number after them.
+      ['It said No. Three people were injured [[case:DFW08TA066]].', 'It said No.'],
+      ['Cylinders Nos. three and four were cold [[case:DFW08TA066]].', 'Cylinders Nos.'],
+      // "approx."/"ca." need a number.
+      ['The engine ran approx. Five minutes later it quit [[case:DFW08TA066]].', 'The engine ran approx.'],
+      ['It was built ca. the year the airport opened [[case:DFW08TA066]].', 'It was built ca.'],
+      // "Mr."/"Mrs."/"Ms." need a capitalised name.
+      ['The report names Mr. 3 people were injured [[case:DFW08TA066]].', 'The report names Mr.'],
+      ['The report names Mrs. the pilot was injured [[case:DFW08TA066]].', 'The report names Mrs.'],
+      ['The report names Ms. SMITH as the owner [[case:DFW08TA066]].', 'The report names Ms.'],
+      // "U.S." needs a lower-case word or "Code"; "U.S.C." a number or a section sign.
+      ['It cites the U.S. Codes of practice [[case:DFW08TA066]].', 'It cites the U.S.'],
+      ['It cites 49 U.S.C. Three people were injured [[case:DFW08TA066]].', 'It cites 49 U.S.C.'],
+      ['It cites 49 U.S.C. the pilot was injured [[case:DFW08TA066]].', 'It cites 49 U.S.C.'],
+      // "e.g."/"i.e." need a lower-case word.
+      ['Some were late, e.g. Three days late [[case:DFW08TA066]].', 'Some were late, e.g.'],
+      ['One failed, i.e. 2 of them [[case:DFW08TA066]].', 'One failed, i.e.'],
+      // Only as a whole word.
+      ['The value was 2No. 3 people were injured [[case:DFW08TA066]].', 'The value was 2No.'],
+    ] as const) {
+      expect(splitSentences(text)[0], text).toBe(first);
+    }
+  });
+
+  it('no sentence end may hide inside a sentence: only declared contexts and decimal points', () => {
+    for (const s of [
+      'The engine lost power.3 people were injured [[case:A1B2C3]].',
+      'The engine lost power.Three people were injured [[case:A1B2C3]].',
+      'The engine lost power!then it quit [[case:A1B2C3]].',
+      'It quit at 10 a.m., on the first flight [[case:A1B2C3]].',
+      'The engine lost power.— 3 people were injured [[case:A1B2C3]].',
+      'The engine lost power., then it quit [[case:A1B2C3]].',
+      'The engine lost power.¹ 3 people were injured [[case:A1B2C3]].',
+      'It was .5 hours [[case:A1B2C3]].',
+    ]) {
+      expect(ambiguousBoundary(s), s).toBe(true);
+    }
+    for (const s of [
+      'The engine lost power 5.1 hours after it was replaced [[case:A1B2C3]].',
+      'The No. 2 engine lost power [[case:A1B2C3]].',
+      'The U.S. operator and 49 U.S.C. 1154(b) apply, e.g. to a part 141 school [[case:A1B2C3]].',
+      'The engine lost power... [[case:A1B2C3]]',
+      'Was the nut secured [[case:A1B2C3]]?',
+      'The pilot said "I am sure the engine quit!" [[case:A1B2C3]]',
+    ]) {
+      expect(ambiguousBoundary(s), s).toBe(false);
+    }
+    // A marker on a "sentence" without a word is misplaced, not a citation.
+    expect(citationPlacement('... [[case:A1B2C3]]')).toBe('misplaced');
+    expect(citationPlacement('[[case:A1B2C3]].')).toBe('misplaced');
+  });
+
+  it('a summary is plain one-line text', () => {
+    for (const s of [
+      'One [[case:A1B2C3]].\nTwo [[case:A1B2C3]].',
+      'One [[case:A1B2C3]].\r\nTwo [[case:A1B2C3]].',
+      'One [[case:A1B2C3]]. Two [[case:A1B2C3]].',
+      'One\u0085two [[case:A1B2C3]].',
+      'One​ [[case:A1B2C3]].',
+      'One­ two [[case:A1B2C3]].',
+      'Oneㅤ two [[case:A1B2C3]].',
+      'One️ two [[case:A1B2C3]].',
+      'One￼ two [[case:A1B2C3]].',
+      'One\u0000 two [[case:A1B2C3]].',
+      'One\t[[case:A1B2C3]].',
+      'One [[case:A1B2C3]]。',
+      'One… [[case:A1B2C3]].',
+      'One; two [[case:A1B2C3]].',
+      'One‼ two [[case:A1B2C3]].',
+      '**One** [[case:A1B2C3]].',
+      '_One_ and ~two~ [[case:A1B2C3]].',
+      'One | two [[case:A1B2C3]].',
+      'One [1] {2} [[case:A1B2C3]].',
+      'One «two» [[case:A1B2C3]].',
+      'One „two“ [[case:A1B2C3]].',
+      'One 「two」 [[case:A1B2C3]].',
+      'One¹ two† [[case:A1B2C3]].',
+      'One • two [[case:A1B2C3]].',
+      'One \u{1F525} two [[case:A1B2C3]].',
+      'One&nbsp;two&#8203; [[case:A1B2C3]].',
+    ]) {
+      expect(summaryFormatProblem(s), JSON.stringify(s)).toBe(true);
+    }
+    for (const s of [
+      'The pilot’s “nut secured” note and the ‘tag’ [[case:A1B2C3]].',
+      'An A&P mechanic signed it on 10/22, at 1430, under § 43.9 (b) [[case:A1B2C3]].',
+      '  Leading and trailing whitespace is ignored [[case:A1B2C3]].\n',
+      'Other spaces and em spaces are whitespace [[case:A1B2C3]].',
+      'A clause; another: a dash — and a comma, [[case:A1B2C3]].',
+    ]) {
+      expect(summaryFormatProblem(s), JSON.stringify(s)).toBe(false);
+    }
+  });
+
   it('an uncited sentence never inherits the next or previous sentence’s citation', () => {
     const verdict = (summary: string) => {
       const out = composition({ summary });
@@ -519,11 +616,17 @@ describe('sentence splitting', () => {
         expect(splitSentences(`${first} ${second}`), `${word} / ${second}`).toEqual([first, second]);
       }
     }
-    // So the uncited sentence is caught.
+    // So the uncited sentence is caught; and "U.S." ending a sentence leaves a dot inside it.
     const out = composition({ summary });
     out.cases = out.cases.slice(0, 1);
     out.groups = [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }];
-    expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({ ok: false, reasons: [{ code: 'uncited_summary', path: 'summary.1' }] });
+    expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({
+      ok: false,
+      reasons: [
+        { code: 'ambiguous_boundary', path: 'summary.0' },
+        { code: 'uncited_summary', path: 'summary.1' },
+      ],
+    });
   });
 
   it('a period right after case markers ends the sentence, whatever starts the next', () => {

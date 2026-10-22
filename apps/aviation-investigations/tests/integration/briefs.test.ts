@@ -646,7 +646,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v4', check: 'check.v3' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v5', check: 'check.v3' },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
       check: { supported: true, problems: [] },
     });

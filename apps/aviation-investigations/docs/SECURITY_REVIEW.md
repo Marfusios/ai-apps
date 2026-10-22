@@ -109,6 +109,28 @@ The implementation review must cover these. It must check in particular that no
 reachable model, including any refusal-fallback target, lacks an allowlisted
 price.
 
+**Summary citations fail closed** (Task 16, post-E2E rounds 4 and 5). Every summary
+sentence must end with the case markers it cites, so a sentence the validator does not
+see as its own could borrow another's citation past the deterministic check. The splitter
+and validator therefore withhold anything unusual (server/briefs/sentences.ts):
+- a summary that is not plain one-line text (controls, invisible or format characters,
+  line breaks, non-ASCII sentence terminators, "…", Markdown or decoration, emoji, HTML
+  entities);
+- a sentence with any `.`, `!` or `?` inside it other than a decimal point;
+- a marker anywhere but at a sentence's end.
+
+An adversarial review of efe27ce (more than 600,000 crafted and random summaries, families
+A to F) found the bypasses this closes; its 237-string corpus is a committed test
+(tests/support/summary-corpus.ts). **Accepted residual (family G):** the six declared
+abbreviation contexts ("No."/"Nos." before a number, "approx."/"ca." before a number,
+"Mr."/"Mrs."/"Ms." before a capitalised name, "U.S." before a lower-case word or "Code",
+"U.S.C." before a number or "§", "e.g."/"i.e." before a lower-case word) are not sentence
+ends. A sentence that really ends with one of them joins the next one ("Was anyone hurt?
+No. 3 passengers were injured"), which the code cannot tell apart from one sentence. The
+evidence checker still judges the joined claim whole against the case's passages, and
+compose v5 asks for no abbreviations with periods. Compound sentences joined by ";", ":",
+a dash or a comma are one sentence by the same policy.
+
 **Withheld-summary diagnostics** (Task 16, after the first paid end-to-end run). A
 withheld summary keeps its rejected composition in `brief_steps.diagnostics` (migration
 0016), with the passage alias map, the summary sentences as the validator split them and,
