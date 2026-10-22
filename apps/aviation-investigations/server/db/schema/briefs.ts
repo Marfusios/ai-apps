@@ -27,10 +27,11 @@ export const BRIEF_STEP_STAGES = ['scope', 'retrieve', 'compose', 'validate', 'd
 export type BriefStepStage = (typeof BRIEF_STEP_STAGES)[number];
 
 /**
- * `running` while a stage runs. Final: `answered`, `withheld`, `scope_reply`,
- * `no_results` (stage `done`); `failed`, `cancelled` (stage `failed`).
+ * `running` while a stage runs. Final: `answered`, `no_match` (the answer model's
+ * explicit abstention), `withheld`, `scope_reply`, `no_results` (stage `done`);
+ * `failed`, `cancelled` (stage `failed`). Migration 0015 added `no_match`.
  */
-export const BRIEF_STEP_STATUSES = ['running', 'answered', 'withheld', 'scope_reply', 'no_results', 'failed', 'cancelled'] as const;
+export const BRIEF_STEP_STATUSES = ['running', 'answered', 'no_match', 'withheld', 'scope_reply', 'no_results', 'failed', 'cancelled'] as const;
 export type BriefStepStatus = (typeof BRIEF_STEP_STATUSES)[number];
 
 const HEX64 = "'^[0-9a-f]{64}$'";
@@ -107,7 +108,7 @@ export const briefSteps = pgTable(
     check(
       'brief_steps_state_check',
       sql`(${t.status} = 'running') = (${t.stage} in ('scope', 'retrieve', 'compose', 'validate'))
-        and (${t.stage} <> 'done' or ${t.status} in ('answered', 'withheld', 'scope_reply', 'no_results'))
+        and (${t.stage} <> 'done' or ${t.status} in ('answered', 'no_match', 'withheld', 'scope_reply', 'no_results'))
         and (${t.stage} <> 'failed' or ${t.status} in ('failed', 'cancelled'))
         and (${t.status} = 'running') = (${t.finishedAt} is null)
         and (${t.status} = 'running' or ${t.result} is not null)`,

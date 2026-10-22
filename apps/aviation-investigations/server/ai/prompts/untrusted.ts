@@ -18,6 +18,7 @@ const DELIMITER_TAGS = [
   'interpretations',
   'case',
   'header',
+  'criteria',
   'passages',
   'passage',
   'claims',

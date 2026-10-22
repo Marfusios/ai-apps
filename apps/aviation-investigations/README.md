@@ -765,8 +765,9 @@ retention are in migrations 0008 and 0009.
   flight, only global pauses are reported. `pruneControls` deletes idempotency records
   after 24 hours, buckets and anti-abuse records after their window plus 7 days, trial
   identities after 30 days, redeemed Turnstile tokens after 15 minutes, AI briefs once
-  they expire (24 hours), and ledger lines and closed reservations after 90 days. The API server runs `expireLeases` and
-  `pruneControls` itself about every 10 minutes, under a PostgreSQL advisory lock
+  they expire (24 hours), and ledger lines and closed reservations after 90 days. The API server runs `expireLeases`,
+  `failOrphanedSteps` (brief steps whose process died) and `pruneControls` itself
+  about every 10 minutes, under a PostgreSQL advisory lock
   (`server/quota/maintenance.ts`; the app role already holds the grants);
   `pnpm worker prune-controls` runs them once by hand.
 
@@ -844,30 +845,52 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    from `clarify.ts`, never model text) and gives the free search back.
 2. **Retrieve** (8 s): the `EvidenceRetriever` port (`evidence.ts`; at most 6 cases
    and 12 passages, query-embedding usage reported through a callback), bound to
-   [hybrid retrieval](#evidence-retrieval-hybrid-search) in `retriever.ts`. Every
-   passage is checked against its stored section revision (`resolvePassage`).
+   [hybrid retrieval](#evidence-retrieval-hybrid-search) in `retriever.ts`. The bundle
+   is then checked, fail closed: every passage against its canonical `passages` row
+   (id derivation, section kind, scope, aircraft, offsets) and section revision
+   (`resolvePassage`), at most 6 cases and 12 passages, and every case holding its best
+   retrieved passage and all its probable-cause passages. A violation fails the step;
+   nothing is dropped or cut.
 3. **Compose** (35 s): the full input is counted with the provider's own counter;
-   above 16,000 tokens the candidates are packed again under a smaller budget.
-4. **Validate**: `validateComposition` (`validate.ts`, rule `quote-ws-v1`: a quote is a
-   substring of its passage after collapsing whitespace runs on both sides; UTF-16
+   above 16,000 tokens the candidates are packed again under a smaller budget, and the
+   re-packed bundle is checked like the first. The answer model may abstain
+   (`no_supported_match`): the case cards and its checked gap notes are shown.
+4. **Validate**: `validateComposition` (`validate.ts`, rule `quote-ws-v2`: a quote of at
+   least three words is a substring of its passage after collapsing whitespace runs on
+   both sides; it resolves to at most 600 code units of source text, shown whole; UTF-16
    spans through an offset map; the first of repeated matches is used and the count
-   recorded; every NTSB-number-shaped token in generated text must be allowlisted),
-   then the check stage (12 s) over every claim. Only `supported` with no problems
-   shows the summary; anything else returns the case cards with the summary withheld.
-   There is no repair loop.
+   recorded; every claim cites passages of its own case; every summary sentence cites a
+   case; timing values have one decimal place for flight hours and whole days; every
+   NTSB-number-shaped token in generated text must be allowlisted). Then the reader's
+   criteria in code (`criteria.ts`: the timing window, first-flight requirement and
+   failure type in effect; a presented case outside them withholds the summary, an
+   unsettled one is shown as not established). Then the check stage (12 s) over every
+   claim, with every verified passage of each case and the criteria as server
+   templates. Only `supported` with no problems shows the summary; anything else
+   returns the case cards with the summary withheld. There is no repair loop.
 
-The step has a 60-second deadline. Stage results are written as they complete
-(`brief_steps`), and only stage status and counts are visible until the end. Each
-stage's usage is settled as itemized ledger lines; a call without reliable usage
-(timeout, abort) settles the full reservation as uncertain. Scope replies, empty
-results and failures before any spend give the free search back; withheld
-summaries, cancellations and failures after spending keep it.
+The step has a 60-second deadline. Every stage enforces its own input cap with the
+provider's counter. Stage results are written as they complete (`brief_steps`), and
+only stage status and counts are visible until the end. Each stage's usage is settled
+as itemized ledger lines with one request id; a call without reliable usage (timeout,
+abort) settles the full reservation as uncertain. Scope replies (settled before they
+are sent), empty results and failures before any spend give the free search back;
+withheld summaries, abstentions, cancellations and failures after spending keep it.
+A step still running 120 s after it started has lost its process: it reads as failed,
+no longer blocks a refinement, and the maintenance pass marks it failed once its
+reservation is closed. Closing the server aborts running steps (they fail and settle)
+and waits up to 8 s for them.
 
 Paid requests check, before any token work or spend: a cross-site request (by
 `Sec-Fetch-Site`, or `Origin` when the browser sends no fetch metadata) is 403; the
-body is strict; AI must be able to run (503 `unavailable`); a refinement needs the
-read owner, a free refinement slot (409 `refinement_limit`) and no running step (429
-`in_flight`). Admission refusals map to `trial_used`, `quota_exhausted`,
+body is strict; a question (with the text refinement in effect) over the query
+embedding cap is 400; AI must be able to run (503 `unavailable`; a refinement on the
+evidence index its brief is pinned to); a refinement needs the read owner, a free
+refinement slot (409 `refinement_limit`) and no running step (429 `in_flight`).
+Admission (`admitPaidRequest`) then applies the kill switch, rate limits, the monthly
+budget and the paced daily allowance (at most $3, counting every open reservation),
+the quota, the anonymous share and concurrency, and reserves the request's maximum
+cost. Admission refusals map to `trial_used`, `quota_exhausted`,
 `free_searches_paused`, `ai_paused`, `rate_limited`, `in_flight` and `conflict`; a
 trial that expired since the gate asks for a new check (403 `challenge_required`).
 
@@ -879,20 +902,23 @@ generation and passages index they started on, and expire after 24 hours. The ap
 role cannot update a brief: the read owner moves once, from a trial to an account,
 through `move_brief_read_owner()` (compare-and-set, for the sign-in handover). A
 step's billing principal, reservation and request never change, and a finished step
-is immutable. Migration 0014 holds the tables, guards, grants and retention.
+is immutable. Migration 0014 holds the tables, guards, grants and retention; 0015 adds
+the `no_match` step status.
 
 **Evidence binding** (`retriever.ts`, wired in `server/main.ts` with the OpenAI query
 embedder):
 
 - The dense channel embeds the question (with the text refinement in effect); the
-  BM25 channel searches the scope stage's `keywordText`. A question and refinement
-  over the 1,000-token query cap are cut to their longest prefix that fits
-  (`fitQueryText`), so the step does not fail after its scope stage was paid for.
+  BM25 channel searches the scope stage's `keywordText`. The routes refuse a question
+  over the 1,000-token query cap before any spend; `fitQueryText` (the longest prefix
+  that fits) remains as a fallback.
 - The query embedding is settled exactly once, from retrieval's `onQueryEmbedding`
   callback, which runs before any search: an Elasticsearch, packing or provenance
   failure afterwards keeps that one `embed` line, and `billing: uncertain` settles
   the step at its full reservation. A failed embedding is settled by its
-  `QueryEmbeddingError` billing (`none`, the billed `usage`, or `uncertain`).
+  `QueryEmbeddingError` billing (`none`, the billed `usage`, or `uncertain`); an
+  embedding aborted mid-request (cancel or deadline) is `uncertain`. A usage callback
+  arriving after `retrieve` returned or threw is ignored.
 - A re-pack for the compose cap packs the same candidates again; nothing is embedded
   twice.
 - Failures become a `RetrievalFailure` with a fixed kind (`unavailable`, `timeout`,

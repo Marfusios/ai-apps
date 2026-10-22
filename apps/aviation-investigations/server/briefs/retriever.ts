@@ -12,7 +12,8 @@
  *   `onQueryEmbedding` callback. Retrieval calls it as soon as the embedder returns,
  *   before any search, and the binding hands it on to the pipeline's
  *   `onEmbeddingUsage` once, with its `billing` (`uncertain` settles the step at the
- *   full reservation). `RetrievalResult.queryEmbedding` (`CandidateResult` here) is
+ *   full reservation). Once `retrieve` has returned or thrown, a late callback is
+ *   ignored: the step has already settled its embedding from the outcome. `RetrievalResult.queryEmbedding` (`CandidateResult` here) is
  *   never read, so an Elasticsearch, packing or provenance failure after the embedding
  *   neither loses nor repeats the line.
  * - **A failed embedding** (no callback) is settled from its `QueryEmbeddingError`
@@ -124,6 +125,7 @@ export function toEvidenceBundle(p: PackedEvidence): EvidenceBundle {
         end: x.end,
         text: x.text,
         role: x.role,
+        reserved: x.reserved,
         rank: x.fusedRank,
       })),
     })),
@@ -156,10 +158,14 @@ export function retrievalFailureOf(err: unknown, signal: AbortSignal | undefined
   return new RetrievalFailure(kind, embedding, `retrieval failed: ${kind} (${reason})`, reason);
 }
 
-/** `embedder`, noting when it is called (an embedding may be billed from then on). */
-function watched(embedder: Embedder | QueryEmbedder, onCall: () => void): Embedder | QueryEmbedder {
+/**
+ * `embedder`, noting when it is called (an embedding may be billed from then on). An
+ * already aborted signal stops the call before anything is sent, so it is not noted.
+ */
+function watched(embedder: Embedder | QueryEmbedder, onCall: () => void, signal: AbortSignal | undefined): Embedder | QueryEmbedder {
   const base = { model: embedder.model, dims: embedder.dims, usdPerMillionTokens: embedder.usdPerMillionTokens };
-  const embed = (texts: string[]): Promise<EmbedResult> => {
+  const embed = async (texts: string[]): Promise<EmbedResult> => {
+    signal?.throwIfAborted();
     onCall();
     return embedder.embed(texts);
   };
@@ -167,9 +173,10 @@ function watched(embedder: Embedder | QueryEmbedder, onCall: () => void): Embedd
   return {
     ...base,
     embed,
-    embedWithSignal: (texts: string[], signal?: AbortSignal) => {
+    embedWithSignal: async (texts: string[], callSignal?: AbortSignal) => {
+      (callSignal ?? signal)?.throwIfAborted();
       onCall();
-      return embedder.embedWithSignal(texts, signal);
+      return embedder.embedWithSignal(texts, callSignal);
     },
   };
 }
@@ -194,18 +201,18 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
 
     async retrieve(query, signal, onEmbeddingUsage) {
       let settled = false;
+      let open = true;
       let embedderCalled = false;
       const settleOnce = (usage: EmbeddingUsage) => {
-        if (settled) return;
+        // After `retrieve` returned or threw, the step has settled from the outcome.
+        if (settled || !open) return;
         settled = true;
         onEmbeddingUsage(usage);
       };
-      let candidates: Awaited<ReturnType<typeof retrieveCandidates>>;
       try {
-        candidates = await retrieveCandidates(
-          es,
-          watched(embedder, () => (embedderCalled = true)),
-          {
+        let candidates: Awaited<ReturnType<typeof retrieveCandidates>>;
+        try {
+          candidates = await retrieveCandidates(es, watched(embedder, () => (embedderCalled = true), signal), {
             dataset: query.dataset,
             text: fitQueryText(query.text),
             keywordText: query.keywordText,
@@ -214,29 +221,31 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
             signal,
             // The one source of the embedding's usage (module comment).
             onQueryEmbedding: (u) => settleOnce(toUsage(u)),
+          });
+        } catch (err) {
+          throw retrievalFailureOf(err, signal, settled ? 'none' : embeddingBilling(err, embedderCalled, settleOnce));
+        }
+        let bundle: EvidenceBundle;
+        try {
+          bundle = toEvidenceBundle(await fetchAndPack(es, candidates.index, candidates.filter, candidates.cases, candidates.params, signal));
+        } catch (err) {
+          // The embedding was reported before the searches ran.
+          throw retrievalFailureOf(err, signal, 'none');
+        }
+        return {
+          bundle,
+          async repack(maxEvidenceTokens: number, repackSignal: AbortSignal) {
+            try {
+              const smaller = retrievalParams({ ...candidates.params, maxEvidenceTokens });
+              return toEvidenceBundle(await fetchAndPack(es, candidates.index, candidates.filter, candidates.cases, smaller, repackSignal));
+            } catch (err) {
+              throw retrievalFailureOf(err, repackSignal, 'none');
+            }
           },
-        );
-      } catch (err) {
-        throw retrievalFailureOf(err, signal, settled ? 'none' : embeddingBilling(err, embedderCalled, settleOnce));
+        };
+      } finally {
+        open = false;
       }
-      let bundle: EvidenceBundle;
-      try {
-        bundle = toEvidenceBundle(await fetchAndPack(es, candidates.index, candidates.filter, candidates.cases, candidates.params, signal));
-      } catch (err) {
-        // The embedding was reported before the searches ran.
-        throw retrievalFailureOf(err, signal, 'none');
-      }
-      return {
-        bundle,
-        async repack(maxEvidenceTokens, repackSignal) {
-          try {
-            const smaller = retrievalParams({ ...candidates.params, maxEvidenceTokens });
-            return toEvidenceBundle(await fetchAndPack(es, candidates.index, candidates.filter, candidates.cases, smaller, repackSignal));
-          } catch (err) {
-            throw retrievalFailureOf(err, repackSignal, 'none');
-          }
-        },
-      };
     },
   };
 

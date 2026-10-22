@@ -30,7 +30,7 @@
  * (`input-v1`); queries deliberately do not, and both use the same model and
  * dimensions, which the passages index records in its `_meta`.
  */
-import OpenAI, { APIConnectionError, APIError } from 'openai';
+import OpenAI, { APIConnectionError, APIError, APIUserAbortError } from 'openai';
 import { STAGE_CAPS, embeddingPrice } from './pricing.js';
 import { countTokens } from './tokens.js';
 
@@ -97,14 +97,19 @@ export interface ProviderErrorInfo {
   /** Provider error code such as `rate_limit_exceeded`. */
   code?: string;
   requestId?: string;
-  /** `connection` (no response), `api` (an HTTP error response) or `other`. */
-  kind: 'connection' | 'api' | 'other';
+  /**
+   * `connection` (no response), `aborted` (the caller's signal ended the request: it may
+   * have reached the provider), `api` (an HTTP error response) or `other`.
+   */
+  kind: 'connection' | 'aborted' | 'api' | 'other';
 }
 
 const SAFE_CODE = /^[a-z0-9_.-]{1,64}$/i;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{1,100}$/;
 
 export function providerErrorInfo(err: unknown): ProviderErrorInfo {
+  // Before APIError: the SDK's abort error is an APIError without a status.
+  if (err instanceof APIUserAbortError) return { kind: 'aborted' };
   if (err instanceof APIConnectionError) return { kind: 'connection' };
   if (err instanceof APIError) {
     const info: ProviderErrorInfo = { kind: 'api' };
@@ -118,6 +123,7 @@ export function providerErrorInfo(err: unknown): ProviderErrorInfo {
 
 export function describeProviderError(i: ProviderErrorInfo): string {
   if (i.kind === 'connection') return 'connection failed or timed out';
+  if (i.kind === 'aborted') return 'request aborted';
   if (i.kind === 'other') return 'unexpected client error';
   return `HTTP ${i.status ?? 'error'}${i.code ? ` ${i.code}` : ''}${i.requestId ? ` (request ${i.requestId})` : ''}`;
 }
@@ -161,6 +167,9 @@ export interface Failure {
 export function classifyFailure(err: unknown): Failure {
   const info = providerErrorInfo(err);
   if (info.kind === 'connection') return { kind: 'uncertain', retryable: true, info };
+  // Aborted by the caller (cancel or deadline): the request may have been processed, so
+  // it is uncertain (settled in full), and the caller stopped waiting, so not retried.
+  if (info.kind === 'aborted') return { kind: 'uncertain', retryable: false, info };
   if (info.kind === 'api' && info.status !== undefined) {
     const s = info.status;
     if (s === 408) return { kind: 'uncertain', retryable: true, info };

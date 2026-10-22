@@ -2,26 +2,28 @@
  * The ports the brief pipeline reads evidence through.
  *
  * `EvidenceRetriever` is the narrow interface to hybrid retrieval (Task 10's
- * `retrieveEvidence`, bound in server/briefs/retriever.ts). It fits two properties of
- * that code:
+ * `retrieveCandidates` and `fetchAndPack`, bound in server/briefs/retriever.ts). It
+ * fits two properties of that code:
  * - query-embedding usage is reported through the caller's `onEmbeddingUsage` callback
  *   as soon as the embedding succeeds, so a later Elasticsearch or packing failure
  *   cannot lose a paid stage; a failed embedding is reported by `RetrievalFailure`'s
  *   `embedding` billing;
  * - a bundle holds at most 6 cases and 12 passages, where every case has its best
- *   retrieved passage and all its probable-cause variants. `repack` packs the same
- *   candidates again under a smaller evidence-token budget (no new embedding), for the
- *   16,000-token compose cap (amendment A11), which is measured with the language
- *   model's own token counter.
+ *   retrieved passage and all its probable-cause variants, marked `reserved`. `repack`
+ *   packs the same candidates again under a smaller evidence-token budget (no new
+ *   embedding), for the 16,000-token compose cap (amendment A11), which is measured
+ *   with the language model's own token counter.
  *
- * `CaseCatalog` reads the dataset in PostgreSQL: case summaries for the cards, and the
- * section revisions the passages were cut from, so each passage's provenance is checked
- * before it can be quoted (server/briefs/validate.ts `resolvePassage`).
+ * The pipeline trusts none of it: `CaseCatalog` reads the dataset in PostgreSQL (case
+ * summaries for the cards, and the canonical `passages` rows with their section
+ * revisions), and every passage is checked against its canonical row and every case
+ * against its complete cause set before anything is quoted (gate G6 #2, #4; a broken
+ * bundle fails the step instead of losing evidence).
  */
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { ReportLink } from '../../shared/contracts/cases.js';
 import type { CaseRow, SectionKind } from '../../shared/contracts/search.js';
-import type { SectionRevision } from './validate.js';
+import type { CanonicalPassage } from './validate.js';
 
 export interface EvidenceDataset {
   generationId: number;
@@ -64,6 +66,8 @@ export interface EvidencePassage {
   text: string;
   /** Why it is in the bundle: the case's retrieved passages, its causes, or room-filling extras. */
   role: 'retrieved' | 'probable_cause' | 'fill';
+  /** Part of the case's justification: its best retrieved passage or one of its causes; never dropped. */
+  reserved: boolean;
   /** 1-based fused rank; null for an attached cause. */
   rank: number | null;
 }
@@ -143,6 +147,8 @@ export interface CaseSummary {
 export interface CaseCatalog {
   /** Summaries of the given cases in one generation; unknown numbers are absent. */
   summaries(generationId: number, ntsbNos: readonly string[]): Promise<Map<string, CaseSummary>>;
-  /** Section revisions by revision id, with their citation text and recorded sha256. */
-  sections(generationId: number, revisionIds: readonly string[]): Promise<Map<string, SectionRevision>>;
+  /** Canonical `passages` rows of one generation and chunker by passage id, with their section text and sha256. */
+  passages(generationId: number, chunkerVersion: string, passageIds: readonly string[]): Promise<Map<string, CanonicalPassage>>;
+  /** Every probable-cause passage id of the given cases (one generation and chunker), by case. */
+  causePassageIds(generationId: number, chunkerVersion: string, ntsbNos: readonly string[]): Promise<Map<string, string[]>>;
 }

@@ -52,16 +52,20 @@ describe('brief request contracts', () => {
 
   it('the composition schema is strict and bounded', () => {
     const ok = {
+      outcome: 'answer',
       summary: 'A [[case:DFW08TA066]].',
       groups: [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }],
-      cases: [{ ntsbNo: 'DFW08TA066', why: 'w', quotes: [{ passageId: 'p1', quote: 'q', speaker: 'pilot' }] }],
+      cases: [{ ntsbNo: 'DFW08TA066', why: 'w', quotes: [{ passageId: 'p1', quote: 'q', speaker: 'pilot' }], evidencePassageIds: ['p1'] }],
       gaps: [],
     };
     expect(ComposeOutputSchema.safeParse(ok).success).toBe(true);
-    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [] }).success).toBe(false);
+    // The explicit abstention is a valid shape; the validator enforces what it may hold.
+    expect(ComposeOutputSchema.safeParse({ ...ok, outcome: 'no_supported_match', summary: '', groups: [], cases: [] }).success).toBe(true);
+    expect(ComposeOutputSchema.safeParse({ ...ok, outcome: 'maybe' }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, html: '<b>' }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], quotes: [] }] }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], timing: '5.1 FH' }] }).success).toBe(false);
+    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], maintenance: 'investigator_attributed' }] }).success).toBe(false);
   });
 
   it('the new error codes are part of ErrorResponse', () => {
@@ -106,8 +110,12 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
     }
     expect(stages).toEqual(['retrieve', 'compose', 'validate', 'validate', 'done']);
     const context = CaseContextResponseSchema.parse(mock.context(s.briefId, 1, 'DEN08LA103').body);
-    expect(context.lines.map((l) => l.label)).toEqual(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'ACCOUNT']);
+    expect(context.lines.map((l) => l.label)).toEqual(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'CRITERIA', 'ACCOUNT']);
     expect(context.passages[0]!.highlights).toHaveLength(2);
+    // Each line links to its own passages; a gap-only case has a context too.
+    expect(context.lines.find((l) => l.label === 'EVIDENCE')!.passageIds).toEqual(['mock-DEN08LA103-analysis', 'mock-DEN08LA103-probable_cause']);
+    const gapCase = CaseContextResponseSchema.parse(mock.context(s.briefId, 1, 'NYC08LA106').body);
+    expect(gapCase).toMatchObject({ reading: null, lines: [], gaps: [{ ntsbNo: 'NYC08LA106', passageIds: ['mock-NYC08LA106-analysis'] }] });
   });
 
   it('offers every outcome: withheld, scope replies, refinements up to the limit, cancel', () => {
@@ -115,6 +123,10 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
     const withheld = StartBriefResponseSchema.parse(mock.create({ question: 'Show me a withheld summary', idempotencyKey: 'key-00000001' }).body);
     mock.read(withheld.briefId);
     expect(BriefStepResponseSchema.parse(mock.read(withheld.briefId).body).result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+
+    const abstained = StartBriefResponseSchema.parse(mock.create({ question: 'Show me no match', idempotencyKey: 'key-00000009' }).body);
+    mock.read(abstained.briefId);
+    expect(BriefStepResponseSchema.parse(mock.read(abstained.briefId).body).result).toMatchObject({ kind: 'no_match', gaps: [{ ntsbNo: 'NYC08LA106' }] });
 
     for (const [question, kind] of [
       ['Write a poem about clouds', 'out_of_scope'],

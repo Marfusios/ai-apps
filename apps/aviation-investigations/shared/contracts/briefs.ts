@@ -229,7 +229,11 @@ export const KeywordSuggestionSchema = z.strictObject({
   filters: BriefFiltersSchema,
 });
 
-/** A server-rendered reading of an ambiguous term; picking it posts `refinement` (1 search). */
+/**
+ * A server-rendered reading of an ambiguous term. Picking it posts `refinement`: a paid
+ * step that uses one of the brief's refinements, so the control shows "· uses 1"
+ * (UI_DESIGN §5).
+ */
 export const ReadingSchema = z.strictObject({
   label: z.string().min(1).max(120),
   refinement: RefinementChangeSchema,
@@ -369,6 +373,23 @@ export const EvidenceAttributionSchema = z.discriminatedUnion('scope', [
   z.strictObject({ scope: z.literal('event'), multiAircraft: z.boolean() }),
 ]);
 
+/** The reader's criteria a brief applies (server-owned readings: chips, pinned or default). */
+export const CRITERIA = ['timing_window', 'first_flight_only', 'failure_type'] as const;
+export type Criterion = (typeof CRITERIA)[number];
+
+/**
+ * How a presented case stands against one criterion. `matches`: decided in code from
+ * the case's checked structured values, or confirmed by the evidence checker for a
+ * semantic criterion. `unknown`: the supplied passages do not settle it (for example
+ * timing stated only in words); the UI shows it as not established, never as a match.
+ * A case that does not match is never presented as one (the summary is withheld).
+ */
+export const CriterionDecisionSchema = z.strictObject({
+  criterion: z.enum(CRITERIA),
+  decision: z.enum(['matches', 'unknown']),
+});
+export type CriterionDecision = z.infer<typeof CriterionDecisionSchema>;
+
 /** The AI's reading of one case. Absent on plain cards. */
 export const CaseReadingSchema = z.strictObject({
   /** Null for a non-mechanical brief, or when attribution to one aircraft is ambiguous. */
@@ -378,6 +399,8 @@ export const CaseReadingSchema = z.strictObject({
   timing: TimingChipSchema.nullable(),
   quotes: z.array(BriefQuoteSchema).min(1).max(3),
   evidence: EvidenceAttributionSchema,
+  /** One decision per criterion in effect (none when the brief has no reading). */
+  criteria: z.array(CriterionDecisionSchema).max(CRITERIA.length),
 });
 export type CaseReading = z.infer<typeof CaseReadingSchema>;
 
@@ -403,12 +426,24 @@ export const SummarySegmentSchema = z.discriminatedUnion('kind', [
 ]);
 export type SummarySegment = z.infer<typeof SummarySegmentSchema>;
 
-export const GapSchema = z.strictObject({ ntsbNo: NtsbNoSchema, text: z.string().min(1).max(300) });
+/**
+ * What a case's supplied passages do not show, written by the answer model, checked
+ * against all of that case's passages and the criteria, with the passages it rests on
+ * (the drawer opens the case at them). It speaks only about the supplied evidence.
+ */
+export const GapSchema = z.strictObject({
+  ntsbNo: NtsbNoSchema,
+  text: z.string().min(1).max(300),
+  passageIds: z.array(z.string().min(1).max(80)).min(1).max(3),
+});
+export type Gap = z.infer<typeof GapSchema>;
 
 /** Why a summary was withheld. Every variant still returns the case cards. */
 export const WITHHELD_REASONS = [
   /** A quote, citation or case number failed the code checks (validateComposition). */
   'citation_check',
+  /** A presented case does not meet the reader's criteria (timing window, first flight, failure type). */
+  'criteria_check',
   /** The evidence checker reported a problem or was inconclusive. */
   'evidence_check',
   /** The answer model refused, was cut off, timed out or returned unusable output. */
@@ -437,6 +472,17 @@ export const BriefResultSchema = z.discriminatedUnion('kind', [
     ...resultContext,
     reason: z.enum(WITHHELD_REASONS),
     cases: z.array(CaseCardSchema).min(1).max(MAX_BRIEF_CASES),
+  }),
+  /**
+   * The answer model found no retrieved case that supports the question as asked (an
+   * explicit abstention). The cases it was given are listed as plain cards, with
+   * checked notes on near misses. This counts as a search.
+   */
+  z.strictObject({
+    kind: z.literal('no_match'),
+    ...resultContext,
+    cases: z.array(CaseCardSchema).min(1).max(MAX_BRIEF_CASES),
+    gaps: z.array(GapSchema).max(2),
   }),
   z.strictObject({ kind: z.literal('scope_reply'), reply: ScopeReplySchema }),
   z.strictObject({ kind: z.literal('no_results'), ...resultContext }),
@@ -491,21 +537,30 @@ export const ContextPassageSchema = z.strictObject({
   highlights: z.array(SpanSchema).max(3),
 });
 
-/** A labelled line of WHY IT'S IN YOUR RESULTS (server templates), each jumping to a passage. */
+/**
+ * A labelled line of WHY IT'S IN YOUR RESULTS (server templates). `passageIds` are the
+ * passages that line's claim was checked on (its own support, not the first quote);
+ * empty for a statement about what the supplied passages lack.
+ */
 export const ContextLineSchema = z.strictObject({
-  label: z.enum(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'ACCOUNT']),
+  label: z.enum(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'CRITERIA', 'ACCOUNT']),
   text: z.string().min(1).max(200),
-  passageId: z.string().min(1).max(80).nullable(),
+  passageIds: z.array(z.string().min(1).max(80)).max(MAX_BRIEF_PASSAGES),
 });
 
-/** `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`: the brief's AI context for one case (the drawer, UI_DESIGN §4.5). */
+/**
+ * `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`: the brief's AI context for one case (the
+ * drawer, UI_DESIGN §4.5): a case on the sheet, or a case a gap note is about.
+ */
 export const CaseContextResponseSchema = z.strictObject({
   briefId: BriefIdSchema,
   step: StepNumberSchema,
   ntsbNo: NtsbNoSchema,
-  /** Null when the step's summary was withheld: the drawer shows NTSB text only. */
+  /** Null when the step's summary was withheld or the case is only in a gap note. */
   reading: CaseReadingSchema.nullable(),
-  lines: z.array(ContextLineSchema).max(6),
+  lines: z.array(ContextLineSchema).max(8),
+  /** Gap notes about this case, with the passages they rest on. */
+  gaps: z.array(GapSchema).max(2),
   passages: z.array(ContextPassageSchema).min(1).max(MAX_BRIEF_PASSAGES),
 });
 export type CaseContextResponse = z.infer<typeof CaseContextResponseSchema>;
@@ -518,6 +573,9 @@ export type CaseContextResponse = z.infer<typeof CaseContextResponseSchema>;
 export const ComposeCaseNumberSchema = z.string().regex(/^[A-Z0-9]{6,16}$/);
 export const PassageIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/);
 
+/** The passages of the same case a statement rests on (shape only; validation checks the case). */
+const SupportSchema = z.array(PassageIdSchema).max(3);
+
 export const ComposeQuoteSchema = z.strictObject({
   passageId: PassageIdSchema,
   /** Copied character for character from the passage (whitespace runs may differ). */
@@ -525,29 +583,47 @@ export const ComposeQuoteSchema = z.strictObject({
   speaker: z.enum(SPEAKERS),
 });
 
+/**
+ * Time from the relevant maintenance to the event. `value` is required for
+ * `flight_hours` (at most one decimal place) and `calendar_days` (whole days), absent
+ * otherwise; the value checked, stored and displayed is exactly this number.
+ */
 export const ComposeTimingSchema = z.strictObject({
   basis: z.enum(TIMING_BASES),
-  /** Flight hours or calendar days; required for those bases, absent otherwise. */
   value: z.number().min(0).max(100_000).optional(),
   bound: z.enum(TIMING_BOUNDS),
+  passageIds: SupportSchema,
 });
+export type ComposeTiming = z.infer<typeof ComposeTimingSchema>;
 
 export const ComposeCaseSchema = z.strictObject({
   ntsbNo: ComposeCaseNumberSchema,
-  /** One plain sentence on why the case matches. */
+  /** One plain sentence on why the case matches; checked against the case's passages. */
   why: z.string().min(1).max(300),
   quotes: z.array(ComposeQuoteSchema).min(1).max(3),
+  /** The passages that support the case's group (its mechanical evidence, or its relevance for `examples`). */
+  evidencePassageIds: SupportSchema,
   /** Mechanical questions only. */
-  maintenance: z.enum(MAINTENANCE_RELATIONS).optional(),
-  symptom: z.enum(SYMPTOMS).optional(),
+  maintenance: z.strictObject({ relation: z.enum(MAINTENANCE_RELATIONS), passageIds: SupportSchema }).optional(),
+  symptom: z.strictObject({ value: z.enum(SYMPTOMS), passageIds: SupportSchema }).optional(),
   /** Only when a passage states the time since the relevant maintenance. */
   timing: ComposeTimingSchema.optional(),
 });
 export type ComposeCase = z.infer<typeof ComposeCaseSchema>;
 
+/**
+ * `answer`: at least one case supports the question as asked. `no_supported_match`: none
+ * does (an explicit abstention): no summary, groups or cases, optionally gap notes.
+ */
+export const COMPOSE_OUTCOMES = ['answer', 'no_supported_match'] as const;
+
 export const ComposeOutputSchema = z.strictObject({
-  /** Two to five plain sentences with `[[case:NTSB_NO]]` markers after statements about a case. */
-  summary: z.string().min(1).max(1_500),
+  outcome: z.enum(COMPOSE_OUTCOMES),
+  /**
+   * For `answer`: two to five plain sentences, each ending with the `[[case:NTSB_NO]]`
+   * markers of the cases it is about. Empty for `no_supported_match`.
+   */
+  summary: z.string().max(1_500),
   /** Mechanical evidence groups, or one `examples` group; every case in exactly one group. */
   groups: z
     .array(
@@ -556,10 +632,12 @@ export const ComposeOutputSchema = z.strictObject({
         caseNumbers: z.array(ComposeCaseNumberSchema).min(1).max(MAX_BRIEF_CASES),
       }),
     )
-    .min(1)
     .max(GLYPH_KINDS.length),
-  cases: z.array(ComposeCaseSchema).min(1).max(MAX_BRIEF_CASES),
-  /** What the evidence does not show for a case (e.g. just outside the timing window), with its passages. */
+  cases: z.array(ComposeCaseSchema).max(MAX_BRIEF_CASES),
+  /**
+   * What a case's supplied passages do not show that matters for the question (for
+   * example just outside the timing window), with the passages it rests on.
+   */
   gaps: z
     .array(
       z.strictObject({

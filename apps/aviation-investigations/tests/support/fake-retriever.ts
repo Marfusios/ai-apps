@@ -1,17 +1,19 @@
 /**
- * A stand-in for Task 10's hybrid retrieval behind the brief pipeline's
- * `EvidenceRetriever` port: it returns the analysis and probable-cause sections of the
- * cases it is told to return, read from the fixture generation in PostgreSQL, as whole
- * passages. Passage text is exactly the stored citation text, so the pipeline's
- * provenance check and quote validation run on real fixture narratives (CRLF and all).
+ * A stand-in for hybrid retrieval behind the brief pipeline's `EvidenceRetriever` port,
+ * for scripting cases and failures. It returns the cases it is told to return, built
+ * from the fixture generation's canonical `passages` rows (the approved chunker) and
+ * their section text in PostgreSQL, the way packing builds a bundle: each case reserves
+ * its first analysis passage (its "best retrieved" passage, ranked) and every
+ * probable-cause passage. So the pipeline's provenance and completeness checks and the
+ * quote validation run on real fixture narratives (CRLF and all).
  *
- * It reports one query embedding through the callback, can fail or hang on request,
- * and records every query and re-pack.
+ * It reports one query embedding through the callback, can fail, hang or tamper with
+ * the bundle on request, and records every query and re-pack. A re-pack under a
+ * smaller budget drops whole cases from the end, never a reserved passage.
  */
-import { createHash } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../server/db/client.js';
-import { caseSections } from '../../server/db/schema/index.js';
+import { caseSections, passages } from '../../server/db/schema/index.js';
 import {
   RetrievalFailure,
   type EmbeddingUsage,
@@ -22,6 +24,7 @@ import {
   type EvidenceRetriever,
   type RetrievedEvidence,
 } from '../../server/briefs/evidence.js';
+import { PASSAGES_CONTRACT } from '../../server/search/passages-contract.js';
 
 export const FAKE_EMBEDDING: Readonly<EmbeddingUsage> = Object.freeze({
   provider: 'openai',
@@ -34,19 +37,16 @@ export const FAKE_EMBEDDING: Readonly<EmbeddingUsage> = Object.freeze({
 export interface FakeRetrieverOptions {
   /** Event numbers to return, in rank order (a function of the query, or a list). */
   cases: readonly string[] | ((q: EvidenceQuery) => readonly string[]);
-  /** Section kinds per case (default analysis and probable cause). */
-  kinds?: readonly ('factual' | 'analysis' | 'probable_cause')[];
   /** Fail after reporting the embedding (`afterEmbedding`) or before (`beforeEmbedding`). */
   fail?: { failure: RetrievalFailure; afterEmbedding: boolean };
   /** Wait for the abort signal, then fail with `timeout`. */
   hang?: boolean;
-  /** What `available` answers (default true). */
-  available?: boolean;
+  /** What `available` answers (default true), or a function of the dataset asked about. */
+  available?: boolean | ((dataset: { generationId: number; passagesIndex: string | null }) => boolean);
   embedding?: EmbeddingUsage | null;
+  /** Change a bundle before it is returned (`repack`: true for re-packed bundles). */
+  tamper?: (bundle: EvidenceBundle, repack: boolean) => EvidenceBundle;
 }
-
-export const passageIdOf = (revisionId: string, start: number, end: number) =>
-  createHash('sha256').update(`${revisionId}:${start}:${end}`).digest('hex');
 
 export class FakeRetriever implements EvidenceRetriever {
   readonly queries: EvidenceQuery[] = [];
@@ -57,8 +57,9 @@ export class FakeRetriever implements EvidenceRetriever {
     public options: FakeRetrieverOptions,
   ) {}
 
-  async available(): Promise<boolean> {
-    return this.options.available ?? true;
+  async available(dataset: { generationId: number; passagesIndex: string | null }): Promise<boolean> {
+    const a = this.options.available ?? true;
+    return typeof a === 'function' ? a(dataset) : a;
   }
 
   async retrieve(query: EvidenceQuery, signal: AbortSignal, onEmbeddingUsage: (u: EmbeddingUsage) => void): Promise<RetrievedEvidence> {
@@ -76,68 +77,82 @@ export class FakeRetriever implements EvidenceRetriever {
       throw new RetrievalFailure('timeout', 'none');
     }
     const numbers = typeof o.cases === 'function' ? o.cases(query) : o.cases;
-    const bundle = await this.bundle(query.dataset.generationId, numbers, Infinity);
+    const tamper = o.tamper ?? ((b: EvidenceBundle) => b);
+    const bundle = tamper(await this.bundle(query.dataset.generationId, numbers, Infinity), false);
     return {
       bundle,
       repack: async (maxEvidenceTokens: number) => {
         this.repacks.push(maxEvidenceTokens);
-        return this.bundle(query.dataset.generationId, numbers, maxEvidenceTokens);
+        return tamper(await this.bundle(query.dataset.generationId, numbers, maxEvidenceTokens), true);
       },
     };
   }
 
+  /** The canonical passages of `numbers` as a packed bundle. */
   private async bundle(generationId: number, numbers: readonly string[], maxTokens: number): Promise<EvidenceBundle> {
-    const kinds = this.options.kinds ?? ['analysis', 'probable_cause'];
     const rows =
       numbers.length === 0
         ? []
         : await this.db
             .select({
-              ntsbNo: caseSections.ntsbNo,
-              sectionId: caseSections.sectionId,
-              revisionId: caseSections.revisionId,
-              kind: caseSections.kind,
-              scope: caseSections.scope,
-              aircraftKey: caseSections.aircraftKey,
-              text: caseSections.text,
+              passageId: passages.passageId,
+              ntsbNo: passages.ntsbNo,
+              sectionId: passages.sectionId,
+              revisionId: passages.revisionId,
+              sectionKind: passages.sectionKind,
+              scope: passages.scope,
+              aircraftKey: passages.aircraftKey,
+              start: passages.start,
+              end: passages.end,
+              tokenCount: passages.tokenCount,
+              sectionText: caseSections.text,
             })
-            .from(caseSections)
-            .where(and(eq(caseSections.generationId, generationId), inArray(caseSections.ntsbNo, [...numbers])));
-    const order = { factual: 0, analysis: 1, probable_cause: 2 } as const;
+            .from(passages)
+            .innerJoin(
+              caseSections,
+              and(eq(caseSections.generationId, passages.generationId), eq(caseSections.sectionId, passages.sectionId), eq(caseSections.revisionId, passages.revisionId)),
+            )
+            .where(
+              and(
+                eq(passages.generationId, generationId),
+                eq(passages.chunkerVersion, PASSAGES_CONTRACT.chunkerVersion),
+                inArray(passages.ntsbNo, [...numbers]),
+                inArray(passages.sectionKind, ['analysis', 'probable_cause']),
+              ),
+            )
+            .orderBy(asc(passages.sectionId), asc(passages.start));
     const cases: EvidenceCase[] = [];
-    let passages = 0;
+    let count = 0;
     let tokens = 0;
     let rank = 0;
     for (const [i, ntsbNo] of numbers.slice(0, 6).entries()) {
-      const own = rows
-        .filter((r) => r.ntsbNo === ntsbNo && kinds.includes(r.kind))
-        .sort((a, b) => order[a.kind] - order[b.kind] || a.sectionId.localeCompare(b.sectionId));
-      const chosen: EvidencePassage[] = [];
-      for (const r of own) {
-        const t = Math.ceil(r.text.length / 4);
-        // Under a smaller budget keep the cause and drop the other sections first.
-        if (r.kind !== 'probable_cause' && tokens + t > maxTokens) continue;
-        if (passages >= 12) break;
-        rank += 1;
-        chosen.push({
-          passageId: passageIdOf(r.revisionId, 0, r.text.length),
-          ntsbNo,
-          sectionId: r.sectionId,
-          revisionId: r.revisionId,
-          sectionKind: r.kind,
-          scope: r.scope as 'aircraft' | 'event',
-          aircraftKey: r.aircraftKey,
-          start: 0,
-          end: r.text.length,
-          text: r.text,
-          role: r.kind === 'probable_cause' ? 'probable_cause' : 'retrieved',
-          rank: r.kind === 'probable_cause' ? null : rank,
-        });
-        passages += 1;
-        tokens += t;
-      }
-      if (chosen.length > 0) cases.push({ ntsbNo, rank: i + 1, passages: chosen });
+      const own = rows.filter((r) => r.ntsbNo === ntsbNo);
+      const best = own.find((r) => r.sectionKind === 'analysis');
+      const causes = own.filter((r) => r.sectionKind === 'probable_cause');
+      if (!best || causes.length === 0) continue;
+      const chosen = [best, ...causes];
+      const weight = chosen.reduce((n, r) => n + r.tokenCount, 0);
+      if (count + chosen.length > 12 || tokens + weight > maxTokens) continue;
+      rank += 1;
+      const passage = (r: (typeof own)[number], isBest: boolean): EvidencePassage => ({
+        passageId: r.passageId,
+        ntsbNo,
+        sectionId: r.sectionId,
+        revisionId: r.revisionId,
+        sectionKind: r.sectionKind,
+        scope: r.scope as 'aircraft' | 'event',
+        aircraftKey: r.aircraftKey,
+        start: r.start,
+        end: r.end,
+        text: r.sectionText.slice(r.start, r.end),
+        role: isBest ? 'retrieved' : 'probable_cause',
+        reserved: true,
+        rank: isBest ? rank : null,
+      });
+      cases.push({ ntsbNo, rank: i + 1, passages: [passage(best, true), ...causes.map((r) => passage(r, false))] });
+      count += chosen.length;
+      tokens += weight;
     }
-    return { cases, passages, evidenceTokens: tokens };
+    return { cases, passages: count, evidenceTokens: tokens };
   }
 }

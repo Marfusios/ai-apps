@@ -14,6 +14,7 @@
  * - "how many", "how often" or "trend": counting (statistics);
  * - "compare" with case numbers: a comparison reply;
  * - "soon after": a clarification with two readings;
+ * - "no match": the answer model's explicit abstention (no case supports the question);
  * - "nothing": no results.
  */
 import {
@@ -110,11 +111,32 @@ const INTERPRETATIONS: InterpretationChip[] = [
 
 const SEED_CASES = ['DFW08TA066', 'MIA08LA156', 'DEN08LA103'] as const;
 
-/** The seed readings' other DESIGN §3 dimensions (the drawer's MAINTENANCE and SYMPTOM lines). */
+const analysisId = (n: string) => passageId(n, 'analysis');
+const causeId = (n: string) => passageId(n, 'probable_cause');
+
+/** The seed readings' DESIGN §3 dimensions, each with its own passages (the drawer's lines). */
 const SEED_DIMENSIONS: Readonly<Record<string, Parameters<typeof readingLines>[1]>> = {
-  DFW08TA066: { maintenance: 'investigator_attributed', symptom: 'total_power_loss' },
-  MIA08LA156: { maintenance: 'preceding_not_established', symptom: 'partial_power_loss' },
-  DEN08LA103: { maintenance: 'preceding_not_established', symptom: 'partial_power_loss' },
+  DFW08TA066: {
+    ntsbNo: 'DFW08TA066',
+    evidencePassageIds: [analysisId('DFW08TA066'), causeId('DFW08TA066')],
+    maintenance: { relation: 'investigator_attributed', passageIds: [causeId('DFW08TA066')] },
+    symptom: { value: 'total_power_loss', passageIds: [analysisId('DFW08TA066')] },
+    timingPassageIds: [analysisId('DFW08TA066')],
+  },
+  MIA08LA156: {
+    ntsbNo: 'MIA08LA156',
+    evidencePassageIds: [analysisId('MIA08LA156')],
+    maintenance: { relation: 'preceding_not_established', passageIds: [analysisId('MIA08LA156')] },
+    symptom: { value: 'partial_power_loss', passageIds: [analysisId('MIA08LA156'), causeId('MIA08LA156')] },
+    timingPassageIds: [analysisId('MIA08LA156')],
+  },
+  DEN08LA103: {
+    ntsbNo: 'DEN08LA103',
+    evidencePassageIds: [analysisId('DEN08LA103'), causeId('DEN08LA103')],
+    maintenance: { relation: 'preceding_not_established', passageIds: [analysisId('DEN08LA103')] },
+    symptom: { value: 'partial_power_loss', passageIds: [analysisId('DEN08LA103')] },
+    timingPassageIds: [analysisId('DEN08LA103')],
+  },
 };
 
 function seedCards(): CaseCard[] {
@@ -134,6 +156,7 @@ function seedCards(): CaseCard[] {
           quote('DFW08TA066', 'analysis', 'The engine had  been replaced 5.1 hours prior to the accident by a contract maintenance facility.'),
         ],
         evidence: { scope: 'aircraft', aircraftKey: 1 },
+        criteria: [{ criterion: 'timing_window', decision: 'matches' }],
       },
     },
     {
@@ -151,6 +174,7 @@ function seedCards(): CaseCard[] {
           quote('MIA08LA156', 'analysis', 'During both test phases, the engine accelerated normally without any hesitation or interruption in power.'),
         ],
         evidence: { scope: 'aircraft', aircraftKey: 1 },
+        criteria: [{ criterion: 'timing_window', decision: 'unknown' }],
       },
     },
     {
@@ -164,6 +188,7 @@ function seedCards(): CaseCard[] {
           quote('DEN08LA103', 'analysis', 'The pilot stated, "I am now sure the engine was trying to seize up and I was again forced to land."', 'pilot'),
         ],
         evidence: { scope: 'aircraft', aircraftKey: 1 },
+        criteria: [{ criterion: 'timing_window', decision: 'unknown' }],
       },
     },
   ];
@@ -177,7 +202,7 @@ export function seedAnswer(filters: BriefFilters = {}): Extract<BriefResult, { k
     filters,
     grouping: 'mechanical',
     summary: [
-      { kind: 'text', text: 'Three investigations fit a power loss soon after maintenance. In one, a mechanic left a control-rod nut unsecured after an engine change, and investigators found that it caused the power loss ' },
+      { kind: 'text', text: 'In one investigation, a mechanic left a control-rod nut unsecured after an engine change, and investigators found that it caused the power loss ' },
       { kind: 'case', ntsbNo: 'DFW08TA066' },
       { kind: 'text', text: '. In another, a fuel-system check valve was installed backwards, but engine runs with it either way were normal, so no causal link was established ' },
       { kind: 'case', ntsbNo: 'MIA08LA156' },
@@ -192,12 +217,24 @@ export function seedAnswer(filters: BriefFilters = {}): Extract<BriefResult, { k
       { kind: 'insufficient', caseNumbers: [] },
     ],
     cases: seedCards(),
-    gaps: [
-      {
-        ntsbNo: 'NYC08LA106',
-        text: 'Just outside the window: the fuel pump was installed about two months and 12 hours of operation before the power loss.',
-      },
-    ],
+    gaps: [NYC_GAP],
+  };
+}
+
+const NYC_GAP = {
+  ntsbNo: 'NYC08LA106',
+  text: 'Just outside the window: the supplied passages put the fuel pump installation about two months and 12 hours before the power loss.',
+  passageIds: [analysisId('NYC08LA106')],
+};
+
+/** The explicit abstention: no case supports the question as asked; the retrieved cases as plain cards. */
+export function seedNoMatch(filters: BriefFilters = {}): Extract<BriefResult, { kind: 'no_match' }> {
+  return {
+    kind: 'no_match',
+    interpretations: INTERPRETATIONS,
+    filters,
+    cases: [...SEED_CASES, 'NYC08LA106'].map(plainCard),
+    gaps: [NYC_GAP],
   };
 }
 
@@ -225,6 +262,7 @@ export const SCOPE_REPLY_SAMPLES = {
 export const RESULT_SAMPLES = {
   answer: seedAnswer(),
   withheld: seedWithheld(),
+  noMatch: seedNoMatch(),
   noResults: { kind: 'no_results', interpretations: INTERPRETATIONS, filters: { category: ['BALL'], injury: ['FATL'] } },
   failedCounted: { kind: 'failed', countedAsSearch: true },
   failedFree: { kind: 'failed', countedAsSearch: false },
@@ -235,7 +273,7 @@ export const RESULT_SAMPLES = {
 // ---------------------------------------------------------------------------
 // The in-memory server
 
-type Variant = 'answer' | 'withheld' | 'no_results';
+type Variant = 'answer' | 'withheld' | 'no_match' | 'no_results';
 
 interface MockStep {
   n: number;
@@ -274,6 +312,7 @@ function scopeOf(question: string, filters: BriefFilters): { reply: ScopeReply |
   if (/\bcompare\b/.test(q) && numbers.length > 0) return { reply: comparisonReply(numbers, new Set(Object.keys(CASES))), variant: null };
   if (/soon after/.test(q)) return { reply: SCOPE_REPLY_SAMPLES.clarification, variant: null };
   if (/\bnothing\b/.test(q)) return { reply: null, variant: 'no_results' };
+  if (/\bno match\b/.test(q)) return { reply: null, variant: 'no_match' };
   return { reply: null, variant: /withheld/.test(q) ? 'withheld' : 'answer' };
 }
 
@@ -365,6 +404,7 @@ export class MockBriefs {
     if (s.cancelled) return { kind: 'cancelled' };
     if (this.stageOf(s) !== 'done') return undefined;
     if (s.variant === 'withheld') return seedWithheld(s.filters);
+    if (s.variant === 'no_match') return seedNoMatch(s.filters);
     if (s.variant === 'no_results') return { kind: 'no_results', interpretations: INTERPRETATIONS, filters: s.filters };
     return seedAnswer(s.filters);
   }
@@ -417,10 +457,11 @@ export class MockBriefs {
     const brief = this.briefs.get(id);
     const step = brief?.steps[n - 1];
     const result = step ? this.resultOf(step) : undefined;
-    if (!brief || !step || !result || (result.kind !== 'answer' && result.kind !== 'withheld')) return NOT_FOUND();
+    if (!brief || !step || !result || (result.kind !== 'answer' && result.kind !== 'withheld' && result.kind !== 'no_match')) return NOT_FOUND();
     const card = result.cases.find((c) => c.case.ntsbNo === ntsbNo);
-    if (!card) return NOT_FOUND();
-    const reading = result.kind === 'answer' ? card.reading : null;
+    const gaps = result.kind === 'withheld' ? [] : result.gaps.filter((g) => g.ntsbNo === ntsbNo);
+    if (!card && gaps.length === 0) return NOT_FOUND();
+    const reading = result.kind === 'answer' ? (card?.reading ?? null) : null;
     const passages = (['analysis', 'probable_cause'] as const).map((kind) => {
       const s = section(ntsbNo, kind);
       return {
@@ -437,6 +478,6 @@ export class MockBriefs {
       };
     });
     const lines = reading ? readingLines(reading, SEED_DIMENSIONS[ntsbNo]) : [];
-    return { status: 200, body: { briefId: brief.id, step: n, ntsbNo, reading, lines, passages } };
+    return { status: 200, body: { briefId: brief.id, step: n, ntsbNo, reading, lines, gaps, passages } };
   }
 }

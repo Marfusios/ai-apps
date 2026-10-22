@@ -40,6 +40,7 @@ import type { AppConfig } from '../shared/config.js';
 import type { FacetKey } from '../shared/contracts/search.js';
 import type { AiRuntime } from './ai/runtime.js';
 import type { EvidenceDataset } from './briefs/evidence.js';
+import { SHUTDOWN_REASON } from './briefs/pipeline.js';
 import { servableEvidence, type BriefServices } from './briefs/services.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
 import type { Db } from './db/client.js';
@@ -93,10 +94,15 @@ export interface AppDeps {
   pollRateLimit?: { limit: number; windowMs: number };
   /** How long the active manifest is reused (default 5 s). */
   manifestTtlMs?: number;
+  /** How long closing waits for aborted brief steps to settle (default `SHUTDOWN_GRACE_MS`). */
+  shutdownGraceMs?: number;
   /** How long a health probe result is shared (default `HEALTH_CACHE_MS`). */
   healthCacheMs?: number;
   now?: () => number;
 }
+
+/** Within the 10 s the process allows itself on shutdown (server/main.ts), for aborted brief steps to settle. */
+export const SHUTDOWN_GRACE_MS = 8_000;
 
 /** Route patterns of the web client: the page and the static files (`@fastify/static`'s wildcard). */
 export const ASSET_ROUTES: ReadonlySet<string> = new Set(['/', '/index.html', '/*']);
@@ -222,6 +228,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   };
 
   app.decorateRequest('networkIdentity', null);
+
+  // Shutdown: running brief steps are aborted (they fail, settle and record their state)
+  // and awaited within the grace the process gives itself before exiting (server/main.ts).
+  app.addHook('onClose', async () => {
+    if (!briefs || briefs.runs.size === 0) return;
+    for (const run of briefs.runs.values()) run.controller.abort(SHUTDOWN_REASON);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      briefs.settled(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+  });
 
   app.addHook('onRequest', async (request, reply) => {
     // The route the router matched on the decoded path; the raw target is never consulted.

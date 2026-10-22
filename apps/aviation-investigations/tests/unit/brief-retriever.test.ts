@@ -161,6 +161,7 @@ describe('toEvidenceBundle', () => {
               end: 20,
               text: 'ten chars.',
               role: 'retrieved',
+              reserved: true,
               rank: 4,
             },
             {
@@ -175,6 +176,7 @@ describe('toEvidenceBundle', () => {
               end: 5,
               text: 'cause',
               role: 'probable_cause',
+              reserved: true,
               rank: null,
             },
           ],
@@ -198,7 +200,7 @@ describe('servableEvidence', () => {
       throw new Error('not used');
     },
   });
-  const services = (accepts = true) => createBriefServices({} as Db, { retriever: retriever(accepts), catalog: { summaries: async () => new Map(), sections: async () => new Map() } });
+  const services = (accepts = true) => createBriefServices({} as Db, { retriever: retriever(accepts), catalog: { summaries: async () => new Map(), passages: async () => new Map(), causePassageIds: async () => new Map() } });
   const pinned = (passages: PinnedDataset['passages']) => async () => ({ manifest, passages });
 
   it('is the active passages index only when the dataset reports it servable and the retriever accepts it', async () => {

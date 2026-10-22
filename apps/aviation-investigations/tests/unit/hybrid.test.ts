@@ -665,6 +665,30 @@ describe('query embeddings', () => {
     expect(err).toMatchObject({ billing: 'usage', billedTokens: 3 });
   });
 
+  it('an embedding aborted mid-request is billed uncertain, and not retried', async () => {
+    // A provider that never answers: the request is aborted by the caller's signal.
+    const calls: number[] = [];
+    const hanging = (async (_url: unknown, init?: RequestInit) => {
+      calls.push(1);
+      await new Promise<void>((_, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(signal.reason as Error);
+        signal?.addEventListener('abort', () => reject(signal.reason as Error), { once: true });
+      });
+      throw new Error('unreachable');
+    }) as unknown as typeof fetch;
+    const embedder = createOpenAIQueryEmbedder({ apiKey: KEY, model: 'text-embedding-3-small', dims: 4, fetch: hanging });
+    const controller = new AbortController();
+    const pending = embedder.embedWithSignal(['carb ice'], controller.signal).catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 20));
+    controller.abort();
+    const err = await pending;
+    expect(err).toBeInstanceOf(QueryEmbeddingError);
+    expect(err).toMatchObject({ billing: 'uncertain' });
+    expect(String((err as Error).message)).toBe('query embedding failed: request aborted');
+    expect(calls).toHaveLength(1);
+  });
+
   it('takes exactly one input within the reserved embed cap', async () => {
     const embedder = createOpenAIQueryEmbedder({ apiKey: KEY, model: 'text-embedding-3-small', dims: 4, fetch: scripted(200, {}) });
     await expect(embedder.embed(['a', 'b'])).rejects.toThrow(/exactly one input/);

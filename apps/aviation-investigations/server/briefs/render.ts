@@ -1,12 +1,17 @@
 /**
  * What the brief pipeline builds from evidence and a validated composition, all from
  * server-owned fields and templates:
- * - the compose input (case headers from coded fields, passages after provenance);
- * - the check input: every claim the reader would see, as bounded claim/citation
- *   pairs (amendment A4: summary sentences, `why` lines, classifications, maintenance,
- *   symptom, timing, attribution and gaps), never the question or the planner's output;
- * - the briefing-sheet result (cards, groups, summary segments, chips, labels);
- * - the evidence a finished step keeps for the case context.
+ * - the compose input (case headers from coded fields, passages after provenance, with
+ *   section labels from the canonical passage rows);
+ * - the check input (gate G6 #1, #5): every claim the reader would see as a claim with
+ *   the passages it says it rests on (summary sentences, `why` lines, classifications,
+ *   maintenance, symptom, timing, attribution, criteria and gaps), every verified
+ *   passage of each case those claims are about, and the reader's criteria as server
+ *   templates; never the question, the planner's output or earlier answers;
+ * - the briefing-sheet result (cards, groups, summary segments, chips, labels), with
+ *   accepted quotes shown whole and timing values shown exactly as checked;
+ * - the evidence a finished step keeps for the case context, with each structured
+ *   claim's own passages.
  */
 import { buildHeadline, aircraftName } from '../../shared/case-view.js';
 import {
@@ -15,7 +20,10 @@ import {
   type BriefResult,
   type CaseCard,
   type CaseReading,
+  type ComposeCase,
   type ComposeOutput,
+  type ComposeTiming,
+  type CriterionDecision,
   type GlyphKind,
   type GroupKind,
   type InterpretationChip,
@@ -27,16 +35,25 @@ import {
 } from '../../shared/contracts/briefs.js';
 import { SECTION_LABEL } from '../../shared/contracts/search.js';
 import type { CheckInput, ClaimKind, ComposeInput } from '../ai/provider.js';
-import type { CaseSummary, EvidenceCase } from './evidence.js';
-import type { StoredEvidence, StoredPassage } from './store.js';
+import type { CaseSummary, EvidencePassage } from './evidence.js';
+import { splitSentences } from './sentences.js';
+import type { StoredDimensions, StoredEvidence, StoredPassage } from './store.js';
 import type { AllowedPassage, ResolvedCitation } from './validate.js';
 
-/** A bundle case after provenance: its card fields and its allowlisted passages. */
+/** A bundle case after the provenance and completeness checks: its card fields and its allowlisted passages. */
 export interface VerifiedCase {
   ntsbNo: string;
   rank: number;
   summary: CaseSummary;
-  passages: { passageId: string; role: EvidenceCase['passages'][number]['role']; rank: number | null; sectionKind: StoredPassage['sectionKind']; allowed: AllowedPassage }[];
+  passages: {
+    passageId: string;
+    role: EvidencePassage['role'];
+    reserved: boolean;
+    rank: number | null;
+    /** From the canonical passage row. */
+    sectionKind: StoredPassage['sectionKind'];
+    allowed: AllowedPassage;
+  }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +85,18 @@ function aircraftLabel(s: CaseSummary, key: number | null): string | undefined {
   return a ? aircraftName(a).slice(0, 120) : undefined;
 }
 
+/** A passage as the models see it: label, scope and aircraft from verified metadata only. */
+function modelPassage(vc: VerifiedCase, p: VerifiedCase['passages'][number]) {
+  const aircraft = p.allowed.scope === 'aircraft' ? aircraftLabel(vc.summary, p.allowed.aircraftKey) : undefined;
+  return {
+    passageId: p.passageId,
+    section: SECTION_LABEL[p.allowed.sectionKind],
+    scope: p.allowed.scope,
+    ...(aircraft ? { aircraft } : {}),
+    text: p.allowed.text,
+  };
+}
+
 export function composeInput(
   cases: readonly VerifiedCase[],
   opts: { question: string; refinement?: string; mechanicalCause: boolean; interpretations: string[] },
@@ -77,57 +106,31 @@ export function composeInput(
     ...(opts.refinement ? { refinement: opts.refinement } : {}),
     mechanicalCause: opts.mechanicalCause,
     interpretations: opts.interpretations.slice(0, 4),
-    cases: cases.map((c) => ({
-      ntsbNo: c.ntsbNo,
-      header: caseHeader(c.summary),
-      passages: c.passages.map((p) => {
-        const aircraft = p.allowed.scope === 'aircraft' ? aircraftLabel(c.summary, p.allowed.aircraftKey) : undefined;
-        return {
-          passageId: p.passageId,
-          section: SECTION_LABEL[p.sectionKind],
-          scope: p.allowed.scope,
-          ...(aircraft ? { aircraft } : {}),
-          text: p.allowed.text,
-        };
-      }),
-    })),
+    cases: cases.map((c) => ({ ntsbNo: c.ntsbNo, header: caseHeader(c.summary), passages: c.passages.map((p) => modelPassage(c, p)) })),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Claims for the check stage (server templates for every structured value)
+// One canonical representation of timing values (G6 #6)
 
-const CLASSIFICATION_CLAIM: Readonly<Record<GlyphKind, string>> = {
-  causal: 'Investigators established a mechanical fault that caused this event.',
-  defect_not_causal: 'Investigators found a defect but did not establish that it caused this event.',
-  no_fault: 'Investigators examined the aircraft and found no relevant mechanical fault.',
-  insufficient: 'The evidence does not establish a causal mechanical fault, a defect without a causal link, or a negative examination; it is insufficient or conflicting.',
-};
-
-const MAINTENANCE_CLAIM: Readonly<Record<Exclude<MaintenanceRelation, 'unknown'>, string>> = {
-  investigator_attributed: 'Investigators attributed a cause of, or a contribution to, this event to maintenance.',
-  preceding_not_established: 'Maintenance preceded this event, but investigators did not establish that it caused or contributed to it.',
-  no_evidence: 'The cited passages mention no maintenance relevant to this event.',
-};
-
-const SYMPTOM_CLAIM: Readonly<Record<Exclude<Symptom, 'other'>, string>> = {
-  total_power_loss: 'The engine lost all power.',
-  partial_power_loss: 'The engine lost partial power.',
-  rough_running: 'The engine ran rough.',
-  failure_to_climb: 'The aircraft could not climb.',
-};
+/**
+ * A timing value as text. Validation allows one decimal place for flight hours and
+ * whole days (`timingValueAllowed`), so this is the number exactly as checked, stored
+ * and shown; nothing is rounded.
+ */
+export function timingValueText(v: number): string {
+  return String(v);
+}
 
 const BOUND_WORD = { exact: '', about: 'about ', at_most: 'at most ', at_least: 'at least ' } as const;
 
-const number = (v: number) => String(Math.round(v * 100) / 100);
-
-function timingClaim(t: NonNullable<ComposeOutput['cases'][number]['timing']>): string {
+function timingClaim(t: ComposeTiming): string {
   const b = BOUND_WORD[t.bound];
   switch (t.basis) {
     case 'flight_hours':
-      return `The event happened ${b}${number(t.value ?? 0)} flight hours after the relevant maintenance.`;
+      return `The event happened ${b}${timingValueText(t.value ?? 0)} flight hours after the relevant maintenance.`;
     case 'calendar_days':
-      return `The event happened ${b}${number(t.value ?? 0)} calendar days after the relevant maintenance.`;
+      return `The event happened ${b}${timingValueText(t.value ?? 0)} calendar days after the relevant maintenance.`;
     case 'first_flight':
       return 'The event happened on the first flight after the relevant maintenance.';
     case 'subsequent_flight':
@@ -137,18 +140,58 @@ function timingClaim(t: NonNullable<ComposeOutput['cases'][number]['timing']>): 
   }
 }
 
+const BOUND_PREFIX = { exact: '', about: '≈ ', at_most: '≤ ', at_least: '≥ ' } as const;
+
+/** "5.1 FH", "≤ 17 DAYS", "1ST FLIGHT", "LATER FLIGHT", "NOT QUANTIFIED". */
+export function timingChip(t: ComposeTiming): TimingChip {
+  const prefix = BOUND_PREFIX[t.bound];
+  const value = t.value ?? null;
+  const label =
+    t.basis === 'flight_hours'
+      ? `${prefix}${timingValueText(value ?? 0)} FH`
+      : t.basis === 'calendar_days'
+        ? `${prefix}${timingValueText(value ?? 0)} ${value === 1 ? 'DAY' : 'DAYS'}`
+        : t.basis === 'first_flight'
+          ? '1ST FLIGHT'
+          : t.basis === 'subsequent_flight'
+            ? 'LATER FLIGHT'
+            : 'NOT QUANTIFIED';
+  return { basis: t.basis, value: t.basis === 'flight_hours' || t.basis === 'calendar_days' ? value : null, bound: t.bound, label };
+}
+
+// ---------------------------------------------------------------------------
+// Claims for the check stage (server templates for every structured value)
+
+const CLASSIFICATION_CLAIM: Readonly<Record<GlyphKind, string>> = {
+  causal: 'Investigators established a mechanical fault that caused this event.',
+  defect_not_causal: 'Investigators found a defect but did not establish that it caused this event.',
+  no_fault: 'Investigators examined the aircraft and found no relevant mechanical fault.',
+  insufficient:
+    'The supplied passages do not settle the mechanical evidence: they establish neither a mechanical fault that caused the event, nor a defect without an established causal link, nor an examination that found no relevant fault, or they conflict. This is about the supplied passages, not an NTSB finding.',
+};
+
+const MAINTENANCE_CLAIM: Readonly<Record<Exclude<MaintenanceRelation, 'unknown'>, string>> = {
+  investigator_attributed: 'Investigators attributed a cause of, or a contribution to, this event to maintenance.',
+  preceding_not_established: 'Maintenance preceded this event, but investigators did not establish that it caused or contributed to it.',
+  no_evidence: 'None of the supplied passages of this case mentions maintenance relevant to the event.',
+};
+
+const SYMPTOM_CLAIM: Readonly<Record<Exclude<Symptom, 'other'>, string>> = {
+  total_power_loss: 'The engine lost all power.',
+  partial_power_loss: 'The engine lost partial power.',
+  rough_running: 'The engine ran rough.',
+  failure_to_climb: 'The aircraft could not climb.',
+};
+
 const SPEAKER_CLAIM = {
-  investigators: 'These words are the investigators’ own (examination, analysis, findings or probable cause):',
-  pilot: 'These words report the pilot’s account:',
-  witness: 'These words report a witness’s account:',
+  investigators: 'These words are the investigators’ own (examination, analysis, findings or probable cause), and they keep their meaning without the surrounding text:',
+  pilot: 'These words report the pilot’s account, and they keep their meaning without the surrounding text:',
+  witness: 'These words report a witness’s account, and they keep their meaning without the surrounding text:',
 } as const;
 
-/** Summary sentences: split after sentence punctuation; markers stay with their sentence. */
+/** Summary sentences (server/briefs/sentences.ts); markers stay with their sentence. */
 export function summarySentences(summary: string): string[] {
-  return summary
-    .split(/(?<=[.!?](?:\s*\[\[case:[A-Z0-9]+\]\])*)\s+(?=\S)(?!\[\[)/)
-    .map((s) => s.trim())
-    .filter((s) => s !== '');
+  return splitSentences(summary);
 }
 
 const MARKER = /\[\[case:([A-Z0-9]+)\]\]/g;
@@ -162,30 +205,42 @@ export interface ClaimMeta {
 const MAX_CLAIMS = 100;
 const MAX_CLAIM_TEXT = 2_000;
 
+export interface CheckOptions {
+  mechanicalCause: boolean;
+  /** The reader's criteria as server templates (server/briefs/criteria.ts `criteriaLines`). */
+  criteria: string[];
+  /** Per case, the semantic criteria the checker must confirm (`evaluateCase(...).claims`). */
+  criterionClaims: ReadonlyMap<string, readonly string[]>;
+}
+
 /**
- * The check stage's input for a validated composition: the cited passages (each once)
- * and every claim with the passages it rests on. A summary sentence cites the quoted
- * passages of the cases it marks (every quoted passage when it marks none).
- * `overflow`: some claim did not fit the input bounds; it would go unchecked, so the
- * caller must treat the check as inconclusive.
+ * The check stage's input for a validated composition. The passages are every verified
+ * passage of each case a claim is about (a presented case, or a case a gap note is
+ * about), so the checker can see contradicting evidence the composition did not quote.
+ * Each claim cites what it says it rests on: a summary sentence the passages of the
+ * cases it marks; a `why` line its case's quoted passages; a structured value its own
+ * passages (all of its case's passages for a statement of absence or insufficiency);
+ * an attribution claim its quote's passage; a criterion claim all of its case's
+ * passages; a gap note its passages. `overflow`: some claim did not fit the input
+ * bounds; it would go unchecked, so the caller must treat the check as inconclusive.
  */
 export function checkInput(
   c: ComposeOutput,
   citations: readonly ResolvedCitation[],
   cases: ReadonlyMap<string, VerifiedCase>,
-  opts: { mechanicalCause: boolean },
+  opts: CheckOptions,
 ): { input: CheckInput; claims: ClaimMeta[]; overflow: boolean } {
+  const all = (n: string) => (cases.get(n)?.passages ?? []).map((p) => p.passageId);
   const quoted = new Map<string, string[]>();
   for (const cit of citations) {
     const ids = quoted.get(cit.ntsbNo) ?? [];
     if (!ids.includes(cit.passageId)) ids.push(cit.passageId);
     quoted.set(cit.ntsbNo, ids);
   }
-  const allQuoted = [...new Set(citations.map((x) => x.passageId))];
   const claims: CheckInput['claims'] = [];
   const meta: ClaimMeta[] = [];
   let overflow = false;
-  const add = (kind: ClaimKind, ntsbNo: string | null, text: string, passageIds: string[]) => {
+  const add = (kind: ClaimKind, ntsbNo: string | null, text: string, passageIds: readonly string[]) => {
     const ids = [...new Set(passageIds)];
     if (ids.length === 0 || ids.length > 12 || claims.length >= MAX_CLAIMS || text.length > MAX_CLAIM_TEXT) {
       overflow = true;
@@ -194,85 +249,66 @@ export function checkInput(
     claims.push({ kind, ...(ntsbNo ? { ntsbNo } : {}), text, passageIds: ids });
     meta.push({ kind, ntsbNo });
   };
+  const own = (ids: readonly string[], n: string) => (ids.length > 0 ? ids : all(n));
 
   for (const sentence of summarySentences(c.summary)) {
     const marked = [...new Set([...sentence.matchAll(MARKER)].map((m) => m[1]!))];
-    const ids = marked.length > 0 ? marked.flatMap((n) => quoted.get(n) ?? []) : allQuoted;
-    add('summary', marked.length === 1 ? marked[0]! : null, sentence.replace(MARKER, (_, n: string) => `(${n})`), ids);
+    add('summary', marked.length === 1 ? marked[0]! : null, sentence.replace(MARKER, (_, n: string) => `(${n})`), marked.flatMap(all));
   }
   const groupOf = new Map<string, GroupKind>();
   for (const g of c.groups) for (const n of g.caseNumbers) groupOf.set(n, g.kind);
-  c.cases.forEach((k) => {
-    const ids = quoted.get(k.ntsbNo) ?? [];
-    add('why', k.ntsbNo, k.why, ids);
-    const group = groupOf.get(k.ntsbNo);
-    if (opts.mechanicalCause && group && group !== 'examples') add('classification', k.ntsbNo, CLASSIFICATION_CLAIM[group], ids);
-    if (opts.mechanicalCause && k.maintenance && k.maintenance !== 'unknown') add('maintenance', k.ntsbNo, MAINTENANCE_CLAIM[k.maintenance], ids);
-    if (opts.mechanicalCause && k.symptom && k.symptom !== 'other') add('symptom', k.ntsbNo, SYMPTOM_CLAIM[k.symptom], ids);
-    if (k.timing) add('timing', k.ntsbNo, timingClaim(k.timing), ids);
-  });
+  for (const k of c.cases) {
+    const n = k.ntsbNo;
+    add('why', n, k.why, quoted.get(n) ?? all(n));
+    const group = groupOf.get(n);
+    if (opts.mechanicalCause && group && group !== 'examples') add('classification', n, CLASSIFICATION_CLAIM[group], own(k.evidencePassageIds, n));
+    if (opts.mechanicalCause && k.maintenance && k.maintenance.relation !== 'unknown') {
+      add('maintenance', n, MAINTENANCE_CLAIM[k.maintenance.relation], own(k.maintenance.passageIds, n));
+    }
+    if (opts.mechanicalCause && k.symptom && k.symptom.value !== 'other') add('symptom', n, SYMPTOM_CLAIM[k.symptom.value], own(k.symptom.passageIds, n));
+    if (k.timing) add('timing', n, timingClaim(k.timing), own(k.timing.passageIds, n));
+    for (const text of opts.criterionClaims.get(n) ?? []) add('criterion', n, text, all(n));
+  }
   for (const cit of citations) {
     const speaker = c.cases[cit.caseIndex]?.quotes[cit.quoteIndex]?.speaker ?? 'investigators';
     add('attribution', cit.ntsbNo, `${SPEAKER_CLAIM[speaker]} “${cit.text}”`, [cit.passageId]);
   }
   for (const g of c.gaps) add('gap', g.ntsbNo, g.note, g.passageIds);
 
-  const cited = new Set(claims.flatMap((x) => x.passageIds));
+  // Every verified passage of every case a claim is about, in bundle order.
+  const about = new Set([...c.cases.map((k) => k.ntsbNo), ...c.gaps.map((g) => g.ntsbNo)]);
+  for (const sentence of summarySentences(c.summary)) for (const m of sentence.matchAll(MARKER)) about.add(m[1]!);
   const passages: CheckInput['passages'] = [];
   for (const vc of cases.values()) {
-    for (const p of vc.passages) {
-      if (!cited.has(p.passageId)) continue;
-      const aircraft = p.allowed.scope === 'aircraft' ? aircraftLabel(vc.summary, p.allowed.aircraftKey) : undefined;
-      passages.push({
-        passageId: p.passageId,
-        ntsbNo: vc.ntsbNo,
-        section: SECTION_LABEL[p.sectionKind],
-        scope: p.allowed.scope,
-        ...(aircraft ? { aircraft } : {}),
-        text: p.allowed.text,
-      });
-    }
+    if (!about.has(vc.ntsbNo)) continue;
+    for (const p of vc.passages) passages.push({ ...modelPassage(vc, p), ntsbNo: vc.ntsbNo });
   }
-  return { input: { passages, claims }, claims: meta, overflow };
+  return { input: { criteria: opts.criteria.slice(0, 4), passages, claims }, claims: meta, overflow };
 }
 
 // ---------------------------------------------------------------------------
 // Result
 
-const BOUND_PREFIX = { exact: '', about: '≈ ', at_most: '≤ ', at_least: '≥ ' } as const;
-
-/** "5.1 FH", "≤ 17 DAYS", "1ST FLIGHT", "LATER FLIGHT", "NOT QUANTIFIED". */
-export function timingChip(t: NonNullable<ComposeOutput['cases'][number]['timing']>): TimingChip {
-  const prefix = BOUND_PREFIX[t.bound];
-  const value = t.value ?? null;
-  const label =
-    t.basis === 'flight_hours'
-      ? `${prefix}${number(value ?? 0)} FH`
-      : t.basis === 'calendar_days'
-        ? `${prefix}${number(value ?? 0)} ${value === 1 ? 'DAY' : 'DAYS'}`
-        : t.basis === 'first_flight'
-          ? '1ST FLIGHT'
-          : t.basis === 'subsequent_flight'
-            ? 'LATER FLIGHT'
-            : 'NOT QUANTIFIED';
-  return { basis: t.basis, value: t.basis === 'flight_hours' || t.basis === 'calendar_days' ? value : null, bound: t.bound, label };
-}
-
 const EXCERPT_MAX = 600;
+
+/** `text` cut to at most `max` code units at a word boundary, never inside a surrogate pair. */
+function cutText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const space = text.lastIndexOf(' ', max);
+  let at = space > max / 2 ? space : max;
+  if (at > 0 && /[\uD800-\uDBFF]/.test(text[at - 1]!)) at -= 1;
+  return text.slice(0, at).trimEnd();
+}
 
 /** The case's best retrieved passage, cut at a word boundary. */
 export function excerptOf(c: VerifiedCase): NtsbExcerpt {
   const best =
-    [...c.passages].filter((p) => p.role === 'retrieved').sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9))[0] ?? c.passages[0]!;
+    [...c.passages].filter((p) => p.reserved && p.rank !== null).sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9))[0] ??
+    [...c.passages].filter((p) => p.rank !== null).sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9))[0] ??
+    c.passages[0]!;
   const text = best.allowed.text.trim();
-  let cut = text;
-  let truncatedEnd = false;
-  if (text.length > EXCERPT_MAX) {
-    const at = text.lastIndexOf(' ', EXCERPT_MAX);
-    cut = text.slice(0, at > EXCERPT_MAX / 2 ? at : EXCERPT_MAX).trimEnd();
-    truncatedEnd = true;
-  }
-  return { passageId: best.passageId, section: best.sectionKind, text: cut, truncatedStart: false, truncatedEnd };
+  const cut = cutText(text, EXCERPT_MAX);
+  return { passageId: best.passageId, section: best.allowed.sectionKind, text: cut, truncatedStart: false, truncatedEnd: cut.length < text.length };
 }
 
 /** A plain card: NTSB fields and an excerpt, no AI reading. */
@@ -302,26 +338,30 @@ export interface AnswerInput {
   mechanicalCause: boolean;
   interpretations: InterpretationChip[];
   filters: BriefFilters;
+  /** Per presented case, its criteria decisions (none fails: that withholds the summary). */
+  criteria: ReadonlyMap<string, CriterionDecision[]>;
 }
 
-function reading(k: ComposeOutput['cases'][number], ci: number, a: AnswerInput, vc: VerifiedCase, group: GroupKind | undefined): CaseReading {
-  const cits = a.citations.filter((x) => x.caseIndex === ci);
-  const quotes = cits.map((cit) => {
-    const p = vc.passages.find((x) => x.passageId === cit.passageId)!;
-    return {
-      passageId: cit.passageId,
-      section: p.sectionKind,
-      scope: p.allowed.scope,
-      aircraftKey: p.allowed.aircraftKey,
-      sectionId: cit.sectionId,
-      revisionId: cit.revisionId,
-      sectionRevision: cit.sectionSha,
-      text: cit.text.slice(0, 1_200),
-      span: cit.passageSpan,
-      sectionSpan: cit.sectionSpan,
-      speaker: k.quotes[cit.quoteIndex]?.speaker ?? 'investigators',
-    };
-  });
+function reading(k: ComposeCase, ci: number, a: AnswerInput, vc: VerifiedCase, group: GroupKind | undefined): CaseReading {
+  const quotes = a.citations
+    .filter((x) => x.caseIndex === ci)
+    .map((cit) => {
+      const p = vc.passages.find((x) => x.passageId === cit.passageId)!;
+      return {
+        passageId: cit.passageId,
+        section: p.allowed.sectionKind,
+        scope: p.allowed.scope,
+        aircraftKey: p.allowed.aircraftKey,
+        sectionId: cit.sectionId,
+        revisionId: cit.revisionId,
+        sectionRevision: cit.sectionSha,
+        // Whole: validation bounds the resolved text (QUOTE_MAX_SOURCE), so nothing is cut.
+        text: cit.text,
+        span: cit.passageSpan,
+        sectionSpan: cit.sectionSpan,
+        speaker: k.quotes[cit.quoteIndex]?.speaker ?? 'investigators',
+      };
+    });
   const first = quotes[0]!;
   const multiAircraft = vc.summary.row.aircraft.length > 1;
   const evidence =
@@ -331,8 +371,17 @@ function reading(k: ComposeOutput['cases'][number], ci: number, a: AnswerInput, 
   // Ambiguous attribution in a multi-aircraft event: no glyph (UI_DESIGN §4.3).
   const glyph =
     a.mechanicalCause && group && group !== 'examples' && !(evidence.scope === 'event' && multiAircraft) ? (group as GlyphKind) : null;
-  return { glyph, why: k.why, timing: k.timing ? timingChip(k.timing) : null, quotes, evidence };
+  return {
+    glyph,
+    why: k.why,
+    timing: k.timing ? timingChip(k.timing) : null,
+    quotes,
+    evidence,
+    criteria: a.criteria.get(k.ntsbNo) ?? [],
+  };
 }
+
+const gapsOf = (c: ComposeOutput) => c.gaps.map((g) => ({ ntsbNo: g.ntsbNo, text: g.note, passageIds: [...g.passageIds] }));
 
 export function answerResult(a: AnswerInput): Extract<BriefResult, { kind: 'answer' }> {
   const c = a.composition;
@@ -353,19 +402,41 @@ export function answerResult(a: AnswerInput): Extract<BriefResult, { kind: 'answ
     summary: summarySegments(c.summary),
     groups,
     cases: cards,
-    gaps: c.gaps.map((g) => ({ ntsbNo: g.ntsbNo, text: g.note })),
+    gaps: gapsOf(c),
   };
 }
 
+/** The explicit abstention: the cases the answer model was given, as plain cards, with its checked gap notes. */
+export function noMatchResult(
+  c: ComposeOutput,
+  cases: readonly VerifiedCase[],
+  context: { interpretations: InterpretationChip[]; filters: BriefFilters },
+): Extract<BriefResult, { kind: 'no_match' }> {
+  return { kind: 'no_match', ...context, cases: cases.map(plainCard), gaps: gapsOf(c) };
+}
+
+/** Each presented case's structured claims with their own passages, for the case context. */
+export function storedDimensions(c: ComposeOutput, mechanicalCause: boolean): StoredDimensions[] {
+  const groupOf = new Map<string, GroupKind>();
+  for (const g of c.groups) for (const n of g.caseNumbers) groupOf.set(n, g.kind);
+  return c.cases.map((k) => ({
+    ntsbNo: k.ntsbNo,
+    evidencePassageIds: [...k.evidencePassageIds],
+    ...(mechanicalCause && k.maintenance ? { maintenance: { relation: k.maintenance.relation, passageIds: [...k.maintenance.passageIds] } } : {}),
+    ...(mechanicalCause && k.symptom ? { symptom: { value: k.symptom.value, passageIds: [...k.symptom.passageIds] } } : {}),
+    ...(k.timing ? { timingPassageIds: [...k.timing.passageIds] } : {}),
+  }));
+}
+
 /** What a finished step keeps for the case context: every verified passage of the bundle. */
-export function storedEvidence(cases: Iterable<VerifiedCase>, ruleVersion: string | null): StoredEvidence {
+export function storedEvidence(cases: Iterable<VerifiedCase>, ruleVersion: string | null, dimensions?: StoredDimensions[]): StoredEvidence {
   const passages: StoredPassage[] = [];
   for (const c of cases) {
     for (const p of c.passages) {
       passages.push({
         passageId: p.passageId,
         ntsbNo: c.ntsbNo,
-        sectionKind: p.sectionKind,
+        sectionKind: p.allowed.sectionKind,
         scope: p.allowed.scope,
         aircraftKey: p.allowed.aircraftKey,
         sectionId: p.allowed.sectionId,
@@ -376,5 +447,5 @@ export function storedEvidence(cases: Iterable<VerifiedCase>, ruleVersion: strin
       });
     }
   }
-  return { ruleVersion, passages };
+  return { ruleVersion, passages, ...(dimensions ? { dimensions } : {}) };
 }

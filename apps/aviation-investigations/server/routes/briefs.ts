@@ -27,6 +27,7 @@
  * Reads (`GET`, the case context and cancel) are for the brief's read owner only: the
  * trial in the request's cookie (Task 20 adds signed-in sessions). Anything else is 404.
  */
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
@@ -46,40 +47,83 @@ import {
 import { NtsbNoSchema } from '../../shared/contracts/common.js';
 import type { AiRuntime } from '../ai/runtime.js';
 import { caseContext } from '../briefs/context.js';
-import { createRequestHash, questionRequest, refineRequestHash, refinementRequest, type StepRequest } from '../briefs/intent.js';
+import { createRequestHash, questionRequest, refineRequestHash, refinementRequest, retrievalText, type StepRequest } from '../briefs/intent.js';
 import { runBriefStep, type ScopedOutcome } from '../briefs/pipeline.js';
 import type { BriefServices } from '../briefs/services.js';
-import { insertBrief, insertStep, listSteps, readBrief, readStep, readStepById, requestCancel, type StepRow } from '../briefs/store.js';
+import {
+  insertBrief,
+  insertStep,
+  isLiveStep,
+  listSteps,
+  readBrief,
+  readStep,
+  readStepById,
+  readStepWithCount,
+  requestCancel,
+  type StepRow,
+} from '../briefs/store.js';
+import type { EvidenceDataset } from '../briefs/evidence.js';
+import { MAX_QUERY_INPUT_TOKENS, QueryTooLongError, queryEmbeddingInput } from '../ai/embeddings.js';
+import { countTokens } from '../ai/tokens.js';
 import { FAILURE_TYPE_LABEL, FIRST_FLIGHT_LABEL, timingWindowLabel } from '../briefs/clarify.js';
 import type { LlmProvider } from '../ai/provider.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { retryAfterSeconds, sendGateRefusal } from '../identity/gate.js';
 import type { TrialPrincipal } from '../identity/trial.js';
 import { admitPaidRequest, releaseQuota, setResultRef, type Admission, type Rejection } from '../quota/admit.js';
-import { LEASE_TTL_MS, principalHash, UnknownPrincipalError, type QuotaPolicy } from '../quota/policy.js';
+import { principalHash, UnknownPrincipalError, type QuotaPolicy } from '../quota/policy.js';
 import { settle } from '../quota/settle.js';
 import { sql } from 'drizzle-orm';
 import type { ApiContext } from './context.js';
 
 const NOT_FOUND = 'No AI search with that link is available. AI searches expire after 24 hours.';
-/** A step still `running` this long after it started died with its process; the lease expiry charged it. */
-const STALE_AFTER_MS = LEASE_TTL_MS + 30_000;
+const TOO_LONG = 'The question is too long to search. Shorten it and try again.';
 
-interface Ready {
+interface Runtime {
   ai: AiRuntime & { policy: QuotaPolicy; llm: LlmProvider; gate: NonNullable<AiRuntime['gate']>; trials: NonNullable<AiRuntime['trials']> };
   svc: BriefServices;
   reservationUsd: number;
-  evidence: { generationId: number; passagesIndex: string };
 }
 
-/** Everything a paid brief request needs, or null (503). */
-async function ready(ctx: ApiContext): Promise<Ready | null> {
+interface Ready extends Runtime {
+  evidence: EvidenceDataset;
+}
+
+/** The AI runtime and brief services a paid brief request needs, or null (503). */
+function runtime(ctx: ApiContext): Runtime | null {
   const ai = ctx.ai;
   const svc = ctx.briefs;
   if (!ai?.startup.enabled || ai.startup.reservationUsd === undefined || !ai.policy || !ai.llm || !ai.gate || !ai.trials || !svc) return null;
+  return { ai: ai as Runtime['ai'], svc, reservationUsd: ai.startup.reservationUsd };
+}
+
+/** A new brief: the runtime and the evidence index of the active manifest, or null (503). */
+async function ready(ctx: ApiContext): Promise<Ready | null> {
+  const r = runtime(ctx);
+  if (!r) return null;
   const evidence = await ctx.aiEvidence().catch(() => null);
-  if (!evidence) return null;
-  return { ai: ai as Ready['ai'], svc, reservationUsd: ai.startup.reservationUsd, evidence };
+  return evidence ? { ...r, evidence } : null;
+}
+
+/** A refinement: the runtime and the evidence index the brief is pinned to, if the retriever still accepts it. */
+async function readyFor(r: Runtime, brief: { generationId: number; passagesIndex: string }): Promise<Ready | null> {
+  const evidence = { generationId: brief.generationId, passagesIndex: brief.passagesIndex };
+  return (await r.svc.retriever.available(evidence).catch(() => false)) ? { ...r, evidence } : null;
+}
+
+/**
+ * True when the dense channel's query input (the question and the text refinement in
+ * effect) is over the query embedder's cap: refused with 400 before any spend, so a
+ * paid scope stage never leads to a step that cannot retrieve (`fitQueryText` in the
+ * binding stays as the fallback).
+ */
+function queryTooLong(req: StepRequest): boolean {
+  try {
+    return countTokens(queryEmbeddingInput(retrievalText(req))) > MAX_QUERY_INPUT_TOKENS;
+  } catch (err) {
+    if (err instanceof QueryTooLongError) return true;
+    throw err;
+  }
 }
 
 /**
@@ -164,7 +208,7 @@ async function abandon(ctx: ApiContext, r: Ready, admission: Admission): Promise
 }
 
 /** Start the step in the background and wait for its scope stage. */
-async function start(ctx: ApiContext, r: Ready, briefId: string, step: StepRow, admission: Admission): Promise<StartBriefResponse> {
+async function start(ctx: ApiContext, r: Ready, briefId: string, step: StepRow, admission: Admission, requestId: string): Promise<StartBriefResponse> {
   const controller = new AbortController();
   let onScoped!: (o: ScopedOutcome) => void;
   const scoped = new Promise<ScopedOutcome>((resolve) => (onScoped = resolve));
@@ -182,7 +226,7 @@ async function start(ctx: ApiContext, r: Ready, briefId: string, step: StepRow, 
     },
     step.id,
     admission,
-    { signal: controller.signal, onScoped },
+    { signal: controller.signal, onScoped, requestId },
   );
   r.svc.runs.set(step.id, { controller, done });
   void done.finally(() => {
@@ -194,8 +238,14 @@ async function start(ctx: ApiContext, r: Ready, briefId: string, step: StepRow, 
   return { kind: 'started', briefId, step: step.n, stage: o.kind === 'continue' ? 'retrieve' : o.stage };
 }
 
-/** Admit a gated principal; maps the trial expiring since the gate to "take a new check". */
-async function admit(ctx: ApiContext, r: Ready, principal: TrialPrincipal, networkId: string, key: string, requestHash: string) {
+/**
+ * Admit a gated principal (server/quota/admit.ts: the kill switch, rate limits, the
+ * monthly budget and the paced daily allowance of at most $3 counting every open
+ * reservation, the trial or account quota, the anonymous share and concurrency), reserving
+ * the request's maximum cost. Maps the trial expiring since the gate to "take a new
+ * check". `requestId` is a fresh content-free id copied to the ledger lines.
+ */
+async function admit(ctx: ApiContext, r: Ready, principal: TrialPrincipal, networkId: string, key: string, requestHash: string, requestId: string) {
   try {
     return await admitPaidRequest(ctx.db, {
       policy: r.ai.policy,
@@ -204,7 +254,7 @@ async function admit(ctx: ApiContext, r: Ready, principal: TrialPrincipal, netwo
       idempotencyKey: key,
       requestHash,
       reservationUsd: r.reservationUsd,
-      requestId: 'brief',
+      requestId,
       now: r.ai.now(),
     });
   } catch (err) {
@@ -257,7 +307,7 @@ function originOf(step: StepRow): BriefStepResponse['origin'] {
 }
 
 function stepResponse(briefId: string, step: StepRow, steps: number, expiresAt: Date, now: Date): BriefStepResponse {
-  const stale = step.status === 'running' && now.getTime() - step.createdAt.getTime() > STALE_AFTER_MS;
+  const stale = step.status === 'running' && !isLiveStep(step, now);
   const finished = step.status !== 'running' || stale;
   return {
     briefId,
@@ -285,6 +335,8 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     const parsed = CreateBriefRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(parsed.error.issues) });
     const body = parsed.data;
+    const stepRequest = questionRequest(body.question, body.filters);
+    if (queryTooLong(stepRequest)) return sendError(reply, 400, 'bad_request', { message: TOO_LONG });
     const r = await ready(ctx);
     if (!r) return sendError(reply, 503, 'unavailable');
 
@@ -292,7 +344,8 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     if (!pass.ok) return sendGateRefusal(reply, pass, r.ai.now());
     const owner = principalHash(r.ai.policy, pass.principal);
     const requestHash = createRequestHash(body.question, body.filters);
-    const admission = await admit(ctx, r, pass.principal, pass.networkId, body.idempotencyKey, requestHash);
+    const requestId = `brief:${randomUUID()}`;
+    const admission = await admit(ctx, r, pass.principal, pass.networkId, body.idempotencyKey, requestHash, requestId);
     if (admission === 'new_check') return sendError(reply, 403, 'challenge_required');
     if (!admission.ok) return sendRejection(reply, admission, r.ai.now());
     if (admission.replay) return sendReplay(ctx, reply, RESULT_REF.exec(admission.resultRef ?? '')?.[1] ?? null, owner, r.ai.now());
@@ -315,7 +368,7 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
           billingPrincipal: owner,
           billingKind: 'trial',
           reservationId: admission.reservationId,
-          request: questionRequest(body.question, body.filters),
+          request: stepRequest,
           now,
         });
         if (!step) throw new Error('the first step of a new brief already exists');
@@ -326,7 +379,7 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
       await abandon(ctx, r, admission);
       throw err;
     }
-    return sendStart(reply, await start(ctx, r, created.briefId, created.step, admission));
+    return sendStart(reply, await start(ctx, r, created.briefId, created.step, admission, requestId));
   });
 
   app.post<{ Params: { id: string } }>('/api/briefs/:id/refine', async (request, reply) => {
@@ -337,24 +390,33 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     if (!parsed.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(parsed.error.issues) });
     const body = parsed.data;
     const change = refinementChange(body);
-    const r = await ready(ctx);
-    if (!r) return sendError(reply, 503, 'unavailable');
+    const rt = runtime(ctx);
+    if (!rt) return sendError(reply, 503, 'unavailable');
 
     // The read owner, before any token work; then a retry of an accepted refinement replays it.
     const owned = await ownedBrief(ctx, request, id.data);
     if (!owned) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
     const requestHash = refineRequestHash(id.data, change);
-    const earlier = await replayed(ctx, owned.who.hash, body.idempotencyKey, requestHash, r.ai.now());
-    if (earlier) return sendReplay(ctx, reply, earlier, owned.who.hash, r.ai.now());
+    const earlier = await replayed(ctx, owned.who.hash, body.idempotencyKey, requestHash, rt.ai.now());
+    if (earlier) return sendReplay(ctx, reply, earlier, owned.who.hash, rt.ai.now());
     const steps = await listSteps(ctx.db, id.data);
     if (steps.length >= MAX_BRIEF_STEPS) return sendError(reply, 409, 'refinement_limit');
-    if (steps.some((s) => s.status === 'running')) return sendError(reply, 429, 'in_flight');
+    // A step that lost its process (stale) no longer blocks the brief.
+    if (steps.some((s) => isLiveStep(s, rt.ai.now()))) return sendError(reply, 429, 'in_flight');
+    const latest = await readStep(ctx.db, id.data);
+    if (latest && queryTooLong(refinementRequest({ request: latest.request, intent: latest.intent }, change))) {
+      return sendError(reply, 400, 'bad_request', { message: TOO_LONG });
+    }
+    // The brief stays on the evidence index it started on.
+    const r = await readyFor(rt, owned.brief);
+    if (!r) return sendError(reply, 503, 'unavailable');
 
     const pass = await r.ai.gate.check(request, reply, body.turnstileToken);
     if (!pass.ok) return sendGateRefusal(reply, pass, r.ai.now());
     const billing = principalHash(r.ai.policy, pass.principal);
     if (billing !== owned.brief.readOwner) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
-    const admission = await admit(ctx, r, pass.principal, pass.networkId, body.idempotencyKey, requestHash);
+    const requestId = `brief:${randomUUID()}`;
+    const admission = await admit(ctx, r, pass.principal, pass.networkId, body.idempotencyKey, requestHash, requestId);
     if (admission === 'new_check') return sendError(reply, 403, 'challenge_required');
     if (!admission.ok) return sendRejection(reply, admission, r.ai.now());
     if (admission.replay) return sendReplay(ctx, reply, RESULT_REF.exec(admission.resultRef ?? '')?.[1] ?? null, billing, r.ai.now());
@@ -363,7 +425,7 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     try {
       step = await ctx.db.transaction(async (tx) => {
         const previous = await readStep(tx, id.data);
-        if (!previous || previous.status === 'running' || previous.n >= MAX_BRIEF_STEPS) return null;
+        if (!previous || isLiveStep(previous, r.ai.now()) || previous.n >= MAX_BRIEF_STEPS) return null;
         const inserted = await insertStep(tx, {
           briefId: id.data,
           n: previous.n + 1,
@@ -385,7 +447,7 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
       await abandon(ctx, r, admission);
       return sendError(reply, 409, 'conflict');
     }
-    return sendStart(reply, await start(ctx, r, id.data, step, admission));
+    return sendStart(reply, await start(ctx, r, id.data, step, admission, requestId));
   });
 
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>('/api/briefs/:id', async (request, reply) => {
@@ -395,10 +457,9 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     if (!query.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(query.error.issues) });
     const owned = await ownedBrief(ctx, request, id.data);
     if (!owned) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
-    const step = await readStep(ctx.db, id.data, query.data.step);
-    if (!step) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
-    const steps = (await listSteps(ctx.db, id.data)).length;
-    const body = BriefStepResponseSchema.parse(stepResponse(id.data, step, steps, owned.brief.expiresAt, ctx.ai.now()));
+    const found = await readStepWithCount(ctx.db, id.data, query.data.step);
+    if (!found) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
+    const body = BriefStepResponseSchema.parse(stepResponse(id.data, found.step, found.steps, owned.brief.expiresAt, ctx.ai.now()));
     return reply.code(200).type(JSON_TYPE).send(JSON.stringify(body));
   });
 

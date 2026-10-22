@@ -117,10 +117,21 @@ export const ATTRIBUTIONS = SPEAKERS;
 /**
  * Claim kinds the check stage judges (amendment A4: every claim type). `classification`
  * is the case's mechanical-evidence group; `maintenance`, `symptom` and `timing` are
- * its other DESIGN §3 dimensions; `attribution` is one quote's speaker; `gap` is a
- * note on what a case's evidence does not show.
+ * its other DESIGN §3 dimensions; `attribution` is one quote's speaker and context;
+ * `criterion` is a reader's criterion the case must meet (server template); `gap` is
+ * a note on what a case's supplied passages do not show.
  */
-export const CLAIM_KINDS = ['summary', 'why', 'classification', 'maintenance', 'symptom', 'timing', 'attribution', 'gap'] as const;
+export const CLAIM_KINDS = [
+  'summary',
+  'why',
+  'classification',
+  'maintenance',
+  'symptom',
+  'timing',
+  'attribution',
+  'criterion',
+  'gap',
+] as const;
 export type ClaimKind = (typeof CLAIM_KINDS)[number];
 
 export const CHECK_REASONS = [
@@ -130,6 +141,7 @@ export const CHECK_REASONS = [
   'wrong_attribution',
   'wrong_aircraft',
   'timing_unsupported',
+  'out_of_context',
   'out_of_scope',
 ] as const;
 
@@ -295,9 +307,14 @@ export const ComposeInputSchema = z
   });
 export type ComposeInput = z.infer<typeof ComposeInputSchema>;
 
-/** Bounded claim/citation pairs and their passages; never the question or planner output. */
+/**
+ * Bounded claim/citation pairs, every verified passage of every case the claims are
+ * about, and the reader's criteria as server templates; never the question, the
+ * planner output or earlier answers.
+ */
 export const CheckInputSchema = z
   .strictObject({
+    criteria: z.array(z.string().min(1).max(200)).max(4),
     passages: z
       .array(EvidencePassage.extend({ ntsbNo: CaseNumber }))
       .min(1)

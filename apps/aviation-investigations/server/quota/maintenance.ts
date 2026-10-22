@@ -1,6 +1,8 @@
 /**
  * Periodic upkeep of the control tables, run inside the API server: expire the leases of
- * reservations nobody settled (`expireLeases`) and apply retention (`pruneControls`).
+ * reservations nobody settled (`expireLeases`), mark brief steps whose process died as
+ * failed once their reservation is closed (`failOrphanedSteps`), and apply retention
+ * (`pruneControls`).
  *
  * Both are available to the app role (`prune_controls()` is granted to `aviation_app` in
  * migration 0008; `expireLeases` needs only the table privileges the app already has),
@@ -12,6 +14,7 @@
 import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { MAINTENANCE_LOCK_KEY } from './policy.js';
+import { failOrphanedSteps } from '../briefs/store.js';
 import { pruneControls, type PruneReport } from './retention.js';
 import { expireLeases } from './settle.js';
 
@@ -21,7 +24,14 @@ export interface MaintenanceLog {
 }
 
 export type MaintenanceResult =
-  | { ran: true; expired: { expired: number; chargedUsd: number } | null; pruned: PruneReport | null; failed: string[] }
+  | {
+      ran: true;
+      expired: { expired: number; chargedUsd: number } | null;
+      /** Brief steps marked failed because their process died. */
+      orphanedSteps: number | null;
+      pruned: PruneReport | null;
+      failed: string[];
+    }
   | { ran: false; reason: 'lock_held' | 'failed' };
 
 /** One pass. Never throws. */
@@ -35,6 +45,7 @@ export async function runControlMaintenance(db: Db, log: MaintenanceLog, now: Da
       const failed: string[] = [];
       let expired: { expired: number; chargedUsd: number } | null = null;
       let pruned: PruneReport | null = null;
+      let orphanedSteps: number | null = null;
       // Leases first, so what they close is retained like any other settled reservation.
       try {
         expired = await tx.transaction((sp) => expireLeases(sp as unknown as Db, now));
@@ -42,14 +53,21 @@ export async function runControlMaintenance(db: Db, log: MaintenanceLog, now: Da
         failed.push('expireLeases');
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: lease expiry failed');
       }
+      // After lease expiry, so a step whose lease just ran out is closed in the same pass.
+      try {
+        orphanedSteps = await tx.transaction((sp) => failOrphanedSteps(sp, now));
+      } catch (err) {
+        failed.push('failOrphanedSteps');
+        log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: orphaned brief steps failed');
+      }
       try {
         pruned = await tx.transaction((sp) => pruneControls(sp));
       } catch (err) {
         failed.push('pruneControls');
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: retention failed');
       }
-      log.info({ leasesExpired: expired?.expired ?? null, pruned, failed }, 'control maintenance pass');
-      return { ran: true, expired, pruned, failed };
+      log.info({ leasesExpired: expired?.expired ?? null, orphanedSteps, pruned, failed }, 'control maintenance pass');
+      return { ran: true, expired, orphanedSteps, pruned, failed };
     });
   } catch (err) {
     log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance failed');

@@ -26,11 +26,11 @@ import {
 } from '../../shared/contracts/briefs.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
-import type { ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
+import type { CheckInput, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
 import { buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
-import { QueryEmbeddingError, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
+import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { RetrievalFailure, type EmbeddingUsage, type EvidenceQuery, type EvidenceRetriever } from '../../server/briefs/evidence.js';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
@@ -39,7 +39,7 @@ import { OUT_OF_SCOPE_LINES, OPERATIONAL_LINES, OPERATIONAL_TITLE } from '../../
 import { moveBriefReadOwner } from '../../server/briefs/store.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { publishManifest } from '../../server/db/generations.js';
-import { pruneControls, setAiSwitch } from '../../server/quota/index.js';
+import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
 import { FIXTURE_EMBEDDING, deleteIndices, fixtureEmbedder, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
 import { FakeRetriever, type FakeRetrieverOptions } from '../support/fake-retriever.js';
 import { FakeSiteverify, REAL_SECRET, REAL_SITE_KEY } from '../support/fake-siteverify.js';
@@ -149,6 +149,8 @@ interface HarnessOptions {
   embedding?: { model: string; dims: number } | null;
   timeouts?: Partial<{ scope: number; retrieve: number; compose: number; check: number; total: number }>;
   trialRequests?: number;
+  /** Which evidence index a new brief pins (default: the dataset resolver's servable index). */
+  aiEvidence?: () => Promise<{ generationId: number; passagesIndex: string } | null>;
 }
 
 function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
@@ -171,6 +173,7 @@ function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
     ai,
     briefs: svc,
     ...(embedding ? { embedding } : {}),
+    ...(opts.aiEvidence ? { aiEvidence: opts.aiEvidence } : {}),
     logger: { level: 'debug', stream: { write: (line: string) => void logs.push(line) } },
     rateLimit: { limit: 100_000, windowMs: 60_000 },
   });
@@ -201,16 +204,19 @@ function firstSentence(text: string): string {
 function composition(input: ComposeInput, tweak?: (c: ComposeOutput) => void): FakeResult<ComposeOutput> {
   const cases = input.cases.map((c) => {
     const p = c.passages.find((x) => x.section === 'Analysis') ?? c.passages[0]!;
+    const cause = c.passages.find((x) => x.section === 'Probable cause') ?? p;
     return {
       ntsbNo: c.ntsbNo,
       why: 'The engine lost power after recent maintenance.',
       quotes: [{ passageId: p.passageId, quote: firstSentence(p.text), speaker: 'investigators' as const }],
-      maintenance: 'preceding_not_established' as const,
-      symptom: 'total_power_loss' as const,
+      evidencePassageIds: [...new Set([p.passageId, cause.passageId])],
+      maintenance: { relation: 'preceding_not_established' as const, passageIds: [p.passageId] },
+      symptom: { value: 'total_power_loss' as const, passageIds: [p.passageId] },
     };
   });
   const kinds = [...new Set(cases.map((c) => GROUP[c.ntsbNo] ?? 'insufficient'))];
   const out: ComposeOutput = {
+    outcome: 'answer',
     summary: cases.map((c) => `Power was lost after maintenance [[case:${c.ntsbNo}]].`).join(' '),
     groups: input.mechanicalCause
       ? kinds.map((kind) => ({ kind, caseNumbers: cases.filter((c) => (GROUP[c.ntsbNo] ?? 'insufficient') === kind).map((c) => c.ntsbNo) }))
@@ -296,6 +302,15 @@ async function askAndWait(h: Harness, question = 'Engine power loss shortly afte
   return { started, briefId, cookie, step: step.json };
 }
 
+/** Wait (bounded) until `ready()` holds. */
+async function until(ready: () => boolean, ms = 5_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!ready()) {
+    if (Date.now() > end) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 // Database ----------------------------------------------------------------------
 
 async function rows<T>(query: ReturnType<typeof sql>): Promise<T[]> {
@@ -342,6 +357,37 @@ async function stepRow(briefId: string, n = 1) {
 
 // ---------------------------------------------------------------------------
 
+/** Astra's case (gate G6 #1): DFW08TA066 classified insufficient with no maintenance evidence, quoting only its analysis. */
+function contradict(c: ComposeOutput, dfw: ComposeInput['cases'][number]): void {
+  const kind = (n: string) => (n === 'DFW08TA066' ? 'insufficient' : (GROUP[n] ?? 'insufficient'));
+  const k = c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
+  const analysis = dfw.passages.find((p) => p.section === 'Analysis') ?? dfw.passages[0]!;
+  k.quotes = [{ passageId: analysis.passageId, quote: firstSentence(analysis.text), speaker: 'investigators' }];
+  k.evidencePassageIds = [];
+  k.maintenance = { relation: 'no_evidence', passageIds: [] };
+  c.groups = [...new Set(c.cases.map((x) => kind(x.ntsbNo)))].map((g) => ({ kind: g, caseNumbers: c.cases.filter((x) => kind(x.ntsbNo) === g).map((x) => x.ntsbNo) }));
+}
+
+/** DFW08TA066 with a supported timing of 5.1 flight hours (its analysis states it). */
+function timing51(c: ComposeOutput, dfw: ComposeInput['cases'][number]): void {
+  const k = c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
+  const stating = dfw.passages.find((p) => p.text.includes('5.1 hours')) ?? dfw.passages[0]!;
+  k.timing = { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: [stating.passageId] };
+}
+
+/**
+ * A checker that reads the whole case, as the check prompt asks: a "no relevant
+ * maintenance" claim is contradicted by a probable cause that blames a mechanic.
+ */
+function judge(input: CheckInput): FakeResult<{ supported: boolean; problems: { claimIndex: number; reason: 'contradicted' }[] }> {
+  const problems = input.claims.flatMap((claim, i) => {
+    if (claim.kind !== 'maintenance' || !claim.text.startsWith('None of the supplied passages')) return [];
+    const blames = input.passages.some((p) => p.ntsbNo === claim.ntsbNo && p.section === 'Probable cause' && /mechanic/i.test(p.text));
+    return blames ? [{ claimIndex: i, reason: 'contradicted' as const }] : [];
+  });
+  return { output: { supported: problems.length === 0, problems } };
+}
+
 describe('POST /api/briefs: the pipeline', () => {
   it('answers with groups, validated quotes and itemized settlement', async () => {
     const h = harness(answering());
@@ -385,6 +431,10 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(JSON.stringify(check)).not.toContain('shortly after maintenance');
 
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
+    // One content-free request id per request, on every ledger line and in the step's record.
+    const ids = await rows<{ request_id: string }>(sql`SELECT DISTINCT request_id FROM cost_ledger`);
+    expect(ids).toEqual([{ request_id: expect.stringMatching(/^brief:[0-9a-f-]{36}$/) }]);
+    expect((await stepRow(briefId)).meta).toMatchObject({ requestId: ids[0]!.request_id });
     const [res] = await reservations();
     expect(res).toMatchObject({ status: 'settled', uncertain: false, quota_counted: true });
     expect(Number(res!.charged)).toBeGreaterThan(0);
@@ -394,7 +444,7 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
       promptVersions: { scope: 'scope.v2', compose: 'compose.v2', check: 'check.v2' },
-      validation: { ruleVersion: 'quote-ws-v1', codes: [] },
+      validation: { ruleVersion: 'quote-ws-v2', codes: [] },
       check: { supported: true, problems: [] },
     });
 
@@ -404,7 +454,9 @@ describe('POST /api/briefs: the pipeline', () => {
     const context = CaseContextResponseSchema.parse(ctx.json);
     const cited = context.passages.find((p) => p.passageId === quote.passageId)!;
     expect(cited.text.slice(cited.highlights[0]!.start, cited.highlights[0]!.end)).toBe(quote.text);
-    expect(context.lines.map((l) => l.label)).toEqual(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM']);
+    // Each line links to the passages its own claim was checked on.
+    expect(context.lines.map((l) => l.label)).toEqual(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'CRITERIA']);
+    expect(context.lines[3]).toEqual({ label: 'CRITERIA', text: 'Timing window not established by the passages', passageIds: [] });
     expect((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/CEN19FA024`, { cookie })).status).toBe(404);
   });
 
@@ -501,8 +553,12 @@ describe('POST /api/briefs: the pipeline', () => {
     const { briefId, step } = await askAndWait(h);
     expect(step.result?.kind).toBe('answer');
     expect(h.retriever.repacks).toHaveLength(1);
-    expect(h.retriever.repacks[0]).toBeLessThan(0.8 * 4_000);
-    expect((await stepRow(briefId)).meta).toMatchObject({ repacks: 1 });
+    // The budget shrinks by the measured overshoot (16,000 / 20,000, with a 10% margin).
+    const first = (await stepRow(briefId)).meta as { repacks: number };
+    expect(first).toMatchObject({ repacks: 1 });
+    expect(h.retriever.repacks[0]).toBeGreaterThan(0);
+    // The re-packed bundle kept whole cases only (each with its best passage and its causes).
+    if (step.result?.kind === 'answer') expect(step.result.cases.length).toBeLessThan(4);
   });
 
   it('retrieval failure after the embedding settles the embedding; no results gives the search back', async () => {
@@ -616,7 +672,8 @@ describe('scope outcomes', () => {
     const h = harness({
       scope: [
         { output: scopeOut({ intent: 'corpus_statistics', filters: { category: ['HELI', 'RCKT'], yearFrom: 2010 }, ambiguity: undefined }) },
-        { output: scopeOut({ intent: 'case_comparison', caseNumbers: ['DFW08TA066', 'XYZ99ZZ999', 'NYC08LA106'], ambiguity: undefined }) },
+        // The planner adds a number the reader never wrote: it is ignored, not listed as "not found".
+        { output: scopeOut({ intent: 'case_comparison', caseNumbers: ['DFW08TA066', 'XYZ99ZZ999', 'NYC08LA106', 'ABC12CD345'], ambiguity: undefined }) },
       ],
     });
     const stats = await ask(h, 'How many helicopter accidents since 2010?');
@@ -1028,6 +1085,100 @@ describe('hybrid retrieval behind the port', () => {
     expect((await ledgerStages())[1]!.filter((s) => s === 'embed')).toHaveLength(1);
   });
 
+  it('an embedding aborted mid-request is settled uncertain, with no usage callback', async () => {
+    // The real query embedder with a provider that never answers (nothing leaves the process).
+    let called = 0;
+    const hanging = (async (_url: unknown, init?: RequestInit) => {
+      called += 1;
+      await new Promise<void>((_, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(signal.reason as Error);
+        signal?.addEventListener('abort', () => reject(signal.reason as Error), { once: true });
+      });
+      throw new Error('unreachable');
+    }) as unknown as typeof fetch;
+    const embedder = createOpenAIQueryEmbedder({ apiKey: 'sk-test-not-a-real-key', model: FIXTURE_EMBEDDING.model, dims: FIXTURE_EMBEDDING.dims, fetch: hanging });
+    const usages: EmbeddingUsage[] = [];
+    const controller = new AbortController();
+    const pending = createHybridRetriever({ es, embedder }).retrieve(evidenceQuery(), controller.signal, (u) => usages.push(u));
+    await until(() => called === 1);
+    controller.abort();
+    const failure = await failureOf(pending);
+    expect(failure).toMatchObject({ kind: 'timeout', embedding: 'uncertain', reason: 'aborted' });
+    expect(usages).toEqual([]);
+  });
+
+  it('offline end to end over the fixture passages index: complete evidence, criteria, citations and re-packing', async () => {
+    const dfwFirst = (input: ComposeInput) => input.cases.find((c) => c.ntsbNo === 'DFW08TA066')!;
+    let forceOver = false;
+    const checks: CheckInput[] = [];
+    const embedder = fixtureEmbedder();
+    const h = harness(
+      {
+        scope: { output: SEED_SCOPE },
+        counts: {
+          compose: () => {
+            if (forceOver) {
+              forceOver = false;
+              return 20_000;
+            }
+            return 9_000;
+          },
+        },
+        compose: [
+          // 1. Astra's case: insufficient, no maintenance evidence, while the cause blames the mechanic.
+          (input) => composition(input, (c) => contradict(c, dfwFirst(input))),
+          // 2. An uncited summary sentence.
+          (input) => composition(input, (c) => (c.summary = `Maintenance matters to every flight. ${c.summary}`)),
+          // 3. After a re-pack: a clean answer.
+          (input) => composition(input),
+          // 4. The refinement pins one flight hour; the case is a supported 5.1 hours.
+          (input) => composition(input, (c) => timing51(c, dfwFirst(input))),
+        ],
+        check: (input) => {
+          checks.push(input);
+          return judge(input);
+        },
+      },
+      { evidence: createHybridRetriever({ es, embedder }), trialRequests: 10 },
+    );
+
+    const one = await askAndWait(h, SEED_QUESTION);
+    expect(one.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    // The checker had every passage of the case, the probable cause the composition did not quote included.
+    expect(checks[0]!.passages.filter((p) => p.ntsbNo === 'DFW08TA066').map((p) => p.section)).toContain('Probable cause');
+    expect((await stepRow(one.briefId)).meta).toMatchObject({ check: { problems: [{ kind: 'maintenance', reason: 'contradicted' }] } });
+
+    advance(MIN);
+    const two = await askAndWait(h, SEED_QUESTION, { cookie: one.cookie });
+    expect(two.step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+    expect((await stepRow(two.briefId)).meta).toMatchObject({ validation: { codes: ['uncited_summary'] } });
+    expect(checks).toHaveLength(1);
+
+    advance(MIN);
+    forceOver = true;
+    const three = await askAndWait(h, SEED_QUESTION, { cookie: one.cookie });
+    expect(three.step.result?.kind).toBe('answer');
+    // Re-packed by the real retriever (no second embedding), and the smaller bundle checked whole.
+    expect((await stepRow(three.briefId)).meta).toMatchObject({ repacks: 1 });
+    expect(embedder.calls).toHaveLength(3);
+    if (three.step.result?.kind === 'answer') {
+      for (const card of three.step.result.cases) expect(card.reading?.quotes.length).toBeGreaterThan(0);
+    }
+
+    advance(MIN);
+    const pinned = await refine(h, three.briefId, three.cookie, { kind: 'interpretation', field: 'timing_window', value: { days: null, flightHours: 1 } });
+    expect(pinned.status).toBe(202);
+    await h.svc.settled();
+    const four = await read(h, three.briefId, three.cookie, 2);
+    expect(four.json.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
+    expect((await stepRow(three.briefId, 2)).meta).toMatchObject({
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
+    });
+    // Code refused it before the checker was asked.
+    expect(checks).toHaveLength(2);
+  });
+
   it('AI stays off unless the dataset reports the passages index servable, and never says why', async () => {
     const refused = async (h: Harness) => {
       expect((await inject<{ state: string; reason?: string }>(h, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'paused', reason: 'dependency' });
@@ -1064,8 +1215,10 @@ describe('cancel and expiry', () => {
     const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 20_000 } });
     const started = await ask(h, 'Engine power loss shortly after maintenance');
     const cookie = cookieOf(started.setCookie);
+    // Deterministic: cancel only once the provider has the compose call (it hangs there).
+    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
     const running = await read(h, started.json.briefId, cookie);
-    expect(running.json).toMatchObject({ stage: expect.stringMatching(/^(retrieve|compose)$/), finishedAt: null });
+    expect(running.json).toMatchObject({ stage: 'compose', finishedAt: null });
     expect(running.json.result).toBeUndefined();
     const c = await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie });
     expect(c.status).toBe(204);
@@ -1131,5 +1284,283 @@ describe('storage', () => {
     const report = await pruneControls(appDb);
     expect(report).toMatchObject({ briefs: 1, briefSteps: 1 });
     expect(await count('briefs')).toBe(0);
+  });
+});
+
+describe('gate G6: evidence semantics through the routes', () => {
+  it('insufficient + no maintenance evidence against a maintenance-caused probable cause → withheld', async () => {
+    const checks: CheckInput[] = [];
+    const h = harness(
+      answering({
+        compose: (input) => composition(input, (c) => contradict(c, input.cases.find((x) => x.ntsbNo === 'DFW08TA066')!)),
+        check: (input) => {
+          checks.push(input);
+          return judge(input);
+        },
+      }),
+    );
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    // The composition quoted only the analysis; the checker still had the cause, and the claim cites it.
+    const dfw = checks[0]!.passages.filter((p) => p.ntsbNo === 'DFW08TA066');
+    expect(dfw.map((p) => p.section)).toEqual(['Analysis', 'Probable cause']);
+    const claim = checks[0]!.claims.find((c) => c.kind === 'maintenance' && c.ntsbNo === 'DFW08TA066')!;
+    expect(claim.passageIds).toEqual(dfw.map((p) => p.passageId));
+    expect((await stepRow(briefId)).meta).toMatchObject({ check: { supported: false, problems: [{ kind: 'maintenance', reason: 'contradicted' }] } });
+  });
+
+  it('a supported 5.1 flight hours under a pinned within-one-flight-hour reading is not presented as a match', async () => {
+    const h = harness(
+      answering({
+        compose: [(input) => composition(input), (input) => composition(input, (c) => timing51(c, input.cases.find((x) => x.ntsbNo === 'DFW08TA066')!))],
+      }),
+    );
+    const first = await askAndWait(h);
+    expect(first.step.result?.kind).toBe('answer');
+    advance(MIN);
+    const r = await refine(h, first.briefId, first.cookie, { kind: 'interpretation', field: 'timing_window', value: { days: null, flightHours: 1 } });
+    expect(r.status).toBe(202);
+    await h.svc.settled();
+    const step = await read(h, first.briefId, first.cookie, 2);
+    expect(step.json.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
+    expect((await stepRow(first.briefId, 2)).meta).toMatchObject({
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
+    });
+    // The pinned reading was enforced in code: the checker was never asked about step 2.
+    expect(h.llm.calls.filter((c) => c.stage === 'check')).toHaveLength(1);
+    // A case whose timing the passages do not settle is shown, flagged as not established.
+    if (first.step.result?.kind === 'answer') {
+      expect(first.step.result.cases[0]!.reading?.criteria).toEqual([{ criterion: 'timing_window', decision: 'unknown' }]);
+    }
+  });
+
+  it('an uncited summary sentence → withheld', async () => {
+    const h = harness(answering({ compose: (input) => composition(input, (c) => (c.summary = `${c.summary} Maintenance is often to blame.`)) }));
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+    expect((await stepRow(briefId)).meta).toMatchObject({ validation: { codes: ['uncited_summary'] } });
+  });
+
+  it('structured lines link to their own passages; gap notes keep theirs and their case context', async () => {
+    const h = harness(
+      answering({
+        compose: (input) =>
+          composition(input, (c) => {
+            const dfwIn = input.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
+            const analysis = dfwIn.passages.find((p) => p.section === 'Analysis')!;
+            const cause = dfwIn.passages.find((p) => p.section === 'Probable cause')!;
+            const dfw = c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
+            dfw.evidencePassageIds = [cause.passageId];
+            dfw.maintenance = { relation: 'investigator_attributed', passageIds: [cause.passageId] };
+            dfw.timing = { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: [analysis.passageId] };
+            // NYC08LA106 is left out of the answer and noted as a gap.
+            c.cases = c.cases.filter((x) => x.ntsbNo !== 'NYC08LA106');
+            c.groups = c.groups.map((g) => ({ ...g, caseNumbers: g.caseNumbers.filter((n) => n !== 'NYC08LA106') })).filter((g) => g.caseNumbers.length > 0);
+            c.summary = c.summary.replace(/ ?Power was lost after maintenance \[\[case:NYC08LA106\]\]\./, '');
+            const nyc = input.cases.find((x) => x.ntsbNo === 'NYC08LA106')!.passages.find((p) => p.section === 'Analysis')!;
+            c.gaps = [{ ntsbNo: 'NYC08LA106', note: 'The supplied passages put the fuel pump installation about two months earlier.', passageIds: [nyc.passageId] }];
+          }),
+      }),
+    );
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    expect(result.gaps).toEqual([{ ntsbNo: 'NYC08LA106', text: expect.any(String), passageIds: [expect.stringMatching(/^[0-9a-f]{64}$/)] }]);
+    const dfwQuote = result.cases.find((c) => c.case.ntsbNo === 'DFW08TA066')!.reading!.quotes[0]!;
+    const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DFW08TA066`, { cookie })).json);
+    const cause = ctx.passages.find((p) => p.section === 'probable_cause')!.passageId;
+    const line = (label: string) => ctx.lines.find((l) => l.label === label)!;
+    expect(line('EVIDENCE').passageIds).toEqual([cause]);
+    expect(line('MAINTENANCE').passageIds).toEqual([cause]);
+    expect(line('TIMING')).toEqual({ label: 'TIMING', text: '5.1 flight hours after the maintenance', passageIds: [dfwQuote.passageId] });
+    expect(line('CRITERIA')).toMatchObject({ text: 'Within your timing window' });
+    // A gap-only case opens in the drawer with its gap and its passages.
+    const gap = await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/NYC08LA106`, { cookie });
+    expect(gap.status).toBe(200);
+    expect(CaseContextResponseSchema.parse(gap.json)).toMatchObject({ reading: null, gaps: [{ ntsbNo: 'NYC08LA106' }] });
+  });
+
+  it('the explicit abstention: no supported match shows the cards and checked gap notes, and counts', async () => {
+    const checks: CheckInput[] = [];
+    const h = harness(
+      answering({
+        compose: (input) => {
+          const nyc = input.cases.find((x) => x.ntsbNo === 'NYC08LA106')!.passages.find((p) => p.section === 'Analysis')!;
+          return {
+            output: {
+              outcome: 'no_supported_match',
+              summary: '',
+              groups: [],
+              cases: [],
+              gaps: [{ ntsbNo: 'NYC08LA106', note: 'The supplied passages put the fuel pump installation about two months earlier.', passageIds: [nyc.passageId] }],
+            },
+          };
+        },
+        check: (input) => {
+          checks.push(input);
+          return SUPPORTED;
+        },
+      }),
+    );
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'no_match', gaps: [{ ntsbNo: 'NYC08LA106' }] });
+    if (step.result?.kind === 'no_match') expect(step.result.cases.map((c) => c.case.ntsbNo)).toEqual(SEEDS);
+    expect(checks[0]!.claims.map((c) => c.kind)).toEqual(['gap']);
+    expect(new Set(checks[0]!.passages.map((p) => p.ntsbNo))).toEqual(new Set(['NYC08LA106']));
+    expect((await stepRow(briefId)).status).toBe('no_match');
+    expect(await trialUsed()).toEqual([1]);
+  });
+
+  it('a bundle that breaks provenance or completeness fails the step; nothing is dropped or cut', async () => {
+    type Tamper = NonNullable<FakeRetrieverOptions['tamper']>;
+    const first = (b: Parameters<Tamper>[0]) => b.cases[0]!;
+    const variants: [string, Tamper][] = [
+      ['kind_mismatch', (b) => (first(b).passages[0]!.sectionKind = 'probable_cause', b)],
+      ['no_passage', (b) => (first(b).passages[0]!.passageId = 'f'.repeat(64), b)],
+      ['missing_cause', (b) => ((first(b).passages = first(b).passages.filter((p) => p.sectionKind !== 'probable_cause')), b)],
+      ['missing_best_passage', (b) => ((first(b).passages[0]!.reserved = false), b)],
+      ['too_many_cases', (b) => ({ ...b, cases: [...b.cases, ...b.cases.slice(0, 3)] })],
+    ];
+    const h = harness(answering(), { trialRequests: 10 });
+    for (const [reason, tamper] of variants) {
+      h.retriever.options.tamper = (b) => tamper(structuredClone(b), false);
+      advance(MIN);
+      const { briefId, step } = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
+      expect(step.result, reason).toEqual({ kind: 'failed', countedAsSearch: true });
+      expect((await stepRow(briefId)).meta, reason).toMatchObject({ failure: { stage: 'retrieve', category: 'integrity', reason } });
+    }
+    expect(h.llm.calls.some((c) => c.stage === 'compose')).toBe(false);
+  });
+
+  it('a re-packed bundle must keep every case whole', async () => {
+    let counts = 0;
+    const h = harness(answering({ counts: { compose: () => (++counts === 1 ? 20_000 : 9_000) } }), {
+      retriever: {
+        tamper: (b, repack) => {
+          if (!repack) return b;
+          const c = structuredClone(b);
+          c.cases[0]!.passages = c.cases[0]!.passages.filter((p) => p.sectionKind !== 'probable_cause');
+          return c;
+        },
+      },
+    });
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toEqual({ kind: 'failed', countedAsSearch: true });
+    expect((await stepRow(briefId)).meta).toMatchObject({ repacks: 1, failure: { stage: 'compose', category: 'integrity', reason: 'missing_cause' } });
+    expect(h.llm.calls.some((c) => c.stage === 'compose')).toBe(false);
+  });
+
+  it('a check input over its cap is inconclusive: withheld, nothing billed for the check', async () => {
+    const h = harness(answering({ counts: { check: 18_001 } }));
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'check', category: 'cap_exceeded' } });
+    expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose']]);
+  });
+});
+
+describe('orphaned and interrupted steps', () => {
+  it('a stale running step neither blocks a refinement nor stays running', async () => {
+    const h = harness(answering(), { trialRequests: 10 });
+    const first = await askAndWait(h);
+    // A step whose process died: still running, its reservation already closed.
+    const reservation = (
+      await rows<{ reservation_id: number }>(sql`SELECT reservation_id::int AS reservation_id FROM brief_steps WHERE brief_id = ${first.briefId}::uuid AND n = 1`)
+    )[0]!.reservation_id;
+    const owner = (await rows<{ read_owner: string }>(sql`SELECT read_owner FROM briefs WHERE id = ${first.briefId}::uuid`))[0]!.read_owner;
+    await migrator.execute(sql`
+      INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, created_at, updated_at)
+      VALUES (${first.briefId}::uuid, 2, ${owner}, 'trial', ${reservation}, ${JSON.stringify({ origin: 'text', question: 'q', refinement: 'r', readings: {} })}::jsonb, ${clock}, ${clock})`);
+    expect((await read(h, first.briefId, first.cookie)).json).toMatchObject({ step: 2, stage: 'scope' });
+    advance(3 * MIN);
+    // Stale: reported failed, and the brief can be refined again.
+    expect((await read(h, first.briefId, first.cookie)).json).toMatchObject({ step: 2, stage: 'failed', result: { kind: 'failed', countedAsSearch: true } });
+    const r = await refine(h, first.briefId, first.cookie, { kind: 'text', text: 'Only airplanes' });
+    expect([r.status, r.json]).toMatchObject([202, { step: 3 }]);
+    await h.svc.settled();
+    // Maintenance marks it failed once its reservation is closed.
+    const pass = await runControlMaintenance(appDb, { info() {}, warn() {} }, clock);
+    expect(pass).toMatchObject({ ran: true, orphanedSteps: 1, failed: [] });
+    expect(await stepRow(first.briefId, 2)).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { category: 'orphaned' } } });
+    expect((await stepRow(first.briefId, 3)).status).toBe('answered');
+  });
+
+  it('closing the server aborts running steps, which fail and settle within the grace', async () => {
+    const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 30_000 } });
+    const started = await ask(h, 'Engine power loss shortly after maintenance');
+    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
+    const t0 = Date.now();
+    harnesses.splice(harnesses.indexOf(h), 1);
+    await h.app.close();
+    expect(Date.now() - t0).toBeLessThan(8_000);
+    expect(h.svc.runs.size).toBe(0);
+    const row = await stepRow(started.json.briefId);
+    expect(row).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'shutdown' } } });
+    // The aborted compose call may have been billed: settled in full, the search kept.
+    expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+    expect(await trialUsed()).toEqual([1]);
+  });
+});
+
+describe('admission: the paced daily budget and other checks before spend', () => {
+  /** An open interactive reservation of another principal, made today. */
+  async function openReservation(usd: number): Promise<void> {
+    await migrator.execute(sql`
+      INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day, quota_counted, created_at)
+      VALUES ('interactive', 'account', ${'e'.repeat(64)}, ${usd}, 'open', ${new Date(clock.getTime() + 90_000)}, '2026-11-01', true, ${clock})`);
+  }
+
+  it('the brief route admits through the $3/day paced allowance and counts open reservations', async () => {
+    // A fresh 30-day month: today's allowance is min($3, $80 / 30) = $2.666666; a brief reserves $0.14.
+    await openReservation(2.4);
+    const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 2_000 } });
+    const a = await ask(h, 'Engine power loss shortly after maintenance');
+    expect(a.status).toBe(202);
+    // While A's $0.14 is reserved, B does not fit: refused before any token work.
+    const calls = h.sv.calls.length;
+    const b = await ask(h, 'Engine power loss shortly after maintenance', { cookie: null });
+    const untilMidnight = Math.ceil((Date.parse('2026-11-02T00:00:00Z') - clock.getTime()) / 1000);
+    expect([b.status, (b.json as unknown as { error: string }).error, (b.json as unknown as { retryAfter: number }).retryAfter]).toEqual([503, 'ai_paused', untilMidnight]);
+    expect(h.sv.calls.length).toBe(calls);
+    // Admission itself applies the same pacing with the same open reservations.
+    const direct = await admitPaidRequest(appDb, {
+      policy: h.ai.policy!,
+      principal: { kind: 'account', issuer: 'https://accounts.google.com', subject: 'pacing-test', createdAt: new Date('2026-01-01T00:00:00Z') },
+      networkId: '198.51.100.40',
+      idempotencyKey: `pacing-${RUN}`,
+      requestHash: canonicalRequestHash({ q: 'pacing' }),
+      reservationUsd: h.ai.startup.reservationUsd!,
+      now: clock,
+    });
+    expect(direct).toMatchObject({ ok: false, reason: 'global_paused', pause: 'daily_budget' });
+    await h.svc.settled();
+    expect(await rows<{ usd: string }>(sql`SELECT usd::text AS usd FROM reservations WHERE principal_kind = 'trial'`)).toEqual([{ usd: '0.140000' }]);
+  });
+
+  it('a question over the query embedding cap is refused before any spend', async () => {
+    const h = harness(answering());
+    const question = '発動機の出力が整備直後に失われた事例。'.repeat(75).slice(0, 1_500);
+    const r = await ask(h, question);
+    expect([r.status, (r.json as unknown as { error: string; message: string }).message]).toEqual([
+      400,
+      'The question is too long to search. Shorten it and try again.',
+    ]);
+    expect(h.sv.calls).toHaveLength(0);
+    expect(await count('reservations')).toBe(0);
+  });
+
+  it('a refinement stays on the evidence index its brief is pinned to', async () => {
+    const pinnedIndex = `aviation-test-briefs${RUN}-pinned`;
+    const h = harness(answering(), {
+      aiEvidence: async () => ({ generationId, passagesIndex: pinnedIndex }),
+      retriever: { available: (d) => d.passagesIndex !== pinnedIndex },
+    });
+    const first = await askAndWait(h);
+    expect(first.step.result?.kind).toBe('answer');
+    advance(MIN);
+    const calls = h.sv.calls.length;
+    const r = await refine(h, first.briefId, first.cookie, { kind: 'text', text: 'Only airplanes' });
+    expect([r.status, (r.json as unknown as { error: string }).error]).toEqual([503, 'unavailable']);
+    expect(h.sv.calls.length).toBe(calls);
   });
 });

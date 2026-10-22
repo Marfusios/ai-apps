@@ -1,42 +1,54 @@
 /**
  * Code checks on a composition before anything reaches the reader (DESIGN §5 step 5,
- * amendment A4). They run before the model checker and are not fallible the way it
- * is: every quote is located in its passage, every case number is allowlisted, and
- * the structure is consistent. Any failure withholds the whole summary; there is no
- * repair loop.
+ * amendment A4, gate G6). They run before the model checker and are not fallible the
+ * way it is: every passage is canonical, every quote is located in its passage, every
+ * claim cites passages of its own case, every case number is allowlisted, and the
+ * structure is consistent. Any failure withholds the whole summary; there is no repair
+ * loop.
  *
- * **Quote rule `quote-ws-v1`** (versioned: change the version when the rule changes,
- * because stored citations depend on it). Both the passage and the quote are
- * normalized the same way, and only this way: every maximal run of whitespace
- * (ECMAScript `\s`: space, tab, CR, LF, VT, FF, NBSP U+00A0, U+1680, U+2000–U+200A,
- * U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF) becomes one space. The quote is then
- * trimmed; an empty quote is refused. The quote must be a substring of the passage's
- * normalized text, compared code unit by code unit: no case folding, no Unicode
- * normalization, no folding of quotation marks, dashes or ellipses. When it occurs
- * more than once, the first occurrence in the cited passage is used and the number
- * of occurrences is recorded. The match is mapped back through the normalization's
- * offset map to a span of the original passage text (UTF-16 code units), and to the
- * section text by the passage's offset in its section.
+ * **Quote rule `quote-ws-v2`** (versioned: stored citations depend on it). Both the
+ * passage and the quote are normalized the same way, and only this way: every maximal
+ * run of whitespace (ECMAScript `\s`: space, tab, CR, LF, VT, FF, NBSP U+00A0, U+1680,
+ * U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF) becomes one space,
+ * and the quote is trimmed. The quote must then have at least `QUOTE_MIN_WORDS` words
+ * and be a substring of the passage's normalized text, compared code unit by code unit:
+ * no case folding, no Unicode normalization, no folding of quotation marks, dashes or
+ * ellipses. When it occurs more than once, the first occurrence in the cited passage is
+ * used and the number of occurrences is recorded. The match is mapped back through the
+ * normalization's offset map to a span of the original passage text (UTF-16 code
+ * units), which may be at most `QUOTE_MAX_SOURCE` code units long, and to the section
+ * text by the passage's offset in its section. An accepted quote is shown whole: its
+ * text is never cut afterwards. (v1, the phase-1 rule, had no length bounds.)
  *
  * Quotes are compared with the stored citation text (`case_sections.text` sliced by the
- * passage offsets), never with the copy rendered into the prompt, where untrusted
- * text had tag-like `<` replaced (server/ai/prompts/untrusted.ts).
+ * canonical passage offsets), never with the copy rendered into the prompt, where
+ * untrusted text had tag-like `<` replaced (server/ai/prompts/untrusted.ts).
  *
- * **Provenance chain** (A4): case → aircraft/scope → section id + revision hash →
- * passage → quote. `resolvePassage` checks a retrieved passage against its stored
- * section revision before the passage enters the allowlist; `validateComposition`
- * then requires each quote's passage to belong to the case that cites it.
+ * **Provenance chain** (A4; G6 #2, #4): case → aircraft/scope → section id + revision
+ * hash → passage → quote. `resolvePassage` checks a retrieved passage against its
+ * canonical `passages` row (identity, derivation, section kind, scope, aircraft,
+ * offsets) and its section revision (hash, text) before the passage enters the
+ * allowlist; the caller fails the whole bundle on any problem. `validateComposition`
+ * then requires every quote and every cited passage to belong to the case that cites it.
  *
  * **Case numbers.** Every token shaped like an NTSB number in the summary, the groups,
  * the case entries, the `why` lines and the gap notes must be in the allowlist (case
- * insensitive). Quotes are exempt: they are verified passage text.
+ * insensitive); `DCA25MA108A/B` names both aircraft numbers. Quotes are exempt: they
+ * are verified passage text.
  */
 import { createHash } from 'node:crypto';
-import { ComposeOutputSchema, type ComposeOutput } from '../../shared/contracts/briefs.js';
+import { ComposeOutputSchema, type ComposeOutput, type GlyphKind } from '../../shared/contracts/briefs.js';
+import { splitSentences } from './sentences.js';
 
-export const QUOTE_MATCH_RULE_VERSION = 'quote-ws-v1';
+export const QUOTE_MATCH_RULE_VERSION = 'quote-ws-v2';
+/** A quote has at least this many whitespace-separated words after normalization. */
+export const QUOTE_MIN_WORDS = 3;
+/** The passage text a quote resolves to is at most this many UTF-16 code units. */
+export const QUOTE_MAX_SOURCE = 600;
 
-/** A passage the composition may cite, with its provenance. */
+export type SectionKind = 'factual' | 'analysis' | 'probable_cause';
+
+/** A passage the composition may cite, with its verified provenance. */
 export interface AllowedPassage {
   ntsbNo: string;
   /** The passage's citation text exactly as stored. */
@@ -45,6 +57,8 @@ export interface AllowedPassage {
   sha: string;
   sectionId: string;
   revisionId: string;
+  /** From the canonical `passages` row, never from retrieval. */
+  sectionKind: SectionKind;
   /** UTF-16 offset of the passage in its section text. */
   sectionStart: number;
   scope: 'aircraft' | 'event';
@@ -79,7 +93,7 @@ export interface ResolvedCitation {
   sectionId: string;
   revisionId: string;
   sectionSha: string;
-  /** The passage text at `passageSpan`: what the reader sees as the quote. */
+  /** The passage text at `passageSpan`: what the reader sees as the quote, whole. */
   text: string;
   passageSpan: Span;
   sectionSpan: Span;
@@ -90,6 +104,7 @@ export interface ResolvedCitation {
 
 export type ValidationCode =
   | 'schema'
+  | 'outcome_mismatch'
   | 'unknown_case'
   | 'duplicate_case'
   | 'duplicate_group'
@@ -99,13 +114,18 @@ export type ValidationCode =
   | 'case_in_two_groups'
   | 'unknown_passage'
   | 'foreign_passage'
+  | 'missing_support'
   | 'provenance'
   | 'empty_quote'
+  | 'quote_too_short'
+  | 'quote_too_long'
   | 'malformed_quote'
   | 'quote_not_found'
   | 'timing_shape'
+  | 'timing_precision'
   | 'bad_marker'
   | 'marker_unknown_case'
+  | 'uncited_summary'
   | 'unallowlisted_case_number'
   | 'markup_or_link'
   | 'gap_unknown_case'
@@ -157,13 +177,14 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 
 export type QuoteMatch =
   | { ok: true; span: Span; matches: number }
-  | { ok: false; code: 'empty_quote' | 'malformed_quote' | 'quote_not_found' };
+  | { ok: false; code: 'empty_quote' | 'quote_too_short' | 'quote_too_long' | 'malformed_quote' | 'quote_not_found' };
 
-/** Locate `quote` in `passage` under `quote-ws-v1`; the span is in the original passage text. */
+/** Locate `quote` in `passage` under `quote-ws-v2`; the span is in the original passage text. */
 export function matchQuote(passage: string, quote: string): QuoteMatch {
   if (LONE_SURROGATE.test(quote)) return { ok: false, code: 'malformed_quote' };
   const q = collapseWhitespace(quote).text.trim();
   if (q === '') return { ok: false, code: 'empty_quote' };
+  if (q.split(' ').length < QUOTE_MIN_WORDS) return { ok: false, code: 'quote_too_short' };
   const p = collapseWhitespace(passage);
   const at = p.text.indexOf(q);
   if (at < 0) return { ok: false, code: 'quote_not_found' };
@@ -172,6 +193,7 @@ export function matchQuote(passage: string, quote: string): QuoteMatch {
   // The trimmed quote starts and ends on non-whitespace, which maps to exactly one code unit.
   const start = p.map[at]!;
   const end = p.map[at + q.length - 1]! + 1;
+  if (end - start > QUOTE_MAX_SOURCE) return { ok: false, code: 'quote_too_long' };
   return { ok: true, span: { start, end }, matches };
 }
 
@@ -184,6 +206,7 @@ export interface RetrievedPassageRef {
   ntsbNo: string;
   sectionId: string;
   revisionId: string;
+  sectionKind: SectionKind;
   scope: 'aircraft' | 'event';
   aircraftKey: number | null;
   start: number;
@@ -191,22 +214,28 @@ export interface RetrievedPassageRef {
   text: string;
 }
 
-/** The stored section revision a passage was cut from. */
-export interface SectionRevision {
+/** The canonical `passages` row of a passage, with its section revision's text and hash. */
+export interface CanonicalPassage {
+  passageId: string;
+  chunkerVersion: string;
   ntsbNo: string;
   sectionId: string;
   revisionId: string;
+  sectionKind: SectionKind;
   scope: 'aircraft' | 'event';
   aircraftKey: number | null;
-  /** Citation text. */
-  text: string;
-  /** sha256 hex of `text` (UTF-8). */
-  sha256: string;
+  start: number;
+  end: number;
+  /** The section revision's citation text and its recorded sha256. */
+  sectionText: string;
+  sectionSha: string;
 }
 
 export type ProvenanceProblem =
-  | 'no_section'
+  | 'no_passage'
+  | 'passage_id'
   | 'section_mismatch'
+  | 'kind_mismatch'
   | 'scope_mismatch'
   | 'section_hash_mismatch'
   | 'offsets'
@@ -215,46 +244,67 @@ export type ProvenanceProblem =
 const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
- * Check a retrieved passage against its stored section revision: same case, section,
- * revision, scope and aircraft; the section text still hashes to its recorded sha256;
- * and the passage text is exactly the section text at the passage's offsets. The
- * allowlisted text is the stored slice.
+ * The approved passage id derivation (Task 9, worker/index/passages.ts `passageId`):
+ * sha256 over the JSON array `[revision id, start, end, chunker version]`.
+ */
+export function derivePassageId(revisionId: string, start: number, end: number, chunkerVersion: string): string {
+  return createHash('sha256').update(JSON.stringify([revisionId, start, end, chunkerVersion])).digest('hex');
+}
+
+/**
+ * Check a retrieved passage against its canonical `passages` row and section revision:
+ * the row exists for the served chunker, its id follows the approved derivation, the
+ * retrieved case, section, revision, kind, scope, aircraft and offsets are the row's,
+ * the section text still hashes to its recorded sha256, and the passage text is exactly
+ * the section text at those offsets. The allowlisted values are the canonical ones.
  */
 export function resolvePassage(
   passage: RetrievedPassageRef,
-  section: SectionRevision | undefined,
+  canonical: CanonicalPassage | undefined,
 ): { ok: true; allowed: AllowedPassage } | { ok: false; problem: ProvenanceProblem } {
-  if (!section) return { ok: false, problem: 'no_section' };
+  const c = canonical;
+  if (!c || c.passageId !== passage.passageId) return { ok: false, problem: 'no_passage' };
+  if (derivePassageId(c.revisionId, c.start, c.end, c.chunkerVersion) !== c.passageId) return { ok: false, problem: 'passage_id' };
   if (
-    section.ntsbNo !== passage.ntsbNo ||
-    section.sectionId !== passage.sectionId ||
-    section.revisionId !== passage.revisionId ||
-    !section.sectionId.startsWith(`${section.ntsbNo}:`) ||
-    !HEX64.test(section.revisionId)
+    c.ntsbNo !== passage.ntsbNo ||
+    c.sectionId !== passage.sectionId ||
+    c.revisionId !== passage.revisionId ||
+    !c.sectionId.startsWith(`${c.ntsbNo}:`) ||
+    !HEX64.test(c.revisionId)
   ) {
     return { ok: false, problem: 'section_mismatch' };
   }
-  if (section.scope !== passage.scope || section.aircraftKey !== passage.aircraftKey) return { ok: false, problem: 'scope_mismatch' };
-  if (!HEX64.test(section.sha256) || createHash('sha256').update(section.text, 'utf8').digest('hex') !== section.sha256) {
+  if (c.sectionKind !== passage.sectionKind) return { ok: false, problem: 'kind_mismatch' };
+  if (c.scope !== passage.scope || c.aircraftKey !== passage.aircraftKey) return { ok: false, problem: 'scope_mismatch' };
+  if (!HEX64.test(c.sectionSha) || createHash('sha256').update(c.sectionText, 'utf8').digest('hex') !== c.sectionSha) {
     return { ok: false, problem: 'section_hash_mismatch' };
   }
-  const { start, end } = passage;
-  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > section.text.length) {
+  const { start, end } = c;
+  if (
+    passage.start !== start ||
+    passage.end !== end ||
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end <= start ||
+    end > c.sectionText.length
+  ) {
     return { ok: false, problem: 'offsets' };
   }
-  const text = section.text.slice(start, end);
+  const text = c.sectionText.slice(start, end);
   if (text !== passage.text) return { ok: false, problem: 'text_mismatch' };
   return {
     ok: true,
     allowed: {
-      ntsbNo: section.ntsbNo,
+      ntsbNo: c.ntsbNo,
       text,
-      sha: section.sha256,
-      sectionId: section.sectionId,
-      revisionId: section.revisionId,
+      sha: c.sectionSha,
+      sectionId: c.sectionId,
+      revisionId: c.revisionId,
+      sectionKind: c.sectionKind,
       sectionStart: start,
-      scope: section.scope,
-      aircraftKey: section.aircraftKey,
+      scope: c.scope,
+      aircraftKey: c.aircraftKey,
     },
   };
 }
@@ -265,13 +315,21 @@ export function resolvePassage(
 /**
  * Anything shaped like an NTSB number (`DFW08TA066`, `SEA08LA057A`, `GAA19CA123`),
  * deliberately loose: 2–4 letters, 2 digits, 1–3 letters, 2–5 digits, an optional
- * letter, not inside a longer word. Matched case-insensitively.
+ * letter, not inside a longer word; `/B` suffixes after an aircraft letter name more
+ * aircraft of the same event (`DCA25MA108A/B`).
  */
-const CASE_NUMBER_TOKEN = /(?<![A-Za-z0-9])[A-Za-z]{2,4}\d{2}[A-Za-z]{1,3}\d{2,5}[A-Za-z]?(?![A-Za-z0-9])/g;
+const CASE_NUMBER_TOKEN = /(?<![A-Za-z0-9])([A-Za-z]{2,4}\d{2}[A-Za-z]{1,3}\d{2,5})([A-Za-z]?)((?:\/[A-Za-z](?![A-Za-z0-9]))*)(?![A-Za-z0-9])/g;
 
-/** Every NTSB-number-shaped token in `text`, upper-cased. */
+/** Every NTSB-number-shaped token in `text`, upper-cased; aircraft shorthand is expanded. */
 export function caseNumberTokens(text: string): string[] {
-  return [...text.matchAll(CASE_NUMBER_TOKEN)].map((m) => m[0].toUpperCase());
+  const out: string[] = [];
+  for (const m of text.matchAll(CASE_NUMBER_TOKEN)) {
+    const base = m[1]!.toUpperCase();
+    const letter = (m[2] ?? '').toUpperCase();
+    out.push(base + letter);
+    for (const more of (m[3] ?? '').split('/').filter(Boolean)) out.push(base + more.toUpperCase());
+  }
+  return out;
 }
 
 const MARKER = /\[\[case:([^\]]*)\]\]/g;
@@ -291,6 +349,16 @@ export function summaryMarkers(summary: string): string[] | null {
   if (/\[\s*\[|\]\s*\]/.test(rest)) return null;
   return found;
 }
+
+/** Allowed precision of timing values: one decimal place for flight hours, whole calendar days. */
+export function timingValueAllowed(basis: string, value: number): boolean {
+  if (basis === 'calendar_days') return Number.isInteger(value);
+  if (basis === 'flight_hours') return Number.isInteger(Math.round(value * 10)) && Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
+  return false;
+}
+
+/** Group kinds whose classification must cite supporting passages. */
+const CITED_GROUPS: ReadonlySet<string> = new Set<GlyphKind>(['causal', 'defect_not_causal', 'no_fault']);
 
 // ---------------------------------------------------------------------------
 
@@ -319,6 +387,13 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     bundleCases.add(p.ntsbNo);
   }
 
+  // The outcome: an answer cites at least one case; an abstention presents none.
+  if (c.outcome === 'answer') {
+    if (c.cases.length === 0 || c.groups.length === 0 || c.summary.trim() === '') fail('outcome_mismatch', 'outcome');
+  } else if (c.cases.length > 0 || c.groups.length > 0 || c.summary.trim() !== '') {
+    fail('outcome_mismatch', 'outcome');
+  }
+
   // Cases: in the bundle, once each.
   const used = new Set<string>();
   c.cases.forEach((k, i) => {
@@ -330,6 +405,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
   // Groups: the right kinds, each used case in exactly one group.
   const kinds = new Set<string>();
   const grouped = new Map<string, number>();
+  const groupOf = new Map<string, string>();
   c.groups.forEach((g, gi) => {
     if (kinds.has(g.kind)) fail('duplicate_group', `groups.${gi}.kind`);
     kinds.add(g.kind);
@@ -337,16 +413,27 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     g.caseNumbers.forEach((n, ni) => {
       if (!used.has(n)) fail('group_unknown_case', `groups.${gi}.caseNumbers.${ni}`);
       grouped.set(n, (grouped.get(n) ?? 0) + 1);
+      groupOf.set(n, g.kind);
     });
   });
-  if (!opts.mechanicalCause && c.groups.length !== 1) fail('group_kind_mismatch', 'groups');
+  if (c.outcome === 'answer' && !opts.mechanicalCause && c.groups.length !== 1) fail('group_kind_mismatch', 'groups');
   c.cases.forEach((k, i) => {
     const n = grouped.get(k.ntsbNo) ?? 0;
     if (n === 0) fail('case_not_grouped', `cases.${i}.ntsbNo`);
     if (n > 1) fail('case_in_two_groups', `cases.${i}.ntsbNo`);
   });
 
-  // Quotes: from a passage of the same case, located under the versioned rule.
+  /** Every id cites a passage of `ntsbNo`; at least `min` ids. */
+  const support = (ids: readonly string[], ntsbNo: string, path: string, min: number) => {
+    if (ids.length < min) fail('missing_support', path);
+    ids.forEach((id, i) => {
+      const p = allow.passages.get(id);
+      if (!p) fail('unknown_passage', `${path}.${i}`);
+      else if (p.ntsbNo !== ntsbNo) fail('foreign_passage', `${path}.${i}`);
+    });
+  };
+
+  // Quotes and cited passages: from passages of the same case; quotes located under the rule.
   const citations: ResolvedCitation[] = [];
   c.cases.forEach((k, ci) => {
     k.quotes.forEach((q, qi) => {
@@ -371,10 +458,18 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
         occurrence: 'first',
       });
     });
+    support(k.evidencePassageIds, k.ntsbNo, `cases.${ci}.evidencePassageIds`, CITED_GROUPS.has(groupOf.get(k.ntsbNo) ?? '') ? 1 : 0);
+    if (k.maintenance) {
+      const cited = k.maintenance.relation === 'investigator_attributed' || k.maintenance.relation === 'preceding_not_established';
+      support(k.maintenance.passageIds, k.ntsbNo, `cases.${ci}.maintenance.passageIds`, cited ? 1 : 0);
+    }
+    if (k.symptom) support(k.symptom.passageIds, k.ntsbNo, `cases.${ci}.symptom.passageIds`, 1);
     const t = k.timing;
     if (t) {
+      support(t.passageIds, k.ntsbNo, `cases.${ci}.timing.passageIds`, 1);
       const numeric = t.basis === 'flight_hours' || t.basis === 'calendar_days';
       if (numeric !== (t.value !== undefined)) fail('timing_shape', `cases.${ci}.timing`);
+      else if (t.value !== undefined && !timingValueAllowed(t.basis, t.value)) fail('timing_precision', `cases.${ci}.timing.value`);
     }
   });
 
@@ -387,10 +482,15 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     });
   });
 
-  // Summary markers point at cases the composition uses.
+  // Summary: markers name used cases, and every sentence cites at least one.
   const markers = summaryMarkers(c.summary);
   if (markers === null) fail('bad_marker', 'summary');
-  else markers.forEach((n) => (used.has(n) ? undefined : fail('marker_unknown_case', 'summary')));
+  else {
+    markers.forEach((n) => (used.has(n) ? undefined : fail('marker_unknown_case', 'summary')));
+    splitSentences(c.summary).forEach((sentence, si) => {
+      if (!/\[\[case:[A-Z0-9]+\]\]/.test(sentence)) fail('uncited_summary', `summary.${si}`);
+    });
+  }
 
   // Free text: every NTSB-number-shaped token is allowlisted; no links or markup.
   const texts: [string, string][] = [

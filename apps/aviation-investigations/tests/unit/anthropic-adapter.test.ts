@@ -55,6 +55,7 @@ const composeInput: ComposeInput = {
 };
 
 const checkInput: CheckInput = {
+  criteria: ['Timing: the event happened within 30 calendar days or 10 flight hours after the relevant maintenance.'],
   passages: [
     {
       passageId: 'p-dfw-1',
@@ -76,6 +77,7 @@ const scopeOutput: ScopeOutput = {
 };
 
 const composeOutput: ComposeOutput = {
+  outcome: 'answer',
   summary: 'A mechanic error caused the power loss [[case:DFW08TA066]].',
   groups: [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }],
   cases: [
@@ -83,9 +85,10 @@ const composeOutput: ComposeOutput = {
       ntsbNo: 'DFW08TA066',
       why: 'Power loss after maintenance.',
       quotes: [{ passageId: 'p-dfw-1', quote: 'The contract mechanic failed.', speaker: 'investigators' }],
-      maintenance: 'investigator_attributed',
-      symptom: 'total_power_loss',
-      timing: { basis: 'flight_hours', value: 5.1, bound: 'exact' },
+      evidencePassageIds: ['p-dfw-1'],
+      maintenance: { relation: 'investigator_attributed', passageIds: ['p-dfw-1'] },
+      symptom: { value: 'total_power_loss', passageIds: ['p-dfw-1'] },
+      timing: { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: ['p-dfw-1'] },
     },
   ],
   gaps: [],

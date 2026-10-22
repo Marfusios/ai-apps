@@ -38,11 +38,20 @@ export interface StoredPassage {
   text: string;
 }
 
+/** A presented case's structured claims with the passages each was checked on (answers only). */
+export interface StoredDimensions {
+  ntsbNo: string;
+  evidencePassageIds: string[];
+  maintenance?: { relation: MaintenanceRelation; passageIds: string[] };
+  symptom?: { value: Symptom; passageIds: string[] };
+  timingPassageIds?: string[];
+}
+
 export interface StoredEvidence {
   ruleVersion: string | null;
   passages: StoredPassage[];
-  /** The composition's other DESIGN §3 dimensions per case, for the case context (answers only). */
-  dimensions?: { ntsbNo: string; maintenance?: MaintenanceRelation; symptom?: Symptom }[];
+  /** The composition's DESIGN §3 dimensions per presented case, for the case context (answers only). */
+  dimensions?: StoredDimensions[];
 }
 
 export interface StepRow {
@@ -158,13 +167,57 @@ export async function readStep(db: DbOrTx, briefId: string, n?: number): Promise
   return row ? toStep(row) : null;
 }
 
-/** Number, status and stage of every step of a brief, in order. */
-export async function listSteps(db: DbOrTx, briefId: string): Promise<{ n: number; status: BriefStepStatus; stage: BriefStepStage }[]> {
+/** Number, status, stage and start of every step of a brief, in order. */
+export async function listSteps(
+  db: DbOrTx,
+  briefId: string,
+): Promise<{ n: number; status: BriefStepStatus; stage: BriefStepStage; createdAt: Date }[]> {
   return db
-    .select({ n: briefSteps.n, status: briefSteps.status, stage: briefSteps.stage })
+    .select({ n: briefSteps.n, status: briefSteps.status, stage: briefSteps.stage, createdAt: briefSteps.createdAt })
     .from(briefSteps)
     .where(eq(briefSteps.briefId, briefId))
     .orderBy(asc(briefSteps.n));
+}
+
+/** Step `n` (or the latest) with the number of steps in its brief, in one query (polling). */
+export async function readStepWithCount(db: DbOrTx, briefId: string, n?: number): Promise<{ step: StepRow; steps: number } | null> {
+  const count = sql<number>`(select count(*)::int from ${briefSteps} s where s.brief_id = ${briefId}::uuid)`;
+  const q = db.select({ row: briefSteps, steps: count }).from(briefSteps);
+  const [r] =
+    n === undefined
+      ? await q.where(eq(briefSteps.briefId, briefId)).orderBy(desc(briefSteps.n)).limit(1)
+      : await q.where(and(eq(briefSteps.briefId, briefId), eq(briefSteps.n, n)));
+  return r ? { step: toStep(r.row), steps: Number(r.steps) } : null;
+}
+
+/**
+ * A step still `running` this long after it started has lost its process (the deadline
+ * is 60 s and settlement follows at once): it reads as failed, it no longer blocks a
+ * refinement, and maintenance marks it failed once its reservation is closed.
+ */
+export const STALE_STEP_MS = 120_000;
+
+export function isLiveStep(step: { status: BriefStepStatus; createdAt: Date }, now: Date): boolean {
+  return step.status === 'running' && now.getTime() - step.createdAt.getTime() <= STALE_STEP_MS;
+}
+
+/**
+ * Mark steps whose process died as failed (`countedAsSearch`: their reservation was
+ * charged): still `running` after `STALE_STEP_MS`, with a reservation that is no longer
+ * open (lease expiry charged it in full, or it was settled before the step's last write
+ * was lost). Run by the periodic control maintenance as aviation_app.
+ */
+export async function failOrphanedSteps(db: DbOrTx, now: Date = new Date()): Promise<number> {
+  const res = await db.execute(sql`
+    UPDATE brief_steps s
+    SET stage = 'failed', status = 'failed',
+      result = '{"kind":"failed","countedAsSearch":true}'::jsonb,
+      meta = s.meta || '{"failure":{"stage":"pipeline","category":"orphaned"}}'::jsonb,
+      cost_usd = r.charged_usd, updated_at = ${now}, finished_at = ${now}
+    FROM reservations r
+    WHERE s.status = 'running' AND r.id = s.reservation_id AND r.status <> 'open'
+      AND s.created_at < ${new Date(now.getTime() - STALE_STEP_MS)}`);
+  return res.rowCount ?? 0;
 }
 
 export interface StageUpdate {

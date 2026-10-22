@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ComposeOutput } from '../../shared/contracts/briefs.js';
+import type { ComposeCase, ComposeOutput, ComposeTiming } from '../../shared/contracts/briefs.js';
 import { ScopeOutputSchema, type ScopeOutput } from '../../server/ai/provider.js';
 import {
   clarificationReadings,
@@ -21,7 +21,9 @@ import {
   scopeFiltersToBrief,
   scopeInput,
 } from '../../server/briefs/intent.js';
-import { checkInput, summarySegments, summarySentences, timingChip, type VerifiedCase } from '../../server/briefs/render.js';
+import { timingLine } from '../../server/briefs/context.js';
+import { criteriaLines, evaluateCase, firstFlightDecision, timingDecision } from '../../server/briefs/criteria.js';
+import { checkInput, summarySegments, summarySentences, timingChip, timingValueText, type VerifiedCase } from '../../server/briefs/render.js';
 import {
   OPERATIONAL_LINES,
   OPERATIONAL_SUGGESTIONS,
@@ -179,61 +181,155 @@ describe('rendering', () => {
     expect(summarySentences('Loose nut. [[case:A1B2C3]] Next one.')).toEqual(['Loose nut. [[case:A1B2C3]]', 'Next one.']);
   });
 
-  it('timing chips are server labels', () => {
-    expect(timingChip({ basis: 'flight_hours', value: 5.1, bound: 'exact' }).label).toBe('5.1 FH');
-    expect(timingChip({ basis: 'calendar_days', value: 17, bound: 'at_most' }).label).toBe('≤ 17 DAYS');
-    expect(timingChip({ basis: 'calendar_days', value: 1, bound: 'about' }).label).toBe('≈ 1 DAY');
-    expect(timingChip({ basis: 'first_flight', bound: 'exact' })).toEqual({ basis: 'first_flight', value: null, bound: 'exact', label: '1ST FLIGHT' });
-    expect(timingChip({ basis: 'qualitative', bound: 'about' }).label).toBe('NOT QUANTIFIED');
+  it('timing chips are server labels, with the value exactly as checked', () => {
+    const t = (over: object) => ({ passageIds: ['p1'], ...over }) as Parameters<typeof timingChip>[0];
+    expect(timingChip(t({ basis: 'flight_hours', value: 5.1, bound: 'exact' })).label).toBe('5.1 FH');
+    expect(timingChip(t({ basis: 'calendar_days', value: 17, bound: 'at_most' })).label).toBe('≤ 17 DAYS');
+    expect(timingChip(t({ basis: 'calendar_days', value: 1, bound: 'about' })).label).toBe('≈ 1 DAY');
+    expect(timingChip(t({ basis: 'first_flight', bound: 'exact' }))).toEqual({ basis: 'first_flight', value: null, bound: 'exact', label: '1ST FLIGHT' });
+    expect(timingChip(t({ basis: 'qualitative', bound: 'about' })).label).toBe('NOT QUANTIFIED');
+    // One canonical representation: what is shown is what was checked (no rounding).
+    expect(timingValueText(12.5)).toBe('12.5');
+    expect(timingLine(timingChip(t({ basis: 'flight_hours', value: 12.5, bound: 'about' })))).toBe('About 12.5 flight hours after the maintenance');
   });
 
-  it('the checker gets every claim with its passages, from templates where values are structured', () => {
-    const passage = (id: string): VerifiedCase['passages'][number] => ({
+  it('the checker gets every claim with its own passages, and every passage of each case it is about', () => {
+    const passage = (id: string, text: string, kind: 'analysis' | 'probable_cause' = 'analysis'): VerifiedCase['passages'][number] => ({
       passageId: id,
-      role: 'retrieved',
-      rank: 1,
-      sectionKind: 'analysis',
-      allowed: { ntsbNo: 'DFW08TA066', text: 'The pilot said the engine quit. A nut was loose.', sha: 'a'.repeat(64), sectionId: 'DFW08TA066:analysis/aircraft-1', revisionId: 'b'.repeat(64), sectionStart: 0, scope: 'aircraft', aircraftKey: 1 },
+      role: kind === 'analysis' ? 'retrieved' : 'probable_cause',
+      reserved: true,
+      rank: kind === 'analysis' ? 1 : null,
+      sectionKind: kind,
+      allowed: {
+        ntsbNo: 'DFW08TA066',
+        text,
+        sha: 'a'.repeat(64),
+        sectionId: `DFW08TA066:${kind}/aircraft-1`,
+        revisionId: 'b'.repeat(64),
+        sectionKind: kind,
+        sectionStart: 0,
+        scope: 'aircraft',
+        aircraftKey: 1,
+      },
     });
     const vc = {
       ntsbNo: 'DFW08TA066',
       rank: 1,
       summary: { row: { aircraft: [{ aircraftKey: 1, make: 'Hughes', model: 'OH-6' }] }, report: {}, aircraftNumbers: [] },
-      passages: [passage('p1'), passage('p2')],
+      passages: [
+        passage('p1', 'The pilot said the engine quit. A nut was loose.'),
+        passage('p2', 'The engine was changed the day before.'),
+        passage('p3', "The contract mechanic's failure to secure the nut.", 'probable_cause'),
+      ],
     } as unknown as VerifiedCase;
+    const other = { ...vc, ntsbNo: 'DEN08LA103', passages: [{ ...passage('p9', 'Unrelated.'), allowed: { ...passage('p9', 'Unrelated.').allowed, ntsbNo: 'DEN08LA103' } }] } as VerifiedCase;
     const composition: ComposeOutput = {
-      summary: 'A nut came loose [[case:DFW08TA066]]. Mechanics matter.',
-      groups: [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }],
+      outcome: 'answer',
+      summary: 'A nut came loose [[case:DFW08TA066]]. Mechanics matter here [[case:DFW08TA066]].',
+      groups: [{ kind: 'insufficient', caseNumbers: ['DFW08TA066'] }],
       cases: [
         {
           ntsbNo: 'DFW08TA066',
           why: 'The engine quit after maintenance.',
           quotes: [{ passageId: 'p1', quote: 'A nut was loose.', speaker: 'investigators' }],
-          maintenance: 'investigator_attributed',
-          symptom: 'other',
-          timing: { basis: 'flight_hours', value: 5.1, bound: 'exact' },
+          evidencePassageIds: [],
+          maintenance: { relation: 'no_evidence', passageIds: [] },
+          symptom: { value: 'other', passageIds: ['p1'] },
+          timing: { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: ['p2'] },
         },
       ],
-      gaps: [{ ntsbNo: 'DFW08TA066', note: 'No inspection date is given.', passageIds: ['p2'] }],
+      gaps: [{ ntsbNo: 'DFW08TA066', note: 'The supplied passages give no inspection date.', passageIds: ['p2'] }],
     };
     const citation: ResolvedCitation = {
       ntsbNo: 'DFW08TA066', caseIndex: 0, quoteIndex: 0, passageId: 'p1', sectionId: 'x', revisionId: 'y', sectionSha: 'z',
       text: 'A nut was loose.', passageSpan: { start: 31, end: 47 }, sectionSpan: { start: 31, end: 47 }, matches: 1, occurrence: 'first',
     };
-    const { input, claims } = checkInput(composition, [citation], new Map([['DFW08TA066', vc]]), { mechanicalCause: true });
-    expect(claims.map((c) => c.kind)).toEqual(['summary', 'summary', 'why', 'classification', 'maintenance', 'timing', 'attribution', 'gap']);
-    expect(input.claims[0]).toEqual({ kind: 'summary', ntsbNo: 'DFW08TA066', text: 'A nut came loose (DFW08TA066).', passageIds: ['p1'] });
-    expect(input.claims[3]!.text).toBe('Investigators established a mechanical fault that caused this event.');
-    expect(input.claims[5]!.text).toBe('The event happened 5.1 flight hours after the relevant maintenance.');
-    expect(input.claims[6]!.text).toBe('These words are the investigators’ own (examination, analysis, findings or probable cause): “A nut was loose.”');
+    const cases = new Map([['DFW08TA066', vc], ['DEN08LA103', other]]);
+    const opts = {
+      mechanicalCause: true,
+      criteria: ['Timing: the event happened within 1 flight hour after the relevant maintenance.'],
+      criterionClaims: new Map([['DFW08TA066', ['This event involved a total loss of engine power.']]]),
+    };
+    const { input, claims } = checkInput(composition, [citation], cases, opts);
+    expect(claims.map((c) => c.kind)).toEqual(['summary', 'summary', 'why', 'classification', 'maintenance', 'timing', 'criterion', 'attribution', 'gap']);
+    const byKind = (k: string) => input.claims[claims.findIndex((c) => c.kind === k)]!;
+    // Every passage of the case, the probable cause included, even though only p1 was quoted.
     expect(input.passages.map((p) => [p.passageId, p.section, p.aircraft])).toEqual([
       ['p1', 'Analysis', 'Hughes OH-6'],
       ['p2', 'Analysis', 'Hughes OH-6'],
+      ['p3', 'Probable cause', 'Hughes OH-6'],
     ]);
+    expect(input.criteria).toEqual(opts.criteria);
+    expect(input.claims[0]).toEqual({ kind: 'summary', ntsbNo: 'DFW08TA066', text: 'A nut came loose (DFW08TA066).', passageIds: ['p1', 'p2', 'p3'] });
+    // Insufficiency and absence are judged on all of the case's passages, never only the quoted one.
+    expect(byKind('classification')).toMatchObject({ passageIds: ['p1', 'p2', 'p3'] });
+    expect(byKind('classification').text).toContain('This is about the supplied passages, not an NTSB finding.');
+    expect(byKind('maintenance')).toMatchObject({ text: 'None of the supplied passages of this case mentions maintenance relevant to the event.', passageIds: ['p1', 'p2', 'p3'] });
+    // A structured value cites its own passages.
+    expect(byKind('timing')).toMatchObject({ text: 'The event happened 5.1 flight hours after the relevant maintenance.', passageIds: ['p2'] });
+    expect(byKind('criterion')).toMatchObject({ text: 'This event involved a total loss of engine power.', passageIds: ['p1', 'p2', 'p3'] });
+    expect(byKind('attribution').text).toContain('“A nut was loose.”');
+    expect(byKind('gap')).toMatchObject({ passageIds: ['p2'] });
 
     // More claims than the checker takes: the check is inconclusive, never partial.
-    const many = { ...composition, summary: Array.from({ length: 120 }, () => 'A.').join(' ') };
-    expect(checkInput(many, [citation], new Map([['DFW08TA066', vc]]), { mechanicalCause: true }).overflow).toBe(true);
-    expect(checkInput(composition, [citation], new Map([['DFW08TA066', vc]]), { mechanicalCause: true }).overflow).toBe(false);
+    const many = { ...composition, summary: Array.from({ length: 120 }, () => 'A note [[case:DFW08TA066]].').join(' ') };
+    expect(checkInput(many, [citation], cases, opts).overflow).toBe(true);
+    expect(checkInput(composition, [citation], cases, opts).overflow).toBe(false);
+  });
+});
+
+describe('the reader’s criteria (server-owned, enforced in code)', () => {
+  const t = (basis: ComposeTiming['basis'], value: number | undefined, bound: ComposeTiming['bound']): ComposeTiming => ({
+    basis,
+    ...(value === undefined ? {} : { value }),
+    bound,
+    passageIds: ['p'],
+  });
+
+  it('timing windows are bound-aware and never convert days into hours', () => {
+    const oneHour = { days: null, flightHours: 1 };
+    expect(timingDecision(oneHour, t('flight_hours', 5.1, 'exact'))).toBe('does_not_match');
+    expect(timingDecision(oneHour, t('flight_hours', 0.5, 'exact'))).toBe('matches');
+    expect(timingDecision(oneHour, t('flight_hours', 5, 'at_most'))).toBe('unknown');
+    expect(timingDecision(oneHour, t('flight_hours', 0.5, 'at_most'))).toBe('matches');
+    expect(timingDecision(oneHour, t('flight_hours', 0.5, 'at_least'))).toBe('unknown');
+    expect(timingDecision(oneHour, t('flight_hours', 2, 'at_least'))).toBe('does_not_match');
+    expect(timingDecision(oneHour, t('flight_hours', 1, 'about'))).toBe('unknown');
+    expect(timingDecision(oneHour, t('calendar_days', 0, 'exact'))).toBe('unknown');
+    expect(timingDecision(oneHour, t('first_flight', undefined, 'exact'))).toBe('unknown');
+    expect(timingDecision(oneHour, undefined)).toBe('unknown');
+    // An OR window: outside on hours, but days are unknown.
+    const shortly = { days: 30, flightHours: 10 };
+    expect(timingDecision(shortly, t('flight_hours', 12, 'exact'))).toBe('unknown');
+    expect(timingDecision(shortly, t('flight_hours', 5.1, 'exact'))).toBe('matches');
+    expect(timingDecision({ days: 30, flightHours: null }, t('calendar_days', 60, 'about'))).toBe('does_not_match');
+    expect(firstFlightDecision(t('first_flight', undefined, 'exact'))).toBe('matches');
+    expect(firstFlightDecision(t('subsequent_flight', undefined, 'exact'))).toBe('does_not_match');
+    expect(firstFlightDecision(t('flight_hours', 0.2, 'exact'))).toBe('unknown');
+  });
+
+  it('a case is judged on every reading in effect; semantic criteria go to the checker', () => {
+    const k = {
+      ntsbNo: 'DFW08TA066',
+      why: 'w',
+      quotes: [],
+      evidencePassageIds: [],
+      timing: t('flight_hours', 5.1, 'exact'),
+    } as unknown as ComposeCase;
+    const pinned = { timingWindow: { value: { days: null, flightHours: 1 }, pinned: true } };
+    expect(evaluateCase(pinned, k, true)).toEqual({ decisions: [{ criterion: 'timing_window', decision: 'does_not_match' }], claims: [] });
+    const failure = { failureType: { value: 'total_power_loss' as const, pinned: false } };
+    expect(evaluateCase(failure, k, true)).toEqual({
+      decisions: [{ criterion: 'failure_type', decision: 'matches' }],
+      claims: ['This event involved a total loss of engine power.'],
+    });
+    expect(evaluateCase(failure, { ...k, symptom: { value: 'partial_power_loss', passageIds: ['p'] } }, true).decisions).toEqual([
+      { criterion: 'failure_type', decision: 'does_not_match' },
+    ]);
+    expect(criteriaLines({ ...pinned, firstFlightOnly: { value: true, pinned: true }, ...failure })).toEqual([
+      'Timing: the event happened within 1 flight hour after the relevant maintenance.',
+      'First flight: the event happened on the first flight after the relevant maintenance.',
+      'Failure: the event involved a total loss of engine power.',
+    ]);
   });
 });
