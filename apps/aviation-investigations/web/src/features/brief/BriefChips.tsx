@@ -220,7 +220,10 @@ export function BriefChips({ briefId, interpretations, filters, editable }: Brie
   const refine = useRefine(briefId);
   const [editing, setEditing] = useState<Editing>(null);
   const close = (): void => setEditing(null);
+  // The last change asked for, so a notice's Try again can send it again (same key if its outcome is unknown).
+  const [lastChange, setLastChange] = useState<RefinementChange | null>(null);
   const run = (change: RefinementChange): void => {
+    setLastChange(change);
     void refine.refine(change).then((ok) => ok && close());
   };
   const runFilters = (f: BriefFilters): void => run({ kind: 'filters', filters: f });
@@ -272,7 +275,7 @@ export function BriefChips({ briefId, interpretations, filters, editable }: Brie
         <FilterOffer title={`Without ${editing.label}`} filters={editing.without} onRun={runFilters} phase={refine.phase} onClose={close} />
       )}
       {editing?.kind === 'add' && <AddFilter filters={filters} onRun={runFilters} phase={refine.phase} onClose={close} />}
-      <AiNoticeBox notice={refine.notice} keywordHref={exploreHref(filters)} className="mt-2.5" />
+      <AiNoticeBox notice={refine.notice} keywordHref={exploreHref(filters)} onRetry={lastChange ? () => run(lastChange) : undefined} className="mt-2.5" />
     </div>
   );
 }

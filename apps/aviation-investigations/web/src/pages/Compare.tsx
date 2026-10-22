@@ -421,15 +421,18 @@ export function Compare() {
           From your search <span className="font-serif text-ink">“{briefStep.data.question}”</span>
         </p>
       )}
-      {aiGone && <p className="-mt-2 mb-4 text-meta text-muted">{AI_NOTES_GONE_PLURAL}</p>}
-      {aiFailed && (
-        <p role="status" className="-mt-2 mb-4 text-meta text-muted">
-          {AI_NOTES_FAILED_PLURAL}{' '}
-          <button type="button" onClick={() => void briefStep.refetch()} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
-            Try again
-          </button>
-        </p>
-      )}
+      {/* Rendered before any note, so a gone or failed brief read is announced when it appears. */}
+      <div aria-live="polite">
+        {aiGone && <p className="-mt-2 mb-4 text-meta text-muted">{AI_NOTES_GONE_PLURAL}</p>}
+        {aiFailed && (
+          <p className="-mt-2 mb-4 text-meta text-muted">
+            {AI_NOTES_FAILED_PLURAL}{' '}
+            <button type="button" onClick={() => void briefStep.refetch()} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+              Try again
+            </button>
+          </p>
+        )}
+      </div>
       {requested > COMPARE_LIMIT && (
         <p className="mb-3 text-meta text-muted">Compare holds four cases; the first four in the link are shown.</p>
       )}

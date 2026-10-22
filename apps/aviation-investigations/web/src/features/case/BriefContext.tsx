@@ -5,7 +5,7 @@ import { SECTION_LABEL, type AircraftBrief, type SectionKind } from '../../../..
 import { DataCaution } from '../../components/DataCaution';
 import { EvidenceGlyph } from '../../components/EvidenceGlyph';
 import { SectionHead } from '../../components/SectionHead';
-import { EVENT_SCOPE_CAUTION, evidenceAttribution, ntsbSectionTag, quoteAttribution } from '../brief/display';
+import { EVENT_SCOPE_CAUTION, attributionAmbiguous, evidenceAttribution, ntsbSectionTag, quoteAttribution } from '../brief/display';
 
 /**
  * The AI context of a case (UI_DESIGN §4.5 items 4, 8 and 9), read from the brief's
@@ -181,26 +181,24 @@ export interface BriefVerdictProps {
 
 /** Verdict pill, the evidence's aircraft in a multi-aircraft event, or why the AI notes are missing. */
 export function BriefVerdict({ ai, ntsbNo, aircraft }: BriefVerdictProps) {
-  if (ai.state === 'gone') return <p className="mt-3 text-meta text-muted">{AI_NOTES_GONE}</p>;
-  if (ai.state === 'error') {
-    return (
-      <p role="status" className="mt-3 text-meta text-muted">
-        {AI_NOTES_FAILED}{' '}
-        <button type="button" onClick={ai.retry} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
-          Try again
-        </button>
-      </p>
-    );
-  }
-  if (ai.state !== 'ready') return null;
-  const reading = ai.context.reading;
-  if (!reading) return null;
-  const eventScoped = reading.evidence.scope === 'event' && reading.evidence.multiAircraft;
-  const attribution = evidenceAttribution(ntsbNo, aircraft, reading.evidence);
+  const reading = ai.state === 'ready' ? ai.context.reading : null;
+  const attribution = reading ? evidenceAttribution(ntsbNo, aircraft, reading.evidence) : null;
   return (
     <>
-      {reading.glyph && <EvidenceGlyph kind={reading.glyph} variant="pill" className="mt-3" />}
-      {eventScoped && <DataCaution className="mt-3">{EVENT_SCOPE_CAUTION}.</DataCaution>}
+      {/* A polite live region rendered while the context loads, so a missing or failed read is announced. */}
+      <div aria-live="polite">
+        {ai.state === 'gone' && <p className="mt-3 text-meta text-muted">{AI_NOTES_GONE}</p>}
+        {ai.state === 'error' && (
+          <p className="mt-3 text-meta text-muted">
+            {AI_NOTES_FAILED}{' '}
+            <button type="button" onClick={ai.retry} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+              Try again
+            </button>
+          </p>
+        )}
+      </div>
+      {reading?.glyph && <EvidenceGlyph kind={reading.glyph} variant="pill" className="mt-3" />}
+      {reading && attributionAmbiguous(aircraft, reading.evidence) && <DataCaution className="mt-3">{EVENT_SCOPE_CAUTION}.</DataCaution>}
       {attribution && (
         <p className="mt-2 text-meta text-muted">
           <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">Evidence</span> {attribution}

@@ -27,6 +27,7 @@ export const EXPIRED_TITLE = 'This AI search has expired.';
 export const EXPIRED_TEXT = 'We delete questions and answers after 24 hours.';
 export const NO_RESULTS_TITLE = 'No completed investigations match all of this.';
 export const CANCELLED_TITLE = 'You cancelled this AI search.';
+export const LOAD_FAILED = 'This AI search didn’t load.';
 
 const STEP_PARAM = 'step';
 
@@ -50,7 +51,7 @@ function Expired({ id }: { id: string }) {
   return (
     <div className="mx-auto w-full max-w-reading px-4 pt-8 pb-12 sm:pt-12">
       <title>AI search expired · Aviation Casebook</title>
-      <div role="status" className="card px-5 py-4">
+      <div className="card px-5 py-4">
         <h1 className="font-serif text-[19px] leading-snug font-semibold">{EXPIRED_TITLE}</h1>
         <p className="mt-1 text-ui text-muted">{EXPIRED_TEXT}</p>
         {remembered && (
@@ -113,7 +114,7 @@ function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsS
         </div>
         <p className="mt-1.5 text-meta text-muted">{countedAsSearch ? COPY.spent : COPY.notSpent}</p>
       </div>
-      <AiNoticeBox notice={notice} keywordHref={exploreHref({}, step.question)} className="mt-2.5" />
+      <AiNoticeBox notice={notice} keywordHref={exploreHref({}, step.question)} onRetry={retry} className="mt-2.5" />
     </>
   );
 }
@@ -217,29 +218,67 @@ export function Brief() {
     if (document.activeElement === document.body || document.activeElement === null) resultHeading.current?.focus({ preventScroll: true });
   }, [step, finished]);
 
-  if (gone) return <Expired id={id} />;
+  // A failed read that is not a 404. While `?step=n` past the last step falls back to the
+  // latest step, only the fallback's own failure counts (the first 404 is expected).
+  const loadError = stepMissing
+    ? fallback.isError && !isNotFound(fallback.error)
+      ? fallback.error
+      : null
+    : query.isError && !isNotFound(query.error)
+      ? query.error
+      : null;
+  // One polite live region for the whole page, rendered first in every state, so whatever
+  // appears later (expiry, a load failure, the fallback note, a finished step) is announced.
+  const liveText = gone
+    ? EXPIRED_TITLE
+    : !step && loadError
+      ? LOAD_FAILED
+      : stepMissing && step
+        ? `There is no answer ${stepParam} in this brief; this is the latest.`
+        : announcement;
+  const live = (
+    <p aria-live="polite" className="sr-only">
+      {liveText}
+    </p>
+  );
+
+  if (gone) {
+    return (
+      <>
+        {live}
+        <Expired id={id} />
+      </>
+    );
+  }
   if (!step) {
     return (
-      <div className="mx-auto w-full max-w-reading px-4 pt-6 pb-12">
-        <title>AI brief · Aviation Casebook</title>
-        {query.isError ? (
-          <div role="alert" className="card px-5 py-4">
-            <p className="font-serif text-[19px] font-semibold">This AI search didn’t load.</p>
-            <p className="mt-1 text-ui text-muted">
-              {query.error instanceof ApiError && query.error.status === 429 ? 'Too many requests; wait a moment.' : 'Check your connection and try again.'}
-            </p>
-            <button type="button" onClick={() => query.refetch()} className="mt-2 cursor-pointer text-ui text-blue hover:underline">
-              Try again
-            </button>
-          </div>
-        ) : (
-          <div aria-hidden="true" className="space-y-3">
-            <div className="h-3 w-24 rounded-[2px] bg-tint" />
-            <div className="h-6 w-4/5 rounded-[3px] bg-tint" />
-            <div className="mt-6 h-40 rounded-chip bg-tint opacity-60" />
-          </div>
-        )}
-      </div>
+      <>
+        {live}
+        <div className="mx-auto w-full max-w-reading px-4 pt-6 pb-12">
+          <title>AI brief · Aviation Casebook</title>
+          {loadError ? (
+            <div className="card px-5 py-4">
+              <p className="font-serif text-[19px] font-semibold">{LOAD_FAILED}</p>
+              <p className="mt-1 text-ui text-muted">
+                {loadError instanceof ApiError && loadError.status === 429 ? 'Too many requests; wait a moment.' : 'Check your connection and try again.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => void (stepMissing ? fallback.refetch() : query.refetch())}
+                className="mt-2 cursor-pointer text-ui text-blue hover:underline"
+              >
+                Try again
+              </button>
+            </div>
+          ) : (
+            <div aria-hidden="true" className="space-y-3">
+              <div className="h-3 w-24 rounded-[2px] bg-tint" />
+              <div className="h-6 w-4/5 rounded-[3px] bg-tint" />
+              <div className="mt-6 h-40 rounded-chip bg-tint opacity-60" />
+            </div>
+          )}
+        </div>
+      </>
     );
   }
 
@@ -308,88 +347,85 @@ export function Brief() {
   const canRefine = finished && latest && result !== undefined && result.kind !== 'scope_reply' && result.kind !== 'failed';
 
   return (
-    <div className={cx('mx-auto w-full max-w-reading px-4 pt-6 pb-12 sm:pt-[26px]', compare.selected.length > 0 && 'pb-24')}>
-      <title>AI brief · Aviation Casebook</title>
-      <Placard as="p">Your question</Placard>
-      <h1 className="mt-1 font-serif text-[17px] leading-[1.3] sm:text-[19px]">{step.question}</h1>
-      <StepSwitcher briefId={id} step={step.step} steps={step.steps} origin={step.origin} />
-      {stepMissing && (
-        <p role="status" className="mb-2.5 text-meta text-muted">
-          There is no answer {stepParam} in this brief; this is the latest.
-        </p>
-      )}
-      {context && <BriefChips briefId={id} interpretations={context.interpretations} filters={context.filters} editable={canRefine && step.refinementsLeft > 0} />}
+    <>
+      {live}
+      <div className={cx('mx-auto w-full max-w-reading px-4 pt-6 pb-12 sm:pt-[26px]', compare.selected.length > 0 && 'pb-24')}>
+        <title>AI brief · Aviation Casebook</title>
+        <Placard as="p">Your question</Placard>
+        <h1 className="mt-1 font-serif text-[17px] leading-[1.3] sm:text-[19px]">{step.question}</h1>
+        <StepSwitcher briefId={id} step={step.step} steps={step.steps} origin={step.origin} />
+        {stepMissing && (
+          <p className="mb-2.5 text-meta text-muted">There is no answer {stepParam} in this brief; this is the latest.</p>
+        )}
+        {context && <BriefChips briefId={id} interpretations={context.interpretations} filters={context.filters} editable={canRefine && step.refinementsLeft > 0} />}
 
-      {!finished ? (
-        <Checklist
-          checklist={step.checklist}
-          stage={step.stage}
-          startedAt={step.startedAt}
-          cohort={config?.coverage.defaultCohort ?? null}
-          onCancel={() => void cancel()}
-          cancelling={cancelling}
+        {!finished ? (
+          <Checklist
+            checklist={step.checklist}
+            stage={step.stage}
+            startedAt={step.startedAt}
+            cohort={config?.coverage.defaultCohort ?? null}
+            onCancel={() => void cancel()}
+            cancelling={cancelling}
+          />
+        ) : (
+          <section aria-labelledby="result-heading" className="mt-1">
+            <h2 id="result-heading" ref={resultHeading} tabIndex={-1} className="sr-only">
+              {step.steps > 1 ? `Answer ${step.step}` : 'Answer'}
+            </h2>
+            {sheet && <BriefingSheet result={sheet} caseTo={caseTo} inCompare={(n) => compare.selected.includes(n)} onToggleCompare={toggle} />}
+            {result?.kind === 'scope_reply' && <ScopeReply briefId={id} question={step.question} reply={result.reply} refinementsLeft={latest ? step.refinementsLeft : 0} />}
+            {result?.kind === 'no_results' && (
+              <div className="card mt-4 px-4 py-3.5">
+                <p className="font-serif text-[18px] leading-tight font-semibold">{NO_RESULTS_TITLE}</p>
+                <p className="mt-1 text-ui text-muted">{[`“${step.question}”`, ...filtersInWords(result.filters)].join(' · ')}</p>
+                <Link to={exploreHref(result.filters)} className="mt-2 inline-block text-ui text-blue hover:underline">
+                  Show keyword results with these filters<span className="sr-only"> (free)</span>
+                </Link>
+              </div>
+            )}
+            {result?.kind === 'failed' && <Failed step={step} countedAsSearch={result.countedAsSearch} />}
+            {result?.kind === 'cancelled' && (
+              <div className="card mt-4 px-4 py-3.5">
+                <p className="font-serif text-[18px] leading-tight font-semibold">{CANCELLED_TITLE}</p>
+                <p className="mt-1 text-meta text-muted">{COPY.spent}</p>
+              </div>
+            )}
+          </section>
+        )}
+
+        {canRefine && <RefineBox briefId={id} refinementsLeft={step.refinementsLeft} question={step.question} />}
+        {finished && !latest && (
+          <p className="mt-5 border-t border-dashed border-hairline pt-2.5 text-ui text-muted" data-print="hide">
+            You are reading answer {step.step} of {step.steps}.{' '}
+            <Link to={`/briefs/${id}`} className="text-blue hover:underline">
+              Go to the latest answer
+            </Link>
+          </p>
+        )}
+        <CompareTray
+          selected={compare.selected}
+          onRemove={compare.remove}
+          notice={notice}
+          from={here}
+          extra={{ brief: id, step: String(step.step) }}
         />
-      ) : (
-        <section aria-labelledby="result-heading" className="mt-1">
-          <h2 id="result-heading" ref={resultHeading} tabIndex={-1} className="sr-only">
-            {step.steps > 1 ? `Answer ${step.step}` : 'Answer'}
-          </h2>
-          {sheet && <BriefingSheet result={sheet} caseTo={caseTo} inCompare={(n) => compare.selected.includes(n)} onToggleCompare={toggle} />}
-          {result?.kind === 'scope_reply' && <ScopeReply briefId={id} question={step.question} reply={result.reply} refinementsLeft={latest ? step.refinementsLeft : 0} />}
-          {result?.kind === 'no_results' && (
-            <div className="card mt-4 px-4 py-3.5">
-              <p className="font-serif text-[18px] leading-tight font-semibold">{NO_RESULTS_TITLE}</p>
-              <p className="mt-1 text-ui text-muted">{[`“${step.question}”`, ...filtersInWords(result.filters)].join(' · ')}</p>
-              <Link to={exploreHref(result.filters)} className="mt-2 inline-block text-ui text-blue hover:underline">
-                Show keyword results with these filters<span className="sr-only"> (free)</span>
-              </Link>
-            </div>
-          )}
-          {result?.kind === 'failed' && <Failed step={step} countedAsSearch={result.countedAsSearch} />}
-          {result?.kind === 'cancelled' && (
-            <div className="card mt-4 px-4 py-3.5">
-              <p className="font-serif text-[18px] leading-tight font-semibold">{CANCELLED_TITLE}</p>
-              <p className="mt-1 text-meta text-muted">{COPY.spent}</p>
-            </div>
-          )}
-        </section>
-      )}
-
-      {canRefine && <RefineBox briefId={id} refinementsLeft={step.refinementsLeft} question={step.question} />}
-      {finished && !latest && (
-        <p className="mt-5 border-t border-dashed border-hairline pt-2.5 text-ui text-muted" data-print="hide">
-          You are reading answer {step.step} of {step.steps}.{' '}
-          <Link to={`/briefs/${id}`} className="text-blue hover:underline">
-            Go to the latest answer
-          </Link>
-        </p>
-      )}
-      <p aria-live="polite" className="sr-only">
-        {announcement}
-      </p>
-
-      <CompareTray
-        selected={compare.selected}
-        onRemove={compare.remove}
-        notice={notice}
-        from={here}
-        extra={{ brief: id, step: String(step.step) }}
-      />
-      <CaseDrawer
-        ntsbNo={openCase}
-        onClose={closeCase}
-        position={position}
-        inCompare={openCase ? compare.selected.includes(openCase) : false}
-        onToggleCompare={() => {
-          if (!openCase) return;
-          setDrawerNotice(toggle(openCase) === 'full' ? COMPARE_FULL_MESSAGE : null);
-        }}
-        compareNotice={drawerNotice}
-        fullPage={openCase ? `/cases/${openCase}?brief=${id}&step=${step.step}` : '/'}
-        fullPageState={{ from: here }}
-        matched={null}
-        brief={finished && openCase ? { id, step: step.step } : null}
-      />
-    </div>
+        <CaseDrawer
+          ntsbNo={openCase}
+          onClose={closeCase}
+          position={position}
+          inCompare={openCase ? compare.selected.includes(openCase) : false}
+          onToggleCompare={() => {
+            if (!openCase) return;
+            setDrawerNotice(toggle(openCase) === 'full' ? COMPARE_FULL_MESSAGE : null);
+          }}
+          compareNotice={drawerNotice}
+          fullPage={openCase ? `/cases/${openCase}?brief=${id}&step=${step.step}` : '/'}
+          fullPageState={{ from: here }}
+          matched={null}
+          brief={finished && openCase ? { id, step: step.step } : null}
+        />
+      </div>
+    </>
   );
 }

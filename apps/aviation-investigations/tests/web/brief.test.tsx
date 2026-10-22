@@ -23,6 +23,7 @@ import {
 } from '../../web/src/features/ai/TurnstileGate';
 import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, type PollState } from '../../web/src/features/brief/api';
 import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
+import { attributionAmbiguous, evidenceAttribution, quoteAttribution } from '../../web/src/features/brief/display';
 import { ApiError } from '../../web/src/api';
 import { chipsContext } from '../../web/src/pages/Brief';
 import { Checklist, CHECKLIST_NOTE } from '../../web/src/features/brief/Checklist';
@@ -730,7 +731,7 @@ describe('Failures are not expiry', { timeout: 20_000 }, () => {
     const { router } = await askFromHome(MOCK_SEED_QUESTION);
     await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
     await act(() => router.navigate(`${currentUrl(router)}?step=3`));
-    expect(await screen.findByText('There is no answer 3 in this brief; this is the latest.', {}, SLOW)).toBeTruthy();
+    expect(await screen.findByText('There is no answer 3 in this brief; this is the latest.', { selector: 'p:not(.sr-only)' }, SLOW)).toBeTruthy();
     expect(screen.getByRole('heading', { name: /AI summary/i })).toBeTruthy();
     expect(screen.queryByText('This AI search has expired.')).toBeNull();
   });
@@ -794,5 +795,279 @@ describe('Two AI controls at once (TurnstileGate sessions)', () => {
     b.release();
     expect(solves.size).toBe(2);
     expect(removed).toEqual(['w1', 'w2']);
+  });
+});
+
+describe('Unknown outcomes stay unknown until a 2xx or a 409 settles them', { timeout: 20_000 }, () => {
+  type Check = 'ok' | 'fail' | 'interactive' | 'broken';
+  /** A widget whose next checks pass, fail, ask for interaction (and never finish) or will not render. */
+  function controllableTurnstile(): { mode: Check } {
+    const ctl: { mode: Check } = { mode: 'ok' };
+    const live = new Map<string, HTMLElement>();
+    let n = 0;
+    window.turnstile = {
+      render(host, params) {
+        if (ctl.mode === 'broken') return undefined;
+        n += 1;
+        const id = `w${n}`;
+        const box = document.createElement('div');
+        host.appendChild(box);
+        live.set(id, box);
+        const mode = ctl.mode;
+        setTimeout(() => {
+          if (!live.has(id)) return;
+          if (mode === 'fail') params['error-callback']();
+          else if (mode === 'interactive') params['before-interactive-callback']();
+          else params.callback(`TOKEN-${id}`);
+        }, 10);
+        return id;
+      },
+      remove(id) {
+        live.get(id)?.remove();
+        live.delete(id);
+      },
+    };
+    return ctl;
+  }
+
+  const UNKNOWN_LINE = 'If it went through, Try again opens it without using another search.';
+  const FREE_CLAIM = "This didn't use one of your searches.";
+
+  interface Arrange {
+    /** Before Try again: how the retry is refused. */
+    before(ctl: { mode: Check }, set: (s: AiStatusResponse | null) => void): void;
+    /** What the reader sees after the refused retry. */
+    seen(): Promise<void>;
+    /** Brief POSTs the refused retry sent (0: refused before sending). */
+    sent: number;
+  }
+
+  const paused = AI_STATUS_SAMPLES.pausedDaily;
+  const trialUsed = AI_STATUS_SAMPLES.trialUsed;
+  const cases: [string, Arrange][] = [
+    [
+      'a failed check',
+      {
+        before: (ctl) => (ctl.mode = 'fail'),
+        seen: async () => {
+          expect(await screen.findByText("The quick check didn't finish.", {}, SLOW)).toBeTruthy();
+          // The check sent nothing, but the lost request may have counted.
+          expect(screen.getByText(UNKNOWN_LINE)).toBeTruthy();
+          expect(screen.queryByText(FREE_CLAIM)).toBeNull();
+        },
+        sent: 0,
+      },
+    ],
+    [
+      'a check that cannot load',
+      {
+        before: (ctl) => (ctl.mode = 'broken'),
+        seen: async () => {
+          expect(await screen.findByText("The quick check couldn't load, so the AI can't run right now.", {}, SLOW)).toBeTruthy();
+          expect(screen.getByText(UNKNOWN_LINE)).toBeTruthy();
+          expect(screen.queryByText(FREE_CLAIM)).toBeNull();
+        },
+        sent: 0,
+      },
+    ],
+    [
+      'a cancelled check',
+      {
+        before: (ctl) => (ctl.mode = 'interactive'),
+        seen: async () => {
+          const panel = await screen.findByRole('dialog', { name: LATER_CHECK_TITLE }, SLOW);
+          fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
+          // Back where the reader was: the unknown outcome is still said.
+          expect(await screen.findByText(UNKNOWN_LINE, {}, SLOW)).toBeTruthy();
+        },
+        sent: 0,
+      },
+    ],
+    [
+      'a paused AI status',
+      {
+        before: (_ctl, set) => set(paused),
+        seen: async () => {
+          expect(await screen.findByText('AI search is done for today.', {}, SLOW)).toBeTruthy();
+        },
+        sent: 0,
+      },
+    ],
+    [
+      'a used-up trial',
+      {
+        before: (_ctl, set) => set(trialUsed),
+        seen: async () => {
+          expect(await screen.findByText('That was your third free AI search.', {}, SLOW)).toBeTruthy();
+        },
+        sent: 0,
+      },
+    ],
+  ];
+
+  it.each(cases)('after a lost response, a retry refused by %s keeps the first key for the next ask', async (_name, arrange) => {
+    freshApi();
+    const ctl = controllableTurnstile();
+    let status: AiStatusResponse | null = null;
+    const keys: string[] = [];
+    server.use(
+      http.get('*/api/ai/status', () => (status ? HttpResponse.json(status) : undefined)),
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return undefined;
+      }),
+    );
+    const { router, client } = renderApp('/');
+    const question = 'Engine power loss after maintenance, lost response';
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: question } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText(UNKNOWN_LINE, {}, SLOW)).toBeTruthy();
+    expect(keys).toHaveLength(1);
+
+    let changed: AiStatusResponse | null = null;
+    arrange.before(ctl, (next) => {
+      changed = next;
+      status = next;
+    });
+    if (changed) {
+      await act(() => client.invalidateQueries({ queryKey: ['ai-status'] }));
+      // The header shows the new status before the retry, so the retry reads it too.
+      const counter = changed === paused ? 'AI back tomorrow' : 'Sign in to keep asking';
+      await waitFor(() => expect(screen.getByRole('banner').textContent).toContain(counter), SLOW);
+    }
+    fireEvent.click(screen.getByRole('button', { name: /^Try again/ }));
+    await arrange.seen();
+    expect(keys).toHaveLength(1 + arrange.sent);
+
+    // Everything back to normal: asking again replays the first key, so it is paid once.
+    ctl.mode = 'ok';
+    status = null;
+    await act(() => client.invalidateQueries({ queryKey: ['ai-status'] }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*2 free$/ }, SLOW));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    expect(keys.at(-1)).toBe(keys[0]);
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
+  });
+
+  it('after a lost response, a known refusal of the replay (503, 429) keeps the first key too', async () => {
+    freshApi();
+    controllableTurnstile();
+    const keys: string[] = [];
+    const answers: (() => Response | undefined)[] = [
+      () => undefined,
+      () => HttpResponse.json({ error: 'unavailable', message: 'Not now.' }, { status: 503 }),
+      () => HttpResponse.json({ error: 'rate_limited', message: 'Slow down.', retryAfter: 3 }, { status: 429 }),
+    ];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return answers[keys.length - 1]?.();
+      }),
+    );
+    const { router } = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), {
+      target: { value: 'Engine power loss after maintenance, lost response' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText(UNKNOWN_LINE, {}, SLOW)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Try again/ }));
+    expect(await screen.findByText('AI search is temporarily unavailable.', {}, SLOW)).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*2 free$/ }, SLOW));
+    expect(await screen.findByText('Slow down a moment. Try again in 3 seconds.', {}, SLOW)).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*2 free$/ }, SLOW));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    expect(keys).toHaveLength(4);
+    expect(new Set(keys).size).toBe(1);
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
+  });
+});
+
+describe('Round-2 minors', { timeout: 20_000 }, () => {
+  it('?step past the last answer shows no load error while the latest step is read', async () => {
+    const id = '00000000-0000-4000-8000-0000000000cc';
+    const latest = {
+      briefId: id,
+      step: 2,
+      steps: 2,
+      refinementsLeft: 1,
+      question: 'Q',
+      origin: { kind: 'text', text: 'x' },
+      stage: 'done',
+      checklist: { question: 'in_scope', searched: { cases: 4, passages: 9 }, written: true, verified: 'passed' },
+      startedAt: '2026-10-22T10:00:00.000Z',
+      finishedAt: '2026-10-22T10:00:20.000Z',
+      expiresAt: '2026-10-23T10:00:00.000Z',
+      result: RESULT_SAMPLES.answer,
+    };
+    server.use(
+      http.get('*/api/briefs/:id', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('step') === '3') return HttpResponse.json({ error: 'not_found', message: 'x' }, { status: 404 });
+        await new Promise((r) => setTimeout(r, 400));
+        return HttpResponse.json(latest);
+      }),
+    );
+    renderApp(`/briefs/${id}?step=3`);
+    const seen: boolean[] = [];
+    for (let i = 0; i < 8; i++) {
+      seen.push(Boolean(screen.queryByText('This AI search didn’t load.', { ignore: '.sr-only' })) || document.querySelector('[role="alert"]') !== null);
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    expect(seen.every((v) => !v)).toBe(true);
+    expect(await screen.findByText('There is no answer 3 in this brief; this is the latest.', { selector: 'p:not(.sr-only)' }, SLOW)).toBeTruthy();
+  });
+
+  it('the brief page and Compare announce notes from a live region that was there first', async () => {
+    server.use(
+      http.get('*/api/briefs/:id', async ({ params }) => {
+        await new Promise((r) => setTimeout(r, 300));
+        return String(params.id).endsWith('404')
+          ? HttpResponse.json({ error: 'not_found', message: 'Gone.' }, { status: 404 })
+          : HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 });
+      }),
+    );
+    const page = renderApp('/briefs/00000000-0000-4000-8000-000000000404');
+    // The page (loaded lazily) renders its live region empty while it reads the brief.
+    const region = await waitFor(() => {
+      const el = page.container.querySelector('p[aria-live="polite"]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(region.textContent).toBe('');
+    await screen.findByRole('heading', { name: 'This AI search has expired.' }, SLOW);
+    expect(page.container.querySelector('p[aria-live="polite"]')).toBe(region);
+    expect(region.textContent).toBe('This AI search has expired.');
+    page.unmount();
+
+    const compare = renderApp('/compare?cases=DFW08TA066,MIA08LA156&brief=00000000-0000-4000-8000-000000000500&step=1');
+    const notes = await waitFor(() => {
+      const el = compare.container.querySelector('div[aria-live="polite"]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(notes.textContent).toBe('');
+    await waitFor(() => expect(notes.textContent).toContain("The AI notes for these cases didn't load."), { timeout: 8_000 });
+    expect(within(notes).getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  it('a refinement key is tied to its brief and change', () => {
+    // The key a lost refinement is remembered under includes the brief (useRefine).
+    const change = { kind: 'text', text: 'only helicopters' } as const;
+    expect(JSON.stringify(['brief-a', change])).not.toBe(JSON.stringify(['brief-b', change]));
+  });
+
+  it('an aircraft-scoped key the record does not list is never shown as both aircraft', () => {
+    const aircraft = [
+      { aircraftKey: 1, aircraftNtsbNo: 'SEA08LA057A', make: 'PIPER', model: 'PA 28-180' },
+      { aircraftKey: 2, aircraftNtsbNo: 'SEA08LA057B', make: 'Barnard/Stancil', model: 'Glastar' },
+    ];
+    const unknown = { scope: 'aircraft', aircraftKey: 7 } as const;
+    expect(evidenceAttribution('SEA08LA057', aircraft, unknown)).toBe('Aircraft not identified in this record — not attributed to one aircraft');
+    expect(attributionAmbiguous(aircraft, unknown)).toBe(true);
+    expect(quoteAttribution('SEA08LA057', aircraft, { scope: 'aircraft', aircraftKey: 7 })).toBe('AIRCRAFT NOT STATED');
+    // A known aircraft is named; event evidence is the event narrative.
+    expect(evidenceAttribution('SEA08LA057', aircraft, { scope: 'aircraft', aircraftKey: 2 })).toBe('Aircraft B · Barnard/Stancil Glastar');
+    expect(attributionAmbiguous(aircraft, { scope: 'aircraft', aircraftKey: 2 })).toBe(false);
+    expect(attributionAmbiguous(aircraft, { scope: 'event', multiAircraft: true })).toBe(true);
+    expect(attributionAmbiguous(aircraft.slice(0, 1), { scope: 'aircraft', aircraftKey: 7 })).toBe(false);
   });
 });

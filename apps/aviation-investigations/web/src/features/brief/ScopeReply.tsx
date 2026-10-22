@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router';
 import type { Reading, ScopeReply as ScopeReplyData } from '../../../../shared/contracts/briefs';
 import { Placard } from '../../components/Placard';
@@ -13,6 +14,12 @@ const pillLink =
 
 function Readings({ briefId, label, line, readings, refinementsLeft }: { briefId: string; label: string; line: string; readings: readonly Reading[]; refinementsLeft: number }) {
   const refine = useRefine(briefId);
+  // The reading last picked, so a notice's Try again can send it again.
+  const [picked, setPicked] = useState<Reading['refinement'] | null>(null);
+  const pick = (refinement: Reading['refinement']): void => {
+    setPicked(refinement);
+    void refine.refine(refinement);
+  };
   return (
     <section aria-label={label} className="mt-4">
       <div className="card px-4 py-3.5">
@@ -24,7 +31,7 @@ function Readings({ briefId, label, line, readings, refinementsLeft }: { briefId
           <ul className="mt-2.5 flex flex-wrap gap-2">
             {readings.map((reading) => (
               <li key={reading.label}>
-                <AskAiButton label={reading.label} usesOne look="chip" onAsk={() => void refine.refine(reading.refinement)} phase={refine.phase} />
+                <AskAiButton label={reading.label} usesOne look="chip" onAsk={() => pick(reading.refinement)} phase={refine.phase} />
               </li>
             ))}
           </ul>
@@ -32,7 +39,7 @@ function Readings({ briefId, label, line, readings, refinementsLeft }: { briefId
           <p className="mt-2 text-ui text-muted">This brief has used its three refinements. Start a new search to keep going.</p>
         )}
       </div>
-      <AiNoticeBox notice={refine.notice} keywordHref="/explore" className="mt-2.5" />
+      <AiNoticeBox notice={refine.notice} keywordHref="/explore" onRetry={picked ? () => pick(picked) : undefined} className="mt-2.5" />
     </section>
   );
 }

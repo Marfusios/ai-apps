@@ -173,7 +173,15 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
         return (
           <Box title={notice.reason === 'failed' ? "The quick check didn't finish." : "The quick check couldn't load, so the AI can't run right now."}>
             <p>{notice.reason === 'failed' ? 'Ask again to take a new check.' : COPY.everythingElse}</p>
-            <p className="text-meta text-muted">{COPY.notSpent}</p>
+            {onRetry && (
+              <div className="mt-2.5">
+                <Button variant="ai" counter="uses 1" onClick={onRetry}>
+                  Try again
+                </Button>
+              </div>
+            )}
+            {/* The check sent nothing, but an earlier send of this request may have counted. */}
+            <p className="pt-1 text-meta text-muted">{notice.unknownBefore ? COPY.unknownSpent : COPY.notSpent}</p>
           </Box>
         );
       case 'empty':

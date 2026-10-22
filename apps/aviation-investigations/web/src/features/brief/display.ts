@@ -53,15 +53,29 @@ const everyAircraft = (n: number): string => (n === 2 ? 'both aircraft' : `all $
  */
 export function evidenceAttribution(ntsbNo: string, aircraft: readonly AircraftRef[], evidence: CaseReading['evidence']): string | null {
   if (aircraft.length < 2) return null;
-  if (evidence.scope === 'aircraft') return namedAircraft(ntsbNo, aircraft, evidence.aircraftKey) ?? `Event narrative, ${everyAircraft(aircraft.length)}`;
+  if (evidence.scope === 'aircraft') {
+    // An aircraft this record does not list: say so, and never imply which aircraft.
+    return namedAircraft(ntsbNo, aircraft, evidence.aircraftKey) ?? 'Aircraft not identified in this record — not attributed to one aircraft';
+  }
   return `Event narrative, ${everyAircraft(aircraft.length)} — not attributed to one aircraft`;
 }
 
-/** The quote's part of a multi-aircraft event, for its label: "AIRCRAFT A" or "EVENT NARRATIVE, BOTH AIRCRAFT". */
+/**
+ * True when a multi-aircraft event's evidence cannot be tied to one aircraft (event
+ * narrative, or an aircraft key the record does not list): the card shows the UI_DESIGN
+ * caution "Applies to the event; aircraft not stated".
+ */
+export function attributionAmbiguous(aircraft: readonly AircraftRef[], evidence: CaseReading['evidence']): boolean {
+  if (evidence.scope === 'event') return evidence.multiAircraft;
+  return aircraft.length > 1 && !aircraft.some((a) => a.aircraftKey === evidence.aircraftKey);
+}
+
+/** The quote's part of a multi-aircraft event, for its label: "AIRCRAFT A", "EVENT NARRATIVE, BOTH AIRCRAFT" or "AIRCRAFT NOT STATED". */
 export function quoteAttribution(ntsbNo: string, aircraft: readonly AircraftRef[], quote: Pick<BriefQuote, 'scope' | 'aircraftKey'>): string | null {
   if (aircraft.length < 2) return null;
-  const one = quote.scope === 'aircraft' ? namedAircraft(ntsbNo, aircraft, quote.aircraftKey) : null;
-  return (one ? one.split(' · ')[0]! : `Event narrative, ${everyAircraft(aircraft.length)}`).toUpperCase();
+  if (quote.scope === 'event') return `Event narrative, ${everyAircraft(aircraft.length)}`.toUpperCase();
+  const one = namedAircraft(ntsbNo, aircraft, quote.aircraftKey);
+  return one ? one.split(' · ')[0]!.toUpperCase() : 'AIRCRAFT NOT STATED';
 }
 
 /** "6 examples found · not every matching investigation" (required by DESIGN §5). */

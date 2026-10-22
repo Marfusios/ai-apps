@@ -9,7 +9,15 @@ import { TimingChip } from '../../components/TimingChip';
 import { cx } from '../../lib/cx';
 import { formatDate } from '../../lib/format';
 import { CAUTION_SHORT, aircraftName, aircraftSummary, letterOf, phaseEventShort, placeShort, profileSteps } from '../case/display';
-import { EVENT_SCOPE_CAUTION, evidenceAttribution, ntsbSectionTag, quoteAttribution, speakerTag, unconfirmedLines } from './display';
+import {
+  EVENT_SCOPE_CAUTION,
+  attributionAmbiguous,
+  evidenceAttribution,
+  ntsbSectionTag,
+  quoteAttribution,
+  speakerTag,
+  unconfirmedLines,
+} from './display';
 
 export const CASE_DETAIL_FAILED = "Couldn't load the flight profile and data cautions.";
 
@@ -70,7 +78,7 @@ export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph =
   const detail = caseRead.data;
   const multi = row.aircraft.length > 1;
   const attribution = reading ? evidenceAttribution(row.ntsbNo, row.aircraft, reading.evidence) : null;
-  const eventScoped = reading?.evidence.scope === 'event' && reading.evidence.multiAircraft;
+  const ambiguous = reading ? attributionAmbiguous(row.aircraft, reading.evidence) : false;
   const unconfirmed = unconfirmedLines(reading);
   const headingId = `card-${row.ntsbNo}`;
   const single = row.aircraft.length === 1 ? row.aircraft[0] : undefined;
@@ -123,9 +131,9 @@ export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph =
               {unconfirmed.join(' ')}
             </p>
           )}
-          {(attribution || eventScoped) && (
+          {(attribution || ambiguous) && (
             <p className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
-              {eventScoped && <DataCaution variant="chip">{EVENT_SCOPE_CAUTION}</DataCaution>}
+              {ambiguous && <DataCaution variant="chip">{EVENT_SCOPE_CAUTION}</DataCaution>}
               {attribution && (
                 <span className="text-muted">
                   <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">Evidence</span> {attribution}

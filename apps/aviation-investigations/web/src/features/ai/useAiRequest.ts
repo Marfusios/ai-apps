@@ -19,7 +19,8 @@ export type AiNotice =
   | { kind: 'free_paused'; loginRequired: boolean }
   | { kind: 'rate'; seconds: number }
   | { kind: 'failure'; spent: SpentKnowledge }
-  | { kind: 'check'; reason: Exclude<AiCheckFailure, 'cancelled'> }
+  /** `unknownBefore`: an earlier send of this request has an unknown outcome (it may have counted). */
+  | { kind: 'check'; reason: Exclude<AiCheckFailure, 'cancelled'>; unknownBefore?: boolean }
   | { kind: 'empty' }
   | { kind: 'message'; text: string };
 
@@ -30,9 +31,14 @@ export type RunResult<T> = { ok: true; value: T } | { ok: false; outcomeUnknown:
 
 export interface RunOptions {
   /**
-   * The request replays an idempotency key whose earlier outcome is unknown. A 409
-   * `conflict` then means that attempt did not complete (the server keeps the key with no
-   * result), so the request is sent once more: this swaps in a new key first.
+   * The request replays an idempotency key whose earlier send has an unknown outcome. Until
+   * this request settles it, no notice may claim that nothing was used.
+   */
+  replaying?: boolean;
+  /**
+   * A 409 `conflict` to the replay means the earlier attempt did not complete (the server
+   * keeps the key with no result), so the request is sent once more: this swaps in a new
+   * key first, which settles the old one.
    */
   onConflict?: () => void;
 }
@@ -134,6 +140,14 @@ export function useAiRequest() {
       let visible = false;
       let challengeRetried = false;
       let conflictRetried = false;
+      // While the replayed key is unsettled, the earlier send may have counted.
+      let uncertainBefore = options.replaying === true;
+      const keepUnknown = (n: AiNotice | null): AiNotice | null => {
+        if (!n || !uncertainBefore) return n;
+        if (n.kind === 'check') return { ...n, unknownBefore: true };
+        if (n.kind === 'failure') return { ...n, spent: 'unknown' };
+        return n;
+      };
       try {
         // At most three sends: the first, one after a refused token, one after a conflict.
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -144,7 +158,9 @@ export function useAiRequest() {
               token = await session.token({ first: availability.firstCheck && attempt === 0, visible });
             } catch (err) {
               const reason = err instanceof AiCheckError ? err.reason : 'unavailable';
-              return finish(refused, reason === 'cancelled' ? null : { kind: 'check', reason });
+              // Cancelled: back to where the reader was (an unknown outcome stays said).
+              if (reason === 'cancelled') return finish(refused, uncertainBefore ? { kind: 'failure', spent: 'unknown' } : null);
+              return finish(refused, keepUnknown({ kind: 'check', reason }));
             }
           }
           setPhase('sending');
@@ -164,15 +180,16 @@ export function useAiRequest() {
               // with a new token (tokens are single use).
               conflictRetried = true;
               options.onConflict();
+              uncertainBefore = false;
               visible = false;
               continue;
             }
-            return finish({ ok: false, outcomeUnknown: outcomeUnknown(err) }, noticeFor(err));
+            return finish({ ok: false, outcomeUnknown: outcomeUnknown(err) }, keepUnknown(noticeFor(err)));
           } finally {
             void queryClient.invalidateQueries({ queryKey: ['ai-status'] });
           }
         }
-        return finish(refused, { kind: 'check', reason: 'failed' });
+        return finish(refused, keepUnknown({ kind: 'check', reason: 'failed' }));
       } finally {
         // Single use: this request's widget goes, and the next request gets a new one.
         session.release();
