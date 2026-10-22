@@ -108,7 +108,7 @@ export function scramVerifier(password: string, salt: Buffer = randomBytes(16), 
 
 export interface PgProvisionOptions {
   env: string;
-  /** Administrative connection (superuser, or CREATEROLE and CREATEDB with membership in the group roles). */
+  /** Administrative connection; must be a superuser (checked before anything changes). */
   adminUrl: string;
   /** Passwords to keep, by role kind; missing ones are generated. */
   passwords?: Partial<Record<RoleKind, string>>;
@@ -149,6 +149,10 @@ export async function provisionPostgres(opts: PgProvisionOptions): Promise<Recor
   await admin.connect();
   const passwords = {} as Record<RoleKind, string>;
   try {
+    // Owner changes, ACL resets across roles and default privileges for another role
+    // need a superuser; fail before changing anything rather than half way.
+    const su = await admin.query<{ rolsuper: boolean }>('SELECT rolsuper FROM pg_roles WHERE rolname = current_user');
+    if (!su.rows[0]?.rolsuper) throw new Error('PG_ADMIN_URL must connect as a superuser');
     const run = async (statement: string): Promise<void> => {
       if (!opts.dryRun) await admin.query(statement);
     };
@@ -269,8 +273,9 @@ export function esRoles(env: string, prefix = defaultIndexPrefix(env)): { read: 
     write: {
       name: `aviation_${env}_writer`,
       keyName: `aviation-${env}-write`,
-      // Cluster `monitor` lets ingestion list its indices (`_cat/indices`).
-      body: { cluster: ['monitor'], indices: [{ names, privileges: ['create_index', 'write', 'manage', 'read'] }] },
+      // Index privileges only: no cluster privilege, so neither key sees other
+      // tenants' indices, cluster state or tasks on a shared cluster.
+      body: { indices: [{ names, privileges: ['create_index', 'write', 'manage', 'read'] }] },
     },
   };
 }
@@ -279,12 +284,24 @@ function esClient(url: string, auth: { apiKey: string } | { username: string; pa
   return new EsClient({ node: url, auth, ...(caFile ? { tls: { ca: readFileSync(caFile) } } : {}) });
 }
 
-/** True when `key` authenticates as the API key named `keyName`. */
-async function keyWorks(admin: EsAdmin, key: string | undefined, keyName: string): Promise<boolean> {
+/** sha256 of a role definition, stored in each API key's metadata. */
+export function descriptorHash(body: EsRole['body']): string {
+  return createHash('sha256').update(JSON.stringify(body)).digest('hex');
+}
+
+/**
+ * True when `key` authenticates as the API key named `role.keyName` and was minted
+ * for the current role definition. A key minted before the definition changed
+ * (another descriptor hash, or none) must be re-minted: API keys keep the role
+ * descriptors they were created with.
+ */
+async function keyCurrent(admin: EsAdmin, adminClient: EsClient, key: string | undefined, role: EsRole): Promise<boolean> {
   if (!key) return false;
   try {
     const me = await esClient(admin.url, { apiKey: key }, admin.caFile).security.authenticate();
-    return me.api_key?.name === keyName;
+    if (me.api_key?.name !== role.keyName || !me.api_key.id) return false;
+    const { api_keys: found } = await adminClient.security.getApiKey({ id: me.api_key.id });
+    return found[0]?.metadata?.descriptor_sha256 === descriptorHash(role.body);
   } catch {
     return false;
   }
@@ -303,8 +320,9 @@ export interface EsProvisionOptions {
 
 /**
  * Create or update the environment's reader and writer roles and return an API key
- * for each, reusing a given key that still authenticates (idempotent). Re-minting
- * invalidates earlier keys of the same name.
+ * for each, reusing a given key that still authenticates and was minted for the
+ * current role definition (idempotent). Re-minting invalidates earlier keys of the
+ * same name.
  */
 export async function provisionElasticsearch(opts: EsProvisionOptions): Promise<{ read: string; write: string }> {
   const log = opts.log ?? ((m: string) => console.log(m));
@@ -316,7 +334,7 @@ export async function provisionElasticsearch(opts: EsProvisionOptions): Promise<
     if (!opts.dryRun) await admin.security.putRole({ name: role.name, ...role.body });
     log(`role ${role.name}: ${opts.dryRun ? 'would put' : 'put'} on ${role.body.indices[0]!.names.join(', ')}`);
     const existing = opts.keys?.[which];
-    if (!opts.rotate && (await keyWorks(opts.admin, existing, role.keyName))) {
+    if (!opts.rotate && (await keyCurrent(opts.admin, admin, existing, role))) {
       out[which] = existing!;
       log(`API key ${role.keyName}: kept`);
       continue;
@@ -329,10 +347,10 @@ export async function provisionElasticsearch(opts: EsProvisionOptions): Promise<
     const k = await admin.security.createApiKey({
       name: role.keyName,
       role_descriptors: { [role.name]: role.body },
-      metadata: { app: 'aviation-investigations', env: opts.env },
+      metadata: { app: 'aviation-investigations', env: opts.env, descriptor_sha256: descriptorHash(role.body) },
     });
     out[which] = k.encoded;
-    log(`API key ${role.keyName}: ${opts.rotate ? 'rotated' : 'minted'}`);
+    log(`API key ${role.keyName}: ${opts.rotate ? 'rotated' : existing ? 'minted (definition changed or key invalid)' : 'minted'}`);
   }
   return out;
 }

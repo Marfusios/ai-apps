@@ -56,7 +56,9 @@ export async function runMigrations(url: string): Promise<void> {
       }
       await client.query('COMMIT');
     } catch (e) {
-      await client.query('ROLLBACK');
+      // The migration's own error is what matters; a failed ROLLBACK (for example on a
+      // broken connection, which discards the transaction anyway) must not replace it.
+      await client.query('ROLLBACK').catch(() => undefined);
       throw e;
     }
   } finally {

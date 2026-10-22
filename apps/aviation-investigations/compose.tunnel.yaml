@@ -1,14 +1,26 @@
 # Tunnel mode (production ingress): the app publishes no port and is reachable
-# only through the cloudflared connector on the `edge` network. Use with the
-# `tunnel` profile:
+# only through the cloudflared connector on the `edge` network. The edge network is
+# pinned to EDGE_SUBNET (a private /28, distinct per environment), and the app
+# trusts proxy headers (CF-Connecting-IP) only from peers in it: TRUSTED_PROXY_CIDRS.
+# Containers on the shared networks can still open aviation-app:3000, but their
+# requests come from outside EDGE_SUBNET and are not treated as tunnel traffic.
 #
 #   docker compose -p ai-aviation-live --env-file <live env file> \
 #     -f compose.yaml -f compose.tunnel.yaml --profile app --profile tunnel up -d --build
 #
-# `pnpm app:up` adds this file and the profile when TUNNEL_TOKEN is set.
+# `pnpm app:up` always uses this file on live, and on dev when TUNNEL_TOKEN is set.
+# `!reset` needs Docker Compose 2.24 or later.
 services:
   aviation-app:
     ports: !reset []
+    environment:
+      TRUSTED_PROXY_CIDRS: ${EDGE_SUBNET:?set EDGE_SUBNET for tunnel mode}
   tunnel:
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN for tunnel mode}
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:?set EDGE_SUBNET for tunnel mode}

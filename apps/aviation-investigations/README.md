@@ -530,7 +530,7 @@ pnpm worker ai-switch --on
 PostgreSQL, Elasticsearch and Langfuse through their Docker networks. Each
 environment has its own database (`aviation_dev`, `aviation_live`) and logins,
 index prefix (`ai-aviation-dev`, `ai-aviation-live`) and Langfuse project
-(`aviation-dev`, `aviation-prod`). It runs no database or search engine itself;
+(`aviation-dev`, `aviation-live`). It runs no database or search engine itself;
 `pnpm provision:shared` creates an environment's roles, database and API keys on
 the shared servers and writes its connection files outside the repository.
 
@@ -543,6 +543,10 @@ the shared servers and writes its connection files outside the repository.
   the extraction image.
 - `tunnel` (profile `tunnel`): the pinned Cloudflare Tunnel connector, sharing only
   the `edge` network with `aviation-app`.
+
+It needs Docker Compose 2.24 or later. `live` always runs behind the Cloudflare
+Tunnel with an explicit `APP_VERSION`, and only peers in its pinned edge subnet
+are trusted as proxies (`TRUSTED_PROXY_CIDRS`).
 
 Configuration comes from env files outside the repository, named in
 `AVIATION_ENV_FILES`; Compose uses them for interpolation only and each container

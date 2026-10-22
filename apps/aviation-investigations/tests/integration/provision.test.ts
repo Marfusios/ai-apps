@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runMigrations } from '../../server/db/migrate.js';
 import { readDotenvAllowlisted } from '../../shared/env-files.js';
 import { parseProvisionArgs, runProvision } from '../../scripts/provision-shared.js';
-import { ROLE_KINDS, loginRole, ownerRole } from '../../scripts/provision.js';
+import { ROLE_KINDS, loginRole, ownerRole, provisionPostgres } from '../../scripts/provision.js';
 import { testDbUrl } from './helpers.js';
 
 // Provisions a throwaway environment `ci` on the local services (or on the server in
@@ -245,6 +245,58 @@ describe('provision-shared on the local services', () => {
     expect(await status(reader.index({ index: 'ai-aviation-ci-probe', document: { a: 2 } }))).toBe(403);
     expect(await status(writer.indices.create({ index: 'aviation-test-ci-probe' }))).toBe(403);
     expect(await status(writer.indices.create({ index: 'ai-aviation-dev-ci-probe' }))).toBe(403);
+    // No cluster privilege: other tenants' indices, cluster state and tasks stay hidden.
+    for (const key of [writer, reader]) {
+      expect(await status(key.cluster.state())).toBe(403);
+      expect(await status(key.tasks.list())).toBe(403);
+      expect(await status(key.cat.indices({ format: 'json' }))).toBe(403);
+    }
+    // Index-level listing of its own indices still works for ingestion.
+    await expect(writer.indices.get({ index: 'ai-aviation-ci-*' })).resolves.toHaveProperty('ai-aviation-ci-probe');
+  });
+
+  it('re-mints a key whose role definition changed', async () => {
+    const f = files().esHost;
+    const es = esAdmin();
+    // A key as an earlier definition minted it: a cluster privilege and no definition hash.
+    const stale = await es.security.createApiKey({
+      name: `aviation-${ENV}-write`,
+      role_descriptors: {
+        [`aviation_${ENV}_writer`]: {
+          cluster: ['monitor'],
+          indices: [{ names: [`ai-aviation-${ENV}-*`], privileges: ['create_index', 'write', 'manage', 'read'] }],
+        },
+      },
+    });
+    writeFileSync(f, readFileSync(f, 'utf8').replace(/^ELASTICSEARCH_WRITE_API_KEY=.*$/m, `ELASTICSEARCH_WRITE_API_KEY=${stale.encoded}`));
+    const reader = read(f).ELASTICSEARCH_READ_API_KEY;
+    await provision();
+    const after = read(f);
+    expect(after.ELASTICSEARCH_WRITE_API_KEY).not.toBe(stale.encoded);
+    expect(after.ELASTICSEARCH_READ_API_KEY).toBe(reader); // current definition: kept
+    const status = (p: Promise<unknown>) => p.then(() => 200, (e: { meta?: { statusCode?: number } }) => e.meta?.statusCode);
+    expect(await status(new EsClient({ node: ES_URL, auth: { apiKey: stale.encoded } }).security.authenticate())).toBe(401);
+    const fresh = new EsClient({ node: ES_URL, auth: { apiKey: after.ELASTICSEARCH_WRITE_API_KEY! } });
+    expect(await status(fresh.cluster.state())).toBe(403);
+  });
+
+  it('refuses an administrator that is not a superuser, before changing anything', async () => {
+    const c = admin();
+    await c.connect();
+    const password = 'f'.repeat(32);
+    try {
+      await c.query(`DROP ROLE IF EXISTS aviation_ci_notsuper`);
+      await c.query(`CREATE ROLE aviation_ci_notsuper LOGIN CREATEROLE CREATEDB PASSWORD '${password}'`);
+      const url = Object.assign(new URL(PG_ADMIN_URL), { username: 'aviation_ci_notsuper', password }).toString();
+      await expect(provisionPostgres({ env: 'ci9', adminUrl: url, log: () => undefined })).rejects.toThrow(
+        /must connect as a superuser/,
+      );
+      const created = await c.query(`SELECT count(*)::int AS n FROM pg_roles WHERE rolname LIKE 'aviation\_ci9\_%'`);
+      expect(created.rows[0].n).toBe(0);
+    } finally {
+      await c.query(`DROP ROLE IF EXISTS aviation_ci_notsuper`);
+      await c.end();
+    }
   });
 
   it('keeps passwords and working keys on a rerun and replaces them with --rotate', async () => {

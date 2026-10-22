@@ -69,8 +69,9 @@ const ids = (r: estypes.SearchResponse): string[] => r.hits.hits.map((h) => h._i
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function indicesLike(pattern: string): Promise<string[]> {
-  const found = await es.cat.indices({ index: pattern, format: 'json', h: 'index' });
-  return found.map((f) => f.index ?? '').sort();
+  // Index-level API: the writer key has no cluster privilege, so `_cat/indices` is refused.
+  const found = await es.indices.get({ index: pattern, expand_wildcards: 'all', allow_no_indices: true, ignore_unavailable: true });
+  return Object.keys(found).sort();
 }
 
 async function deleteOwnIndices(): Promise<void> {
