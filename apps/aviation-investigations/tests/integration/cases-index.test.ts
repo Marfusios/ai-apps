@@ -1050,6 +1050,39 @@ describe('alias', () => {
     }
   });
 
+  it('reasserting the current sole target sends no alias request and records no attempt', async () => {
+    const prefix = `${PREFIX}-current`;
+    const alias = casesAlias(prefix);
+    const a = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    // A client whose alias requests would all fail in transport, counting them.
+    let sent = 0;
+    const failing = patched(() => ({
+      updateAliases: async () => {
+        sent += 1;
+        throw lostResponse();
+      },
+    }));
+    const again = await switchAlias(failing, ingest, alias, a.index);
+    expect(again).toMatchObject({ status: 'already_current', attemptId: null, previous: [a.index] });
+    expect(sent).toBe(0);
+    expect(await outcomes(a.index)).toEqual(['committed']);
+    // Nothing unknown was recorded, so the alias is not blocked and the next build publishes alone.
+    expect((await reconcileAlias(es, ingest, alias)).blocked).toBe(false);
+    const b = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    expect(b.previousIndices).toEqual([a.index]);
+    expect(await aliasTargets(es, alias)).toEqual([b.index]);
+
+    // A switch to an index that is not the sole target is a real request.
+    const back = await switchAlias(failing, ingest, alias, a.index).catch((e: unknown) => e);
+    expect(sent).toBe(1);
+    expect((back as AliasSwitchError).outcome).toBe('unknown');
+    expect(await outcomes(a.index)).toEqual(['committed', 'unknown']);
+    // A read-back without the index keeps that attempt blocking.
+    expect((await reconcileAlias(es, ingest, alias)).blocked).toBe(true);
+    const r = await reconcileAlias(es, ingest, alias);
+    await declareAbandoned(ingest, alias, r.unresolved[0]?.id as number, 'test: simulated transport failure, never sent');
+  });
+
   it('refuses to shadow a concrete index', async () => {
     const concrete = `${PREFIX}-concrete`;
     await es.indices.create({ index: concrete });

@@ -332,8 +332,8 @@ export interface IndexReport {
   index: string;
   alias: string;
   buildId: string;
-  /** The committed `index_switch_attempts` row. */
-  attemptId: number;
+  /** The committed `index_switch_attempts` row (a new build's index is never already current). */
+  attemptId: number | null;
   /** Indices the alias pointed at before; kept. */
   previousIndices: string[];
   /** A read-back after the committed switch showed exactly the new index. */

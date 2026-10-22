@@ -12,10 +12,14 @@
  * 1. refuses while the alias has a `pending` attempt or an `unknown` one that no
  *    operator has declared abandoned (`pnpm worker index reconcile --alias <alias>`),
  *    and runs the caller's `beforeSwitch` check (e.g. the build still holds its pin);
- * 2. appends a `pending` row to `index_switch_attempts`;
- * 3. sends one `_aliases` request, without client retries, that removes every current
+ * 2. returns `already_current` without recording or sending anything when the alias
+ *    already points solely at the index (an add-only request for the current target
+ *    could fail in transport, and a later read-back would then wrongly show it as
+ *    committed while the request might still land after another switch);
+ * 3. appends a `pending` row to `index_switch_attempts`;
+ * 4. sends one `_aliases` request, without client retries, that removes every current
  *    target (`must_exist`) and adds the index;
- * 4. resolves that attempt: a success response is `committed`, a 4xx response (other
+ * 5. resolves that attempt: a success response is `committed`, a 4xx response (other
  *    than 408) `rejected`, anything else (transport failure, timeout, 5xx) `unknown`,
  *    whatever the alias shows afterwards, because Elasticsearch may apply a queued
  *    request later and its master timeout does not bound execution. Only a later
@@ -116,7 +120,10 @@ export function blockedMessage(alias: string, attempts: BlockingAttempt[]): stri
 export interface AliasSwitch {
   alias: string;
   index: string;
-  attemptId: number;
+  /** `already_current`: the alias already pointed solely at the index; nothing was recorded or sent. */
+  status: 'switched' | 'already_current';
+  /** The committed attempt; null when already current. */
+  attemptId: number | null;
   /** Indices the alias pointed at before (kept, not deleted). */
   previous: string[];
   /** A read-back after the committed request showed exactly the new index. */
@@ -195,6 +202,9 @@ export async function switchAlias(
         if (previous.length === 0 && (await es.indices.exists({ index: alias }))) {
           throw new Error(`${alias} is a concrete index, not an alias`);
         }
+        if (previous.length === 1 && previous[0] === index) {
+          return { alias, index, status: 'already_current', attemptId: null, previous, verified: true };
+        }
         const inserted = await client.query<{ id: string }>(
           `insert into index_switch_attempts (alias, index_name, build_id) values ($1, $2, $3) returning id`,
           [alias, index, opts.buildId ?? null],
@@ -242,7 +252,7 @@ export async function switchAlias(
             id,
           );
         }
-        return { alias, index, attemptId: id, previous, verified: targets !== null };
+        return { alias, index, status: 'switched', attemptId: id, previous, verified: targets !== null };
       },
       opts,
     );
