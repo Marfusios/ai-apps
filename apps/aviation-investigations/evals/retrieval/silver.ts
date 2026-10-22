@@ -1,6 +1,7 @@
 /**
- * The silver retrieval set (amendment A13): questions whose expected cases are derived
- * from structured fields plus explicit keyword criteria, never picked by hand.
+ * The silver retrieval set (amendment A13; review gate G5): questions whose expected
+ * cases are derived from structured fields plus explicit keyword criteria, never
+ * picked by hand.
  *
  * A question carries:
  * - the text a user would type, and the filters the scope stage would emit for it
@@ -9,18 +10,23 @@
  *   the canonical corpus of a generation; `describeCriteria` into a sentence an
  *   expert can re-check. Text patterns are PostgreSQL case-insensitive regular
  *   expressions (`~*`, ARE syntax: `\y` is a word boundary) matched against one
- *   section's text at a time.
+ *   section's text at a time;
+ * - `section`: `rag` (scored by the retrieval evaluation) or `structured` (answered
+ *   by structured fields such as inspection dates; kept for a structured or combined
+ *   evaluation and excluded from RAG metrics);
+ * - `paraphrase_of`, for an independently worded paraphrase of another question: the
+ *   same rule, filters and expected set, different words;
  * - `adjudication: "pending-expert"`: labels are silver until an instructor or
  *   analyst has reviewed them (DESIGN §12).
  *
  * The expected set is every answer-eligible US case (the passages index cohort) the
- * rule selects. It must hold 1 to `MAX_EXPECTED` cases, so Recall@20 can reach 100%.
+ * rule selects, in full: never capped or shared out. A rule must select 1 to
+ * `MAX_EXPECTED` cases, so candidate Recall@20 can reach 100%.
  *
- * **Held out by case.** Every case is expected by one question at most: a case several
- * rules derive stays with the first question in rule order and is listed under
- * `derivation.sharedWith` in the others (`disjointExpected`). Questions are then split
- * into `dev` and `holdout`, stratified by primary tag (`assignSplits`). No case is
- * expected in both splits, so tuning on `dev` cannot leak passages of a `holdout` case.
+ * **Held out by case.** Questions that share any expected case, and a question and
+ * its paraphrases, form one connected group; whole groups are assigned to `dev` or
+ * `holdout` (`assignSplits`) before anything is scored. No case is expected in both
+ * splits, so tuning on `dev` cannot see a `holdout` case.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -29,13 +35,29 @@ import { RetrievalFiltersSchema } from '../../server/search/filters.js';
 export const SILVER_VERSION = 'silver-v1';
 export const MIN_EXPECTED = 1;
 export const MAX_EXPECTED = 20;
+/** RAG questions (originals and paraphrases) the set must hold. */
 export const MIN_QUESTIONS = 40;
 
-export const TAGS = ['seed', 'negation', 'causal_uncertainty', 'maintenance_timing', 'multi_aircraft', 'mechanical', 'operational'] as const;
+export const TAGS = [
+  'seed',
+  'negation',
+  'causal_uncertainty',
+  'maintenance_timing',
+  'multi_aircraft',
+  'mechanical',
+  'operational',
+  'structured_timing',
+  'paraphrase',
+] as const;
 export type Tag = (typeof TAGS)[number];
-/** Every one of these tags must be covered by several questions (A13). */
+/** Every one of these tags must be covered by several RAG questions, in both splits (A13, G5). */
 export const REQUIRED_TAGS: readonly Tag[] = ['negation', 'causal_uncertainty', 'maintenance_timing', 'multi_aircraft'];
 export const MIN_PER_REQUIRED_TAG = 6;
+/** Independently worded paraphrases (G5 ruling b). */
+export const MIN_PARAPHRASES = 12;
+
+export const SECTIONS = ['rag', 'structured'] as const;
+export type Section = (typeof SECTIONS)[number];
 /** The four seed cases of DATA_REVIEW.md. They may be expected cases, never the whole set. */
 export const SEED_CASES = ['DFW08TA066', 'DEN08LA103', 'MIA08LA156', 'NYC08LA106'] as const;
 
@@ -72,7 +94,7 @@ export const CriteriaSchema = z.strictObject({
   purposeAny: z.array(z.string().regex(/^[A-Z0-9]{3,4}$/)).min(1).optional(),
   /** Some aircraft had its last inspection at most this many days before the event. */
   inspectedWithinDays: z.number().int().min(0).optional(),
-  /** Some aircraft had flown at most this many airframe hours since its last inspection. */
+  /** Some aircraft had flown at most this many hours since its last inspection (`afm_hrs_last_insp`). */
   hoursSinceInspectionMax: z.number().min(0).optional(),
   /** Some sequence-of-events row's description matches. */
   sequence: Pattern.optional(),
@@ -85,10 +107,14 @@ export const CriteriaSchema = z.strictObject({
 });
 export type Criteria = z.infer<typeof CriteriaSchema>;
 
+const QuestionId = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/).max(60);
+
 export const QuestionSpecSchema = z.strictObject({
-  id: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/).max(60),
+  id: QuestionId,
   question: z.string().min(10).max(1500),
   tags: z.array(z.enum(TAGS)).min(1),
+  /** Default `rag`. */
+  section: z.enum(SECTIONS).optional(),
   filters: RetrievalFiltersSchema,
   criteria: CriteriaSchema,
   /** Why the rule stands for the question, and what an expert should check first. */
@@ -96,19 +122,29 @@ export const QuestionSpecSchema = z.strictObject({
 });
 export type QuestionSpec = z.infer<typeof QuestionSpecSchema>;
 
+/** A paraphrase: another question's rule, filters and expected set, in other words. */
+export const ParaphraseSpecSchema = z.strictObject({
+  id: QuestionId,
+  of: QuestionId,
+  question: z.string().min(10).max(1500),
+  /** The label words the paraphrase avoids. */
+  avoids: z.array(z.string().min(1)).min(1),
+});
+export type ParaphraseSpec = z.infer<typeof ParaphraseSpecSchema>;
+
 export const DatasetItemSchema = z.strictObject({
-  id: QuestionSpecSchema.shape.id,
+  id: QuestionId,
   question: QuestionSpecSchema.shape.question,
   tags: QuestionSpecSchema.shape.tags,
+  section: z.enum(SECTIONS),
+  /** Set on an independently worded paraphrase: the question it rewords. */
+  paraphrase_of: QuestionId.optional(),
   filters: RetrievalFiltersSchema,
+  /** Every case the rule derives: the full positive set. */
   expected: z.array(z.string().regex(/^[A-Z0-9]{6,16}$/)).min(MIN_EXPECTED).max(MAX_EXPECTED),
-  derivation: z.strictObject({
-    rule: z.string().min(1),
-    criteria: CriteriaSchema,
-    note: z.string(),
-    /** Cases the rule also derives that an earlier question keeps (held out by case). */
-    sharedWith: z.array(z.strictObject({ ntsbNo: z.string(), keptIn: z.string() })),
-  }),
+  derivation: z.strictObject({ rule: z.string().min(1), criteria: CriteriaSchema, note: z.string() }),
+  /** The connected group (shared cases, paraphrases) the question was split with. */
+  group: z.string().regex(/^g[0-9]+$/),
   split: z.enum(['dev', 'holdout']),
   adjudication: z.literal('pending-expert'),
 });
@@ -167,7 +203,8 @@ export function compileCriteria(criteria: Criteria): CompiledQuery {
     where.push(aircraft(`a.date_last_insp <= c.ev_date and c.ev_date - a.date_last_insp <= ${v(c.inspectedWithinDays)}`));
   }
   if (c.hoursSinceInspectionMax !== undefined) {
-    where.push(aircraft(`a.afm_hrs >= a.afm_hrs_last_insp and a.afm_hrs - a.afm_hrs_last_insp <= ${v(c.hoursSinceInspectionMax)}`));
+    // `afm_hrs_last_insp` already is the hours since the last inspection (data dictionary).
+    where.push(aircraft(`a.afm_hrs_last_insp between 0 and ${v(c.hoursSinceInspectionMax)}`));
   }
   if (c.sequence) {
     where.push(`exists (select 1 from case_sequence q where q.generation_id = c.generation_id and q.ntsb_no = c.ntsb_no and q.description ~* ${v(c.sequence)})`);
@@ -198,7 +235,9 @@ export function describeCriteria(criteria: Criteria): string {
   if (c.categoryEvery) parts.push(`where every aircraft is ${c.categoryEvery}`);
   if (c.purposeAny) parts.push(`with an aircraft flying for purpose ${list(c.purposeAny)}`);
   if (c.inspectedWithinDays !== undefined) parts.push(`with an aircraft inspected at most ${c.inspectedWithinDays} days before the event`);
-  if (c.hoursSinceInspectionMax !== undefined) parts.push(`with an aircraft at most ${c.hoursSinceInspectionMax} airframe hours past its last inspection`);
+  if (c.hoursSinceInspectionMax !== undefined) {
+    parts.push(`with an aircraft at most ${c.hoursSinceInspectionMax} hours since its last inspection (afm_hrs_last_insp)`);
+  }
   if (c.sequence) parts.push(`with a sequence-of-events entry matching /${c.sequence}/`);
   if (c.finding) parts.push(`with a finding matching /${c.finding}/`);
   const matches = (c.text ?? []).map((r) => `the ${kinds(r.in)} matches /${r.pattern}/`);
@@ -208,59 +247,62 @@ export function describeCriteria(criteria: Criteria): string {
   return `${parts.join(' ')}, where ${text.join(' and ')} (case-insensitive PostgreSQL regular expressions, one section at a time).`;
 }
 
-/** sha256 over the question specs: changes whenever a question or rule does. */
-export function rulesSha256(specs: readonly QuestionSpec[]): string {
-  return createHash('sha256').update(JSON.stringify(specs)).digest('hex');
+/** sha256 over the question and paraphrase specs: changes whenever a question or rule does. */
+export function rulesSha256(specs: readonly QuestionSpec[], paraphrases: readonly ParaphraseSpec[] = []): string {
+  return createHash('sha256').update(JSON.stringify({ specs, paraphrases })).digest('hex');
+}
+
+// ---------------------------------------------------------------------------
+// Evidence criterion (question-specific evidence coverage)
+
+/**
+ * A PostgreSQL ARE pattern of the rules as a JavaScript regular expression: `\y`
+ * (word boundary) becomes `\b`; the rules use no other ARE-only syntax.
+ */
+export function jsPattern(pattern: string): RegExp {
+  return new RegExp(pattern.replace(/\\y/g, '\\b'), 'iu');
+}
+
+/**
+ * True when `passages` (one case's bundle passages) satisfy every text rule of the
+ * question: each rule matched by some passage of its section kinds. Null when the rule
+ * has no text part (structured-only rules).
+ */
+export function satisfiesTextCriterion(criteria: Criteria, passages: readonly { sectionKind: string; text: string }[]): boolean | null {
+  const rules = criteria.text ?? [];
+  if (rules.length === 0) return null;
+  return rules.every((rule) => {
+    const re = jsPattern(rule.pattern);
+    return passages.some((p) => (rule.in as readonly string[]).includes(p.sectionKind) && re.test(p.text));
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Held out by case
 
-export interface Derived {
-  id: string;
-  tags: readonly Tag[];
-  /** Every case the rule derives, sorted. */
-  derived: readonly string[];
-}
-
-export interface Disjoint extends Derived {
-  /** The derived cases this question keeps. */
-  expected: string[];
-  /** Derived cases kept by an earlier question instead. */
-  sharedWith: { ntsbNo: string; keptIn: string }[];
-}
-
-/**
- * Make expected sets disjoint: a case several rules derive stays with the first
- * question (in rule order) and is recorded as shared in the later ones. Recall of a
- * later question neither credits nor penalizes that case.
- */
-export function disjointExpected(items: readonly Derived[]): Disjoint[] {
-  const owner = new Map<string, string>();
-  return items.map((q) => {
-    const expected: string[] = [];
-    const sharedWith: Disjoint['sharedWith'] = [];
-    for (const ntsbNo of q.derived) {
-      const keptIn = owner.get(ntsbNo);
-      if (keptIn === undefined) {
-        owner.set(ntsbNo, q.id);
-        expected.push(ntsbNo);
-      } else sharedWith.push({ ntsbNo, keptIn });
-    }
-    return { ...q, expected, sharedWith };
-  });
+export interface GroupedSplits {
+  /** Split per question id. */
+  split: Map<string, 'dev' | 'holdout'>;
+  /** Group label per question id (`g1`, `g2`, …, numbered in assignment order). */
+  group: Map<string, string>;
+  /** Question ids per group, in assignment order. */
+  groups: { id: string; questions: string[]; split: 'dev' | 'holdout' }[];
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 /**
- * `dev` / `holdout` per question id, held out by case and stratified by primary tag.
- * Questions sharing an expected case form one component and share a split (none do
- * after `disjointExpected`). Components are placed in sha256 order of their ids, each
- * into the split with fewer questions of its primary tag (the first tag of its first
- * question), then with fewer questions overall; ties go to `dev`.
+ * Split questions into `dev` and `holdout` by connected group. Questions that share an
+ * expected case, and a paraphrase and its original (`links`), are joined with a
+ * union-find into one group, so every case lies in one split. Groups are placed in
+ * sha256 order of their question ids, each into the split with fewer questions of its
+ * primary tag (the first tag of its first question), then fewer questions overall;
+ * ties go to `dev`.
  */
-export function assignSplits(items: readonly { id: string; tags: readonly Tag[]; expected: readonly string[] }[]): Map<string, 'dev' | 'holdout'> {
+export function assignSplits(
+  items: readonly { id: string; tags: readonly Tag[]; expected: readonly string[] }[],
+  links: readonly [string, string][] = [],
+): GroupedSplits {
   const parent = new Map<string, string>(items.map((q) => [q.id, q.id]));
   const find = (x: string): string => {
     let r = x;
@@ -268,32 +310,44 @@ export function assignSplits(items: readonly { id: string; tags: readonly Tag[];
     parent.set(x, r);
     return r;
   };
+  const union = (a: string, b: string) => {
+    if (!parent.has(a) || !parent.has(b)) throw new Error(`unknown question in a split link: ${a} / ${b}`);
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
   const owner = new Map<string, string>();
   for (const q of items) {
     for (const ntsbNo of q.expected) {
       const other = owner.get(ntsbNo);
       if (other === undefined) owner.set(ntsbNo, q.id);
-      else parent.set(find(q.id), find(other));
+      else union(q.id, other);
     }
   }
+  for (const [a, b] of links) union(a, b);
   const byId = new Map(items.map((q) => [q.id, q]));
-  const components = new Map<string, string[]>();
-  for (const q of items) components.set(find(q.id), [...(components.get(find(q.id)) ?? []), q.id]);
-  const ordered = [...components.values()]
+  const members = new Map<string, string[]>();
+  for (const q of items) members.set(find(q.id), [...(members.get(find(q.id)) ?? []), q.id]);
+  const ordered = [...members.values()]
     .map((ids) => [...ids].sort())
     .map((ids) => ({ ids, key: sha(ids.join('\n')), tag: byId.get(ids[0] as string)?.tags[0] ?? 'none' }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  const out = new Map<string, 'dev' | 'holdout'>();
+  const out: GroupedSplits = { split: new Map(), group: new Map(), groups: [] };
   const total = { dev: 0, holdout: 0 };
   const perTag = new Map<string, { dev: number; holdout: number }>();
-  for (const c of ordered) {
-    const t = perTag.get(c.tag) ?? { dev: 0, holdout: 0 };
+  ordered.forEach((g, i) => {
+    const t = perTag.get(g.tag) ?? { dev: 0, holdout: 0 };
     const split = t.dev < t.holdout ? 'dev' : t.holdout < t.dev ? 'holdout' : total.dev <= total.holdout ? 'dev' : 'holdout';
-    t[split] += c.ids.length;
-    total[split] += c.ids.length;
-    perTag.set(c.tag, t);
-    for (const id of c.ids) out.set(id, split);
-  }
+    t[split] += g.ids.length;
+    total[split] += g.ids.length;
+    perTag.set(g.tag, t);
+    const label = `g${i + 1}`;
+    out.groups.push({ id: label, questions: g.ids, split });
+    for (const id of g.ids) {
+      out.split.set(id, split);
+      out.group.set(id, label);
+    }
+  });
   return out;
 }
 
@@ -323,43 +377,56 @@ export function filterProblems(q: Pick<DatasetItem, 'id' | 'filters'> & { criter
   return out;
 }
 
-/** Problems with a dataset beyond its schema: coverage, seeds, splits, filters. Empty when it is usable. */
+/** Problems with a dataset beyond its schema: coverage, seeds, splits, filters, paraphrases. Empty when it is usable. */
 export function datasetProblems(d: Dataset): string[] {
   const problems: string[] = [];
-  for (const q of d.questions) problems.push(...filterProblems({ id: q.id, filters: q.filters, criteria: q.derivation.criteria }));
-  const ids = new Set<string>();
-  const expectedBy = new Map<string, string>();
+  const byId = new Map<string, DatasetItem>();
   for (const q of d.questions) {
-    if (ids.has(q.id)) problems.push(`duplicate question id ${q.id}`);
-    ids.add(q.id);
+    if (byId.has(q.id)) problems.push(`duplicate question id ${q.id}`);
+    byId.set(q.id, q);
     if (new Set(q.expected).size !== q.expected.length) problems.push(`${q.id}: duplicate expected case`);
-    for (const n of q.expected) {
-      const other = expectedBy.get(n);
-      if (other !== undefined) problems.push(`case ${n} is expected by ${other} and ${q.id}`);
-      expectedBy.set(n, q.id);
+    problems.push(...filterProblems({ id: q.id, filters: q.filters, criteria: q.derivation.criteria }));
+    if ((q.section === 'structured') !== q.tags.includes('structured_timing')) {
+      problems.push(`${q.id}: only structured questions carry the structured_timing tag`);
     }
   }
+  const rag = d.questions.filter((q) => q.section === 'rag');
   for (const tag of REQUIRED_TAGS) {
-    const n = d.questions.filter((q) => q.tags.includes(tag)).length;
-    if (n < MIN_PER_REQUIRED_TAG) problems.push(`only ${n} ${tag} questions (at least ${MIN_PER_REQUIRED_TAG})`);
+    const n = rag.filter((q) => q.tags.includes(tag) && q.paraphrase_of === undefined).length;
+    if (n < MIN_PER_REQUIRED_TAG) problems.push(`only ${n} original RAG ${tag} questions (at least ${MIN_PER_REQUIRED_TAG})`);
+    for (const split of ['dev', 'holdout'] as const) {
+      if (!rag.some((q) => q.split === split && q.tags.includes(tag))) problems.push(`no ${split} RAG question tagged ${tag}`);
+    }
+  }
+  const paraphrases = d.questions.filter((q) => q.paraphrase_of !== undefined);
+  if (paraphrases.length < MIN_PARAPHRASES) problems.push(`only ${paraphrases.length} paraphrases (at least ${MIN_PARAPHRASES})`);
+  for (const q of paraphrases) {
+    const of = byId.get(q.paraphrase_of as string);
+    if (!of) problems.push(`${q.id}: paraphrase of unknown question ${q.paraphrase_of}`);
+    else {
+      if (of.paraphrase_of !== undefined) problems.push(`${q.id}: paraphrase of a paraphrase`);
+      if (JSON.stringify(of.expected) !== JSON.stringify(q.expected)) problems.push(`${q.id}: expected set differs from ${of.id}`);
+      if (of.group !== q.group || of.split !== q.split) problems.push(`${q.id}: not in the group of ${of.id}`);
+      if (!q.tags.includes('paraphrase')) problems.push(`${q.id}: a paraphrase carries the paraphrase tag`);
+    }
   }
   const seeds = new Set<string>(SEED_CASES);
-  const nonSeed = d.questions.filter((q) => q.expected.some((n) => !seeds.has(n)));
-  if (nonSeed.length < MIN_QUESTIONS) problems.push('the set leans on the seed cases: too few questions expect other cases');
+  if (rag.filter((q) => q.expected.some((n) => !seeds.has(n))).length < MIN_QUESTIONS) {
+    problems.push('the set leans on the seed cases: too few RAG questions expect other cases');
+  }
   for (const q of d.questions) {
     if (q.expected.every((n) => seeds.has(n))) problems.push(`${q.id} expects seed cases only`);
   }
   const splitOf = new Map<string, string>();
+  const groupOf = new Map<string, string>();
   for (const q of d.questions) {
     for (const n of q.expected) {
       const s = splitOf.get(n);
       if (s !== undefined && s !== q.split) problems.push(`case ${n} is expected in both splits`);
+      const g = groupOf.get(n);
+      if (g !== undefined && g !== q.group) problems.push(`case ${n} is expected in groups ${g} and ${q.group}`);
       splitOf.set(n, q.split);
-    }
-  }
-  for (const split of ['dev', 'holdout'] as const) {
-    for (const tag of REQUIRED_TAGS) {
-      if (!d.questions.some((q) => q.split === split && q.tags.includes(tag))) problems.push(`no ${split} question tagged ${tag}`);
+      groupOf.set(n, q.group);
     }
   }
   return problems;

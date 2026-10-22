@@ -386,10 +386,12 @@ Integration test files run one at a time: they share `aviation_test` and the
 ### Evidence retrieval (hybrid search)
 
 `server/search/hybrid.ts` retrieves the evidence an AI brief is written from
-(DESIGN §5; amendments A2, A3, A11, A13). It reads the passages index the active
-manifest names and refuses (`RetrievalUnavailableError`) when there is none, or when
-the index `_meta` names another generation, index version, embedding model or
-dimension count. There is no keyword-only fallback for AI answers.
+(DESIGN §5; amendments A2, A3, A11, A13; review gate G5). It reads the passages index
+the active manifest names and refuses (`RetrievalUnavailableError`) when there is
+none or when the index breaks the passages contract
+(`server/search/passages-contract.ts`; the same check `worker publish` and the API's
+dataset loader use). The contract is checked before the query is embedded, within
+the request's deadline. There is no keyword-only fallback for AI answers.
 
 - **One filter.** `compileFilters` (in `server/search/filters.ts`, the compiler
   keyword search uses too) always adds `country: USA` and `answer_eligible: true`.
@@ -397,6 +399,9 @@ dimension count. There is no keyword-only fallback for AI answers.
   clause, so an event-scoped passage of a multi-aircraft event never satisfies an
   aircraft filter. The BM25 query, the kNN prefilter and the evidence fetch use the
   same clauses.
+- **Complete answers only.** Every search sets `allow_partial_search_results: false`;
+  a response that timed out, has a failed shard or misses a shard fails retrieval
+  (`IncompleteSearchError`).
 - **Stage 1, case candidates.** The question is embedded once
   (`queryEmbeddingInput`, template `query-v1`: whitespace collapsed, no header, at
   most 1,000 tokens). BM25 (`multi_match` over `text`) and kNN (`num_candidates` =
@@ -404,44 +409,56 @@ dimension count. There is no keyword-only fallback for AI answers.
   Reciprocal rank fusion in TypeScript (`sum 1/(60 + rank)`) and deduplication to
   cases at their best passage give the case ranking.
 - **Stage 2, packing** (`server/search/evidence.ts`). At most 6 cases, 12 passages,
-  3 passages per case and 10,000 passage-text tokens. Each selected case gets its
-  2 best retrieved passages (a retrieved cause counts) and every probable-cause
-  passage it has under the filters, which always counts toward the limits; the
-  lowest-ranked other passages are dropped first, and free room is filled in fused
-  order. `RETRIEVAL_DEFAULTS` holds every value; all are starting points for review
-  gate G5.
-- **Cost.** Retrieval embeds through the `Embedder` it is given and reports the
-  query embedding's model, billed tokens and USD. It never reserves money: an AI
-  request's admission reservation covers one query embedding, and its settlement
-  adds the reported `embed` line (`createOpenAIQueryEmbedder` makes one attempt;
-  a `QueryEmbeddingError` says whether it was billed).
+  3 passages per case and 10,000 passage-text tokens. Each selected case first
+  reserves its justification: its best retrieved passage and every probable-cause
+  variant it has under the filters. A case whose reservation does not fit is skipped,
+  so the bundle holds fewer cases rather than cases without the passage that ranked
+  them. Then each case adds its next best passages (2 retrieved in all), the
+  lowest-ranked of those extras are trimmed to the budgets, and free room is filled in
+  fused order. `RETRIEVAL_DEFAULTS` holds every value; all remain provisional.
+- **Cost.** Retrieval embeds through the `Embedder` it is given and hands the query
+  embedding's usage (model, tokens, USD, `billing: reported | uncertain`) to
+  `onQueryEmbedding` before any search, so a later failure cannot lose a paid stage.
+  It never reserves money: an AI request's admission reservation covers one query
+  embedding. `createOpenAIQueryEmbedder` takes exactly one input, makes one attempt,
+  and reports a missing usage report as uncertain; a `QueryEmbeddingError` says
+  whether the attempt was billed (`none`, `usage` with its tokens, or `uncertain`).
 
-The retrieval evaluation measures case Recall@20 on the stage 1 ranking and evidence
-coverage on the packed bundle, for BM25 alone, kNN alone and the hybrid, at 50 and
-100 passages per channel:
+The retrieval evaluation measures candidate case Recall@20 and, on the packed bundle,
+case coverage, question-specific evidence coverage (do the bundle's passages for an
+expected case satisfy the question's own text criterion), bundle precision and
+nDCG@6, for BM25 alone, kNN alone and the hybrid, at 50 and 100 passages per channel.
+Probable-cause coverage is reported as a structural check only.
 
 ```sh
-pnpm eval:retrieval:silver --dry-run          # derive the silver set from the active generation (DATABASE_URL)
+pnpm eval:retrieval:silver --dry-run          # derive the silver set from the active generation (DATABASE_URL); prints the split groups
 pnpm eval:retrieval:silver                    # write evals/retrieval/dataset.json; --check compares instead
-pnpm eval:retrieval                           # plan only: question count, tokens, estimated cost
+pnpm eval:retrieval                           # checks, then plan only: question count, tokens, estimated cost
 pnpm eval:retrieval --confirm-cost            # embed the questions (about $0.00002) and write data/work/eval-retrieval-<UTC>.json
-pnpm eval:retrieval --fake-embedder           # free pipeline check; vector and hybrid numbers mean nothing
+pnpm eval:retrieval --fake-embedder           # free pipeline check; non-gating, vector and hybrid numbers mean nothing
 ```
 
 Both commands take `--env-files a,b` (otherwise `AVIATION_ENV_FILES`, otherwise
 `.env.local`). `eval:retrieval` evaluates the active manifest's passages index or
 `--passages-index <name>`, takes `--sizes`, `--split dev|holdout` and `--out-dir`,
 and meters the embeddings on the ledger under `evaluation` (`DATABASE_INGEST_URL`).
-The report holds every ranking, bundle and Elasticsearch body, query vectors elided.
+It fails closed before embedding anything: dataset problems, a target generation
+other than the one the silver set was built from, or an index that breaks the
+passages contract stop the run. `--exploratory` continues past the first two and
+marks the report `gating: false`. The report holds every ranking, bundle and
+Elasticsearch body, query vectors elided.
 
 The silver set (`evals/retrieval/dataset.json`) has public NTSB case numbers derived
 by committed rules (`evals/retrieval/questions.ts`): structured fields plus explicit
 PostgreSQL regular expressions over one section at a time, each recorded as
 `derivation.rule` and `derivation.criteria` for an expert to re-check. Every label is
-`pending-expert`. A case several rules derive stays with the first question
-(`derivation.sharedWith` in the others), so splits are held out by case; questions
-are split into `dev` and `holdout`, stratified by primary tag. A unit test fails when
-`dataset.json` no longer matches the rules.
+`pending-expert`, and every question keeps its rule's full positive set. Independently
+worded paraphrases (`paraphrase_of`) reuse their original's rule and expected set.
+Questions sharing a case, and paraphrases with their originals, form groups that are
+assigned whole to `dev` or `holdout`, stratified by primary tag. Three questions
+answered by inspection dates and hours are kept as `section: "structured"` and are
+not run by the RAG evaluation. A unit test fails when `dataset.json` no longer matches
+the rules.
 
 ### Web client
 
@@ -554,10 +571,15 @@ duration), without client addresses or query strings.
   the date the data is current to; the archive's own date is not recorded.
 - **Publishing.** `pnpm worker publish` checks that the cases index is a concrete
   index (not an alias) built for that generation with a version and fingerprint the
-  server serves (see above), and that it holds exactly the generation's US events; a
-  passages index, when given, must name the same generation and not be empty. It
-  then calls `publishManifest`, which also requires the generation's current
-  verification.
+  server serves (see above), and that it holds exactly the generation's US events. A
+  passages index, when given, must meet the passages contract
+  (`server/search/passages-contract.ts`): this generation, version `passages-v1`, the
+  approved mapping fingerprint for the configured `OPENAI_EMBEDDING_MODEL` and
+  `OPENAI_EMBEDDING_DIMENSIONS`, chunker `chunk-v2` and input template `input-v1`; and
+  it must hold exactly the generation's `chunk-v2` passage rows. It then calls
+  `publishManifest`, which also requires the generation's current verification. The
+  API applies the same contract when it loads the manifest: an unservable passages
+  index leaves keyword search working and marks the dataset's passages unservable.
 - **Keyword search** (`server/search/keyword.ts`, `filters.ts`, `facets.ts`). The
   words of `q` must all occur in the report: one `multi_match` (`cross_fields`,
   operator `and`) over `probable_cause`, `analysis`, `factual` and `findings_text`

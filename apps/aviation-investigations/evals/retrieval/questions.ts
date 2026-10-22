@@ -10,9 +10,14 @@
  *
  * The rules are deliberately narrow so each derives at most 20 cases. They are silver
  * labels: keyword rules miss paraphrases and can include near misses, which is what
- * expert adjudication is for.
+ * expert adjudication is for. `PARAPHRASES` rewords some questions without their label
+ * words, so the evaluation also sees questions the rules' keywords do not give away.
+ *
+ * Three questions are answered by structured inspection fields rather than narrative
+ * text (`section: 'structured'`): they stay here for a structured or combined
+ * evaluation and are excluded from the RAG metrics (G5 ruling b).
  */
-import type { QuestionSpec } from './silver.js';
+import type { ParaphraseSpec, QuestionSpec } from './silver.js';
 
 const PC = ['probable_cause'] as const;
 const AN = ['analysis'] as const;
@@ -331,7 +336,8 @@ export const QUESTIONS: readonly QuestionSpec[] = [
   {
     id: 'mt-inspected-within-3-days',
     question: 'Accidents from 2015 to 2017 caused by maintenance errors on aircraft that had been inspected within the previous three days.',
-    tags: ['maintenance_timing'],
+    tags: ['structured_timing'],
+    section: 'structured',
     filters: { yearFrom: 2015, yearTo: 2017 },
     criteria: {
       years: [2015, 2017],
@@ -342,11 +348,12 @@ export const QUESTIONS: readonly QuestionSpec[] = [
   },
   {
     id: 'mt-within-5-hours-of-inspection',
-    question: 'Accidents blamed on maintenance errors within 5 flight hours of the aircraft\'s last inspection.',
-    tags: ['maintenance_timing'],
-    filters: {},
-    criteria: { hoursSinceInspectionMax: 5, text: [{ in: [...PC], pattern: MAINTENANCE_FAULT }] },
-    note: 'Structured: airframe hours minus hours at last inspection at most 5; the probable cause blames maintenance.',
+    question: 'In 2008, accidents blamed on maintenance errors within 5 flight hours of the aircraft\'s last inspection.',
+    tags: ['structured_timing'],
+    section: 'structured',
+    filters: { yearFrom: 2008, yearTo: 2008 },
+    criteria: { years: [2008, 2008], hoursSinceInspectionMax: 5, text: [{ in: [...PC], pattern: MAINTENANCE_FAULT }] },
+    note: 'Structured: hours since the last inspection (afm_hrs_last_insp, already a since-inspection figure) at most 5; the probable cause blames maintenance.',
   },
   {
     id: 'mt-overhaul-recent-2008-2014',
@@ -420,7 +427,8 @@ export const QUESTIONS: readonly QuestionSpec[] = [
   {
     id: 'mt-inspected-within-30-days-power-loss',
     question: 'In 2008 and 2009, engine power losses linked to maintenance on aircraft inspected within the previous 30 days.',
-    tags: ['maintenance_timing'],
+    tags: ['structured_timing'],
+    section: 'structured',
     filters: { yearFrom: 2008, yearTo: 2009 },
     criteria: {
       years: [2008, 2009],
@@ -465,7 +473,7 @@ export const QUESTIONS: readonly QuestionSpec[] = [
   },
   {
     id: 'ma-taxi-collision-atc',
-    question: 'Ground collisions between aircraft while taxiing where air traffic control instructions played a part.',
+    question: 'Ground collisions between aircraft taxiing on their own (not as a formation) where air traffic control instructions played a part.',
     tags: ['multi_aircraft'],
     filters: {},
     criteria: {
@@ -474,8 +482,9 @@ export const QUESTIONS: readonly QuestionSpec[] = [
         { in: [...PC], pattern: r`taxi` },
         { in: [...PC], pattern: r`controller|tower` },
       ],
+      textNot: [{ in: [...PC], pattern: r`formation` }],
     },
-    note: 'Several aircraft; taxiing and a controller or tower in the probable cause.',
+    note: 'Several aircraft; taxiing and a controller or tower in the probable cause; formation taxiing excluded (it belongs to ma-formation-flight and keeps the multi-aircraft questions in two split groups).',
   },
   {
     id: 'ma-two-helicopters',
@@ -513,11 +522,11 @@ export const QUESTIONS: readonly QuestionSpec[] = [
   },
   {
     id: 'ma-alaska',
-    question: 'Accidents in Alaska from 2008 to 2016 that involved more than one aircraft.',
+    question: 'Accidents in Alaska from 2008 to 2016 that involved more than one aircraft, other than taxiing or ramp collisions.',
     tags: ['multi_aircraft'],
     filters: { state: ['AK'], yearFrom: 2008, yearTo: 2016 },
-    criteria: { states: ['AK'], years: [2008, 2016], minAircraft: 2 },
-    note: 'Structured only: Alaska, 2008 to 2016, at least two aircraft.',
+    criteria: { states: ['AK'], years: [2008, 2016], minAircraft: 2, textNot: [{ in: [...PC], pattern: r`taxi|parked|ramp` }] },
+    note: 'Structured: Alaska, 2008 to 2016, at least two aircraft; ground collisions (taxi, parked, ramp in the probable cause) excluded.',
   },
   {
     id: 'ma-traffic-pattern-midair',
@@ -536,11 +545,15 @@ export const QUESTIONS: readonly QuestionSpec[] = [
   },
   {
     id: 'ma-skydiving',
-    question: 'Accidents between aircraft during skydiving or parachute operations.',
+    question: 'Accidents between aircraft during skydiving or parachute operations, other than formation or traffic pattern collisions.',
     tags: ['multi_aircraft'],
     filters: {},
-    criteria: { minAircraft: 2, text: [{ in: [...PC_AN], pattern: r`parachut|skydiv` }] },
-    note: 'Several aircraft; parachute or skydiving in the cause or analysis.',
+    criteria: {
+      minAircraft: 2,
+      text: [{ in: [...PC_AN], pattern: r`parachut|skydiv` }],
+      textNot: [{ in: [...PC_AN], pattern: r`formation|traffic pattern` }],
+    },
+    note: 'Several aircraft; parachute or skydiving in the cause or analysis; formation and traffic pattern collisions excluded (they belong to other questions).',
   },
   {
     id: 'ma-balloon-and-another-aircraft',
@@ -731,5 +744,110 @@ export const QUESTIONS: readonly QuestionSpec[] = [
     filters: { yearFrom: 2008, yearTo: 2015 },
     criteria: { years: [2008, 2015], text: [{ in: [...PC], pattern: r`structural ic(e|ing)|airframe ic(e|ing)` }] },
     note: 'Structural or airframe ice in the probable cause.',
+  },
+];
+
+/**
+ * Independently worded paraphrases (G5 ruling b): the original's rule, filters and
+ * expected set, in words a pilot or student would use instead of the rule's label
+ * keywords (`avoids`). The structured constraints the original states (years, place,
+ * category, injury) are stated again, so the same filters apply.
+ */
+export const PARAPHRASES: readonly ParaphraseSpec[] = [
+  {
+    id: 'para-carb-heat-alaska',
+    of: 'neg-carb-heat-alaska',
+    question: 'In Alaska, which engines quit because ice built up in the induction system while the pilot never pulled the hot-air control?',
+    avoids: ['carburetor', 'carburetor heat', 'icing'],
+  },
+  {
+    id: 'para-stall-warning-silent',
+    of: 'neg-stall-warning-silent',
+    question: 'From 2008 to 2014, which aircraft lost lift at low airspeed without the cockpit alert going off first?',
+    avoids: ['stall', 'stall warning', 'horn', 'sound'],
+  },
+  {
+    id: 'para-gear-warning-silent',
+    of: 'neg-gear-warning-silent',
+    question: 'Belly landings where no alarm told the pilot the wheels were still up.',
+    avoids: ['landing gear', 'gear', 'warning horn', 'sound'],
+  },
+  {
+    id: 'para-no-weather-briefing',
+    of: 'neg-no-weather-briefing',
+    question: 'Deadly flights into cloud or low visibility from 2015 to 2020 where the pilot never looked at the forecast before leaving.',
+    avoids: ['instrument meteorological conditions', 'IMC', 'weather briefing', 'obtain'],
+  },
+  {
+    id: 'para-helicopter-no-anomalies',
+    of: 'neg-helicopter-no-anomalies',
+    question: 'Between 2008 and 2015, which rotorcraft turbines or engines quit for no reason anyone could find, with nothing wrong found in the teardown?',
+    avoids: ['loss of engine power', 'undetermined', 'anomalies', 'malfunctions'],
+  },
+  {
+    id: 'para-inflight-fire',
+    of: 'unc-inflight-fire',
+    question: 'From 2008 to 2014, aircraft that caught fire while airborne where nobody could say where the flames started.',
+    avoids: ['in-flight fire', 'undetermined', 'could not be determined'],
+  },
+  {
+    id: 'para-incapacitation',
+    of: 'unc-incapacitation',
+    question: 'Crashes where the person at the controls apparently became unable to fly, for a medical or other reason the investigation never pinned down.',
+    avoids: ['incapacitated', 'incapacitation', 'undetermined', 'unknown'],
+  },
+  {
+    id: 'para-inflight-breakup',
+    of: 'unc-inflight-breakup',
+    question: 'Aircraft that came apart in the air without investigators being able to explain why.',
+    avoids: ['in-flight breakup', 'structural failure', 'undetermined'],
+  },
+  {
+    id: 'para-fuel-contamination-suspected',
+    of: 'unc-fuel-contamination-suspected',
+    question: 'Unexplained engine stoppages where investigators looked for dirty or tainted gas but could not tie it to the failure.',
+    avoids: ['contamination', 'loss of engine power', 'undetermined'],
+  },
+  {
+    id: 'para-overhaul-recent-2008-2014',
+    of: 'mt-overhaul-recent-2008-2014',
+    question: 'Between 2008 and 2014, engines or parts that failed only a few running hours after being rebuilt in a shop.',
+    avoids: ['overhaul', 'engine failure', 'hours before'],
+  },
+  {
+    id: 'para-first-flight-after-maintenance-2015-2026',
+    of: 'mt-first-flight-after-maintenance-2015-2026',
+    question: 'Since 2015, crashes on the very first trip after a shop handed the aircraft back, where the shop work was blamed.',
+    avoids: ['first flight', 'maintenance', 'mechanic', 'install'],
+  },
+  {
+    id: 'para-helicopter-and-airplane',
+    of: 'ma-helicopter-and-airplane',
+    question: 'Rotorcraft and fixed-wing aircraft that hit each other in the air or came dangerously close.',
+    avoids: ['helicopter', 'airplane', 'collision', 'see and avoid'],
+  },
+  {
+    id: 'para-formation-flight',
+    of: 'ma-formation-flight',
+    question: 'Aircraft flying close together as a group that struck one another.',
+    avoids: ['formation', 'collision'],
+  },
+  {
+    id: 'para-runway-incursion',
+    of: 'ma-runway-incursion',
+    question: 'From 2008 to 2016, cases where the tower let an aircraft onto an active strip while another one was using it.',
+    avoids: ['runway', 'incursion', 'cleared', 'clearance'],
+  },
+  {
+    id: 'para-crankshaft-fatigue',
+    of: 'mech-crankshaft-fatigue',
+    question: 'Between 2008 and 2012, engines that failed when the main rotating shaft cracked from repeated stress.',
+    avoids: ['crankshaft', 'fatigue', 'fracture'],
+  },
+  {
+    id: 'para-helicopter-mast-bumping',
+    of: 'op-helicopter-mast-bumping',
+    question: 'Helicopters whose rotor hub struck its own drive shaft in flight.',
+    avoids: ['mast bumping', 'mast'],
   },
 ];

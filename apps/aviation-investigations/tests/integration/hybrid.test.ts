@@ -1,8 +1,10 @@
 /**
  * Hybrid retrieval against a real passages index of the fixture corpus (fake
- * embeddings, no paid call): one filter on both channels and the fetch, the
- * compulsory country and answer-eligibility clauses, aircraft attribution in the
- * two-aircraft fixtures, the bundle limits and the probable-cause attachment.
+ * embeddings under the production model name, so the approved passages contract
+ * applies; no paid call): one filter on both channels and the fetch, the compulsory
+ * country and answer-eligibility clauses, aircraft attribution in the two-aircraft
+ * fixtures, the bundle limits, every cause variant attached, and the passages contract
+ * at publication and in the API's dataset loader.
  */
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -11,10 +13,14 @@ import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { queryEmbeddingInput } from '../../server/ai/embeddings.js';
+import { DatasetResolver } from '../../server/dataset.js';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
+import { getActiveManifest } from '../../server/db/generations.js';
 import { RetrievalUnavailableError, fetchAndPack, rankingOf, retrieveCandidates, retrieveEvidence, type PassageHit } from '../../server/search/hybrid.js';
+import { rebuildCasesIndex } from '../../worker/index/cases-index.js';
 import { createFakeEmbedder, fakeVector } from '../../worker/index/embed.js';
 import { PASSAGES_EMBEDDING_DIMS, rebuildPassagesIndex, type PassageDoc } from '../../worker/index/passages-index.js';
+import { PublishRefusedError, publishGeneration } from '../../worker/index/publish.js';
 import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
 import { makeExtractDir, removeDir } from '../support/extract-dir.js';
 import { loadVerified } from './corpus-helpers.js';
@@ -22,7 +28,9 @@ import { TEST_INDEX_PREFIX, resetCorpus, testDbUrl, testEs } from './helpers.js'
 
 const PREFIX = `${TEST_INDEX_PREFIX}${randomBytes(4).toString('hex')}`;
 const DIMS = PASSAGES_EMBEDDING_DIMS;
-const embedder = createFakeEmbedder(DIMS);
+/** Fake vectors under the configured model's name: the index gets the approved fingerprint. */
+const MODEL = 'text-embedding-3-small';
+const embedder = createFakeEmbedder(DIMS, MODEL);
 const MIDAIR = 'midair collision of an airliner and a helicopter route close to the runway approach path';
 
 let ingest: Db;
@@ -31,6 +39,9 @@ let fixtureDir: string;
 const reportDir = mkdtempSync(join(tmpdir(), 'aviation-hybrid-test-'));
 let generationId: number;
 let index: string;
+let casesIndex: string;
+/** Synthetic documents added to the built index (removed before the publication tests). */
+const SYNTHETIC = ['foreign1', 'ineligible1', 'dca-cause-variant-2'];
 const dataset = () => ({ generationId, passagesIndex: index });
 
 /** Synthetic passages the filters must exclude: they are the best match for `MIDAIR` in both channels. */
@@ -83,9 +94,24 @@ beforeAll(async () => {
     confirmCost: true,
   });
   index = built.index;
+  casesIndex = (await rebuildCasesIndex(es, ingest, { generationId, prefix: PREFIX })).index;
+  // A second, distinct event-scoped cause variant of the two-aircraft fixture DCA25MA108
+  // (the fixture's own causes are identical, so it holds one variant).
+  const [dcaCause] = (
+    await es.search<PassageDoc>({ index, size: 1, query: { bool: { filter: [{ term: { ntsb_no: 'DCA25MA108' } }, { term: { section_kind: 'probable_cause' } }] } } })
+  ).hits.hits;
+  const variant: PassageDoc = {
+    ...(dcaCause?._source as PassageDoc),
+    passage_id: 'dca-cause-variant-2',
+    section_id: 'DCA25MA108:probable_cause/event-2',
+    revision_id: 'r2',
+    text: 'The helicopter crew’s failure to maintain visual separation from the airplane.',
+    embedding: Array.from(fakeVector('variant', DIMS)),
+  };
   const operations = [
     intruder('foreign1', { country: 'CAN', state: null }),
     intruder('ineligible1', { answer_eligible: false }),
+    variant,
   ].flatMap((d) => [{ create: { _index: index, _id: d.passage_id } }, d]);
   const res = await es.bulk({ operations, refresh: true });
   expect(res.errors).toBe(false);
@@ -186,8 +212,83 @@ describe('hybrid retrieval on the fixture corpus', () => {
     await expect(retrieveEvidence(es, embedder, { dataset: { generationId: generationId + 1, passagesIndex: index }, text: 'x' })).rejects.toThrow(
       /generation/,
     );
-    await expect(
-      retrieveEvidence(es, createFakeEmbedder(DIMS, 'text-embedding-3-small'), { dataset: dataset(), text: 'x' }),
-    ).rejects.toThrow(/embedding model fake-embedding-v1/);
+    await expect(retrieveEvidence(es, createFakeEmbedder(DIMS), { dataset: dataset(), text: 'x' })).rejects.toThrow(
+      /embedding model text-embedding-3-small \(expected fake-embedding-v1\)/,
+    );
+  });
+
+  it('attaches every event-scoped cause variant of an unfiltered two-aircraft case, with the passage that ranked it', async () => {
+    const c = await retrieveCandidates(es, embedder, { dataset: dataset(), text: MIDAIR });
+    const ranking = rankingOf(c, 'keyword');
+    expect(ranking[0]?.ntsbNo).toBe('DCA25MA108');
+    const packed = await fetchAndPack(es, c.index, c.filter, ranking, c.params);
+    const dca = packed.cases.find((x) => x.ntsbNo === 'DCA25MA108');
+    const causes = await es.search({
+      index,
+      size: 20,
+      _source: false,
+      query: { bool: { filter: [{ term: { ntsb_no: 'DCA25MA108' } }, { term: { section_kind: 'probable_cause' } }] } },
+    });
+    const variants = causes.hits.hits.map((h) => h._id).sort();
+    expect(variants).toHaveLength(2);
+    expect(dca?.passages.filter((p) => p.sectionKind === 'probable_cause').map((p) => p.id).sort()).toEqual(variants);
+    expect(dca?.passages.every((p) => p.scope === 'event' && !p.aircraftSpecific)).toBe(true);
+    expect(dca?.passages.every((p) => p.reserved || p.role !== 'probable_cause')).toBe(true);
+    // The case keeps a retrieved passage: the best one that ranked it.
+    expect(dca?.passages.some((p) => p.reserved && p.fusedRank === 1)).toBe(true);
+  });
+});
+
+describe('the passages contract at publication and in the API', () => {
+  const embedding = { model: MODEL, dims: DIMS };
+  const publish = (over: { embedding?: { model: string; dims: number } } = {}) =>
+    publishGeneration(es, ingest, { generationId, casesIndex, passagesIndex: index, embedding, ...over });
+
+  it('refuses an index whose documents do not match the stored passages', async () => {
+    // The synthetic documents make the index larger than the generation's passages rows.
+    await expect(publish()).rejects.toThrow(/holds \d+ documents; generation \d+ has \d+ chunk-v2 passages/);
+  });
+
+  it('refuses a wrong fingerprint, an unknown chunker or template, other dimensions and no embedding', async () => {
+    const original = (await es.indices.getMapping({ index }))[index]?.mappings?._meta as Record<string, unknown>;
+    const withMeta = async (change: Record<string, unknown>, message: RegExp) => {
+      await es.indices.putMapping({ index, _meta: { ...original, ...change } });
+      await expect(publish()).rejects.toThrow(message);
+    };
+    try {
+      await withMeta({ fingerprint: 'e'.repeat(64) }, /fingerprint eeeeeeeeeeee \(expected 57d731b28445\)/);
+      await withMeta({ chunker_version: 'chunk-v9' }, /chunker chunk-v9 \(expected chunk-v2\)/);
+      await withMeta({ input_template_version: 'input-v9' }, /input template input-v9 \(expected input-v1\)/);
+      await withMeta({ embedding_dims: 512 }, /512 dimensions \(expected 1536\)/);
+      await withMeta({ index_version: 'passages-v2' }, /index version passages-v2/);
+    } finally {
+      await es.indices.putMapping({ index, _meta: original });
+    }
+    await expect(publish({ embedding: { model: MODEL, dims: 512 } })).rejects.toThrow(/no approved fingerprint for text-embedding-3-small\/512/);
+    await expect(publishGeneration(es, ingest, { generationId, casesIndex, passagesIndex: index })).rejects.toThrow(
+      /needs the configured embedding model/,
+    );
+    await expect(publish()).rejects.toBeInstanceOf(PublishRefusedError);
+  });
+
+  it('publishes a matching index, and the API marks it servable only for the configured embedding', async () => {
+    for (const id of SYNTHETIC) await es.delete({ index, id, refresh: true });
+    const r = await publish();
+    expect(r.passagesDocuments).toBeGreaterThan(0);
+    const app = createDb(testDbUrl('app'), { max: 2, applicationName: 'aviation-test-hybrid-app' });
+    try {
+      expect((await getActiveManifest(app))?.passagesIndex).toBe(index);
+      const servable = await new DatasetResolver(app, es, { embedding }).current();
+      expect(servable.passages).toEqual({ index, servable: true });
+      const other = await new DatasetResolver(app, es, { embedding: { model: MODEL, dims: 512 } }).current();
+      expect(other.passages).toMatchObject({ index, servable: false });
+      expect(other.passages?.servable === false && other.passages.reason).toMatch(/1536 dimensions \(expected 512\)/);
+      const unconfigured = await new DatasetResolver(app, es).current();
+      expect(unconfigured.passages).toEqual({ index, servable: false, reason: 'no embedding model is configured' });
+      // Keyword search keeps working either way: the dataset itself resolves.
+      expect(other.dataset.revision).toBe(servable.dataset.revision);
+    } finally {
+      await closeDb(app);
+    }
   });
 });

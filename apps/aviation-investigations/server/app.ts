@@ -44,6 +44,8 @@ declare module 'fastify' {
 
 export interface AppDeps {
   config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'>;
+  /** The configured embedding model and dimensions: a published passages index must match them. */
+  embedding?: { model: string; dims: number };
   /** PostgreSQL as `aviation_app`. */
   db: Db;
   /** Elasticsearch with the read key only. */
@@ -99,6 +101,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const headers = securityHeaders({ hsts: deps.config.appUrl.startsWith('https://') });
   const limiter = new RateLimiter({ ...(deps.rateLimit ?? { limit: 60, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const datasets = new DatasetResolver(deps.db, deps.es, {
+    ...(deps.embedding ? { embedding: deps.embedding } : {}),
     ...(deps.manifestTtlMs !== undefined ? { manifestTtlMs: deps.manifestTtlMs } : {}),
     ...(deps.now ? { now: deps.now } : {}),
   });

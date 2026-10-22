@@ -14,7 +14,12 @@
  *   index version and mapping fingerprint this code serves (the current version, or
  *   an earlier one with the same fields: `isServableCasesIndex`). A mismatch makes the
  *   API unavailable (503) instead of serving another generation's data;
- * - the coverage numbers of `GET /api/config` and the corpus year range.
+ * - the coverage numbers of `GET /api/config` and the corpus year range;
+ * - whether the manifest's passages index can serve AI evidence: the passages
+ *   contract (`server/search/passages-contract.ts`) for the configured embedding model
+ *   and dimensions. An unservable passages index leaves keyword search, case pages
+ *   and the dashboard working; `passages.servable` is false and AI routes must stay
+ *   off (retrieval checks the same contract again before every use).
  */
 import { createHash } from 'node:crypto';
 import type { Client } from '@elastic/elasticsearch';
@@ -25,6 +30,7 @@ import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from '../worker/index/c
 import type { Db } from './db/client.js';
 import { getActiveManifest, type ActiveManifest } from './db/generations.js';
 import { IndexMetaError, readIndexMeta } from './search/index-meta.js';
+import { PassagesIndexIncompatibleError, checkPassagesIndex } from './search/passages-contract.js';
 
 export class DatasetUnavailableError extends Error {
   constructor(message: string) {
@@ -41,12 +47,18 @@ export interface PinnedDataset {
   coverage: Coverage;
   /** First and last event year of the US events (the Explore and dashboard year axis). */
   years: { from: number; to: number };
+  /** The manifest's passages index and whether it meets the passages contract; null when keyword-only. */
+  passages: PassagesStatus | null;
 }
+
+export type PassagesStatus = { index: string; servable: true } | { index: string; servable: false; reason: string };
 
 export interface DatasetResolverOptions {
   /** How long the active manifest row is reused before it is read again (default 5 s). */
   manifestTtlMs?: number;
   now?: () => number;
+  /** The configured embedding model and dimensions; without them no passages index is servable. */
+  embedding?: { model: string; dims: number };
 }
 
 function revisionOf(m: ActiveManifest, indexVersion: string): string {
@@ -60,6 +72,7 @@ const manifestKey = (m: ActiveManifest): string =>
 export class DatasetResolver {
   private readonly ttl: number;
   private readonly now: () => number;
+  private readonly embedding: { model: string; dims: number } | undefined;
   private manifest: { value: ActiveManifest; at: number } | null = null;
   private manifestLoad: Promise<ActiveManifest | null> | null = null;
   private readonly facts = new Map<string, Promise<PinnedDataset>>();
@@ -71,6 +84,7 @@ export class DatasetResolver {
   ) {
     this.ttl = opts.manifestTtlMs ?? 5_000;
     this.now = opts.now ?? Date.now;
+    this.embedding = opts.embedding;
   }
 
   /** The dataset of the active manifest. Throws `DatasetUnavailableError` when none can be served. */
@@ -153,6 +167,7 @@ export class DatasetResolver {
       throw new DatasetUnavailableError('the active cases index is empty');
     }
     const indexVersion = meta.indexVersion;
+    const passages = await this.passagesStatus(manifest);
     return {
       manifest,
       dataset: { revision: revisionOf(manifest, indexVersion), snapshotDate },
@@ -166,6 +181,21 @@ export class DatasetResolver {
         provisional: !manifest.mappingVerified,
       },
       years: { from, to },
+      passages,
     };
+  }
+
+  private async passagesStatus(manifest: ActiveManifest): Promise<PassagesStatus | null> {
+    const index = manifest.passagesIndex;
+    if (index === null) return null;
+    if (!this.embedding) return { index, servable: false, reason: 'no embedding model is configured' };
+    try {
+      await checkPassagesIndex(this.es, index, { generationId: manifest.generationId, ...this.embedding });
+      return { index, servable: true };
+    } catch (err) {
+      if (err instanceof PassagesIndexIncompatibleError) return { index, servable: false, reason: err.problems.join('; ') };
+      if (err instanceof IndexMetaError) return { index, servable: false, reason: err.message };
+      throw err;
+    }
   }
 }

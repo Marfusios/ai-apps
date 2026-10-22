@@ -20,14 +20,25 @@
  * attached and counted, a token budget).
  *
  * Nothing here falls back to keyword-only answers: without a published passages
- * index, or with an index built for another generation, version or embedding,
- * retrieval refuses with `RetrievalUnavailableError`.
+ * index, or with an index that breaks the passages contract
+ * (`server/search/passages-contract.ts`: generation, version, approved fingerprint,
+ * embedding model and dimensions, chunker and input-template versions), retrieval
+ * refuses with `RetrievalUnavailableError`. The contract is checked before the query
+ * is embedded, under the request's deadline.
  *
- * Query embedding cost: retrieval embeds through the `Embedder` it is given and
- * reports `queryEmbedding` (model, billed tokens, USD). It never reserves money: the
- * interactive request's admission reservation covers it (Task 16 settles that
- * reservation with an `embed` line from this report), and the evaluation passes an
- * embedder metered on the ledger under `evaluation`.
+ * Every search sets `allow_partial_search_results: false` and every response is
+ * checked for completeness (not timed out, no failed shard, every shard answered or
+ * skipped); an incomplete channel or evidence fetch fails retrieval with
+ * `IncompleteSearchError` instead of yielding a bundle from part of the index.
+ *
+ * Query embedding cost: retrieval embeds through the `Embedder` it is given and hands
+ * the usage (model, tokens, USD, and whether the provider reported it) to
+ * `RetrievalQuery.onQueryEmbedding` as soon as the embedding succeeds, before any
+ * search, so an Elasticsearch or packing failure afterwards cannot lose a paid stage.
+ * It never reserves money: the interactive request's admission reservation covers it
+ * (Task 16 settles that reservation with an `embed` line from this usage, in full when
+ * `billing` is `uncertain`), and the evaluation passes an embedder metered on the
+ * ledger under `evaluation`.
  */
 import type { Client, estypes } from '@elastic/elasticsearch';
 import {
@@ -42,11 +53,12 @@ import { MAX_CASES, MAX_PASSAGES } from '../ai/provider.js';
 import { countTokens } from '../ai/tokens.js';
 import { packEvidence, SECTION_ORDER, type PackOptions, type PackRole, type PassageKind, type SkipReason } from './evidence.js';
 import { RetrievalFiltersSchema, compileFilters, type Query, type RetrievalFilters } from './filters.js';
-import { IndexMetaError, readIndexMeta } from './index-meta.js';
+import { IndexMetaError } from './index-meta.js';
+import { PASSAGES_CONTRACT, PassagesIndexIncompatibleError, checkPassagesIndex, type PassagesContract } from './passages-contract.js';
 import { RRF_K, asRanking, rankCases, rrfFuse, type CaseCandidate, type CaseScoring, type FusedHit } from './rrf.js';
 
 /** Passages index versions this code reads (`worker/index/passages-index.ts` `PASSAGES_INDEX_VERSION`). */
-export const SERVABLE_PASSAGES_VERSIONS: readonly string[] = ['passages-v1'];
+export const SERVABLE_PASSAGES_VERSIONS: readonly string[] = [PASSAGES_CONTRACT.indexVersion];
 
 export interface RetrievalParams extends PackOptions {
   /** RRF constant. */
@@ -123,6 +135,33 @@ export class RetrievalUnavailableError extends Error {
   ) {
     super(message);
     this.name = 'RetrievalUnavailableError';
+  }
+}
+
+/** A search answered for part of the index only: timed out, failed shards or missing shards. */
+export class IncompleteSearchError extends Error {
+  constructor(
+    readonly request: 'keyword' | 'vector' | 'fetch',
+    reason: string,
+  ) {
+    super(`the ${request} search was incomplete: ${reason}`);
+    this.name = 'IncompleteSearchError';
+  }
+}
+
+/**
+ * Throw unless `res` covers the whole index: not timed out, no failed shard, and every
+ * shard either answered or was skipped (a shard skipped by the pre-filter holds no
+ * match, which is complete).
+ */
+export function assertCompleteResponse(res: Pick<estypes.SearchResponse<unknown>, 'timed_out' | '_shards'>, request: IncompleteSearchError['request']): void {
+  if (res.timed_out !== false) throw new IncompleteSearchError(request, res.timed_out ? 'timed out' : 'no timed_out flag');
+  const s = res._shards;
+  if (!s || typeof s.total !== 'number') throw new IncompleteSearchError(request, 'no shard report');
+  const failed = Math.max(s.failed ?? 0, s.failures?.length ?? 0);
+  if (failed > 0) throw new IncompleteSearchError(request, `${failed} shard(s) failed`);
+  if (s.successful + (s.skipped ?? 0) !== s.total) {
+    throw new IncompleteSearchError(request, `${s.successful} of ${s.total} shard(s) answered (${s.skipped ?? 0} skipped)`);
   }
 }
 
@@ -233,6 +272,7 @@ export function keywordChannelBody(index: string, text: string, filter: Query[],
     index,
     size,
     track_total_hits: false,
+    allow_partial_search_results: false,
     _source: [...HIT_FIELDS],
     query: {
       bool: {
@@ -255,6 +295,7 @@ export function vectorChannelBody(
     index,
     size: k,
     track_total_hits: false,
+    allow_partial_search_results: false,
     _source: [...HIT_FIELDS],
     knn: { field: 'embedding', query_vector: [...vector], k, num_candidates: candidates, filter: { bool: { filter } } },
   };
@@ -271,6 +312,7 @@ export function evidenceFetchBody(index: string, filter: Query[], ids: readonly 
     index,
     size,
     track_total_hits: true,
+    allow_partial_search_results: false,
     _source: [...HIT_FIELDS, 'text'],
     query: { bool: { filter: [...filter, { bool: { should: wanted, minimum_should_match: 1 } }] } },
     sort: [{ ntsb_no: { order: 'asc' } }, { section_id: { order: 'asc' } }, { part: { order: 'asc' } }],
@@ -296,46 +338,48 @@ export interface RetrievalDataset {
   passagesIndex: string | null;
 }
 
-const checked = new Map<string, Promise<void>>();
+/** Indexes that passed the contract, per generation, embedding and contract (bounded). */
+const verified = new Set<string>();
+
+export interface IndexCheckOptions {
+  contract?: PassagesContract;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
 
 /**
- * Refuse unless the dataset names a passages index whose `_meta` matches: the same
- * generation, a servable index version, and the embedder's model and dimensions.
- * A successful check is remembered per index, generation and embedding.
+ * Refuse unless the dataset names a passages index that meets the passages contract
+ * for its generation and the embedder's model and dimensions. The metadata lookup is
+ * bounded by `timeoutMs` and `signal`; a passed check is remembered per index,
+ * generation, embedding and contract (failures and aborted lookups are not).
  */
 export async function assertServablePassagesIndex(
   es: Client,
   dataset: RetrievalDataset,
   embedder: Pick<Embedder, 'model' | 'dims'>,
+  opts: IndexCheckOptions = {},
 ): Promise<string> {
   const index = dataset.passagesIndex;
   if (!index) {
     throw new RetrievalUnavailableError('no_passages_index', `generation ${dataset.generationId} has no published passages index`);
   }
-  const key = `${index}\n${dataset.generationId}\n${embedder.model}\n${embedder.dims}`;
-  let check = checked.get(key);
-  if (!check) {
-    check = (async () => {
-      const meta = await readIndexMeta(es, index).catch((err: unknown) => {
-        throw err instanceof IndexMetaError ? new RetrievalUnavailableError('index_mismatch', err.message) : err;
-      });
-      const wrong: string[] = [];
-      if (meta.generationId !== dataset.generationId) wrong.push(`generation ${meta.generationId ?? 'unknown'}`);
-      if (meta.indexVersion === null || !SERVABLE_PASSAGES_VERSIONS.includes(meta.indexVersion)) wrong.push(`version ${meta.indexVersion ?? 'unknown'}`);
-      if (meta.embeddingModel !== embedder.model) wrong.push(`embedding model ${meta.embeddingModel ?? 'unknown'}`);
-      if (meta.embeddingDims !== embedder.dims) wrong.push(`${meta.embeddingDims ?? 'unknown'} dimensions`);
-      if (wrong.length > 0) {
-        throw new RetrievalUnavailableError(
-          'index_mismatch',
-          `${index} cannot serve generation ${dataset.generationId} with ${embedder.model}/${embedder.dims}: it has ${wrong.join(', ')}`,
-        );
-      }
-    })();
-    if (checked.size >= 16) checked.clear();
-    checked.set(key, check);
-    check.catch(() => checked.delete(key));
+  const contract = opts.contract ?? PASSAGES_CONTRACT;
+  const key = JSON.stringify([index, dataset.generationId, embedder.model, embedder.dims, contract]);
+  if (verified.has(key)) return index;
+  try {
+    await checkPassagesIndex(es, index, { generationId: dataset.generationId, model: embedder.model, dims: embedder.dims }, {
+      contract,
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+  } catch (err) {
+    if (err instanceof PassagesIndexIncompatibleError || err instanceof IndexMetaError) {
+      throw new RetrievalUnavailableError('index_mismatch', err.message);
+    }
+    throw err;
   }
-  await check;
+  if (verified.size >= 16) verified.clear();
+  verified.add(key);
   return index;
 }
 
@@ -352,15 +396,24 @@ export interface RetrievalQuery {
   filters?: RetrievalFilters;
   params?: Partial<RetrievalParams>;
   signal?: AbortSignal;
+  /**
+   * Called once, as soon as the query embedding succeeds and before any search: the
+   * caller records the paid stage here, so a later failure cannot lose it.
+   */
+  onQueryEmbedding?: (usage: QueryEmbeddingUsage) => void;
+  /** The passages contract (tests and future versions); default `PASSAGES_CONTRACT`. */
+  contract?: PassagesContract;
 }
 
 export interface QueryEmbeddingUsage {
   model: string;
   dims: number;
   inputTemplate: string;
-  /** Billed tokens as the provider reported them (counted tokens for the fake embedder). */
+  /** Provider-reported billed tokens, or the counted input when `billing` is `uncertain`. */
   tokens: number;
   usd: number;
+  /** `uncertain`: the provider reported no usable usage; settle the stage in full. */
+  billing: 'reported' | 'uncertain';
 }
 
 export interface RetrievalRequests {
@@ -399,6 +452,7 @@ async function embedQuery(embedder: Embedder | QueryEmbedder, text: string, sign
       inputTemplate: QUERY_INPUT_TEMPLATE_VERSION,
       tokens: res.tokens,
       usd: embeddingUsd(res.tokens, embedder.usdPerMillionTokens),
+      billing: res.usageUncertain ? 'uncertain' : 'reported',
     },
   };
 }
@@ -409,11 +463,16 @@ export async function retrieveCandidates(es: Client, embedder: Embedder | QueryE
   const filters = RetrievalFiltersSchema.parse(q.filters ?? {});
   const keywordText = (q.keywordText ?? q.text).replace(/\s+/gu, ' ').trim();
   if (keywordText === '') throw new Error('the query is empty');
-  const index = await assertServablePassagesIndex(es, q.dataset, embedder);
+  const index = await assertServablePassagesIndex(es, q.dataset, embedder, {
+    timeoutMs: params.timeoutMs,
+    ...(q.contract ? { contract: q.contract } : {}),
+    ...(q.signal ? { signal: q.signal } : {}),
+  });
   const filter = compileFilters(filters).bool.filter;
 
   const t0 = Date.now();
   const { vector, usage } = await embedQuery(embedder, q.text, q.signal);
+  q.onQueryEmbedding?.(usage);
   const t1 = Date.now();
   const keywordBody = keywordChannelBody(index, keywordText, filter, params.perChannel);
   const vectorBody = vectorChannelBody(index, vector, filter, params.perChannel, numCandidates(params));
@@ -422,6 +481,8 @@ export async function retrieveCandidates(es: Client, embedder: Embedder | QueryE
     es.search<Record<string, unknown>>(keywordBody, opts),
     es.search<Record<string, unknown>>(vectorBody, opts),
   ]);
+  assertCompleteResponse(kw, 'keyword');
+  assertCompleteResponse(vec, 'vector');
   const keyword = hitsOf(kw);
   const vectorHits = hitsOf(vec);
   const fused = rrfFuse([keyword, vectorHits], params.rrfK);
@@ -450,6 +511,8 @@ export function rankingOf(c: Pick<CandidateResult, 'keyword' | 'vector' | 'fused
 
 export interface EvidencePassage extends PassageWithText {
   role: PackRole;
+  /** The case's justification (its best retrieved passage, its causes): never trimmed. */
+  reserved: boolean;
   /** `cl100k_base` tokens of `text`. */
   tokens: number;
   /** 1-based rank in the ranking the bundle was packed from; null for an attached cause. */
@@ -496,6 +559,7 @@ export async function fetchAndPack(
   const size = ids.length + 20 * causeCases.length;
   const body = evidenceFetchBody(index, filter, ids, causeCases, size);
   const res = await es.search<Record<string, unknown>>(body, transport(params, signal));
+  assertCompleteResponse(res, 'fetch');
   const total = typeof res.hits.total === 'number' ? res.hits.total : (res.hits.total?.value ?? 0);
   if (total > res.hits.hits.length) throw new Error(`the evidence fetch matched ${total} passages but returned ${res.hits.hits.length}`);
 
@@ -534,7 +598,14 @@ export async function fetchAndPack(
       ntsbNo: c.ntsbNo,
       caseRank: c.caseRank,
       caseScore: c.caseScore,
-      passages: c.passages.map((p) => ({ ...p.passage, role: p.role, tokens: p.tokens, fusedRank: p.fusedRank, fusedScore: p.fusedScore })),
+      passages: c.passages.map((p) => ({
+        ...p.passage,
+        role: p.role,
+        reserved: p.reserved,
+        tokens: p.tokens,
+        fusedRank: p.fusedRank,
+        fusedScore: p.fusedScore,
+      })),
     })),
     passages: packed.passages,
     tokens: packed.tokens,

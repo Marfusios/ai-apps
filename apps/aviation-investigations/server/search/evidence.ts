@@ -1,30 +1,32 @@
 /**
- * Evidence packing (stage 2 of retrieval; amendments A3, A11, A13). Pure: it takes the
- * case-candidate ranking, each candidate case's probable-cause passages and the
- * passages' token counts, and returns the bundle the compose stage sees.
+ * Evidence packing (stage 2 of retrieval; amendments A3, A11, A13; review gate G5 #2).
+ * Pure: it takes the case-candidate ranking, each candidate case's probable-cause
+ * passages and the passages' token counts, and returns the bundle the compose stage
+ * sees.
  *
- * 1. **Cases.** Walk the case ranking and select at most `maxCases`. A case is
- *    selected only together with every probable-cause passage it has under the
- *    request's filters (each aircraft's own cause, continuation parts included). A
- *    case without one, or whose causes no longer fit the passage or token budget, is
- *    skipped and the next case is tried: fewer, well-supported cases are preferred
- *    over thin ones (A11).
- * 2. **Diversify.** Each selected case contributes its `retrievedPerCase` best
- *    retrieved passages (fused order). A retrieved probable cause counts among them.
- *    `maxPassagesPerCase` (cause included) caps a case here and in step 5; only a
- *    case with more cause passages than the cap (an event with many aircraft) goes
- *    over it, with its causes alone.
- * 3. **Attach causes.** Each selected case's probable-cause passages are added if they
- *    were not retrieved. They count toward every limit from the start (A11).
- * 4. **Trim.** While the bundle holds more than `maxPassages` passages or more than
- *    `maxEvidenceTokens` tokens, the lowest-ranked passage that is not a probable
- *    cause is dropped. Causes are never dropped: step 1 already made them fit.
- * 5. **Fill.** Free capacity goes to the next-best retrieved passages of the selected
+ * 1. **Reserve.** Walk the case ranking and select at most `maxCases`. Each selected
+ *    case reserves its justification: its best retrieved passage (the one that ranked
+ *    it) plus every probable-cause passage it has under the request's filters (each
+ *    aircraft's own cause variant, continuation parts included), deduplicated. A case
+ *    without a cause, or whose reservation no longer fits the passage or token budget,
+ *    is skipped and the next case is tried: fewer, well-supported cases are preferred
+ *    over thin ones (A11). Reserved passages are never removed afterwards, so a case
+ *    never ends up holding only causes it was not retrieved for.
+ * 2. **Diversify.** Each selected case adds its next best retrieved passages until it
+ *    holds `retrievedPerCase` retrieved passages (a retrieved cause counts) or
+ *    `maxPassagesPerCase` passages (causes included).
+ * 3. **Trim.** While the bundle holds more than `maxPassages` passages or more than
+ *    `maxEvidenceTokens` tokens, the lowest-ranked passage added in step 2 is dropped.
+ * 4. **Fill.** Free capacity goes to the next-best retrieved passages of the selected
  *    cases, in fused order, while a case holds fewer than `maxPassagesPerCase`
- *    passages (cause included) and the bundle stays within both budgets.
+ *    passages and the bundle stays within both budgets.
+ *
+ * Only a case whose reservation alone exceeds `maxPassagesPerCase` (an event with
+ * several distinct causes) goes over that cap, with its reservation alone.
  *
  * Within a case, passages are returned in reading order (factual, analysis, probable
- * cause; then section and part), each with its role and fused rank.
+ * cause; then section and part), each with its role, whether it was reserved, and its
+ * fused rank.
  */
 import type { CaseCandidate, FusedHit } from './rrf.js';
 
@@ -43,9 +45,9 @@ export interface PackablePassage {
 export interface PackOptions {
   maxCases: number;
   maxPassages: number;
-  /** Retrieved passages per case in the diversification pass (a retrieved cause counts). */
+  /** Retrieved passages per case in the diversification pass (the best one and a retrieved cause count). */
   retrievedPerCase: number;
-  /** Passages per case after filling, cause included. */
+  /** Passages per case after filling, causes included. */
   maxPassagesPerCase: number;
   /** Passage-text tokens (`cl100k_base`) of the whole bundle. */
   maxEvidenceTokens: number;
@@ -57,6 +59,8 @@ export interface PackedPassage<P extends PackablePassage> {
   passage: P;
   /** `probable_cause` for every cause passage, retrieved or attached. */
   role: PackRole;
+  /** Part of the case's reservation (its best retrieved passage and its causes): never trimmed. */
+  reserved: boolean;
   /** 1-based fused rank, `null` for a cause that was attached without being retrieved. */
   fusedRank: number | null;
   fusedScore: number | null;
@@ -71,7 +75,7 @@ export interface PackedCase<P extends PackablePassage> {
   passages: PackedPassage<P>[];
 }
 
-export type SkipReason = 'no_probable_cause' | 'cause_over_budget';
+export type SkipReason = 'no_probable_cause' | 'no_retrieved_passage' | 'over_budget';
 
 export interface PackResult<P extends PackablePassage> {
   cases: PackedCase<P>[];
@@ -79,7 +83,7 @@ export interface PackResult<P extends PackablePassage> {
   tokens: number;
   /** Candidate cases passed over before `maxCases` were selected. */
   skipped: { ntsbNo: string; caseRank: number; reason: SkipReason }[];
-  /** Retrieved passages of selected cases removed by the trim. */
+  /** Diversification passages of selected cases removed by the trim. */
   trimmed: { id: string; ntsbNo: string; fusedRank: number }[];
 }
 
@@ -107,75 +111,95 @@ export function packEvidence<P extends PackablePassage>(input: PackInput<P>, o: 
   checkOptions(o);
   const skipped: PackResult<P>['skipped'] = [];
   const trimmed: PackResult<P>['trimmed'] = [];
+  const packed = (p: P, role: PackRole, reserved: boolean, hit: FusedHit<P> | undefined): PackedPassage<P> => ({
+    passage: p,
+    role,
+    reserved,
+    fusedRank: hit?.rank ?? null,
+    fusedScore: hit?.score ?? null,
+    tokens: input.tokensOf(p),
+  });
 
-  // 1. Cases, with room for their causes.
+  // 1. Reserve each selected case's best retrieved passage and every cause variant.
   type Slot = { candidate: CaseCandidate<P>; chosen: Map<string, PackedPassage<P>> };
   const slots: Slot[] = [];
   let count = 0;
   let tokens = 0;
   for (const candidate of input.cases) {
     if (slots.length >= o.maxCases) break;
+    const skip = (reason: SkipReason) => skipped.push({ ntsbNo: candidate.ntsbNo, caseRank: candidate.rank, reason });
     const causes = input.probableCauses.get(candidate.ntsbNo) ?? [];
     if (causes.length === 0) {
-      skipped.push({ ntsbNo: candidate.ntsbNo, caseRank: candidate.rank, reason: 'no_probable_cause' });
+      skip('no_probable_cause');
       continue;
     }
-    const causeTokens = causes.reduce((sum, p) => sum + input.tokensOf(p), 0);
-    if (count + causes.length > o.maxPassages || tokens + causeTokens > o.maxEvidenceTokens) {
-      skipped.push({ ntsbNo: candidate.ntsbNo, caseRank: candidate.rank, reason: 'cause_over_budget' });
+    const best = candidate.passages[0];
+    if (!best) {
+      skip('no_retrieved_passage');
       continue;
     }
     const retrieved = new Map(candidate.passages.map((h) => [h.id, h]));
     const chosen = new Map<string, PackedPassage<P>>();
-    // 3 (done first so a cause always holds its place). Causes keep their fused rank when retrieved.
     for (const p of causes) {
       if (p.ntsbNo !== candidate.ntsbNo || p.sectionKind !== 'probable_cause') {
         throw new Error(`passage ${p.id} is not a probable cause of ${candidate.ntsbNo}`);
       }
-      const hit = retrieved.get(p.id);
-      chosen.set(p.id, { passage: p, role: 'probable_cause', fusedRank: hit?.rank ?? null, fusedScore: hit?.score ?? null, tokens: input.tokensOf(p) });
+      chosen.set(p.id, packed(p, 'probable_cause', true, retrieved.get(p.id)));
+    }
+    if (!chosen.has(best.id)) chosen.set(best.id, packed(best.item, 'retrieved', true, best));
+    let size = 0;
+    let weight = 0;
+    for (const p of chosen.values()) {
+      size += 1;
+      weight += p.tokens;
+    }
+    if (count + size > o.maxPassages || tokens + weight > o.maxEvidenceTokens) {
+      skip('over_budget');
+      continue;
     }
     slots.push({ candidate, chosen });
-    count += causes.length;
-    tokens += causeTokens;
+    count += size;
+    tokens += weight;
   }
 
   const isCause = (h: FusedHit<P>) => h.item.sectionKind === 'probable_cause';
   const add = (slot: Slot, h: FusedHit<P>, role: PackRole) => {
-    const packed: PackedPassage<P> = { passage: h.item, role, fusedRank: h.rank, fusedScore: h.score, tokens: input.tokensOf(h.item) };
-    slot.chosen.set(h.id, packed);
+    const p = packed(h.item, role, false, h);
+    slot.chosen.set(h.id, p);
     count += 1;
-    tokens += packed.tokens;
+    tokens += p.tokens;
   };
 
-  // 2. Diversify: the case's best retrieved passages; a retrieved cause is already chosen and counts.
+  // 2. Diversify: the next best retrieved passages, up to `retrievedPerCase` retrieved ones.
   for (const slot of slots) {
-    for (const h of slot.candidate.passages.slice(0, o.retrievedPerCase)) {
+    let retrievedHeld = [...slot.chosen.values()].filter((p) => p.fusedRank !== null).length;
+    for (const h of slot.candidate.passages) {
+      if (retrievedHeld >= o.retrievedPerCase || slot.chosen.size >= o.maxPassagesPerCase) break;
       if (slot.chosen.has(h.id)) continue;
-      // Every cause under the filters was attached in step 1; skip anything else claiming to be one.
+      // Every cause under the filters was reserved in step 1; skip anything else claiming to be one.
       if (isCause(h)) continue;
-      if (slot.chosen.size >= o.maxPassagesPerCase) break;
       add(slot, h, 'retrieved');
+      retrievedHeld += 1;
     }
   }
 
-  // 4. Trim the lowest-ranked non-cause passages until both budgets hold.
+  // 3. Trim the lowest-ranked unreserved passages until both budgets hold.
   while (count > o.maxPassages || tokens > o.maxEvidenceTokens) {
     let worst: { slot: Slot; p: PackedPassage<P> } | null = null;
     for (const slot of slots) {
       for (const p of slot.chosen.values()) {
-        if (p.role === 'probable_cause' || p.fusedRank === null) continue;
+        if (p.reserved || p.fusedRank === null) continue;
         if (!worst || p.fusedRank > (worst.p.fusedRank as number)) worst = { slot, p };
       }
     }
-    if (!worst) throw new Error('the probable causes alone exceed the bundle limits'); // excluded by step 1
+    if (!worst) throw new Error('the reservations alone exceed the bundle limits'); // excluded by step 1
     worst.slot.chosen.delete(worst.p.passage.id);
     count -= 1;
     tokens -= worst.p.tokens;
     trimmed.push({ id: worst.p.passage.id, ntsbNo: worst.p.passage.ntsbNo, fusedRank: worst.p.fusedRank as number });
   }
 
-  // 5. Fill free capacity in fused order, within the per-case cap and both budgets.
+  // 4. Fill free capacity in fused order, within the per-case cap and both budgets.
   const trimmedIds = new Set(trimmed.map((t) => t.id));
   const rest = slots
     .flatMap((slot) => slot.candidate.passages.filter((h) => !slot.chosen.has(h.id) && !trimmedIds.has(h.id) && !isCause(h)).map((h) => ({ slot, h })))

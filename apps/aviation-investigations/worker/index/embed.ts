@@ -283,7 +283,8 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
           throw new EmbeddingRequestError(`invalid embedding response: ${problem}`, attempt, { kind: 'api', status: 200 });
         }
         await cfg.gate.settle(reservation, outcome);
-        return { vectors, tokens: billed ?? tokens };
+        // Without a usage report the attempt was settled in full above; say so to the caller.
+        return billed === undefined ? { vectors, tokens, usageUncertain: true } : { vectors, tokens: billed };
       }
     },
   };

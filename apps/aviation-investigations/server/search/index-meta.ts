@@ -16,6 +16,15 @@ export interface IndexMeta {
   /** Passages indices: the embedding model and dimensions the vectors were built with. */
   embeddingModel: string | null;
   embeddingDims: number | null;
+  /** Passages indices: the chunker and embedding-input template versions. */
+  chunkerVersion: string | null;
+  inputTemplateVersion: string | null;
+}
+
+export interface IndexMetaOptions {
+  /** Request timeout in milliseconds (default: the client's). */
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export class IndexMetaError extends Error {
@@ -31,10 +40,14 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? 
  * Read an index's `_meta`. Throws `IndexMetaError` when the index does not exist or
  * the name is an alias (an alias resolves to differently named indices).
  */
-export async function readIndexMeta(es: Client, index: string): Promise<IndexMeta> {
+export async function readIndexMeta(es: Client, index: string, opts: IndexMetaOptions = {}): Promise<IndexMeta> {
   let found: Record<string, { mappings?: { _meta?: Record<string, unknown> } }>;
+  const transport = {
+    ...(opts.timeoutMs !== undefined ? { requestTimeout: opts.timeoutMs } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  };
   try {
-    found = (await es.indices.getMapping({ index })) as typeof found;
+    found = (await es.indices.getMapping({ index }, transport)) as typeof found;
   } catch (err) {
     if ((err as { meta?: { statusCode?: number } }).meta?.statusCode === 404) {
       throw new IndexMetaError(`index ${index} does not exist`);
@@ -56,5 +69,7 @@ export async function readIndexMeta(es: Client, index: string): Promise<IndexMet
     buildId: str(meta.build_id),
     embeddingModel: str(meta.embedding_model),
     embeddingDims: typeof dims === 'number' && Number.isSafeInteger(dims) && dims > 0 ? dims : null,
+    chunkerVersion: str(meta.chunker_version),
+    inputTemplateVersion: str(meta.input_template_version),
   };
 }

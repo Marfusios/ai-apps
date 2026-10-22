@@ -1,10 +1,12 @@
 /**
- * The retrieval evaluation (amendment A13): for every question and every channel size,
- * stage 1 runs once (both channels, the question's filters) and yields three case
- * rankings: keyword (BM25 alone), vector (kNN alone) and hybrid (RRF). Case recall is
- * measured on each ranking; each ranking is then packed with the live packing rules
- * and evidence coverage is measured on the bundle. Every Elasticsearch body is kept,
- * query vectors elided, for review gate G5.
+ * The retrieval evaluation (amendment A13; review gate G5): for every RAG question and
+ * every channel size, stage 1 runs once (both channels, the question's filters) and
+ * yields three case rankings: keyword (BM25 alone), vector (kNN alone) and hybrid
+ * (RRF). Case recall is measured on each ranking; each ranking is then packed with
+ * the live packing rules and the bundle is scored (`metrics.ts`: case, question-
+ * specific evidence and structural cause coverage, precision, nDCG@6). Questions of
+ * the `structured` section are never run here. Every Elasticsearch body is kept,
+ * query vectors elided.
  */
 import type { Client } from '@elastic/elasticsearch';
 import type { Embedder } from '../../server/ai/embeddings.js';
@@ -17,13 +19,19 @@ import {
   type RetrievalParams,
 } from '../../server/search/hybrid.js';
 import { aggregate, scoreMode, type Aggregate, type ModeScore } from './metrics.js';
-import type { DatasetItem, Tag } from './silver.js';
+import { satisfiesTextCriterion, type DatasetItem, type Tag } from './silver.js';
 
 export const MODES = ['keyword', 'vector', 'hybrid'] as const;
 export type Mode = (typeof MODES)[number];
 
 export interface BundleSummary {
-  cases: { ntsbNo: string; caseRank: number; passages: { id: string; sectionKind: string; role: string; fusedRank: number | null; tokens: number }[] }[];
+  cases: {
+    ntsbNo: string;
+    caseRank: number;
+    /** The bundle passages satisfy the question's text criterion (null: no text criterion or not expected). */
+    evidence: boolean | null;
+    passages: { id: string; sectionKind: string; role: string; reserved: boolean; fusedRank: number | null; tokens: number }[];
+  }[];
   passages: number;
   tokens: number;
   skipped: { ntsbNo: string; caseRank: number; reason: string }[];
@@ -50,6 +58,8 @@ export interface SizeResult {
 export interface QuestionResult {
   id: string;
   split: 'dev' | 'holdout';
+  group: string;
+  paraphraseOf: string | null;
   tags: readonly Tag[];
   question: string;
   filters: DatasetItem['filters'];
@@ -75,7 +85,7 @@ export interface EvaluateOptions {
   log?: (message: string) => void;
 }
 
-/** Run the evaluation over `items` against one passages index. */
+/** Run the evaluation over the RAG questions of `items` against one passages index. */
 export async function evaluateRetrieval(
   es: Client,
   embedder: Embedder,
@@ -86,9 +96,10 @@ export async function evaluateRetrieval(
   const log = opts.log ?? (() => undefined);
   const base = retrievalParams(opts.params);
   const questions: QuestionResult[] = [];
+  const rag = items.filter((q) => q.section === 'rag');
   let tokens = 0;
   let usd = 0;
-  for (const [i, q] of items.entries()) {
+  for (const [i, q] of rag.entries()) {
     const sizes: Record<string, SizeResult> = {};
     for (const size of opts.sizes) {
       const params = retrievalParams({ ...opts.params, perChannel: size });
@@ -100,11 +111,20 @@ export async function evaluateRetrieval(
         const ranking = rankingOf(c, mode);
         const order = ranking.map((x) => x.ntsbNo);
         const packed = await fetchAndPack(es, c.index, c.filter, ranking, params);
+        const expected = new Set(q.expected);
         const bundle: BundleSummary = {
           cases: packed.cases.map((x) => ({
             ntsbNo: x.ntsbNo,
             caseRank: x.caseRank,
-            passages: x.passages.map((p) => ({ id: p.id, sectionKind: p.sectionKind, role: p.role, fusedRank: p.fusedRank, tokens: p.tokens })),
+            evidence: expected.has(x.ntsbNo) ? satisfiesTextCriterion(q.derivation.criteria, x.passages) : null,
+            passages: x.passages.map((p) => ({
+              id: p.id,
+              sectionKind: p.sectionKind,
+              role: p.role,
+              reserved: p.reserved,
+              fusedRank: p.fusedRank,
+              tokens: p.tokens,
+            })),
           })),
           passages: packed.passages,
           tokens: packed.tokens,
@@ -113,7 +133,7 @@ export async function evaluateRetrieval(
         };
         const rankOf = new Map(order.slice(0, 100).map((n, k) => [n, k + 1]));
         modes[mode] = {
-          ...scoreMode(q.expected, order, bundle.cases, params.maxCases),
+          ...scoreMode(q.expected, order, packed.cases, params.maxCases, q.derivation.criteria),
           top20: order.slice(0, 20),
           expectedRanks: Object.fromEntries(q.expected.map((n) => [n, rankOf.get(n) ?? null])),
           bundle,
@@ -127,8 +147,18 @@ export async function evaluateRetrieval(
         timingsMs: c.timingsMs,
       };
     }
-    questions.push({ id: q.id, split: q.split, tags: q.tags, question: q.question, filters: q.filters, expected: [...q.expected], sizes });
-    log(`${i + 1}/${items.length} ${q.id}`);
+    questions.push({
+      id: q.id,
+      split: q.split,
+      group: q.group,
+      paraphraseOf: q.paraphrase_of ?? null,
+      tags: q.tags,
+      question: q.question,
+      filters: q.filters,
+      expected: [...q.expected],
+      sizes,
+    });
+    log(`${i + 1}/${rag.length} ${q.id}`);
   }
   return { sizes: [...opts.sizes], params: base, questions, summary: summarize(questions, opts.sizes), queryEmbedding: { tokens, usd } };
 }

@@ -19,9 +19,12 @@
  * call and never reserves money itself: an interactive request's admission
  * reservation (`server/quota`, Task 15) already covers one query embedding at the
  * `embed` stage cap (`STAGE_CAPS.embed`, 1,000 tokens). The caller settles that
- * reservation with the usage the retrieval result reports (`RetrievalResult.queryEmbedding`)
- * or, after a `QueryEmbeddingError`, by its `billing` (`none`: the provider rejected
- * the request; `uncertain`: it may have been billed). The query input is
+ * reservation with the usage retrieval hands it (`RetrievalQuery.onQueryEmbedding`,
+ * called as soon as the embedding succeeds, so a later failure cannot lose it), or,
+ * after a `QueryEmbeddingError`, by its `billing`: `none` (the provider rejected the
+ * request), `usage` (processed and billed at `billedTokens`, but unusable) or
+ * `uncertain` (it may have been billed: settle in full). A successful response
+ * without a usable usage report is marked `usageUncertain`. The query input is
  * `queryEmbeddingInput(text)` (template `QUERY_INPUT_TEMPLATE_VERSION`): the question
  * with whitespace runs collapsed, no header. Passage inputs carry a header
  * (`input-v1`); queries deliberately do not, and both use the same model and
@@ -34,8 +37,13 @@ import { countTokens } from './tokens.js';
 export interface EmbedResult {
   /** One vector per input, in input order. */
   vectors: Float32Array[];
-  /** Billed input tokens. */
+  /** Billed input tokens; the counted input tokens when `usageUncertain`. */
   tokens: number;
+  /**
+   * The provider processed the request but reported no usable usage: `tokens` is only
+   * the counted input, and the call must be settled as uncertain (in full).
+   */
+  usageUncertain?: boolean;
 }
 
 export interface Embedder {
@@ -238,8 +246,11 @@ export function queryEmbeddingInput(text: string): string {
   return input;
 }
 
-/** How a failed query embedding is billed: `none` (rejected by the provider) or `uncertain`. */
-export type QueryEmbeddingBilling = 'none' | 'uncertain';
+/**
+ * How a failed query embedding is billed: `none` (rejected by the provider), `usage`
+ * (processed and billed at `billedTokens`) or `uncertain` (settle in full).
+ */
+export type QueryEmbeddingBilling = 'none' | 'usage' | 'uncertain';
 
 /** A failed query embedding; `billing` tells the caller how to settle its reservation. */
 export class QueryEmbeddingError extends EmbeddingRequestError {
@@ -247,6 +258,8 @@ export class QueryEmbeddingError extends EmbeddingRequestError {
     message: string,
     info: ProviderErrorInfo,
     readonly billing: QueryEmbeddingBilling,
+    /** Provider-reported tokens when `billing` is `usage`; null otherwise. */
+    readonly billedTokens: number | null = null,
   ) {
     super(message, 1, info);
     this.name = 'QueryEmbeddingError';
@@ -271,10 +284,10 @@ export interface QueryEmbedder extends Embedder {
 }
 
 /**
- * The API's query embedder: one attempt per call, no retries, no reservation of its
- * own (see the module comment). A failure throws `QueryEmbeddingError` with its
- * billing; a successful response without a usable usage report is charged as the
- * counted input tokens (the response was processed, so it is billed).
+ * The API's query embedder: exactly one input of at most `MAX_QUERY_INPUT_TOKENS`
+ * tokens per call, one attempt, no retries, no reservation of its own (see the module
+ * comment). A failure throws `QueryEmbeddingError` with its billing; a successful
+ * response without a usable usage report returns `usageUncertain: true`.
  */
 export function createOpenAIQueryEmbedder(cfg: OpenAIQueryEmbedderConfig): QueryEmbedder {
   const price = embeddingPrice(cfg.model).input;
@@ -287,7 +300,9 @@ export function createOpenAIQueryEmbedder(cfg: OpenAIQueryEmbedderConfig): Query
     ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
   });
   const embedWithSignal = async (texts: string[], signal?: AbortSignal): Promise<EmbedResult> => {
+    if (texts.length !== 1) throw new Error(`the query embedder takes exactly one input, not ${texts.length}`);
     const counted = checkBatch(texts);
+    if (counted > MAX_QUERY_INPUT_TOKENS) throw new QueryTooLongError(counted);
     let response: Awaited<ReturnType<typeof requestEmbeddings>>;
     try {
       response = await requestEmbeddings(client, cfg.model, cfg.dims, texts, signal);
@@ -305,10 +320,15 @@ export function createOpenAIQueryEmbedder(cfg: OpenAIQueryEmbedderConfig): Query
       vectors = decodeEmbeddingResponse(response.data, texts.length, cfg.dims);
     } catch (err) {
       const problem: ResponseProblem = err instanceof ResponseShapeError ? err.problem : 'invalid_response_shape';
-      // Processed and billed: settle at the reported usage, or in full without one.
-      throw new QueryEmbeddingError(`invalid query embedding response: ${problem}`, { kind: 'api', status: 200 }, 'uncertain');
+      // Processed, so billed: at the reported usage when there is one, otherwise in full.
+      throw new QueryEmbeddingError(
+        `invalid query embedding response: ${problem}`,
+        { kind: 'api', status: 200 },
+        billed === undefined ? 'uncertain' : 'usage',
+        billed ?? null,
+      );
     }
-    return { vectors, tokens: billed ?? counted };
+    return billed === undefined ? { vectors, tokens: counted, usageUncertain: true } : { vectors, tokens: billed };
   };
   return {
     model: cfg.model,
