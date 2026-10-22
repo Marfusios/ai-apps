@@ -28,7 +28,7 @@ const DIMS = 8;
 const PRICE = 0.02;
 const API_KEY = 'sk-test-not-a-real-key';
 
-type Step = { status: number; body?: unknown; headers?: Record<string, string> } | { throw: Error };
+type Step = { status: number; body?: unknown; raw?: string; headers?: Record<string, string> } | { throw: Error };
 
 function vectorB64(seed: number): string {
   const v = new Float32Array(DIMS).map((_, i) => (i + seed) / 10);
@@ -54,7 +54,7 @@ function scriptedFetch(steps: Step[], events: string[]) {
     requests.push({ body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>, auth: headers.get('authorization') });
     if (!step) throw new Error('unexpected request');
     if ('throw' in step) throw step.throw;
-    return new Response(JSON.stringify(step.body ?? { error: { message: 'failure', type: 'server_error', code: null } }), {
+    return new Response(step.raw ?? JSON.stringify(step.body ?? { error: { message: 'failure', type: 'server_error', code: null } }), {
       status: step.status,
       headers: { 'content-type': 'application/json', ...step.headers },
     });
@@ -225,6 +225,96 @@ describe('OpenAI embedder', () => {
     // Stopped before reserving or sending anything.
     expect(far.events.filter((e) => e === 'fetch')).toHaveLength(1);
     expect(far.memory.records).toHaveLength(1);
+  });
+
+  it('waits for rate-limit resets reported on a 429, taking the latest deadline', async () => {
+    const limited = { error: { message: 'slow', type: 'tokens', code: 'rate_limit_exceeded' } };
+    const cases: [Record<string, string>, number][] = [
+      // No remaining tokens: wait for the token reset, not the 1 s local backoff.
+      [{ 'x-ratelimit-remaining-tokens': '0', 'x-ratelimit-reset-tokens': '2m0s' }, 120_000],
+      // Remaining count not reported on a 429: the reset still applies; the later of it and Retry-After wins.
+      [{ 'retry-after': '30', 'x-ratelimit-reset-tokens': '2m0s' }, 120_000],
+      [{ 'retry-after': '200', 'x-ratelimit-remaining-tokens': '0', 'x-ratelimit-reset-tokens': '2m0s' }, 200_000],
+      // Out of requests.
+      [{ 'x-ratelimit-remaining-requests': '0', 'x-ratelimit-reset-requests': '1m30s', 'x-ratelimit-remaining-tokens': '900000', 'x-ratelimit-reset-tokens': '5s' }, 90_000],
+    ];
+    for (const [headers, wait] of cases) {
+      const { embedder, events, sleeps } = embedderWith([{ status: 429, headers, body: limited }, { status: 200, body: okBody(2, TOKENS) }]);
+      await embedder.embed(TEXTS);
+      expect(sleeps).toEqual([wait]);
+      expect(events.filter((e) => e === 'fetch' || e.startsWith('sleep') || e.startsWith('reserve'))).toEqual([
+        `reserve ${RESERVE.toFixed(6)}`, 'fetch', `sleep ${wait}`, `reserve ${RESERVE.toFixed(6)}`, 'fetch',
+      ]);
+    }
+    // Plenty of tokens left: the token reset does not apply; the local backoff does.
+    const plenty = embedderWith([
+      { status: 429, headers: { 'x-ratelimit-remaining-tokens': '900000', 'x-ratelimit-reset-tokens': '2m0s' }, body: limited },
+      { status: 200, body: okBody(2, TOKENS) },
+    ]);
+    await plenty.embedder.embed(TEXTS);
+    expect(plenty.sleeps).toEqual([1000]);
+  });
+
+  it('stops resumably when a 429 reports a rate-limit reset beyond the limit', async () => {
+    const { embedder, events, memory, clock } = embedderWith([
+      { status: 429, headers: { 'x-ratelimit-remaining-tokens': '0', 'x-ratelimit-reset-tokens': '15m0s' }, body: { error: { message: 'slow', type: 'tokens', code: 'rate_limit_exceeded' } } },
+      { status: 200, body: okBody(2, TOKENS) },
+    ]);
+    const err = await embedder.embed(TEXTS).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EmbeddingDeferredError);
+    expect((err as EmbeddingDeferredError).retryAt.getTime()).toBe(clock.now + 15 * 60_000);
+    expect(events.filter((e) => e === 'fetch')).toHaveLength(1);
+    // The rejected attempt was settled at zero before stopping; nothing is left open.
+    expect(memory.records.map((r) => [r.status, r.chargedUsd])).toEqual([['settled', 0]]);
+  });
+
+  it('reports malformed successful responses by fixed categories, never by their content', async () => {
+    const S = 'SENTINEL_RESPONSE';
+    const item = (index: unknown, embedding: unknown = vectorB64(0)) => ({ object: 'embedding', index, embedding });
+    const body = (data: unknown, usage: unknown = { prompt_tokens: TOKENS, total_tokens: TOKENS }) => ({ object: 'list', model: S, data, usage });
+    const short = Buffer.from(new Float32Array([1, 2, 3]).buffer).toString('base64');
+    const cases: [Step, string][] = [
+      [{ status: 200, body: body([item(S), item(1)]) }, 'invalid embedding response: invalid_response_shape'],
+      [{ status: 200, body: body([item(0), item(99)]) }, 'invalid embedding response: index_out_of_range'],
+      [{ status: 200, body: body([item(0), item(0)]) }, 'invalid embedding response: index_out_of_range'],
+      [{ status: 200, body: body([item(0), item(1, short)]) }, 'invalid embedding response: dimension_mismatch'],
+      [{ status: 200, body: body([item(0), item(1, { [S]: S })]) }, 'invalid embedding response: invalid_response_shape'],
+      [{ status: 200, body: body(S) }, 'invalid embedding response: invalid_response_shape'],
+      [{ status: 200, body: body([item(0)]) }, 'invalid embedding response: count_mismatch'],
+      [{ status: 200, raw: `${S} is not JSON` }, 'embedding request failed after 1 attempt(s): unexpected client error'],
+    ];
+    for (const [step, message] of cases) {
+      const events: string[] = [];
+      const gate = createMemorySpendGate(1);
+      const embedder = createOpenAIEmbedder({
+        apiKey: API_KEY, model: 'text-embedding-3-small', dims: DIMS, gate, purpose: 'test',
+        fetch: scriptedFetch([step, { status: 200, body: okBody(2, TOKENS) }], events).fetch, baseURL: 'http://embeddings.test/v1',
+        sleep: async () => undefined, log: (m) => events.push(m),
+      });
+      const err = await embedder.embed(TEXTS).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(EmbeddingRequestError);
+      expect((err as Error).message).toBe(message);
+      expect(events.filter((e) => e === 'fetch')).toHaveLength(1);
+      for (const text of [describeWorkerError(err), inspect(err, { depth: 10 }), JSON.stringify(err), ...events]) {
+        expect(text).not.toContain('SENTINEL');
+      }
+      // Processed requests stay charged: at the reported usage, or in full when it is unusable.
+      // (A body that is not JSON cannot be checked for usage: uncertain.)
+      expect(gate.records.map((r) => r.status)).toEqual(['raw' in step ? 'uncertain' : 'settled']);
+    }
+
+    // A usable response without a usable usage report succeeds and is charged in full.
+    const events: string[] = [];
+    const gate = createMemorySpendGate(1);
+    const embedder = createOpenAIEmbedder({
+      apiKey: API_KEY, model: 'text-embedding-3-small', dims: DIMS, gate, purpose: 'test',
+      fetch: scriptedFetch([{ status: 200, body: { ...okBody(2, TOKENS), usage: { prompt_tokens: S } } }], events).fetch,
+      baseURL: 'http://embeddings.test/v1', log: (m) => events.push(m),
+    });
+    const res = await embedder.embed(TEXTS);
+    expect(res.tokens).toBe(TOKENS);
+    expect(gate.records.map((r) => [r.status, r.chargedUsd])).toEqual([['uncertain', RESERVE]]);
+    for (const text of events) expect(text).not.toContain('SENTINEL');
   });
 
   it('keeps provider messages, keys and inputs out of errors and the worker error line', async () => {

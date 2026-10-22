@@ -5,11 +5,14 @@
  *   with SDK retries off (`maxRetries: 0`). It retries only rate limits (429, except
  *   `insufficient_quota`), request timeouts (408), server errors (5xx) and connection
  *   failures/timeouts, at most `maxAttempts` (3) attempts.
- * - **Waiting.** A provider deadline (`Retry-After`, `retry-after-ms`, or the token
- *   rate limit's reset after a response that nearly used it up) is honoured in full;
- *   only the locally generated exponential backoff is capped. A deadline further away
- *   than `maxWaitMs` (10 minutes) stops the run with `EmbeddingDeferredError`, which
- *   says when to rerun: every vector paid for so far is in the cache.
+ * - **Waiting.** Provider deadlines are honoured in full, after successful and failed
+ *   responses alike: `Retry-After` / `retry-after-ms`, and the token and request rate
+ *   limits' resets (`x-ratelimit-reset-tokens`, `x-ratelimit-reset-requests`) when the
+ *   matching remaining count is too low for the next request, or missing on a 429.
+ *   The latest of them applies. Only the locally generated exponential backoff (used
+ *   when the provider names no deadline) is capped. A deadline further away than
+ *   `maxWaitMs` (10 minutes) stops the run with `EmbeddingDeferredError`, which says
+ *   when to rerun: every vector paid for so far is in the cache.
  * - **Metering per attempt (A7).** Before each attempt it reserves the batch's maximum
  *   cost (exact `cl100k_base` tokens × price × `RESERVATION_SAFETY_FACTOR`) on the
  *   spend gate; nothing is sent if the reservation is refused. The attempt then
@@ -22,7 +25,9 @@
  * - **Errors carry metadata only.** `EmbeddingRequestError` keeps the HTTP status, a
  *   provider error code and the request id when they look like identifiers, and
  *   nothing else: no provider message (a 401 message quotes part of the key), no
- *   request body, and no `cause`, so no formatter can unwrap the raw SDK error.
+ *   request body, and no `cause`, so no formatter can unwrap the raw SDK error. A
+ *   malformed successful response is reported by a fixed category
+ *   (`ResponseProblem`), never by a value taken from it.
  * - Vectors are requested as base64 and decoded straight into `Float32Array`.
  *
  * `createFakeEmbedder` is deterministic (a hash-seeded unit vector per input) and
@@ -169,6 +174,16 @@ export class EmbeddingRequestError extends Error {
   }
 }
 
+/** Fixed categories of a malformed successful response; messages never quote the response. */
+export type ResponseProblem = 'invalid_response_shape' | 'count_mismatch' | 'index_out_of_range' | 'dimension_mismatch' | 'invalid_vector';
+
+class ResponseShapeError extends Error {
+  constructor(readonly problem: ResponseProblem) {
+    super(problem);
+    this.name = 'ResponseShapeError';
+  }
+}
+
 /** The provider asked for a wait longer than the run may sleep: rerun after `retryAt`. */
 export class EmbeddingDeferredError extends Error {
   constructor(
@@ -256,20 +271,62 @@ export function parseResetDuration(raw: string | null): number | undefined {
   return matched === raw.trim() && matched !== '' ? total : undefined;
 }
 
-function decodeVector(b64: string, dims: number): Float32Array {
+/** Rate-limit headers of a response (successful or not) that set the earliest next request, in ms from now. */
+export function rateLimitWaitMs(headers: Headers | undefined, batchTokens: number, now: number, rejected: boolean): number | undefined {
+  if (!headers) return undefined;
+  const waits: number[] = [];
+  const retryAfter = retryAfterMs(headers, now);
+  if (retryAfter !== undefined) waits.push(retryAfter);
+  /** A reset applies when its remaining count is below `need`, or is not reported on a rejected request. */
+  const reset = (remainingHeader: string, resetHeader: string, need: number) => {
+    const ms = parseResetDuration(headers.get(resetHeader));
+    if (ms === undefined) return;
+    const raw = headers.get(remainingHeader);
+    const remaining = raw === null ? Number.NaN : Number(raw);
+    if (Number.isFinite(remaining) ? remaining < need : rejected) waits.push(ms);
+  };
+  reset('x-ratelimit-remaining-tokens', 'x-ratelimit-reset-tokens', 2 * batchTokens);
+  reset('x-ratelimit-remaining-requests', 'x-ratelimit-reset-requests', 1);
+  return waits.length > 0 ? Math.max(...waits) : undefined;
+}
+
+function decodeVector(b64: unknown, dims: number): Float32Array {
+  if (typeof b64 !== 'string') throw new ResponseShapeError('invalid_response_shape');
   const buf = Buffer.from(b64, 'base64');
-  if (buf.byteLength !== dims * 4) throw new Error(`embedding has ${buf.byteLength / 4} dimensions, expected ${dims}`);
+  if (buf.byteLength !== dims * 4) throw new ResponseShapeError('dimension_mismatch');
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const out = new Float32Array(dims);
   let norm = 0;
   for (let i = 0; i < dims; i += 1) {
     const v = view.getFloat32(i * 4, true);
-    if (!Number.isFinite(v)) throw new Error('embedding contains a non-finite value');
+    if (!Number.isFinite(v)) throw new ResponseShapeError('invalid_vector');
     out[i] = v;
     norm += v * v;
   }
-  if (!(norm > 0)) throw new Error('embedding is the zero vector');
+  if (!(norm > 0)) throw new ResponseShapeError('invalid_vector');
   return out;
+}
+
+/** Vectors of a successful response in input order; throws `ResponseShapeError` for anything unexpected. */
+function decodeResponse(body: unknown, count: number, dims: number): Float32Array[] {
+  const items = (body as { data?: unknown } | null)?.data;
+  if (typeof body !== 'object' || body === null || !Array.isArray(items)) throw new ResponseShapeError('invalid_response_shape');
+  if (items.length !== count) throw new ResponseShapeError('count_mismatch');
+  const vectors = new Array<Float32Array>(count);
+  for (const item of items as unknown[]) {
+    if (typeof item !== 'object' || item === null) throw new ResponseShapeError('invalid_response_shape');
+    const index = (item as { index?: unknown }).index;
+    if (typeof index !== 'number' || !Number.isInteger(index)) throw new ResponseShapeError('invalid_response_shape');
+    if (index < 0 || index >= count || vectors[index]) throw new ResponseShapeError('index_out_of_range');
+    vectors[index] = decodeVector((item as { embedding?: unknown }).embedding, dims);
+  }
+  return vectors;
+}
+
+/** Billed prompt tokens, when the response reports them as a non-negative integer. */
+function billedTokens(body: unknown): number | undefined {
+  const t = (body as { usage?: { prompt_tokens?: unknown } } | null)?.usage?.prompt_tokens;
+  return typeof t === 'number' && Number.isSafeInteger(t) && t >= 0 ? t : undefined;
 }
 
 export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
@@ -289,8 +346,15 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
     ...(cfg.fetch ? { fetch: cfg.fetch } : {}),
     ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
   });
-  /** No request before this time: the token rate limit was nearly used up. */
+  /** No request before this time: a provider deadline (rate-limit reset or `Retry-After`). */
   let notBefore = 0;
+  let notBeforeReason = 'the provider rate limit';
+  const deferUntil = (at: number, reason: string) => {
+    if (at > notBefore) {
+      notBefore = at;
+      notBeforeReason = reason;
+    }
+  };
 
   /** Wait for a provider deadline in full, or stop resumably when it is too far away. */
   const waitUntil = async (at: number, reason: string) => {
@@ -309,7 +373,7 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
       const tokens = checkBatch(texts);
       const reserve = reservationUsd(tokens, price);
       for (let attempt = 1; ; attempt += 1) {
-        await waitUntil(notBefore, 'the token rate limit');
+        await waitUntil(notBefore, notBeforeReason);
         const reservation = await cfg.gate.reserve({ category: 'indexing', usd: reserve, purpose: cfg.purpose });
         let response: Awaited<ReturnType<typeof requestEmbeddings>>;
         try {
@@ -322,9 +386,10 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
             throw new EmbeddingRequestError(`embedding request failed after ${attempt} attempt(s): ${what}`, attempt, f.info);
           }
           const headers = err instanceof APIError ? err.headers : undefined;
-          const provider = retryAfterMs(headers, now());
+          const provider = rateLimitWaitMs(headers, tokens, now(), f.info.status === 429);
           if (provider !== undefined) {
-            await waitUntil(now() + provider, `the provider (${what})`);
+            // Waited out (or deferred) at the top of the loop, before anything is reserved.
+            deferUntil(now() + provider, `the provider (${what})`);
           } else {
             const delay = Math.min(maxBackoffMs, baseDelayMs * 2 ** (attempt - 1));
             log(`embedding attempt ${attempt} failed (${what}); retrying in ${delay} ms`);
@@ -333,30 +398,24 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
           continue;
         }
 
-        // The request was processed: it is billed whatever its content.
+        // The request was processed: it is billed whatever its content. Without a usable
+        // usage report the attempt is charged in full.
         const { data, headers } = response;
-        const billed = data.usage?.prompt_tokens;
-        const usd = typeof billed === 'number' && billed >= 0 ? embeddingUsd(billed, price) : undefined;
-        const outcome = usd === undefined ? ('uncertain' as const) : { usd, tokens: billed as number };
+        const billed = billedTokens(data);
+        const outcome = billed === undefined ? ('uncertain' as const) : { usd: embeddingUsd(billed, price), tokens: billed };
+        if (billed === undefined) log('embedding response without a usable usage report: charged at the full reservation');
+        const wait = rateLimitWaitMs(headers, tokens, now(), false);
+        if (wait !== undefined) deferUntil(now() + wait, 'the provider rate limit');
         let vectors: Float32Array[];
         try {
-          if (data.data.length !== texts.length) throw new Error(`${data.data.length} embeddings for ${texts.length} inputs`);
-          vectors = new Array<Float32Array>(texts.length);
-          for (const item of data.data) {
-            if (!Number.isInteger(item.index) || item.index < 0 || item.index >= texts.length || vectors[item.index]) {
-              throw new Error(`unexpected embedding index ${String(item.index).slice(0, 20)}`);
-            }
-            vectors[item.index] = decodeVector(item.embedding, cfg.dims);
-          }
+          vectors = decodeResponse(data, texts.length, cfg.dims);
         } catch (err) {
           await cfg.gate.settle(reservation, outcome);
-          const reason = err instanceof Error ? err.message : 'malformed response';
-          throw new EmbeddingRequestError(`invalid embedding response: ${reason}`, attempt, { kind: 'api', status: 200 });
+          // A fixed category only: never a value from the response or a decoder message.
+          const problem: ResponseProblem = err instanceof ResponseShapeError ? err.problem : 'invalid_response_shape';
+          throw new EmbeddingRequestError(`invalid embedding response: ${problem}`, attempt, { kind: 'api', status: 200 });
         }
         await cfg.gate.settle(reservation, outcome);
-        const remaining = Number(headers.get('x-ratelimit-remaining-tokens'));
-        const reset = parseResetDuration(headers.get('x-ratelimit-reset-tokens'));
-        if (Number.isFinite(remaining) && reset !== undefined && remaining < 2 * tokens) notBefore = now() + reset;
         return { vectors, tokens: billed ?? tokens };
       }
     },

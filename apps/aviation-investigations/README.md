@@ -340,12 +340,14 @@ pnpm worker index passages --generation <id> --confirm-cost  # paid: OPENAI_API_
   phase(s)>"` + newline + passage text; only the raw text is stored and cited.
   `text-embedding-3-small` at 1,536 dimensions, through the official SDK with SDK
   retries off; our own retry handles 429, 408, 5xx and connection failures, at most 3
-  attempts. A provider deadline (`Retry-After`, or the token limit's reset) is waited
+  attempts. Provider deadlines (`Retry-After`, and the token and request limits'
+  resets, after successful and failed responses alike; the latest wins) are waited
   out in full, only the local backoff is capped, and a deadline over 10 minutes stops
   the run with the time to rerun it. Requests hold at most 96 inputs and 250,000
   tokens; an input is at most 8,192 tokens. Errors keep only the HTTP status, a
   provider error code and the request id: no provider message (a 401 message quotes
-  part of the key), no input text, no wrapped SDK error.
+  part of the key), no input text, no wrapped SDK error. A malformed successful
+  response is reported by a fixed category, never by a value from it.
 - **Cache.** `embedding_cache` is keyed by sha256 of the exact input, model,
   dimensions and `EMBEDDING_INPUT_TEMPLATE_VERSION`; a changed header misses it.
   Identical inputs are embedded once, vectors are cached as they arrive, and a rebuild
