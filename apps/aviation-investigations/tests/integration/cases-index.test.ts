@@ -6,13 +6,15 @@ import type { Client, estypes } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, type Db } from '../../server/db/client.js';
-import { activePins, pinGeneration, pruneGenerations, unpinGeneration } from '../../server/db/generations.js';
+import { activePins, pinGeneration, pruneGenerations, publishManifest, unpinGeneration } from '../../server/db/generations.js';
 import { streamCaseRecords, type CaseRecord } from '../../server/db/queries/case-records.js';
 import { ALIAS_LOCK_NAMESPACE, AliasSwitchError, aliasTargets, switchAlias } from '../../worker/index/aliases.js';
 import {
   BUILD_LOCK_NAMESPACE,
   buildPinReason,
-  cleanupStaleBuilds,
+  cleanupStalePins,
+  declareAbandoned,
+  deleteUnusedIndices,
   reconcileAlias,
 } from '../../worker/index/publications.js';
 import { INDEX_ANALYZER, SEARCH_ANALYZER } from '../../worker/index/analysis.js';
@@ -120,10 +122,16 @@ function patched(patch: (real: Client['indices']) => IndicesPatch): Client {
 const lostResponse = () => Object.assign(new Error('socket hang up (simulated lost response)'), { name: 'ConnectionError' });
 const rejected = () => Object.assign(new Error('illegal_argument_exception (simulated)'), { name: 'ResponseError', meta: { statusCode: 400 } });
 
-/** The `index_publications` row of an index. */
-async function publication(index: string): Promise<{ status: string; deleted: boolean } | undefined> {
-  const r = await ingest.execute(sql`select status, deleted_at is not null as deleted from index_publications where index_name = ${index}`);
-  return r.rows[0] as { status: string; deleted: boolean } | undefined;
+/** Outcomes of every switch attempt for an index, oldest first. */
+async function outcomes(index: string): Promise<string[]> {
+  const r = await ingest.execute(sql`select outcome from index_switch_attempts where index_name = ${index} order by id`);
+  return (r.rows as { outcome: string }[]).map((x) => x.outcome);
+}
+
+/** Whether the build's index is recorded as deleted (undefined: no build row). */
+async function recordedDeleted(index: string): Promise<boolean | undefined> {
+  const r = await ingest.execute(sql`select deleted_at is not null as deleted from index_builds where index_name = ${index}`);
+  return (r.rows[0] as { deleted: boolean } | undefined)?.deleted;
 }
 
 const realUpdateAliases = (real: Client['indices']) => (real.updateAliases as (...a: never[]) => Promise<unknown>).bind(real);
@@ -193,7 +201,8 @@ describe('rebuildCasesIndex', () => {
     });
     expect(CASES_INDEX_VERSION).toBe('cases-v2');
     expect(built.index).toMatch(new RegExp(`^${PREFIX}-cases-v2-g${generationId}-\\d{17}-${built.buildId}$`));
-    expect(await publication(built.index)).toEqual({ status: 'committed', deleted: false });
+    expect(await outcomes(built.index)).toEqual(['committed']);
+    expect(await recordedDeleted(built.index)).toBe(false);
     expect(await aliasTargets(es, ALIAS)).toEqual([built.index]);
     // The build's pin is released; only the test's own pin remains.
     expect((await activePins(ingest, generationId)).map((p) => p.reason)).toEqual([TEST_PIN]);
@@ -318,10 +327,12 @@ describe('rebuildCasesIndex', () => {
       },
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AliasSwitchError);
-    expect((err as AliasSwitchError).outcome).toBe('not_switched');
+    expect((err as AliasSwitchError).outcome).toBe('not_submitted');
     expect(String(err)).toMatch(new RegExp(`pin index-build:${buildId} .* is gone; refusing to publish`));
+    // Never part of an alias request: the build deleted its own index.
     expect(await es.indices.exists({ index })).toBe(false);
-    expect(await publication(index)).toEqual({ status: 'abandoned', deleted: true });
+    expect(await outcomes(index)).toEqual([]);
+    expect(await recordedDeleted(index)).toBe(true);
     expect(await aliasTargets(es, casesAlias(prefix))).toEqual([before.index]);
   });
 
@@ -730,7 +741,7 @@ describe('alias', () => {
     // Rolling back is another switch.
     await switchAlias(es, ingest, ALIAS, first as string);
     expect(await aliasTargets(es, ALIAS)).toEqual([first]);
-    expect(await publication(first as string)).toEqual({ status: 'committed', deleted: false });
+    expect(await outcomes(first as string)).toEqual(['committed', 'committed']);
   });
 
   it('serializes simultaneous first publications: exactly one target', async () => {
@@ -763,7 +774,7 @@ describe('alias', () => {
     expect((await reader.count({ index: casesAlias(prefix) })).count).toBe(US_EVENTS);
   });
 
-  it('treats a lost response as unknown and blocks the alias until reconciled', async () => {
+  it('treats a lost response as unknown and blocks the alias until a read-back shows it', async () => {
     const prefix = `${PREFIX}-lost`;
     const alias = casesAlias(prefix);
     const before = await rebuildCasesIndex(es, ingest, { generationId, prefix });
@@ -788,7 +799,7 @@ describe('alias', () => {
     expect(await aliasTargets(es, alias)).toEqual([index]);
     expect(await es.indices.exists({ index })).toBe(true);
     expect(await es.indices.exists({ index: before.index })).toBe(true);
-    expect(await publication(index)).toEqual({ status: 'unknown', deleted: false });
+    expect(await outcomes(index)).toEqual(['unknown']);
 
     // No further switch until reconciled: the next build stops before creating anything.
     const blocked = await rebuildCasesIndex(es, ingest, { generationId, prefix }).catch((e: unknown) => e);
@@ -796,16 +807,16 @@ describe('alias', () => {
     expect(String(blocked)).toContain(`pnpm worker index reconcile --alias ${alias}`);
     expect(await indicesLike(`${prefix}-*`)).toEqual([before.index, index].sort());
 
-    const settled = await reconcileAlias(es, ingest, alias, { settleMs: 50 });
-    expect(settled).toMatchObject({ targets: [index], committed: [index], abandoned: [] });
-    expect(await publication(index)).toEqual({ status: 'committed', deleted: false });
+    const settled = await reconcileAlias(es, ingest, alias);
+    expect(settled).toMatchObject({ targets: [index], committed: [{ indexName: index }], unresolved: [], blocked: false });
+    expect(await outcomes(index)).toEqual(['committed']);
     const after = await rebuildCasesIndex(es, ingest, { generationId, prefix });
     expect(after.previousIndices).toEqual([index]);
   });
 
-  it('never deletes an index whose switch is applied after a timeout (delayed commit)', async () => {
+  it('keeps an unknown attempt blocked, whatever the delay, until a read-back includes its index', async () => {
     const pending: Promise<unknown>[] = [];
-    /** The request times out at once and Elasticsearch applies it `ms` later. */
+    /** The request times out at once; Elasticsearch completes it `ms` later. */
     const delayedCommit = (ms: number) =>
       patched((real) => ({
         updateAliases: async (...args: never[]) => {
@@ -814,32 +825,40 @@ describe('alias', () => {
         },
       }));
 
-    // An alias with a previous target: the read-back right after the failure still shows it.
     const prefix = `${PREFIX}-delayed`;
     const alias = casesAlias(prefix);
     const before = await rebuildCasesIndex(es, ingest, { generationId, prefix });
     const buildId = bid('delay');
     const index = casesIndexName(prefix, generationId, new Date('2026-08-08T08:08:08.008Z'), buildId);
-    const err = await rebuildCasesIndex(delayedCommit(400), ingest, {
+    const err = await rebuildCasesIndex(delayedCommit(1500), ingest, {
       generationId,
       prefix,
       buildId,
       now: () => new Date('2026-08-08T08:08:08.008Z'),
     }).catch((e: unknown) => e);
     expect((err as AliasSwitchError).outcome).toBe('unknown');
-    expect(await aliasTargets(es, alias)).toEqual([before.index]);
-    expect(await publication(index)).toEqual({ status: 'unknown', deleted: false });
+
+    // Reconciling before completion proves nothing: the attempt stays unknown and blocking.
+    for (let i = 0; i < 2; i += 1) {
+      const early = await reconcileAlias(es, ingest, alias);
+      expect(early).toMatchObject({ targets: [before.index], committed: [], blocked: true });
+      expect(early.unresolved.map((u) => u.indexName)).toEqual([index]);
+      expect(await rebuildCasesIndex(es, ingest, { generationId, prefix }).catch((e: unknown) => e)).toBeInstanceOf(UnresolvedAliasError);
+      await sleep(300);
+    }
+    expect(await outcomes(index)).toEqual(['unknown']);
     await Promise.all(pending.splice(0));
-    // The delayed request landed on an index that still exists.
+    // Completed after the reconciles: it landed on an index that still exists.
     expect(await aliasTargets(es, alias)).toEqual([index]);
     expect(await es.indices.exists({ index })).toBe(true);
-    expect(await reconcileAlias(es, ingest, alias, { settleMs: 50 })).toMatchObject({ committed: [index], abandoned: [] });
+    const late = await reconcileAlias(es, ingest, alias);
+    expect(late).toMatchObject({ committed: [{ indexName: index }], unresolved: [], blocked: false });
 
     // Simultaneous first publication of a fresh alias, one request delayed.
     const fresh = `${PREFIX}-delayedfirst`;
     const freshAlias = casesAlias(fresh);
     const [x, y] = await Promise.all([
-      rebuildCasesIndex(delayedCommit(400), ingest, { generationId, prefix: fresh }).catch((e: unknown) => e),
+      rebuildCasesIndex(delayedCommit(800), ingest, { generationId, prefix: fresh }).catch((e: unknown) => e),
       rebuildCasesIndex(es, ingest2, { generationId, prefix: fresh }).catch((e: unknown) => e),
     ]);
     expect((x as AliasSwitchError).outcome).toBe('unknown');
@@ -848,17 +867,13 @@ describe('alias', () => {
     expect(targets).toHaveLength(1);
     expect(await es.indices.exists({ index: targets[0] as string })).toBe(true);
     // y either published first (then x replaced it) or was refused while x was unresolved.
-    if (y instanceof Error) {
-      expect(y).toBeInstanceOf(AliasSwitchError);
-      expect(String(y)).toMatch(/unresolved switch/);
-    }
-    const settled = await reconcileAlias(es, ingest, freshAlias, { settleMs: 50 });
-    expect(settled.targets).toEqual(targets);
-    expect(settled.abandoned).toEqual([]);
-    expect(await publication(targets[0] as string)).toEqual({ status: 'committed', deleted: false });
+    if (y instanceof Error) expect(String(y)).toMatch(/blocked by an unresolved switch/);
+    const settled = await reconcileAlias(es, ingest, freshAlias);
+    expect(settled).toMatchObject({ targets, unresolved: [], blocked: false });
+    expect(await outcomes(targets[0] as string)).toContain('committed');
   });
 
-  it('abandons an unknown switch that never applied, and cleanup deletes its index', async () => {
+  it('unblocks a never-applied unknown attempt only by an explicit declaration, deleting nothing', async () => {
     const prefix = `${PREFIX}-neverapplied`;
     const alias = casesAlias(prefix);
     const before = await rebuildCasesIndex(es, ingest, { generationId, prefix });
@@ -876,22 +891,30 @@ describe('alias', () => {
       now: () => new Date('2026-09-09T09:09:09.009Z'),
     }).catch((e: unknown) => e);
     expect((err as AliasSwitchError).outcome).toBe('unknown');
-    expect(await es.indices.exists({ index })).toBe(true);
-    expect(await aliasTargets(es, alias)).toEqual([before.index]);
-
-    expect(await reconcileAlias(es, ingest, alias, { settleMs: 50 })).toMatchObject({ committed: [], abandoned: [index] });
-    expect(await publication(index)).toEqual({ status: 'abandoned', deleted: false });
+    const attemptId = (err as AliasSwitchError).attemptId as number;
     expect(await es.indices.exists({ index })).toBe(true);
 
-    const cleaned = await cleanupStaleBuilds(es, ingest, { olderThanHours: 0 });
-    expect(cleaned.indicesDeleted).toContain(index);
-    expect(cleaned.indicesDeleted).not.toContain(before.index);
-    expect(await es.indices.exists({ index })).toBe(false);
-    expect(await publication(index)).toEqual({ status: 'abandoned', deleted: true });
-    expect(await aliasTargets(es, alias)).toEqual([before.index]);
+    const r = await reconcileAlias(es, ingest, alias);
+    expect(r).toMatchObject({ committed: [], unresolved: [{ id: attemptId, indexName: index, declared: false }], blocked: true });
+    await expect(declareAbandoned(ingest, alias, attemptId, '  ')).rejects.toThrow(/reason/);
+    await declareAbandoned(ingest, alias, attemptId, 'cluster restarted before the request was processed');
+    await expect(declareAbandoned(ingest, alias, attemptId, 'twice')).rejects.toThrow(/not an undeclared unknown/);
+    expect((await reconcileAlias(es, ingest, alias)).blocked).toBe(false);
+
+    // Unblocked: the next build publishes. The declared index still exists and stays unknown.
+    const next = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    expect(next.previousIndices).toEqual([before.index]);
+    expect(await outcomes(index)).toEqual(['unknown']);
+    expect(await es.indices.exists({ index })).toBe(true);
+    const declared = await ingest.execute(sql`select declared_reason from index_switch_attempts where id = ${attemptId}`);
+    expect(declared.rows).toEqual([{ declared_reason: 'cluster restarted before the request was processed' }]);
+    // And delete-unused never touches an index with an unknown attempt.
+    const del = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
+    expect(del.refused).toEqual(expect.arrayContaining([{ indexName: index, reason: 'has a switch attempt that is unknown' }]));
+    expect(await es.indices.exists({ index })).toBe(true);
   });
 
-  it('deletes the new index at once when Elasticsearch rejects the switch', async () => {
+  it('keeps the index after Elasticsearch rejects the switch; only delete-unused removes it', async () => {
     const prefix = `${PREFIX}-rejected`;
     const alias = casesAlias(prefix);
     const before = await rebuildCasesIndex(es, ingest, { generationId, prefix });
@@ -909,12 +932,56 @@ describe('alias', () => {
       now: () => new Date('2026-03-03T03:03:03.003Z'),
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AliasSwitchError);
-    expect((err as AliasSwitchError).outcome).toBe('not_switched');
-    expect(await es.indices.exists({ index })).toBe(false);
-    expect(await publication(index)).toEqual({ status: 'abandoned', deleted: true });
+    expect((err as AliasSwitchError).outcome).toBe('rejected');
+    // Submitted, so the build does not delete it.
+    expect(await es.indices.exists({ index })).toBe(true);
+    expect(await outcomes(index)).toEqual(['rejected']);
     expect(await aliasTargets(es, alias)).toEqual([before.index]);
     // A rejection settles the outcome: the alias is not blocked.
-    expect((await rebuildCasesIndex(es, ingest, { generationId, prefix })).previousIndices).toEqual([before.index]);
+    const next = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    expect(next.previousIndices).toEqual([before.index]);
+
+    // Dry run by default; deletes only with yes, and only the rejected-only index.
+    const dry = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, aliases: [alias] });
+    expect(dry).toMatchObject({ dryRun: true, deleted: [], wouldDelete: [index] });
+    expect(await es.indices.exists({ index })).toBe(true);
+    const done = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
+    expect(done.deleted).toEqual([index]);
+    expect(done.refused.map((k) => k.indexName).sort()).toEqual([before.index, next.index].sort());
+    expect(await es.indices.exists({ index })).toBe(false);
+    expect(await recordedDeleted(index)).toBe(true);
+    expect(await aliasTargets(es, alias)).toEqual([next.index]);
+  });
+
+  it('a rejected rollback to an older committed index leaves that index non-deletable', async () => {
+    const prefix = `${PREFIX}-rollback`;
+    const alias = casesAlias(prefix);
+    const older = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    const newer = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    const faulty = patched(() => ({
+      updateAliases: async () => {
+        throw rejected();
+      },
+    }));
+    const err = await switchAlias(faulty, ingest, alias, older.index).catch((e: unknown) => e);
+    expect((err as AliasSwitchError).outcome).toBe('rejected');
+    // Committed is sticky: a later rejected attempt does not make the index disposable.
+    expect(await outcomes(older.index)).toEqual(['committed', 'rejected']);
+    const del = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
+    expect(del.deleted).toEqual([]);
+    expect(del.refused).toEqual(
+      expect.arrayContaining([
+        { indexName: older.index, reason: 'has a switch attempt that is committed' },
+        { indexName: newer.index, reason: 'has a switch attempt that is committed' },
+      ]),
+    );
+    expect(await es.indices.exists({ index: older.index })).toBe(true);
+    expect(await aliasTargets(es, alias)).toEqual([newer.index]);
+    // The database refuses rewriting the committed attempt itself.
+    const rewrite = await ingest
+      .execute(sql`update index_switch_attempts set outcome = 'rejected' where index_name = ${older.index} and outcome = 'committed'`)
+      .catch((e: unknown) => e);
+    expect(String((rewrite as { cause?: unknown }).cause ?? rewrite)).toMatch(/cannot go from committed to rejected/);
   });
 
   it('treats a committed switch as done even when reading the alias back fails', async () => {
@@ -951,7 +1018,7 @@ describe('alias', () => {
     });
     expect(unreadable.aliasVerified).toBe(false);
     expect(await aliasTargets(es, alias)).toEqual([unreadable.index]);
-    expect(await publication(unreadable.index)).toEqual({ status: 'committed', deleted: false });
+    expect(await outcomes(unreadable.index)).toEqual(['committed']);
   });
 
   it('fails cleanly while another worker holds the alias lock', async () => {
@@ -971,9 +1038,11 @@ describe('alias', () => {
         alias: { lockTimeoutMs: 300 },
       }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(AliasSwitchError);
-      expect((err as AliasSwitchError).outcome).toBe('not_switched');
+      expect((err as AliasSwitchError).outcome).toBe('not_submitted');
       expect(String(err)).toMatch(/timed out waiting/);
-      expect(await es.indices.exists({ index: casesIndexName(prefix, generationId, at, buildId) })).toBe(false);
+      const index = casesIndexName(prefix, generationId, at, buildId);
+      expect(await es.indices.exists({ index })).toBe(false);
+      expect(await recordedDeleted(index)).toBe(true);
       expect(await aliasTargets(es, alias)).toEqual([before.index]);
     } finally {
       await holder.query('select pg_advisory_unlock($1, hashtext($2))', [ALIAS_LOCK_NAMESPACE, alias]);
@@ -981,55 +1050,136 @@ describe('alias', () => {
     }
   });
 
-  it('cleanup-builds removes what a dead build left, and skips a running one', async () => {
-    const prefix = `${PREFIX}-stale`;
-    const alias = casesAlias(prefix);
-    const live = await rebuildCasesIndex(es, ingest, { generationId, prefix });
-    // A build that died while loading: its pin, its row and its partial index remain.
-    const dead = { buildId: bid('dead'), index: casesIndexName(prefix, generationId, new Date('2026-10-10T10:10:10.010Z'), bid('dead')) };
-    // A build still running elsewhere: same leftovers, but its lock is held.
-    const running = { buildId: bid('running'), index: casesIndexName(prefix, generationId, new Date('2026-10-10T10:10:10.010Z'), bid('running')) };
-    for (const b of [dead, running]) {
-      await pinGeneration(ingest, generationId, buildPinReason(b.buildId));
-      await ingest.execute(sql`insert into index_publications (index_name, alias, build_id, generation_id, status)
-        values (${b.index}, ${alias}, ${b.buildId}, ${generationId}, 'building')`);
-      await es.indices.create({ index: b.index });
-    }
-    const holder = await ingest2.$client.connect();
-    try {
-      await holder.query('select pg_advisory_lock($1, hashtext($2))', [BUILD_LOCK_NAMESPACE, running.buildId]);
-      const r = await cleanupStaleBuilds(es, ingest, { olderThanHours: 0 });
-      expect(r.pinsRemoved).toEqual(expect.arrayContaining([{ generationId, buildId: dead.buildId }]));
-      expect(r.pinsRemoved.map((p) => p.buildId)).not.toContain(running.buildId);
-      expect(r.indicesDeleted).toContain(dead.index);
-      expect(r.indicesDeleted).not.toContain(running.index);
-      expect(r.skippedRunning).toContain(running.buildId);
-      expect(await es.indices.exists({ index: dead.index })).toBe(false);
-      expect(await es.indices.exists({ index: running.index })).toBe(true);
-      expect(await publication(dead.index)).toEqual({ status: 'abandoned', deleted: true });
-      expect(await publication(running.index)).toEqual({ status: 'building', deleted: false });
-      const reasons = (await activePins(ingest, generationId)).map((p) => p.reason);
-      expect(reasons).toContain(buildPinReason(running.buildId));
-      expect(reasons).not.toContain(buildPinReason(dead.buildId));
-      // The published index is never touched, nor is a pin that is not a build's.
-      expect(await aliasTargets(es, alias)).toEqual([live.index]);
-      expect(reasons).toContain(TEST_PIN);
-    } finally {
-      await holder.query('select pg_advisory_unlock($1, hashtext($2))', [BUILD_LOCK_NAMESPACE, running.buildId]);
-      holder.release();
-    }
-    // Once it has stopped, the second build is cleaned up too.
-    const later = await cleanupStaleBuilds(es, ingest, { olderThanHours: 0 });
-    expect(later.indicesDeleted).toContain(running.index);
-    expect(later.pinsRemoved.map((p) => p.buildId)).toContain(running.buildId);
-  });
-
   it('refuses to shadow a concrete index', async () => {
     const concrete = `${PREFIX}-concrete`;
     await es.indices.create({ index: concrete });
     const err = await switchAlias(es, ingest, concrete, built.index).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AliasSwitchError);
-    expect((err as AliasSwitchError).outcome).toBe('not_switched');
+    expect((err as AliasSwitchError).outcome).toBe('not_submitted');
     expect(String(err)).toMatch(/concrete index/);
+  });
+});
+
+describe('explicit cleanup', () => {
+  it('delete-unused rechecks after selection: a publication finishing in between makes the index ineligible', async () => {
+    const prefix = `${PREFIX}-between`;
+    const alias = casesAlias(prefix);
+    const before = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    const buildId = bid('between');
+    const index = casesIndexName(prefix, generationId, new Date('2026-11-11T11:11:11.011Z'), buildId);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let recorded!: () => void;
+    const isRecorded = new Promise<void>((r) => (recorded = r));
+    const build = rebuildCasesIndex(es, ingest2, {
+      generationId,
+      prefix,
+      buildId,
+      now: () => new Date('2026-11-11T11:11:11.011Z'),
+      afterPin: async () => {
+        recorded();
+        await gate;
+      },
+    });
+    await isRecorded;
+
+    // While the build waits, it is a candidate but still running.
+    const running = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
+    expect(running.refused).toEqual(expect.arrayContaining([{ indexName: index, reason: 'its build is still running' }]));
+
+    // Selected while running; the build publishes before the locks are taken.
+    let selected: string[] = [];
+    const report = await deleteUnusedIndices(es, ingest, {
+      olderThanHours: 0,
+      yes: true,
+      aliases: [alias],
+      afterSelect: async (candidates) => {
+        selected = candidates;
+        release();
+        await build;
+      },
+    });
+    expect(selected).toContain(index);
+    expect(report.deleted).toEqual([]);
+    expect(report.refused).toEqual(expect.arrayContaining([{ indexName: index, reason: 'has a switch attempt that is committed' }]));
+    expect(await es.indices.exists({ index })).toBe(true);
+    expect(await aliasTargets(es, alias)).toEqual([index]);
+    expect(await es.indices.exists({ index: before.index })).toBe(true);
+  });
+
+  it('delete-unused refuses indices referenced by a dataset manifest, active or retained', async () => {
+    const g = await verified();
+    await pinGeneration(ingest, g, TEST_PIN);
+    const prefix = `${PREFIX}-manifest`;
+    const alias = casesAlias(prefix);
+    const faulty = patched(() => ({
+      updateAliases: async () => {
+        throw rejected();
+      },
+    }));
+    // Two indices that were never alias targets (their switches were rejected).
+    const make = async (tag: string) => {
+      const buildId = bid(tag);
+      const at = new Date('2026-12-12T12:12:12.012Z');
+      await rebuildCasesIndex(faulty, ingest, { generationId: g, prefix, buildId, now: () => at }).catch((e: unknown) => e);
+      return casesIndexName(prefix, g, at, buildId);
+    };
+    const [m1, m2] = [await make('man1'), await make('man2')];
+    expect((await deleteUnusedIndices(es, ingest, { olderThanHours: 0, aliases: [alias] })).wouldDelete.sort()).toEqual([m1, m2].sort());
+
+    await publishManifest(ingest, g, m1, `${PREFIX}-passages-a`);
+    let r = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
+    expect(r.refused).toEqual([{ indexName: m1, reason: 'referenced by a dataset manifest' }]);
+    expect(r.deleted).toEqual([m2]);
+
+    // Retained (inactive) manifests protect their indices too.
+    const g2 = await verified();
+    await publishManifest(ingest, g2, built.index, `${PREFIX}-passages-b`);
+    r = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
+    expect(r.refused).toEqual([{ indexName: m1, reason: 'referenced by a dataset manifest' }]);
+    expect(await es.indices.exists({ index: m1 })).toBe(true);
+    await unpinGeneration(ingest, g, TEST_PIN);
+  });
+
+  it('delete-unused keeps young indices, and cleanup-builds removes only stale pins', async () => {
+    const prefix = `${PREFIX}-stale`;
+    const alias = casesAlias(prefix);
+    const faulty = patched(() => ({
+      updateAliases: async () => {
+        throw rejected();
+      },
+    }));
+    const buildId = bid('young');
+    const at = new Date('2026-12-01T00:00:00.000Z');
+    await rebuildCasesIndex(faulty, ingest, { generationId, prefix, buildId, now: () => at }).catch((e: unknown) => e);
+    const young = casesIndexName(prefix, generationId, at, buildId);
+    const r = await deleteUnusedIndices(es, ingest, { olderThanHours: 1, yes: true, aliases: [alias] });
+    expect(r.deleted).toEqual([]);
+    expect(await es.indices.exists({ index: young })).toBe(true);
+
+    // A build that died left its pin; another build is still running.
+    const dead = bid('dead');
+    const running = bid('running');
+    for (const b of [dead, running]) await pinGeneration(ingest, generationId, buildPinReason(b));
+    const holder = await ingest2.$client.connect();
+    try {
+      await holder.query('select pg_advisory_lock($1, hashtext($2))', [BUILD_LOCK_NAMESPACE, running]);
+      const cleaned = await cleanupStalePins(ingest, { olderThanHours: 0 });
+      expect(cleaned.pinsRemoved).toEqual(expect.arrayContaining([{ generationId, buildId: dead }]));
+      expect(cleaned.pinsRemoved.map((p) => p.buildId)).not.toContain(running);
+      expect(cleaned.skippedRunning).toContain(running);
+      const reasons = (await activePins(ingest, generationId)).map((p) => p.reason);
+      expect(reasons).toContain(buildPinReason(running));
+      expect(reasons).not.toContain(buildPinReason(dead));
+      expect(reasons).toContain(TEST_PIN);
+      // No index is touched by pin cleanup.
+      expect(await es.indices.exists({ index: young })).toBe(true);
+    } finally {
+      await holder.query('select pg_advisory_unlock($1, hashtext($2))', [BUILD_LOCK_NAMESPACE, running]);
+      holder.release();
+    }
+    const later = await cleanupStalePins(ingest, { olderThanHours: 0 });
+    expect(later.pinsRemoved.map((p) => p.buildId)).toContain(running);
+    expect((await cleanupStalePins(ingest, { olderThanHours: 1 })).pinsRemoved).toEqual([]);
   });
 });

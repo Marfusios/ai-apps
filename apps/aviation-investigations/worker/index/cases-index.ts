@@ -40,9 +40,9 @@ import { PHASE_GROUPS, orderPhaseGroups, type PhaseGroup } from '../../shared/co
 import type { CompletionClass } from '../../shared/completion.js';
 import { occurrenceEventLabel } from '../../shared/occurrences.js';
 import type pg from 'pg';
-import { AliasSwitchError, switchAlias, unresolvedMessage, unresolvedPublications, type SwitchAliasOptions } from './aliases.js';
+import { AliasSwitchError, blockedMessage, blockingAttempts, switchAlias, type SwitchAliasOptions } from './aliases.js';
 import { AVIATION_ANALYSIS, NAME_NORMALIZER, aviationTextField } from './analysis.js';
-import { abandonIndex, buildPinReason, checkBuildId, recordBuild, withBuildLock } from './publications.js';
+import { buildPinReason, checkBuildId, deleteUnsubmittedIndex, recordBuild, withBuildLock } from './publications.js';
 
 /** Bump on any change to the mapping, analysis, synonyms or stem overrides. */
 export const CASES_INDEX_VERSION = 'cases-v2';
@@ -301,7 +301,7 @@ export class GenerationNotIndexableError extends Error {
   }
 }
 
-/** The alias has a switch whose outcome is unresolved; nothing is built until it is reconciled. */
+/** The alias is blocked by an unresolved switch attempt; nothing is built until it is reconciled. */
 export class UnresolvedAliasError extends Error {
   constructor(message: string) {
     super(message);
@@ -332,6 +332,8 @@ export interface IndexReport {
   index: string;
   alias: string;
   buildId: string;
+  /** The committed `index_switch_attempts` row. */
+  attemptId: number;
   /** Indices the alias pointed at before; kept. */
   previousIndices: string[];
   /** A read-back after the committed switch showed exactly the new index. */
@@ -458,19 +460,20 @@ async function verifyIndex(es: Client, index: string, expected: CaseRecordCounts
 /**
  * Build a new cases index for one verified generation and move the alias to it.
  *
- * 1. Take this build's liveness lock and refuse while the alias has an unresolved
- *    switch.
+ * 1. Take this build's liveness lock; refuse while the alias is blocked by an
+ *    unresolved switch attempt; record the build (reserving its index name).
  * 2. Under the lifecycle lock, check the generation (verified or published, latest
  *    verification ok by the current verifier) and pin it for this build, without
  *    expiry.
- * 3. Count its US cases (an empty generation is refused), record the build, create the
- *    index (refresh off), bulk-load every US case, refresh, and verify the counts.
+ * 3. Count its US cases (an empty generation is refused), create the index (refresh
+ *    off), bulk-load every US case, refresh, and verify the counts.
  * 4. Switch the alias (serialized per alias; refused if the build's pin is gone).
  * 5. Remove this build's pin.
  *
- * Until the switch request is sent, any failure deletes the new index. Once sent, the
- * index is deleted only on a definite rejection; a transport failure leaves it in
- * place and the alias blocked until reconciled. The previous index is always kept.
+ * The only automatic deletion: if the build fails before its index was part of any
+ * alias request, the index is deleted. Once a request was attempted (rejected,
+ * unknown or committed), the index is kept; deleting it later is the explicit
+ * `worker index delete-unused`. The previous index is always kept.
  */
 export async function rebuildCasesIndex(es: Client, db: Db, opts: RebuildCasesOptions): Promise<IndexReport> {
   const started = Date.now();
@@ -484,83 +487,78 @@ export async function rebuildCasesIndex(es: Client, db: Db, opts: RebuildCasesOp
   const pinReason = buildPinReason(buildId);
 
   return withBuildLock(db, buildId, async () => {
-    const unresolved = await unresolvedPublications(db.$client, alias);
-    if (unresolved.length > 0) throw new UnresolvedAliasError(unresolvedMessage(alias, unresolved));
+    const blocking = await blockingAttempts(db.$client, alias);
+    if (blocking.length > 0) throw new UnresolvedAliasError(blockedMessage(alias, blocking));
+    await recordBuild(db, { indexName: index, alias, buildId, generationId });
 
-    await pinIndexableGeneration(db, generationId, pinReason);
+    let pinned = false;
+    let submitted = false;
     try {
+      await pinIndexableGeneration(db, generationId, pinReason);
+      pinned = true;
       await opts.afterPin?.();
       const expected = await countCaseRecords(db, generationId);
       if (expected.cases === 0) {
         throw new GenerationNotIndexableError(generationId, 'it has no US cases; an empty index is never built');
       }
       const fingerprint = casesIndexFingerprint();
-      await recordBuild(db, { indexName: index, alias, buildId, generationId });
 
-      // Pre-publication: the alias is untouched, so any failure deletes the new index.
       let streamed = 0;
       let unparsedEventLabels = 0;
-      try {
-        await es.indices.create({
-          index,
-          settings: { ...CASES_SETTINGS, refresh_interval: '-1' },
-          mappings: {
-            ...CASES_MAPPING,
-            _meta: { index_version: CASES_INDEX_VERSION, fingerprint, generation_id: generationId, build_id: buildId },
-          },
-        });
-        log(`created ${index}`);
-        let buffer: CaseDoc[] = [];
-        let bytes = 0;
-        const flush = async () => {
-          if (buffer.length === 0) return;
-          await bulkCreate(es, index, buffer, log);
-          streamed += buffer.length;
-          buffer = [];
-          bytes = 0;
-          log(`indexed ${streamed}/${expected.cases}`);
-        };
-        for await (const record of streamCaseRecords(db, generationId, { batchSize })) {
-          const doc = buildCaseDocument(record);
-          for (const s of definingSequenceRows(record)) {
-            if (occurrenceEventLabel(s.phaseNo, s.description)?.parsed === false) unparsedEventLabels += 1;
-          }
-          buffer.push(doc);
-          bytes += Buffer.byteLength(JSON.stringify(doc));
-          if (buffer.length >= batchSize || bytes >= maxBulkBytes) await flush();
+      await es.indices.create({
+        index,
+        settings: { ...CASES_SETTINGS, refresh_interval: '-1' },
+        mappings: {
+          ...CASES_MAPPING,
+          _meta: { index_version: CASES_INDEX_VERSION, fingerprint, generation_id: generationId, build_id: buildId },
+        },
+      });
+      log(`created ${index}`);
+      let buffer: CaseDoc[] = [];
+      let bytes = 0;
+      const flush = async () => {
+        if (buffer.length === 0) return;
+        await bulkCreate(es, index, buffer, log);
+        streamed += buffer.length;
+        buffer = [];
+        bytes = 0;
+        log(`indexed ${streamed}/${expected.cases}`);
+      };
+      for await (const record of streamCaseRecords(db, generationId, { batchSize })) {
+        const doc = buildCaseDocument(record);
+        for (const s of definingSequenceRows(record)) {
+          if (occurrenceEventLabel(s.phaseNo, s.description)?.parsed === false) unparsedEventLabels += 1;
         }
-        await flush();
-
-        // Back to the default once loaded; the index takes no further writes.
-        await es.indices.putSettings({ index, settings: { refresh_interval: '1s' } });
-        await es.indices.refresh({ index });
-        await verifyIndex(es, index, expected, streamed);
-      } catch (err) {
-        await abandonIndex(es, db.$client, index).catch((e: unknown) => log(`cleanup of ${index} failed: ${String(e)}`));
-        throw err;
+        buffer.push(doc);
+        bytes += Buffer.byteLength(JSON.stringify(doc));
+        if (buffer.length >= batchSize || bytes >= maxBulkBytes) await flush();
       }
+      await flush();
 
-      // Publication.
+      // Back to the default once loaded; the index takes no further writes.
+      await es.indices.putSettings({ index, settings: { refresh_interval: '1s' } });
+      await es.indices.refresh({ index });
+      await verifyIndex(es, index, expected, streamed);
+
       let switched;
       try {
         switched = await switchAlias(es, db, alias, index, {
           ...opts.alias,
           buildId,
-          generationId,
           beforeSwitch: (client) => assertPinned(client, generationId, pinReason),
         });
       } catch (err) {
-        if (err instanceof AliasSwitchError && err.outcome === 'not_switched') {
-          await abandonIndex(es, db.$client, index).catch((e: unknown) => log(`cleanup of ${index} failed: ${String(e)}`));
-        }
+        if (!(err instanceof AliasSwitchError && err.outcome === 'not_submitted')) submitted = true;
         throw err;
       }
+      submitted = true;
       log(`alias ${alias} -> ${index}${switched.previous.length ? ` (was ${switched.previous.join(', ')})` : ''}`);
       if (!switched.verified) log(`alias ${alias}: switch committed but could not be read back`);
       return {
         index,
         alias,
         buildId,
+        attemptId: switched.attemptId,
         previousIndices: switched.previous,
         aliasVerified: switched.verified,
         generationId,
@@ -575,8 +573,14 @@ export async function rebuildCasesIndex(es: Client, db: Db, opts: RebuildCasesOp
         unparsedEventLabels,
         durationMs: Date.now() - started,
       };
+    } catch (err) {
+      if (!submitted) {
+        // Never part of an alias request: the only index a build deletes on its own.
+        await deleteUnsubmittedIndex(es, db.$client, index).catch((e: unknown) => log(`cleanup of ${index} failed: ${String(e)}`));
+      }
+      throw err;
     } finally {
-      await unpin(db, generationId, pinReason, log);
+      if (pinned) await unpin(db, generationId, pinReason, log);
     }
   });
 }

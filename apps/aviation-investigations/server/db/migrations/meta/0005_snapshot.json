@@ -1,5 +1,5 @@
 {
-  "id": "2f2fd663-5997-48df-8f02-201ba85c2bc3",
+  "id": "7eb7c6cd-61df-4658-a040-78d53a2f757b",
   "prevId": "453fb095-6088-4241-a5fe-533a001d5f8a",
   "version": "7",
   "dialect": "postgresql",
@@ -1929,24 +1929,24 @@
       },
       "isRLSEnabled": false
     },
-    "public.index_publications": {
-      "name": "index_publications",
+    "public.index_builds": {
+      "name": "index_builds",
       "schema": "",
       "columns": {
-        "index_name": {
-          "name": "index_name",
+        "build_id": {
+          "name": "build_id",
           "type": "text",
           "primaryKey": true,
           "notNull": true
         },
-        "alias": {
-          "name": "alias",
+        "index_name": {
+          "name": "index_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "build_id": {
-          "name": "build_id",
+        "alias": {
+          "name": "alias",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1957,21 +1957,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -1984,9 +1971,106 @@
           "notNull": false
         }
       },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "index_builds_index_unique": {
+          "name": "index_builds_index_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "index_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "index_builds_build_id_check": {
+          "name": "index_builds_build_id_check",
+          "value": "\"index_builds\".\"build_id\" ~ '^[a-z0-9]{4,32}$'"
+        },
+        "index_builds_names_check": {
+          "name": "index_builds_names_check",
+          "value": "\"index_builds\".\"index_name\" ~ '^[a-z0-9][a-z0-9._-]{0,254}$' and \"index_builds\".\"alias\" ~ '^[a-z0-9][a-z0-9._-]{0,254}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.index_switch_attempts": {
+      "name": "index_switch_attempts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "index_switch_attempts_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "alias": {
+          "name": "alias",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "index_name": {
+          "name": "index_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "build_id": {
+          "name": "build_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "declared_abandoned_at": {
+          "name": "declared_abandoned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "declared_reason": {
+          "name": "declared_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
       "indexes": {
-        "index_publications_alias_idx": {
-          "name": "index_publications_alias_idx",
+        "index_switch_attempts_alias_idx": {
+          "name": "index_switch_attempts_alias_idx",
           "columns": [
             {
               "expression": "alias",
@@ -1995,7 +2079,22 @@
               "nulls": "last"
             },
             {
-              "expression": "status",
+              "expression": "outcome",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "index_switch_attempts_index_idx": {
+          "name": "index_switch_attempts_index_idx",
+          "columns": [
+            {
+              "expression": "index_name",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2009,28 +2108,24 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "index_publications_build_unique": {
-          "name": "index_publications_build_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "build_id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "index_publications_status_check": {
-          "name": "index_publications_status_check",
-          "value": "\"index_publications\".\"status\" in ('building', 'switching', 'committed', 'unknown', 'abandoned')"
+        "index_switch_attempts_outcome_check": {
+          "name": "index_switch_attempts_outcome_check",
+          "value": "\"index_switch_attempts\".\"outcome\" in ('pending', 'committed', 'rejected', 'unknown')"
         },
-        "index_publications_deleted_check": {
-          "name": "index_publications_deleted_check",
-          "value": "\"index_publications\".\"deleted_at\" is null or \"index_publications\".\"status\" = 'abandoned'"
+        "index_switch_attempts_resolved_check": {
+          "name": "index_switch_attempts_resolved_check",
+          "value": "(\"index_switch_attempts\".\"outcome\" = 'pending') = (\"index_switch_attempts\".\"resolved_at\" is null)"
         },
-        "index_publications_names_check": {
-          "name": "index_publications_names_check",
-          "value": "\"index_publications\".\"index_name\" ~ '^[a-z0-9][a-z0-9._-]{0,254}$' and \"index_publications\".\"alias\" ~ '^[a-z0-9][a-z0-9._-]{0,254}$'"
+        "index_switch_attempts_declared_check": {
+          "name": "index_switch_attempts_declared_check",
+          "value": "(\"index_switch_attempts\".\"declared_abandoned_at\" is null) = (\"index_switch_attempts\".\"declared_reason\" is null)\n        and (\"index_switch_attempts\".\"declared_reason\" is null or (\"index_switch_attempts\".\"declared_reason\" ~ '\\S' and length(\"index_switch_attempts\".\"declared_reason\") <= 500))\n        and (\"index_switch_attempts\".\"declared_abandoned_at\" is null or \"index_switch_attempts\".\"outcome\" in ('unknown', 'committed'))"
+        },
+        "index_switch_attempts_names_check": {
+          "name": "index_switch_attempts_names_check",
+          "value": "\"index_switch_attempts\".\"index_name\" ~ '^[a-z0-9][a-z0-9._-]{0,254}$' and \"index_switch_attempts\".\"alias\" ~ '^[a-z0-9][a-z0-9._-]{0,254}$'"
         }
       },
       "isRLSEnabled": false

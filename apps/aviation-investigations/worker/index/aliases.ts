@@ -9,23 +9,21 @@
  * Switches are serialized per alias across workers with a PostgreSQL advisory lock
  * keyed on the alias name. Under the lock a switch:
  *
- * 1. refuses while any build of the alias is `unknown` or `switching` in
- *    `index_publications` (an earlier request may still be applied; run
- *    `pnpm worker index reconcile --alias <alias>`), and runs the caller's
- *    `beforeSwitch` check (e.g. the build still holds its pin);
- * 2. records the build as `switching`;
+ * 1. refuses while the alias has a `pending` attempt or an `unknown` one that no
+ *    operator has declared abandoned (`pnpm worker index reconcile --alias <alias>`),
+ *    and runs the caller's `beforeSwitch` check (e.g. the build still holds its pin);
+ * 2. appends a `pending` row to `index_switch_attempts`;
  * 3. sends one `_aliases` request, without client retries, that removes every current
- *    target and adds the new index;
- * 4. records the outcome. A response settles it: success is `committed`, a 4xx
- *    rejection (other than 408) is `abandoned`. A transport failure, timeout or 5xx is
- *    `unknown` whatever a read-back shows, because Elasticsearch may still apply a
- *    queued request afterwards; the new index is then kept and the alias blocked until
- *    `reconcileAlias` settles it.
+ *    target (`must_exist`) and adds the index;
+ * 4. resolves that attempt: a success response is `committed`, a 4xx response (other
+ *    than 408) `rejected`, anything else (transport failure, timeout, 5xx) `unknown`,
+ *    whatever the alias shows afterwards, because Elasticsearch may apply a queued
+ *    request later and its master timeout does not bound execution. Only a later
+ *    read-back that includes the index resolves `unknown` (to `committed`).
  *
- * Previous indices are kept (a rollback is another switch); deleting abandoned ones is
- * `cleanupStaleBuilds`'s job.
+ * Nothing here deletes an index. Previous indices are kept (a rollback is another
+ * switch); deleting unused indices is the explicit `worker index delete-unused`.
  */
-import { randomBytes } from 'node:crypto';
 import type { Client } from '@elastic/elasticsearch';
 import type pg from 'pg';
 import type { Db } from '../../server/db/client.js';
@@ -33,11 +31,13 @@ import type { Db } from '../../server/db/client.js';
 /** First key of the two-key advisory locks for aliases (the single-key lifecycle locks are a separate key space). */
 export const ALIAS_LOCK_NAMESPACE = 731_190_503;
 
-/** Upper bound for the master to process the alias request; reconcile waits longer than this. */
+/** How long the master may queue the alias request before giving up on it. */
 export const ALIAS_MASTER_TIMEOUT = '30s';
 
 const statusOf = (e: unknown) => (e as { meta?: { statusCode?: number } }).meta?.statusCode;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+type Queryable = Pick<pg.PoolClient, 'query'> | Pick<pg.Pool, 'query'>;
 
 /** Concrete indices the alias points at (empty when it does not exist). */
 export async function aliasTargets(es: Client, alias: string): Promise<string[]> {
@@ -57,7 +57,7 @@ export interface AliasLockOptions {
 
 /**
  * Run `fn` holding the advisory lock of `alias` on a dedicated connection, which `fn`
- * receives (write the alias's publication rows on it). The lock is released with the
+ * receives (write the alias's attempt rows on it). The lock is released with the
  * connection if the process dies.
  */
 export async function withAliasLock<T>(
@@ -91,42 +91,51 @@ export async function withAliasLock<T>(
   }
 }
 
-/** Builds of the alias whose switch is unresolved (`unknown`, or `switching` left by a crash). */
-export async function unresolvedPublications(
-  q: Pick<pg.PoolClient, 'query'> | Pick<pg.Pool, 'query'>,
-  alias: string,
-): Promise<{ indexName: string; status: string }[]> {
-  const r = await q.query<{ index_name: string; status: string }>(
-    `select index_name, status from index_publications where alias = $1 and status in ('unknown', 'switching') order by created_at`,
-    [alias],
-  );
-  return r.rows.map((x) => ({ indexName: x.index_name, status: x.status }));
+export interface BlockingAttempt {
+  id: number;
+  indexName: string;
+  outcome: 'pending' | 'unknown';
 }
 
-export function unresolvedMessage(alias: string, rows: { indexName: string; status: string }[]): string {
-  return `alias ${alias} has an unresolved switch (${rows.map((r) => `${r.indexName}: ${r.status}`).join(', ')}); run pnpm worker index reconcile --alias ${alias}`;
+/** Attempts that block switching the alias: `pending`, or `unknown` and not declared abandoned. */
+export async function blockingAttempts(q: Queryable, alias: string): Promise<BlockingAttempt[]> {
+  const r = await q.query<{ id: string; index_name: string; outcome: 'pending' | 'unknown' }>(
+    `select id, index_name, outcome from index_switch_attempts
+      where alias = $1 and (outcome = 'pending' or (outcome = 'unknown' and declared_abandoned_at is null))
+      order by id`,
+    [alias],
+  );
+  return r.rows.map((x) => ({ id: Number(x.id), indexName: x.index_name, outcome: x.outcome }));
+}
+
+export function blockedMessage(alias: string, attempts: BlockingAttempt[]): string {
+  const list = attempts.map((a) => `attempt ${a.id} to ${a.indexName}: ${a.outcome}`).join(', ');
+  return `alias ${alias} is blocked by an unresolved switch (${list}); run pnpm worker index reconcile --alias ${alias}`;
 }
 
 export interface AliasSwitch {
   alias: string;
   index: string;
+  attemptId: number;
   /** Indices the alias pointed at before (kept, not deleted). */
   previous: string[];
   /** A read-back after the committed request showed exactly the new index. */
   verified: boolean;
 }
 
-export type AliasSwitchOutcome = 'not_switched' | 'unknown' | 'inconsistent';
+/**
+ * `not_submitted`: no request was sent (blocked, refused by `beforeSwitch`, lock not
+ * taken): the index was never part of an alias request. `rejected`: Elasticsearch
+ * refused the request. `unknown`: it may still be applied; the alias is blocked.
+ * `inconsistent`: committed, but the alias has other targets too.
+ */
+export type AliasSwitchOutcome = 'not_submitted' | 'rejected' | 'unknown' | 'inconsistent';
 
 export class AliasSwitchError extends Error {
   constructor(
     message: string,
-    /**
-     * `not_switched`: no request was sent, or it was rejected; the index is certainly
-     * not the alias target. `unknown`: the request may still be applied; keep the index
-     * and reconcile. `inconsistent`: committed, but the alias has other targets too.
-     */
     readonly outcome: AliasSwitchOutcome,
+    readonly attemptId: number | null,
     cause?: unknown,
   ) {
     super(message, { cause });
@@ -135,9 +144,8 @@ export class AliasSwitchError extends Error {
 }
 
 export interface SwitchAliasOptions extends AliasLockOptions {
-  /** Build that owns `index` (its `index_publications` row); default a fresh manual id. */
-  buildId?: string;
-  generationId?: number | null;
+  /** Build that owns the index; null for a manual switch such as a rollback. */
+  buildId?: string | null;
   /** Runs under the alias lock before anything is recorded or sent; throwing refuses the switch. */
   beforeSwitch?: (client: pg.PoolClient) => Promise<void>;
   /** Read-back attempts after a committed request (default 3). */
@@ -146,20 +154,23 @@ export interface SwitchAliasOptions extends AliasLockOptions {
   readRetryDelayMs?: number;
 }
 
-/** A response from Elasticsearch that rejected the request: it was never applied. */
+/** A response from Elasticsearch that refused the request: it was never applied. */
 function definitelyRejected(err: unknown): boolean {
   const code = statusOf(err);
   return typeof code === 'number' && code >= 400 && code < 500 && code !== 408;
 }
 
-async function setStatus(client: pg.PoolClient, index: string, status: string): Promise<void> {
-  await client.query(`update index_publications set status = $2, updated_at = now() where index_name = $1`, [index, status]);
+async function resolve(client: pg.PoolClient, attemptId: number, outcome: 'committed' | 'rejected' | 'unknown'): Promise<void> {
+  await client.query(`update index_switch_attempts set outcome = $2, resolved_at = now() where id = $1 and outcome = 'pending'`, [
+    attemptId,
+    outcome,
+  ]);
 }
 
 /**
  * Point `alias` at `index` only, serialized with every other switch of the alias,
- * and record the outcome in `index_publications`. Throws `AliasSwitchError`; its
- * `outcome` says whether the caller may delete `index` (`not_switched` only).
+ * and record the attempt. Throws `AliasSwitchError`; only `not_submitted` means the
+ * index was never part of an alias request.
  */
 export async function switchAlias(
   es: Client,
@@ -168,31 +179,29 @@ export async function switchAlias(
   index: string,
   opts: SwitchAliasOptions = {},
 ): Promise<AliasSwitch> {
-  if (alias === index) throw new AliasSwitchError('alias and index names must differ', 'not_switched');
+  if (alias === index) throw new AliasSwitchError('alias and index names must differ', 'not_submitted', null);
   const attempts = Math.max(1, opts.readAttempts ?? 3);
   const delayMs = opts.readRetryDelayMs ?? 200;
-  const buildId = opts.buildId ?? `manual-${randomBytes(4).toString('hex')}`;
-  let sent = false;
+  let attemptId: number | null = null;
   try {
     return await withAliasLock(
       db,
       alias,
       async (client) => {
-        const unresolved = await unresolvedPublications(client, alias);
-        if (unresolved.length > 0) throw new Error(unresolvedMessage(alias, unresolved));
+        const blocking = await blockingAttempts(client, alias);
+        if (blocking.length > 0) throw new Error(blockedMessage(alias, blocking));
         await opts.beforeSwitch?.(client);
         const previous = await aliasTargets(es, alias);
         if (previous.length === 0 && (await es.indices.exists({ index: alias }))) {
           throw new Error(`${alias} is a concrete index, not an alias`);
         }
-        await client.query(
-          `insert into index_publications (index_name, alias, build_id, generation_id, status)
-           values ($1, $2, $3, $4, 'switching')
-           on conflict (index_name) do update set alias = excluded.alias, status = 'switching', deleted_at = null, updated_at = now()`,
-          [index, alias, buildId, opts.generationId ?? null],
+        const inserted = await client.query<{ id: string }>(
+          `insert into index_switch_attempts (alias, index_name, build_id) values ($1, $2, $3) returning id`,
+          [alias, index, opts.buildId ?? null],
         );
+        attemptId = Number(inserted.rows[0]?.id);
+        const id = attemptId;
 
-        sent = true;
         try {
           await es.indices.updateAliases(
             {
@@ -207,17 +216,18 @@ export async function switchAlias(
           );
         } catch (err) {
           if (definitelyRejected(err)) {
-            await setStatus(client, index, 'abandoned');
-            throw new AliasSwitchError(`alias ${alias} not switched to ${index}: rejected (${String(err)})`, 'not_switched', err);
+            await resolve(client, id, 'rejected');
+            throw new AliasSwitchError(`alias ${alias} not switched to ${index}: rejected (${String(err)})`, 'rejected', id, err);
           }
-          await setStatus(client, index, 'unknown');
+          await resolve(client, id, 'unknown');
           throw new AliasSwitchError(
-            `alias ${alias}: switch to ${index} failed in transport and may still be applied; ${index} is kept and the alias is blocked until pnpm worker index reconcile --alias ${alias}`,
+            `alias ${alias}: switch attempt ${id} to ${index} failed in transport and may still be applied; ${index} is kept and the alias is blocked until pnpm worker index reconcile --alias ${alias}`,
             'unknown',
+            id,
             err,
           );
         }
-        await setStatus(client, index, 'committed');
+        await resolve(client, id, 'committed');
 
         // The response settled the outcome; a read-back only confirms it.
         let targets: string[] | null = null;
@@ -229,19 +239,20 @@ export async function switchAlias(
           throw new AliasSwitchError(
             `alias ${alias} points at ${targets.join(', ') || 'nothing'} after switching to ${index}; ${index} is kept`,
             'inconsistent',
+            id,
           );
         }
-        return { alias, index, previous, verified: targets !== null };
+        return { alias, index, attemptId: id, previous, verified: targets !== null };
       },
       opts,
     );
   } catch (err) {
     if (err instanceof AliasSwitchError) throw err;
-    if (!sent) {
-      // Taking the lock, the checks before the request, or recording `switching` failed.
-      throw new AliasSwitchError(`alias ${alias} not switched: ${err instanceof Error ? err.message : String(err)}`, 'not_switched', err);
+    if (attemptId === null) {
+      // Taking the lock, the checks, or recording the attempt failed: nothing was sent.
+      throw new AliasSwitchError(`alias ${alias} not switched: ${err instanceof Error ? err.message : String(err)}`, 'not_submitted', null, err);
     }
-    // Recording the outcome failed after the request: the row still says `switching`, which blocks the alias.
-    throw new AliasSwitchError(`alias ${alias}: outcome of switching to ${index} not recorded; ${index} is kept`, 'unknown', err);
+    // Recording the outcome failed after the attempt was recorded: it stays pending, which blocks the alias.
+    throw new AliasSwitchError(`alias ${alias}: outcome of attempt ${attemptId} to ${index} not recorded; ${index} is kept`, 'unknown', attemptId, err);
   }
 }

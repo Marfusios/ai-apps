@@ -4,7 +4,7 @@ import { listGenerations } from '../server/db/generations.js';
 import { createEsClient } from '../server/search/es.js';
 import { workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
-import { cleanupStaleBuilds, reconcileAlias } from './index/publications.js';
+import { cleanupStalePins, declareAbandoned, deleteUnusedIndices, reconcileAlias } from './index/publications.js';
 import { extractArchive, isTerminating } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
 import { STALE_RUN_MINUTES, failStaleRuns, listRunningRuns } from './ingest/runs.js';
@@ -18,7 +18,8 @@ const USAGE = [
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
   '  worker index cases --generation <id>',
-  '  worker index reconcile --alias <alias> [--settle-seconds <n>]',
+  '  worker index reconcile --alias <alias> [--declare-abandoned <attempt-id> --reason <text>]',
+  '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
   '  worker index cleanup-builds --older-than <hours>',
 ].join('\n');
 
@@ -169,22 +170,62 @@ async function main(argv: string[]): Promise<number> {
     if (target === 'reconcile') {
       const { values } = parseArgs({
         args,
-        options: { alias: { type: 'string' }, 'settle-seconds': { type: 'string' } },
+        options: { alias: { type: 'string' }, 'declare-abandoned': { type: 'string' }, reason: { type: 'string' } },
         strict: true,
       });
-      const settle = values['settle-seconds'] === undefined ? 60 : Number(values['settle-seconds']);
-      if (!values.alias || !Number.isFinite(settle) || settle < 0) {
+      const declared = values['declare-abandoned'] === undefined ? null : Number(values['declare-abandoned']);
+      if (!values.alias || (declared !== null && (!Number.isSafeInteger(declared) || declared < 1 || !values.reason))) {
         console.error(USAGE);
         return 2;
       }
       const alias = values.alias;
       const es = createEsClient(config, 'write');
       try {
-        console.error(`waiting ${settle} s for pending alias requests of ${alias} to settle`);
-        const r = await withDb((db) => reconcileAlias(es, db, alias, { settleMs: settle * 1000 }));
+        if (declared !== null) {
+          const reason = values.reason as string;
+          await withDb((db) => declareAbandoned(db, alias, declared, reason));
+          // An operator's assertion: logged with its reason; it unblocks switching and deletes nothing.
+          console.log(`attempt ${declared} of ${alias} declared abandoned: ${reason}`);
+          return 0;
+        }
+        const r = await withDb((db) => reconcileAlias(es, db, alias));
         console.log(`alias: ${r.alias} -> ${r.targets.join(', ') || 'nothing'}`);
-        console.log(`committed: ${r.committed.join(', ') || 'none'}`);
-        console.log(`abandoned (deleted by cleanup-builds): ${r.abandoned.join(', ') || 'none'}`);
+        console.log(`committed: ${r.committed.map((c) => `${c.id} (${c.indexName})`).join(', ') || 'none'}`);
+        for (const u of r.unresolved) {
+          console.log(`unknown: attempt ${u.id} (${u.indexName})${u.declared ? ' declared abandoned' : ''}`);
+        }
+        if (r.blocked) {
+          console.log(
+            `alias ${alias} stays blocked. Rerun once the request may have completed, or declare an attempt abandoned: ` +
+              `pnpm worker index reconcile --alias ${alias} --declare-abandoned <attempt-id> --reason <text>`,
+          );
+          return 1;
+        }
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
+    if (target === 'delete-unused') {
+      const { values } = parseArgs({
+        args,
+        options: { 'older-than': { type: 'string' }, alias: { type: 'string', multiple: true }, yes: { type: 'boolean' } },
+        strict: true,
+      });
+      const hours = Number(values['older-than']);
+      if (values['older-than'] === undefined || !Number.isFinite(hours) || hours < 0) {
+        console.error(USAGE);
+        return 2;
+      }
+      const es = createEsClient(config, 'write');
+      try {
+        const r = await withDb((db) =>
+          deleteUnusedIndices(es, db, { olderThanHours: hours, yes: values.yes === true, ...(values.alias ? { aliases: values.alias } : {}) }),
+        );
+        if (r.dryRun) console.log(`would delete (dry run; pass --yes): ${r.wouldDelete.join(', ') || 'none'}`);
+        else console.log(`deleted: ${r.deleted.join(', ') || 'none'}`);
+        if (r.missing.length > 0) console.log(`already missing: ${r.missing.join(', ')}`);
+        for (const k of r.refused) console.log(`kept ${k.indexName}: ${k.reason}`);
       } finally {
         await es.close();
       }
@@ -197,16 +238,9 @@ async function main(argv: string[]): Promise<number> {
         console.error(USAGE);
         return 2;
       }
-      const es = createEsClient(config, 'write');
-      try {
-        const r = await withDb((db) => cleanupStaleBuilds(es, db, { olderThanHours: hours }));
-        console.log(`pins removed: ${r.pinsRemoved.map((p) => `${p.buildId} (generation ${p.generationId})`).join(', ') || 'none'}`);
-        console.log(`indices deleted: ${r.indicesDeleted.join(', ') || 'none'}`);
-        console.log(`running builds skipped: ${r.skippedRunning.join(', ') || 'none'}`);
-        if (r.keptTargets.length > 0) console.log(`kept (alias targets; check manually): ${r.keptTargets.join(', ')}`);
-      } finally {
-        await es.close();
-      }
+      const r = await withDb((db) => cleanupStalePins(db, { olderThanHours: hours }));
+      console.log(`pins removed: ${r.pinsRemoved.map((p) => `${p.buildId} (generation ${p.generationId})`).join(', ') || 'none'}`);
+      console.log(`running builds skipped: ${r.skippedRunning.join(', ') || 'none'}`);
       return 0;
     }
     console.error(USAGE);

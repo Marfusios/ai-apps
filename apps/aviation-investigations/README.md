@@ -204,41 +204,49 @@ pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running b
 
 ```sh
 pnpm worker index cases --generation <id>          # aviation_ingest + ELASTICSEARCH_WRITE_API_KEY
-pnpm worker index reconcile --alias <alias> [--settle-seconds 60]
+pnpm worker index reconcile --alias <alias> [--declare-abandoned <attempt-id> --reason <text>]
+pnpm worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]
 pnpm worker index cleanup-builds --older-than <hours>
 ```
 
 - **Build.** Each run has a random build id, part of its index name
   `<prefix>-cases-v2-g<generation>-<UTC timestamp>-<build id>` and of its generation
-  pin `index-build:<build id>`. While it runs it holds an advisory lock on that id.
-  Under the lifecycle lock it checks that the generation is `verified` (or already
-  `published`) with a latest verification `ok` by the current verifier, and pins it
-  without expiry, so pruning cannot remove it mid-build; a generation without US
-  events is refused. The build is recorded in `index_publications`, then the US
-  events are read in batches of 500 from one repeatable-read snapshot
+  pin `index-build:<build id>`, and is recorded in `index_builds` before its index
+  exists. While it runs it holds an advisory lock on that id. Under the lifecycle
+  lock it checks that the generation is `verified` (or already `published`) with a
+  latest verification `ok` by the current verifier, and pins it without expiry, so
+  pruning cannot remove it mid-build; a generation without US events is refused. The
+  US events are read in batches of 500 from one repeatable-read snapshot
   (`server/db/queries/case-records.ts`) into the new index (one shard, no replicas,
   refresh off while loading), which is refreshed and checked against the database:
   documents equal the generation's US events, nested aircraft equal its aircraft, and
-  the answer-eligible, multi-aircraft and non-US counts match. Any failure up to here
-  deletes the new index. The build removes only its own pin when it ends.
+  the answer-eligible, multi-aircraft and non-US counts match. The build removes only
+  its own pin when it ends. If it fails before its index was part of any alias
+  request, it deletes that index: the only index the system deletes on its own.
 - **Alias.** `<prefix>-cases` means "the cases index built last", for operators.
   The API never reads it: it uses the index names of the active `dataset_manifests`
   row, published separately once the passages index of the same generation exists.
   Switches are serialized per alias with a PostgreSQL advisory lock. Under it, a
-  build refuses to publish if its pin has gone, records `switching`, and sends one
-  `_aliases` request (no client retries) that removes every current target and adds
-  the new index. A response settles the outcome (`committed`, or `abandoned` and the
-  index deleted on a rejection). A transport failure or timeout is `unknown` whatever
-  the alias shows afterwards, because Elasticsearch may still apply a queued request:
-  the new index is kept and the alias accepts no further switch until
-  `worker index reconcile` has waited past the request's 30 s master timeout and
-  recorded each pending build as `committed` (an alias target) or `abandoned`.
-  Previous indices are kept.
-- **Cleanup.** `worker index cleanup-builds --older-than <hours>` removes what builds
-  that are no longer running (their lock is free) left behind: their pins, the
-  partial index of a build that died while loading, and abandoned indices. Running
-  builds, `switching`/`unknown` builds (reconcile first) and alias targets are never
-  touched.
+  build refuses to publish if its pin has gone, appends a `pending` row to
+  `index_switch_attempts`, and sends one `_aliases` request (no client retries) that
+  removes every current target and adds the new index. A response resolves the
+  attempt (`committed`, or `rejected`); a transport failure or timeout leaves it
+  `unknown`, whatever the alias shows afterwards, because Elasticsearch may still
+  complete a queued request and its master timeout does not bound execution. The new
+  index is then kept, and the alias accepts no further switch until
+  `worker index reconcile` reads the alias and finds the index there (`committed`).
+  Time never resolves an attempt: if the index is absent, only an operator's
+  `--declare-abandoned <attempt-id> --reason <text>` (recorded with the reason)
+  unblocks switching, and it deletes nothing. Previous indices are kept. The
+  database allows only forward transitions of an attempt, and a committed attempt
+  stays committed.
+- **Cleanup is explicit.** `worker index delete-unused --older-than <hours>` lists
+  (and with `--yes` deletes) indices of stopped builds that are older than the
+  threshold, are no alias target, appear in no `dataset_manifests` row (active or
+  retained), and have no committed, pending or unknown switch attempt. Every
+  candidate is rechecked just before deletion while holding its build lock (free),
+  its alias lock and the lifecycle lock. `worker index cleanup-builds --older-than
+  <hours>` removes the pins of builds that are no longer running and nothing else.
 - **Documents.** One per US event, keyed by case number (`ev_id` is never indexed).
   Event fields are keywords (`country` is `ev_country` as published, always `USA`),
   `ev_date` a date, `location` a geo point (absent without coordinates). Aircraft are
