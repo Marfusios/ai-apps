@@ -46,12 +46,35 @@ describe('readDotenvAllowlisted', () => {
     });
   });
 
-  it('throws for a missing file', () => {
-    expect(() => readDotenvAllowlisted(join(dir, 'nope'), ['A'])).toThrow();
+  it('names a missing file instead of a bare ENOENT', () => {
+    const missing = join(dir, 'nope.env');
+    expect(() => readDotenvAllowlisted(missing, ['A'])).toThrow(missing);
+    expect(() => readDotenvAllowlisted(missing, ['A'])).not.toThrow(/ENOENT/);
+    expect(() => loadConfig({ env: {}, files: [missing] })).toThrow(/nope\.env/);
+  });
+
+  it('refuses an unterminated quote, naming the variable and not the value', () => {
+    const p = file('q.env', 'A="never closed\nB=fine\n');
+    expect(() => readDotenvAllowlisted(p, ['A', 'B'])).toThrow(/A has an unterminated quote/);
+    try {
+      readDotenvAllowlisted(p, ['A', 'B']);
+    } catch (err) {
+      expect(String(err)).not.toContain('never closed');
+    }
+    expect(readDotenvAllowlisted(file('r.env', "A='closed'\nB=\"x\n"), ['A'])).toEqual({ A: 'closed' });
   });
 });
 
 describe('loadConfig', () => {
+  it('validates APP_URL and ELASTICSEARCH_URL as http(s) URLs', () => {
+    expect(() => loadConfig({ env: { APP_URL: 'not a url' }, files: [] })).toThrow(/APP_URL: expected an http\(s\) URL/);
+    expect(() => loadConfig({ env: { ELASTICSEARCH_URL: 'localhost:9200' }, files: [] })).toThrow(/ELASTICSEARCH_URL/);
+    expect(() => loadConfig({ env: { APP_URL: 'ftp://casebook.example' }, files: [] })).toThrow(/APP_URL/);
+    expect(loadConfig({ env: { APP_URL: 'https://casebook.example', ELASTICSEARCH_URL: 'https://es.internal:9200' }, files: [] }).appUrl).toBe(
+      'https://casebook.example',
+    );
+  });
+
   it('process env wins over file', () => {
     const p = file('a.env', 'DATABASE_URL=postgres://file\n');
     const c = loadConfig({ env: { DATABASE_URL: 'postgres://env' }, files: [p] });

@@ -17,6 +17,7 @@ import { loadConfig, type AppConfig } from '../shared/config.js';
 import { createAiRuntime } from './ai/runtime.js';
 import { buildApp } from './app.js';
 import { closeDb, createDb } from './db/client.js';
+import { startControlMaintenance } from './quota/maintenance.js';
 import { startTracing } from './observability/tracing.js';
 import { createEsClient } from './search/es.js';
 
@@ -53,11 +54,15 @@ async function main(): Promise<void> {
     logger: { level: config.nodeEnv === 'production' ? 'info' : 'debug' },
   });
 
+  // Retention and lease expiry of the control tables (server/quota/maintenance.ts): advisory-locked, never fatal.
+  const maintenance = startControlMaintenance(db, app.log);
+
   let closing = false;
   const shutdown = (signal: string) => {
     if (closing) return;
     closing = true;
     app.log.info({ signal }, 'shutting down');
+    maintenance.stop();
     const force = setTimeout(() => process.exit(1), 10_000);
     force.unref();
     void (async () => {

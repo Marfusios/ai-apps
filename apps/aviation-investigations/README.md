@@ -4,9 +4,9 @@ Find and compare NTSB aviation investigations using their evidence, findings, an
 probable causes. For flight instructors preparing case-based lessons and safety
 analysts exploring similar events.
 
-**Status: Experimental.** Keyword search, case pages and the dashboard run on the
-API server with the web client; AI briefs are not built yet and there is no public
-deployment.
+**Status: Experimental.** Keyword search, case pages and the dashboard are live on the
+dev environment (API server, web client, container deployment, trial identity and AI
+status); AI briefs are in progress and there is no public deployment.
 
 - [Implementation design](docs/DESIGN.md): TypeScript stack, retrieval, UI,
   authentication, cost controls, deployment, and delivery milestones.
@@ -160,6 +160,8 @@ pnpm worker load --from data/work/<extraction-dir>
 pnpm worker verify --generation <id> [--profile <file>]
 pnpm worker generations                              # generations, plus runs still marked running
 pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running by a dead process
+pnpm worker prune-generations [--dry-run] [--grace-hours <n>]  # retention by publication, see "Retention"
+pnpm worker prune-controls                           # lease expiry and control-data retention (also run by the API)
 ```
 
 - **Dataset generations.** Every load writes a new generation in one transaction:
@@ -486,7 +488,13 @@ its 5-second Elasticsearch `timeout` (`timed_out`, partial counts) is a 503, nev
 404, partial data or an internal message. The router's own refusals (a malformed URL)
 get the same headers and a JSON 400, and the static files' refusals are 404 or 400.
 The log has one line per API request (method, route pattern, status, duration),
-without client addresses or query strings.
+without client addresses or query strings; an unmatched `/api` path is logged with
+the route `unmatched` and nothing of the request target. Per-visitor routes
+(`/api/ai`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
+prefix, so later routes are covered) answer `Cache-Control: private, no-store`; public
+data routes are cacheable and keyed by the dataset revision; errors are `no-store`.
+Requests the HTTP parser itself refuses get the same security headers and a JSON 400
+with `Connection: close`.
 
 - **Dataset pinning (A6).** Each request resolves the active `dataset_manifests` row
   (reused for 5 seconds) and reads only that generation and its cases index, never
@@ -659,7 +667,10 @@ retention are in migrations 0008 and 0009.
   flight, only global pauses are reported. `pruneControls` deletes idempotency records
   after 24 hours, buckets and anti-abuse records after their window plus 7 days, trial
   identities after 30 days, redeemed Turnstile tokens after 15 minutes, and ledger
-  lines and closed reservations after 90 days.
+  lines and closed reservations after 90 days. The API server runs `expireLeases` and
+  `pruneControls` itself about every 10 minutes, under a PostgreSQL advisory lock
+  (`server/quota/maintenance.ts`; the app role already holds the grants);
+  `pnpm worker prune-controls` runs them once by hand.
 
 The kill switch pauses interactive AI only. Its second flag is the login-required
 emergency mode (DESIGN §7): anonymous trials are refused (admission `login_required`,

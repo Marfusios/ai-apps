@@ -409,6 +409,88 @@ The extraction image was formerly tagged `aviation-extract:mdbtools-1.0.0`;
 old tag can be removed (`docker image rm aviation-extract:mdbtools-1.0.0`).
 Manifests of earlier extractions keep the old name; loading does not depend on it.
 
+## Costs of the opt-in commands
+
+Nothing in the test suite or in a default command calls a paid provider. These do,
+and each needs an explicit flag or key:
+
+| Command | What it pays for | Cost |
+| --- | --- | --- |
+| `pnpm ingest index passages --generation <id> --confirm-cost` | OpenAI embeddings of every passage (`text-embedding-3-small`) | about $0.57 for the full corpus, measured; the dry run (no flag) prints the planned tokens and cost and spends nothing |
+| the retrieval evaluation (README, "Retrieval evaluation") | embeddings of the evaluation queries | about $0.00002 |
+| AI briefs (later) | the scope, answer and check models per request | about $0.006 to $0.01 a request (DESIGN §8), capped by the budgets below |
+
+Embeddings and evaluations are metered on the indexing ledger and stop at
+`AI_INGESTION_MONTHLY_BUDGET_USD`; vectors already paid for are kept in
+`embedding_cache`, so a rerun pays only for what is missing. Interactive AI is capped
+by `AI_MONTHLY_BUDGET_USD` (total), `AI_INTERACTIVE_MONTHLY_BUDGET_USD`,
+`AI_INTERACTIVE_DAILY_BUDGET_USD` and `AI_ANONYMOUS_BUDGET_SHARE`, and by the per-visitor
+request limits (`AI_ANONYMOUS_TRIAL_REQUESTS`, `AI_USER_DAILY_REQUESTS`, ...); see
+`.env.example`. `pnpm worker ai-switch --off` pauses interactive AI at once.
+
+## Backups
+
+What lives only in PostgreSQL, and must be backed up:
+
+- the corpus generations and manifests (`dataset_generations`, `dataset_manifests`,
+  the case tables), which are the product of an ingestion you would otherwise redo
+  from the source archive;
+- the cost ledger, reservations and the budget switch (`cost_ledger`, `reservations`,
+  `ai_switch`), which are the only record of spend;
+- trial, usage, lease, idempotency and abuse records (`trial_identities`,
+  `usage_buckets`, `leases`, `idempotency`, `abuse_records`);
+- the report links (`report_links`) and their provenance, and the passage embedding
+  cache (`embedding_cache`), which is what keeps a rebuild from paying again;
+- the generation pins and the index build records.
+
+Rebuildable: the Elasticsearch indices. They are built from PostgreSQL (the cases
+index) and PostgreSQL plus `embedding_cache` (the passages index), so after a restore
+run `index cases`, `index passages` (free while the cache is complete) and `publish`.
+Verification reports under `data/reports/` and the extraction directories are
+derived and need no backup; the source archive is kept wherever you keep it.
+
+```sh
+# One environment's database, as a role that can read everything in it. Run it on the
+# host that can reach the database; keep the file off the repository and encrypted.
+pg_dump --format=custom --no-owner --file "<backup-dir>/aviation_<env>-$(date +%F).dump" \
+  "postgresql://<backup-role>@<db-host>:<port>/aviation_<env>"
+
+# Restore into an empty database, then re-run the migrations to check the schema.
+pg_restore --no-owner --dbname "postgresql://<admin-role>@<db-host>:<port>/aviation_<env>" "<backup-dir>/<file>.dump"
+pnpm app:migrate
+```
+
+Roles and grants are part of provisioning, not of the dump (`pnpm provision:shared`).
+
+## Retention and maintenance
+
+Nothing grows without bound, but two kinds of retention run differently:
+
+- **Control data** (idempotency records, quota buckets, abuse records, trial
+  identities, redeemed Turnstile tokens, ledger lines and closed reservations) and
+  **expired leases** are handled by the API server itself. About every 10 minutes (jittered), each
+  `aviation-app` instance tries a PostgreSQL advisory lock and, if it gets it, expires
+  leases of unsettled reservations (charged in full, as the cost gate requires) and calls
+  `prune_controls()`. Several instances do not overlap; a failure is logged (the error
+  type only) and retried at the next pass, and never stops the server. This runs as
+  `aviation_app`, which already holds `EXECUTE` on `prune_controls()` and the table
+  privileges lease expiry needs (migration 0008), so no grant was added and no host
+  cron or systemd timer is needed. To run it by hand (a host with `DATABASE_URL`, the
+  `aviation_app` login, in `AVIATION_ENV_FILES` or `.env.local`; the ingest container does not hold
+  that credential): `pnpm worker prune-controls`.
+- **Generations** are pruned only on request. Run it after publishing a new generation
+  (and after a rollback has settled):
+
+  ```sh
+  pnpm ingest prune-generations --dry-run    # lists what would be deleted; deletes nothing
+  pnpm ingest prune-generations              # keeps the active, pinned and the two most recently published
+  pnpm ingest prune-generations --grace-hours 48   # never-published generations are kept this long (default 24)
+  ```
+
+  Pruned generations take their case rows with them, so run the dry run first, and
+  delete the indices that belonged to them afterwards with
+  `index delete-unused --older-than <hours>` (above).
+
 ## Tunnel mode
 
 `live` is reached only through a Cloudflare Tunnel; the app publishes no port.

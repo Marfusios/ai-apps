@@ -18,7 +18,10 @@
  *   - `GET /api/health` from loopback (the container's own health check).
  *   In tunnel mode only the trusted connector may connect at all (403 otherwise).
  * - Every response carries the security headers (server/http/security-headers.ts),
- *   including the router's own errors for malformed URLs (`frameworkErrors`).
+ *   including the router's own errors for malformed URLs (`frameworkErrors`, which
+ *   applies the tunnel peer check first) and the HTTP parser's (`clientErrorHandler`).
+ * - `Cache-Control` of per-visitor routes (AI, briefs, auth, account) is forced to
+ *   `private, no-store` from the matched route (server/http/cache-headers.ts).
  *
  * Fastify runs with `trustProxy: false`; `request.ip` is never used.
  */
@@ -34,9 +37,11 @@ import type { AiRuntime } from './ai/runtime.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
 import type { Db } from './db/client.js';
 import { CLIENT_IP_HEADER, compileTrustedProxies, isLoopback, resolveNetworkIdentity } from './http/network-identity.js';
+import { isNoStoreRoute, PRIVATE_NO_STORE } from './http/cache-headers.js';
+import { makeClientErrorHandler } from './http/client-error.js';
 import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
-import { contentSecurityPolicy, securityHeaders } from './http/security-headers.js';
+import { contentSecurityPolicy, isHttpsUrl, securityHeaders } from './http/security-headers.js';
 import { SearchTimedOutError } from './search/timeout.js';
 import { aiStatusRoutes } from './routes/ai-status.js';
 import { caseRoutes } from './routes/cases.js';
@@ -133,7 +138,7 @@ function clientStatus(err: unknown): number | null {
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const trusted = compileTrustedProxies(deps.config.trustedProxyCidrs);
-  const headers = securityHeaders({ hsts: deps.config.appUrl.startsWith('https://') });
+  const headers = securityHeaders({ hsts: isHttpsUrl(deps.config.appUrl) });
   const withHeaders = (reply: FastifyReply): FastifyReply => {
     for (const [name, value] of Object.entries(headers)) {
       // A page sets its own CSP (with its style nonce).
@@ -142,6 +147,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return reply;
   };
 
+  const identityOf = (peer: string | undefined, clientIp: string | string[] | undefined) => resolveNetworkIdentity(peer, clientIp, trusted);
+
   const app = Fastify({
     logger: deps.logger ?? false,
     trustProxy: false,
@@ -149,10 +156,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 16 * 1024,
     return503OnClosing: true,
+    // The HTTP parser's own refusals (before routing) carry the security headers too.
+    clientErrorHandler: makeClientErrorHandler(headers),
     routerOptions: { ignoreTrailingSlash: true, maxParamLength: 64 },
     // The router's own refusals (a malformed URL) get the security headers and an ErrorResponse.
-    frameworkErrors: (error, _request, reply) => {
+    // `onRequest` never runs for them, so the tunnel's peer check applies here too: a peer
+    // that is not the connector gets 403, not a 400 that tells it how we parse URLs.
+    frameworkErrors: (error, request, reply) => {
       withHeaders(reply);
+      const peer = identityOf(request.raw.socket.remoteAddress, undefined);
+      if (!peer.ok && peer.status === 403) {
+        request.log.warn({ reason: peer.reason }, 'request refused');
+        void sendError(reply, 403, 'forbidden');
+        return;
+      }
       if (clientStatus(error) !== null) void sendError(reply, 400, 'bad_request', { message: 'The request URL is not valid.' });
       else void sendError(reply, 500, 'internal');
     },
@@ -200,14 +217,22 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
   });
 
-  app.addHook('onSend', async (_request, reply, payload) => {
+  app.addHook('onSend', async (request, reply, payload) => {
     withHeaders(reply);
+    // Per-visitor routes (AI, auth, account, briefs) are never stored, whatever their handler set.
+    if (isNoStoreRoute(request.routeOptions.url)) reply.header('cache-control', PRIVATE_NO_STORE);
     return payload;
   });
 
   app.addHook('onResponse', async (request, reply) => {
-    const route = request.routeOptions.url;
-    if (accessOf(route) === 'asset') return;
+    const matched = request.routeOptions.url;
+    let route = matched;
+    if (accessOf(matched) === 'asset') {
+      // An unmatched /api path reaches the not-found handler: still one line per API request,
+      // with the class of path only (never the raw target, which may hold search text).
+      if (!isApiPath(routerPath(request.url))) return;
+      route = 'unmatched';
+    }
     request.log.info(
       { method: request.method, route, status: reply.statusCode, ms: Math.round(reply.elapsedTime) },
       'api request',
@@ -226,6 +251,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // The static files' refusals (a path outside the root, a NUL byte, ...) are the request's fault.
     const status = clientStatus(err);
     if (status !== null && accessOf(request.routeOptions.url) === 'asset' && (err as Error).name !== 'ResponseError') {
+      if (status === 412 || status === 416) {
+        // Conditional and range refusals are the client's protocol, not a bad request: pass the status
+        // through, with the Content-Range a 416 carries.
+        const contentRange = (err as { headers?: Record<string, unknown> }).headers?.['Content-Range'];
+        if (status === 416 && typeof contentRange === 'string' && /^bytes \*\/\d+$/.test(contentRange)) reply.header('content-range', contentRange);
+        return sendError(reply, status, 'bad_request');
+      }
       return [403, 404, 410].includes(status) ? sendError(reply, 404, 'not_found') : sendError(reply, 400, 'bad_request');
     }
     request.log.error({ err: { name: (err as Error).name, type: (err as { meta?: { body?: { error?: { type?: string } } } }).meta?.body?.error?.type } }, 'request failed');

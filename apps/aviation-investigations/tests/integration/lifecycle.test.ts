@@ -205,6 +205,22 @@ describe('pruning', () => {
     expect((await getActiveManifest(app))?.generationId).toBe(g4);
   });
 
+  it('a dry run lists what would be deleted and deletes nothing', async () => {
+    const [g1, g2, g3, g4] = [await verified(), await verified(), await verified(), await verified()];
+    for (const g of [g1, g2, g3]) await publish(g as number);
+    await pinGeneration(ingest, g1 as number, 'brief 7');
+    const before = (await listGenerations(app)).map((g) => g.id);
+    const planned = await pruneGenerations(ingest, { keep: 1, dryRun: true });
+    expect(planned).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1] });
+    expect((await listGenerations(app)).map((g) => g.id)).toEqual(before);
+    expect(await rowsOf(ingest, g2 as number)).toBeGreaterThan(0);
+    // g4 is verified but never published and inside the grace period: not a candidate either way.
+    expect(planned.deleted).not.toContain(g4);
+    // The real run does what the plan said.
+    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual(planned);
+    expect((await listGenerations(app)).map((g) => g.id)).not.toContain(g2);
+  });
+
   it('keeps a slow load that committed late, deletes unpublished ones past the grace period and failed ones', async () => {
     const active = await verified();
     await publish(active);

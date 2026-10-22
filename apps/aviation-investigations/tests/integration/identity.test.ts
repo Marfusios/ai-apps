@@ -94,12 +94,12 @@ interface Harness {
 let keySeq = 0;
 
 /** The server with its AI runtime, plus the test-only AI route `POST /api/test/ask`. */
-function harness(opts: { config?: AiRuntimeConfig; trialLimits?: TrialCreationLimits } = {}): Harness {
+function harness(opts: { config?: AiRuntimeConfig; trialLimits?: TrialCreationLimits; siteverify?: typeof fetch } = {}): Harness {
   const config = opts.config ?? aiConfig();
   const sv = new FakeSiteverify(now, { hostname: HOST, action: TURNSTILE_ACTION });
   const ai = createAiRuntime(config, {
     db: appDb,
-    turnstile: { fetch: sv.fetch, retryDelayMs: 0, attemptTimeoutMs: 200 },
+    turnstile: { fetch: opts.siteverify ?? sv.fetch, retryDelayMs: 0, attemptTimeoutMs: 200 },
     ...(opts.trialLimits ? { trialLimits: opts.trialLimits } : {}),
     now,
   });
@@ -168,7 +168,7 @@ async function status(h: Harness | FastifyInstance, cookie?: string | null): Pro
   const app = 'app' in h ? h.app : h;
   const r = await app.inject({ method: 'GET', url: '/api/ai/status', remoteAddress: VISITOR, headers: cookie ? { cookie } : {} });
   expect(r.statusCode, r.body).toBe(200);
-  expect(r.headers['cache-control']).toBe('no-store');
+  expect(r.headers['cache-control']).toBe('private, no-store');
   expect(r.headers['set-cookie']).toBeUndefined();
   return { ...AiStatusResponseSchema.parse(JSON.parse(r.body)), raw: r.body };
 }
@@ -316,6 +316,20 @@ describe('anonymous gate', () => {
     }
     await nothingSpent();
     expect(await count('usage_buckets')).toBe(0);
+  });
+
+  it('an uppercase HTTPS:// APP_URL still gets the Secure, __Host- trial cookie', async () => {
+    const h = harness({ config: aiConfig({ appUrl: `HTTPS://${HOST}` }) });
+    const first = await ask(h, { turnstileToken: h.sv.issue() });
+    expect(first.setCookie).toMatch(new RegExp(`^${TRIAL_COOKIE_SECURE}=v1\\..*; Secure$`));
+  });
+
+  it('bad-request and unknown Cloudflare codes are our fault: 503, not a failed challenge', async () => {
+    for (const code of ['bad-request', 'new-unknown-code']) {
+      const h = harness({ siteverify: (async () => Response.json({ success: false, 'error-codes': [code] })) as typeof fetch });
+      const r = await ask(h, { turnstileToken: h.sv.issue() });
+      expect([r.status, errorOf(r), r.setCookie], code).toEqual([503, 'unavailable', null]);
+    }
   });
 
   it("Cloudflare's always-passing test keys: the dummy token passes repeatedly, other tokens stay single-use", async () => {

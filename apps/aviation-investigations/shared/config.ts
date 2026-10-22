@@ -18,12 +18,21 @@ export function isCidr(value: string): boolean {
   const bits = Number(m[2]);
   return (family === 4 && bits <= 32) || (family === 6 && bits <= 128);
 }
+/** An absolute http(s) URL. */
+const isHttpUrl = (v: string): boolean => {
+  try {
+    const p = new URL(v).protocol;
+    return p === 'http:' || p === 'https:';
+  } catch {
+    return false;
+  }
+};
 const int = (def: number) => z.coerce.number().int().default(def);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ENV: z.enum(['dev', 'live']).default('dev'),
-  APP_URL: str('http://localhost:3000'),
+  APP_URL: str('http://localhost:3000').refine(isHttpUrl, 'expected an http(s) URL'),
   TRUSTED_PROXY_CIDRS: z
     .string()
     .default('')
@@ -36,7 +45,7 @@ const envSchema = z.object({
   DATABASE_INGEST_URL: str(),
   POSTGRES_PORT: int(55432),
   ELASTICSEARCH_PORT: int(59200),
-  ELASTICSEARCH_URL: str('http://localhost:59200'),
+  ELASTICSEARCH_URL: str('http://localhost:59200').refine(isHttpUrl, 'expected an http(s) URL'),
   ELASTICSEARCH_API_KEY: str(),
   ELASTICSEARCH_READ_API_KEY: str(),
   ELASTICSEARCH_WRITE_API_KEY: str(),

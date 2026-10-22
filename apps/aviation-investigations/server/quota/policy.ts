@@ -61,6 +61,8 @@ export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60_000;
 export const WINDOW_RETENTION_MS = 7 * 24 * 60 * 60_000;
 /** Advisory lock serializing every money reservation (interactive, indexing, evaluation). */
 export const SPEND_LOCK_KEY = 7_311_905_023;
+/** Transaction-level advisory lock of the periodic control maintenance (server/quota/maintenance.ts). */
+export const MAINTENANCE_LOCK_KEY = 7_311_905_024;
 
 export interface QuotaPolicy {
   budgets: QuotaBudgets;

@@ -72,7 +72,7 @@ export function isWellFormedToken(value: unknown): value is string {
 /** The visitor's token is not acceptable (403): get a fresh one. */
 export type TurnstileRejection = 'invalid_token' | 'expired_or_used' | 'hostname_mismatch' | 'action_mismatch' | 'stale_challenge';
 /** The check could not be made (503): siteverify unreachable or misbehaving, or our secret refused. */
-export type TurnstileFailure = 'network' | 'timeout' | 'http_status' | 'malformed_response' | 'secret_rejected' | 'internal_error';
+export type TurnstileFailure = 'network' | 'timeout' | 'http_status' | 'malformed_response' | 'secret_rejected' | 'internal_error' | 'bad_request' | 'unknown_error';
 
 export type TurnstileVerdict =
   | { ok: true; testKey: boolean }
@@ -188,7 +188,11 @@ export class TurnstileVerifier {
       if (codes.includes('internal-error')) return unavailable('internal_error', true);
       if (codes.includes('missing-input-secret') || codes.includes('invalid-input-secret')) return unavailable('secret_rejected');
       if (codes.includes('timeout-or-duplicate')) return rejected('expired_or_used');
-      return rejected('invalid_token');
+      // The visitor's own fault: a token Cloudflare does not know (or none).
+      if (codes.includes('invalid-input-response') || codes.includes('missing-input-response')) return rejected('invalid_token');
+      // `bad-request` and any code we do not know mean our request or our assumptions are wrong,
+      // not that the visitor failed: 503, never a challenge failure.
+      return unavailable(codes.includes('bad-request') ? 'bad_request' : 'unknown_error');
     }
     if (status !== 200) return unavailable('http_status');
     if (this.testKey) return { retry: false, verdict: { ok: true, testKey: true } };

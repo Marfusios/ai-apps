@@ -7,7 +7,7 @@ Create a scaffold with `python3 scripts/new_app.py <app-name>` from the reposito
 
 | App | Purpose | Status |
 | --- | --- | --- |
-| [Aviation Casebook](aviation-investigations/README.md) | Evidence-based search and comparison of NTSB investigations. | Experimental |
+| [Aviation Casebook](aviation-investigations/README.md) | Evidence-based search and comparison of NTSB investigations. Keyword search is live on dev; AI briefs are in progress. | Experimental |
 <!-- app-catalog -->
 
 Status meanings: **Scaffold** (starting documentation), **Design** (researched proposal,

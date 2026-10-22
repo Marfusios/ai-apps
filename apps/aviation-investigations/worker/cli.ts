@@ -2,8 +2,10 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
-import { listGenerations } from '../server/db/generations.js';
+import { listGenerations, pruneGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
+import { pruneControls } from '../server/quota/retention.js';
+import { expireLeases } from '../server/quota/settle.js';
 import { readAiSwitch, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
 import { APP_DIR, workerConfig } from './config.js';
@@ -35,6 +37,8 @@ const USAGE = [
   '  worker report-links --seed',
   '  worker report-links --export <file> --case-col <name> (--id-col <name> | --url-col <name>) [--aircraft-col <name>] [--date-col <name>] --retrieved-at <ISO date>',
   '  worker generations',
+  '  worker prune-generations [--dry-run] [--grace-hours <n>]',
+  '  worker prune-controls',
   '  worker fail-stale-runs --older-than-minutes <n>',
   '  worker index cases --generation <id>',
   '  worker index passages --generation <id> [--dry-run | --confirm-cost]',
@@ -550,6 +554,38 @@ async function main(argv: string[]): Promise<number> {
     console.log(
       `interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}; ${free}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`,
     );
+    return 0;
+  }
+  if (command === 'prune-generations') {
+    const { values } = parseArgs({ args: rest, options: { 'dry-run': { type: 'boolean' }, 'grace-hours': { type: 'string' } }, strict: true });
+    const grace = values['grace-hours'];
+    if (grace !== undefined && !/^\d+(\.\d+)?$/.test(grace)) {
+      console.error(USAGE);
+      return 2;
+    }
+    const dryRun = values['dry-run'] === true;
+    const report = await withDb((db) => pruneGenerations(db, { dryRun, ...(grace !== undefined ? { graceHours: Number(grace) } : {}) }));
+    const list = (ids: number[]) => (ids.length === 0 ? 'none' : ids.join(', '));
+    console.log(`retained (active and most recently published): ${list(report.retained)}`);
+    console.log(`${dryRun ? 'would delete (dry run, nothing deleted)' : 'deleted'}: ${list(report.deleted)}`);
+    console.log(`skipped (pinned): ${list(report.skippedPinned)}`);
+    return 0;
+  }
+  if (command === 'prune-controls') {
+    // Retention of the control tables runs as aviation_app (DATABASE_URL): prune_controls() is granted to
+    // that role only, which is also the role the API's periodic job uses.
+    parseArgs({ args: rest, options: {}, strict: true });
+    const url = workerConfig().databaseUrl;
+    if (!url) throw new Error('DATABASE_URL is not set (the aviation_app login); run pnpm services:setup');
+    const db = createDb(url, { max: 2, applicationName: 'aviation-worker-controls' });
+    try {
+      const leases = await expireLeases(db);
+      const pruned = await pruneControls(db);
+      console.log(`leases expired: ${leases.expired} (charged ${leases.chargedUsd} USD)`);
+      for (const [k, v] of Object.entries(pruned)) console.log(`pruned ${k}: ${v}`);
+    } finally {
+      await closeDb(db);
+    }
     return 0;
   }
   if (command === 'migrate') {

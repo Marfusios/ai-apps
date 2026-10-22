@@ -139,6 +139,8 @@ export interface PruneOptions {
   keep?: number;
   /** Never-published generations are kept this long after sealing or their latest verification (default 24). */
   graceHours?: number;
+  /** Plan only: nothing is deleted and `deleted` lists what a real run would delete. */
+  dryRun?: boolean;
   /** Test seam: runs under the lifecycle lock after planning, before any deletion. */
   afterPlan?: (candidates: number[]) => Promise<void> | void;
 }
@@ -191,7 +193,7 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
         skippedPinned.push(c.id);
         continue;
       }
-      await call(q, sql`select prune_generation(${c.id})`);
+      if (opts.dryRun !== true) await call(q, sql`select prune_generation(${c.id})`);
       deleted.push(c.id);
     }
     return { retained, deleted, skippedPinned };

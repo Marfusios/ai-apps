@@ -22,6 +22,7 @@ import type { Db } from '../db/client.js';
 import { AnonymousGate } from '../identity/gate.js';
 import { TrialIdentities, type TrialCreationLimits } from '../identity/trial.js';
 import { TurnstileVerifier, TURNSTILE_TEST_SECRET_KEYS, TURNSTILE_TEST_SITE_KEYS, type TurnstileVerifierOptions } from '../identity/turnstile.js';
+import { isHttpsUrl } from '../http/security-headers.js';
 import { QuotaConfigError, quotaPolicy, type QuotaPolicy } from '../quota/policy.js';
 import { startupAiCheck, type AiStartupCheck } from './pricing.js';
 
@@ -82,7 +83,7 @@ export function createAiRuntime(config: AiRuntimeConfig, deps: AiRuntimeDeps): A
     problems.push(err.message);
   }
 
-  const secure = config.appUrl.startsWith('https://');
+  const secure = isHttpsUrl(config.appUrl);
   const trials = policy ? new TrialIdentities({ db: deps.db, policy, secure, ...(deps.trialLimits ? { limits: deps.trialLimits } : {}) }) : null;
 
   let gate: AnonymousGate | null = null;

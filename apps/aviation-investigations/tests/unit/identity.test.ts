@@ -196,6 +196,16 @@ describe('Turnstile verification', () => {
     });
   });
 
+  it('maps bad-request and unknown error codes to unavailable, not to a failed challenge', async () => {
+    const answer = (codes: string[]) => (async () => Response.json({ success: false, 'error-codes': codes })) as typeof fetch;
+    const at = (codes: string[]) => verifier(fake(), { fetch: answer(codes), attempts: 1 }).verify('0.token');
+    expect(await at(['bad-request'])).toEqual({ ok: false, kind: 'unavailable', reason: 'bad_request' });
+    expect(await at(['something-new'])).toEqual({ ok: false, kind: 'unavailable', reason: 'unknown_error' });
+    expect(await at([])).toEqual({ ok: false, kind: 'unavailable', reason: 'unknown_error' });
+    expect(await at(['invalid-input-response'])).toMatchObject({ kind: 'rejected', reason: 'invalid_token' });
+    expect(await at(['timeout-or-duplicate'])).toMatchObject({ kind: 'rejected', reason: 'expired_or_used' });
+  });
+
   it('times out a hanging call', async () => {
     const hang = ((_: unknown, init?: RequestInit) =>
       new Promise((_r, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason as Error)))) as typeof fetch;

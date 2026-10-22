@@ -14,6 +14,15 @@
  */
 import { CSP_SCRIPT_HASHES } from '../../web/src/csp-hashes.js';
 
+/** True when the public origin is HTTPS: the URL's parsed scheme, so `HTTPS://` counts and a malformed URL does not. */
+export function isHttpsUrl(url: string): boolean {
+  try {
+    return new URL(url).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export interface SecurityHeaderOptions {
   /** Send Strict-Transport-Security: the public origin is HTTPS (APP_URL). */
   hsts: boolean;

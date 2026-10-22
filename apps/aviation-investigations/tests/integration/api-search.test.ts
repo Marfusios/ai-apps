@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
+import { Writable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
@@ -556,6 +557,94 @@ describe('http', () => {
     expect((await get('/api/config', { app: limited, from: '127.0.0.2' })).status).toBe(200);
   });
 
+  it('no-store on /api/briefs', async () => {
+    // A test-only route: the real /api/briefs arrives with the briefs task. The prefix rule covers it already.
+    const a = makeApp();
+    for (const route of ['/api/briefs/probe', '/api/auth/probe', '/api/account/probe', '/api/ai/probe']) {
+      a.get(route, async (_request, reply) => reply.header('cache-control', 'public, max-age=600').send({ ok: true }));
+    }
+    for (const route of ['/api/briefs/probe', '/api/auth/probe', '/api/account/probe', '/api/ai/probe', '/api/ai/status']) {
+      const r = await get(route, { app: a });
+      expect(r.status, route).toBe(200);
+      expect(r.headers['cache-control'], route).toBe('private, no-store');
+    }
+    // Refusals on those routes are never stored either.
+    const limited = makeApp({ rateLimit: { limit: 1, windowMs: 60_000 } });
+    limited.get('/api/briefs/probe', async () => ({ ok: true }));
+    expect((await get('/api/briefs/probe', { app: limited })).status).toBe(200);
+    const refused = await get('/api/briefs/probe', { app: limited });
+    expect(refused.status).toBe(429);
+    expect(refused.headers['cache-control']).toBe('private, no-store');
+    // A public data route is not affected.
+    expect((await get('/api/config')).headers['cache-control']).toBe('public, max-age=300');
+  });
+
+  it('public cache on /api/cases', async () => {
+    for (const url of ['/api/cases/DFW08TA066', '/api/config', '/api/dashboard?cohort=default']) {
+      const r = await get(url);
+      expect(r.status, url).toBe(200);
+      expect(r.headers['cache-control'], url).toBe('public, max-age=300');
+      expect(String(r.headers.etag), url).toMatch(/^"g\d+-/);
+    }
+    expect((await get('/api/search?q=carburetor')).headers['cache-control']).toBe('public, max-age=60');
+  });
+
+  it('error responses are never cacheable and carry only the fixed message', async () => {
+    for (const [url, status] of [
+      ['/api/cases/ZZZ99ZZ999', 404],
+      ['/api/search?phase=bogus', 400],
+      ['/api/nope', 404],
+      ['/api/%ZZ', 400],
+    ] as const) {
+      const r = await get(url);
+      expect(r.status, url).toBe(status);
+      expect(r.headers['cache-control'], url).toBe('no-store');
+      ErrorResponseSchema.parse(r.json);
+    }
+  });
+
+  it('HTTPS in any letter case turns on HSTS', async () => {
+    const upper = makeApp({ config: { appUrl: 'HTTPS://casebook.example', trustedProxyCidrs: [] } });
+    expect((await get('/api/config', { app: upper })).headers['strict-transport-security']).toBe('max-age=31536000');
+    const plain = makeApp({ config: { appUrl: 'http://casebook.example/https://', trustedProxyCidrs: [] } });
+    expect((await get('/api/config', { app: plain })).headers['strict-transport-security']).toBeUndefined();
+  });
+
+  it('tunnel mode: a non-connector peer sending a malformed URL gets 403, not 400', async () => {
+    const tunnel = makeApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: ['203.0.113.0/28'] } });
+    for (const url of ['/%E0%A4%A', '/api/%ZZ']) {
+      const stranger = await get(url, { app: tunnel, from: '192.0.2.5' });
+      expect(stranger.status, url).toBe(403);
+      expect(ErrorResponseSchema.parse(stranger.json).error).toBe('forbidden');
+      expect(stranger.headers['content-security-policy']).toContain("default-src 'self'");
+      // The connector itself still gets the router's 400.
+      const connector = await get(url, { app: tunnel, from: '203.0.113.2', headers: { 'cf-connecting-ip': '198.51.100.1' } });
+      expect(connector.status, url).toBe(400);
+    }
+  });
+
+  it('logs one line per API request, unmatched paths included, without the raw URL', async () => {
+    const lines: Record<string, unknown>[] = [];
+    const stream = new Writable({
+      write(chunk: Buffer, _enc, done) {
+        for (const l of chunk.toString().split('\n').filter(Boolean)) lines.push(JSON.parse(l) as Record<string, unknown>);
+        done();
+      },
+    });
+    const logged = makeApp({ logger: { level: 'info', stream } });
+    expect((await get('/api/nope-secret-path?q=private+text', { app: logged })).status).toBe(404);
+    expect((await get('/%61pi/also-nope', { app: logged })).status).toBe(404);
+    expect((await get('/api/config', { app: logged })).status).toBe(200);
+    expect((await get('/some-page', { app: logged, headers: { accept: 'text/html' } })).status).toBe(200);
+    const api = lines.filter((l) => l.msg === 'api request');
+    expect(api.map((l) => [l.route, l.status])).toEqual([
+      ['unmatched', 404],
+      ['unmatched', 404],
+      ['/api/config', 200],
+    ]);
+    expect(JSON.stringify(lines)).not.toMatch(/nope-secret-path|private|also-nope/);
+  });
+
   it('every search response validates against its contract', async () => {
     const requests: Record<string, string>[] = [
       {},
@@ -674,6 +763,42 @@ describe('request targets the router decodes', () => {
       // Either the router's refusal (JSON) or the plain 404 of a missing file; never a file outside the root.
       if (r.json !== null) expect(ErrorResponseSchema.parse(r.json).error, url).toBe('not_found');
       else expect(r.body, url).toBe('Not found');
+    }
+  });
+
+  it('static 412 and 416 pass through (416 keeps Content-Range); other refusals stay 400 or 404', async () => {
+    const range = await get('/assets/app-0123abcd.js', { headers: { range: 'bytes=100-200' } });
+    expect(range.status).toBe(416);
+    expect(range.headers['content-range']).toBe('bytes */16');
+    expect(ErrorResponseSchema.parse(range.json).error).toBe('bad_request');
+    expect(range.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(range.headers['cache-control']).toBe('no-store');
+    const precondition = await get('/assets/app-0123abcd.js', { headers: { 'if-match': '"never"' } });
+    expect(precondition.status).toBe(412);
+    expect(ErrorResponseSchema.parse(precondition.json).error).toBe('bad_request');
+  });
+
+  it('a request the HTTP parser refuses gets a JSON 400 with the security headers and Connection: close', async () => {
+    const a = makeApp();
+    await a.listen({ host: LOCAL, port: 0 });
+    const { port } = a.server.address() as { port: number };
+    for (const garbage of ['GET / HTTP/1.1\r\nBad Header Line\r\n\r\n', 'GET /\u0000 HTTP/1.1\r\n\r\n', '\x16\x03\x01 not http\r\n\r\n']) {
+      const text = await new Promise<string>((resolve, reject) => {
+        const socket = connect(port, LOCAL, () => socket.write(garbage, 'latin1'));
+        let data = '';
+        socket.setEncoding('utf8');
+        socket.on('data', (c: string) => (data += c));
+        socket.on('end', () => resolve(data));
+        socket.on('close', () => resolve(data));
+        socket.on('error', reject);
+      });
+      const [head = '', body = ''] = text.split('\r\n\r\n');
+      expect(head, JSON.stringify(garbage)).toMatch(/^HTTP\/1\.1 400 /);
+      expect(head.toLowerCase()).toContain('connection: close');
+      expect(head.toLowerCase()).toContain("content-security-policy: default-src 'self'");
+      expect(head.toLowerCase()).toContain('x-content-type-options: nosniff');
+      expect(head.toLowerCase()).toContain('cache-control: no-store');
+      expect(ErrorResponseSchema.parse(JSON.parse(body)).error).toBe('bad_request');
     }
   });
 
