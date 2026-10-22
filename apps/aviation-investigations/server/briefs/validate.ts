@@ -127,6 +127,8 @@ export type ValidationCode =
   | 'uncited_summary'
   | 'unallowlisted_case_number'
   | 'markup_or_link'
+  /** Model prose (summary, `why`, gap notes) names a passage alias (`P3`): ids belong in id fields only. */
+  | 'alias_in_text'
   | 'gap_unknown_case'
   | 'gap_foreign_passage';
 
@@ -349,6 +351,13 @@ export function summaryMarkers(summary: string): string[] | null {
   return found;
 }
 
+/**
+ * A passage alias (`P1`..`P12`, server/briefs/aliases.ts) as a token of its own: alone,
+ * in parentheses or in a list ("P3", "(P3)", "P3, P4"). Not inside a longer word or
+ * number ("WPR19LA123", "P-51").
+ */
+const ALIAS_TOKEN = /(?<![A-Za-z0-9])[Pp]\d{1,3}(?![A-Za-z0-9])/;
+
 /** Allowed precision of timing values: one decimal place for flight hours, whole calendar days. */
 export function timingValueAllowed(basis: string, value: number): boolean {
   if (basis === 'calendar_days') return Number.isInteger(value);
@@ -515,6 +524,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     ...c.gaps.map((g, i) => [`gaps.${i}.note`, g.note]),
   ] as [string, string][]) {
     if (LINK_OR_MARKUP.test(text)) fail('markup_or_link', path);
+    if (ALIAS_TOKEN.test(text.replace(MARKER, ' '))) fail('alias_in_text', path);
   }
 
   return reasons.length > 0 ? { ok: false, ruleVersion, reasons } : { ok: true, ruleVersion, citations };

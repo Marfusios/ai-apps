@@ -62,6 +62,8 @@ export interface AllowedAttrs {
   /** A failed stage's category (on its stage span, and on the request span with `failureStage`). */
   failure?: FailureCategory;
   failureStage?: FailureStage;
+  /** Of `outputTokens`, the reasoning the provider reports (`output_tokens_details.thinking_tokens`). */
+  thinkingTokens?: number;
 }
 
 const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
@@ -83,6 +85,7 @@ const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
   caseCount: 'number',
   failure: 'string',
   failureStage: 'string',
+  thinkingTokens: 'number',
 };
 
 /** Attributes that take only the values of a closed set. */

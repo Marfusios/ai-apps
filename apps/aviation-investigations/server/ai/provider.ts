@@ -40,10 +40,16 @@ export const STAGE_ROLE = { scope: 'scope', compose: 'answer', check: 'check' } 
 export interface StageUsage {
   /** Uncached input tokens. */
   inputTokens: number;
-  /** All billed output, including thinking. */
+  /** All billed output, including thinking: the billing figure. */
   outputTokens: number;
   cacheWriteTokens: number;
   cacheReadTokens: number;
+  /**
+   * Of `outputTokens`, the provider's count of internal reasoning
+   * (`usage.output_tokens_details.thinking_tokens`), when it reports one. For calibrating
+   * the thinking allowance (worker/ai-preflight.ts) only; it is never billed separately.
+   */
+  thinkingTokens?: number;
 }
 
 /**

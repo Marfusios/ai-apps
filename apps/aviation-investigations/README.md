@@ -736,9 +736,9 @@ the stage with a `StageError` that says whether the call was billed.
 per-request reservations ($0.31 Opus, $0.16 Sonnet, $0.02 Haiku answer model). The
 caps were measured with the provider's own counter (free) against real passages
 (DESIGN §9 "Hard caps"): scope 6,500 in / 600 out, answer 28,000 / 9,000, check
-36,000 / 3,000, in provider tokens, so a full 12-passage bundle and the longest
-question and refinement fit without re-packing and a check of a full bundle's
-complete evidence fits whole. `startupAiCheck(config)` enables AI only when the
+36,000 / 3,000, in provider tokens, so the measured stress cases fit: a full
+12-passage bundle with the longest question and refinement without re-packing, and a
+check of a full bundle's complete evidence whole. `startupAiCheck(config)` enables AI only when the
 provider has an adapter, its keys are set, every reachable model is priced and the
 worst-case request (all stages at their caps plus cache-write premiums) fits the
 reservation. Change a price, cap or model only together with the expected sums in
@@ -756,9 +756,10 @@ It counts, with the configured provider and models, each stage's fixed request (
 prompt and structured-output schema) and a synthetic worst case at the server's input
 bounds (the longest refinement in English and in dense text at the query-embedding
 cap; a full bundle of 12 chunker-maximum passages within the 10,000-token evidence
-budget, with every claim the composition schema allows), plus each stage's output at
-its schema bounds (the answer stage with 1,500 tokens left for thinking), and exits 1
-when anything is over its cap. Its client refuses generation. Between preflights,
+budget, with every claim the composition schema allows), each stage's output at its
+schema bounds (the answer stage with 1,500 tokens left for thinking) and each stage's
+cached prefix (system prompt and schema) against `CACHED_PREFIX_MAX`, and exits 1 when
+anything is over its cap. Its client refuses generation. Between preflights,
 `tests/unit/ai-preflight.test.ts` sizes the same requests offline with `cl100k_base`
 times measured factors (2.2 for system prompt plus schema, 1.8 for Latin-script text).
 
@@ -916,8 +917,11 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    above the answer input cap (28,000 tokens; a full bundle measures about 22,100) the
    candidates are packed again under a smaller budget, and the re-packed bundle is
    checked like the first. The compose and check stages read passages under short
-   aliases (`P1`..`P12`, `aliases.ts`), mapped back to canonical ids before validation:
-   a 64-character passage id costs about 42 tokens wherever a model reads or writes it.
+   aliases (`P1`..`P12`, `aliases.ts`): a 64-character passage id costs about 42 tokens
+   wherever a model reads or writes it. The composition is validated against the
+   aliases (any other id fails as `unknown_passage`; an alias-shaped token in the
+   summary, a `why` line or a gap note fails as `alias_in_text`) and only then mapped
+   back to canonical ids.
    The answer model may abstain
    (`no_supported_match`): the case cards and its checked gap notes are shown, with
    server copy saying that none of the retrieved cases supports the question as asked

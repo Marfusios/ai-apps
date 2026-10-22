@@ -706,7 +706,8 @@ Behaviour:
   - `createFakeProvider(script)` is deterministic and drives tests.
 
 - [ ] Tests:
-  - `opus worst case ≈ 0.1307 and fits 0.14`, `sonnet ≈ 0.0667 fits 0.07`, `haiku ≈ 0.0059 fits 0.01`.
+  - `opus worst case ≈ 0.1307 and fits 0.14`, `sonnet ≈ 0.0667 fits 0.07`, `haiku ≈ 0.0059 fits 0.01`
+    (superseded by the calibrated caps: now ≈ 0.3038 / 0.31, ≈ 0.1551 / 0.16 and ≈ 0.0138 / 0.02; DESIGN §9).
   - `unknown model throws`.
   - `adapter maps refusal to StageError` and `adapter never sends temperature or prefill` (mock SDK).
   - `adapter reads usage incl cache tokens`.
@@ -1032,7 +1033,8 @@ amendments are binding and override the task text above where they differ.
     - Mandatory probable-cause passages count inside the limits from the start
       and are deduplicated.
     - The packed bundle must respect 6 cases, 12 passages and the compose input
-      cap (16,000 tokens, measured).
+      cap (16,000 tokens, measured; superseded by the calibrated answer input cap of
+      28,000 provider tokens, DESIGN §9).
     - Fewer, well-supported cases are preferred over six thin ones. The default
       is at most 3 passages per case, the cause included.
 12. **Analyzers (T7/T9).**

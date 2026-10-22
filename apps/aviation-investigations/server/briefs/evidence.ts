@@ -11,8 +11,8 @@
  * - a bundle holds at most 6 cases and 12 passages, where every case has its best
  *   retrieved passage and all its probable-cause variants, marked `reserved`. `repack`
  *   packs the same candidates again under a smaller evidence-token budget (no new
- *   embedding), for the 16,000-token compose cap (amendment A11), which is measured
- *   with the language model's own token counter.
+ *   embedding), for the answer stage's input cap (`STAGE_CAPS.answer`, amendment A11),
+ *   which is measured with the language model's own token counter.
  *
  * The pipeline trusts none of it: `CaseCatalog` reads the dataset in PostgreSQL (case
  * summaries for the cards, and the canonical `passages` rows with their section

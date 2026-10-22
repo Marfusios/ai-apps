@@ -94,8 +94,12 @@ The 2026-10-21 interface and provider decisions are also unreviewed:
 
 - Language models move to Anthropic behind a deployment-time provider interface,
   with OpenAI kept for embeddings. This means two provider keys, per-request
-  reservations of $0.14 (Opus answer model) instead of $0.03, and a $100 monthly
-  ceiling instead of $25.
+  reservations of $0.31 (Opus answer model) instead of $0.03, and a $100 monthly
+  ceiling instead of $25. (The reservation was $0.14 when this was written; it rose
+  to $0.31 after the stage caps were measured with Anthropic's own token counter.
+  The old caps were below the real request sizes, so every brief failed at scope; the
+  new caps hold a full 12-passage bundle and a full check, and the reservation is their
+  worst case. DESIGN §9 has the measurements.)
 - A public AI-availability endpoint.
 - Moving an anonymous brief to a new account at sign-in.
 - Brief-only AI content: AI output appears only inside the viewer's own live

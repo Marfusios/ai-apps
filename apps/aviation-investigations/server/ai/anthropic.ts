@@ -20,8 +20,8 @@ import Anthropic, {
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { CACHED_PREFIX_MAX, llmPrice } from './pricing.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v2.js';
-import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v2.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v3.js';
+import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v3.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
 import {
   CheckInputSchema,
@@ -138,11 +138,14 @@ function outputFormat<O>(schema: z.ZodType<O>): AutoParseableOutputFormat<O | nu
 }
 
 function normalizeUsage(u: Anthropic.Messages.Usage): StageUsage {
+  // The reasoning share of the output, when reported; `output_tokens` stays the billed total.
+  const thinking = u.output_tokens_details?.thinking_tokens;
   return {
     inputTokens: u.input_tokens,
     outputTokens: u.output_tokens,
     cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
     cacheReadTokens: u.cache_read_input_tokens ?? 0,
+    ...(typeof thinking === 'number' && Number.isSafeInteger(thinking) && thinking >= 0 ? { thinkingTokens: thinking } : {}),
   };
 }
 
@@ -215,8 +218,11 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 /**
- * The SDK client the adapter uses, without retries: each paid attempt would need its own
- * reservation. The free token counts of `pnpm worker ai-preflight` may retry.
+ * The SDK client the adapter uses. `maxRetries` is 0 by default and for every client
+ * that may generate: the SDK would retry a generation on its own, and each attempt could
+ * be billed under the one reservation the request holds. Only a client that never
+ * generates may pass retries: the count-only client of `pnpm worker ai-preflight`, whose
+ * retries repeat free token counts.
  */
 export function createAnthropicClient(apiKey: string, opts: { maxRetries?: number } = {}): Anthropic {
   return new Anthropic({

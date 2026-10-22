@@ -9,8 +9,8 @@ import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { PHASE_GROUPS } from '../../shared/codes.js';
 import { createFakeProvider, DEFAULT_FAKE_USAGE } from '../../server/ai/fake.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v2.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v2.js';
+import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v3.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v3.js';
 import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
   CheckOutputSchema,
@@ -333,7 +333,23 @@ describe('Anthropic adapter results', () => {
     const result = await p.compose(composeInput, ctx('compose'));
     expect(result.output).toEqual(composeOutput);
     expect(result.model).toBe(OPUS);
-    expect(result.promptVersion).toBe('compose.v2');
+    expect(result.promptVersion).toBe('compose.v3');
+  });
+
+  it('keeps the reported thinking tokens as calibration data; output_tokens stays the billed total', async () => {
+    const content = [
+      { type: 'thinking', thinking: '', signature: 'sig' },
+      { type: 'text', text: JSON.stringify(composeOutput), citations: null },
+    ];
+    const usage = { ...USAGE, output_tokens: 2_600, output_tokens_details: { thinking_tokens: 812 } };
+    const { p } = provider(jsonResponse(200, messageJson(null, { content, usage })));
+    const result = await p.compose(composeInput, ctx('compose'));
+    expect(result.usage).toEqual({ inputTokens: 900, outputTokens: 2_600, cacheWriteTokens: 1_200, cacheReadTokens: 300, thinkingTokens: 812 });
+    // Without the breakdown (or with a malformed one) there is no thinking figure.
+    for (const details of [null, { thinking_tokens: -1 }, { thinking_tokens: '812' }]) {
+      const plain = provider(jsonResponse(200, messageJson(null, { content, usage: { ...USAGE, output_tokens_details: details } })));
+      expect((await plain.p.compose(composeInput, ctx('compose'))).usage).not.toHaveProperty('thinkingTokens');
+    }
   });
 
   it('adapter maps refusal to StageError', async () => {

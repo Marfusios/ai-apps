@@ -267,6 +267,13 @@ const SUPPORTED = { output: { supported: true, problems: [] } };
 /** A compose count over the answer input cap (a re-pack follows). */
 const OVER_ANSWER_CAP = STAGE_CAPS.answer.input + 4_000;
 
+/** Tracing to a loopback address that never answers (the tests read an in-memory exporter). */
+const tracingConfig = () =>
+  loadConfig({
+    env: { NODE_ENV: 'test', APP_ENV: 'dev', AVIATION_TRACING_ENABLED: 'true', LANGFUSE_BASE_URL: 'http://127.0.0.1:1', LANGFUSE_PUBLIC_KEY: 'pk-test', LANGFUSE_SECRET_KEY: 'sk-test' },
+    files: [],
+  });
+
 const answering = (over: Partial<FakeScript> = {}): FakeScript => ({
   scope: { output: scopeOut() },
   compose: (input) => composition(input),
@@ -620,7 +627,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v2', check: 'check.v2' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v3', check: 'check.v3' },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
       check: { supported: true, problems: [] },
     });
@@ -1424,23 +1431,57 @@ describe('hybrid retrieval behind the port', () => {
 });
 
 describe('cancel and expiry', () => {
-  it('cancel ends the running step and keeps the search', async () => {
-    const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 20_000 } });
+  it('cancel ends the running step and keeps the search; it is logged and traced as cancelled, not as a failure', async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = startTracing(tracingConfig(), { exporter, scheduledDelayMillis: 10 });
+    try {
+      const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 20_000 } });
+      const started = await ask(h, 'Engine power loss shortly after maintenance');
+      const cookie = cookieOf(started.setCookie);
+      // Deterministic: cancel only once the provider has the compose call (it hangs there).
+      await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
+      const running = await read(h, started.json.briefId, cookie);
+      expect(running.json).toMatchObject({ stage: 'compose', finishedAt: null });
+      expect(running.json.result).toBeUndefined();
+      const c = await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie });
+      expect(c.status).toBe(204);
+      await h.svc.settled();
+      const step = await read(h, started.json.briefId, cookie);
+      expect(step.json).toMatchObject({ stage: 'failed', result: { kind: 'cancelled' } });
+      expect(await trialUsed()).toEqual([1]);
+      // The aborted compose call may have been billed: settled in full.
+      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+      // A reader's cancel has no failure category: not in the meta, the log line or the spans.
+      const row = await stepRow(started.json.briefId);
+      expect(row.status).toBe('cancelled');
+      expect(row.meta).not.toHaveProperty('failure');
+      const finished = h.logs.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.msg === 'brief step finished');
+      expect(finished).toMatchObject({ status: 'cancelled' });
+      expect(finished).not.toHaveProperty('failure');
+      await new Promise((r) => setTimeout(r, 100));
+      const spans = exporter.getFinishedSpans();
+      const compose = spans.find((sp) => sp.name === 'brief.compose')!;
+      expect(compose.attributes).toMatchObject({ outcome: 'cancelled' });
+      expect(compose.attributes).not.toHaveProperty('failure');
+      const root = spans.find((sp) => sp.name === 'brief.step')!;
+      expect(root.attributes).toMatchObject({ outcome: 'cancelled' });
+      expect(root.attributes).not.toHaveProperty('failure');
+    } finally {
+      await tracing.shutdown();
+    }
+  });
+
+  it('a cancel during the check is not a failure either', async () => {
+    const h = harness(answering({ check: { hang: true } }), { timeouts: { check: 20_000 } });
     const started = await ask(h, 'Engine power loss shortly after maintenance');
     const cookie = cookieOf(started.setCookie);
-    // Deterministic: cancel only once the provider has the compose call (it hangs there).
-    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
-    const running = await read(h, started.json.briefId, cookie);
-    expect(running.json).toMatchObject({ stage: 'compose', finishedAt: null });
-    expect(running.json.result).toBeUndefined();
-    const c = await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie });
-    expect(c.status).toBe(204);
+    await until(() => h.llm.calls.some((c) => c.stage === 'check'));
+    expect((await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie })).status).toBe(204);
     await h.svc.settled();
-    const step = await read(h, started.json.briefId, cookie);
-    expect(step.json).toMatchObject({ stage: 'failed', result: { kind: 'cancelled' } });
-    expect(await trialUsed()).toEqual([1]);
-    // The aborted compose call may have been billed: settled in full.
-    expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+    expect((await read(h, started.json.briefId, cookie)).json.result).toEqual({ kind: 'cancelled' });
+    const row = await stepRow(started.json.briefId);
+    expect(row.status).toBe('cancelled');
+    expect(row.meta).not.toHaveProperty('failure');
   });
 
   it('an expired brief is gone for its owner too', async () => {
@@ -1744,6 +1785,27 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
   });
 
+  it('passage aliases: an alias in model prose, or anything but an alias in an id field, withholds the summary', async () => {
+    const h = harness(
+      answering({
+        compose: [
+          // An alias written into a why line.
+          (input) => composition(input, (c) => (c.cases[0]!.why = `The engine lost power (${input.cases[0]!.passages[0]!.passageId}).`)),
+          // An id field holding something the model was never shown (a canonical-looking id).
+          (input) => composition(input, (c) => (c.cases[0]!.evidencePassageIds = ['f'.repeat(64)])),
+        ],
+      }),
+      { trialRequests: 10 },
+    );
+    const first = await askAndWait(h);
+    expect(first.step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+    expect((await stepRow(first.briefId)).meta).toMatchObject({ validation: { codes: ['alias_in_text'] } });
+    advance(MIN);
+    const second = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect(second.step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+    expect((await stepRow(second.briefId)).meta).toMatchObject({ validation: { codes: ['unknown_passage'] } });
+  });
+
   it('an uncited summary sentence → withheld', async () => {
     const h = harness(answering({ compose: (input) => composition(input, (c) => (c.summary = `${c.summary} Maintenance is often to blame.`)) }));
     const { briefId, step } = await askAndWait(h);
@@ -1879,16 +1941,31 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(h.llm.calls.some((c) => c.stage === 'compose')).toBe(false);
   });
 
+  it('the provider’s reported thinking tokens are kept per stage in the meta and on the stage span', async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = startTracing(tracingConfig(), { exporter, scheduledDelayMillis: 10 });
+    try {
+      const h = harness(answering({ compose: (input) => ({ ...composition(input), usage: { outputTokens: 2_600, thinkingTokens: 812 } }) }));
+      const { briefId, step } = await askAndWait(h);
+      expect(step.result?.kind).toBe('answer');
+      const meta = (await stepRow(briefId)).meta;
+      // Only the stage that reported them; the billed output stays the whole 2,600.
+      expect(meta.thinkingTokens).toEqual({ compose: 812 });
+      const lines = await rows<{ stage: string; tokens: Record<string, number> }>(sql`SELECT stage, tokens FROM cost_ledger WHERE stage = 'compose'`);
+      expect(lines).toEqual([{ stage: 'compose', tokens: expect.objectContaining({ output: 2_600 }) }]);
+      await new Promise((r) => setTimeout(r, 100));
+      const compose = exporter.getFinishedSpans().find((sp) => sp.name === 'brief.compose')!;
+      expect(compose.attributes).toMatchObject({ outputTokens: 2_600, thinkingTokens: 812 });
+      expect(exporter.getFinishedSpans().find((sp) => sp.name === 'brief.scope')!.attributes).not.toHaveProperty('thinkingTokens');
+    } finally {
+      await tracing.shutdown();
+    }
+  });
+
   it('a stage over its cap: its category on the stage span, the request span and the step log line, with no paid call', async () => {
     // The first paid end-to-end test stopped this way at scope; the reason was only in the step's meta.
     const exporter = new InMemorySpanExporter();
-    const tracing = startTracing(
-      loadConfig({
-        env: { NODE_ENV: 'test', APP_ENV: 'dev', AVIATION_TRACING_ENABLED: 'true', LANGFUSE_BASE_URL: 'http://127.0.0.1:1', LANGFUSE_PUBLIC_KEY: 'pk-test', LANGFUSE_SECRET_KEY: 'sk-test' },
-        files: [],
-      }),
-      { exporter, scheduledDelayMillis: 10 },
-    );
+    const tracing = startTracing(tracingConfig(), { exporter, scheduledDelayMillis: 10 });
     try {
       const h = harness(answering({ counts: { scope: STAGE_CAPS.scope.input + 1 } }));
       const { briefId, step } = await askAndWait(h);

@@ -9,8 +9,8 @@
 import { describe, expect, it } from 'vitest';
 import { outputJsonSchema } from '../../server/ai/anthropic.js';
 import { STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v2.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v2.js';
+import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v3.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v3.js';
 import { renderScopeUser, SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import { CheckInputSchema, CheckOutputSchema, ComposeInputSchema, ScopeInputSchema, ScopeOutputSchema } from '../../server/ai/provider.js';
 import { countTokens } from '../../server/ai/tokens.js';

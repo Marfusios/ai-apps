@@ -13,7 +13,10 @@
  *   largest size within the retrieval evidence budget, 400-character headers) with the
  *   longest claims the composition schema allows;
  * - the visible output at the output schema's bounds, counted as text: for the answer
- *   stage against its output cap less `THINKING_ALLOWANCE` (thinking shares the cap).
+ *   stage against its output cap less `THINKING_ALLOWANCE` (thinking shares the cap);
+ * - the frozen prefix the stage caches (system prompt and schema: the fixed request less
+ *   its user turn counted alone) against `CACHED_PREFIX_MAX`, the size the reservation's
+ *   cache-write premium assumes.
  *
  * The synthetic text is investigation-style prose written for this check (Latin script;
  * the scope stage also counts a dense non-Latin question at the query-embedding cap).
@@ -24,7 +27,10 @@ import { createHash } from 'node:crypto';
 import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOutput } from '../shared/contracts/briefs.js';
 import { PHASE_GROUPS } from '../shared/codes.js';
 import { MAX_QUERY_INPUT_TOKENS } from '../server/ai/embeddings.js';
-import { STAGE_CAPS } from '../server/ai/pricing.js';
+import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../server/ai/pricing.js';
+import { renderCheckUser } from '../server/ai/prompts/check.v3.js';
+import { renderComposeUser } from '../server/ai/prompts/compose.v3.js';
+import { renderScopeUser } from '../server/ai/prompts/scope.v2.js';
 import {
   AIRCRAFT_CATEGORY_CODES,
   INJURY_CODES,
@@ -356,10 +362,17 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
     rows.push({ stage, model: models[stage], request, tokens, limit, ok: tokens <= limit });
   const output = async (model: string, text: string) => (await countText(model, text)) - (await countText(model, '.')) + 1;
 
-  add('scope', 'fixed (system prompt + schema)', await provider.countInputTokens('scope', r.fixed.scope, ctx('scope')), STAGE_CAPS.scope.input);
+  // The cached prefix: the fixed request less its (minimal) user turn counted on its own.
+  const prefix = async (model: string, fixed: number, userTurn: string) => fixed - (await countText(model, userTurn));
+
+  const scopeFixed = await provider.countInputTokens('scope', r.fixed.scope, ctx('scope'));
+  add('scope', 'fixed (system prompt + schema)', scopeFixed, STAGE_CAPS.scope.input);
+  add('scope', 'cached prefix (system prompt + schema)', await prefix(models.scope, scopeFixed, renderScopeUser(r.fixed.scope)), CACHED_PREFIX_MAX);
   for (const w of r.worst.scope) add('scope', w.label, await provider.countInputTokens('scope', w.input, ctx('scope')), STAGE_CAPS.scope.input);
   add('scope', 'output at its schema bounds', await output(models.scope, r.outputs.scope), STAGE_CAPS.scope.output);
-  add('answer', 'fixed (system prompt + schema)', await provider.countInputTokens('compose', r.fixed.compose, ctx('compose')), STAGE_CAPS.answer.input);
+  const composeFixed = await provider.countInputTokens('compose', r.fixed.compose, ctx('compose'));
+  add('answer', 'fixed (system prompt + schema)', composeFixed, STAGE_CAPS.answer.input);
+  add('answer', 'cached prefix (system prompt + schema)', await prefix(models.answer, composeFixed, renderComposeUser(r.fixed.compose)), CACHED_PREFIX_MAX);
   add(
     'answer',
     `full bundle (${r.facts.passages} passages, ${r.facts.evidenceTokens} cl100k evidence tokens)`,
@@ -367,7 +380,9 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
     STAGE_CAPS.answer.input,
   );
   add('answer', `output at its schema bounds (+${THINKING_ALLOWANCE} thinking)`, (await output(models.answer, r.outputs.compose)) + THINKING_ALLOWANCE, STAGE_CAPS.answer.output);
-  add('check', 'fixed (system prompt + schema)', await provider.countInputTokens('check', r.fixed.check, ctx('check')), STAGE_CAPS.check.input);
+  const checkFixed = await provider.countInputTokens('check', r.fixed.check, ctx('check'));
+  add('check', 'fixed (system prompt + schema)', checkFixed, STAGE_CAPS.check.input);
+  add('check', 'cached prefix (system prompt + schema)', await prefix(models.check, checkFixed, renderCheckUser(r.fixed.check)), CACHED_PREFIX_MAX);
   add('check', `full bundle, ${r.facts.claims} claims`, await provider.countInputTokens('check', r.worst.check, ctx('check')), STAGE_CAPS.check.input);
   add('check', 'output at its schema bounds', await output(models.check, r.outputs.check), STAGE_CAPS.check.output);
   return rows;

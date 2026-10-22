@@ -281,7 +281,7 @@ hash (`hashBrief`). `scripts/trace-smoke.ts` sends one synthetic span by hand.
 | Where | Keys |
 | --- | --- |
 | Resource (every span) | `service.name` = `aviation-casebook`; `deployment.environment` and `deployment.environment.name` = `APP_ENV` (`dev` or `live`). Set explicitly: the SDK default (`unknown_service:<node path>`) would export a filesystem path. |
-| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage` |
+| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `thinkingTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage` |
 | Instrumentation scope | `aviation-casebook` |
 
 `failure` is the fixed category of a failed stage (`FAILURE_CATEGORIES`): from a provider
@@ -296,4 +296,11 @@ request span `brief.step` carries `outcome` with `failure` and `failureStage` (`
 are in the step's `meta.failure` and in its `brief step finished` log line
 (`{status, charged, released, failure: {stage, category}}`), so a stage failing on
 every request (as the first paid end-to-end test did at scope) is visible in Langfuse
-and the logs, not only in the database.
+and the logs, not only in the database. A reader's cancel is not a failure: the stage
+span and `brief.step` carry `outcome: cancelled`, with no `failure` attribute, category
+or log field.
+
+`thinkingTokens` is the provider's reported reasoning share of a stage's output
+(`usage.output_tokens_details.thinking_tokens`), when it reports one; it is also kept
+per stage in the step's `meta.thinkingTokens`, to calibrate the answer stage's thinking
+allowance. `outputTokens` stays the billed total.

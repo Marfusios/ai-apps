@@ -6,14 +6,18 @@
  * stages see `P1`..`P12`, numbered in bundle order, and nothing else changes:
  *
  * - `composeForModel` / `checkForModel` replace every passage id the input carries;
- * - `compositionFromModel` maps every passage id the composition cites back to its
- *   canonical id before validation. An alias the bundle does not hold is left as it is,
- *   so validation refuses it (`unknown_passage`) as it refuses any unknown id.
+ * - the composition is validated as the model wrote it, against an allowlist keyed by
+ *   these aliases, so an id field holding anything else (an unknown alias, a canonical id,
+ *   any other string) fails as `unknown_passage`; an alias-shaped token in model prose
+ *   fails as `alias_in_text` (server/briefs/validate.ts);
+ * - `compositionFromModel` and `citationsFromModel` then map every passage id back to its
+ *   canonical id, strictly: an id that is not an alias of the bundle throws.
  *
  * The check output names claims by index, so it needs no mapping.
  */
-import { ComposeOutputSchema, type ComposeOutput } from '../../shared/contracts/briefs.js';
+import type { ComposeOutput } from '../../shared/contracts/briefs.js';
 import type { CheckInput, ComposeInput } from '../ai/provider.js';
+import type { ResolvedCitation } from './validate.js';
 
 export interface PassageAliases {
   /** Canonical id → alias. */
@@ -37,8 +41,20 @@ export function passageAliases(cases: readonly { passages: readonly { passageId:
   return { toModel, fromModel };
 }
 
+/** An id field holding something other than an alias of the bundle (validation refuses that first). */
+export class UnknownAliasError extends Error {
+  override readonly name = 'UnknownAliasError';
+  constructor() {
+    super('a passage id is not an alias of the bundle');
+  }
+}
+
 const to = (a: PassageAliases) => (id: string) => a.toModel.get(id) ?? id;
-const from = (a: PassageAliases) => (id: string) => a.fromModel.get(id) ?? id;
+const from = (a: PassageAliases) => (id: string) => {
+  const canonical = a.fromModel.get(id);
+  if (canonical === undefined) throw new UnknownAliasError();
+  return canonical;
+};
 
 /** The compose input as the model reads it. */
 export function composeForModel(input: ComposeInput, a: PassageAliases): ComposeInput {
@@ -56,12 +72,8 @@ export function checkForModel(input: CheckInput, a: PassageAliases): CheckInput 
   };
 }
 
-/**
- * The composition with canonical passage ids, for validation and everything after it.
- * A composition outside its schema is returned unchanged: validation refuses it anyway.
- */
+/** A validated composition with canonical passage ids, for everything after validation. */
 export function compositionFromModel(c: ComposeOutput, a: PassageAliases): ComposeOutput {
-  if (!ComposeOutputSchema.safeParse(c).success) return c;
   const id = from(a);
   const ids = (xs: readonly string[]) => xs.map(id);
   return {
@@ -85,4 +97,10 @@ export function compositionFromModel(c: ComposeOutput, a: PassageAliases): Compo
     })),
     gaps: c.gaps.map((g) => ({ ...g, passageIds: ids(g.passageIds) })),
   };
+}
+
+/** Validated citations with canonical passage ids. */
+export function citationsFromModel(citations: readonly ResolvedCitation[], a: PassageAliases): ResolvedCitation[] {
+  const id = from(a);
+  return citations.map((c) => ({ ...c, passageId: id(c.passageId) }));
 }

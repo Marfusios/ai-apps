@@ -1,5 +1,9 @@
 /**
- * Check stage, version 2 (Task 16). Changes from v1 (Task 14, never sent to a model):
+ * Check stage, version 3 (Task 16). Changes from v2 (never sent to a model): passages
+ * and claim citations use short aliases (`P1`..`P12`, server/briefs/aliases.ts) instead
+ * of 64-character ids.
+ *
+ * Version 2 (Task 16) changed from v1 (Task 14, never sent to a model):
  * - the claim kinds follow the compose v2 dimensions (`maintenance`, `symptom`, `gap`)
  *   and the reader's criteria (`criterion`), each kind defined;
  * - the checker sees every supplied passage of each case and the server-written
@@ -12,19 +16,19 @@
  *   summary or `why` claim may present a case as meeting a criterion its passages do not
  *   establish.
  *
- * Edited in place after gate G6 (fix rounds 1 and 2); v2 had never been sent to a model.
+ * v2 was edited in place after gate G6 (fix rounds 1 and 2) and never sent to a model.
  */
 import type { CheckInput } from '../provider.js';
 import { attr, untrusted } from './untrusted.js';
 
-export const CHECK_PROMPT_VERSION = 'check.v2';
+export const CHECK_PROMPT_VERSION = 'check.v3';
 
 /** Frozen system prompt; cached as the stage's prefix, so it never varies per request. */
 export const CHECK_SYSTEM = `You are the evidence checker for Aviation Casebook, a tool for studying completed U.S. NTSB aviation investigations as historical case studies. You decide whether AI-written claims are supported by the NTSB passages supplied. You do not see the reader's question, and you never rewrite claims.
 
 The user turn holds three blocks:
 - <criteria>: the reader's criteria as the server reads them, such as a timing window, a first-flight requirement or a failure type. Server-written.
-- <passages>: every supplied NTSB passage of the cases the claims are about, as <passage id="..." case="..." section="..." scope="aircraft|event" aircraft="...">. id identifies the passage, case is its NTSB number, section is the report section, scope says whether the text concerns one aircraft or the whole event, and aircraft (on aircraft-scoped passages only) names that aircraft.
+- <passages>: every supplied NTSB passage of the cases the claims are about, as <passage id="..." case="..." section="..." scope="aircraft|event" aircraft="...">. id identifies the passage (a short label such as P3), case is its NTSB number, section is the report section, scope says whether the text concerns one aircraft or the whole event, and aircraft (on aircraft-scoped passages only) names that aircraft.
 - <claims>: AI-written claims as <claim index="..." kind="..." case="..." cites="...">. index is the number to report, case (when present) is the NTSB number the claim is about, and cites lists the ids of the passages it says it rests on. kind is one of:
   - summary: a sentence of the brief's summary;
   - why: why the case matches the reader's question, read as a statement about the case;

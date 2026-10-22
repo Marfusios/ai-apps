@@ -641,7 +641,8 @@ async function main(argv: string[]): Promise<number> {
       return 2;
     }
     const models = { scope: config.ai.anthropic.scopeModel, answer: config.ai.anthropic.answerModel, check: config.ai.anthropic.checkModel };
-    // Counting is free, so transient errors may be retried.
+    // This client only ever counts tokens (the provider below gets a facade whose `parse`
+    // throws), so its retries repeat free count calls, never a billed generation.
     const client = createAnthropicClient(apiKey, { maxRetries: 3 });
     const countOnly = {
       messages: {

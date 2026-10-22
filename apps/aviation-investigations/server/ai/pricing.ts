@@ -76,7 +76,7 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  * - answer input: fixed part 4,616; worst full bundle (12 passages at 9,416 `cl100k`
  *   evidence tokens, 400-character headers, the longest question and refinement) 22,096;
  *   the 10,000-token evidence budget at 1.75 Claude tokens per `cl100k` token bounds it
- *   at about 25,300 → 28,000, so a full bundle is not re-packed.
+ *   at about 25,300 → 28,000: the measured stress cases fit without re-packing.
  * - check input: fixed part 1,939; complete evidence of a full bundle with 91 claims at
  *   their longest 28,020, bounded at about 30,400 → 36,000 (gate G6 ruling 5: the
  *   evidence is never cut to fit).

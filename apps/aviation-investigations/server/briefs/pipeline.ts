@@ -59,7 +59,7 @@ import {
 } from '../../shared/contracts/briefs.js';
 import type { Db } from '../db/client.js';
 import { stageCostUsd, STAGE_CAPS } from '../ai/pricing.js';
-import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v2.js';
+import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v3.js';
 import {
   StageError,
   stageCtx,
@@ -77,7 +77,7 @@ import { PIPELINE_DEADLINE_MS, type QuotaPolicy } from '../quota/policy.js';
 import { releaseQuota, type Admission } from '../quota/admit.js';
 import { settle, type SpendLine } from '../quota/settle.js';
 import { clarificationReadings, composeInterpretations, interpretationChips } from './clarify.js';
-import { checkForModel, composeForModel, compositionFromModel, passageAliases } from './aliases.js';
+import { checkForModel, citationsFromModel, composeForModel, compositionFromModel, passageAliases } from './aliases.js';
 import { criteriaLines, evaluateCase, type CriterionCheck } from './criteria.js';
 import { RetrievalFailure, type CaseCatalog, type EvidenceBundle, type EvidenceRetriever, type RetrievedEvidence } from './evidence.js';
 import { resolveIntent, retrievalText, scopeInput, type StepIntent, type StepRequest } from './intent.js';
@@ -175,6 +175,11 @@ interface Meta {
   failure?: { stage: FailureStage; category: FailureCategory; reason?: string; inputTokens?: number };
   /** The chunker of the served index's passages contract the bundle was checked under. */
   chunkerVersion?: string;
+  /**
+   * Per stage, the reasoning tokens the provider reported within its billed output
+   * (`output_tokens_details.thinking_tokens`), when it reports them.
+   */
+  thinkingTokens?: Partial<Record<LlmStage, number>>;
   clarificationDropped?: boolean;
   outcome?: ComposeOutput['outcome'];
   validation?: { ruleVersion: string; codes: string[] };
@@ -301,7 +306,13 @@ class Run {
     this.meta.promptVersions[stage] = r.promptVersion;
     this.meta.models[stage] = r.model;
     this.lines.push({ usd: stageCostUsd(r.model, r.usage), provider: r.provider, model: r.model, stage, tokens: tokensOf(r.usage) });
+    this.noteThinking(stage, r.usage);
     this.spent = true;
+  }
+
+  /** The provider's reported reasoning tokens of a billed call, for calibration (never billed separately). */
+  private noteThinking(stage: LlmStage, usage: StageUsage): void {
+    if (usage.thinkingTokens !== undefined) this.meta.thinkingTokens = { ...this.meta.thinkingTokens, [stage]: usage.thinkingTokens };
   }
 
   /**
@@ -320,6 +331,7 @@ class Run {
     this.meta.models[stage] = err.model;
     if (err.billing.kind === 'usage') {
       this.lines.push({ usd: stageCostUsd(err.model, err.billing.usage), provider: err.provider, model: err.model, stage, tokens: tokensOf(err.billing.usage) });
+      this.noteThinking(stage, err.billing.usage);
       this.spent = true;
     } else if (err.billing.kind === 'uncertain') {
       this.uncertain = true;
@@ -343,12 +355,19 @@ class Run {
     return { stage, category, ...(reason ? { reason } : {}), ...(inputTokens !== null ? { inputTokens } : {}) };
   }
 
-  /** A stage span's body; a failure leaves its fixed category (and prompt version) on the span. */
+  /**
+   * A stage span's body; a failure leaves its fixed category (and prompt version) on the
+   * span. A stage stopped by the reader's cancel is `cancelled`, not a failure; one stopped
+   * by a shutdown fails as `shutdown`.
+   */
   private async recorded<T>(s: StageSpanHandle, fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } catch (err) {
-      s.setAttrs({ failure: this.categoryOf(err), ...(err instanceof StageError ? { promptVersion: err.promptVersion } : {}) });
+      const version = err instanceof StageError ? { promptVersion: err.promptVersion } : {};
+      const stopped = this.stopped;
+      if (stopped === 'cancelled') s.setAttrs({ outcome: 'cancelled', ...version });
+      else s.setAttrs({ failure: stopped === 'shutdown' ? 'shutdown' : this.categoryOf(err), ...version });
       throw err;
     }
   }
@@ -565,25 +584,31 @@ class Run {
           if (err instanceof BundleIntegrityError) this.log.warn({ reason: err.reason }, 'brief evidence refused after re-packing');
           return this.failedEnd('compose', err);
         }
+        // A reader's cancel is not a failure (stoppedEnd records a shutdown itself).
+        if (this.stopped) return this.stoppedEnd();
         this.meta.failure = this.failureOf('compose', err);
         return this.withheldEnd('compose_failed', cases, intent);
       }
       this.meta.timingsMs.compose = Math.round(performance.now() - t0);
     }
-    // Back to canonical passage ids: everything from here on (validation, storage) uses them.
-    composition = compositionFromModel(composition, passageAliases(cases));
     this.meta.outcome = composition.outcome;
     if (!(await this.stage('validate', { question: 'in_scope', searched: searched(), written: true }))) return this.stoppedEnd();
 
-    // 4. Validate: code checks, the reader's criteria, then the evidence checker.
+    // 4. Validate: code checks, the reader's criteria, then the evidence checker. The
+    // composition is validated as the model wrote it, against the aliases it was shown,
+    // so an id field holding anything but an alias of this bundle fails (`unknown_passage`);
+    // then it is mapped back to canonical ids for everything after (aliases.ts).
+    const aliases = passageAliases(cases);
     const byCase = new Map(cases.map((c) => [c.ntsbNo, c]));
     const allow: Allowlist = {
-      passages: new Map(cases.flatMap((c) => c.passages.map((p): [string, AllowedPassage] => [p.passageId, p.allowed]))),
+      passages: new Map(cases.flatMap((c) => c.passages.map((p): [string, AllowedPassage] => [aliases.toModel.get(p.passageId)!, p.allowed]))),
       cases: new Set(cases.flatMap((c) => [c.ntsbNo, ...c.summary.aircraftNumbers])),
     };
-    const validated = validateComposition(composition, allow, { mechanicalCause: intent.mechanicalCause });
-    this.meta.validation = { ruleVersion: validated.ruleVersion, codes: validated.ok ? [] : validated.reasons.map((r) => r.code) };
-    if (!validated.ok) return this.withheldEnd('citation_check', cases, intent);
+    const checked = validateComposition(composition, allow, { mechanicalCause: intent.mechanicalCause });
+    this.meta.validation = { ruleVersion: checked.ruleVersion, codes: checked.ok ? [] : checked.reasons.map((r) => r.code) };
+    if (!checked.ok) return this.withheldEnd('citation_check', cases, intent);
+    composition = compositionFromModel(composition, aliases);
+    const validated = { ...checked, citations: citationsFromModel(checked.citations, aliases) };
 
     // Every criterion decision of every presented case, each a claim for the checker.
     const decisions = new Map<string, CriterionDecision[]>();
@@ -622,7 +647,7 @@ class Run {
       try {
         const out = await stageSpan('brief.check', { stage: 'check', provider: llm.name, model: llm.models.check }, (s) =>
           this.recorded(s, async () => {
-            const r = await llm.check(checkForModel(input, passageAliases(cases)), stageCtx('check', signal, budget));
+            const r = await llm.check(checkForModel(input, aliases), stageCtx('check', signal, budget));
             s.setAttrs({ promptVersion: r.promptVersion, ...usageAttrs(r.usage), outcome: r.output.supported && r.output.problems.length === 0 ? 'supported' : 'problems' });
             return r;
           }),
@@ -638,9 +663,11 @@ class Run {
       } catch (err) {
         // Over the checker's cap (counted, unbilled) or a failed call: withheld with the
         // failure recorded; the complete evidence is kept, never cut to fit (ruling 5).
+        // A reader's cancel is not a failure (stoppedEnd records a shutdown itself).
         this.chargeFailure(err, 'check', true);
-        this.meta.failure = this.failureOf('check', err);
         this.meta.timingsMs.check = Math.round(performance.now() - t0);
+        if (this.stopped) return this.stoppedEnd();
+        this.meta.failure = this.failureOf('check', err);
         return this.withheldEnd('evidence_check', cases, intent);
       }
     }
@@ -816,5 +843,11 @@ class Run {
 }
 
 function usageAttrs(u: StageUsage) {
-  return { inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheWriteTokens: u.cacheWriteTokens, cacheReadTokens: u.cacheReadTokens };
+  return {
+    inputTokens: u.inputTokens,
+    outputTokens: u.outputTokens,
+    cacheWriteTokens: u.cacheWriteTokens,
+    cacheReadTokens: u.cacheReadTokens,
+    ...(u.thinkingTokens !== undefined ? { thinkingTokens: u.thinkingTokens } : {}),
+  };
 }

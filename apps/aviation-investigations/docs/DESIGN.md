@@ -611,7 +611,7 @@ synthetic worst cases of `pnpm worker ai-preflight`):
 | Stage | Input | Output | Largest measured request |
 | --- | --- | --- | --- |
 | Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
-| Answer | 28,000 | 9,000, including thinking | fixed 4,631; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,096 with real passages and 22,171 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,300, so a full bundle is never re-packed; output at its schema bounds 6,556 plus 1,500 for thinking |
+| Answer | 28,000 | 9,000, including thinking | fixed 4,631; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,096 with real passages and 22,171 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,300, and the measured stress cases fit without re-packing; output at its schema bounds 6,556 plus 1,500 for thinking |
 | Check | 36,000 | 3,000 | fixed 1,953; a full bundle's complete evidence with 91 claims 28,020 (real) and 27,348 (synthetic), bounded near 30,400; a problem for each of 100 claims 2,414 |
 | Embedding | 1,000 | — | — |
 
@@ -640,10 +640,13 @@ cached prefix:
 | Sonnet 5.5 | $0.15207 | 5,500 × $0.50/M = $0.00275 | $0.000275 | about $0.155 | $0.16 |
 | Haiku 5.5 | $0.01337 | 5,500 × $0.025/M = $0.0001375 | $0.000275 | about $0.0138 | $0.02 |
 
-With the Opus answer model, the $3 daily cap holds nine worst-case reservations; on a
-fresh 30-day month the paced allowance (the lower of $3 and $80 / 30 = $2.67) admits
-eight at once. Reservations settle at the actual cost, so about 27 typical briefs
-spend $3.
+With the Opus answer model, the $3 daily cap holds nine worst-case reservations, and
+a fresh 30-day month's paced allowance (the lower of $3 and $80 / 30 = $2.67) eight.
+That is **budget capacity, not concurrency**: separate in-flight limits apply (one
+request per principal, `AI_GLOBAL_CONCURRENCY` overall, and currently one anonymous
+request at a time). Each admission needs its whole reservation as headroom under the
+day's allowance, even though it settles at its actual cost; how many briefs a day that
+admits is under [Budget](#budget).
 
 Recalculate whenever a model, price, cap, TTL, cached-prefix size or retry policy
 changes.
@@ -683,17 +686,32 @@ about $11. Pace the daily allowance using the lower of
 that bound and remaining interactive money divided by remaining calendar days.
 Cap anonymous spending at 25% of the resulting allowance.
 
-What $80 covers depends on the answer model:
+What $80 covers depends on the answer model. Each admission needs today's spend plus
+its whole reservation to fit the day's allowance (`server/quota/pacing.ts`), and then
+settles at its actual cost. Simulating a fresh 30-day month in which every brief
+settles at the estimated typical cost above before the next is admitted (unspent
+allowance rolls into later days, so the daily figure rises slowly):
 
-| Answer model | Typical answers per month | Anonymous searches per day |
-| --- | --- | --- |
-| Opus 5.5 | about 890 (about 30 per day) | about 7 (2 complete trials) |
-| Sonnet 5.5 | about 1,700 | about 14 |
-| Haiku 5.5 | far more; per-user limits bind first | per-user and network limits bind first |
+| Answer model | Typical cost / reservation | Admitted per day | Per month | Anonymous searches per day |
+| --- | --- | --- | --- | --- |
+| Opus 5.5 | about $0.11 / $0.31 | about 22, rising to 25 | about 710 | 4 to 5 (about one complete trial) |
+| Sonnet 5.5 | about $0.054 / $0.16 | about 47, rising to 53 | about 1,470 | 10 to 11 |
+| Haiku 5.5 | about $0.004 / $0.02 | hundreds; per-user and network limits bind first | — | per-user and network limits bind first |
 
-None of these is a guaranteed allocation; abuse and unresolved reservations reduce
-them. Opus 5.5 stays the default answer model. The owner picks the production
-model from the evaluation results (§12).
+The anonymous column applies the same rule to the 25% anonymous share of the allowance.
+These are budget capacity, not concurrency (see the reservation table above), and none
+is a guaranteed allocation: abuse, uncertain settlements (charged at the whole
+reservation) and unresolved reservations reduce them. The typical costs are estimates
+from measured request sizes; the paid runs' settled usage replaces them.
+
+**Capacity trade-off** (the owner's decision after the paid run): the Opus answer
+model's $0.31 reservation is mostly its output cap (9,000 tokens, including room for
+thinking), so it admits about 22 briefs and 4 anonymous searches a day. Sonnet roughly
+doubles both at half the cost per brief; a lower answer output cap or a larger anonymous
+share would also raise them, at the cost of truncated answers or of signed-in capacity.
+The caps, reservations and anonymous share stay as they are until the paid runs have
+measured actual usage. Opus 5.5 stays the default answer model; the owner picks the
+production model from the evaluation results (§12).
 
 Compute remaining money after subtracting settled charges and the full amount of
 all unsettled or uncertain reservations. Pacing must never make those funds

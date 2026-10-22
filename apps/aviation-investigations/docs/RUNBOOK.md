@@ -367,8 +367,9 @@ AVIATION_ENV_FILES=<the environment's settings file> pnpm worker ai-preflight
 For each stage it counts the fixed request (system prompt and structured-output
 schema), a synthetic worst case at the server's input bounds (a full bundle of 12
 chunker-maximum passages within the evidence budget, the longest question and
-refinement, the most claims the composition allows) and the output at its schema
-bounds, and prints each against its cap (`server/ai/pricing.ts`, DESIGN §9). It exits
+refinement, the most claims the composition allows), the output at its schema bounds
+and the cached prefix (against `CACHED_PREFIX_MAX`), and prints each against its cap
+(`server/ai/pricing.ts`, DESIGN §9). It exits
 1 when anything is over: do not run paid tests or deploy until the cap or the request
 is fixed. A cap below a stage's fixed request refuses every brief at that stage, free
 but useless (the first paid end-to-end test stopped this way at scope).
