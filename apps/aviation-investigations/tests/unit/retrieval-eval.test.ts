@@ -19,6 +19,7 @@ import {
   describeCriteria,
   filterProblems,
   jsPattern,
+  needsEventAircraftQualification,
   rulesSha256,
   satisfiesTextCriterion,
   type Dataset,
@@ -212,10 +213,48 @@ describe('silver set rules', () => {
 
   it('requires filters to state what the rule states', () => {
     expect(filterProblems({ id: 'x', filters: { category: ['HELI'] }, criteria: { categoryAny: ['HELI'] } })).toEqual([
-      'x: an aircraft filter needs a single-aircraft rule (maxAircraft 1)',
+      'x: an aircraft filter needs a single-aircraft rule (maxAircraft 1) or an every-aircraft rule (categoryEvery)',
     ]);
     expect(filterProblems({ id: 'x', filters: { yearFrom: 2008, yearTo: 2009 }, criteria: { years: [2008, 2010] } })).toHaveLength(1);
     expect(filterProblems({ id: 'x', filters: { state: ['AK'] }, criteria: { states: ['AK'], text: [] } })).toEqual([]);
+    expect(filterProblems({ id: 'x', filters: { category: ['HELI'] }, criteria: { categoryAny: ['HELI'], maxAircraft: 1 } })).toEqual([]);
+  });
+
+  it('accepts an aircraft filter over multi-aircraft events only with an every-aircraft rule of that one category', () => {
+    // Every aircraft of each derived event is a helicopter: the event-level qualification reaches all of them.
+    expect(filterProblems({ id: 'x', filters: { category: ['HELI'] }, criteria: { minAircraft: 2, categoryEvery: 'HELI' } })).toEqual([]);
+    expect(filterProblems({ id: 'x', filters: { category: ['AIR'] }, criteria: { minAircraft: 2, categoryEvery: 'HELI' } })).toEqual([
+      "x: filter category differs from the rule's categoryEvery",
+    ]);
+    expect(filterProblems({ id: 'x', filters: { category: ['HELI', 'AIR'] }, criteria: { minAircraft: 2, categoryEvery: 'HELI' } })).toHaveLength(1);
+    // A helicopter-and-airplane event never meets a helicopter filter (mixed events stay excluded).
+    expect(filterProblems({ id: 'x', filters: { category: ['HELI'] }, criteria: { minAircraft: 2, categoriesAll: ['HELI', 'AIR'] } })).toHaveLength(2);
+    expect(filterProblems({ id: 'x', filters: { category: ['HELI'] }, criteria: { minAircraft: 2, categoryEvery: 'HELI', categoryAny: ['HELI'] } })).toEqual([
+      'x: an every-aircraft rule states its category once (categoryEvery)',
+    ]);
+    // "Every aircraft" holds vacuously for an event without aircraft rows, which no aircraft filter matches.
+    expect(filterProblems({ id: 'x', filters: { category: ['HELI'] }, criteria: { categoryEvery: 'HELI' } })).toEqual([
+      'x: an every-aircraft rule under an aircraft filter needs minAircraft',
+    ]);
+  });
+
+  it('marks the questions only the event-level aircraft qualification can answer', () => {
+    expect(needsEventAircraftQualification({ filters: { category: ['HELI'] }, criteria: { minAircraft: 2, categoryEvery: 'HELI' } })).toBe(true);
+    expect(needsEventAircraftQualification({ filters: { category: ['HELI'] }, criteria: { categoryAny: ['HELI'], maxAircraft: 1 } })).toBe(false);
+    expect(needsEventAircraftQualification({ filters: { state: ['AK'] }, criteria: { minAircraft: 2 } })).toBe(false);
+    expect(needsEventAircraftQualification({ filters: {}, criteria: { minAircraft: 2, categoryEvery: 'HELI' } })).toBe(false);
+  });
+
+  it('places groups so that every required tag spread over several groups reaches both splits', () => {
+    // Two negation groups and two multi-aircraft groups: each tag lands in both splits whatever the hash order.
+    const g = assignSplits([
+      { id: 'n1', tags: ['negation'], expected: ['N1'] },
+      { id: 'n2', tags: ['mechanical', 'negation'], expected: ['N2'] },
+      { id: 'm1', tags: ['multi_aircraft'], expected: ['M1'] },
+      { id: 'm2', tags: ['operational', 'multi_aircraft'], expected: ['M2'] },
+      { id: 's1', tags: ['structured_timing', 'negation'], expected: ['S1'], section: 'structured' },
+    ]);
+    for (const [a, b] of [['n1', 'n2'], ['m1', 'm2']] as const) expect(g.split.get(a), `${a}/${b}`).not.toBe(g.split.get(b));
   });
 });
 

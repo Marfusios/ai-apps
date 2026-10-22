@@ -948,7 +948,7 @@ describe('hybrid retrieval behind the port', () => {
     );
     expect(err).toBeInstanceOf(RetrievalFailure);
     const f = err as RetrievalFailure;
-    expect(f.message).not.toMatch(/SENTINEL|aviation-test|passages-v1|chunk-v2/);
+    expect(f.message).not.toMatch(/SENTINEL|aviation-test|passages-v\d|chunk-v2/);
     return f;
   }
 

@@ -3,7 +3,8 @@
 How NTSB data becomes the PostgreSQL corpus and the two Elasticsearch indices, and
 why each step works the way it does. Written 2026-10-22 against implementation
 snapshot `fc450ec`; sections 2.4, 2.11, 2.12, 5 and 6 were updated at `f69d8a3`,
-when hybrid retrieval (Task 10) was merged. The numbers come from generation 1 in the shared `dev`
+when hybrid retrieval (Task 10) was merged, and sections 2.9 to 2.12, 3, 5 and 6 for
+`passages-v2` and the event-level aircraft qualification (Task 10b). The numbers come from generation 1 in the shared `dev`
 environment, loaded from the NTSB `avall.zip` archive. Paths are relative to
 `apps/aviation-investigations/`.
 
@@ -452,30 +453,67 @@ into `passages` before indexing. Triggers require a verified generation and a
 matching section of an answer-eligible US case. They also forbid updates, and make
 an insert lock its generation so pruning waits (G4).
 
-**Mapping choices.**
+**Mapping choices** (`passages-v2`).
 
 - **`embedding`** is a `dense_vector` with 1,536 dimensions, cosine similarity and
   `int8_hnsw`, which quantizes the vectors used by the HNSW graph to save memory.
 - **`exclude_source_vectors`** keeps vectors out of `_source`, so hits do not carry
   1,536 floats each.
-- **Nested `aircraft` versus object `event_aircraft`.**
+- **Nested `aircraft` versus nested `event_aircraft`.**
   - An aircraft-scoped passage fills the nested `aircraft` field with its own
-    aircraft.
-  - An event-scoped passage puts the event's aircraft in the plain object field
-    `event_aircraft` and sets `aircraft_specific: false`.
+    aircraft. Its `event_aircraft` is empty, `event_aircraft_count` null and
+    `event_aircraft_complete` false.
+  - An event-scoped passage sets `aircraft_specific: false` and `aircraft_key` null,
+    leaves `aircraft` empty and puts every aircraft of the event in the nested field
+    `event_aircraft` (the same properties: key, category, make, model, FAR part,
+    purpose, engine types, defining phase group). It records `event_aircraft_count`,
+    the event's `case_aircraft` rows, and `event_aircraft_complete: true`.
 
-  A nested aircraft filter therefore can never match an event-scoped passage.
+  A nested `aircraft` filter therefore never matches an event-scoped passage.
+  Because `event_aircraft` is nested, a query can ask whether one and the same
+  aircraft meets several conditions, which the flattened object of `passages-v1`
+  could not (its fields merged the event's aircraft). Retrieval uses this for the
+  event-level qualification (section 2.12).
 - **Filters copied per passage:** `country`, year, date, state, `answer_eligible`,
   defining phases, injury, weather and light. The kNN prefilter and the keyword
   channel can then apply the same constraints without a cross-index join.
 - **One primary shard** avoids BM25 statistics that differ from shard to shard.
   **Zero replicas** is a capacity choice for a single node and gives no redundancy.
 
+**Event aircraft sets.** The dry run and the build read each multi-aircraft event's
+aircraft keys from `case_aircraft` with their own aggregate query, separately from
+the case records the passages are built from. Every event-scoped passage must carry
+exactly that key set, at least two. Any difference stops the dry run and the build
+(`IncompleteEventAircraftError`) before an index exists. The completeness flag is
+written only after that check, so a document cannot claim a set the build did not
+compare.
+
 **Build checks.** Before the alias moves, the build checks counts per kind and scope,
 that every document has an embedding, and that there are zero scope violations and
-zero non-US or non-eligible documents.
+zero non-US or non-eligible documents. For event aircraft it checks that the nested
+`event_aircraft` documents and the sum of `event_aircraft_count` both equal the
+PostgreSQL counts, and that no event-scoped passage lacks the nested set, the
+completeness flag or a count of at least 2, and no aircraft-scoped passage has any of
+them.
 
-**Real data.** 91,898 documents, all US and answer-eligible. In a smoke check, kNN
+**Versions.** `passages-v2` differs from `passages-v1` only in the three event
+aircraft fields. Chunks (`chunk-v2`), passage ids, the input template (`input-v1`)
+and therefore every embedding input and cache key are unchanged, so a generation
+indexed as v1 is rebuilt as v2 entirely from `embedding_cache`. A unit test pins the
+fixture passages' ids and cache keys to the values the v1 code produced.
+
+**Cache-only builds.** `index passages --cache-only` builds without an embedder: the
+worker creates no OpenAI client and passes the build an embedder that throws on any
+call, and `confirmCost` and the spend gate are not used. The build stops with
+`CacheIncompleteError` before creating an index unless the dry run finds every input
+cached ("to embed: 0"). A miss that appeared after planning would reach the throwing
+embedder and fail the build, which then deletes its unsubmitted index.
+
+**Real data.** 91,898 documents, all US and answer-eligible (`passages-v1`, built on
+`dev`). A read-only `passages-v2` dry run on a local load of the same archive
+(generation 1) gives the same 91,898 passages, 91,676 distinct inputs and 28,512,628
+input tokens. It checked 2,197 event-scoped passages of 375 events against
+`case_aircraft`: all complete, with 4,412 nested event aircraft. In a smoke check, kNN
 seeded with a carburetor-icing probable-cause vector returned other
 carburetor-icing causes at Elasticsearch `_score` 0.94–0.95. With cosine
 similarity, `_score = (1 + cosine) / 2`, so that is a cosine of about 0.88–0.90.
@@ -533,18 +571,23 @@ whose `_meta` names the generation and a servable version and fingerprint, and w
 document count equals the generation's US events. A passages index must meet the
 passages contract (`server/search/passages-contract.ts`):
 
-- its `_meta` names this generation, version `passages-v1`, chunker `chunk-v2` and
-  input template `input-v1`;
+- its `_meta` names this generation and an approved version: `passages-v2`, or
+  `passages-v1`, which stays servable with the event-level qualification off. The
+  version brings its chunker (`chunk-v2` for both) and input template (`input-v1`
+  for both);
 - it was built for the configured embedding model and dimensions
   (`OPENAI_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_DIMENSIONS`), and its mapping
-  fingerprint is the one approved for that pair in code (today only
-  `text-embedding-3-small/1536`);
+  fingerprint is the one approved for that version and pair in code (today only
+  `text-embedding-3-small/1536`: `ed335f46…` for v2, `57d731b2…` for v1). A v2
+  mapping cannot pass as v1, or the reverse;
 - its document count equals the generation's `chunk-v2` passage rows.
 
 `publish_manifest` then requires a current successful verification, retires the old
-manifest and activates the new one. A manifest without passages is keyword-only. Republishing an earlier generation is the
-rollback. **The `dev` manifest for
-generation 1 serves `cases-v3` and `passages-v1`.**
+manifest and activates the new one. A manifest without passages is keyword-only.
+Republishing an earlier generation, or the same generation with its earlier passages
+index, is the rollback. **The `dev` manifest for generation 1 serves `cases-v3` and
+`passages-v1` until the cache-only `passages-v2` rebuild is published (RUNBOOK,
+"Rebuilding passages as `passages-v2` from the cache").**
 
 **The API:**
 
@@ -580,9 +623,36 @@ provisionally (section 5); every value is in `RETRIEVAL_DEFAULTS`.
   before the query is embedded, within the request's deadline. There is no
   keyword-only fallback for AI answers.
 - **One filter compiler for both channels and the fetch.** It always adds
-  `country: USA` and `answer_eligible: true`. An aircraft facet adds
-  `aircraft_specific: true` and one nested `aircraft` clause, so an event-scoped
-  passage of a multi-aircraft event never satisfies an aircraft filter.
+  `country: USA` and `answer_eligible: true`. The filter is compiled once per
+  request, for the version the passages contract matched, and the BM25 query, the kNN
+  prefilter and the evidence fetch carry the identical clauses. With an aircraft
+  facet:
+  - **`passages-v1`: exclusion.** `aircraft_specific: true` and one nested
+    `aircraft` clause, so an event-scoped passage never satisfies an aircraft
+    filter.
+  - **`passages-v2`: event-level qualification** (gate G5 extension). One clause:
+    either that aircraft branch, or an event-scoped passage of an event that
+    qualifies as a whole:
+    - `aircraft_specific: false` and `event_aircraft_complete: true`;
+    - a non-empty nested `event_aircraft`;
+    - no nested event aircraft failing the full conjunction of the active aircraft
+      facets: `must_not nested(event_aircraft, bool must_not [bool filter
+      conjunction])`. Each aircraft must meet every facet itself. A missing value
+      fails its facet: `blank` is left out of the event branch, and a facet whose
+      only value is `blank` leaves the event branch out.
+
+    Two helicopters qualify under a helicopter filter; a helicopter and an airplane
+    do not, and neither do two facets met by different aircraft (an Army helicopter
+    and a Part 121 airliner under "helicopter, Part 121"). The passage stays
+    event-scoped (`scope: event`, `aircraft_key` null), so nothing attributes it to
+    one aircraft, and the brief pipeline's rules for multi-aircraft events are
+    unchanged. The qualification belongs to the event: every passage of a qualifying
+    event qualifies, so the fetch attaches every event-scoped probable-cause variant
+    stored for it. Applied to a v1 index by mistake, the clause qualifies nothing:
+    v1 has no `event_aircraft_complete` field.
+
+  Integration tests compare the matches of 18 selections on a fixture variant with
+  an independent reference implementation of these rules.
 - **Complete answers only.** Every search sets `allow_partial_search_results: false`.
   A response that timed out, has a failed shard, or has fewer `successful` shards than
   `total` fails retrieval.
@@ -606,14 +676,24 @@ provisionally (section 5); every value is in `RETRIEVAL_DEFAULTS`.
   later failure cannot lose a paid stage. Retrieval reserves no money: the AI
   request's admission reservation covers one query embedding.
 
-**Evaluation** (`evals/retrieval/`). The silver set has 72 questions derived from
+**Evaluation** (`evals/retrieval/`). The silver set has 76 questions derived from
 generation 1 by committed rules (structured fields plus explicit PostgreSQL regular
 expressions, each recorded for an expert to re-check; every label is
 `pending-expert`):
 
-- 69 retrieval questions, 38 `dev` and 31 `holdout`, including 16 independently
+- 73 retrieval questions, 35 `dev` and 38 `holdout`, including 16 independently
   worded paraphrases. Questions that share a case, and paraphrases with their
-  originals, form groups assigned whole to one split.
+  originals, form groups assigned whole to one split. Groups go first where they
+  bring a required tag a split lacks, then by primary tag; adding questions
+  reorders the groups, and 29 of the 72 earlier questions changed split at Task 10b.
+- 5 retrieval questions (tag `multi_aircraft_filtered`) ask for multi-aircraft events
+  under an aircraft category filter, with every-aircraft rules (`categoryEvery`):
+  two helicopters and helicopter collisions under the helicopter filter, and the
+  airplane versions of the taxi, Alaska and skydiving questions under the airplane
+  filter (the latter three keep their originals' exclusions, which hold the
+  multi-aircraft questions in three groups). Only the `passages-v2` qualification
+  reaches their cases. On a `passages-v1` index the evaluation reports them as a
+  problem and, with `--exploratory`, runs without them.
 - 3 questions answered by inspection dates and hours, kept as `structured` and not
   run by the retrieval evaluation.
 
@@ -631,7 +711,7 @@ Both indices are `dynamic: strict`, share the aviation analyzers, and record ver
 fingerprint and generation in `_meta`. Each has one primary shard, for consistent
 BM25 statistics, and zero replicas, for single-node capacity without redundancy.
 
-| Field group | Cases index (`cases-v3`, 25,407 docs) | Passages index (`passages-v1`, 91,898 docs) | Purpose |
+| Field group | Cases index (`cases-v3`, 25,407 docs) | Passages index (`passages-v2`; `passages-v1` on `dev`, 91,898 docs) | Purpose |
 | --- | --- | --- | --- |
 | Unit | one US event | one passage of a provisionally answer-eligible US case (completed, with probable cause) | |
 | Identity | `ntsb_no` | `passage_id`, `ntsb_no`, `section_id`, `revision_id` | Case URL; citation chain |
@@ -640,7 +720,7 @@ BM25 statistics, and zero replicas, for single-node capacity without redundancy.
 | Vector | — | `embedding`: `dense_vector` 1,536, cosine, `int8_hnsw`, not in `_source` | kNN |
 | Event filters | `country`, `ev_date`, `ev_year`, `state`, `city`, `location` (`geo_point`), `highest_injury`, `light`, `wx_cond`, `completion_class`, `raw_status`, `answer_eligible`, `completed_with_cause` | `country`, `ev_date`, `ev_year`, `state`, `highest_injury`, `light`, `wx_cond`, `answer_eligible` | Facets, cohorts, compulsory clauses |
 | Phases | `defining_phase_groups`, `sequence_phase_groups`, `defining_events` | `defining_phase_groups` | Event-level phase data; the Phase facet filters `aircraft.defining_phase_group` |
-| Aircraft | `nested` `aircraft` (make, model, category, FAR part, purpose, damage, engine types, homebuilt, defining phase); `aircraft_count` | `nested` `aircraft` if aircraft-scoped; `object` `event_aircraft` if event-scoped | Same-aircraft constraints |
+| Aircraft | `nested` `aircraft` (make, model, category, FAR part, purpose, damage, engine types, homebuilt, defining phase); `aircraft_count` | `nested` `aircraft` if aircraft-scoped; `nested` `event_aircraft` (every aircraft of the event), `event_aircraft_count` and `event_aircraft_complete` if event-scoped (v1: `object` `event_aircraft`, no count or flag) | Same-aircraft constraints; event-level qualification |
 
 **Why two indices.**
 
@@ -693,8 +773,14 @@ until no blocking issue remained.
 | G5 | AI retrieval | Partial search results accepted, packing could drop the passage that ranked a case, an inspection-hours label bug, shared positives scored as wrong, incomplete passages checks, query-embedding cost lost on a later failure, an evaluation that warned and went on; then skipped shards counted twice, a transient passages failure kept until the next publication, upstream error text in the status | Complete responses only, packing reservations, full positive sets with grouped splits, paraphrases and structured questions, the passages contract at publish and load, the usage callback, a fail-closed evaluation, `successful === total`, a 30 s re-check, fixed failure categories |
 
 G5 cleared provisionally: the defaults may serve AI in `dev`, not public answers,
-until a relevance audit and candidate-discovery work (planned) improve recall. G6
-(model input and quote validation) is still ahead.
+until a relevance audit and candidate-discovery work (planned) improve recall. G5
+then approved a conservative event-level "every aircraft matches" extension:
+complete, non-empty aircraft sets, the full conjunction of the active facets for
+every aircraft, a properly nested representation, the identical clause in both
+channels and the cause fetch, no attribution to an individual aircraft, and the
+exclusion kept until those tests pass. `passages-v2` implements it; the extension
+itself goes back to G5 before it runs on `dev`. G6 (model input and quote
+validation) is still ahead.
 
 ## 6. Known limits and open owner items
 
@@ -718,10 +804,11 @@ until a relevance audit and candidate-discovery work (planned) improve recall. G
   (section 2.12). The planned order is a blinded audit of the labels, the scope-stage
   search terms, better candidate discovery (notably for maintenance timelines), then
   a bounded reranker.
-- **Multi-aircraft events under aircraft filters.** G5 approved letting an
-  event-scoped passage match when every aircraft of the event satisfies the filter.
-  That needs a nested event-aircraft representation and a passages rebuild, from the
-  cache, so without paid embeddings.
+- **Multi-aircraft events under aircraft filters.** `passages-v2` implements the
+  G5 event-level qualification (section 2.12). It takes effect on `dev` once a
+  cache-only `passages-v2` rebuild of generation 1 is reviewed and published; until
+  then the published `passages-v1` keeps the exclusion, and the 5
+  `multi_aircraft_filtered` evaluation questions run only against a v2 index.
 
 **Known limits:**
 
@@ -732,7 +819,10 @@ until a relevance audit and candidate-discovery work (planned) improve recall. G
 - Embedding inputs still contain glued headings. Fixing that needs a new input
   template and a paid re-embedding.
 - Multi-aircraft narratives (2,197 passages) can never ground an aircraft-specific
-  claim.
+  claim. Under an aircraft filter they reach a brief only when every aircraft of
+  the event satisfies it, and then only as event-scoped evidence. A mixed event (a
+  helicopter and an airplane) stays out of a helicopter-only filter, and an aircraft
+  with a missing value for a filtered field keeps its event out.
 - Aircraft facets can sum to more than the event total.
 - Extraction can rarely orphan a container if the Docker daemon is slow.
 - There are no replicas. Both indices can be rebuilt from PostgreSQL and the cache.

@@ -10,7 +10,7 @@ import { readAiSwitch, setAiSwitch, setAnonymousAi } from '../server/quota/switc
 import { createEsClient } from '../server/search/es.js';
 import { APP_DIR, workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
-import { createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
+import { cacheOnlyEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
 import { MAX_INPUT_TOKENS } from './index/passages.js';
 import {
   PASSAGES_BUILD_MIN_POOL,
@@ -19,7 +19,7 @@ import {
   type PassagePlan,
   type PassagesIndexReport,
 } from './index/passages-index.js';
-import { createLedgerSpendGate } from './index/spend-gate.js';
+import { createLedgerSpendGate, createMemorySpendGate } from './index/spend-gate.js';
 import { cleanupStalePins, declareAbandoned, deleteUnusedIndices, reconcileAlias } from './index/publications.js';
 import { PublishRefusedError, publishGeneration } from './index/publish.js';
 import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
@@ -41,7 +41,7 @@ const USAGE = [
   '  worker prune-controls',
   '  worker fail-stale-runs --older-than-minutes <n>',
   '  worker index cases --generation <id>',
-  '  worker index passages --generation <id> [--dry-run | --confirm-cost]',
+  '  worker index passages --generation <id> [--dry-run | --confirm-cost | --cache-only]',
   '  worker index reconcile --alias <alias> [--declare-abandoned <attempt-id> --reason <text>]',
   '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
   '  worker index cleanup-builds --older-than <hours>',
@@ -146,6 +146,10 @@ function printPlan(p: PassagePlan): void {
     ['US cases', `${int(p.usCases)} (answer-eligible ${int(p.answerEligibleCases)}, with passages ${int(p.casesWithPassages)})`],
     ['sections', int(p.sections)],
     ['passages', `${int(p.passages)} (aircraft-specific ${int(p.aircraftSpecific)}, event-scoped ${int(p.eventScoped)})`],
+    [
+      'event aircraft sets (checked against case_aircraft)',
+      `${int(p.eventAircraft.events)} events complete: ${int(p.eventAircraft.passages)} event-scoped passages, ${int(p.eventAircraft.aircraft)} nested event aircraft`,
+    ],
   ];
   for (const k of p.byKindScope) {
     lines.push([
@@ -166,7 +170,7 @@ function printPlan(p: PassagePlan): void {
     ['cases affected by A16 splits', p.oversized.cases.length === 0 ? 'none' : `${p.oversized.cases.length}: ${p.oversized.cases.join(', ')}`],
     ['distinct inputs', `${int(p.uniqueInputs)} (${int(p.duplicateInputs)} duplicates embedded once)`],
     ['cache hits expected', p.cache.available ? `${int(p.cache.hits)} inputs, ${int(p.cache.hitTokens)} tokens` : '0 (embedding_cache table not present in this database yet)'],
-    ['to embed', `${int(p.toEmbed.inputs)} inputs, ${int(p.toEmbed.tokens)} tokens, ${int(p.toEmbed.requests)} requests`],
+    ['to embed', `${int(p.toEmbed.inputs)} inputs, ${int(p.toEmbed.tokens)} tokens, ${int(p.toEmbed.requests)} requests${p.toEmbed.inputs === 0 && p.cache.available ? ' (every input is cached: --cache-only builds with no embedding call)' : ''}`],
     ['estimated cost', usd(p.estimatedUsd)],
     ['reservations (sum of single attempts, A7)', `$${p.reservationUsd.toFixed(6)}`],
     ['duration', `${(p.durationMs / 1000).toFixed(1)} s`],
@@ -185,23 +189,49 @@ function printPassagesIndex(r: PassagesIndexReport): void {
     ['passages', `${int(r.passages)} (${int(r.passagesAlreadyStored)} already stored)`],
     ['cache hits (distinct inputs cached before this build)', int(r.cacheHits)],
     ['deduplicated (passages sharing an input)', int(r.deduplicated)],
+    ['mode', r.cacheOnly ? 'cache only (no embedder; nothing paid)' : 'paid misses (--confirm-cost)'],
     ['embedded', `${int(r.embedded.inputs)} inputs, ${int(r.embedded.tokens)} tokens, ${int(r.embedded.requests)} requests, ${usd(r.embedded.usd)}`],
     ['duration', `${(r.durationMs / 1000).toFixed(1)} s`],
   ];
   for (const [k, v] of lines) console.log(`${k}: ${v}`);
 }
 
-async function indexPassages(id: number, confirmCost: boolean): Promise<number> {
+async function indexPassages(id: number, mode: 'dry-run' | 'confirm-cost' | 'cache-only'): Promise<number> {
   const config = workerConfig();
   const { embeddingModel: model, embeddingDimensions: dims } = config.ai.openai;
   const price = embeddingUsdPerMillion(model);
-  if (!confirmCost) {
+  if (mode === 'dry-run') {
     const plan = await withDb((db) =>
       planPassages(db, { generationId: id, embedding: { model, dims, usdPerMillionTokens: price }, log: (m) => console.error(m) }),
     );
     printPlan(plan);
-    console.log('dry run: nothing written, no paid request made; run with --confirm-cost to build the index');
+    console.log(
+      plan.toEmbed.inputs === 0 && plan.cache.available
+        ? 'dry run: nothing written, no paid request made; 0 to embed: run with --cache-only to build the index from the cache'
+        : 'dry run: nothing written, no paid request made; run with --confirm-cost to build the index',
+    );
     return 0;
+  }
+  if (mode === 'cache-only') {
+    // No OpenAI client and no ledger: the embedder throws on any call and the gate holds nothing.
+    return withDb(async (db) => {
+      const es = createEsClient(config.elasticsearch, 'write', { requestTimeoutMs: 120_000 });
+      try {
+        const report = await rebuildPassagesIndex(es, db, cacheOnlyEmbedder({ model, dims, usdPerMillionTokens: price }), {
+          generationId: id,
+          prefix: config.elasticsearch.indexPrefix,
+          gate: createMemorySpendGate(0),
+          confirmCost: false,
+          cacheOnly: true,
+          log: (m) => console.error(m),
+        });
+        printPlan(report.plan);
+        printPassagesIndex(report);
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }, PASSAGES_BUILD_MIN_POOL);
   }
   return withDb(async (db) => {
     const gate = createLedgerSpendGate(db, { budgets: config.ai.budgets, provider: 'openai', model, stage: 'embed' });
@@ -355,7 +385,12 @@ async function main(argv: string[]): Promise<number> {
     if (target === 'passages') {
       const { values } = parseArgs({
         args,
-        options: { generation: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'confirm-cost': { type: 'boolean' } },
+        options: {
+          generation: { type: 'string' },
+          'dry-run': { type: 'boolean' },
+          'confirm-cost': { type: 'boolean' },
+          'cache-only': { type: 'boolean' },
+        },
         strict: true,
       });
       const id = Number(values.generation);
@@ -363,11 +398,11 @@ async function main(argv: string[]): Promise<number> {
         console.error(USAGE);
         return 2;
       }
-      if (values['dry-run'] && values['confirm-cost']) {
-        console.error('--dry-run and --confirm-cost exclude each other');
+      if ([values['dry-run'], values['confirm-cost'], values['cache-only']].filter(Boolean).length > 1) {
+        console.error('--dry-run, --confirm-cost and --cache-only exclude each other');
         return 2;
       }
-      return indexPassages(id, values['confirm-cost'] === true);
+      return indexPassages(id, values['cache-only'] ? 'cache-only' : values['confirm-cost'] ? 'confirm-cost' : 'dry-run');
     }
     if (target === 'reconcile') {
       const { values } = parseArgs({

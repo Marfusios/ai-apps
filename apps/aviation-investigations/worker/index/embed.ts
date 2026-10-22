@@ -291,6 +291,35 @@ export function createOpenAIEmbedder(cfg: OpenAIEmbedderConfig): Embedder {
 }
 
 // ---------------------------------------------------------------------------
+// Cache only
+
+/** A cache-only build asked for an embedding: refused, nothing was sent. */
+export class CacheOnlyEmbeddingError extends Error {
+  constructor(inputs: number) {
+    super(`a cache-only build asked to embed ${inputs} input(s); nothing was sent and nothing is paid`);
+    this.name = 'CacheOnlyEmbeddingError';
+  }
+}
+
+/**
+ * An embedder for cache-only builds: the model, dimensions and price of `spec` (cache
+ * keys and the plan need them), and an `embed` that always throws
+ * `CacheOnlyEmbeddingError` without calling anything. It holds no reference to
+ * `spec`'s own `embed`, so no provider request can follow from it.
+ */
+export function cacheOnlyEmbedder(spec: Pick<Embedder, 'model' | 'dims' | 'usdPerMillionTokens'>): Embedder {
+  const { model, dims, usdPerMillionTokens } = spec;
+  return {
+    model,
+    dims,
+    usdPerMillionTokens,
+    async embed(texts) {
+      throw new CacheOnlyEmbeddingError(texts.length);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Fake
 
 export interface FakeEmbedder extends Embedder {

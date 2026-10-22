@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { Client, estypes } from '@elastic/elasticsearch';
 import { and, eq, sql } from 'drizzle-orm';
 import pg from 'pg';
@@ -15,8 +17,10 @@ import type { QuotaBudgets } from '../../server/quota/policy.js';
 import { aliasTargets } from '../../worker/index/aliases.js';
 import { GenerationNotIndexableError } from '../../worker/index/cases-index.js';
 import { createFakeEmbedder, fakeVector, type Embedder } from '../../worker/index/embed.js';
+import { embeddingCacheKey, storeEmbeddings } from '../../worker/index/embedding-cache.js';
 import { buildCasePassages, type CasePassage } from '../../worker/index/passages.js';
 import {
+  CacheIncompleteError,
   CostNotConfirmedError,
   PASSAGES_EMBEDDING_DIMS,
   passagesAlias,
@@ -31,7 +35,7 @@ import { TABLE_NAMES } from '../../worker/ingest/tables.js';
 import { fixtureCaseRecords } from '../support/case-records.js';
 import { editTable, makeExtractDir, removeDir } from '../support/extract-dir.js';
 import { count, evIdOf, loadVerified, sqlState } from './corpus-helpers.js';
-import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDb, testDbUrl, testEs, testPool } from './helpers.js';
+import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDb, testDbUrl, testEs, testEsApiKey, testPool } from './helpers.js';
 
 const PREFIX = `${TEST_INDEX_PREFIX}${randomBytes(4).toString('hex')}`;
 const ALIAS = passagesAlias(PREFIX);
@@ -71,6 +75,40 @@ async function resetCache(): Promise<void> {
   } finally {
     await pool.end();
   }
+}
+
+/** Remove one cached vector (the migrator owns the table; the ingest role cannot delete). */
+async function dropCachedVector(): Promise<string> {
+  const pool = testPool('migrator');
+  try {
+    const r = await pool.query<{ cache_key: string }>('delete from embedding_cache where cache_key = (select min(cache_key) from embedding_cache) returning cache_key');
+    const key = r.rows[0]?.cache_key;
+    if (!key) throw new Error('the cache is empty');
+    return key;
+  } finally {
+    await pool.end();
+  }
+}
+
+const run = promisify(execFile);
+const APP_DIR = resolve(import.meta.dirname, '../..');
+
+/** `pnpm worker …` as a child process against aviation_test and this file's index prefix only. */
+async function worker(...args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return run(resolve(APP_DIR, 'node_modules/.bin/tsx'), ['worker/cli.ts', ...args], {
+    cwd: APP_DIR,
+    env: {
+      ...process.env,
+      // Nonempty process values win over .env.local: only the test environment is reached.
+      DATABASE_URL: testDbUrl('app'),
+      DATABASE_INGEST_URL: testDbUrl('ingest'),
+      ELASTICSEARCH_READ_API_KEY: testEsApiKey('read'),
+      ELASTICSEARCH_WRITE_API_KEY: testEsApiKey('write'),
+      ELASTICSEARCH_INDEX_PREFIX: PREFIX,
+      OPENAI_EMBEDDING_MODEL: 'text-embedding-3-small',
+      OPENAI_EMBEDDING_DIMENSIONS: String(DIMS),
+    },
+  });
 }
 
 const build = (embedder: Embedder, over: Partial<Parameters<typeof rebuildPassagesIndex>[3]> = {}) =>
@@ -235,7 +273,7 @@ describe('rebuildPassagesIndex', () => {
     expect(built.embedded.requests).toBe(built.plan.toEmbed.requests);
     expect(built.embedded.tokens).toBe(built.plan.toEmbed.tokens);
     expect(await aliasTargets(es, ALIAS)).toEqual([built.index]);
-    expect(built.index).toMatch(new RegExp(`^${PREFIX}-passages-v1-g${generationId}-\\d{17}-${built.buildId}$`));
+    expect(built.index).toMatch(new RegExp(`^${PREFIX}-passages-v2-g${generationId}-\\d{17}-${built.buildId}$`));
     // The build's pin (index-build:<id>, no expiry) is gone once it has finished.
     expect(await activePins(ingest, generationId)).toEqual([]);
     const rec = await ingest.$client.query('select generation_id, alias, deleted_at from index_builds where build_id = $1', [built.buildId]);
@@ -283,9 +321,19 @@ describe('rebuildPassagesIndex', () => {
     const dca = await es.search<PassageDoc>({ index: built.index, query: { term: { ntsb_no: 'DCA25MA108' } }, size: 20 });
     expect(dca.hits.hits.length).toBeGreaterThan(0);
     for (const h of dca.hits.hits) {
-      expect(h._source).toMatchObject({ scope: 'event', aircraft_specific: false, aircraft_key: null, aircraft: [] });
+      expect(h._source).toMatchObject({
+        scope: 'event',
+        aircraft_specific: false,
+        aircraft_key: null,
+        aircraft: [],
+        event_aircraft_count: 2,
+        event_aircraft_complete: true,
+      });
       expect(h._source?.event_aircraft.map((a) => a.make)).toEqual(['BOMBARDIER INC', 'SIKORSKY']);
     }
+    const mapping = await es.indices.getMapping({ index: built.index });
+    expect(mapping[built.index]?.mappings.properties?.event_aircraft).toMatchObject({ type: 'nested' });
+    expect(mapping[built.index]?.mappings._meta).toMatchObject({ index_version: 'passages-v2', input_template_version: 'input-v1' });
     // A nested aircraft filter alone, without any aircraft_specific clause.
     const byMake = (make: string) =>
       es.search<PassageDoc>({
@@ -297,8 +345,17 @@ describe('rebuildPassagesIndex', () => {
     expect(total(await byMake('sikorsky'))).toBe(0);
     // WPR15FA010 (a Cessna 170B and a Savannah) has only event-scoped passages.
     expect([...new Set((await byMake('cessna')).hits.hits.map((h) => h._source?.ntsb_no))].sort()).toEqual(['CEN20LA361', 'DEN08LA103']);
-    // The event's aircraft stay findable as event facts.
-    expect(total(await es.search({ index: built.index, size: 0, track_total_hits: true, query: { term: { 'event_aircraft.make': 'sikorsky' } } }))).toBeGreaterThan(0);
+    // The event's aircraft stay findable as event facts, each one whole (nested).
+    const eventMake = (make: string, far: string) =>
+      es.search({
+        index: built.index,
+        size: 0,
+        track_total_hits: true,
+        query: { nested: { path: 'event_aircraft', query: { bool: { filter: [{ term: { 'event_aircraft.make': make } }, { term: { 'event_aircraft.far_part': far } }] } } } },
+      });
+    expect(total(await eventMake('sikorsky', 'ARMF'))).toBeGreaterThan(0);
+    // The helicopter is not Part 121: a flattened object would have matched this.
+    expect(total(await eventMake('sikorsky', '121'))).toBe(0);
   });
 
   it('reuses cached embeddings: a rebuild makes no embedding call', async () => {
@@ -324,6 +381,52 @@ describe('rebuildPassagesIndex', () => {
     expect(await vector(report.index)).toEqual(a);
   });
 
+  it('cache only: builds from embedding_cache with no embedder call, no confirmation and no budget', async () => {
+    const fake = createFakeEmbedder(DIMS);
+    const report = await build(fake, { cacheOnly: true, confirmCost: false, gate: createMemorySpendGate(0) });
+    expect(fake.calls).toEqual([]);
+    expect(report).toMatchObject({
+      cacheOnly: true,
+      passages: expected.length,
+      cacheHits: unique,
+      embedded: { inputs: 0, tokens: 0, requests: 0, usd: 0 },
+      plan: { toEmbed: { inputs: 0, tokens: 0, requests: 0 }, estimatedUsd: 0, reservationUsd: 0 },
+    });
+    expect(await aliasTargets(es, ALIAS)).toEqual([report.index]);
+  });
+
+  it('cache only: vectors cached for the unchanged input-v1 inputs (as the v1 build left them) serve every passage', async () => {
+    await resetCache();
+    const model = 'fake-embedding-v1';
+    const byKey = new Map(expected.map((p) => [embeddingCacheKey({ input: p.input, model, dims: DIMS, templateVersion: 'input-v1' }), p.input]));
+    await storeEmbeddings(ingest, [...byKey].map(([key, input]) => ({ key, vector: fakeVector(input, DIMS) })), model, DIMS, 'input-v1');
+    const plan = await planPassages(ingest, { generationId, embedding: { model, dims: DIMS, usdPerMillionTokens: 0.02 } });
+    expect(plan).toMatchObject({ cache: { available: true, hits: unique }, toEmbed: { inputs: 0, tokens: 0, requests: 0 }, estimatedUsd: 0 });
+    const fake = createFakeEmbedder(DIMS);
+    const report = await build(fake, { cacheOnly: true, confirmCost: false, gate: createMemorySpendGate(0) });
+    expect(fake.calls).toEqual([]);
+    expect(report.cacheHits).toBe(unique);
+  });
+
+  it('cache only: one missing input stops the build before any index, without calling the embedder', async () => {
+    await dropCachedVector();
+    const indices = await ownIndices();
+    const target = await aliasTargets(es, ALIAS);
+    const fake = createFakeEmbedder(DIMS);
+    const err = await build(fake, { cacheOnly: true, confirmCost: false, gate: createMemorySpendGate(0) }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CacheIncompleteError);
+    expect((err as CacheIncompleteError).plan.toEmbed.inputs).toBe(1);
+    expect(String(err)).toMatch(/1 of \d+ embedding inputs are not in embedding_cache/);
+    expect(fake.calls).toEqual([]);
+    expect(await ownIndices()).toEqual(indices);
+    expect(await aliasTargets(es, ALIAS)).toEqual(target);
+    expect(await activePins(ingest, generationId)).toEqual([]);
+    // A paid build would embed exactly that input; it also restores the cache for the tests below.
+    const paid = createFakeEmbedder(DIMS);
+    await build(paid);
+    expect(paid.calls.flat()).toHaveLength(1);
+  });
+
   it('misses the cache for another model (the key covers model and template)', async () => {
     const plan = await planPassages(ingest, { generationId, embedding: { model: 'fake-embedding-v2', dims: DIMS, usdPerMillionTokens: 0 } });
     expect(plan.cache.hits).toBe(0);
@@ -339,6 +442,39 @@ describe('rebuildPassagesIndex', () => {
     });
     expect(String(inner)).toMatch(/another passages build of generation \d+ is running/);
   });
+});
+
+describe('worker index passages (CLI)', () => {
+  it('the dry run reports 0 to embed, --cache-only builds without an OpenAI client, and a missing input fails it', async () => {
+    // Vectors cached under the configured model name (fake values), as a paid build leaves them.
+    await build(createFakeEmbedder(DIMS, 'text-embedding-3-small'));
+    const id = String(generationId);
+    const dry = await worker('index', 'passages', '--generation', id);
+    expect(dry.stdout).toMatch(/^to embed: 0 inputs, 0 tokens, 0 requests \(every input is cached/m);
+    expect(dry.stdout).toMatch(/0 to embed: run with --cache-only/);
+    expect(dry.stdout).toMatch(/^event aircraft sets \(checked against case_aircraft\): 3 events complete/m);
+
+    const before = await aliasTargets(es, ALIAS);
+    const built = await worker('index', 'passages', '--generation', id, '--cache-only');
+    expect(built.stdout).toMatch(/^mode: cache only \(no embedder; nothing paid\)$/m);
+    expect(built.stdout).toMatch(/^embedded: 0 inputs, 0 tokens, 0 requests, \$0\.0000$/m);
+    const after = await aliasTargets(es, ALIAS);
+    expect(after).not.toEqual(before);
+    expect(after[0]).toMatch(new RegExp(`^${PREFIX}-passages-v2-g${id}-`));
+
+    await expect(worker('index', 'passages', '--generation', id, '--cache-only', '--confirm-cost')).rejects.toMatchObject({ code: 2 });
+    // Remove every vector of the configured model but one: the cache-only build stops, paying nothing.
+    const pool = testPool('migrator');
+    try {
+      await pool.query(`delete from embedding_cache where model = 'text-embedding-3-small' and cache_key <> (select min(cache_key) from embedding_cache where model = 'text-embedding-3-small')`);
+    } finally {
+      await pool.end();
+    }
+    const failed = await worker('index', 'passages', '--generation', id, '--cache-only').catch((e: unknown) => e as { code: number; stderr: string });
+    expect(failed).toMatchObject({ code: 1 });
+    expect((failed as { stderr: string }).stderr).toMatch(/embedding inputs are not in embedding_cache .*a cache-only build embeds nothing and stops/);
+    expect(await aliasTargets(es, ALIAS)).toEqual(after);
+  }, 120_000);
 });
 
 describe('passages table', () => {

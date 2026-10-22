@@ -10,12 +10,13 @@
  *   (`isServableCasesIndex`), so a generation indexed before a version bump can be
  *   published again;
  * - its document count equals the generation's US events in PostgreSQL;
- * - a passages index, when given, meets the passages contract
- *   (`server/search/passages-contract.ts`: generation, version, approved fingerprint
- *   for the configured embedding model and dimensions, chunker and input-template
- *   versions) and holds exactly the generation's `passages` rows of the approved
- *   chunker version. Without one the manifest is keyword-only: AI routes stay off
- *   until a later publication names a passages index.
+ * - a passages index, when given, meets the passages contract of its version
+ *   (`server/search/passages-contract.ts`: generation, an approved version —
+ *   `passages-v2`, or `passages-v1` for a rollback —, that version's fingerprint for
+ *   the configured embedding model and dimensions, chunker and input-template
+ *   versions) and holds exactly the generation's `passages` rows of that version's
+ *   chunker. Without one the manifest is keyword-only: AI routes stay off until a
+ *   later publication names a passages index.
  *
  * `publish_manifest` itself checks that the generation's latest verification passed
  * under the current verifier.
@@ -27,7 +28,7 @@ import { publishManifest, type ActiveManifest } from '../../server/db/generation
 import { countCaseRecords } from '../../server/db/queries/case-records.js';
 import { passages as passagesTable } from '../../server/db/schema/index.js';
 import { readIndexMeta } from '../../server/search/index-meta.js';
-import { PASSAGES_CONTRACT, passagesIndexProblems, type PassagesContract } from '../../server/search/passages-contract.js';
+import { PASSAGES_CONTRACTS, matchPassagesContract, type PassagesContracts } from '../../server/search/passages-contract.js';
 import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from './cases-index.js';
 
 export interface PublishOptions {
@@ -37,8 +38,8 @@ export interface PublishOptions {
   passagesIndex: string | null;
   /** The configured embedding model and dimensions; required with a passages index. */
   embedding?: { model: string; dims: number };
-  /** Test seam; default the approved contract. */
-  contract?: PassagesContract;
+  /** Test seam; default the approved contracts. */
+  contracts?: PassagesContracts;
 }
 
 export interface PublishReport {
@@ -87,10 +88,9 @@ export async function publishGeneration(es: Client, db: Db, opts: PublishOptions
     if (passagesIndex === casesIndex) refuse('the passages index must differ from the cases index');
     if (!opts.embedding) refuse('a passages index needs the configured embedding model and dimensions');
     const embedding = opts.embedding as { model: string; dims: number };
-    const contract = opts.contract ?? PASSAGES_CONTRACT;
     const passages = await readIndexMeta(es, passagesIndex).catch((err: unknown) => refuse(String((err as Error).message)));
-    const problems = passagesIndexProblems(passages, { generationId, ...embedding }, contract);
-    if (problems.length > 0) refuse(`${passagesIndex} breaks the passages contract: ${problems.join('; ')}`);
+    const { contract, mismatches } = matchPassagesContract(passages, { generationId, ...embedding }, opts.contracts ?? PASSAGES_CONTRACTS);
+    if (mismatches.length > 0) refuse(`${passagesIndex} breaks the passages contract: ${mismatches.map((m) => m.problem).join('; ')}`);
     const [rows] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(passagesTable)

@@ -23,6 +23,11 @@
  *   mean nothing).
  * - Questions of the `structured` section are not run (they belong to a structured or
  *   combined evaluation).
+ * - Questions tagged `multi_aircraft_filtered` (an aircraft filter over multi-aircraft
+ *   events, `needsEventAircraftQualification`) need an index whose contract has the
+ *   event-level aircraft qualification (`passages-v2`). On a `passages-v1` index they
+ *   are a problem that stops the run; `--exploratory` runs without them, non-gating,
+ *   and the report lists them.
  * - Writes `data/work/eval-retrieval-<UTC timestamp>.json` with every metric, ranking,
  *   bundle and Elasticsearch body (query vectors elided), and prints candidate recall
  *   and the bundle metrics for keyword, vector and hybrid at each size.
@@ -42,7 +47,7 @@ import { getActiveManifest } from '../../server/db/generations.js';
 import { createEsClient } from '../../server/search/es.js';
 import { CANDIDATE_STAGE_PER_CHANNEL, RETRIEVAL_DEFAULTS, numCandidates, type RetrievalDataset } from '../../server/search/hybrid.js';
 import { IndexMetaError, readIndexMeta, type IndexMeta } from '../../server/search/index-meta.js';
-import { PassagesIndexIncompatibleError, checkPassagesIndex } from '../../server/search/passages-contract.js';
+import { PassagesIndexIncompatibleError, checkPassagesIndex, type PassagesContract } from '../../server/search/passages-contract.js';
 import { APP_DIR } from '../../worker/config.js';
 import { describeWorkerError } from '../../worker/errors.js';
 import { batchByLimits, createFakeEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion, reservationUsd } from '../../worker/index/embed.js';
@@ -50,7 +55,7 @@ import { createLedgerSpendGate } from '../../worker/index/spend-gate.js';
 import { DEFAULT_DATASET } from './build-silver.js';
 import { evalConfig } from './config.js';
 import { MODES, evaluateRetrieval, type EvaluationResult } from './evaluate.js';
-import { DatasetSchema, datasetProblems, type Dataset } from './silver.js';
+import { DatasetSchema, datasetProblems, needsEventAircraftQualification, type Dataset } from './silver.js';
 
 const USAGE =
   'usage: pnpm eval:retrieval [--env-files <a,b>] [--dataset <file>] [--sizes 50,100] [--split all|dev|holdout] ' +
@@ -155,7 +160,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const dataset: Dataset = parsed.data;
   const problems = datasetProblems(dataset).map((p) => `dataset: ${p}`);
-  const items = dataset.questions.filter((q) => q.section === 'rag' && (split === 'all' || q.split === split));
+  const selected = dataset.questions.filter((q) => q.section === 'rag' && (split === 'all' || q.split === split));
   const structured = dataset.questions.filter((q) => q.section === 'structured').length;
   const { embeddingModel: model, embeddingDimensions: dims } = config.ai.openai;
 
@@ -177,8 +182,9 @@ async function main(argv: string[]): Promise<number> {
     }
     const index = target.passagesIndex as string;
     let meta: IndexMeta;
+    let contract: PassagesContract;
     try {
-      meta = await checkPassagesIndex(es, index, { generationId: target.generationId, model, dims }, { timeoutMs: 30_000 });
+      ({ meta, contract } = await checkPassagesIndex(es, index, { generationId: target.generationId, model, dims }, { timeoutMs: 30_000 }));
     } catch (err) {
       if (err instanceof PassagesIndexIncompatibleError || err instanceof IndexMetaError) {
         console.error(`${err.message}; nothing embedded`);
@@ -186,6 +192,17 @@ async function main(argv: string[]): Promise<number> {
       }
       throw err;
     }
+    // An index without the event-level qualification can never reach these questions' multi-aircraft cases.
+    const unreachable = contract.eventAircraftQualification
+      ? []
+      : selected.filter((q) => needsEventAircraftQualification({ filters: q.filters, criteria: q.derivation.criteria })).map((q) => q.id);
+    if (unreachable.length > 0) {
+      problems.push(
+        `index: ${contract.indexVersion} has no event-level aircraft qualification; ${unreachable.length} question(s) need it ` +
+          `(${unreachable.join(', ')}) and are not run`,
+      );
+    }
+    const items = selected.filter((q) => !unreachable.includes(q.id));
     if (target.generationId !== dataset.source.generationId) {
       problems.push(`generation: the silver set was built from generation ${dataset.source.generationId}; the target is generation ${target.generationId}`);
     }
@@ -276,6 +293,7 @@ async function main(argv: string[]): Promise<number> {
         rulesSha256: dataset.source.rulesSha256,
         split,
         ragQuestions: items.length,
+        notRunWithoutEventAircraftQualification: unreachable,
         structuredQuestionsNotRun: structured,
         paraphrases: items.filter((q) => q.paraphrase_of !== undefined).length,
         groups: Object.fromEntries([...groups.entries()].sort(([a], [b]) => Number(a.slice(1)) - Number(b.slice(1)))),
@@ -285,6 +303,7 @@ async function main(argv: string[]): Promise<number> {
         passagesIndex: index,
         generationId: target.generationId,
         indexVersion: meta.indexVersion,
+        eventAircraftQualification: contract.eventAircraftQualification,
         fingerprint: meta.fingerprint,
         buildId: meta.buildId,
         chunkerVersion: meta.chunkerVersion,

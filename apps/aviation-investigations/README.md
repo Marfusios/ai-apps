@@ -313,7 +313,12 @@ pnpm worker index cleanup-builds --older-than <hours>
 ```sh
 pnpm worker index passages --generation <id>                 # dry run (default): writes nothing, calls nothing
 pnpm worker index passages --generation <id> --confirm-cost  # paid: OPENAI_API_KEY, aviation_ingest, ELASTICSEARCH_WRITE_API_KEY
+pnpm worker index passages --generation <id> --cache-only    # every vector from embedding_cache; no OpenAI client, fails if one is missing
 ```
+
+The dry run prints "to embed"; when it is 0 every input is cached and `--cache-only`
+builds the index without an embedder: it needs neither `--confirm-cost` nor
+`OPENAI_API_KEY`, and it stops before creating an index if any input is missing.
 
 - **Scope and builds.** Only answer-eligible US cases of a verified generation get
   passages. A build works like the cases build: it is recorded in `index_builds`,
@@ -339,9 +344,14 @@ pnpm worker index passages --generation <id> --confirm-cost  # paid: OPENAI_API_
 - **Attribution.** In a single-aircraft event passages are aircraft-scoped and
   aircraft-specific, with their aircraft in the nested `aircraft` field. In a
   multi-aircraft event every section is event-scoped: its passages say "Event (n
-  aircraft)" in their header, have `aircraft_specific: false`, leave `aircraft` empty
-  and list the event's aircraft in the plain `event_aircraft` field, so a nested
-  aircraft filter can never match them.
+  aircraft)" in their header, have `aircraft_specific: false` and `aircraft_key`
+  null, leave `aircraft` empty and list every aircraft of the event in the nested
+  `event_aircraft` field, with `event_aircraft_count` (the event's `case_aircraft`
+  rows) and `event_aircraft_complete: true`. The dry run and the build compare each
+  event-scoped passage's set with the event's aircraft keys read separately from
+  PostgreSQL and refuse to build on any difference. A nested `aircraft` filter never
+  matches an event-scoped passage; retrieval may qualify the whole event instead
+  (see "Evidence retrieval").
 - **Embedding input** is `"<section> · <make model | Event (n aircraft)> · <defining
   phase(s)>"` + newline + passage text; only the raw text is stored and cited.
   `text-embedding-3-small` at 1,536 dimensions, through the official SDK with SDK
@@ -373,14 +383,18 @@ pnpm worker index passages --generation <id> --confirm-cost  # paid: OPENAI_API_
   text, reject updates, and delete a generation's passages when pruning deletes the
   generation. An insert locks its generation row until it commits, so pruning waits
   for it (or the insert fails once pruning has removed the generation).
-- **Index.** `<prefix>-passages-v1-g<generation>-<UTC timestamp>-<build id>`, alias
+- **Index.** `<prefix>-passages-v2-g<generation>-<UTC timestamp>-<build id>`, alias
   `<prefix>-passages`. Strict mapping: passage and section ids, kind, scope,
   `aircraft_specific`, offsets, `part`/`parts`/`continuation`, `text` with the cases
   analyzers, `embedding` (`dense_vector`, 1,536, cosine, `int8_hnsw`, kept out of
   `_source`), the event filters (`country`, `ev_year`, `ev_date`, `state`,
   `answer_eligible`, `defining_phase_groups`, `highest_injury`, `wx_cond`, `light`),
-  nested `aircraft` and object `event_aircraft`. The build checks the loaded index
-  and the stored rows against what it built before the alias moves.
+  nested `aircraft`, nested `event_aircraft`, `event_aircraft_count` and
+  `event_aircraft_complete`. The build checks the loaded index and the stored rows
+  against what it built before the alias moves, including the nested event aircraft
+  against the PostgreSQL counts. `passages-v2` changed only those event aircraft
+  fields: chunks and embedding inputs are those of `passages-v1` (`chunk-v2`,
+  `input-v1`), so a generation indexed as v1 rebuilds as v2 from the cache.
 
 Integration test files run one at a time: they share `aviation_test` and the
 `aviation-test-*` indices, and some of them reset both.
@@ -397,10 +411,23 @@ the request's deadline. There is no keyword-only fallback for AI answers.
 
 - **One filter.** `compileFilters` (in `server/search/filters.ts`, the compiler
   keyword search uses too) always adds `country: USA` and `answer_eligible: true`.
-  With any aircraft facet it adds `aircraft_specific: true` and one nested aircraft
-  clause, so an event-scoped passage of a multi-aircraft event never satisfies an
-  aircraft filter. The BM25 query, the kNN prefilter and the evidence fetch use the
-  same clauses.
+  With any aircraft facet the aircraft clause depends on the index version, which
+  the passages contract reports:
+  - `passages-v2` (event-level qualification, review gate G5): a passage whose own
+    nested aircraft satisfies every active aircraft facet, or an event-scoped passage
+    whose event qualifies as a whole: `event_aircraft_complete: true`, a non-empty
+    nested `event_aircraft`, and no event aircraft failing the full conjunction of
+    the facets (`must_not nested(must_not conjunction)`). A missing value fails its
+    facet (`blank` does not count there). So two helicopters qualify under a
+    helicopter filter, a helicopter and an airplane do not, and two facets met by
+    different aircraft do not. The passage stays event-scoped: `scope: event`,
+    `aircraftKey: null`, never attributed to one aircraft.
+  - `passages-v1`: `aircraft_specific: true` and the nested aircraft clause, so an
+    event-scoped passage never satisfies an aircraft filter.
+
+  The filter is compiled once per request; the BM25 query, the kNN prefilter and the
+  evidence fetch use the same clauses, so a qualifying event brings every
+  event-scoped probable-cause variant it has.
 - **Complete answers only.** Every search sets `allow_partial_search_results: false`;
   a response that timed out, has a failed shard or reports fewer `successful` shards
   than `total` fails retrieval (`IncompleteSearchError`). Shards skipped by the
@@ -447,8 +474,10 @@ Both commands take `--env-files a,b` (otherwise `AVIATION_ENV_FILES`, otherwise
 and meters the embeddings on the ledger under `evaluation` (`DATABASE_INGEST_URL`).
 It fails closed before embedding anything: dataset problems, a target generation
 other than the one the silver set was built from, or an index that breaks the
-passages contract stop the run. `--exploratory` continues past the first two and
-marks the report `gating: false`. The report holds every ranking, bundle and
+passages contract stop the run. So do questions tagged `multi_aircraft_filtered`
+(an aircraft filter over multi-aircraft events) on a `passages-v1` index, which cannot
+reach their cases. `--exploratory` continues past these problems (without those
+questions) and marks the report `gating: false`. The report holds every ranking, bundle and
 Elasticsearch body, query vectors elided.
 
 The silver set (`evals/retrieval/dataset.json`) has public NTSB case numbers derived
@@ -458,8 +487,12 @@ PostgreSQL regular expressions over one section at a time, each recorded as
 `pending-expert`, and every question keeps its rule's full positive set. Independently
 worded paraphrases (`paraphrase_of`) reuse their original's rule and expected set.
 Questions sharing a case, and paraphrases with their originals, form groups that are
-assigned whole to `dev` or `holdout`, stratified by primary tag. Three questions
-answered by inspection dates and hours are kept as `section: "structured"` and are
+assigned whole to `dev` or `holdout`: first so that every required tag spread over
+several groups reaches both splits, then stratified by primary tag. A question with
+an aircraft category filter has a single-aircraft rule of that category or an
+every-aircraft rule (`categoryEvery`) of it; the latter derives multi-aircraft events
+only the `passages-v2` qualification reaches (tag `multi_aircraft_filtered`). Three
+questions answered by inspection dates and hours are kept as `section: "structured"` and are
 not run by the RAG evaluation. A unit test fails when `dataset.json` no longer matches
 the rules.
 
@@ -596,11 +629,12 @@ headers and a JSON body, and the connection is closed.
 - **Publishing.** `pnpm worker publish` checks that the cases index is a concrete
   index (not an alias) built for that generation with a version and fingerprint the
   server serves (see above), and that it holds exactly the generation's US events. A
-  passages index, when given, must meet the passages contract
-  (`server/search/passages-contract.ts`): this generation, version `passages-v1`, the
-  approved mapping fingerprint for the configured `OPENAI_EMBEDDING_MODEL` and
-  `OPENAI_EMBEDDING_DIMENSIONS`, chunker `chunk-v2` and input template `input-v1`; and
-  it must hold exactly the generation's `chunk-v2` passage rows. It then calls
+  passages index, when given, must meet the passages contract of its version
+  (`server/search/passages-contract.ts`): this generation, version `passages-v2` (or
+  `passages-v1`, still servable without the event-level qualification), that
+  version's approved mapping fingerprint for the configured `OPENAI_EMBEDDING_MODEL`
+  and `OPENAI_EMBEDDING_DIMENSIONS`, chunker `chunk-v2` and input template
+  `input-v1`; and it must hold exactly the generation's `chunk-v2` passage rows. It then calls
   `publishManifest`, which also requires the generation's current verification. The
   API applies the same contract when it loads the manifest: an unservable passages
   index leaves keyword search working and marks the dataset's passages unservable

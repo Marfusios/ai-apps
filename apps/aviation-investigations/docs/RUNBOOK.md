@@ -374,8 +374,9 @@ pnpm ingest load --from data/work/<dir>
 pnpm ingest verify --generation <id>     # report written to data/reports/<env>/
 pnpm ingest generations
 pnpm ingest index cases --generation <id>  # cases index <prefix>-cases-v3-g<id>-...; alias <prefix>-cases
-pnpm ingest index passages --generation <id>                 # dry run: passages, tokens, cost; writes nothing
-pnpm ingest index passages --generation <id> --confirm-cost  # paid embeddings; passages index <prefix>-passages-v1-g<id>-...
+pnpm ingest index passages --generation <id>                 # dry run: passages, tokens, cost ("to embed"); writes nothing
+pnpm ingest index passages --generation <id> --confirm-cost  # paid embeddings; passages index <prefix>-passages-v2-g<id>-...
+pnpm ingest index passages --generation <id> --cache-only    # from embedding_cache only: no OpenAI client, fails if one vector is missing
 pnpm ingest index reconcile --alias <alias>
 pnpm ingest publish --generation <id> --cases-index <index name> [--passages-index <index name>]
 ```
@@ -385,6 +386,34 @@ ledger (shared with evaluations, `AI_INGESTION_MONTHLY_BUDGET_USD`) and refuses
 when the planned reservations exceed what is left. If OpenAI asks for a wait longer
 than 10 minutes, the run stops and prints when to rerun it; vectors paid for so far
 are cached in `embedding_cache`, so the rerun pays only for the rest.
+
+### Rebuilding passages as `passages-v2` from the cache
+
+`passages-v2` stores each multi-aircraft event's complete aircraft set as a nested
+field, so retrieval can let an event-scoped passage satisfy an aircraft filter when
+every aircraft of its event does (DATA_PIPELINE section 2.12). Its chunks and embedding
+inputs are those of `passages-v1`, so a generation already indexed as v1 is rebuilt
+from `embedding_cache` without a paid call. The API keeps serving a published v1
+index, with event-scoped passages excluded under aircraft filters, until a v2 index is
+published.
+
+```sh
+# 1. Dry run: must report "to embed: 0 inputs, 0 tokens, 0 requests" and
+#    "event aircraft sets (checked against case_aircraft): <n> events complete".
+pnpm ingest index passages --generation <id>
+# 2. Build from the cache. No OPENAI_API_KEY is read and no OpenAI client exists; the
+#    build stops before creating an index if any vector is missing, or if any
+#    event-scoped passage's aircraft set differs from case_aircraft.
+pnpm ingest index passages --generation <id> --cache-only
+# 3. Publish the cases index the active manifest already serves (its
+#    dataset_manifests.cases_index) with the passages index name step 2 printed.
+pnpm ingest publish --generation <id> --cases-index <cases index name> --passages-index <prefix>-passages-v2-g<id>-...
+```
+
+The build's report shows `mode: cache only (no embedder; nothing paid)` and
+`embedded: 0 inputs`. If the dry run reports anything to embed, stop: a cache-only
+build would refuse, and a paid build needs a new review. Rolling back is publishing
+the v1 passages index again (still servable).
 
 `publish` makes the generation the one the API serves (the active
 `dataset_manifests` row). Pass the concrete index name the build printed, never the
@@ -416,7 +445,7 @@ and each needs an explicit flag or key:
 
 | Command | What it pays for | Cost |
 | --- | --- | --- |
-| `pnpm ingest index passages --generation <id> --confirm-cost` | OpenAI embeddings of every passage (`text-embedding-3-small`) | about $0.57 for the full corpus, measured; the dry run (no flag) prints the planned tokens and cost and spends nothing |
+| `pnpm ingest index passages --generation <id> --confirm-cost` | OpenAI embeddings of every passage (`text-embedding-3-small`) | about $0.57 for the full corpus, measured; the dry run (no flag) prints the planned tokens and cost and spends nothing; `--cache-only` never pays |
 | `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
 | AI briefs (later) | the scope, answer and check models per request | about $0.006 to $0.01 a request (DESIGN §8), capped by the budgets below |
 

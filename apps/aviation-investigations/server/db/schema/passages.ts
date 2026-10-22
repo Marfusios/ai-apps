@@ -42,7 +42,7 @@ export const passages = pgTable(
     scope: text('scope', { enum: SECTION_SCOPES }).notNull(),
     /** The aircraft of an aircraft-scoped passage; null when event-scoped. */
     aircraftKey: integer('aircraft_key'),
-    /** False for event-scoped passages: they never satisfy an aircraft filter. */
+    /** False for event-scoped passages: they never satisfy an aircraft filter as one aircraft's passage. */
     aircraftSpecific: boolean('aircraft_specific').notNull(),
     /** UTF-16 code-unit offsets into the section text. */
     start: integer('start').notNull(),
