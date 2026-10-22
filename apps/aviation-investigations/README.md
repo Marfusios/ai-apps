@@ -70,10 +70,16 @@ substitution. Keep real values in ignored files such as `.env.local`.
 
 ### Local services
 
-`compose.yaml` (Compose project `ai-aviation`) runs pinned PostgreSQL 17.6 and
-Elasticsearch 9.5.5 (single node, security on, 2 GB heap, ML disabled). Both
-bind to loopback only; HTTP TLS is disabled for this local profile. Ports come
-from `POSTGRES_PORT` (default 55432) and `ELASTICSEARCH_PORT` (default 59200).
+Deployments use shared PostgreSQL, Elasticsearch and Langfuse (see
+[Deployment with Docker Compose](#deployment-with-docker-compose)). For
+contributors without them and for the offline integration tests,
+`compose.local-services.yaml` (Compose project `ai-aviation-local`) runs pinned
+PostgreSQL 17.6 and Elasticsearch 9.5.5 (single node, security on, 2 GB heap, ML
+disabled). Both bind to loopback only, for development; HTTP TLS is disabled for
+this local profile. Ports come from `POSTGRES_PORT` (default 55432) and
+`ELASTICSEARCH_PORT` (default 59200). Earlier checkouts ran them as project
+`ai-aviation`: stop it once with `docker compose -p ai-aviation down` before
+`pnpm services:up` (the [runbook](docs/RUNBOOK.md#local-services-mode) has details).
 
 ```sh
 pnpm services:up      # generate bootstrap passwords, start services, wait until healthy
@@ -365,3 +371,41 @@ pnpm worker ai-switch                        # show it
 pnpm worker ai-switch --off --note "<why>"   # pause (reason: maintenance)
 pnpm worker ai-switch --on
 ```
+
+## Deployment with Docker Compose
+
+`compose.yaml` runs the application once per environment, as Compose projects
+`ai-aviation-dev` and `ai-aviation-live` (`APP_ENV`), connected to the shared
+PostgreSQL, Elasticsearch and Langfuse through their Docker networks. Each
+environment has its own database (`aviation_dev`, `aviation_live`), index prefix
+(`aviation-dev`, `aviation-live`) and Langfuse project (`aviation-dev`,
+`aviation-prod`). It runs no database or search engine itself.
+
+- `app` (profile `app`): the API and web client from the multi-stage `Dockerfile`
+  image `ai-aviation/app:${APP_VERSION:-dev}`; non-root, read-only root, no
+  capabilities. Dev publishes `127.0.0.1:${PORT:-3000}`; tunnel mode publishes
+  nothing.
+- `ingest` and `migrate` (profile `tools`): the same image running the worker CLI
+  one-shot with the ingestion or migrator database role; `extract-image` builds
+  the extraction image.
+- `tunnel` (profile `tunnel`): the pinned Cloudflare Tunnel connector, sharing only
+  the `edge` network with `app`.
+
+Configuration comes from env files outside the repository, named in
+`AVIATION_ENV_FILES`; Compose uses them for interpolation only and each container
+gets just the variables it needs. `compose.tunnel.yaml` removes the app port and
+`compose.tracing.yaml` joins the shared observability network.
+
+```sh
+export AVIATION_ENV_FILES=/path/outside/the/repo/aviation-dev.env
+pnpm app:migrate          # schema migrations
+pnpm app:up               # build and start (tunnel mode when TUNNEL_TOKEN is set)
+pnpm ingest generations   # any worker command, in a one-shot container
+pnpm app:ps               # this environment's containers
+pnpm app:down
+```
+
+The API server entry (`server/main.ts`) is not built yet, so `app:up` stops with a
+message until it exists; the image and the tools already work. The
+[runbook](docs/RUNBOOK.md) lists each container's credentials, the networks, tunnel
+and tracing modes, ingestion and the local-services mode.

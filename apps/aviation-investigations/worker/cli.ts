@@ -1,11 +1,13 @@
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations } from '../server/db/generations.js';
+import { runMigrations } from '../server/db/migrate.js';
 import { readAiSwitch, setAiSwitch } from '../server/quota/switch.js';
-import { workerConfig } from './config.js';
+import { APP_DIR, workerConfig } from './config.js';
 import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
-import { extractArchive, isTerminating } from './ingest/extract.js';
+import { extractArchive, isTerminating, setExtractEnvironment } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
 import { STALE_RUN_MINUTES, failStaleRuns, listRunningRuns } from './ingest/runs.js';
 import { readProfile, verifyCorpus, type VerifyReport } from './ingest/verify.js';
@@ -20,6 +22,7 @@ const USAGE = [
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
   '  worker ai-switch [--on | --off --note <text>]',
+  '  worker migrate',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -102,6 +105,7 @@ async function main(argv: string[]): Promise<number> {
       console.error(USAGE);
       return 2;
     }
+    setExtractEnvironment(workerConfig().appEnv);
     const manifest = await extractArchive({ archive: values.archive, sha256: values.sha256, out: values.out });
     for (const [table, t] of Object.entries(manifest.tables)) {
       console.log(`${table}: ${t.rows} rows, ${t.columns} columns, ${t.bytes} bytes`);
@@ -131,7 +135,12 @@ async function main(argv: string[]): Promise<number> {
       return 2;
     }
     const profile = values.profile ? readProfile(values.profile) : undefined;
-    const report = await withDb((db) => verifyCorpus(db, id, profile ? { profile } : {}));
+    // AVIATION_VERIFY_DIR (absolute or app-relative); the ingest container sets a writable one.
+    const verifyDir = workerConfig().verifyDir;
+    const outDir = verifyDir ? resolve(APP_DIR, verifyDir) : undefined;
+    const report = await withDb((db) =>
+      verifyCorpus(db, id, { ...(profile ? { profile } : {}), ...(outDir ? { outDir } : {}) }),
+    );
     printVerify(report);
     return report.ok && !report.conflict ? 0 : 1;
   }
@@ -227,6 +236,18 @@ async function main(argv: string[]): Promise<number> {
     );
     const note = state.note ? ` (${state.note})` : '';
     console.log(`interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`);
+    return 0;
+  }
+  if (command === 'migrate') {
+    // Schema migrations as aviation_migrator (DATABASE_MIGRATOR_URL); the URL is never printed.
+    parseArgs({ args: rest, options: {}, strict: true });
+    const url = workerConfig().databaseMigratorUrl;
+    if (!url) {
+      console.error('DATABASE_MIGRATOR_URL is not set');
+      return 2;
+    }
+    await runMigrations(url);
+    console.log(`migrations applied to ${new URL(url).pathname.slice(1)}`);
     return 0;
   }
   console.error(USAGE);

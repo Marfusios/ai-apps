@@ -69,8 +69,10 @@ async function run(signal: 'SIGINT' | 'SIGTERM', env: Record<string, string>, na
 describe('CLI signal handling', () => {
   for (const [signal, expected] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
     it(`${signal}: exits only after delayed container removal completes`, async () => {
-      const r = await run(signal, { FAKE_RM_SLEEP: '1' }, `slow-${signal}`);
+      const r = await run(signal, { FAKE_RM_SLEEP: '1', APP_ENV: 'live' }, `slow-${signal}`);
       expect(r.code).toBe(expected);
+      // APP_ENV picks the Compose project the extraction containers are grouped with.
+      expect(r.logText).toMatch(/^create --name ai-aviation-live-extract-[0-9a-f]{12} --label com\.docker\.compose\.project=ai-aviation-live /m);
       expect(r.logText).toContain('rm-done');
       expect(existsSync(r.out)).toBe(false);
     }, 30_000);

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -9,7 +9,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { DEFAULT_LIMITS, extractMember, verifyArchive } from './archive.js';
 import { TABLE_NAMES, TABLE_SPECS, projectFile, type TableName } from './tables.js';
 
-export const EXTRACT_IMAGE = 'aviation-extract:mdbtools-1.0.0';
+/** Built by `pnpm extract:image` (Compose service `extract-image`); formerly tagged aviation-extract:mdbtools-1.0.0. */
+export const EXTRACT_IMAGE = 'ai-aviation/extract:mdbtools-1.0.0';
 export const EXPORT_TIMEOUT_MS = 10 * 60 * 1000;
 /** Per-table cap on bytes accepted from the container's stdout. */
 export const MAX_TABLE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -48,6 +49,44 @@ export const BENIGN_STDERR: readonly RegExp[] = [];
 
 const SAFE_TABLE = /^[a-z_]+$/;
 const IMAGE_ID = /^sha256:[0-9a-f]{64}$/;
+
+export type ExtractEnvironment = 'dev' | 'live';
+let environment: ExtractEnvironment = 'dev';
+/**
+ * Group extraction containers with the deployment environment's Compose project
+ * (`ai-aviation-<env>`): they are named `ai-aviation-<env>-extract-<hex>` and carry
+ * its project/service labels, so `docker compose -p ai-aviation-<env> ps -a` lists them.
+ */
+export function setExtractEnvironment(env: ExtractEnvironment): void {
+  if (env !== 'dev' && env !== 'live') throw new Error('invalid extract environment');
+  environment = env;
+}
+
+/** The Compose project of the current environment. */
+export function composeProject(): string {
+  return `ai-aviation-${environment}`;
+}
+
+/**
+ * Labels of every extraction container: a one-off `extract` container of the
+ * environment's project. `docker compose ps` lists only containers that carry a
+ * config hash; here it is the sha256 of the container's sandbox flags, mounts,
+ * image and command.
+ */
+export function containerLabels(run: Pick<ContainerRun, 'image' | 'mounts' | 'command'>): string[] {
+  const configHash = createHash('sha256')
+    .update(JSON.stringify([SANDBOX_FLAGS, run.mounts, run.image, run.command]))
+    .digest('hex');
+  return [
+    `com.docker.compose.project=${composeProject()}`,
+    'com.docker.compose.service=extract',
+    'com.docker.compose.oneoff=True',
+    `com.docker.compose.config-hash=${configHash}`,
+    'ai-apps.app=aviation-investigations',
+    'ai-apps.component=extract',
+    `ai-apps.environment=${environment}`,
+  ].flatMap((label) => ['--label', label]);
+}
 
 let dockerCommand = 'docker';
 /** Test seam: replace the docker executable (e.g. with a scripted fake). */
@@ -265,7 +304,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
     sink?.destroy();
     throw new Error('cancelled by signal');
   }
-  const name = `aviation-extract-${randomBytes(6).toString('hex')}`;
+  const name = `${composeProject()}-extract-${randomBytes(6).toString('hex')}`;
   const entry: Live = { name, id: null, child: null, creating: null, cleanup: null, cancelled: false };
   live.set(name, entry);
   let failure: Error | null = null;
@@ -279,7 +318,7 @@ export async function runContainer(run: ContainerRun): Promise<{ stderr: string 
   // instead of becoming an unhandled 'error' event. It stays attached for late errors.
   sink?.on('error', (e: Error) => abort(e));
   entry.creating = dockerCall(
-    ['create', '--name', name, ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command],
+    ['create', '--name', name, ...containerLabels(run), ...SANDBOX_FLAGS, ...run.mounts, run.image, ...run.command],
     DOCKER_CALL_TIMEOUT_MS,
   );
   const timer = setTimeout(() => abort(new Error(`container timed out after ${run.timeoutMs} ms`)), run.timeoutMs);

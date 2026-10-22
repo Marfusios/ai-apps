@@ -749,10 +749,14 @@ flowchart LR
 ```
 
 Use a multi-stage non-root image. Fastify serves built Vite assets and `/api/*`
-on the same origin; the dev server is not deployed. Compose project `ai-aviation`
-groups clear `app`, `ingest`, and one-shot `extract` services. Avoid global `container_name` values so
-multiple checkouts can coexist. Offer a reproducible local service profile with
-pinned PostgreSQL/Elasticsearch and configurable connections to existing services.
+on the same origin; the dev server is not deployed. One Compose project per
+environment (`ai-aviation-dev`, `ai-aviation-live`) groups clear `app`, `ingest`, and
+one-shot `extract` services and connects to the shared PostgreSQL, Elasticsearch and
+Langfuse over their Docker networks, with a database, index prefix and Langfuse
+project per environment. Avoid global `container_name` values so environments and
+checkouts can coexist. An optional project `ai-aviation-local` offers pinned
+PostgreSQL/Elasticsearch for contributors and offline tests. See the
+[runbook](RUNBOOK.md).
 
 Run Langfuse as separate reusable infrastructure under Compose project
 `ai-observability`, with isolated projects/credentials and its own resource budget.

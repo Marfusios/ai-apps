@@ -1,0 +1,26 @@
+# Tracing: joins app and ingest to the shared observability network (Langfuse)
+# and enables export. The network may not exist on every machine, so it is only
+# declared here.
+#
+#   docker compose -p ai-aviation-dev --env-file <dev env file> \
+#     -f compose.yaml -f compose.tracing.yaml --profile app up -d --build
+#
+# `pnpm app:up` and `pnpm ingest` add this file when AVIATION_TRACING_ENABLED is true.
+x-tracing-env: &tracing-env
+  AVIATION_TRACING_ENABLED: "true"
+  LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:?set LANGFUSE_BASE_URL (reachable on the observability network)}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set LANGFUSE_PUBLIC_KEY}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set LANGFUSE_SECRET_KEY}
+
+services:
+  app:
+    environment: *tracing-env
+    networks: [observability]
+  ingest:
+    environment: *tracing-env
+    networks: [observability]
+
+networks:
+  observability:
+    external: true
+    name: ${SHARED_OBSERVABILITY_NETWORK:?set SHARED_OBSERVABILITY_NETWORK}

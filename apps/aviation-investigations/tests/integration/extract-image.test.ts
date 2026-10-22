@@ -102,7 +102,7 @@ exec docker "$@"
   const listed = (name: string) =>
     spawnSync('docker', ['ps', '-a', '-q', '--filter', `name=^/?${name}$`], { encoding: 'utf8' }).stdout.trim();
   const createdName = () =>
-    /create --name (aviation-extract-[0-9a-f]+)/.exec(readFileSync(wrapperLog, 'utf8'))?.[1] ?? 'missing';
+    /create --name (ai-aviation-dev-extract-[0-9a-f]+)/.exec(readFileSync(wrapperLog, 'utf8'))?.[1] ?? 'missing';
   async function viaWrapper(env: Record<string, string>, body: () => Promise<unknown>): Promise<string> {
     rmSync(wrapperLog, { force: true });
     Object.assign(process.env, { WRAPPER_LOG: wrapperLog, ...env });

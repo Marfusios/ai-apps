@@ -1,0 +1,14 @@
+# Tunnel mode (production ingress): the app publishes no port and is reachable
+# only through the cloudflared connector on the `edge` network. Use with the
+# `tunnel` profile:
+#
+#   docker compose -p ai-aviation-live --env-file <live env file> \
+#     -f compose.yaml -f compose.tunnel.yaml --profile app --profile tunnel up -d --build
+#
+# `pnpm app:up` adds this file and the profile when TUNNEL_TOKEN is set.
+services:
+  app:
+    ports: !reset []
+  tunnel:
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN for tunnel mode}

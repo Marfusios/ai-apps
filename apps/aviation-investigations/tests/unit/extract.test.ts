@@ -20,7 +20,9 @@ import {
   removeAllContainers,
   runContainer,
   runMdbExport,
+  SANDBOX_FLAGS,
   setDockerCommand,
+  setExtractEnvironment,
   summarizeStderr,
 } from '../../worker/ingest/extract.js';
 import { TABLE_NAMES } from '../../worker/ingest/tables.js';
@@ -123,10 +125,42 @@ describe('runContainer cleanup', () => {
 describe('runContainer lifecycle', () => {
   it('removes the container explicitly after a successful run', async () => {
     await runContainer({ ...base, sink: sink() });
-    expect(logText()).toMatch(/create --name aviation-extract-/);
+    expect(logText()).toMatch(/create --name ai-aviation-dev-extract-[0-9a-f]{12} /);
     expect(logText()).not.toMatch(/--rm/);
     expect(logText()).toMatch(/rm -f [0-9a-f]{64}/);
     expect(logText()).toMatch(/rm-done/);
+  });
+
+  it('groups the container with the environment\'s Compose project and keeps the sandbox flags', async () => {
+    const createLine = () => logText().split('\n').find((l) => l.startsWith('create ')) ?? '';
+    // sha256 of the sandbox flags, mounts, image and command (`docker compose ps` needs a config hash).
+    const HASH = createHash('sha256').update(JSON.stringify([SANDBOX_FLAGS, [], IMAGE, ['mdb-export']])).digest('hex');
+    const labels = (env: string) =>
+      [
+        `--label com.docker.compose.project=ai-aviation-${env}`,
+        '--label com.docker.compose.service=extract',
+        '--label com.docker.compose.oneoff=True',
+        `--label com.docker.compose.config-hash=${HASH}`,
+        '--label ai-apps.app=aviation-investigations',
+        '--label ai-apps.component=extract',
+        `--label ai-apps.environment=${env}`,
+      ].join(' ');
+    await runContainer({ ...base, sink: sink() });
+    expect(createLine()).toMatch(/^create --name ai-aviation-dev-extract-[0-9a-f]{12} /);
+    expect(createLine()).toContain(labels('dev'));
+    expect(createLine()).toContain(
+      '--network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 --memory 1g --cpus 2 --pids-limit 64',
+    );
+    rmSync(log, { force: true });
+    setExtractEnvironment('live');
+    try {
+      await runContainer({ ...base, sink: sink() });
+    } finally {
+      setExtractEnvironment('dev');
+    }
+    expect(createLine()).toMatch(/^create --name ai-aviation-live-extract-[0-9a-f]{12} /);
+    expect(createLine()).toContain(labels('live'));
+    expect(() => setExtractEnvironment('prod' as 'live')).toThrow(/invalid/);
   });
 
   it('waits for an in-flight create, removes the returned id and never starts it', async () => {
@@ -190,7 +224,7 @@ describe('output sink failures', () => {
 });
 
 describe('uncertain container creation', () => {
-  const createdName = () => /create --name (aviation-extract-[0-9a-f]+)/.exec(logText())?.[1] ?? 'missing';
+  const createdName = () => /create --name (ai-aviation-dev-extract-[0-9a-f]+)/.exec(logText())?.[1] ?? 'missing';
 
   it('reconciles by name when the daemon created the container but the CLI exited 1 without an ID', async () => {
     process.env.FAKE_CREATE = 'lost';

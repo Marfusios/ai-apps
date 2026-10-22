@@ -107,6 +107,16 @@ describe('loadConfig', () => {
     expect(c.elasticsearch.url).toBe('http://localhost:59200');
   });
 
+  it('deployment environment and verification report directory', () => {
+    const d = loadConfig({ env: {}, files: [] });
+    expect(d.appEnv).toBe('dev');
+    expect(d.verifyDir).toBeUndefined();
+    const c = loadConfig({ env: { APP_ENV: 'live', AVIATION_VERIFY_DIR: '/app/data/reports' }, files: [] });
+    expect(c.appEnv).toBe('live');
+    expect(c.verifyDir).toBe('/app/data/reports');
+    expect(() => loadConfig({ env: { APP_ENV: 'prod' }, files: [] })).toThrow(/APP_ENV/);
+  });
+
   it('does not leak values in validation errors', () => {
     try {
       loadConfig({ env: { PORT: 'secret-not-a-port-xyz' }, files: [] });

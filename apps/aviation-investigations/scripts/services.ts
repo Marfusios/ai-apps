@@ -7,9 +7,8 @@ if (cmd !== 'up' && cmd !== 'down') {
   process.exit(2);
 }
 ensureSecrets(['ELASTIC_PASSWORD', 'POSTGRES_PASSWORD']);
-const args =
-  cmd === 'up'
-    ? ['compose', '--env-file', ENV_LOCAL, 'up', '-d', '--wait', '--wait-timeout', '240']
-    : ['compose', '--env-file', ENV_LOCAL, 'down'];
+// Optional stand-alone services (project ai-aviation-local); deployments use the shared ones.
+const compose = ['compose', '-f', 'compose.local-services.yaml', '--env-file', ENV_LOCAL];
+const args = cmd === 'up' ? [...compose, 'up', '-d', '--wait', '--wait-timeout', '240'] : [...compose, 'down'];
 const r = spawnSync('docker', args, { cwd: APP_DIR, stdio: 'inherit' });
 process.exit(r.status ?? 1);

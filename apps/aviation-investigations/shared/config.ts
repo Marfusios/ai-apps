@@ -12,6 +12,7 @@ const int = (def: number) => z.coerce.number().int().default(def);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  APP_ENV: z.enum(['dev', 'live']).default('dev'),
   APP_URL: str('http://localhost:3000'),
   PORT: int(3000).pipe(z.number().min(0).max(65535)),
   DATABASE_URL: str(),
@@ -62,6 +63,7 @@ const envSchema = z.object({
   AI_USER_MONTHLY_REQUESTS: int(150),
   AI_GLOBAL_CONCURRENCY: int(2),
   NTSB_API_KEY: str(),
+  AVIATION_VERIFY_DIR: str(),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -71,6 +73,8 @@ export const CONFIG_ENV_NAMES = Object.keys(envSchema.shape) as readonly string[
 
 export interface AppConfig {
   nodeEnv: Env['NODE_ENV'];
+  /** Deployment environment (dev or live): Compose project, database, index prefix. */
+  appEnv: Env['APP_ENV'];
   appUrl: string;
   port: number;
   databaseUrl?: string;
@@ -123,6 +127,8 @@ export interface AppConfig {
   turnstile: { secretKey?: string; siteKey?: string };
   tracing: { enabled: boolean; baseUrl?: string; publicKey?: string; secretKey?: string };
   ntsbApiKey?: string;
+  /** Directory for verification reports; default `data/work` in the checkout. */
+  verifyDir?: string;
 }
 
 export interface LoadConfigOptions {
@@ -169,6 +175,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
 
   return {
     nodeEnv: e.NODE_ENV,
+    appEnv: e.APP_ENV,
     appUrl: e.APP_URL,
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
@@ -231,5 +238,6 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
       secretKey: e.LANGFUSE_SECRET_KEY,
     },
     ntsbApiKey: e.NTSB_API_KEY,
+    verifyDir: e.AVIATION_VERIFY_DIR,
   };
 }

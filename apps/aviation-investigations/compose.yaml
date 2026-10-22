@@ -1,54 +1,235 @@
-# Local development services. Start with `pnpm services:up`, which generates
-# ELASTIC_PASSWORD and POSTGRES_PASSWORD in the ignored .env.local and passes it
-# to Compose with --env-file. Ports are configurable and bound to loopback only.
-# Elasticsearch HTTP TLS is disabled for this local profile only.
-name: ai-aviation
+# Aviation Casebook deployment: one Compose project per environment
+# (ai-aviation-dev, ai-aviation-live) that connects to the shared PostgreSQL,
+# Elasticsearch and, optionally, Langfuse. It runs no database or search engine
+# of its own (for those, see compose.local-services.yaml). Full guide:
+# docs/RUNBOOK.md.
+#
+#   docker compose -p ai-aviation-dev --env-file <dev env file> --profile app up -d --build
+#
+# The pnpm wrappers (app:up, app:down, app:migrate, ingest, extract:image) choose
+# the project, env files and override files. Profiles: `app` (HTTP), `tools`
+# (ingest, migrate, extract-image; one-shot with `run --rm`), `tunnel`
+# (cloudflared). Overrides: compose.tunnel.yaml (no app port, tunnel token
+# required) and compose.tracing.yaml (shared observability network).
+#
+# Containers get only the variables listed under their `environment`, never a
+# whole env file. `docker compose config` prints resolved secrets; use
+# `config --quiet` or `--no-interpolate` when sharing output.
+name: ai-aviation-${APP_ENV:?set APP_ENV to dev or live}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-service: &service
+  restart: unless-stopped
+  logging: *logging
+  security_opt:
+    - no-new-privileges:true
+
+# Containers of the application image: non-root user from the image (uid 1000),
+# read-only root filesystem, no Linux capabilities, a small private /tmp.
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+
+# Built locally, never pulled (no registry holds these names).
+x-app-image: &app-image
+  image: ai-aviation/app:${APP_VERSION:-dev}
+  pull_policy: never
+  build:
+    context: .
+    labels:
+      ai-apps.app: aviation-investigations
+
+# Elasticsearch connection shared by app and ingest; each adds its own API key.
+# ELASTICSEARCH_CA_FILE is a host path, mounted read-only (see `volumes`).
+x-elasticsearch-env: &elasticsearch-env
+  ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-}
+  ELASTICSEARCH_CA_FILE: ${ELASTICSEARCH_CA_FILE:+/run/aviation/elasticsearch-ca.pem}
+  ELASTICSEARCH_INDEX_PREFIX: ${ELASTICSEARCH_INDEX_PREFIX:-}
+
+x-elasticsearch-ca: &elasticsearch-ca ${ELASTICSEARCH_CA_FILE:-/dev/null}:/run/aviation/elasticsearch-ca.pem:ro
+
+x-embeddings-env: &embeddings-env
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
+  OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-}
 
 services:
-  postgres:
-    image: postgres:17.6
-    restart: unless-stopped
+  # Fastify API and the built web client on one origin. The healthcheck needs the
+  # GET /api/health route of the API server.
+  app:
+    <<: [*service, *hardened, *app-image]
+    profiles: [app]
+    labels:
+      ai-apps.app: aviation-investigations
+      ai-apps.component: app
+      ai-apps.environment: ${APP_ENV}
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run pnpm services:up}
-      POSTGRES_DB: postgres
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+      <<: [*elasticsearch-env, *embeddings-env]
+      NODE_ENV: production
+      APP_ENV: ${APP_ENV}
+      APP_URL: ${APP_URL:-}
+      PORT: "3000"
+      DATABASE_URL: ${DATABASE_URL:-}
+      ELASTICSEARCH_READ_API_KEY: ${ELASTICSEARCH_READ_API_KEY:-}
+      AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_SCOPE_MODEL: ${ANTHROPIC_SCOPE_MODEL:-}
+      ANTHROPIC_ANSWER_MODEL: ${ANTHROPIC_ANSWER_MODEL:-}
+      ANTHROPIC_CHECK_MODEL: ${ANTHROPIC_CHECK_MODEL:-}
+      OPENAI_SCOPE_MODEL: ${OPENAI_SCOPE_MODEL:-}
+      OPENAI_ANSWER_MODEL: ${OPENAI_ANSWER_MODEL:-}
+      OPENAI_CHECK_MODEL: ${OPENAI_CHECK_MODEL:-}
+      AVIATION_TRACING_ENABLED: "false"
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      IP_HMAC_SECRET: ${IP_HMAC_SECRET:-}
+      IDENTITY_HMAC_SECRET: ${IDENTITY_HMAC_SECRET:-}
+      AI_MONTHLY_BUDGET_USD: ${AI_MONTHLY_BUDGET_USD:-}
+      AI_INTERACTIVE_MONTHLY_BUDGET_USD: ${AI_INTERACTIVE_MONTHLY_BUDGET_USD:-}
+      AI_INTERACTIVE_DAILY_BUDGET_USD: ${AI_INTERACTIVE_DAILY_BUDGET_USD:-}
+      AI_INGESTION_MONTHLY_BUDGET_USD: ${AI_INGESTION_MONTHLY_BUDGET_USD:-}
+      AI_ANONYMOUS_TRIAL_REQUESTS: ${AI_ANONYMOUS_TRIAL_REQUESTS:-}
+      AI_ANONYMOUS_BUDGET_SHARE: ${AI_ANONYMOUS_BUDGET_SHARE:-}
+      AI_NEW_ACCOUNT_DAILY_REQUESTS: ${AI_NEW_ACCOUNT_DAILY_REQUESTS:-}
+      AI_NEW_ACCOUNT_DAYS: ${AI_NEW_ACCOUNT_DAYS:-}
+      AI_USER_DAILY_REQUESTS: ${AI_USER_DAILY_REQUESTS:-}
+      AI_USER_MONTHLY_REQUESTS: ${AI_USER_MONTHLY_REQUESTS:-}
+      AI_GLOBAL_CONCURRENCY: ${AI_GLOBAL_CONCURRENCY:-}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
-      interval: 3s
-      timeout: 3s
-      retries: 30
-
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
-    restart: unless-stopped
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "true"
-      xpack.security.http.ssl.enabled: "false"
-      xpack.ml.enabled: "false"
-      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?run pnpm services:up}
-      ES_JAVA_OPTS: -Xms2g -Xmx2g
+      - *elasticsearch-ca
+    # Development access on loopback only; compose.tunnel.yaml removes it.
     ports:
-      - "127.0.0.1:${ELASTICSEARCH_PORT:-59200}:9200"
-    volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
-    ulimits:
-      memlock: { soft: -1, hard: -1 }
+      - "127.0.0.1:${PORT:-3000}:3000"
+    networks: [edge, postgres, elasticsearch]
+    mem_limit: 1g
+    cpus: 1
     healthcheck:
       test:
-        - CMD-SHELL
-        - >-
-          curl -s -u "elastic:$$ELASTIC_PASSWORD" http://localhost:9200/_cluster/health
-          | grep -Eq '"status":"(green|yellow)"'
-      interval: 5s
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 15s
       timeout: 5s
-      retries: 40
+      retries: 3
       start_period: 20s
 
-volumes:
-  postgres-data:
-  elasticsearch-data:
+  # Worker CLI, one-shot: `docker compose --profile tools run --rm ingest <command>`.
+  # Ingestion database role and the Elasticsearch writer key. It runs as the host
+  # user that owns data/ (AVIATION_UID/AVIATION_GID, set by `pnpm ingest`), reads
+  # data/ read-only and writes verification reports to data/reports/<env>.
+  ingest:
+    <<: [*service, *hardened, *app-image]
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["node", "worker/cli.js"]
+    command: []
+    user: "${AVIATION_UID:-1000}:${AVIATION_GID:-1000}"
+    labels:
+      ai-apps.app: aviation-investigations
+      ai-apps.component: ingest
+      ai-apps.environment: ${APP_ENV}
+    environment:
+      <<: [*elasticsearch-env, *embeddings-env]
+      NODE_ENV: production
+      APP_ENV: ${APP_ENV}
+      DATABASE_INGEST_URL: ${DATABASE_INGEST_URL:-}
+      ELASTICSEARCH_WRITE_API_KEY: ${ELASTICSEARCH_WRITE_API_KEY:-}
+      AI_MONTHLY_BUDGET_USD: ${AI_MONTHLY_BUDGET_USD:-}
+      AI_INGESTION_MONTHLY_BUDGET_USD: ${AI_INGESTION_MONTHLY_BUDGET_USD:-}
+      AVIATION_TRACING_ENABLED: "false"
+      AVIATION_VERIFY_DIR: /app/data/reports
+    volumes:
+      - ${AVIATION_DATA_DIR:-./data}:/app/data:ro
+      - ${AVIATION_DATA_DIR:-./data}/reports/${APP_ENV}:/app/data/reports
+      - *elasticsearch-ca
+    networks: [egress, postgres, elasticsearch]
+    mem_limit: 2g
+    cpus: 2
+
+  # Schema migrations, one-shot: `docker compose --profile tools run --rm migrate`.
+  # The only container with the migrator (schema owner) role.
+  migrate:
+    <<: [*service, *hardened, *app-image]
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["node", "worker/cli.js", "migrate"]
+    command: []
+    labels:
+      ai-apps.app: aviation-investigations
+      ai-apps.component: migrate
+      ai-apps.environment: ${APP_ENV}
+    environment:
+      NODE_ENV: production
+      APP_ENV: ${APP_ENV}
+      DATABASE_MIGRATOR_URL: ${DATABASE_MIGRATOR_URL:-}
+    networks: [postgres]
+    mem_limit: 512m
+    cpus: 1
+
+  # Build-only: `docker compose build extract-image` (pnpm extract:image). The
+  # worker on the host runs this image as sandboxed one-off containers named
+  # ai-aviation-<env>-extract-<hex>, labelled as service `extract` of this project.
+  extract-image:
+    <<: *service
+    profiles: [tools]
+    restart: "no"
+    image: ai-aviation/extract:mdbtools-1.0.0
+    pull_policy: never
+    build:
+      context: docker/extract
+      labels:
+        ai-apps.app: aviation-investigations
+        ai-apps.component: extract
+    labels:
+      ai-apps.app: aviation-investigations
+      ai-apps.component: extract
+    entrypoint: ["mdb-export", "--version"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    user: "65534:65534"
+
+  # Cloudflare Tunnel connector (remotely managed tunnel; its public hostname
+  # routes to http://app:3000). Use with compose.tunnel.yaml.
+  tunnel:
+    <<: *service
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:2026.10.0
+    command: ["tunnel", "--no-autoupdate", "run"]
+    labels:
+      ai-apps.app: aviation-investigations
+      ai-apps.component: tunnel
+      ai-apps.environment: ${APP_ENV}
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    read_only: true
+    cap_drop: [ALL]
+    networks: [edge]
+    mem_limit: 256m
+    cpus: 0.5
+
+networks:
+  # App ingress and the tunnel connector only; also their outbound route to
+  # Cloudflare and the model, embedding, OAuth and Turnstile APIs.
+  edge: {}
+  # Outbound route for ingest (embeddings API); no other container joins it.
+  egress: {}
+  # Networks of the shared stacks, created outside this project. Their names are
+  # machine-specific and come from the env file.
+  postgres:
+    external: true
+    name: ${SHARED_POSTGRES_NETWORK:-shared-postgres-network-not-set}
+  elasticsearch:
+    external: true
+    name: ${SHARED_ELASTICSEARCH_NETWORK:-shared-elasticsearch-network-not-set}
