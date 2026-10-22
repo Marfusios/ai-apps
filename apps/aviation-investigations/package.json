@@ -25,6 +25,7 @@
     "worker": "tsx worker/cli.ts",
     "eval:retrieval": "tsx evals/retrieval/run.ts",
     "eval:retrieval:silver": "tsx evals/retrieval/build-silver.ts",
+    "eval:retrieval:coded": "tsx evals/retrieval/coded/build-coded.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "dev:server": "tsx watch server/main.ts",

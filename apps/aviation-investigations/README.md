@@ -496,6 +496,47 @@ questions answered by inspection dates and hours are kept as `section: "structur
 not run by the RAG evaluation. A unit test fails when `dataset.json` no longer matches
 the rules.
 
+**Coded-reference track** (Track C of the task 10c evaluation protocol). Its scores are
+labelled `coded-reference`: they measure retrieval of coded facts, not adjudicated
+relevance. Each question in `evals/retrieval/coded/questions.ts` is defined by a frozen
+code set: ten-digit `case_findings` codes (the modifier is always explicit), optionally
+required to be cited in the probable cause (`in_probable_cause`), and/or three-digit
+`case_sequence` occurrence codes. Each question also states its aircraft attribution
+(one aircraft carries every clause, or each clause some aircraft) and its filters
+(years, state, aircraft category, phase group). Under an aircraft filter the carrying
+aircraft must match, and a multi-aircraft event counts only when every aircraft matches;
+coded events the filter cannot reach are recorded as `unreachable`. Question text
+follows the code's meaning ("conditions conducive to carburetor icing", never
+"confirmed carburetor icing"), paraphrases avoid the code vocabulary and keep the
+labels, and `cause_factor` and the " - C"/" - F" description suffixes are never labels.
+The builder derives the labels from every answer-eligible US case in one read-only
+snapshot and records, per question, the codes, the description text seen, case counts
+and the class:
+
+- **narrow** (1 to 20 coded cases): gated on candidate Recall@20 (target 90%);
+- **broad** (more than 20): gated on strict P@6 and nDCG@6 of the bundle (gains
+  0/1/2 → 0/1/3); Recall@20 is a diagnostic with its ceiling.
+
+Absence of a code is not a negative judgement, so precision is reported as coded
+precision. The metric module (`evals/retrieval/metrics.ts`) also computes the bounds
+the model-judged track will need for unknown grades (exact P@6 bounds; nDCG@6 bounds
+by enumeration, or the protocol's sound relaxation beyond 12 unknowns; zero-IDCG
+flags). Questions sharing a case, and paraphrases with their originals, are split
+together, and every area and class reaches both splits.
+
+```sh
+pnpm eval:retrieval:coded --generation 1 --check   # rebuild evals/retrieval/coded/dataset.json in memory and compare (DATABASE_URL, read-only)
+pnpm eval:retrieval:coded --generation 1           # write it; --dry-run prints the questions and split groups only
+pnpm eval:retrieval --track coded                  # checks, then plan only (43 questions, about $0.00002)
+pnpm eval:retrieval --track coded --confirm-cost   # embed and write data/work/eval-retrieval-coded-<UTC>.json
+```
+
+The coded run takes the same options and fails closed in the same way, and also stops
+when the dataset was built from other question specs than the committed ones. Its
+report holds the metric definitions, the summary per split, class, area and tag, a
+per-question table, and every ranking, bundle and Elasticsearch body (query vectors
+elided).
+
 ### Web client
 
 `web/` is a React 19 single-page app built with Vite, React Router, TanStack Query

@@ -705,6 +705,20 @@ the run before anything is embedded. On `dev` generation 1 at 50 passages per
 channel, hybrid candidate Recall@20 was 33.7% (BM25 28.4%, kNN 30.5%), and the
 maintenance-timing questions were near 0.
 
+The coded-reference set (`evals/retrieval/coded/`, Track C of the task 10c protocol)
+has 43 questions on generation 1: 34 originals over environment, aircraft systems,
+personnel and occurrences, and 9 paraphrases. 25 are narrow (1 to 20 coded cases,
+gated on Recall@20) and 18 broad (more than 20, gated on strict P@6 and nDCG@6); the
+dev and holdout splits hold 21 and 22 questions, each with narrow and broad questions
+of every area. Labels are exact membership in a frozen code set: finding codes with
+explicit modifiers, optionally cited in the probable cause, and occurrence codes, with
+an aircraft attribution rule. Under an aircraft filter the carrying aircraft must
+match and a multi-aircraft event must match as a whole (one question, helicopter
+midair collisions, relies on the `passages-v2` qualification and records 15 mixed
+events as unreachable). Absence of a code is not a negative judgement: precision is
+coded precision. `pnpm eval:retrieval --track coded` runs it with the silver run's
+checks, plus a check that the dataset was built from the committed specs.
+
 ## 3. How Elasticsearch is composed
 
 Both indices are `dynamic: strict`, share the aviation analyzers, and record version,

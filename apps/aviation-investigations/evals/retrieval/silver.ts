@@ -314,10 +314,14 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
  * 2. then has fewer questions of the group's primary tag (the first tag of its first
  *    question);
  * 3. then has fewer questions overall; ties go to `dev`.
+ *
+ * `requiredTags` defaults to the silver set's `REQUIRED_TAGS`; the coded-reference set
+ * passes its own (`coded/coded.ts`).
  */
 export function assignSplits(
-  items: readonly { id: string; tags: readonly Tag[]; expected: readonly string[]; section?: Section }[],
+  items: readonly { id: string; tags: readonly string[]; expected: readonly string[]; section?: Section }[],
   links: readonly [string, string][] = [],
+  requiredTags: readonly string[] = REQUIRED_TAGS,
 ): GroupedSplits {
   const parent = new Map<string, string>(items.map((q) => [q.id, q.id]));
   const find = (x: string): string => {
@@ -352,10 +356,10 @@ export function assignSplits(
   const total = { dev: 0, holdout: 0 };
   const perTag = new Map<string, { dev: number; holdout: number }>();
   /** RAG questions per required tag and split. */
-  const required = new Map<Tag, { dev: number; holdout: number }>(REQUIRED_TAGS.map((t) => [t, { dev: 0, holdout: 0 }]));
+  const required = new Map<string, { dev: number; holdout: number }>(requiredTags.map((t) => [t, { dev: 0, holdout: 0 }]));
   ordered.forEach((g, i) => {
     const rag = g.ids.map((id) => byId.get(id)).filter((q) => q !== undefined && (q.section ?? 'rag') === 'rag');
-    const tags = REQUIRED_TAGS.filter((tag) => rag.some((q) => q?.tags.includes(tag)));
+    const tags = requiredTags.filter((tag) => rag.some((q) => q?.tags.includes(tag)));
     const lacking = (s: 'dev' | 'holdout') => tags.filter((tag) => (required.get(tag) as { dev: number; holdout: number })[s] === 0).length;
     const t = perTag.get(g.tag) ?? { dev: 0, holdout: 0 };
     const gap = lacking('holdout') - lacking('dev');

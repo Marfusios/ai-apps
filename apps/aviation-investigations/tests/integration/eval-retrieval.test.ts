@@ -3,7 +3,8 @@
  * model name, no paid call): metrics, bundles and recorded request bodies, and the
  * `pnpm eval:retrieval` command end to end against an unpublished passages index:
  * it fails closed on dataset problems before embedding anything, and an exploratory
- * `--fake-embedder` run writes a non-gating report.
+ * `--fake-embedder` run writes a non-gating report. The same for the coded-reference
+ * track (`--track coded`), whose builder reads the fixture generation in one snapshot.
  */
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -12,6 +13,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { CORPUS_QUERIES, loadCodedCorpus } from '../../evals/retrieval/coded/build-coded.js';
+import { assembleCoded, codeStats, deriveQuestion, indexCorpus, type CodedCorpus, type CodedDataset, type CodedQuestionSpec } from '../../evals/retrieval/coded/coded.js';
+import { evaluateCoded } from '../../evals/retrieval/coded/evaluate.js';
 import { evaluateRetrieval } from '../../evals/retrieval/evaluate.js';
 import { SILVER_VERSION, type Dataset, type DatasetItem } from '../../evals/retrieval/silver.js';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
@@ -172,5 +177,163 @@ describe('retrieval evaluation', () => {
     // No vector anywhere in the report: no run of 50 numbers.
     expect(text).not.toMatch(/(-?\d\.\d+,\s*){50}/);
     expect(text).toContain('1536-dimension query vector elided');
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------
+// Coded-reference track (task 10c Track C)
+
+/** The answer-eligible US fixture cases: completed with a probable cause (ENG08WA029 is Peruvian; three have no cause). */
+const FIXTURE_COHORT = [
+  'CEN19FA024', 'CEN20LA361', 'CEN24FA064', 'DCA25MA108', 'DEN08LA103', 'DFW08TA066',
+  'ERA24LA303', 'MIA08LA156', 'NYC08LA106', 'SEA08LA057', 'WPR15FA010', 'WPR26LA114',
+];
+
+const codedSpec = (id: string, question: string, wording: string[], filters: CodedQuestionSpec['filters'], clauses: CodedQuestionSpec['codeSet']['clauses']): CodedQuestionSpec => ({
+  id,
+  question,
+  area: 'occurrence',
+  class: 'narrow',
+  filters,
+  codeSet: { clauses, attribution: 'same-aircraft' },
+  wording,
+  note: 'fixture',
+});
+const CODED_SPECS: CodedQuestionSpec[] = [
+  codedSpec('fx-midair', 'Which accidents involved a midair collision?', ['midair collision'], {}, [{ kind: 'event', codes: ['250'] }]),
+  codedSpec('fx-midair-airplanes', 'Which midair collisions were between airplanes?', ['midair collision'], { category: ['AIR'] }, [{ kind: 'event', codes: ['250'] }]),
+  codedSpec('fx-decision-cause', "Which accidents have a probable cause that cites the pilot's decision making?", ["the pilot's decision making"], {}, [
+    { kind: 'finding', codes: ['0204152044'], inProbableCause: true },
+  ]),
+  codedSpec('fx-decision-cause-helicopters', "Which helicopter accidents have a probable cause that cites the pilot's decision making?", ["the pilot's decision making"], { category: ['HELI'] }, [
+    { kind: 'finding', codes: ['0204152044'], inProbableCause: true },
+  ]),
+];
+
+describe('coded-reference track', () => {
+  let corpus: CodedCorpus;
+  let coded: CodedDataset;
+
+  beforeAll(async () => {
+    const client = new pg.Client({ connectionString: testDbUrl('app') });
+    await client.connect();
+    try {
+      corpus = await loadCodedCorpus(client, generationId);
+    } finally {
+      await client.end();
+    }
+    const index = indexCorpus(corpus);
+    const derived = new Map(CODED_SPECS.map((s) => [s.id, deriveQuestion(index, s)]));
+    const stats = codeStats(corpus, CODED_SPECS.flatMap((s) => s.codeSet.clauses.flatMap((c) => c.codes.map((code) => ({ kind: c.kind, code })))));
+    coded = assembleCoded({ generationId, answerEligibleCases: corpus.cases.length, builder: 'test' }, CODED_SPECS, [], derived, stats).dataset;
+  });
+
+  it('reads the answer-eligible US cohort in one read-only snapshot, never cause_factor, and derives labels from codes', () => {
+    expect(corpus.cases.map((c) => c.ntsbNo)).toEqual(FIXTURE_COHORT);
+    expect(corpus.findings.length).toBeGreaterThan(0);
+    for (const f of corpus.findings) expect(Object.keys(f).sort()).toEqual(['aircraftKey', 'code', 'description', 'inProbableCause', 'ntsbNo']);
+    for (const q of Object.values(CORPUS_QUERIES)) expect(q).not.toMatch(/cause_factor/);
+    const byId = new Map(coded.questions.map((q) => [q.id, q]));
+    expect(byId.get('fx-midair')?.relevant).toEqual(['DCA25MA108', 'SEA08LA057', 'WPR15FA010']);
+    // Under the airplane filter the airplane-and-helicopter midair is coded but unreachable (passages-v2 needs every aircraft to match).
+    expect(byId.get('fx-midair-airplanes')).toMatchObject({ relevant: ['SEA08LA057', 'WPR15FA010'], unreachable: ['DCA25MA108'], needsEventAircraftQualification: true });
+    expect(byId.get('fx-decision-cause')?.relevant).toEqual(['CEN19FA024', 'NYC08LA106']);
+    expect(byId.get('fx-decision-cause-helicopters')?.relevant).toEqual(['CEN19FA024']);
+    expect(byId.get('fx-midair')?.codes).toEqual([{ kind: 'event', code: '250', descriptions: ['Midair collision'], cohortCases: 3, relevantCases: 3 }]);
+    expect(byId.get('fx-decision-cause')?.codes[0]).toMatchObject({
+      descriptions: ['Personnel issues-Action/decision-Info processing/decision-Decision making/judgment-Pilot'],
+      cohortCases: 2,
+      cohortCasesInProbableCause: 2,
+    });
+  });
+
+  it('scores keyword, vector and hybrid against the coded reference at each channel size', async () => {
+    const r = await evaluateCoded(es, embedder, { generationId, passagesIndex: index }, coded.questions, { sizes: [10, 100] });
+    expect(r.questions.map((q) => q.id)).toEqual(coded.questions.map((q) => q.id));
+    for (const q of r.questions) {
+      for (const size of ['10', '100']) {
+        const s = q.sizes[size];
+        expect(JSON.stringify(s?.requests.vector)).toContain('query vector elided');
+        for (const mode of ['keyword', 'vector', 'hybrid'] as const) {
+          const m = s?.modes[mode];
+          expect(m?.score.recall.gate).toBe('eligible');
+          expect(m?.score.recall.value).toBeGreaterThanOrEqual(0);
+          expect(m?.score.recall.value).toBeLessThanOrEqual(1);
+          expect(m?.score.ndcg.method).toBe('exact');
+          expect(m?.score.precision.strict.lower).toBe(m?.score.precision.strict.upper);
+          expect(m?.bundle.cases.length).toBeLessThanOrEqual(6);
+          const relevant = coded.questions.find((x) => x.id === q.id)?.relevant ?? [];
+          for (const c of m?.bundle.cases ?? []) expect(c.coded, `${q.id} ${c.ntsbNo}`).toBe(relevant.includes(c.ntsbNo));
+        }
+      }
+      // Twelve cases fit in 100 passages per channel: BM25 reaches every coded case in the first 20.
+      expect(q.sizes['100']?.modes.keyword.score.recall.value, q.id).toBe(1);
+    }
+    // The airplane filter reaches the two-airplane midairs through the event-level qualification.
+    const air = r.questions.find((q) => q.id === 'fx-midair-airplanes');
+    expect(JSON.stringify(air?.sizes['10']?.requests.keyword)).toContain('event_aircraft');
+    expect(r.summary['100']?.keyword.all?.recallGate).toMatchObject({ questions: 4, mean: 1, atTarget: 1 });
+    expect(r.table).toHaveLength(4 * 2 * 3);
+  });
+
+  it('runs as pnpm eval:retrieval --track coded: fails closed before embedding, and writes a coded-reference report when exploratory', () => {
+    const datasetFile = join(work, 'coded.json');
+    writeFileSync(datasetFile, JSON.stringify(coded));
+    const out = join(work, 'coded-out');
+    const cli = (file: string, ...args: string[]) =>
+      spawnSync(process.execPath, [join(APP_DIR, 'node_modules/tsx/dist/cli.mjs'), 'evals/retrieval/run.ts', '--track', 'coded', '--dataset', file, '--passages-index', index, '--out-dir', out, ...args], {
+        cwd: APP_DIR,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: testDbUrl('app'), ELASTICSEARCH_READ_API_KEY: testEsApiKey('read') },
+      });
+
+    // The fixture set breaks the coverage rules and was not built from the committed specs: no embedding, in plan mode or paid.
+    for (const args of [[], ['--confirm-cost']]) {
+      const refused = cli(datasetFile, ...args);
+      expect(refused.status, refused.stderr).toBe(1);
+      expect(refused.stderr).toMatch(/dataset: only 4 questions/);
+      expect(refused.stderr).toContain('dataset: built from other question specs');
+      expect(refused.stderr).toContain('nothing embedded');
+    }
+    // Another generation than the one the set was built from.
+    const otherGeneration = join(work, 'coded-other-generation.json');
+    writeFileSync(otherGeneration, JSON.stringify({ ...coded, source: { ...coded.source, generationId: generationId + 1 } }));
+    const mismatch = cli(otherGeneration, '--confirm-cost');
+    expect(mismatch.status).toBe(1);
+    expect(mismatch.stderr).toContain(`generation: the coded set was built from generation ${generationId + 1}; the target is generation ${generationId}`);
+    // A dataset that does not parse.
+    const broken = join(work, 'coded-broken.json');
+    writeFileSync(broken, JSON.stringify({ ...coded, reference: 'adjudicated' }));
+    const unparsed = cli(broken, '--confirm-cost');
+    expect(unparsed.status).toBe(1);
+    expect(unparsed.stderr).toContain('the coded dataset does not parse; nothing embedded');
+    expect(existsSync(out)).toBe(false);
+    expect(cli(datasetFile, '--track', 'nope').status).toBe(2);
+
+    const run = cli(datasetFile, '--fake-embedder', '--exploratory', '--sizes', '10,20');
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stderr).toContain('NON-GATING');
+    expect(run.stdout).toContain('coded-reference: 4 questions');
+    expect(run.stdout).toContain('meets the passages contract');
+    expect(run.stdout).toMatch(/per question, 10 per channel/);
+    const files = readdirSync(out).filter((f) => /^eval-retrieval-coded-\d{8}T\d{6}Z\.json$/.test(f));
+    expect(files).toHaveLength(1);
+    const text = readFileSync(join(out, files[0] as string), 'utf8');
+    const report = JSON.parse(text) as Record<string, unknown> & { nonGatingReasons: string[]; table: unknown[]; summary: Record<string, unknown> };
+    expect(report).toMatchObject({
+      kind: 'eval-retrieval-coded',
+      reference: 'coded-reference',
+      gating: false,
+      dataset: { questions: 4, narrow: 4, broad: 0, split: 'all', notRunWithoutEventAircraftQualification: [] },
+      index: { passagesIndex: index, generationId, indexVersion: 'passages-v2', eventAircraftQualification: true },
+      embedder: { kind: 'fake', inputs: 4 },
+    });
+    expect(report.nonGatingReasons).toEqual(expect.arrayContaining(['--exploratory', '--fake-embedder']));
+    expect(report.nonGatingReasons.some((r) => r.startsWith('dataset: '))).toBe(true);
+    expect(Object.keys(report.summary)).toEqual(['10', '20']);
+    expect(report.table).toHaveLength(4 * 2 * 3);
+    expect(text).not.toMatch(/(-?\d\.\d+,\s*){50}/);
+    expect(text).toContain('1536-dimension query vector elided');
+    expect(text).not.toMatch(/expert/i);
   }, 120_000);
 });
