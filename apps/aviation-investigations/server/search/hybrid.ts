@@ -9,7 +9,11 @@
  * - Two requests run in parallel with the same compiled filter (`compileFilters`):
  *   BM25 (`multi_match` over `text`, the filter as `bool.filter`) and kNN
  *   (`knn` on `embedding`, the same filter as its prefilter), `perChannel` passages
- *   each; kNN looks at `perChannel × numCandidatesFactor` candidates per shard.
+ *   each; kNN looks at `perChannel × numCandidatesFactor` candidates per shard. The
+ *   filter is compiled once per request for the index's version: the contract of a
+ *   `passages-v2` index turns on the event-level aircraft qualification (an
+ *   event-scoped passage qualifies when every aircraft of its event satisfies the
+ *   aircraft facets), a `passages-v1` index keeps event-scoped passages out.
  * - Reciprocal rank fusion in TypeScript (`rrfFuse`, k = 60), then the unique cases in
  *   fused order (`rankCases`). Evaluation measures case Recall@20 here.
  *
@@ -18,6 +22,10 @@
  * probable-cause passage of those cases; `packEvidence` then builds the bundle (at
  * most 6 cases, 12 passages, 3 passages per case with the cause, the cause always
  * attached and counted, a token budget).
+ *
+ * Stage 2 fetches under that same compiled filter, so a case's cause variants are
+ * attached exactly when its passages qualify, and an event-scoped passage stays
+ * event-scoped (`scope: 'event'`, `aircraftKey: null`) whatever the filter.
  *
  * Nothing here falls back to keyword-only answers: without a published passages
  * index, or with an index that breaks the passages contract
@@ -55,11 +63,17 @@ import { countTokens } from '../ai/tokens.js';
 import { packEvidence, SECTION_ORDER, type PackOptions, type PackRole, type PassageKind, type SkipReason } from './evidence.js';
 import { RetrievalFiltersSchema, compileFilters, type Query, type RetrievalFilters } from './filters.js';
 import { IndexMetaError } from './index-meta.js';
-import { PASSAGES_CONTRACT, PassagesIndexIncompatibleError, checkPassagesIndex, type PassagesContract } from './passages-contract.js';
+import {
+  PASSAGES_CONTRACTS,
+  PassagesIndexIncompatibleError,
+  checkPassagesIndex,
+  type PassagesContract,
+  type PassagesContracts,
+} from './passages-contract.js';
 import { RRF_K, asRanking, rankCases, rrfFuse, type CaseCandidate, type CaseScoring, type FusedHit } from './rrf.js';
 
-/** Passages index versions this code reads (`worker/index/passages-index.ts` `PASSAGES_INDEX_VERSION`). */
-export const SERVABLE_PASSAGES_VERSIONS: readonly string[] = [PASSAGES_CONTRACT.indexVersion];
+/** Passages index versions this code reads, newest first (the worker builds the first: `PASSAGES_INDEX_VERSION`). */
+export const SERVABLE_PASSAGES_VERSIONS: readonly string[] = PASSAGES_CONTRACTS.map((c) => c.indexVersion);
 
 export interface RetrievalParams extends PackOptions {
   /** RRF constant. */
@@ -341,40 +355,51 @@ export interface RetrievalDataset {
   passagesIndex: string | null;
 }
 
-/** Indexes that passed the contract, per generation, embedding and contract (bounded). */
-const verified = new Set<string>();
+/** Indexes that passed the contract, per generation, embedding and accepted contracts (bounded), with their version's contract. */
+const verified = new Map<string, PassagesContract>();
 
 export interface IndexCheckOptions {
-  contract?: PassagesContract;
+  /** The accepted contracts (tests and future versions); default `PASSAGES_CONTRACTS`. */
+  contracts?: PassagesContracts;
   timeoutMs?: number;
   signal?: AbortSignal;
 }
 
+/** A dataset's passages index that meets the contract of its version. */
+export interface ServableIndex {
+  index: string;
+  /** Its version's contract: decides the event-level aircraft qualification. */
+  contract: PassagesContract;
+}
+
 /**
  * Refuse unless the dataset names a passages index that meets the passages contract
- * for its generation and the embedder's model and dimensions. The metadata lookup is
- * bounded by `timeoutMs` and `signal`; a passed check is remembered per index,
- * generation, embedding and contract (failures and aborted lookups are not).
+ * of its version for its generation and the embedder's model and dimensions. The
+ * metadata lookup is bounded by `timeoutMs` and `signal`; a passed check is
+ * remembered per index, generation, embedding and accepted contracts (failures and
+ * aborted lookups are not).
  */
 export async function assertServablePassagesIndex(
   es: Client,
   dataset: RetrievalDataset,
   embedder: Pick<Embedder, 'model' | 'dims'>,
   opts: IndexCheckOptions = {},
-): Promise<string> {
+): Promise<ServableIndex> {
   const index = dataset.passagesIndex;
   if (!index) {
     throw new RetrievalUnavailableError('no_passages_index', `generation ${dataset.generationId} has no published passages index`);
   }
-  const contract = opts.contract ?? PASSAGES_CONTRACT;
-  const key = JSON.stringify([index, dataset.generationId, embedder.model, embedder.dims, contract]);
-  if (verified.has(key)) return index;
+  const contracts = opts.contracts ?? PASSAGES_CONTRACTS;
+  const key = JSON.stringify([index, dataset.generationId, embedder.model, embedder.dims, contracts]);
+  const known = verified.get(key);
+  if (known) return { index, contract: known };
+  let contract: PassagesContract;
   try {
-    await checkPassagesIndex(es, index, { generationId: dataset.generationId, model: embedder.model, dims: embedder.dims }, {
-      contract,
+    ({ contract } = await checkPassagesIndex(es, index, { generationId: dataset.generationId, model: embedder.model, dims: embedder.dims }, {
+      contracts,
       ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
-    });
+    }));
   } catch (err) {
     if (err instanceof PassagesIndexIncompatibleError || err instanceof IndexMetaError) {
       throw new RetrievalUnavailableError('index_mismatch', err.message);
@@ -382,8 +407,8 @@ export async function assertServablePassagesIndex(
     throw err;
   }
   if (verified.size >= 16) verified.clear();
-  verified.add(key);
-  return index;
+  verified.set(key, contract);
+  return { index, contract };
 }
 
 // ---------------------------------------------------------------------------
@@ -405,8 +430,8 @@ export interface RetrievalQuery {
    * lose it.
    */
   onQueryEmbedding?: (usage: QueryEmbeddingUsage) => void;
-  /** The passages contract (tests and future versions); default `PASSAGES_CONTRACT`. */
-  contract?: PassagesContract;
+  /** The accepted passages contracts (tests and future versions); default `PASSAGES_CONTRACTS`. */
+  contracts?: PassagesContracts;
 }
 
 export interface QueryEmbeddingUsage {
@@ -429,7 +454,12 @@ export interface RetrievalRequests {
 
 export interface CandidateResult {
   index: string;
+  /** The index's version (its contract decided the filter). */
+  indexVersion: string;
+  /** Whether the filter lets event-scoped passages of qualifying events satisfy aircraft facets. */
+  eventAircraftQualification: boolean;
   params: RetrievalParams;
+  /** The compiled filter of both channels; stage 2 fetches under the same clauses. */
   filter: Query[];
   keyword: PassageHit[];
   vector: PassageHit[];
@@ -476,12 +506,12 @@ export async function retrieveCandidates(es: Client, embedder: Embedder | QueryE
   const filters = RetrievalFiltersSchema.parse(q.filters ?? {});
   const keywordText = (q.keywordText ?? q.text).replace(/\s+/gu, ' ').trim();
   if (keywordText === '') throw new Error('the query is empty');
-  const index = await assertServablePassagesIndex(es, q.dataset, embedder, {
+  const { index, contract } = await assertServablePassagesIndex(es, q.dataset, embedder, {
     timeoutMs: params.timeoutMs,
-    ...(q.contract ? { contract: q.contract } : {}),
+    ...(q.contracts ? { contracts: q.contracts } : {}),
     ...(q.signal ? { signal: q.signal } : {}),
   });
-  const filter = compileFilters(filters).bool.filter;
+  const filter = compileFilters(filters, { eventAircraftQualification: contract.eventAircraftQualification }).bool.filter;
 
   const t0 = Date.now();
   const { vector, usage } = await embedQuery(embedder, q.text, q.signal, q.onQueryEmbedding);
@@ -500,6 +530,8 @@ export async function retrieveCandidates(es: Client, embedder: Embedder | QueryE
   const fused = rrfFuse([keyword, vectorHits], params.rrfK);
   return {
     index,
+    indexVersion: contract.indexVersion,
+    eventAircraftQualification: contract.eventAircraftQualification,
     params,
     filter,
     keyword,

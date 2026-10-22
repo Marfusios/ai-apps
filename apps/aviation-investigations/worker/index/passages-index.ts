@@ -3,7 +3,7 @@
  * cases, with their embeddings, for filtered kNN and BM25 retrieval (DESIGN §5;
  * amendments A2, A3, A6, A7, A10, A12, A16).
  *
- * - Index `<prefix>-passages-v1-g<generation>-<UTC timestamp>-<build id>`, alias
+ * - Index `<prefix>-passages-v2-g<generation>-<UTC timestamp>-<build id>`, alias
  *   `<prefix>-passages` ("built last", for operators; the API reads index names from
  *   the active `dataset_manifests` row). Builds use the cases index's machinery
  *   (`publications.ts`, `aliases.ts`): a recorded build with its own liveness lock,
@@ -14,27 +14,46 @@
  *   (`aviation_english`, A12). `embedding` is a 1,536-dimension `dense_vector`
  *   (cosine, `int8_hnsw`); vectors are kept out of `_source`. Event filter fields are
  *   copied onto every passage. Only an aircraft-scoped passage fills the nested
- *   `aircraft` field (its one aircraft); an event-scoped passage lists the event's
- *   aircraft under the plain object field `event_aircraft` and has
- *   `aircraft_specific: false`, so a nested aircraft filter can never match it.
+ *   `aircraft` field (its one aircraft), so a nested `aircraft` filter never matches
+ *   an event-scoped passage.
+ * - **Event aircraft (`passages-v2`).** An event-scoped passage (`aircraft_specific:
+ *   false`) lists every aircraft of its event under the nested field
+ *   `event_aircraft`, with the same properties, records `event_aircraft_count` (the
+ *   event's `case_aircraft` rows in PostgreSQL) and `event_aircraft_complete: true`.
+ *   The plan and the build compare each event-scoped passage's set with the event's
+ *   aircraft keys read separately from PostgreSQL (`loadEventAircraftSets`) and refuse
+ *   (`IncompleteEventAircraftError`) on any difference, before an index exists. This
+ *   is what lets retrieval qualify an event as a whole under aircraft filters (gate
+ *   G5 extension, `server/search/filters.ts`); the passage stays event-scoped.
+ *   `passages-v1` stored the set as a flattened object, which cannot prove that every
+ *   aircraft satisfies a conjunction; its mapping (`PASSAGES_V1_MAPPING`) is kept to
+ *   re-derive its recorded fingerprint.
+ * - Embedding inputs are those of `passages-v1` (template `input-v1`, chunker
+ *   `chunk-v2`): a `passages-v2` build of a generation `passages-v1` was built for
+ *   finds every vector in `embedding_cache`.
  * - `planPassages` is the dry run: it reads the generation (one repeatable-read
  *   snapshot, nothing written, nothing pinned), builds every passage and reports
  *   counts, exact token totals (headers and overlap included), percentiles, A16
- *   splits, expected cache hits and the estimated cost.
+ *   splits, the checked event aircraft sets, expected cache hits and the estimated
+ *   cost ("to embed").
  * - `rebuildPassagesIndex` refuses unless `confirmCost` is set and the plan's
  *   reservations fit the remaining indexing budget. It then writes the passages to
  *   PostgreSQL (insert-only, idempotent), resolves vectors from `embedding_cache`,
  *   embeds only the misses (each distinct input once, in requests of at most 96
  *   inputs), stores them in the cache as they arrive, bulk-loads the index, checks
  *   it against what was built and switches the alias.
+ * - **Cache only** (`cacheOnly`): the build pays for nothing. It replaces the given
+ *   embedder with one that throws on any call (`cacheOnlyEmbedder`), needs neither
+ *   `confirmCost` nor the spend gate, and stops with `CacheIncompleteError` before
+ *   creating an index unless the plan finds every input in the cache.
  */
 import { createHash } from 'node:crypto';
 import type { Client, estypes } from '@elastic/elasticsearch';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import pg from 'pg';
-import type { Db } from '../../server/db/client.js';
+import type { Db, DbOrTx } from '../../server/db/client.js';
 import { VERIFIER_VERSION } from '../../server/db/generations.js';
-import { streamCaseRecords, type SectionKind } from '../../server/db/queries/case-records.js';
+import { streamCaseRecords, type CaseRecord, type SectionKind } from '../../server/db/queries/case-records.js';
 import { datasetGenerations, passages as passagesTable } from '../../server/db/schema/index.js';
 import { AliasSwitchError, blockedMessage, blockingAttempts, switchAlias, type SwitchAliasOptions } from './aliases.js';
 import { AVIATION_ANALYSIS, NAME_NORMALIZER, aviationTextField } from './analysis.js';
@@ -49,7 +68,7 @@ import {
 } from './cases-index.js';
 import { buildPinReason, checkBuildId, deleteUnsubmittedIndex, recordBuild, withBuildLock } from './publications.js';
 import { CHUNKER_VERSION, DEFAULT_CHUNK_OPTIONS } from './chunk.js';
-import { EMBEDDING_LIMITS, batchByLimits, embeddingUsd, reservationUsd, type Embedder } from './embed.js';
+import { EMBEDDING_LIMITS, batchByLimits, cacheOnlyEmbedder, embeddingUsd, reservationUsd, type Embedder } from './embed.js';
 import { countCachedKeys, embeddingCacheKey, lookupEmbeddings, storeEmbeddings } from './embedding-cache.js';
 import {
   EMBEDDING_INPUT_TEMPLATE_VERSION,
@@ -62,7 +81,10 @@ import { SpendRefusedError, type SpendGate } from './spend-gate.js';
 import { TOKENIZER } from './tokens.js';
 
 /** Bump on any change to the mapping, analysis, chunking, input template or embedding model. */
-export const PASSAGES_INDEX_VERSION = 'passages-v1';
+export const PASSAGES_INDEX_VERSION = 'passages-v2';
+/** Versions whose definition this module keeps (`passagesIndexFingerprint`). */
+export const PASSAGES_INDEX_VERSIONS = ['passages-v1', 'passages-v2'] as const;
+export type PassagesIndexVersion = (typeof PASSAGES_INDEX_VERSIONS)[number];
 /** The embedding the mapping is built for (DESIGN §5: `text-embedding-3-small`, 1,536 dimensions). */
 export const PASSAGES_EMBEDDING_DIMS = 1536;
 /** Two-key advisory lock namespace: one passages build per generation at a time (no double spending). */
@@ -103,8 +125,12 @@ export interface PassageDoc {
   light: string | null;
   /** Nested: the one aircraft of an aircraft-scoped passage; empty when event-scoped. */
   aircraft: PassageAircraft[];
-  /** Plain object (not nested): every aircraft of an event-scoped passage's event; empty when aircraft-scoped. */
+  /** Nested: every aircraft of an event-scoped passage's event, as in PostgreSQL; empty when aircraft-scoped. */
   event_aircraft: PassageAircraft[];
+  /** Event-scoped: the event's aircraft rows in PostgreSQL (`case_aircraft`); null when aircraft-scoped. */
+  event_aircraft_count: number | null;
+  /** True only on an event-scoped passage whose `event_aircraft` was checked to be the event's full set. */
+  event_aircraft_complete: boolean;
 }
 
 /** float32 values with 9 significant digits: exact for float32, about half the JSON of a float64 rendering. */
@@ -112,8 +138,64 @@ function vectorJson(v: Float32Array): number[] {
   return Array.from(v, (x) => Number(x.toPrecision(9)));
 }
 
-export function buildPassageDocument(p: CasePassage, vector: Float32Array): PassageDoc {
+// ---------------------------------------------------------------------------
+// Event aircraft sets
+
+/** Every multi-aircraft answer-eligible US event's aircraft keys in PostgreSQL, ascending, by case number. */
+export type EventAircraftSets = ReadonlyMap<string, readonly number[]>;
+
+/**
+ * Each multi-aircraft answer-eligible US event's aircraft keys, read from
+ * `case_aircraft` by its own aggregate query (not through the case records the
+ * passages are built from). A generation is sealed, so it cannot change between this
+ * read and the record stream.
+ */
+export async function loadEventAircraftSets(db: DbOrTx, generationId: number): Promise<Map<string, number[]>> {
+  const r = await db.execute(sql`
+    select a.ntsb_no, array_agg(a.aircraft_key order by a.aircraft_key) as keys
+      from case_aircraft a
+      join cases c on c.generation_id = a.generation_id and c.ntsb_no = a.ntsb_no
+     where a.generation_id = ${generationId} and c.is_us and c.answer_eligible
+     group by a.ntsb_no
+    having count(*) > 1`);
+  const out = new Map<string, number[]>();
+  for (const row of r.rows as { ntsb_no: string; keys: unknown }[]) {
+    const keys = row.keys;
+    if (!Array.isArray(keys) || !keys.every((k) => Number.isSafeInteger(k))) throw new Error(`aircraft keys of ${row.ntsb_no} are not integers`);
+    out.set(row.ntsb_no, keys as number[]);
+  }
+  return out;
+}
+
+/** Event-scoped passages whose aircraft set is not the event's full set in PostgreSQL: nothing is built. */
+export class IncompleteEventAircraftError extends Error {
+  constructor(readonly cases: readonly string[]) {
+    super(
+      `${cases.length} event(s) have event-scoped passages whose aircraft set differs from case_aircraft ` +
+        `(${cases.slice(0, 10).join(', ')}${cases.length > 10 ? ', ...' : ''}); a passages index needs every event's complete aircraft set`,
+    );
+    this.name = 'IncompleteEventAircraftError';
+  }
+}
+
+/** True when the passage carries exactly the event's aircraft keys (at least two). Aircraft-scoped passages: true. */
+export function hasCompleteEventAircraft(p: CasePassage, sets: EventAircraftSets): boolean {
+  if (p.aircraftSpecific) return true;
+  const canonical = sets.get(p.ntsbNo);
+  const stored = p.aircraft.map((a) => a.aircraft_key).sort((a, b) => a - b);
+  return canonical !== undefined && canonical.length >= 2 && stored.length === canonical.length && stored.every((k, i) => k === canonical[i]);
+}
+
+/** `event_aircraft_count` of a passage: the event's aircraft count, or null when aircraft-scoped; throws on an incomplete set. */
+export function eventAircraftCount(p: CasePassage, sets: EventAircraftSets): number | null {
+  if (p.aircraftSpecific) return null;
+  if (!hasCompleteEventAircraft(p, sets)) throw new IncompleteEventAircraftError([p.ntsbNo]);
+  return p.aircraft.length;
+}
+
+export function buildPassageDocument(p: CasePassage, vector: Float32Array, sets: EventAircraftSets): PassageDoc {
   if (vector.length !== PASSAGES_EMBEDDING_DIMS) throw new Error(`${p.passageId}: vector has ${vector.length} dimensions`);
+  const count = eventAircraftCount(p, sets);
   return {
     passage_id: p.passageId,
     ntsb_no: p.ntsbNo,
@@ -133,6 +215,8 @@ export function buildPassageDocument(p: CasePassage, vector: Float32Array): Pass
     ...p.filters,
     aircraft: p.aircraftSpecific ? p.aircraft : [],
     event_aircraft: p.aircraftSpecific ? [] : p.aircraft,
+    event_aircraft_count: count,
+    event_aircraft_complete: count !== null,
   };
 }
 
@@ -152,41 +236,57 @@ const aircraftProperties = (): Record<string, estypes.MappingProperty> => ({
   defining_phase_group: keyword(),
 });
 
+const V1_PROPERTIES: Record<string, estypes.MappingProperty> = {
+  passage_id: keyword(),
+  ntsb_no: keyword(),
+  section_id: keyword(),
+  revision_id: keyword(),
+  section_kind: keyword(),
+  scope: keyword(),
+  aircraft_specific: { type: 'boolean' },
+  aircraft_key: { type: 'integer' },
+  start: { type: 'integer' },
+  end: { type: 'integer' },
+  part: { type: 'integer' },
+  parts: { type: 'integer' },
+  continuation: { type: 'boolean' },
+  text: aviationTextField(),
+  embedding: {
+    type: 'dense_vector',
+    dims: PASSAGES_EMBEDDING_DIMS,
+    similarity: 'cosine',
+    index: true,
+    index_options: { type: 'int8_hnsw' },
+  },
+  country: keyword(),
+  ev_year: { type: 'integer' },
+  ev_date: { type: 'date', format: 'strict_date' },
+  state: keyword(),
+  answer_eligible: { type: 'boolean' },
+  defining_phase_groups: keyword(),
+  highest_injury: keyword(),
+  wx_cond: keyword(),
+  light: keyword(),
+  aircraft: { type: 'nested', dynamic: 'strict', properties: aircraftProperties() },
+  event_aircraft: { type: 'object', dynamic: 'strict', properties: aircraftProperties() },
+};
+
+/**
+ * The `passages-v1` mapping: `event_aircraft` a plain object, whose flattened fields
+ * cannot tell which aircraft satisfied which predicate. Kept to re-derive the
+ * recorded `passages-v1` fingerprint (and, in tests, to stand up a v1 index); the
+ * build never uses it.
+ */
+export const PASSAGES_V1_MAPPING: estypes.MappingTypeMapping = { dynamic: 'strict', properties: V1_PROPERTIES };
+
+/** The `passages-v2` mapping: v1 with `event_aircraft` nested, its count and the completeness flag. */
 export const PASSAGES_MAPPING: estypes.MappingTypeMapping = {
   dynamic: 'strict',
   properties: {
-    passage_id: keyword(),
-    ntsb_no: keyword(),
-    section_id: keyword(),
-    revision_id: keyword(),
-    section_kind: keyword(),
-    scope: keyword(),
-    aircraft_specific: { type: 'boolean' },
-    aircraft_key: { type: 'integer' },
-    start: { type: 'integer' },
-    end: { type: 'integer' },
-    part: { type: 'integer' },
-    parts: { type: 'integer' },
-    continuation: { type: 'boolean' },
-    text: aviationTextField(),
-    embedding: {
-      type: 'dense_vector',
-      dims: PASSAGES_EMBEDDING_DIMS,
-      similarity: 'cosine',
-      index: true,
-      index_options: { type: 'int8_hnsw' },
-    },
-    country: keyword(),
-    ev_year: { type: 'integer' },
-    ev_date: { type: 'date', format: 'strict_date' },
-    state: keyword(),
-    answer_eligible: { type: 'boolean' },
-    defining_phase_groups: keyword(),
-    highest_injury: keyword(),
-    wx_cond: keyword(),
-    light: keyword(),
-    aircraft: { type: 'nested', dynamic: 'strict', properties: aircraftProperties() },
-    event_aircraft: { type: 'object', dynamic: 'strict', properties: aircraftProperties() },
+    ...V1_PROPERTIES,
+    event_aircraft: { type: 'nested', dynamic: 'strict', properties: aircraftProperties() },
+    event_aircraft_count: { type: 'integer' },
+    event_aircraft_complete: { type: 'boolean' },
   },
 };
 
@@ -198,14 +298,23 @@ export const PASSAGES_SETTINGS: estypes.IndicesIndexSettings = {
   analysis: AVIATION_ANALYSIS,
 };
 
-/** sha256 over everything that shapes a passage document; recorded in the index `_meta`. */
-export function passagesIndexFingerprint(model: string): string {
+const MAPPINGS: Readonly<Record<PassagesIndexVersion, estypes.MappingTypeMapping>> = {
+  'passages-v1': PASSAGES_V1_MAPPING,
+  'passages-v2': PASSAGES_MAPPING,
+};
+
+/**
+ * sha256 over everything that shapes a passage document of `version` (default: the
+ * one built); recorded in the index `_meta`. Both versions share settings, chunking,
+ * template, tokenizer and dimensions; only the mapping differs.
+ */
+export function passagesIndexFingerprint(model: string, version: PassagesIndexVersion = PASSAGES_INDEX_VERSION): string {
   return createHash('sha256')
     .update(
       JSON.stringify({
-        version: PASSAGES_INDEX_VERSION,
+        version,
         settings: PASSAGES_SETTINGS,
-        mapping: PASSAGES_MAPPING,
+        mapping: MAPPINGS[version],
         chunker: CHUNKER_VERSION,
         chunkOptions: DEFAULT_CHUNK_OPTIONS,
         template: EMBEDDING_INPUT_TEMPLATE_VERSION,
@@ -231,7 +340,7 @@ export function passagesAlias(prefix: string): string {
   return `${prefix}-passages`;
 }
 
-/** `<prefix>-passages-v1-g<generation>-<yyyymmddhhmmssmmm UTC>-<build id>`, like the cases index. */
+/** `<prefix>-passages-v2-g<generation>-<yyyymmddhhmmssmmm UTC>-<build id>`, like the cases index. */
 export function passagesIndexName(prefix: string, generationId: number, at: Date, buildId: string): string {
   checkPrefix(prefix);
   checkBuildId(buildId);
@@ -284,6 +393,8 @@ export interface PassagePlan {
   byKindScope: KindScopeCount[];
   aircraftSpecific: number;
   eventScoped: number;
+  /** Event-scoped passages checked against each event's aircraft rows in PostgreSQL (all complete, or the plan throws). */
+  eventAircraft: { events: number; passages: number; aircraft: number };
   tokens: {
     /** Exact tokens of every embedding input: header, separator, overlap and text. */
     input: number;
@@ -352,15 +463,32 @@ export interface PlanPassagesOptions {
   /** Cases per read batch (default 500). */
   batchSize?: number;
   log?: (message: string) => void;
+  /** Test seam: alters each case record before its passages are built (simulates a projection fault). */
+  mapRecord?: (r: CaseRecord) => CaseRecord;
 }
 
-/** The dry run: every passage of the generation, counted and priced; nothing is written. */
+/**
+ * The passages of one streamed record (answer-eligible only), after the test seam.
+ * Shared by the plan and the build so both see the same passages.
+ */
+function recordPassages(r: CaseRecord, mapRecord: ((r: CaseRecord) => CaseRecord) | undefined) {
+  return buildCasePassages(mapRecord ? mapRecord(r) : r);
+}
+
+/**
+ * The dry run: every passage of the generation, counted and priced; nothing is
+ * written. Throws `IncompleteEventAircraftError` when an event-scoped passage's
+ * aircraft set is not its event's full set in PostgreSQL.
+ */
 export async function planPassages(db: Db, opts: PlanPassagesOptions): Promise<PassagePlan> {
   const started = Date.now();
   const log = opts.log ?? (() => undefined);
   const { generationId, embedding } = opts;
   if (embedding.dims !== PASSAGES_EMBEDDING_DIMS) throw new Error(`the passages mapping needs ${PASSAGES_EMBEDDING_DIMS} dimensions, not ${embedding.dims}`);
   await assertIndexable(db, generationId);
+  const sets = await loadEventAircraftSets(db, generationId);
+  const incomplete = new Set<string>();
+  const eventAircraft = { events: new Set<string>(), passages: 0, aircraft: 0 };
 
   let usCases = 0;
   let answerEligibleCases = 0;
@@ -383,7 +511,7 @@ export async function planPassages(db: Db, opts: PlanPassagesOptions): Promise<P
     usCases += 1;
     if (!r.answerEligible) continue;
     answerEligibleCases += 1;
-    const built = buildCasePassages(r);
+    const built = recordPassages(r, opts.mapRecord);
     if (built.passages.length > 0) casesWithPassages += 1;
     for (const s of built.sections) {
       sections += 1;
@@ -400,7 +528,14 @@ export async function planPassages(db: Db, opts: PlanPassagesOptions): Promise<P
     for (const p of built.passages) {
       passages += 1;
       if (p.aircraftSpecific) aircraftSpecific += 1;
-      else eventScoped += 1;
+      else {
+        eventScoped += 1;
+        if (hasCompleteEventAircraft(p, sets)) {
+          eventAircraft.events.add(p.ntsbNo);
+          eventAircraft.passages += 1;
+          eventAircraft.aircraft += p.aircraft.length;
+        } else incomplete.add(p.ntsbNo);
+      }
       if (p.continuation) continuations += 1;
       maxPassageTextTokens = Math.max(maxPassageTextTokens, p.tokens);
       if (p.kind === 'probable_cause' && p.parts === 1) maxProbableCauseTokens = Math.max(maxProbableCauseTokens, p.tokens);
@@ -417,6 +552,7 @@ export async function planPassages(db: Db, opts: PlanPassagesOptions): Promise<P
     if (usCases % 5000 === 0) log(`planned ${usCases} US cases, ${passages} passages`);
   }
   tokens.header = tokens.input - tokens.text;
+  if (incomplete.size > 0) throw new IncompleteEventAircraftError([...incomplete].sort());
 
   const { available, cached } = await countCachedKeys(db, [...unique.keys()]);
   let hitTokens = 0;
@@ -442,6 +578,7 @@ export async function planPassages(db: Db, opts: PlanPassagesOptions): Promise<P
     byKindScope: [...byKindScope.values()].sort((a, b) => `${a.kind}/${a.scope}`.localeCompare(`${b.kind}/${b.scope}`)),
     aircraftSpecific,
     eventScoped,
+    eventAircraft: { events: eventAircraft.events.size, passages: eventAircraft.passages, aircraft: eventAircraft.aircraft },
     tokens,
     inputTokenPercentiles: percentiles(inputTokens),
     maxPassageTextTokens,
@@ -464,6 +601,19 @@ export async function planPassages(db: Db, opts: PlanPassagesOptions): Promise<P
 // ---------------------------------------------------------------------------
 // Build
 
+/** A cache-only build found inputs that are not cached: it stops before creating an index, having paid for nothing. */
+export class CacheIncompleteError extends Error {
+  constructor(readonly plan: PassagePlan) {
+    super(
+      plan.cache.available
+        ? `${plan.toEmbed.inputs} of ${plan.uniqueInputs} embedding inputs are not in embedding_cache (${plan.toEmbed.tokens} tokens, ` +
+            `about $${plan.estimatedUsd.toFixed(4)}); a cache-only build embeds nothing and stops`
+        : 'embedding_cache does not exist in this database; a cache-only build stops',
+    );
+    this.name = 'CacheIncompleteError';
+  }
+}
+
 export class CostNotConfirmedError extends Error {
   constructor(readonly plan: PassagePlan) {
     super(
@@ -477,8 +627,14 @@ export interface RebuildPassagesOptions {
   generationId: number;
   prefix: string;
   gate: SpendGate;
-  /** Required: without it the build stops after the plan (`CostNotConfirmedError`). */
+  /** Required for a paid build: without it the build stops after the plan (`CostNotConfirmedError`). */
   confirmCost: boolean;
+  /**
+   * Build from `embedding_cache` alone: the embedder is replaced by one that throws on
+   * any call, `confirmCost` and the spend gate are not consulted, and the build stops
+   * with `CacheIncompleteError` before creating an index unless every input is cached.
+   */
+  cacheOnly?: boolean;
   /** Cases per read batch (default 200). */
   batchSize?: number;
   /** Passages per embedding/indexing window (default 480). */
@@ -493,6 +649,8 @@ export interface RebuildPassagesOptions {
   alias?: Pick<SwitchAliasOptions, 'lockTimeoutMs' | 'readAttempts' | 'readRetryDelayMs'>;
   /** Test seam: runs once the generation is pinned, before planning. */
   afterPin?: () => Promise<void> | void;
+  /** Test seam: alters each case record before its passages are built, in the plan and the build. */
+  mapRecord?: (r: CaseRecord) => CaseRecord;
 }
 
 export interface PassagesIndexReport {
@@ -516,6 +674,8 @@ export interface PassagesIndexReport {
   cacheHits: number;
   /** Passages whose exact input another passage of this build already had: embedded once. */
   deduplicated: number;
+  /** Built with `cacheOnly`: no embedder call was possible. */
+  cacheOnly: boolean;
   embedded: { inputs: number; tokens: number; requests: number; usd: number };
   plan: PassagePlan;
   durationMs: number;
@@ -621,6 +781,8 @@ interface Expected {
   eventScoped: number;
   /** Nested aircraft: one per aircraft-scoped passage. */
   nestedAircraft: number;
+  /** Nested event aircraft: the event's aircraft count per event-scoped passage. */
+  eventAircraft: number;
 }
 
 async function verifyIndex(es: Client, index: string, want: Expected): Promise<void> {
@@ -631,21 +793,43 @@ async function verifyIndex(es: Client, index: string, want: Expected): Promise<v
     aggs: {
       kinds: { multi_terms: { terms: [{ field: 'section_kind' }, { field: 'scope' }], size: 20 } },
       aircraft: { nested: { path: 'aircraft' } },
+      event_aircraft: { nested: { path: 'event_aircraft' } },
+      event_aircraft_count: { sum: { field: 'event_aircraft_count' } },
     },
   });
   const total = typeof res.hits.total === 'number' ? res.hits.total : (res.hits.total?.value ?? -1);
   const buckets = (res.aggregations?.kinds as estypes.AggregationsMultiTermsAggregate | undefined)?.buckets;
   const got = new Map((Array.isArray(buckets) ? buckets : []).map((b) => [`${b.key[0]}/${b.key[1]}`, b.doc_count]));
   const nested = (res.aggregations?.aircraft as estypes.AggregationsNestedAggregate | undefined)?.doc_count ?? -1;
+  const nestedEvent = (res.aggregations?.event_aircraft as estypes.AggregationsNestedAggregate | undefined)?.doc_count ?? -1;
+  const countSum = (res.aggregations?.event_aircraft_count as estypes.AggregationsSumAggregate | undefined)?.value ?? -1;
   const count = async (query: estypes.QueryDslQueryContainer) => (await es.count({ index, query })).count;
   const nestedAny: estypes.QueryDslQueryContainer = { nested: { path: 'aircraft', query: { match_all: {} } } };
+  const eventAny: estypes.QueryDslQueryContainer = { nested: { path: 'event_aircraft', query: { match_all: {} } } };
+  const eventScoped: estypes.QueryDslQueryContainer = { term: { aircraft_specific: false } };
+  const aircraftScoped: estypes.QueryDslQueryContainer = { term: { aircraft_specific: true } };
   const checks: [string, number, number][] = [
     ['passages', want.passages, total],
     ['nested aircraft', want.nestedAircraft, nested],
-    ['event-scoped (aircraft_specific false)', want.eventScoped, await count({ term: { aircraft_specific: false } })],
-    ['event-scoped with nested aircraft', 0, await count({ bool: { filter: [{ term: { aircraft_specific: false } }, nestedAny] } })],
-    ['aircraft-scoped with event aircraft', 0, await count({ bool: { filter: [{ term: { aircraft_specific: true } }, { exists: { field: 'event_aircraft.aircraft_key' } }] } })],
-    ['event-scoped without event aircraft', 0, await count({ bool: { filter: [{ term: { aircraft_specific: false } }], must_not: [{ exists: { field: 'event_aircraft.aircraft_key' } }] } })],
+    ['nested event aircraft', want.eventAircraft, nestedEvent],
+    ['sum of event_aircraft_count', want.eventAircraft, countSum],
+    ['event-scoped (aircraft_specific false)', want.eventScoped, await count(eventScoped)],
+    ['event-scoped with nested aircraft', 0, await count({ bool: { filter: [eventScoped, nestedAny] } })],
+    ['aircraft-scoped with event aircraft', 0, await count({ bool: { filter: [aircraftScoped, eventAny] } })],
+    ['event-scoped without event aircraft', 0, await count({ bool: { filter: [eventScoped], must_not: [eventAny] } })],
+    ['event-scoped not marked complete', 0, await count({ bool: { filter: [eventScoped], must_not: [{ term: { event_aircraft_complete: true } }] } })],
+    ['event-scoped with fewer than 2 event aircraft', 0, await count({ bool: { filter: [eventScoped], must_not: [{ range: { event_aircraft_count: { gte: 2 } } }] } })],
+    [
+      'aircraft-scoped with an event aircraft count or flag',
+      0,
+      await count({
+        bool: {
+          filter: [aircraftScoped],
+          should: [{ term: { event_aircraft_complete: true } }, { exists: { field: 'event_aircraft_count' } }],
+          minimum_should_match: 1,
+        },
+      }),
+    ],
     ['with an embedding', want.passages, await count({ exists: { field: 'embedding' } })],
     ['not answer-eligible', 0, await count({ bool: { must_not: { term: { answer_eligible: true } } } })],
     ['non-US', 0, await count({ bool: { must_not: { term: { country: 'USA' } } } })],
@@ -673,9 +857,11 @@ function checkPool(db: Db): void {
  *    while the alias is blocked by an unresolved switch attempt; record the build.
  * 2. Check and pin the generation for this build (`index-build:<build id>`, no
  *    expiry), as the cases index does.
- * 3. Plan (the dry run). Stop with `CostNotConfirmedError` unless `confirmCost`, and
- *    with `SpendRefusedError` if the plan's reservations exceed the remaining indexing
- *    budget. An empty plan is refused.
+ * 3. Plan (the dry run; it refuses incomplete event aircraft sets). With `cacheOnly`,
+ *    stop with `CacheIncompleteError` unless every input is cached; otherwise stop
+ *    with `CostNotConfirmedError` unless `confirmCost`, and with `SpendRefusedError`
+ *    if the plan's reservations exceed the remaining indexing budget. An empty plan is
+ *    refused.
  * 4. Create the index and stream the generation again: store passages, resolve
  *    vectors (cache first, then the embedder for misses, each distinct input once,
  *    in the plan's request boundaries), cache new vectors, bulk-load documents.
@@ -689,12 +875,15 @@ function checkPool(db: Db): void {
 export async function rebuildPassagesIndex(
   es: Client,
   db: Db,
-  embedder: Embedder,
+  given: Embedder,
   opts: RebuildPassagesOptions,
 ): Promise<PassagesIndexReport> {
   const started = Date.now();
   const log = opts.log ?? (() => undefined);
   const { generationId, prefix } = opts;
+  const cacheOnly = opts.cacheOnly === true;
+  // A cache-only build never holds a callable embedder: only the model, dimensions and price are kept.
+  const embedder: Embedder = cacheOnly ? cacheOnlyEmbedder(given) : given;
   if (embedder.dims !== PASSAGES_EMBEDDING_DIMS) throw new Error(`the passages mapping needs ${PASSAGES_EMBEDDING_DIMS} dimensions, not ${embedder.dims}`);
   checkPool(db);
   const buildId = opts.buildId ?? newBuildId();
@@ -715,15 +904,26 @@ export async function rebuildPassagesIndex(
         await pinIndexableGeneration(db, generationId, pinReason);
         pinned = true;
         await opts.afterPin?.();
-        const plan = await planPassages(db, { generationId, embedding: spec, batchSize: opts.batchSize, log });
+        const plan = await planPassages(db, {
+          generationId,
+          embedding: spec,
+          batchSize: opts.batchSize,
+          log,
+          ...(opts.mapRecord ? { mapRecord: opts.mapRecord } : {}),
+        });
         if (plan.passages === 0) throw new GenerationNotIndexableError(generationId, 'it has no answer-eligible US passages');
-        if (!opts.confirmCost) throw new CostNotConfirmedError(plan);
-        const remaining = await opts.gate.remainingUsd('indexing');
-        if (plan.reservationUsd > remaining) {
-          throw new SpendRefusedError(
-            `the build reserves up to $${plan.reservationUsd.toFixed(6)} but $${remaining.toFixed(6)} of the indexing budget is left`,
-          );
+        if (cacheOnly) {
+          if (!plan.cache.available || plan.toEmbed.inputs > 0) throw new CacheIncompleteError(plan);
+        } else {
+          if (!opts.confirmCost) throw new CostNotConfirmedError(plan);
+          const remaining = await opts.gate.remainingUsd('indexing');
+          if (plan.reservationUsd > remaining) {
+            throw new SpendRefusedError(
+              `the build reserves up to $${plan.reservationUsd.toFixed(6)} but $${remaining.toFixed(6)} of the indexing budget is left`,
+            );
+          }
         }
+        const sets = await loadEventAircraftSets(db, generationId);
         const fingerprint = passagesIndexFingerprint(embedder.model);
 
         await es.indices.create({
@@ -745,7 +945,7 @@ export async function rebuildPassagesIndex(
         });
         log(`created ${index}`);
 
-        const want: Expected = { passages: 0, byKindScope: new Map(), eventScoped: 0, nestedAircraft: 0 };
+        const want: Expected = { passages: 0, byKindScope: new Map(), eventScoped: 0, nestedAircraft: 0, eventAircraft: 0 };
         const embedded = { inputs: 0, tokens: 0, requests: 0, usd: 0 };
         let cacheHits = 0;
         let deduplicated = 0;
@@ -773,7 +973,7 @@ export async function rebuildPassagesIndex(
           if (!entry) return;
           pending.delete(key);
           for (const p of entry.passages) {
-            const doc = buildPassageDocument(p, vector);
+            const doc = buildPassageDocument(p, vector, sets);
             ready.push(doc);
             readyBytes += Buffer.byteLength(JSON.stringify(doc));
             await flushDocs(false);
@@ -815,7 +1015,10 @@ export async function rebuildPassagesIndex(
             want.passages += 1;
             want.byKindScope.set(`${p.kind}/${p.scope}`, (want.byKindScope.get(`${p.kind}/${p.scope}`) ?? 0) + 1);
             if (p.aircraftSpecific) want.nestedAircraft += p.aircraft.length;
-            else want.eventScoped += 1;
+            else {
+              want.eventScoped += 1;
+              want.eventAircraft += eventAircraftCount(p, sets) ?? 0;
+            }
             const entry = pending.get(key);
             if (seen.has(key)) deduplicated += 1;
             if (entry) {
@@ -848,7 +1051,7 @@ export async function rebuildPassagesIndex(
 
         for await (const r of streamCaseRecords(db, generationId, { batchSize: opts.batchSize ?? 200 })) {
           if (!r.answerEligible) continue;
-          window.push(...buildCasePassages(r).passages);
+          window.push(...recordPassages(r, opts.mapRecord).passages);
           if (window.length >= windowSize) await processWindow();
         }
         await processWindow();
@@ -899,6 +1102,7 @@ export async function rebuildPassagesIndex(
           passagesAlreadyStored: alreadyStored,
           cacheHits,
           deduplicated,
+          cacheOnly,
           embedded,
           plan,
           durationMs: Date.now() - started,

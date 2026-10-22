@@ -5,8 +5,10 @@ import {
   EMBEDDING_LIMITS,
   EmbeddingDeferredError,
   EmbeddingRequestError,
+  CacheOnlyEmbeddingError,
   RESERVATION_SAFETY_FACTOR,
   batchByLimits,
+  cacheOnlyEmbedder,
   checkBatch,
   createFakeEmbedder,
   createOpenAIEmbedder,
@@ -395,6 +397,19 @@ describe('batching', () => {
     expect(parseResetDuration('120ms')).toBe(120);
     expect(parseResetDuration('soon')).toBeUndefined();
     expect(parseResetDuration(null)).toBeUndefined();
+  });
+});
+
+describe('cache-only embedder', () => {
+  it('keeps the model, dimensions and price and refuses every call without reaching the wrapped embedder', async () => {
+    const wrapped = { ...createFakeEmbedder(DIMS, 'text-embedding-3-small'), usdPerMillionTokens: PRICE };
+    const refusing = cacheOnlyEmbedder(wrapped);
+    expect(refusing).toMatchObject({ model: 'text-embedding-3-small', dims: DIMS, usdPerMillionTokens: PRICE });
+    await expect(refusing.embed(['a', 'b'])).rejects.toBeInstanceOf(CacheOnlyEmbeddingError);
+    await expect(refusing.embed(['a'])).rejects.toThrow(/cache-only build asked to embed 1 input\(s\); nothing was sent/);
+    expect(wrapped.calls).toEqual([]);
+    // It holds no reference to the wrapped embedder's request function.
+    expect(Object.values(refusing)).not.toContain(wrapped.embed);
   });
 });
 

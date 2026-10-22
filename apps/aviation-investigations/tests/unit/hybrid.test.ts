@@ -10,10 +10,14 @@ import {
 import { errors } from '@elastic/elasticsearch';
 import {
   PASSAGES_CONTRACT,
+  PASSAGES_CONTRACTS,
+  PASSAGES_V1_CONTRACT,
+  PASSAGES_V2_CONTRACT,
   PassagesCheckTimeoutError,
   PassagesIndexIncompatibleError,
   isDefinitivePassagesFailure,
   passagesCheckFailure,
+  matchPassagesContract,
   passagesIndexMismatches,
   passagesIndexProblems,
   type PassagesContract,
@@ -23,6 +27,7 @@ import { packEvidence, type PackOptions, type PackablePassage } from '../../serv
 import {
   NO_AIRCRAFT,
   RetrievalFiltersSchema,
+  aircraftClauses,
   compileFilters,
   filterClauses,
   type Query,
@@ -33,6 +38,7 @@ import {
   RetrievalUnavailableError,
   SERVABLE_PASSAGES_VERSIONS,
   elideVectors,
+  retrieveCandidates,
   retrieveEvidence,
   retrievalParams,
   type QueryEmbeddingUsage,
@@ -45,11 +51,17 @@ import { EMBEDDING_INPUT_TEMPLATE_VERSION } from '../../worker/index/passages.js
 import { PASSAGES_EMBEDDING_DIMS, PASSAGES_INDEX_VERSION, passagesIndexFingerprint } from '../../worker/index/passages-index.js';
 
 const DIMS = 16;
-const INDEX = 'test-passages-v1-g7';
+const INDEX = 'test-passages-v2-g7';
 const DATASET: RetrievalDataset = { generationId: 7, passagesIndex: INDEX };
 const FAKE_FINGERPRINT = 'f'.repeat(64);
-/** The approved contract plus the fake embedder's 16-dimension test embedding. */
-const CONTRACT: PassagesContract = { ...PASSAGES_CONTRACT, fingerprints: { 'fake-embedding-v1/16': FAKE_FINGERPRINT } };
+const FAKE_V1_FINGERPRINT = '1'.repeat(64);
+/** The approved contracts with the fake embedder's 16-dimension test embedding. */
+const CONTRACTS: PassagesContract[] = [
+  { ...PASSAGES_V2_CONTRACT, fingerprints: { 'fake-embedding-v1/16': FAKE_FINGERPRINT } },
+  { ...PASSAGES_V1_CONTRACT, fingerprints: { 'fake-embedding-v1/16': FAKE_V1_FINGERPRINT } },
+];
+/** `_meta` of a v1 index for the fake embedding. */
+const V1_META = { index_version: 'passages-v1', fingerprint: FAKE_V1_FINGERPRINT };
 
 // ---------------------------------------------------------------------------
 // Synthetic passages
@@ -126,7 +138,7 @@ function fakeEs(keyword: Doc[], vector: Doc[], all: Doc[], opts: FakeOptions = {
           [index]: {
             mappings: {
               _meta: {
-                index_version: 'passages-v1',
+                index_version: 'passages-v2',
                 generation_id: 7,
                 fingerprint: FAKE_FINGERPRINT,
                 chunker_version: 'chunk-v2',
@@ -184,30 +196,106 @@ function corpus(n: number): Doc[] {
 
 // ---------------------------------------------------------------------------
 
+/** The filter clauses of the keyword body, the kNN prefilter and the fetch (its last clause selects ids and causes). */
+function bodyFilters(calls: estypes.SearchRequest[]): { keyword: Query[]; vector: Query[]; fetch: Query[] } {
+  const [kw, vec, fetch] = calls;
+  return {
+    keyword: (kw?.query as { bool: { filter: Query[] } }).bool.filter,
+    vector: ((vec?.knn as estypes.KnnSearch).filter as { bool: { filter: Query[] } }).bool.filter,
+    fetch: (fetch?.query as { bool: { filter: Query[] } }).bool.filter.slice(0, -1),
+  };
+}
+
+/**
+ * The passages-v2 aircraft clause for phase landing and category AIR: the own-aircraft
+ * branch, or an event-scoped passage whose complete, non-empty event aircraft set has
+ * no aircraft failing the conjunction.
+ */
+const QUALIFIED_LANDING_AIR: Query = {
+  bool: {
+    should: [
+      {
+        bool: {
+          filter: [
+            { term: { aircraft_specific: true } },
+            {
+              nested: {
+                path: 'aircraft',
+                query: { bool: { filter: [{ terms: { 'aircraft.defining_phase_group': ['landing'] } }, { terms: { 'aircraft.category': ['AIR'] } }] } },
+              },
+            },
+          ],
+        },
+      },
+      {
+        bool: {
+          filter: [
+            { term: { aircraft_specific: false } },
+            { term: { event_aircraft_complete: true } },
+            { nested: { path: 'event_aircraft', query: { match_all: {} } } },
+          ],
+          must_not: [
+            {
+              nested: {
+                path: 'event_aircraft',
+                query: {
+                  bool: {
+                    must_not: [
+                      {
+                        bool: {
+                          filter: [
+                            { terms: { 'event_aircraft.defining_phase_group': ['landing'] } },
+                            { terms: { 'event_aircraft.category': ['AIR'] } },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+    minimum_should_match: 1,
+  },
+};
+
+/** The own-aircraft branch both versions share: the passage's one nested aircraft satisfies every facet. */
+const OWN_AIRCRAFT_LANDING_AIR: Query[] = [
+  { term: { aircraft_specific: true } },
+  {
+    nested: {
+      path: 'aircraft',
+      query: { bool: { filter: [{ terms: { 'aircraft.defining_phase_group': ['landing'] } }, { terms: { 'aircraft.category': ['AIR'] } }] } },
+    },
+  },
+];
+
 describe('one filter for every retrieval request', () => {
   it('same filters applied to both channels', async () => {
     const all = corpus(8);
-    const f = fakeEs(all.filter((d) => d.section_kind === 'analysis'), all.filter((d) => d.section_kind === 'factual'), all);
+    const f = fakeEs(all.filter((d) => d.section_kind === 'analysis'), all.filter((d) => d.section_kind === 'factual'), all, { meta: V1_META });
     const embedder = createFakeEmbedder(DIMS);
     const filters = { category: ['AIR'], phase: ['landing'], injury: ['FATL'], yearFrom: 2010, yearTo: 2015 };
-    const r = await retrieveEvidence(f.es, embedder, { dataset: DATASET, text: 'engine power loss after maintenance', filters, contract: CONTRACT });
+    const r = await retrieveEvidence(f.es, embedder, {
+      dataset: { generationId: 7, passagesIndex: `${INDEX}-v1-bodies` },
+      text: 'engine power loss after maintenance',
+      filters,
+      contracts: CONTRACTS,
+    });
     const [kw, vec, fetch] = f.calls;
-    const keywordFilter = (kw?.query as { bool: { filter: Query[] } }).bool.filter;
-    const vectorFilter = (vec?.knn as estypes.KnnSearch).filter as { bool: { filter: Query[] } };
-    const fetchFilter = (fetch?.query as { bool: { filter: Query[] } }).bool.filter;
+    const bodies = bodyFilters(f.calls);
     const compiled = compileFilters(filters).bool.filter;
-    expect(keywordFilter).toEqual(compiled);
-    expect(vectorFilter.bool.filter).toEqual(compiled);
-    expect(fetchFilter.slice(0, -1)).toEqual(compiled);
+    expect(bodies.keyword).toEqual(compiled);
+    expect(bodies.vector).toEqual(compiled);
+    expect(bodies.fetch).toEqual(compiled);
     expect(compiled).toContainEqual({ term: { answer_eligible: true } });
     expect(compiled).toContainEqual({ term: { country: 'USA' } });
-    expect(compiled).toContainEqual({ term: { aircraft_specific: true } });
-    expect(compiled).toContainEqual({
-      nested: {
-        path: 'aircraft',
-        query: { bool: { filter: [{ terms: { 'aircraft.defining_phase_group': ['landing'] } }, { terms: { 'aircraft.category': ['AIR'] } }] } },
-      },
-    });
+    // A passages-v1 index keeps the exclusion: the own-aircraft clauses at the top level, nothing about event aircraft.
+    for (const clause of OWN_AIRCRAFT_LANDING_AIR) expect(compiled).toContainEqual(clause);
+    expect(JSON.stringify(compiled)).not.toContain('event_aircraft');
     // Both channels ask for the same number of passages; kNN looks at 4x as many candidates.
     expect(kw?.size).toBe(50);
     // No search may return partial results.
@@ -243,6 +331,65 @@ describe('one filter for every retrieval request', () => {
     expect(JSON.stringify(filterClauses('passages', { injury: ['FATL'], state: ['AK'] }))).not.toContain('aircraft_specific');
   });
 
+  it('passages-v2: the identical event-level qualification in the keyword body, the kNN prefilter and the cause fetch', async () => {
+    const all = corpus(8);
+    const f = fakeEs(all.filter((d) => d.section_kind === 'analysis'), all.filter((d) => d.section_kind === 'factual'), all);
+    const filters = { category: ['AIR'], phase: ['landing'], injury: ['FATL'], yearFrom: 2010, yearTo: 2015 };
+    const dataset = { generationId: 7, passagesIndex: `${INDEX}-v2-bodies` };
+    const r = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset, text: 'engine power loss after maintenance', filters, contracts: CONTRACTS });
+    const bodies = bodyFilters(f.calls);
+    const compiled = compileFilters(filters, { eventAircraftQualification: true }).bool.filter;
+    expect(bodies.keyword).toEqual(compiled);
+    expect(bodies.vector).toEqual(compiled);
+    expect(bodies.fetch).toEqual(compiled);
+    expect(compiled).toEqual([
+      { term: { country: 'USA' } },
+      { term: { answer_eligible: true } },
+      { terms: { highest_injury: ['FATL'] } },
+      QUALIFIED_LANDING_AIR,
+      { range: { ev_year: { gte: 2010, lte: 2015 } } },
+    ]);
+    // The recorded bodies are the sent ones.
+    expect((r.requests.keyword as { query: { bool: { filter: Query[] } } }).query.bool.filter).toEqual(compiled);
+    expect((r.requests.fetch as { query: { bool: { filter: Query[] } } }).query.bool.filter.slice(0, -1)).toEqual(compiled);
+    const c = await retrieveCandidates(fakeEs([], [], [], {}).es, createFakeEmbedder(DIMS), { dataset, text: 'x', filters, contracts: CONTRACTS });
+    expect(c).toMatchObject({ indexVersion: 'passages-v2', eventAircraftQualification: true, filter: compiled });
+  });
+
+  it('compiles the event-level qualification: complete, non-empty, and no aircraft failing the full conjunction', () => {
+    const on = { eventAircraftQualification: true };
+    expect(aircraftClauses('passages', { phase: ['landing'], category: ['AIR'] }, on)).toEqual([QUALIFIED_LANDING_AIR]);
+    // Off (passages-v1, and the default): the exclusion, unchanged.
+    expect(aircraftClauses('passages', { phase: ['landing'], category: ['AIR'] })).toEqual(OWN_AIRCRAFT_LANDING_AIR);
+    // Without aircraft facets both versions compile the same filter.
+    expect(compileFilters({ injury: ['FATL'], state: ['AK'] }, on)).toEqual(compileFilters({ injury: ['FATL'], state: ['AK'] }));
+    // Every facet is one predicate of the same conjunction, applied to each event aircraft.
+    const all = aircraftClauses('passages', { phase: ['cruise'], category: ['HELI'], engine: ['TS'], far_part: ['091'], purpose: ['PERS'] }, on);
+    const conjunction = JSON.parse(JSON.stringify(all))[0].bool.should[1].bool.must_not[0].nested.query.bool.must_not[0].bool.filter;
+    expect(conjunction).toEqual([
+      { terms: { 'event_aircraft.defining_phase_group': ['cruise'] } },
+      { terms: { 'event_aircraft.category': ['HELI'] } },
+      { terms: { 'event_aircraft.eng_types': ['TS'] } },
+      { terms: { 'event_aircraft.far_part': ['091'] } },
+      { terms: { 'event_aircraft.purpose': ['PERS'] } },
+    ]);
+    // The cases index never takes it.
+    expect(() => filterClauses('cases', { category: ['AIR'] }, on)).toThrow(/passages index only/);
+  });
+
+  it('a missing value fails its predicate on an event aircraft: blank is dropped, and a blank-only facet leaves the event branch out', () => {
+    const on = { eventAircraftQualification: true };
+    // Blank only: no event aircraft can satisfy it, so only the exclusion form remains.
+    expect(aircraftClauses('passages', { category: ['blank'] }, on)).toEqual(aircraftClauses('passages', { category: ['blank'] }));
+    expect(aircraftClauses('passages', { category: ['HELI'], purpose: ['blank'] }, on)).toEqual(aircraftClauses('passages', { category: ['HELI'], purpose: ['blank'] }));
+    // A code and blank: the own-aircraft branch still matches a missing value, the event branch only the code.
+    const [clause] = aircraftClauses('passages', { category: ['HELI', 'blank'] }, on) as [Query];
+    const [own, event] = (clause as { bool: { should: Query[] } }).bool.should as [Query, Query];
+    expect(JSON.stringify(own)).toContain('"must_not":[{"exists":{"field":"aircraft.category"}}]');
+    expect(JSON.stringify(event)).not.toContain('exists');
+    expect(JSON.stringify(event)).toContain('{"terms":{"event_aircraft.category":["HELI"]}}');
+  });
+
   it('records request bodies without vectors', () => {
     const body = { index: 'x', knn: { field: 'embedding', query_vector: [0.1, 0.2, 0.3], k: 1, num_candidates: 4 } };
     expect(elideVectors(body)).toEqual({ index: 'x', knn: { field: 'embedding', query_vector: '<3-dimension query vector elided>', k: 1, num_candidates: 4 } });
@@ -254,7 +401,7 @@ describe('refusals', () => {
   it('refuses without a published passages index and sends nothing', async () => {
     const f = fakeEs([], [], []);
     const embedder = createFakeEmbedder(DIMS);
-    const err = await retrieveEvidence(f.es, embedder, { dataset: { generationId: 7, passagesIndex: null }, text: 'carb ice', contract: CONTRACT }).catch((e: unknown) => e);
+    const err = await retrieveEvidence(f.es, embedder, { dataset: { generationId: 7, passagesIndex: null }, text: 'carb ice', contracts: CONTRACTS }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RetrievalUnavailableError);
     expect((err as RetrievalUnavailableError).reason).toBe('no_passages_index');
     expect(f.calls).toHaveLength(0);
@@ -276,7 +423,7 @@ describe('refusals', () => {
     const embedder = createFakeEmbedder(DIMS);
     // A distinct index name per case: a passed check is remembered per index.
     const dataset = { generationId: 7, passagesIndex: `${INDEX}-${JSON.stringify(meta)}` };
-    const err = await retrieveEvidence(f.es, embedder, { dataset, text: 'carb ice', contract: CONTRACT }).catch((e: unknown) => e);
+    const err = await retrieveEvidence(f.es, embedder, { dataset, text: 'carb ice', contracts: CONTRACTS }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RetrievalUnavailableError);
     expect((err as RetrievalUnavailableError).reason).toBe('index_mismatch');
     expect(String((err as Error).message)).toMatch(message);
@@ -296,7 +443,7 @@ describe('refusals', () => {
     await retrieveEvidence(f.es, createFakeEmbedder(DIMS), {
       dataset: { generationId: 7, passagesIndex: `${INDEX}-deadline` },
       text: 'carb ice',
-      contract: CONTRACT,
+      contracts: CONTRACTS,
       params: { timeoutMs: 1234 },
       signal: controller.signal,
     });
@@ -304,15 +451,25 @@ describe('refusals', () => {
   });
 
   it('serves exactly the index the worker builds: version, chunker, template and approved fingerprint', () => {
-    expect(SERVABLE_PASSAGES_VERSIONS).toEqual([PASSAGES_INDEX_VERSION]);
+    expect(SERVABLE_PASSAGES_VERSIONS).toEqual(['passages-v2', 'passages-v1']);
+    expect(PASSAGES_CONTRACTS).toEqual([PASSAGES_V2_CONTRACT, PASSAGES_V1_CONTRACT]);
+    expect(PASSAGES_CONTRACT).toBe(PASSAGES_V2_CONTRACT);
     expect(PASSAGES_CONTRACT.indexVersion).toBe(PASSAGES_INDEX_VERSION);
-    expect(PASSAGES_CONTRACT.chunkerVersion).toBe(CHUNKER_VERSION);
-    expect(PASSAGES_CONTRACT.inputTemplateVersion).toBe(EMBEDDING_INPUT_TEMPLATE_VERSION);
-    // Recomputed with the worker's definition: a mapping, analysis or chunking change fails here until approved.
-    expect(PASSAGES_CONTRACT.fingerprints[`text-embedding-3-small/${PASSAGES_EMBEDDING_DIMS}`]).toBe(passagesIndexFingerprint('text-embedding-3-small'));
+    for (const c of PASSAGES_CONTRACTS) {
+      // Same chunks and the same embedding inputs in both versions: v2 is built from v1's cached vectors.
+      expect(c.chunkerVersion).toBe(CHUNKER_VERSION);
+      expect(c.inputTemplateVersion).toBe(EMBEDDING_INPUT_TEMPLATE_VERSION);
+      // Recomputed with the worker's definition: a mapping, analysis or chunking change fails here until approved.
+      expect(c.fingerprints[`text-embedding-3-small/${PASSAGES_EMBEDDING_DIMS}`]).toBe(
+        passagesIndexFingerprint('text-embedding-3-small', c.indexVersion as 'passages-v1' | 'passages-v2'),
+      );
+    }
+    // Only the version with complete nested event aircraft may qualify event-scoped passages.
+    expect(PASSAGES_V2_CONTRACT.eventAircraftQualification).toBe(true);
+    expect(PASSAGES_V1_CONTRACT.eventAircraftQualification).toBe(false);
     const meta: IndexMeta = {
       index: 'x',
-      indexVersion: 'passages-v1',
+      indexVersion: 'passages-v2',
       fingerprint: passagesIndexFingerprint('text-embedding-3-small'),
       generationId: 1,
       buildId: 'b',
@@ -321,11 +478,42 @@ describe('refusals', () => {
       chunkerVersion: 'chunk-v2',
       inputTemplateVersion: 'input-v1',
     };
-    expect(passagesIndexProblems(meta, { generationId: 1, model: 'text-embedding-3-small', dims: 1536 })).toEqual([]);
+    const expectation = { generationId: 1, model: 'text-embedding-3-small', dims: 1536 };
+    expect(passagesIndexProblems(meta, expectation)).toEqual([]);
+    expect(matchPassagesContract(meta, expectation).contract).toBe(PASSAGES_V2_CONTRACT);
     expect(passagesIndexProblems(meta, { generationId: 1, model: 'text-embedding-3-small', dims: 512 })).toEqual([
       '1536 dimensions (expected 512)',
       'no approved fingerprint for text-embedding-3-small/512',
     ]);
+    // The published v1 index stays servable, under its own contract (qualification off).
+    const v1 = { ...meta, indexVersion: 'passages-v1', fingerprint: PASSAGES_V1_CONTRACT.fingerprints['text-embedding-3-small/1536'] as string };
+    expect(passagesIndexProblems(v1, expectation)).toEqual([]);
+    expect(matchPassagesContract(v1, expectation).contract).toBe(PASSAGES_V1_CONTRACT);
+    // A version's fingerprint never passes for the other version, and an unknown version is refused.
+    expect(passagesIndexProblems({ ...meta, indexVersion: 'passages-v1' }, expectation)).toEqual(['fingerprint ed335f462734 (expected 57d731b28445)']);
+    expect(passagesIndexProblems({ ...v1, indexVersion: 'passages-v2' }, expectation)).toEqual(['fingerprint 57d731b28445 (expected ed335f462734)']);
+    expect(passagesIndexProblems({ ...meta, indexVersion: 'passages-v3' }, expectation)).toEqual([
+      'index version passages-v3 (expected passages-v2 or passages-v1)',
+    ]);
+  });
+
+  it('retrieval on a passages-v1 index keeps the exclusion; on passages-v2 it qualifies events', async () => {
+    const filters = { category: ['HELI'] };
+    const v1 = fakeEs([], [], [], { meta: V1_META });
+    const c1 = await retrieveCandidates(v1.es, createFakeEmbedder(DIMS), { dataset: { generationId: 7, passagesIndex: `${INDEX}-v1-only` }, text: 'x', filters, contracts: CONTRACTS });
+    expect(c1).toMatchObject({ indexVersion: 'passages-v1', eventAircraftQualification: false });
+    expect(c1.filter).toEqual(compileFilters(filters).bool.filter);
+    expect(c1.filter).toContainEqual({ term: { aircraft_specific: true } });
+    expect(v1.calls).toHaveLength(2);
+    expect(JSON.stringify(v1.calls)).not.toContain('event_aircraft');
+    const v2 = fakeEs([], [], []);
+    const c2 = await retrieveCandidates(v2.es, createFakeEmbedder(DIMS), { dataset: { generationId: 7, passagesIndex: `${INDEX}-v2-only` }, text: 'x', filters, contracts: CONTRACTS });
+    expect(c2).toMatchObject({ indexVersion: 'passages-v2', eventAircraftQualification: true });
+    expect(c2.filter).toEqual(compileFilters(filters, { eventAircraftQualification: true }).bool.filter);
+    // The check is remembered with its contract: a second request compiles the same filter without reading the mapping.
+    const again = await retrieveCandidates(v2.es, createFakeEmbedder(DIMS), { dataset: { generationId: 7, passagesIndex: `${INDEX}-v2-only` }, text: 'x', filters, contracts: CONTRACTS });
+    expect(again.filter).toEqual(c2.filter);
+    expect(v2.mappingCalls).toBe(1);
   });
 
   it('fixes candidate counts and bundle limits in code', () => {
@@ -397,7 +585,7 @@ describe('complete answers only', () => {
   ] as const)('fails retrieval on an incomplete %s response (%o)', async (request, incomplete, message) => {
     const all = corpus(3);
     const f = fakeEs(all, all, all, { incomplete: { [request]: incomplete } });
-    const err = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset: DATASET, text: 'carb ice', contract: CONTRACT }).catch((e: unknown) => e);
+    const err = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset: DATASET, text: 'carb ice', contracts: CONTRACTS }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(IncompleteSearchError);
     expect(String((err as Error).message)).toMatch(message);
   });
@@ -408,7 +596,7 @@ describe('complete answers only', () => {
   ])('accepts shards skipped by the pre-filter, which Elasticsearch counts as successful (%o)', async (shards) => {
     const all = corpus(3);
     const f = fakeEs(all, all, all, { incomplete: { keyword: { _shards: shards }, vector: { _shards: shards }, fetch: { _shards: shards } } });
-    const r = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset: DATASET, text: 'carb ice', contract: CONTRACT });
+    const r = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset: DATASET, text: 'carb ice', contracts: CONTRACTS });
     expect(r.cases.length).toBeGreaterThan(0);
   });
 
@@ -420,7 +608,7 @@ describe('complete answers only', () => {
       const err = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), {
         dataset: DATASET,
         text: 'carb ice on climb',
-        contract: CONTRACT,
+        contracts: CONTRACTS,
         onQueryEmbedding: (u) => usage.push(u),
       }).catch((e: unknown) => e);
       expect(String((err as Error).message)).toContain(`${fail[0]} search failed`);
@@ -432,7 +620,7 @@ describe('complete answers only', () => {
     const wrongShape = { ...createFakeEmbedder(DIMS), embed: async (texts: string[]) => ({ vectors: [new Float32Array(3)], tokens: texts.length * 7 }) };
     const paid: QueryEmbeddingUsage[] = [];
     await expect(
-      retrieveEvidence(fakeEs([], [], []).es, wrongShape, { dataset: DATASET, text: 'carb ice', contract: CONTRACT, onQueryEmbedding: (u) => paid.push(u) }),
+      retrieveEvidence(fakeEs([], [], []).es, wrongShape, { dataset: DATASET, text: 'carb ice', contracts: CONTRACTS, onQueryEmbedding: (u) => paid.push(u) }),
     ).rejects.toThrow(/wrong shape/);
     expect(paid).toEqual([expect.objectContaining({ tokens: 7, billing: 'reported' })]);
     // A refusal before embedding reports nothing: nothing was paid.
@@ -488,7 +676,7 @@ describe('evidence packing', () => {
     // The same through retrieveEvidence with the default parameters.
     const all = corpus(30);
     const f = fakeEs(all.filter((d) => d.section_kind !== 'probable_cause'), [...all].reverse(), all);
-    const result = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset: DATASET, text: 'stall on approach', contract: CONTRACT });
+    const result = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset: DATASET, text: 'stall on approach', contracts: CONTRACTS });
     expect(result.cases.length).toBeLessThanOrEqual(6);
     expect(result.passages).toBeLessThanOrEqual(12);
     expect(result.cases.flatMap((c) => c.passages)).toHaveLength(result.passages);

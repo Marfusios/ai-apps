@@ -26,12 +26,30 @@
  * Passages differ in the aircraft clause only (amendment A3). An aircraft-scoped
  * passage has exactly one nested aircraft, its own; an event-scoped passage (every
  * section of a multi-aircraft event) has none and lists the event's aircraft under
- * the plain `event_aircraft` field. With any aircraft facet active the passages
- * clause is `aircraft_specific: true` plus the nested clause, and it never has the
- * "event without aircraft" branch the cases index uses for `blank`: that branch would
- * match every event-scoped passage. So an event-scoped passage never satisfies an
- * aircraft filter, and evidence for an aircraft-specific question always comes from
- * the aircraft that matched.
+ * `event_aircraft`. The passages clause never has the "event without aircraft" branch
+ * the cases index uses for `blank`: that branch would match every event-scoped
+ * passage. With any aircraft facet active it is, by passages index version:
+ *
+ * - **Exclusion** (`passages-v1`, and the default): `aircraft_specific: true` plus the
+ *   nested clause. An event-scoped passage never satisfies an aircraft filter.
+ * - **Event-level qualification** (`passages-v2`, `eventAircraftQualification`; the
+ *   gate G5 "every aircraft matches" extension): that aircraft branch, OR an
+ *   event-scoped passage whose event qualifies as a whole:
+ *   - `aircraft_specific: false` and `event_aircraft_complete: true` (the build
+ *     verified that the nested `event_aircraft` holds every aircraft row the event has
+ *     in PostgreSQL);
+ *   - the nested `event_aircraft` is not empty;
+ *   - no nested `event_aircraft` fails the full conjunction of the active aircraft
+ *     facets: `must_not nested(bool must_not conjunction)`. Each aircraft must
+ *     satisfy every facet itself; facets met by different aircraft do not qualify.
+ *     A missing value fails its predicate: `blank` is dropped from the event branch,
+ *     and a facet whose only value is `blank` leaves the event branch out.
+ *   The passage stays event-scoped (`aircraft_key` null): it qualifies the event, it
+ *   never attributes its text to one of the aircraft. A mixed event (a helicopter and
+ *   an airplane) never satisfies a helicopter-only filter.
+ *   Only a version whose documents carry the complete nested set can prove this, so
+ *   the passages contract (`passages-contract.ts`) decides it per index; the flattened
+ *   object `event_aircraft` of `passages-v1` cannot.
  */
 import type { estypes } from '@elastic/elasticsearch';
 import { z } from 'zod';
@@ -156,23 +174,83 @@ export function hasAircraftFilter(selection: FilterSelection): boolean {
   return Object.keys(aircraftSelectionOf(selection)).length > 0;
 }
 
+/** The aircraft facets on the passages index's nested `event_aircraft` (event-scoped passages). */
+export const EVENT_AIRCRAFT_FACET_FIELD: Readonly<Record<AircraftFacet, string>> = {
+  phase: 'event_aircraft.defining_phase_group',
+  category: 'event_aircraft.category',
+  engine: 'event_aircraft.eng_types',
+  far_part: 'event_aircraft.far_part',
+  purpose: 'event_aircraft.purpose',
+};
+
+/**
+ * The conjunction one event aircraft must satisfy: every active facet, each on its
+ * concrete values only. A missing value fails (`blank` is dropped), so null when an
+ * active facet has no value but `blank`: no aircraft can satisfy it.
+ */
+export function eventAircraftConjunction(selection: AircraftSelection): Query[] | null {
+  const out: Query[] = [];
+  for (const facet of AIRCRAFT_FACET_KEYS) {
+    const values = selection[facet];
+    if (!values || values.length === 0) continue;
+    const codes = values.filter((v) => v !== BLANK);
+    if (codes.length === 0) return null;
+    out.push({ terms: { [EVENT_AIRCRAFT_FACET_FIELD[facet]]: codes } });
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * Event-scoped passages whose event qualifies as a whole (module comment): a verified
+ * complete, non-empty nested `event_aircraft` set in which no aircraft fails the
+ * conjunction. Null when the conjunction cannot be satisfied.
+ */
+export function eventAircraftClause(selection: AircraftSelection): Query | null {
+  const conjunction = eventAircraftConjunction(selection);
+  if (!conjunction) return null;
+  return {
+    bool: {
+      filter: [
+        { term: { aircraft_specific: false } },
+        { term: { event_aircraft_complete: true } },
+        { nested: { path: 'event_aircraft', query: { match_all: {} } } },
+      ],
+      must_not: [{ nested: { path: 'event_aircraft', query: { bool: { must_not: [{ bool: { filter: conjunction } }] } } } }],
+    },
+  };
+}
+
+export interface PassagesFilterOptions {
+  /**
+   * Let an event-scoped passage satisfy the aircraft facets when every aircraft of its
+   * event does (module comment). Only for an index whose contract says its documents
+   * carry the complete nested `event_aircraft` set (`passages-v2`); off by default.
+   */
+  eventAircraftQualification?: boolean;
+}
+
 /**
  * The aircraft clauses of a selection for one target, empty when none is active.
  * Cases: one nested clause (or it, or "no aircraft rows" when every active facet
  * allows `blank`). Passages: `aircraft_specific: true` and the nested clause, never
- * the "no aircraft" branch (module comment).
+ * the "no aircraft" branch; with `eventAircraftQualification`, one clause: that, or
+ * an event-scoped passage of a qualifying event (module comment).
  */
-export function aircraftClauses(target: FilterTarget, selection: AircraftSelection): Query[] {
+export function aircraftClauses(target: FilterTarget, selection: AircraftSelection, opts: PassagesFilterOptions = {}): Query[] {
   if (target === 'cases') {
+    if (opts.eventAircraftQualification) throw new Error('the event-level aircraft qualification applies to the passages index only');
     const a = aircraftClause(selection);
     return a ? [a] : [];
   }
   const inner = aircraftInner(selection);
   if (inner.length === 0) return [];
-  return [{ term: { aircraft_specific: true } }, { nested: { path: 'aircraft', query: { bool: { filter: inner } } } }];
+  const own: Query[] = [{ term: { aircraft_specific: true } }, { nested: { path: 'aircraft', query: { bool: { filter: inner } } } }];
+  const event = opts.eventAircraftQualification ? eventAircraftClause(selection) : null;
+  if (!event) return own;
+  return [{ bool: { should: [{ bool: { filter: own } }, event], minimum_should_match: 1 } }];
 }
 
-export interface CompileOptions {
+export interface CompileOptions extends PassagesFilterOptions {
   except?: Except;
   /** Cases only: the probable-cause text clause ("mentioned in the probable cause"). */
   textInCause?: Query | null;
@@ -201,7 +279,10 @@ export function filterClauses(target: FilterTarget, selection: FilterSelection, 
     if (facet === except.facet || values.length === 0) continue;
     out.push(valuesClause(EVENT_FACET_FIELD[facet], values));
   }
-  if (!except.aircraft) out.push(...aircraftClauses(target, aircraftSelectionOf(selection, except.facet)));
+  if (!except.aircraft) {
+    const qualification = opts.eventAircraftQualification ? { eventAircraftQualification: true } : {};
+    out.push(...aircraftClauses(target, aircraftSelectionOf(selection, except.facet), qualification));
+  }
   if (!except.years) {
     const y = yearsClause(selection.yearFrom, selection.yearTo);
     if (y) out.push(y);
@@ -256,10 +337,12 @@ export type ValidatedFilters = RetrievalFilters;
 /**
  * The passages filter both retrieval channels use (BM25 `filter`, kNN prefilter and
  * the evidence fetch): `answer_eligible: true`, `country: USA`, the selection, and for
- * any aircraft facet `aircraft_specific: true` with one nested aircraft clause.
+ * any aircraft facet `aircraft_specific: true` with one nested aircraft clause, or
+ * with `eventAircraftQualification` (the index's contract decides) that or a
+ * qualifying event-scoped passage (module comment).
  */
-export function compileFilters(f: ValidatedFilters): { bool: { filter: Query[] } } {
-  return { bool: { filter: filterClauses('passages', f) } };
+export function compileFilters(f: ValidatedFilters, opts: PassagesFilterOptions = {}): { bool: { filter: Query[] } } {
+  return { bool: { filter: filterClauses('passages', f, opts.eventAircraftQualification ? { eventAircraftQualification: true } : {}) } };
 }
 
 /** What `filters()` leaves out: one facet's own selection, the years, completion or the probable-cause text. */

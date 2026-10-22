@@ -4,11 +4,17 @@
  * (`server/dataset.ts`) and retrieval (`server/search/hybrid.ts`): a passages index
  * is served only when its `_meta` names
  * - the generation being served;
- * - the approved index version (`passages-v1`);
- * - the approved chunker (`chunk-v2`) and embedding-input template (`input-v1`);
+ * - an approved index version (`PASSAGES_CONTRACTS`: `passages-v2`, `passages-v1`);
+ * - that version's chunker (`chunk-v2`) and embedding-input template (`input-v1`);
  * - the configured embedding model and dimensions;
- * - the approved mapping fingerprint for that model and dimension count.
+ * - that version's approved mapping fingerprint for that model and dimension count.
  * A missing, unknown or different value is refused; nothing is inferred.
+ *
+ * The version also decides how retrieval filters the index:
+ * `eventAircraftQualification` lets an event-scoped passage satisfy aircraft filters
+ * when every aircraft of its event does (gate G5 extension, `filters.ts`). Only
+ * `passages-v2` stores each event's complete aircraft set as nested `event_aircraft`
+ * and can prove that; `passages-v1` keeps the exclusion.
  *
  * The approved fingerprints are recorded here, not computed, so the API does not
  * load the worker's mapping and analysis code. A unit test recomputes each one with
@@ -17,7 +23,7 @@
  * version is approved here.
  *
  * `worker publish` also compares the index's document count with the generation's
- * `passages` rows for the approved chunker version.
+ * `passages` rows for the version's chunker.
  */
 import { errors, type Client } from '@elastic/elasticsearch';
 import { IndexMetaError, readIndexMeta, type IndexMeta, type IndexMetaOptions } from './index-meta.js';
@@ -28,9 +34,27 @@ export interface PassagesContract {
   inputTemplateVersion: string;
   /** Approved mapping fingerprint per embedding, keyed `<model>/<dims>`. */
   fingerprints: Readonly<Record<string, string>>;
+  /**
+   * Whether an event-scoped passage may satisfy aircraft filters when every aircraft
+   * of its event does (`filters.ts`). True only for a version whose documents carry
+   * the event's complete aircraft set as nested `event_aircraft`.
+   */
+  eventAircraftQualification: boolean;
 }
 
-export const PASSAGES_CONTRACT: PassagesContract = Object.freeze({
+/** The current version: event aircraft nested and complete, so the event-level qualification is on. */
+export const PASSAGES_V2_CONTRACT: PassagesContract = Object.freeze({
+  indexVersion: 'passages-v2',
+  chunkerVersion: 'chunk-v2',
+  inputTemplateVersion: 'input-v1',
+  fingerprints: Object.freeze({
+    'text-embedding-3-small/1536': 'ed335f462734e6b8e4888ed51f6ba2f9926747b100e97d9735eeb0c1f6043dd2',
+  }),
+  eventAircraftQualification: true,
+});
+
+/** The first version (event aircraft a flattened object): servable, with event-scoped passages excluded under aircraft filters. */
+export const PASSAGES_V1_CONTRACT: PassagesContract = Object.freeze({
   indexVersion: 'passages-v1',
   chunkerVersion: 'chunk-v2',
   inputTemplateVersion: 'input-v1',
@@ -38,7 +62,14 @@ export const PASSAGES_CONTRACT: PassagesContract = Object.freeze({
     // The shared dev index (generation 1, built at d2b9db8) records this fingerprint.
     'text-embedding-3-small/1536': '57d731b28445deb4369951a92c767414376b6d78cc312c1cdea4a8b822375b5b',
   }),
+  eventAircraftQualification: false,
 });
+
+/** Every servable passages version, newest first; the worker builds the first. */
+export const PASSAGES_CONTRACTS: readonly PassagesContract[] = Object.freeze([PASSAGES_V2_CONTRACT, PASSAGES_V1_CONTRACT]);
+
+/** The contract the worker builds to (`PASSAGES_INDEX_VERSION`). */
+export const PASSAGES_CONTRACT: PassagesContract = PASSAGES_V2_CONTRACT;
 
 export const embeddingKey = (model: string, dims: number): string => `${model}/${dims}`;
 
@@ -53,17 +84,38 @@ export interface PassagesExpectation {
 /** The contract fields an index can fail on (fixed names, safe for logs). */
 export type ContractField = 'generation' | 'index_version' | 'chunker' | 'input_template' | 'embedding_model' | 'embedding_dims' | 'fingerprint';
 
-/** Every way `meta` breaks the contract, by field; empty when the index can be served. */
-export function passagesIndexMismatches(
+/** The contracts a check accepts: one version, or several (newest first). */
+export type PassagesContracts = PassagesContract | readonly PassagesContract[];
+
+const contractList = (c: PassagesContracts): readonly PassagesContract[] => ('indexVersion' in c ? [c] : c);
+
+export interface PassagesContractMatch {
+  /** The contract of the index's version; the first (newest) accepted one when the version is not accepted. */
+  contract: PassagesContract;
+  /** Every way the index breaks that contract, by field; empty when it can be served. */
+  mismatches: { field: ContractField; problem: string }[];
+}
+
+/**
+ * The contract of `meta`'s index version, and every way `meta` breaks it. An index
+ * version none of `contracts` names is a mismatch; the rest is then checked against
+ * the newest contract, so the report lists every difference.
+ */
+export function matchPassagesContract(
   meta: IndexMeta,
   expect: PassagesExpectation,
-  contract: PassagesContract = PASSAGES_CONTRACT,
-): { field: ContractField; problem: string }[] {
+  contracts: PassagesContracts = PASSAGES_CONTRACTS,
+): PassagesContractMatch {
+  const list = contractList(contracts);
+  const newest = list[0];
+  if (!newest) throw new Error('no passages contract to check against');
+  const own = list.find((c) => c.indexVersion === meta.indexVersion);
+  const contract = own ?? newest;
   const out: { field: ContractField; problem: string }[] = [];
   const show = (v: string | number | null) => (v === null ? 'none' : String(v));
   const add = (field: ContractField, problem: string) => out.push({ field, problem });
   if (meta.generationId !== expect.generationId) add('generation', `generation ${show(meta.generationId)} (expected ${expect.generationId})`);
-  if (meta.indexVersion !== contract.indexVersion) add('index_version', `index version ${show(meta.indexVersion)} (expected ${contract.indexVersion})`);
+  if (!own) add('index_version', `index version ${show(meta.indexVersion)} (expected ${list.map((c) => c.indexVersion).join(' or ')})`);
   if (meta.chunkerVersion !== contract.chunkerVersion) add('chunker', `chunker ${show(meta.chunkerVersion)} (expected ${contract.chunkerVersion})`);
   if (meta.inputTemplateVersion !== contract.inputTemplateVersion) {
     add('input_template', `input template ${show(meta.inputTemplateVersion)} (expected ${contract.inputTemplateVersion})`);
@@ -74,12 +126,21 @@ export function passagesIndexMismatches(
   const approved = Object.hasOwn(contract.fingerprints, key) ? contract.fingerprints[key] : undefined;
   if (approved === undefined) add('fingerprint', `no approved fingerprint for ${key}`);
   else if (meta.fingerprint !== approved) add('fingerprint', `fingerprint ${meta.fingerprint ? meta.fingerprint.slice(0, 12) : 'none'} (expected ${approved.slice(0, 12)})`);
-  return out;
+  return { contract, mismatches: out };
+}
+
+/** Every way `meta` breaks the contract of its version, by field; empty when the index can be served. */
+export function passagesIndexMismatches(
+  meta: IndexMeta,
+  expect: PassagesExpectation,
+  contracts: PassagesContracts = PASSAGES_CONTRACTS,
+): { field: ContractField; problem: string }[] {
+  return matchPassagesContract(meta, expect, contracts).mismatches;
 }
 
 /** Every way `meta` breaks the contract, as sentences (operator messages); empty when the index can be served. */
-export function passagesIndexProblems(meta: IndexMeta, expect: PassagesExpectation, contract: PassagesContract = PASSAGES_CONTRACT): string[] {
-  return passagesIndexMismatches(meta, expect, contract).map((m) => m.problem);
+export function passagesIndexProblems(meta: IndexMeta, expect: PassagesExpectation, contracts: PassagesContracts = PASSAGES_CONTRACTS): string[] {
+  return passagesIndexMismatches(meta, expect, contracts).map((m) => m.problem);
 }
 
 export class PassagesIndexIncompatibleError extends Error {
@@ -133,18 +194,25 @@ export function isDefinitivePassagesFailure(err: unknown): boolean {
   return err instanceof PassagesIndexIncompatibleError || err instanceof IndexMetaError;
 }
 
+/** A passages index that meets the contract of its version. */
+export interface ServablePassagesIndex {
+  meta: IndexMeta;
+  contract: PassagesContract;
+}
+
 /**
- * Read `index`'s `_meta` (bounded by `opts`) and check it against the contract.
- * Throws `IndexMetaError` (missing index, alias) or `PassagesIndexIncompatibleError`.
+ * Read `index`'s `_meta` (bounded by `opts`) and check it against the contract of its
+ * version. Throws `IndexMetaError` (missing index, alias) or
+ * `PassagesIndexIncompatibleError`.
  */
 export async function checkPassagesIndex(
   es: Client,
   index: string,
   expect: PassagesExpectation,
-  opts: IndexMetaOptions & { contract?: PassagesContract } = {},
-): Promise<IndexMeta> {
+  opts: IndexMetaOptions & { contracts?: PassagesContracts } = {},
+): Promise<ServablePassagesIndex> {
   const meta = await readIndexMeta(es, index, opts);
-  const mismatches = passagesIndexMismatches(meta, expect, opts.contract);
+  const { contract, mismatches } = matchPassagesContract(meta, expect, opts.contracts);
   if (mismatches.length > 0) throw new PassagesIndexIncompatibleError(index, mismatches);
-  return meta;
+  return { meta, contract };
 }

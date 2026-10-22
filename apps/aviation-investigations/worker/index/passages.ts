@@ -9,9 +9,11 @@
  *   from it. In a multi-aircraft event every section is event-scoped (the narrative
  *   row that carried a text does not prove which aircraft it describes): its passages
  *   are `event`-scoped with `aircraftSpecific: false`, carry every aircraft of the
- *   event, and say "Event (n aircraft)" in the header. Retrieval excludes them
- *   whenever an aircraft filter is active, so they never ground an aircraft-specific
- *   claim. Any other combination is a data-model violation and fails the build.
+ *   event, and say "Event (n aircraft)" in the header. They never ground an
+ *   aircraft-specific claim: under an aircraft filter a `passages-v1` index excludes
+ *   them, and a `passages-v2` index admits them only when every aircraft of the event
+ *   satisfies the filter, still event-scoped (`server/search/filters.ts`). Any other
+ *   combination is a data-model violation and fails the build.
  * - **Embedding input** is `header + "\n" + passage text`, the header being
  *   `"<section label> · <make model | Event (n aircraft)> · <defining phase(s)>"`
  *   (parts without a value are left out). Only the raw passage text is stored, indexed
@@ -118,7 +120,7 @@ export interface CasePassage extends PassageDraft {
   scope: PassageScope;
   /** The aircraft of an aircraft-scoped passage; null for an event-scoped one. */
   aircraftKey: number | null;
-  /** False for event-scoped passages: they never satisfy an aircraft filter. */
+  /** False for event-scoped passages: they never satisfy an aircraft filter as one aircraft's passage. */
   aircraftSpecific: boolean;
   header: string;
   /** `header + "\n" + text`. */

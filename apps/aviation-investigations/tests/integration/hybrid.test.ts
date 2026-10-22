@@ -4,7 +4,8 @@
  * applies; no paid call): one filter on both channels and the fetch, the compulsory
  * country and answer-eligibility clauses, aircraft attribution in the two-aircraft
  * fixtures, the bundle limits, every cause variant attached, and the passages contract
- * at publication and in the API's dataset loader.
+ * at publication and in the API's dataset loader. The event-level aircraft
+ * qualification itself is covered in event-aircraft.test.ts.
  */
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -77,6 +78,8 @@ function intruder(id: string, over: Partial<PassageDoc>): PassageDoc {
       { aircraft_key: 1, category: 'AIR', make: 'X', model: 'Y', far_part: '121', purpose: 'BUS', eng_types: ['TF'], defining_phase_group: 'approach' },
     ],
     event_aircraft: [],
+    event_aircraft_count: null,
+    event_aircraft_complete: false,
     ...over,
   };
 }
@@ -159,16 +162,33 @@ describe('hybrid retrieval on the fixture corpus', () => {
   });
 
   it('two-aircraft fixture: airplane filter never returns helicopter-scoped passage', async () => {
+    // DCA25MA108 (airliner and Army helicopter) is mixed; SEA08LA057 and WPR15FA010 are two
+    // airplanes each. All three have only event-scoped passages (passages-v2: the event
+    // qualifies only when every aircraft satisfies the selection, and stays event-scoped).
+    const qualifying: Record<string, string[]> = {
+      AIR: ['SEA08LA057', 'WPR15FA010'],
+      HELI: [],
+      blank: [],
+      'AIR,HELI': ['DCA25MA108', 'SEA08LA057', 'WPR15FA010'],
+    };
     for (const category of [['AIR'], ['HELI'], ['blank'], ['AIR', 'HELI']]) {
       const c = await retrieveCandidates(es, embedder, { dataset: dataset(), text: MIDAIR, filters: { category }, params: { perChannel: 100 } });
+      expect(c.indexVersion).toBe('passages-v2');
       const hits: PassageHit[] = [...c.keyword, ...c.vector];
-      // DCA25MA108 (airliner and Army helicopter) and SEA08LA057 (two airplanes) have only
-      // event-scoped passages: no aircraft filter can be satisfied by them.
-      expect(hits.filter((h) => !h.aircraftSpecific)).toEqual([]);
-      expect(hits.map((h) => h.ntsbNo)).not.toContain('DCA25MA108');
-      expect(hits.map((h) => h.ntsbNo)).not.toContain('SEA08LA057');
+      const allowed = qualifying[category.join(',')] as string[];
+      for (const h of hits.filter((x) => !x.aircraftSpecific)) {
+        expect(h).toMatchObject({ scope: 'event', aircraftKey: null });
+        expect(allowed).toContain(h.ntsbNo);
+      }
+      // A single category is never met by both aircraft of the mixed event.
+      if (category.length === 1) expect(hits.map((h) => h.ntsbNo)).not.toContain('DCA25MA108');
       const packed = await fetchAndPack(es, c.index, c.filter, c.cases, c.params);
-      expect(packed.cases.flatMap((x) => x.passages).every((p) => p.aircraftSpecific)).toBe(true);
+      for (const p of packed.cases.flatMap((x) => x.passages)) {
+        if (!p.aircraftSpecific) {
+          expect(allowed).toContain(p.ntsbNo);
+          expect(p).toMatchObject({ scope: 'event', aircraftKey: null });
+        }
+      }
     }
     // The helicopter filter only finds single-helicopter cases, the airplane filter only airplanes.
     const heli = await retrieveEvidence(es, embedder, { dataset: dataset(), text: MIDAIR, filters: { category: ['HELI'] } });
@@ -258,11 +278,13 @@ describe('the passages contract at publication and in the API', () => {
       await expect(publish()).rejects.toThrow(message);
     };
     try {
-      await withMeta({ fingerprint: 'e'.repeat(64) }, /fingerprint eeeeeeeeeeee \(expected 57d731b28445\)/);
+      await withMeta({ fingerprint: 'e'.repeat(64) }, /fingerprint eeeeeeeeeeee \(expected ed335f462734\)/);
       await withMeta({ chunker_version: 'chunk-v9' }, /chunker chunk-v9 \(expected chunk-v2\)/);
       await withMeta({ input_template_version: 'input-v9' }, /input template input-v9 \(expected input-v1\)/);
       await withMeta({ embedding_dims: 512 }, /512 dimensions \(expected 1536\)/);
-      await withMeta({ index_version: 'passages-v2' }, /index version passages-v2/);
+      await withMeta({ index_version: 'passages-v3' }, /index version passages-v3 \(expected passages-v2 or passages-v1\)/);
+      // A v2 mapping cannot pass as v1 (and so be served without its completeness proof checked), nor the reverse.
+      await withMeta({ index_version: 'passages-v1' }, /fingerprint ed335f462734 \(expected 57d731b28445\)/);
     } finally {
       await es.indices.putMapping({ index, _meta: original });
     }
