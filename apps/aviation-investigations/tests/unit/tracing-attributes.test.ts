@@ -1,8 +1,8 @@
-import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
+import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 import { hashBrief, resetTracingStats, sanitizeAttrs, tracingStats } from '../../server/observability/attributes.js';
-import { stageSpan, startTracing } from '../../server/observability/tracing.js';
+import { stageSpan, startRequestSpan, startTracing } from '../../server/observability/tracing.js';
 
 const QUESTION = 'Why did the pilot lose control after the flaps were retracted near Denver?';
 const ENV = {
@@ -47,10 +47,10 @@ describe('tracing attributes', () => {
   it('keeps allowlisted values and drops unknown keys, long strings, free text', () => {
     const out = sanitizeAttrs({
       stage: 'compose', model: 'claude-opus-5-5', inputTokens: 12, usd: 0.09, extra: 'x',
-      outcome: 'two words', promptVersion: 'v'.repeat(65), caseCount: Number.NaN, briefHash: hashBrief('brief-1', 'salt'),
+      outcome: 'two words', datasetGeneration: 'a<b>', indexVersion: 'ok/1.2+x@y:z', promptVersion: 'v'.repeat(65), caseCount: Number.NaN, briefHash: hashBrief('brief-1', 'salt'),
     });
-    expect(Object.keys(out).sort()).toEqual(['briefHash', 'inputTokens', 'model', 'stage', 'usd']);
-    expect(tracingStats.droppedAttrs).toBe(4);
+    expect(Object.keys(out).sort()).toEqual(['briefHash', 'indexVersion', 'inputTokens', 'model', 'stage', 'usd']);
+    expect(tracingStats.droppedAttrs).toBe(5);
     expect(out.briefHash).not.toContain('brief-1');
     expect(hashBrief('brief-1', 'salt')).not.toBe(hashBrief('brief-1', 'other'));
   });
@@ -67,6 +67,50 @@ describe('tracing attributes', () => {
     await new Promise((r) => setTimeout(r, 300));
     await h.shutdown();
     expect(tracingStats.exportFailures).toBeGreaterThan(0);
+  });
+
+  it('stage spans inside a request span share its trace and parent', async () => {
+    const exporter = new InMemorySpanExporter();
+    const h = startTracing(cfg(), { exporter, scheduledDelayMillis: 10 });
+    stop = () => h.shutdown();
+    await startRequestSpan('request', { outcome: 'ok' }, async () => {
+      await stageSpan('scope', { stage: 'scope' }, () => stageSpan('inner', {}, () => 1));
+      await stageSpan('compose', { stage: 'compose' }, async () => {
+        await new Promise((r) => setTimeout(r, 5));
+      });
+    });
+    await startRequestSpan('other', {}, () => 1);
+    await new Promise((r) => setTimeout(r, 100));
+    const by = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s]));
+    const id = (s: { parentSpanContext?: { spanId: string } }) => s.parentSpanContext?.spanId;
+    const root = by.request!;
+    expect(id(root)).toBeUndefined();
+    expect(by.scope!.spanContext().traceId).toBe(root.spanContext().traceId);
+    expect(by.compose!.spanContext().traceId).toBe(root.spanContext().traceId);
+    expect(id(by.scope!)).toBe(root.spanContext().spanId);
+    expect(id(by.compose!)).toBe(root.spanContext().spanId);
+    expect(id(by.inner!)).toBe(by.scope!.spanContext().spanId);
+    expect(by.other!.spanContext().traceId).not.toBe(root.spanContext().traceId);
+  });
+
+  it('requires https unless loopback or test', async () => {
+    const prod = { NODE_ENV: 'production' };
+    const run = async (url: string, nodeEnv: string) => {
+      const exporter = new InMemorySpanExporter();
+      const h = startTracing(loadConfig({ env: { ...ENV, LANGFUSE_BASE_URL: url, NODE_ENV: nodeEnv }, files: [] }), {
+        exporter,
+        scheduledDelayMillis: 10,
+      });
+      await stageSpan('x', {}, () => 1);
+      await new Promise((r) => setTimeout(r, 50));
+      const n = exporter.getFinishedSpans().length;
+      await h.shutdown();
+      return n;
+    };
+    expect(await run('http://langfuse.example.com', prod.NODE_ENV)).toBe(0);
+    expect(await run('https://langfuse.example.com', prod.NODE_ENV)).toBe(1);
+    expect(await run('http://localhost:3000', prod.NODE_ENV)).toBe(1);
+    expect(await run('http://langfuse.example.com', 'test')).toBe(1);
   });
 
   it('is disabled when the config is incomplete', async () => {

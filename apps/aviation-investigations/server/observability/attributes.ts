@@ -46,6 +46,7 @@ export const ALLOWED_ATTR_KEYS: readonly string[] = Object.keys(KINDS);
 
 export const MAX_ATTR_STRING = 64;
 const MAX_SPAN_NAME = 64;
+const VALUE_RE = /^[A-Za-z0-9._:/@+-]+$/;
 const NAME_RE = /^[A-Za-z0-9_.:-]+$/;
 
 /** Operational counters; no content. */
@@ -69,7 +70,7 @@ export function sanitizeAttrs(attrs: object): Record<string, string | number> {
     let ok = false;
     if (kind === 'number') ok = typeof value === 'number' && Number.isFinite(value);
     else if (kind === 'string') {
-      ok = typeof value === 'string' && value.length > 0 && value.length <= MAX_ATTR_STRING && !/\s/u.test(value);
+      ok = typeof value === 'string' && value.length > 0 && value.length <= MAX_ATTR_STRING && VALUE_RE.test(value);
     }
     if (ok) out[key] = value as string | number;
     else tracingStats.droppedAttrs += 1;

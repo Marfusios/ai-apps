@@ -1,11 +1,12 @@
-import { SpanStatusCode, type Span, type Tracer } from '@opentelemetry/api';
+import { context, SpanStatusCode, trace, type Span, type Tracer } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import {
-  BasicTracerProvider,
   BatchSpanProcessor,
   type ReadableSpan,
+  TracerProvider,
   type SpanExporter,
-} from '@opentelemetry/sdk-trace-base';
+} from '@opentelemetry/sdk-trace';
 import type { AppConfig } from '../../shared/config.js';
 import { safeSpanName, sanitizeAttrs, tracingStats, type AllowedAttrs } from './attributes.js';
 
@@ -24,6 +25,21 @@ export interface StartTracingOptions {
   maxExportBatchSize?: number;
   /** Upper bound on `shutdown()`. */
   shutdownTimeoutMillis?: number;
+}
+
+/** https is required except for loopback hosts and the test environment. */
+function transportAllowed(cfg: AppConfig, baseUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol === 'https:') return true;
+  if (url.protocol !== 'http:') return false;
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  const loopback = host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
+  return loopback || cfg.nodeEnv === 'test';
 }
 
 const NOOP: TracingHandle = { async shutdown() {} };
@@ -86,6 +102,10 @@ function bounded(p: Promise<void>, ms: number): Promise<void> {
 export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): TracingHandle {
   const { enabled, baseUrl, publicKey, secretKey } = cfg.tracing;
   if (!enabled || !baseUrl || !publicKey || !secretKey) return NOOP;
+  if (!transportAllowed(cfg, baseUrl)) return NOOP;
+
+  // Needed so nested spans find their parent; a no-op if a manager is already set.
+  context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
 
   void active?.shutdown();
   const auth = Buffer.from(`${publicKey}:${secretKey}`).toString('base64');
@@ -97,9 +117,10 @@ export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): Tr
       headers: { Authorization: `Basic ${auth}`, 'x-langfuse-ingestion-version': '4' },
       timeoutMillis: timeout,
     });
-  const provider = new BasicTracerProvider({
+  const provider = new TracerProvider({
     spanProcessors: [
-      new BatchSpanProcessor(swallowing(inner), {
+      new BatchSpanProcessor({
+        exporter: swallowing(inner),
         maxQueueSize: opts.maxQueueSize ?? 256,
         maxExportBatchSize: opts.maxExportBatchSize ?? 64,
         scheduledDelayMillis: opts.scheduledDelayMillis ?? 5000,
@@ -140,16 +161,17 @@ function safely(fn: () => void): void {
  * Runs `fn` inside a span carrying only allowlisted, content-free attributes. Tracing
  * problems never change `fn`'s result or error; error messages are not recorded.
  */
-export async function stageSpan<T>(
+async function runInSpan<T>(
   name: string,
   attrs: AllowedAttrs,
   fn: (span: StageSpanHandle) => Promise<T> | T,
+  root = false,
 ): Promise<T> {
   const t = tracer;
   if (!t) return fn(NOOP_HANDLE);
   let span: Span | undefined;
   try {
-    span = t.startSpan(safeSpanName(name));
+    span = t.startSpan(safeSpanName(name), {}, root ? trace.deleteSpan(context.active()) : undefined);
     span.setAttributes(sanitizeAttrs(attrs));
   } catch {
     tracingStats.exportFailures += 1;
@@ -161,6 +183,7 @@ export async function stageSpan<T>(
       if (s) safely(() => s.setAttributes(sanitizeAttrs(more)));
     },
   };
+  const active = s ? trace.setSpan(context.active(), s) : context.active();
   const finish = (ok: boolean) =>
     safely(() => {
       if (!s) return;
@@ -169,7 +192,7 @@ export async function stageSpan<T>(
       s.end();
     });
   try {
-    const result = await fn(handle);
+    const result = await context.with(active, () => fn(handle));
     finish(true);
     return result;
   } catch (err) {
@@ -178,3 +201,25 @@ export async function stageSpan<T>(
   }
 }
 
+
+/**
+ * Runs `fn` inside a span carrying only allowlisted, content-free attributes. Tracing
+ * problems never change `fn`'s result or error; error messages are not recorded.
+ * Spans started inside `fn` become its children.
+ */
+export function stageSpan<T>(
+  name: string,
+  attrs: AllowedAttrs,
+  fn: (span: StageSpanHandle) => Promise<T> | T,
+): Promise<T> {
+  return runInSpan(name, attrs, fn);
+}
+
+/** The root span of one logical request; stage spans run inside it share its trace. */
+export function startRequestSpan<T>(
+  name: string,
+  attrs: AllowedAttrs,
+  fn: (span: StageSpanHandle) => Promise<T> | T,
+): Promise<T> {
+  return runInSpan(name, attrs, fn, true);
+}
