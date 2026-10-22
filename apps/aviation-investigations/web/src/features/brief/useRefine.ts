@@ -10,7 +10,8 @@ import { refineBrief } from './api';
  * A paid step on a brief (UI_DESIGN §4.3 "What costs an AI search on a brief"): free-text
  * refinement, an edited interpretation, changed filters or a picked reading. On success
  * the brief shows its newest step, keeping the compare selection. A retry of the same
- * change after an unknown outcome reuses its idempotency key (the server replays it).
+ * change after an unknown outcome reuses its idempotency key (the server replays it); a
+ * 409 `conflict` to that replay sends it once more under a new key.
  */
 export function useRefine(briefId: string) {
   const request = useAiRequest();
@@ -24,14 +25,19 @@ export function useRefine(briefId: string) {
   const refine = useCallback(
     async (change: RefinementChange): Promise<boolean> => {
       const changeKey = JSON.stringify(change);
-      const replay = unsettled.current;
-      const idempotencyKey = replay && replay.change === changeKey ? replay.key : newIdempotencyKey();
-      unsettled.current = null;
-      const result = await run((turnstileToken) => refineBrief(briefId, { ...change, turnstileToken, idempotencyKey }));
+      const earlier = unsettled.current;
+      const replaying = earlier !== null && earlier.change === changeKey;
+      let idempotencyKey = replaying ? earlier.key : newIdempotencyKey();
+      const result = await run(
+        (turnstileToken) => refineBrief(briefId, { ...change, turnstileToken, idempotencyKey }),
+        // A replay answered 409: the earlier attempt never completed, so send it under a new key.
+        replaying ? { onConflict: () => (idempotencyKey = newIdempotencyKey()) } : {},
+      );
       if (!result.ok) {
-        if (result.outcomeUnknown) unsettled.current = { change: changeKey, key: idempotencyKey };
+        if (!result.busy) unsettled.current = result.outcomeUnknown ? { change: changeKey, key: idempotencyKey } : null;
         return false;
       }
+      unsettled.current = null;
       await queryClient.invalidateQueries({ queryKey: ['brief', briefId] });
       const next = new URLSearchParams();
       if (cases) next.set(CASES_PARAM, cases);

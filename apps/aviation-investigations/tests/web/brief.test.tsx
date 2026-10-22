@@ -659,35 +659,69 @@ describe('Failures are not expiry', { timeout: 20_000 }, () => {
     expect(within(strip).getByRole('button', { name: 'Try again' })).toBeTruthy();
   });
 
-  it('no answer back: the notice does not claim it was free, and Try again replays the same request', async () => {
-    freshApi();
-    installTurnstile();
+  /** Records each brief POST's idempotency key, then lets the mock answer. */
+  const recordKeys = (): string[] => {
     const keys: string[] = [];
     server.use(
       http.post('*/api/briefs', async ({ request }) => {
         keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
-        return keys.length === 1 ? HttpResponse.error() : undefined;
+        return undefined;
       }),
     );
-    const { router } = renderApp('/');
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    return keys;
+  };
+  const askOnHome = async (question: string) => {
+    const app = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: question } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    return app;
+  };
+
+  it('a lost response: the notice does not claim it was free, and Try again replays the same key (no second charge)', async () => {
+    freshApi();
+    installTurnstile();
+    const keys = recordKeys();
+    // The mock starts the brief, then the answer is lost on the way back.
+    const { router } = await askOnHome('Engine power loss after maintenance, lost response');
     expect(await screen.findByText('If it went through, Try again opens it without using another search.', {}, SLOW)).toBeTruthy();
     expect(screen.queryByText("This didn't use one of your searches.")).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Try again\s*·\s*uses 1$/ }));
     await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
+    // The replay returned the brief the lost request had started: one search used, not two.
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
   });
 
-  it('a 503 "unavailable" shows the paused copy', async () => {
+  it('a lost response whose replay is a 409 conflict is asked once more under a new key', async () => {
     freshApi();
     installTurnstile();
-    server.use(http.post('*/api/briefs', () => HttpResponse.json({ error: 'unavailable', message: 'Not now.' }, { status: 503 })));
-    renderApp('/');
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
-    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    const keys = recordKeys();
+    // The request never made a step: the server keeps its key with no result.
+    const { router } = await askOnHome('Engine power loss after maintenance, lost before start');
+    expect(await screen.findByText('If it went through, Try again opens it without using another search.', {}, SLOW)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Try again\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    // The same key first (a replay), then, after its 409, a new one.
+    expect(keys).toHaveLength(3);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(screen.queryByText(/accepted earlier but did not start/)).toBeNull();
+  });
+
+  it('a 503 "unavailable" shows the paused copy, and the next ask uses a new key', async () => {
+    freshApi();
+    installTurnstile();
+    const keys = recordKeys();
+    const { router } = await askOnHome('Engine power loss after maintenance, unavailable');
     expect(await screen.findByText('AI search is temporarily unavailable.', {}, SLOW)).toBeTruthy();
+    // Known outcome: nothing was spent, so the free-search claim is not withheld here.
+    expect(screen.queryByText('If it went through, Try again opens it without using another search.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    // A same-key retry would be a 409 (the server keeps the released key); a new key starts the brief.
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
   });
 
   it('?step past the last answer shows the latest, with a note', async () => {

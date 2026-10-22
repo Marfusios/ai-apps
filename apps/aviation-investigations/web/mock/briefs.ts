@@ -17,6 +17,13 @@
  * - "no match": the answer model's explicit abstention (no retrieved case supports the question);
  * - "midair": an "Examples found" answer about two-aircraft events (SEA08LA057, WPR15FA010),
  *   whose evidence is event-scoped, with two adjacent case citations in the summary;
+ * - "unavailable" (the first time a question is asked): 503 `unavailable`, which releases the
+ *   admission; the server keeps the key with no result, so a retry under the same key is a
+ *   409 `conflict`;
+ * - "lost before start" (the first time): the response is lost and the request never made a
+ *   step, so a replay of its key is a 409 `conflict`;
+ * - "lost response" (the first time): the brief starts but the response is lost, so a replay
+ *   of its key returns that brief without spending again;
  * - "nothing": no results.
  *
  * Once the scope row is done, a running step's checklist carries the step's readings and
@@ -355,8 +362,11 @@ interface MockBrief {
   keys: Map<string, number>;
 }
 
-/** `replayed`: the idempotency key was seen before, so nothing new ran and nothing is spent. */
-export type MockReply<T> = { status: number; body: T | ErrorResponse | null; replayed?: boolean };
+/**
+ * `replayed`: the idempotency key was seen before, so nothing new ran and nothing is spent.
+ * `lost`: the handler drops the response (a network error), whatever happened on the server.
+ */
+export type MockReply<T> = { status: number; body: T | ErrorResponse | null; replayed?: boolean; lost?: boolean };
 
 const STAGES: Checklist[] = [
   { question: 'in_scope' },
@@ -391,6 +401,18 @@ export class MockBriefs {
   private readonly briefs = new Map<string, MockBrief>();
   /** Create requests by idempotency key: a retry with the same key and question replays (DESIGN §8). */
   private readonly created = new Map<string, string>();
+  /** Keys the server took that made no step (a released admission, a start that failed): a retry is a 409. */
+  private readonly unfinished = new Set<string>();
+  /** The one-time failures already played, per question. */
+  private readonly played = new Set<string>();
+
+  /** True the first time `what` happens to `question`. */
+  private once(what: string, question: string): boolean {
+    const key = `${what}:${question}`;
+    if (this.played.has(key)) return false;
+    this.played.add(key);
+    return true;
+  }
   private seq = 0;
   private readonly pollsToFinish: number;
   private readonly now: () => Date;
@@ -416,6 +438,18 @@ export class MockBriefs {
   }
 
   create(body: CreateBriefRequest): MockReply<StartBriefResponse> {
+    if (this.unfinished.has(body.idempotencyKey)) {
+      return error(409, 'conflict', 'This request was accepted earlier but did not start. Ask again.');
+    }
+    const q = body.question.toLowerCase();
+    if (/\bunavailable\b/.test(q) && this.once('unavailable', q)) {
+      this.unfinished.add(body.idempotencyKey);
+      return error(503, 'unavailable', 'AI search is temporarily unavailable.');
+    }
+    if (/\blost before start\b/.test(q) && this.once('lost-before-start', q)) {
+      this.unfinished.add(body.idempotencyKey);
+      return { status: 0, body: null, lost: true };
+    }
     const earlier = this.briefs.get(this.created.get(body.idempotencyKey) ?? '');
     if (earlier) {
       if (earlier.question !== body.question) return error(409, 'conflict', 'This request key was used for another question.');
@@ -427,7 +461,8 @@ export class MockBriefs {
     brief.keys.set(body.idempotencyKey, 1);
     this.briefs.set(brief.id, brief);
     this.created.set(body.idempotencyKey, brief.id);
-    return this.start(brief, step);
+    const reply = this.start(brief, step);
+    return /\blost response\b/.test(q) && this.once('lost-response', q) ? { ...reply, lost: true } : reply;
   }
 
   refine(id: string, body: RefinementRequest): MockReply<StartBriefResponse> {

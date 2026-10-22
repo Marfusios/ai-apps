@@ -26,7 +26,16 @@ export type AiNotice =
 export type AiPhase = 'idle' | 'checking' | 'sending';
 
 /** The outcome of one `run`: the response, or nothing with whether the server may have acted. */
-export type RunResult<T> = { ok: true; value: T } | { ok: false; outcomeUnknown: boolean };
+export type RunResult<T> = { ok: true; value: T } | { ok: false; outcomeUnknown: boolean; busy?: true };
+
+export interface RunOptions {
+  /**
+   * The request replays an idempotency key whose earlier outcome is unknown. A 409
+   * `conflict` then means that attempt did not complete (the server keeps the key with no
+   * result), so the request is sent once more: this swaps in a new key first.
+   */
+  onConflict?: () => void;
+}
 
 /** A fresh idempotency key for one logical AI request (kept across its retries). */
 export function newIdempotencyKey(): string {
@@ -98,8 +107,9 @@ export function useAiRequest() {
   }, []);
 
   const run = useCallback(
-    async <T>(send: (turnstileToken: string | null) => Promise<T>): Promise<RunResult<T>> => {
-      if (running.current) return { ok: false, outcomeUnknown: false };
+    async <T>(send: (turnstileToken: string | null) => Promise<T>, options: RunOptions = {}): Promise<RunResult<T>> => {
+      // This control already has a request in flight: nothing is sent.
+      if (running.current) return { ok: false, outcomeUnknown: false, busy: true };
       running.current = true;
       setNotice(null);
       const finish = <R>(value: R, next: AiNotice | null = null): R => {
@@ -122,8 +132,11 @@ export function useAiRequest() {
       const session = check.session();
       let needToken = availability.anonymous;
       let visible = false;
+      let challengeRetried = false;
+      let conflictRetried = false;
       try {
-        for (let attempt = 0; attempt < 2; attempt++) {
+        // At most three sends: the first, one after a refused token, one after a conflict.
+        for (let attempt = 0; attempt < 3; attempt++) {
           let token: string | null = null;
           if (needToken) {
             setPhase('checking');
@@ -138,10 +151,20 @@ export function useAiRequest() {
           try {
             return finish({ ok: true, value: await send(token) });
           } catch (err) {
-            if (attempt === 0 && err instanceof ApiError && err.body && CHALLENGE.has(err.body.error)) {
+            const code = err instanceof ApiError ? err.body?.error : undefined;
+            if (!challengeRetried && code !== undefined && CHALLENGE.has(code)) {
               // A refused or missing token: one more check, shown in the panel.
+              challengeRetried = true;
               needToken = true;
               visible = true;
+              continue;
+            }
+            if (!conflictRetried && code === 'conflict' && options.onConflict) {
+              // The replayed attempt never completed: send it once more under a new key,
+              // with a new token (tokens are single use).
+              conflictRetried = true;
+              options.onConflict();
+              visible = false;
               continue;
             }
             return finish({ ok: false, outcomeUnknown: outcomeUnknown(err) }, noticeFor(err));

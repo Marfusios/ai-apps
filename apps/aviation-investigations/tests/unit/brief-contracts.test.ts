@@ -120,6 +120,28 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
     }
   });
 
+  it('keys like the server: a released or unstarted key is a 409, a started one replays', () => {
+    const mock = new MockBriefs();
+    const ask = (question: string, idempotencyKey: string) => mock.create({ question, idempotencyKey });
+    // 503 unavailable releases the admission and keeps the key with no result.
+    const q503 = 'Power loss after maintenance, unavailable';
+    expect(ask(q503, 'key-unavail-1')).toMatchObject({ status: 503, body: { error: 'unavailable' } });
+    expect(ask(q503, 'key-unavail-1')).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(ask(q503, 'key-unavail-2').status).toBe(202);
+    // A lost response before the step started: the replay is a 409.
+    const before = 'Power loss after maintenance, lost before start';
+    expect(ask(before, 'key-lostb-1')).toMatchObject({ lost: true });
+    expect(ask(before, 'key-lostb-1')).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(ask(before, 'key-lostb-2').status).toBe(202);
+    // A lost response after the brief started: the replay returns that brief, spending nothing.
+    const after = 'Power loss after maintenance, lost response';
+    const lost = ask(after, 'key-losta-1');
+    expect(lost).toMatchObject({ status: 202, lost: true });
+    const replay = ask(after, 'key-losta-1');
+    expect(replay).toMatchObject({ status: 202, replayed: true });
+    expect(StartBriefResponseSchema.parse(replay.body).briefId).toBe(StartBriefResponseSchema.parse(lost.body).briefId);
+  });
+
   it('a two-aircraft answer: event-scoped evidence, no glyph, and two adjacent citations', () => {
     const mock = new MockBriefs({ pollsToFinish: 1 });
     const started = StartBriefResponseSchema.parse(mock.create({ question: MOCK_MIDAIR_QUESTION, idempotencyKey: 'key-midair-1' }).body);

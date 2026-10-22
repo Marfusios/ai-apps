@@ -108,6 +108,8 @@ export function createHandlers({
   };
   const admit = <T,>(reply: MockReply<T>): Response => {
     if (reply.status < 300 && !reply.replayed) admitted(reply.status === 202);
+    // The server may have acted, but the answer never arrives.
+    if (reply.lost) return HttpResponse.error();
     return briefReply(reply);
   };
   return [

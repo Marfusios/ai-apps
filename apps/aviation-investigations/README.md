@@ -527,7 +527,10 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   "Quick check before your first AI search"; later ones run invisibly while the button
   reads "Checking…". When no answer comes back (a network or server error), the notice
   does not claim the search was free, and Try again replays the same request under the
-  same idempotency key. The site
+  same idempotency key; if that replay is a 409 `conflict` (the earlier attempt never
+  completed), it is sent once more under a new key. A 503 `unavailable` or `ai_paused`
+  released the admission and spent nothing: the paused copy shows, and the next ask uses
+  a new key. The site
   key comes from `/api/config`, and Cloudflare's script loads only when an AI request
   needs it, so the Content-Security-Policy must allow `https://challenges.cloudflare.com`
   as a script and frame source wherever anonymous AI is offered.
@@ -590,7 +593,10 @@ replies and reading templates, a checklist that moves one row per poll
 (`createHandlers({ briefPolls })`) and carries the step's readings and filters after the
 scope row, replays of a request key, and question keywords that select the other
 outcomes (withheld, no match, a two-aircraft "midair" answer with adjacent citations, out
-of scope, operational, counting, comparison, clarification, no results).
+of scope, operational, counting, comparison, clarification, no results) or, the first time
+a question is asked, a failure: "unavailable" (503, its key then a 409), "lost before
+start" (no answer, its key then a 409) and "lost response" (no answer, its key then
+replays the started brief).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
