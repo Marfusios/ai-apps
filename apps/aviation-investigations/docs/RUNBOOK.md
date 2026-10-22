@@ -322,7 +322,14 @@ Loading, verification and the other worker commands then run in the
 pnpm ingest load --from data/work/<dir>
 pnpm ingest verify --generation <id>     # report written to data/reports/<env>/
 pnpm ingest generations
+pnpm ingest index cases --generation <id>  # cases index <prefix>-cases-v2-g<id>-...; alias <prefix>-cases
+pnpm ingest index reconcile --alias <alias>
 ```
+
+The `index` commands (README, "Cases index") use the environment's write API key,
+so they create and switch only `ai-aviation-<env>-*` indices. A build deletes only
+its own index, and only when it failed before any alias request; every other index
+stays until an explicit `index delete-unused --older-than <hours> --yes`.
 
 Paths are relative to the app directory, which the container sees at the same
 relative location (`data/` is mounted at `/app/data`).
@@ -429,7 +436,8 @@ the migrations runs inside a `DO` block guarded by `server_version_num >= 170000
 The loader refreshes statistics through `analyze_corpus()`, a `SECURITY DEFINER`
 function owned by `aviation_migrator` with a fixed `search_path` (migration 0003),
 so it needs no `MAINTAIN`. Already-migrated databases are unaffected by the
-guards; no new migration was needed. `pnpm test:pg16` checks every migration and
+guards; no new migration was needed. Later migrations follow the same pattern
+(0010, the index build and alias switch tables, revokes `MAINTAIN` only on 17+). `pnpm test:pg16` checks every migration and
 the integration suite on 16.2 (a throwaway `postgres16` service of
 `ai-aviation-local`, profile `pg16`, data in tmpfs).
 
