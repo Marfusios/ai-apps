@@ -91,7 +91,8 @@ export class DatasetResolver {
     return facts;
   }
 
-  private async activeManifest(): Promise<ActiveManifest | null> {
+  /** The active manifest row (PostgreSQL only, reused for `manifestTtlMs`), or null before the first publish. */
+  async activeManifest(): Promise<ActiveManifest | null> {
     const cached = this.manifest;
     if (cached && this.now() - cached.at < this.ttl) return cached.value;
     this.manifestLoad ??= getActiveManifest(this.db).finally(() => {

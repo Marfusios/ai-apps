@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { loadConfig } from '../../shared/config.js';
 import { AiStatusResponseSchema, TURNSTILE_ACTION, type AiStatusResponse } from '../../shared/contracts/ai.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
+import { createFakeProvider } from '../../server/ai/fake.js';
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
 import { buildApp } from '../../server/app.js';
 import { closeDb, type Db } from '../../server/db/client.js';
@@ -52,6 +53,8 @@ let ingest: Db;
 let migrator: Db;
 const es = new Client({ node: 'http://localhost:9' }); // never used: these routes read no index
 const apps: FastifyInstance[] = [];
+/** These tests read no index: AI evidence is taken as available (server/routes/ai-status.ts checks it). */
+const EVIDENCE = async () => ({ generationId: 1, passagesIndex: 'aviation-test-passages' });
 
 beforeAll(() => {
   appDb = testDb('app');
@@ -101,6 +104,7 @@ function harness(opts: { config?: AiRuntimeConfig; trialLimits?: TrialCreationLi
     db: appDb,
     turnstile: { fetch: opts.siteverify ?? sv.fetch, retryDelayMs: 0, attemptTimeoutMs: 200 },
     ...(opts.trialLimits ? { trialLimits: opts.trialLimits } : {}),
+    llm: createFakeProvider(),
     now,
   });
   const app = buildApp({
@@ -108,6 +112,7 @@ function harness(opts: { config?: AiRuntimeConfig; trialLimits?: TrialCreationLi
     db: appDb,
     es,
     ai,
+    aiEvidence: EVIDENCE,
     rateLimit: { limit: 100_000, windowMs: 60_000 },
   });
   // What Task 16's AI routes will do for an anonymous visitor.
@@ -486,10 +491,26 @@ describe('GET /api/ai/status', () => {
     // No amounts, ever.
     for (const body of [fresh.raw, returning.raw]) expect(body).not.toMatch(/usd|budget|spend|amount|cost|0\.14|0\.5|0\.6|2\.6/i);
 
-    // Admission agrees: the next anonymous request is refused before any reservation.
+    // The gate agrees before claiming the token: the next anonymous request is refused with
+    // nothing spent (no siteverify call, no reservation); admission would refuse it too.
     advance(MIN);
+    const calls = h.sv.calls.length;
     const refused = await ask(h, { turnstileToken: h.sv.issue() }, { cookie: cookies[0], from: '198.51.100.1' });
-    expect([refused.status, refused.json]).toEqual([429, { rejected: 'anonymous_share_exhausted' }]);
+    const untilMidnight = Math.ceil((Date.parse('2026-11-02T00:00:00Z') - now().getTime()) / 1000);
+    expect([refused.status, refused.json.error, refused.json.retryAfter]).toEqual([429, 'free_searches_paused', untilMidnight]);
+    expect(h.sv.calls.length).toBe(calls);
+    expect(await count('reservations')).toBe(4);
+    const trial = (await migrator.execute(sql`SELECT id::text AS id FROM trial_identities ORDER BY created_at LIMIT 1`)).rows[0] as { id: string };
+    const admission = await admitPaidRequest(appDb, {
+      policy: h.ai.policy!,
+      principal: { kind: 'trial', id: trial.id },
+      networkId: '198.51.100.1',
+      idempotencyKey: 'share-exhausted-1',
+      requestHash: canonicalRequestHash({ question: 'q' }),
+      reservationUsd: 0.14,
+      now: now(),
+    });
+    expect(admission).toMatchObject({ ok: false, reason: 'anonymous_share_exhausted' });
     expect(await count('reservations')).toBe(4);
 
     // A new day brings the free searches back.
@@ -510,9 +531,12 @@ describe('GET /api/ai/status', () => {
       advance(MIN);
     }
     expect((await status(h, cookie)).raw).not.toMatch(/retryAt/);
-    // A fourth request passes the gate (a fresh token) and is refused at admission.
+    // A fourth request is refused by the gate before its token is claimed or checked.
+    const calls = h.sv.calls.length;
     const fourth = await ask(h, { turnstileToken: h.sv.issue() }, { cookie });
-    expect([fourth.status, fourth.json]).toEqual([429, { rejected: 'trial_exhausted' }]);
+    expect([fourth.status, fourth.json.error]).toEqual([429, 'trial_used']);
+    expect(h.sv.calls.length).toBe(calls);
+    expect(await count('turnstile_redemptions')).toBe(3);
   });
 
   it('is paused with reason dependency when AI cannot run', async () => {
@@ -545,8 +569,15 @@ describe('GET /api/ai/status', () => {
     const r = await h.app.inject({ method: 'GET', url: '/api/%61i/status', remoteAddress: VISITOR });
     expect(r.statusCode).toBe(200);
     const sv = new FakeSiteverify(now, { hostname: HOST, action: TURNSTILE_ACTION });
-    const limitedAi = createAiRuntime(aiConfig(), { db: appDb, turnstile: { fetch: sv.fetch }, now });
-    const limited = buildApp({ config: { appUrl: `https://${HOST}`, trustedProxyCidrs: [] }, db: appDb, es, ai: limitedAi, rateLimit: { limit: 1, windowMs: 60_000 } });
+    const limitedAi = createAiRuntime(aiConfig(), { db: appDb, turnstile: { fetch: sv.fetch }, llm: createFakeProvider(), now });
+    const limited = buildApp({
+      config: { appUrl: `https://${HOST}`, trustedProxyCidrs: [] },
+      db: appDb,
+      es,
+      ai: limitedAi,
+      aiEvidence: EVIDENCE,
+      rateLimit: { limit: 1, windowMs: 60_000 },
+    });
     apps.push(limited);
     expect((await limited.inject({ method: 'GET', url: '/api/ai/status', remoteAddress: VISITOR })).statusCode).toBe(200);
     expect((await limited.inject({ method: 'GET', url: '/api/ai/status', remoteAddress: VISITOR })).statusCode).toBe(429);

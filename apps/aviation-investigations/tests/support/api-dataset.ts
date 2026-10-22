@@ -28,6 +28,17 @@ export const TEST_PREFIX = 'aviation-test-';
 
 export async function publishFixtureDataset(ingest: Db, es: Client, prefix: string): Promise<FixtureDataset> {
   if (!prefix.startsWith(TEST_PREFIX)) throw new Error(`prefix must start with ${TEST_PREFIX}`);
+  const generationId = await loadFixtureGeneration(ingest);
+  const built = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+  await publishGeneration(es, ingest, { generationId, casesIndex: built.index, passagesIndex: null });
+  return { generationId, casesIndex: built.index };
+}
+
+/**
+ * Reset aviation_test's corpus, load both fixture sets as one generation, verify it and
+ * import the report-link seed. PostgreSQL only; returns the generation id.
+ */
+export async function loadFixtureGeneration(ingest: Db): Promise<number> {
   await resetCorpus();
   const dir = await makeCombinedExtractDir();
   const reports = mkdtempSync(join(tmpdir(), 'aviation-api-verify-'));
@@ -36,9 +47,7 @@ export async function publishFixtureDataset(ingest: Db, es: Client, prefix: stri
     const verified = await verifyCorpus(ingest, generationId, { outDir: reports, profile: null });
     if (!verified.ok) throw new Error(`fixture generation ${generationId} failed verification`);
     await importSeedLinks(ingest, join(APP_DIR, 'fixtures/report-links-seed.json'));
-    const built = await rebuildCasesIndex(es, ingest, { generationId, prefix });
-    await publishGeneration(es, ingest, { generationId, casesIndex: built.index, passagesIndex: null });
-    return { generationId, casesIndex: built.index };
+    return generationId;
   } finally {
     removeDir(dir);
     removeDir(reports);

@@ -5,7 +5,12 @@
  * - `policy`: the quota policy, which needs both HMAC secrets (server/quota/policy.ts);
  * - `trials`: trial cookies and identities (server/identity/trial.ts), available
  *   whenever the policy is;
- * - `gate`: the anonymous gate (server/identity/gate.ts), which also needs Turnstile.
+ * - `gate`: the anonymous gate (server/identity/gate.ts), which also needs Turnstile;
+ *   before any token work it checks availability with `aiStatus` (kill switch, budgets,
+ *   the trial's searches and the anonymous share);
+ * - `llm`: the language-model provider (server/ai/provider.ts) when the startup check
+ *   passed (tests inject the fake one);
+ * - `traceSalt`: the salt of brief hashes in traces.
  *
  * A missing part keeps the AI features that need it off (fail closed) and is listed in
  * `problems` (setting names only, never values) for the startup log. `GET /api/ai/status`
@@ -19,18 +24,26 @@
 import type { AppConfig } from '../../shared/config.js';
 import { TURNSTILE_ACTION } from '../../shared/contracts/ai.js';
 import type { Db } from '../db/client.js';
-import { AnonymousGate } from '../identity/gate.js';
+import { AnonymousGate, type GateAvailability } from '../identity/gate.js';
+import { deriveIdentityKey } from '../identity/keys.js';
 import { TrialIdentities, type TrialCreationLimits } from '../identity/trial.js';
 import { TurnstileVerifier, TURNSTILE_TEST_SECRET_KEYS, TURNSTILE_TEST_SITE_KEYS, type TurnstileVerifierOptions } from '../identity/turnstile.js';
 import { isHttpsUrl } from '../http/security-headers.js';
 import { QuotaConfigError, quotaPolicy, type QuotaPolicy } from '../quota/policy.js';
+import { aiStatus } from '../quota/status.js';
+import { createAnthropicProvider } from './anthropic.js';
 import { startupAiCheck, type AiStartupCheck } from './pricing.js';
+import type { LlmProvider } from './provider.js';
 
 export interface AiRuntime {
   startup: AiStartupCheck;
   policy: QuotaPolicy | null;
   trials: TrialIdentities | null;
   gate: AnonymousGate | null;
+  /** The language-model provider; null while AI cannot run. */
+  llm: LlmProvider | null;
+  /** Salt of `hashBrief` (derived from IDENTITY_HMAC_SECRET); null without the policy. */
+  traceSalt: string | null;
   now: () => Date;
   /** Why parts of AI are off: setting names and rules only. */
   problems: string[];
@@ -44,7 +57,26 @@ export interface AiRuntimeDeps {
   /** Siteverify transport and timing (tests inject a fake fetch). */
   turnstile?: Pick<TurnstileVerifierOptions, 'fetch' | 'attemptTimeoutMs' | 'attempts' | 'retryDelayMs'>;
   trialLimits?: TrialCreationLimits;
+  /** A provider to use instead of the configured one (tests: the fake provider). */
+  llm?: LlmProvider;
   now?: () => Date;
+}
+
+/**
+ * The gate's availability check: `aiStatus` for the cookie's trial (or a new visitor)
+ * mapped to a refusal, so a request that admission would refuse for the kill switch, the
+ * budgets, a used-up trial or the anonymous share never claims a token or makes a trial.
+ */
+export function gateAvailability(db: Db, policy: QuotaPolicy, reservationUsd: number): GateAvailability {
+  return async (principal, now) => {
+    const s = await aiStatus(db, principal, { policy, reservationUsd, now });
+    if (s.state === 'available') return null;
+    const retryAt = s.retryAt ? { retryAt: s.retryAt } : {};
+    if (s.state === 'paused') return { ok: false, reason: 'ai_paused', status: 503, detail: s.reason ?? 'paused', ...retryAt };
+    if (s.reason === 'trial_used') return { ok: false, reason: 'trial_used', status: 429, detail: 'trial_used' };
+    if (s.reason === 'anonymous_share') return { ok: false, reason: 'free_searches_paused', status: 429, detail: 'anonymous_share', ...retryAt };
+    return { ok: false, reason: 'login_required', status: 403 };
+  };
 }
 
 /** The Turnstile setup problem, or null when the keys and APP_URL suit the environment. */
@@ -103,8 +135,21 @@ export function createAiRuntime(config: AiRuntimeConfig, deps: AiRuntimeDeps): A
       turnstile,
       identitySecret: policy.secrets.identity,
       siteKey: config.turnstile.siteKey!,
+      ...(startup.enabled && startup.reservationUsd !== undefined
+        ? { availability: gateAvailability(deps.db, policy, startup.reservationUsd) }
+        : {}),
       now,
     });
   }
-  return { startup, policy, trials, gate, now, problems };
+
+  let llm: LlmProvider | null = deps.llm ?? null;
+  if (!llm && startup.enabled && config.ai.llmProvider === 'anthropic' && startup.models) {
+    llm = createAnthropicProvider({
+      apiKey: config.ai.anthropic.apiKey,
+      models: { scope: startup.models.scope, answer: startup.models.answer, check: startup.models.check },
+    });
+  }
+  if (!llm && startup.enabled) problems.push('no language-model provider is available');
+  const traceSalt = policy ? deriveIdentityKey(policy.secrets.identity, 'brief-trace').toString('hex') : null;
+  return { startup, policy, trials, gate, llm, traceSalt, now, problems };
 }

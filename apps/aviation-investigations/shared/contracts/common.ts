@@ -66,9 +66,21 @@ export type Dataset = z.infer<typeof DatasetSchema>;
  * Body of every 4xx/5xx JSON response. `message` is plain text for people.
  *
  * The anonymous AI gate (server/identity/gate.ts) adds three 403 codes:
- * `challenge_required` (no Turnstile token was sent), `challenge_failed` (the token was
- * rejected, expired or already used: get a fresh one) and `sign_in_required` (the
- * login-required emergency mode refuses anonymous AI).
+ * `challenge_required` (no Turnstile token was sent, or the trial ended meanwhile:
+ * take a new check), `challenge_failed` (the token was rejected, expired or already
+ * used: get a fresh one) and `sign_in_required` (the login-required emergency mode
+ * refuses anonymous AI).
+ *
+ * AI briefs (shared/contracts/briefs.ts) add, before any spend:
+ * - `ai_paused` (503): AI is paused for everyone (budget or kill switch); `retryAfter`
+ *   when the recovery time is known. `GET /api/ai/status` has the reason.
+ * - `trial_used` (429): this visitor's free searches are used up.
+ * - `free_searches_paused` (429): today's free searches are used up for everyone;
+ *   signed-in AI may still be open.
+ * - `quota_exhausted` (429): a signed-in account's daily or monthly searches are used up.
+ * - `in_flight` (429): this visitor already has an AI request running.
+ * - `conflict` (409): the idempotency key was used with another request.
+ * - `refinement_limit` (409): the brief has used its three refinements.
  */
 export const ErrorResponseSchema = z.strictObject({
   error: z.enum([
@@ -81,6 +93,13 @@ export const ErrorResponseSchema = z.strictObject({
     'challenge_required',
     'challenge_failed',
     'sign_in_required',
+    'ai_paused',
+    'trial_used',
+    'free_searches_paused',
+    'quota_exhausted',
+    'in_flight',
+    'conflict',
+    'refinement_limit',
   ]),
   message: z.string().max(500),
   /** For `bad_request`: which parameters failed. */

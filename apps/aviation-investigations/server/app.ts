@@ -5,6 +5,10 @@
  *   `/api/dashboard`, each pinned to the active dataset manifest (server/dataset.ts),
  *   and `GET /api/ai/status` (server/routes/ai-status.ts). AI routes get the anonymous
  *   gate (server/identity/gate.ts) from `ApiContext.ai`.
+ * - AI briefs under `/api/briefs` (server/routes/briefs.ts) when `AppDeps.briefs` binds
+ *   an evidence retriever. Polling a brief (`GET /api/briefs/:id`, about once a second
+ *   while a step runs) has its own network-identity limit (`pollRateLimit`) so a running
+ *   brief cannot use up the browsing limit; every other route shares `rateLimit`.
  * - The web client from `dist/web` with an SPA fallback: any other GET that accepts
  *   HTML gets the page (`index.html` with a per-response style nonce). Hashed assets
  *   are cached for a year; the page is revalidated.
@@ -34,6 +38,8 @@ import Fastify, { LogController, type FastifyInstance, type FastifyReply, type F
 import type { AppConfig } from '../shared/config.js';
 import type { FacetKey } from '../shared/contracts/search.js';
 import type { AiRuntime } from './ai/runtime.js';
+import type { EvidenceDataset } from './briefs/evidence.js';
+import { manifestEvidence, type BriefServices } from './briefs/services.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
 import type { Db } from './db/client.js';
 import { CLIENT_IP_HEADER, compileTrustedProxies, isLoopback, resolveNetworkIdentity } from './http/network-identity.js';
@@ -44,6 +50,7 @@ import { sendError } from './http/reply.js';
 import { contentSecurityPolicy, isHttpsUrl, securityHeaders } from './http/security-headers.js';
 import { SearchTimedOutError } from './search/timeout.js';
 import { aiStatusRoutes } from './routes/ai-status.js';
+import { briefRoutes } from './routes/briefs.js';
 import { caseRoutes } from './routes/cases.js';
 import { configRoutes } from './routes/config.js';
 import type { ApiContext } from './routes/context.js';
@@ -66,11 +73,20 @@ export interface AppDeps {
   es: Client;
   /** AI runtime (server/ai/runtime.ts); absent: AI is reported unavailable. */
   ai?: AiRuntime | null;
+  /** Evidence retrieval for AI briefs (`createBriefServices`, server/briefs/services.ts); absent: AI briefs are unavailable. */
+  briefs?: BriefServices | null;
+  /**
+   * Test seam: which evidence index AI would use. Default: the active manifest's passages
+   * index, when the briefs' retriever accepts it.
+   */
+  aiEvidence?: () => Promise<EvidenceDataset | null>;
   /** Built web client (`dist/web`); null or a missing directory serves the API only. */
   webRoot?: string | null;
   logger?: FastifyServerOptions['logger'];
   /** Browsing rate limit per network identity (default 60 a minute). */
   rateLimit?: { limit: number; windowMs: number };
+  /** Brief polling limit per network identity (default 150 a minute). */
+  pollRateLimit?: { limit: number; windowMs: number };
   /** How long the active manifest is reused (default 5 s). */
   manifestTtlMs?: number;
   /** How long a health probe result is shared (default `HEALTH_CACHE_MS`). */
@@ -81,13 +97,16 @@ export interface AppDeps {
 /** Route patterns of the web client: the page and the static files (`@fastify/static`'s wildcard). */
 export const ASSET_ROUTES: ReadonlySet<string> = new Set(['/', '/index.html', '/*']);
 const HEALTH_ROUTE = '/api/health';
+/** Read by the brief page about once a second while a step runs. */
+export const POLL_ROUTES: ReadonlySet<string> = new Set(['/api/briefs/:id']);
 
-type Access = 'asset' | 'health' | 'api';
+type Access = 'asset' | 'health' | 'api' | 'poll';
 
 /** The access class of a request, from its matched route; an unmatched request is the not-found handler. */
-function accessOf(route: string | undefined): Access {
+function accessOf(route: string | undefined, method = 'GET'): Access {
   if (route === undefined || ASSET_ROUTES.has(route)) return 'asset';
   if (route === HEALTH_ROUTE) return 'health';
+  if (POLL_ROUTES.has(route) && method === 'GET') return 'poll';
   return 'api';
 }
 
@@ -176,16 +195,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   const limiter = new RateLimiter({ ...(deps.rateLimit ?? { limit: 60, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
+  const pollLimiter = new RateLimiter({ ...(deps.pollRateLimit ?? { limit: 150, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const datasets = new DatasetResolver(deps.db, deps.es, {
     ...(deps.manifestTtlMs !== undefined ? { manifestTtlMs: deps.manifestTtlMs } : {}),
     ...(deps.now ? { now: deps.now } : {}),
   });
+  const briefs = deps.briefs ?? null;
   const ctx: ApiContext = {
     db: deps.db,
     es: deps.es,
     datasets,
     log: app.log,
     ai: deps.ai ?? null,
+    briefs,
+    aiEvidence: deps.aiEvidence ?? (() => manifestEvidence(briefs, () => datasets.activeManifest())),
     onUnknownFacetValue: (facet: FacetKey, value: string) =>
       app.log.warn({ facet, value: value.slice(0, 16) }, 'facet value outside the vocabulary left out of the buckets'),
   };
@@ -194,7 +217,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   app.addHook('onRequest', async (request, reply) => {
     // The route the router matched on the decoded path; the raw target is never consulted.
-    const access = accessOf(request.routeOptions.url);
+    const access = accessOf(request.routeOptions.url, request.method);
     const peer = request.raw.socket.remoteAddress;
     // The container's own health check connects over loopback, never through the tunnel.
     if (access === 'health' && isLoopback(peer)) return;
@@ -210,7 +233,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
     request.networkIdentity = identity.identity;
     if (access === 'asset') return;
-    const decision = limiter.take(identity.identity);
+    const decision = (access === 'poll' ? pollLimiter : limiter).take(identity.identity);
     if (!decision.ok) {
       reply.header('retry-after', String(decision.retryAfterSeconds));
       return sendError(reply, 429, 'rate_limited', { retryAfter: decision.retryAfterSeconds });
@@ -270,6 +293,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   caseRoutes(app, ctx);
   dashboardRoutes(app, ctx);
   aiStatusRoutes(app, ctx);
+  briefRoutes(app, ctx, { appUrl: deps.config.appUrl });
   for (const problem of deps.ai?.problems ?? ['AI is not configured']) app.log.warn({ problem }, 'AI feature off');
   if (deps.ai?.gate?.testKeys) app.log.warn('Turnstile test keys in use: every challenge passes (development only)');
 

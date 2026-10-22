@@ -999,6 +999,8 @@ describe('roles and guards', () => {
       costLedger: 1,
       leases: 1,
       reservations: 1,
+      briefs: 0,
+      briefSteps: 0,
     });
     const left = await migrator.execute(sql`SELECT id::int AS id FROM reservations`);
     expect(left.rows).toEqual([{ id: current.reservationId }]);

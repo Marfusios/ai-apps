@@ -1,0 +1,130 @@
+/**
+ * The ports the brief pipeline reads evidence through.
+ *
+ * `EvidenceRetriever` is the narrow interface to hybrid retrieval (Task 10's
+ * `retrieveEvidence`, bound in phase 2). It fits two properties of that code:
+ * - query-embedding usage is reported through the caller's `onEmbeddingUsage` callback
+ *   as soon as the embedding succeeds, so a later Elasticsearch or packing failure
+ *   cannot lose a paid stage; a failed embedding is reported by `RetrievalFailure`'s
+ *   `embedding` billing;
+ * - a bundle holds at most 6 cases and 12 passages, where every case has its best
+ *   retrieved passage and all its probable-cause variants. `repack` packs the same
+ *   candidates again under a smaller evidence-token budget (no new embedding), for the
+ *   16,000-token compose cap (amendment A11), which is measured with the language
+ *   model's own token counter.
+ *
+ * `CaseCatalog` reads the dataset in PostgreSQL: case summaries for the cards, and the
+ * section revisions the passages were cut from, so each passage's provenance is checked
+ * before it can be quoted (server/briefs/validate.ts `resolvePassage`).
+ */
+import type { BriefFilters } from '../../shared/contracts/briefs.js';
+import type { ReportLink } from '../../shared/contracts/cases.js';
+import type { CaseRow, SectionKind } from '../../shared/contracts/search.js';
+import type { SectionRevision } from './validate.js';
+
+export interface EvidenceDataset {
+  generationId: number;
+  passagesIndex: string;
+}
+
+export interface EvidenceQuery {
+  dataset: EvidenceDataset;
+  /** Text embedded for the dense channel: the question and the text refinement in effect. */
+  text: string;
+  /** Text for the keyword (BM25) channel: the scope stage's `keywordText`. */
+  keywordText: string;
+  /** Validated filters; retrieval adds its compulsory clauses (US, answer-eligible). */
+  filters: BriefFilters;
+}
+
+/** One query embedding, reported once it is paid for. */
+export interface EmbeddingUsage {
+  provider: 'openai';
+  model: string;
+  tokens: number;
+  usd: number;
+  /** `uncertain`: the provider reported no usable usage; settlement charges the stage in full. */
+  billing: 'reported' | 'uncertain';
+}
+
+/** A retrieved passage, with the attribution and offsets retrieval read from the index. */
+export interface EvidencePassage {
+  passageId: string;
+  ntsbNo: string;
+  sectionId: string;
+  revisionId: string;
+  sectionKind: SectionKind;
+  scope: 'aircraft' | 'event';
+  /** The aircraft of an aircraft-scoped passage; null when event-scoped. */
+  aircraftKey: number | null;
+  /** UTF-16 offsets into the section's citation text. */
+  start: number;
+  end: number;
+  text: string;
+  /** Why it is in the bundle: the case's retrieved passages, its causes, or room-filling extras. */
+  role: 'retrieved' | 'probable_cause' | 'fill';
+  /** 1-based fused rank; null for an attached cause. */
+  rank: number | null;
+}
+
+export interface EvidenceCase {
+  ntsbNo: string;
+  /** 1-based rank of the case among the candidates. */
+  rank: number;
+  /** Reading order: factual, analysis, probable cause. */
+  passages: EvidencePassage[];
+}
+
+export interface EvidenceBundle {
+  cases: EvidenceCase[];
+  /** Passages in the bundle (at most 12). */
+  passages: number;
+  /** `cl100k_base` tokens of the passage text (retrieval's own budget unit). */
+  evidenceTokens: number;
+}
+
+export interface RetrievedEvidence {
+  bundle: EvidenceBundle;
+  /** Pack the same candidates again under a smaller evidence-token budget. */
+  repack(maxEvidenceTokens: number, signal: AbortSignal): Promise<EvidenceBundle>;
+}
+
+export type RetrievalFailureKind = 'unavailable' | 'timeout' | 'failed';
+
+/** Retrieval did not produce a bundle. `embedding` says whether a failed embedding may have been billed. */
+export class RetrievalFailure extends Error {
+  override readonly name = 'RetrievalFailure';
+  constructor(
+    readonly kind: RetrievalFailureKind,
+    /** `none`: no embedding was billed by this failure (or it was reported through the callback first). */
+    readonly embedding: 'none' | 'uncertain',
+    message = `retrieval failed: ${kind}`,
+  ) {
+    super(message);
+  }
+}
+
+export interface EvidenceRetriever {
+  /** Whether the dataset can serve evidence: a published, compatible passages index. */
+  available(dataset: { generationId: number; passagesIndex: string | null }): Promise<boolean>;
+  /**
+   * Retrieve one bundle. Calls `onEmbeddingUsage` once, as soon as the query embedding
+   * is paid for. Throws `RetrievalFailure` (or rejects when `signal` aborts).
+   */
+  retrieve(query: EvidenceQuery, signal: AbortSignal, onEmbeddingUsage: (usage: EmbeddingUsage) => void): Promise<RetrievedEvidence>;
+}
+
+/** NTSB fields of a case for its card. */
+export interface CaseSummary {
+  row: Omit<CaseRow, 'snippet'>;
+  report: ReportLink;
+  /** Suffixed numbers of its aircraft (`SEA08LA057A`), allowlisted alongside the event number. */
+  aircraftNumbers: string[];
+}
+
+export interface CaseCatalog {
+  /** Summaries of the given cases in one generation; unknown numbers are absent. */
+  summaries(generationId: number, ntsbNos: readonly string[]): Promise<Map<string, CaseSummary>>;
+  /** Section revisions by revision id, with their citation text and recorded sha256. */
+  sections(generationId: number, revisionIds: readonly string[]): Promise<Map<string, SectionRevision>>;
+}

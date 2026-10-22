@@ -7,7 +7,8 @@
  * - `trial-cookie-lookup`: the HMAC of the cookie's random value, the only form in which
  *   a cookie is stored (`trial_identities.cookie_hash`);
  * - `turnstile-token`: the HMAC under which a presented Turnstile token is claimed
- *   (`turnstile_redemptions`), so stored rows cannot be replayed as tokens.
+ *   (`turnstile_redemptions`), so stored rows cannot be replayed as tokens;
+ * - `brief-trace`: the salt of `hashBrief`, so traces never carry a raw brief id.
  *
  * Rotating the secret ends every trial cookie (visitors pass a new check) and resets
  * the anonymous counters keyed by principal HMACs.
@@ -15,7 +16,7 @@
 import { createHmac, hkdfSync } from 'node:crypto';
 import { MIN_SECRET_LENGTH, QuotaConfigError } from '../quota/policy.js';
 
-export type IdentityKeyPurpose = 'trial-cookie-signature' | 'trial-cookie-lookup' | 'turnstile-token';
+export type IdentityKeyPurpose = 'trial-cookie-signature' | 'trial-cookie-lookup' | 'turnstile-token' | 'brief-trace';
 
 const SALT = 'aviation-casebook identity keys';
 

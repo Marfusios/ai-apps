@@ -6,7 +6,18 @@
  */
 import { z } from 'zod';
 import { PHASE_GROUPS, type PhaseGroup } from '../../shared/codes.js';
+import {
+  ComposeOutputSchema,
+  FAILURE_TYPES,
+  GLYPH_KINDS,
+  GROUP_KINDS,
+  PassageIdSchema,
+  SPEAKERS,
+  type ComposeOutput,
+} from '../../shared/contracts/briefs.js';
 import { STAGE_CAPS } from './pricing.js';
+
+export { ComposeOutputSchema, GLYPH_KINDS, GROUP_KINDS, type ComposeOutput };
 
 /** `openai` is reserved for a future Responses API adapter; only `anthropic` and `fake` exist. */
 export type LlmProviderName = 'anthropic' | 'openai' | 'fake';
@@ -98,14 +109,19 @@ export const INTENTS = [
 export type Intent = (typeof INTENTS)[number];
 
 export const AMBIGUITY_TYPES = ['timing_window', 'aircraft_category', 'phase', 'failure_type'] as const;
+export type AmbiguityType = (typeof AMBIGUITY_TYPES)[number];
 
-/** Evidence glyph kinds (UI_DESIGN §4.3), plus `examples` for non-mechanical questions. */
-export const GLYPH_KINDS = ['causal', 'defect_not_causal', 'no_fault', 'insufficient'] as const;
-export const GROUP_KINDS = [...GLYPH_KINDS, 'examples'] as const;
+/** Whose words a quote gives; the compose output's `speaker`. */
+export const ATTRIBUTIONS = SPEAKERS;
 
-export const ATTRIBUTIONS = ['investigators', 'pilot', 'witness'] as const;
-
-export const CLAIM_KINDS = ['summary', 'why', 'classification', 'timing', 'attribution'] as const;
+/**
+ * Claim kinds the check stage judges (amendment A4: every claim type). `classification`
+ * is the case's mechanical-evidence group; `maintenance`, `symptom` and `timing` are
+ * its other DESIGN §3 dimensions; `attribution` is one quote's speaker; `gap` is a
+ * note on what a case's evidence does not show.
+ */
+export const CLAIM_KINDS = ['summary', 'why', 'classification', 'maintenance', 'symptom', 'timing', 'attribution', 'gap'] as const;
+export type ClaimKind = (typeof CLAIM_KINDS)[number];
 
 export const CHECK_REASONS = [
   'not_supported',
@@ -142,7 +158,7 @@ export const MAX_PASSAGES = 12;
 
 /** Shape bound only; the server's allowlist decides which numbers are valid. */
 const CaseNumber = z.string().regex(/^[A-Z0-9]{6,16}$/);
-const PassageId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/);
+const PassageId = PassageIdSchema;
 /** A single token, so an ambiguity value can never carry free text. */
 const ValueToken = z.string().regex(/^[A-Za-z0-9_]{1,40}$/);
 const Question = z.string().min(1).max(QUESTION_MAX_CHARS);
@@ -171,45 +187,30 @@ export const AmbiguitySchema = z.strictObject({
 });
 export type Ambiguity = z.infer<typeof AmbiguitySchema>;
 
+/**
+ * Keyword text for the BM25 channel: plain words and short phrases separated by
+ * spaces (letters, digits, spaces, apostrophes, hyphens, periods and slashes). Empty
+ * for replies that search nothing.
+ */
+export const KeywordTextSchema = z
+  .string()
+  .max(200)
+  .regex(/^(?:[\p{L}\p{N}][\p{L}\p{N} '\-./]*)?$/u, 'plain words only');
+
 export const ScopeOutputSchema = z.strictObject({
   intent: z.enum(INTENTS),
   /** True when the question is about a mechanical, maintenance or equipment cause. */
   mechanicalCause: z.boolean(),
   filters: ScopeFiltersSchema,
-  terms: z.array(z.string().min(1).max(60)).max(8),
+  /** Search terms for the keyword channel: the question's key aviation terms and close synonyms. */
+  keywordText: KeywordTextSchema,
   ambiguity: AmbiguitySchema.optional(),
   caseNumbers: z.array(CaseNumber).max(4).optional(),
 });
 export type ScopeOutput = z.infer<typeof ScopeOutputSchema>;
 
-export const ComposeOutputSchema = z.strictObject({
-  /** Plain text with `[[case:NTSBNO]]` citation markers. */
-  summary: z.string().min(1).max(2_000),
-  groups: z
-    .array(
-      z.strictObject({
-        kind: z.enum(GROUP_KINDS),
-        caseNumbers: z.array(CaseNumber).min(1).max(MAX_CASES),
-      }),
-    )
-    .max(GROUP_KINDS.length),
-  cases: z
-    .array(
-      z.strictObject({
-        ntsbNo: CaseNumber,
-        why: z.string().min(1).max(400),
-        timing: z.string().min(1).max(24).optional(),
-        quotes: z
-          .array(z.strictObject({ passageId: PassageId, quote: z.string().min(1).max(1_000) }))
-          .min(1)
-          .max(3),
-        attribution: z.enum(ATTRIBUTIONS).optional(),
-      }),
-    )
-    .max(MAX_CASES),
-  gaps: z.array(z.string().min(1).max(400)).max(3),
-});
-export type ComposeOutput = z.infer<typeof ComposeOutputSchema>;
+/** Failure-type readings the planner may offer (`ambiguity.type = failure_type`). */
+export const FAILURE_TYPE_VALUES = FAILURE_TYPES;
 
 export const CheckOutputSchema = z.strictObject({
   supported: z.boolean(),
@@ -222,15 +223,29 @@ export type CheckOutput = z.infer<typeof CheckOutputSchema>;
 // ---------------------------------------------------------------------------
 // Stage inputs, built by the server. Bounded so a stage never sends unbounded text.
 
+/** A reading in effect: the planner's default, or one the reader chose (`pinned`). */
+export const PriorReadingSchema = z.strictObject({
+  type: z.enum(AMBIGUITY_TYPES),
+  value: ValueToken,
+  pinned: z.boolean(),
+});
+export type PriorReading = z.infer<typeof PriorReadingSchema>;
+
 export const ScopeInputSchema = z.strictObject({
+  /** The question, or for a text refinement the refinement text. */
   question: Question,
-  /** The server-owned brief from the previous step of a refinement; never an earlier answer. */
+  /**
+   * The server-owned state of the brief before this step (refinements only); never an
+   * earlier answer. `question` is the brief's question and `refinement` the text
+   * refinement in effect, if any.
+   */
   prior: z
     .strictObject({
       question: Question,
+      refinement: Question.optional(),
       intent: z.enum(INTENTS),
       filters: ScopeFiltersSchema,
-      reading: AmbiguitySchema.optional(),
+      readings: z.array(PriorReadingSchema).max(AMBIGUITY_TYPES.length),
       caseNumbers: z.array(CaseNumber).max(MAX_CASES),
     })
     .optional(),
@@ -251,6 +266,8 @@ export type EvidencePassage = z.infer<typeof EvidencePassage>;
 export const ComposeInputSchema = z
   .strictObject({
     question: Question,
+    /** The refinement text of a text refinement step; the question stays the brief's question. */
+    refinement: Question.optional(),
     mechanicalCause: z.boolean(),
     /** Server-rendered readings in effect, e.g. "Shortly = within 30 calendar days or 10 flight hours". */
     interpretations: z.array(z.string().min(1).max(200)).max(4),

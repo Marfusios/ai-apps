@@ -5,11 +5,14 @@
 
 const DELIMITER_TAGS = [
   'question',
+  'refinement',
   'prior',
   'previous_question',
+  'previous_refinement',
   'previous_intent',
   'previous_filters',
-  'previous_reading',
+  'previous_readings',
+  'reading',
   'previous_cases',
   'mechanical_cause',
   'interpretations',
@@ -29,8 +32,8 @@ const TAG_START = new RegExp(`<(?=\\s*/?\\s*(?:${DELIMITER_TAGS.join('|')})\\b)`
  * for byte.
  *
  * The rewrite is visible to the model, so a quote copied across a rewritten tag
- * contains `‹` where the passage has `<`. The quote validator (Task 16) must compare
- * quotes against the original stored passage text, never this rendered copy, so such
+ * contains `‹` where the passage has `<`. The quote validator (server/briefs/validate.ts)
+ * compares quotes against the original stored passage text, never this rendered copy, so such
  * a quote fails validation and the summary is withheld (fail-safe). NTSB narratives
  * do not normally contain these tags.
  */

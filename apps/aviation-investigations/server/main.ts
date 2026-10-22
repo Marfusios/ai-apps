@@ -45,6 +45,8 @@ async function main(): Promise<void> {
   const tracing = startTracing(config);
   const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api' });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 10_000, maxRetries: 1 });
+  // AI briefs need an evidence retriever (`briefs`), bound to hybrid retrieval in a later
+  // change; until then the brief routes answer 503 and AI status reports `dependency`.
   const app = buildApp({
     config,
     db,

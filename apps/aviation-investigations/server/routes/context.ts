@@ -3,6 +3,8 @@ import type { Client } from '@elastic/elasticsearch';
 import type { FastifyBaseLogger } from 'fastify';
 import type { FacetKey } from '../../shared/contracts/search.js';
 import type { AiRuntime } from '../ai/runtime.js';
+import type { BriefServices } from '../briefs/services.js';
+import type { EvidenceDataset } from '../briefs/evidence.js';
 import type { DatasetResolver } from '../dataset.js';
 import type { Db } from '../db/client.js';
 
@@ -11,8 +13,15 @@ export interface ApiContext {
   es: Client;
   datasets: DatasetResolver;
   log: FastifyBaseLogger;
-  /** AI startup check, quota policy, trial identities and the anonymous gate; null: AI is off. */
+  /** AI startup check, quota policy, trial identities, the anonymous gate and the provider; null: AI is off. */
   ai: AiRuntime | null;
+  /** Evidence retrieval and the brief runs; null until retrieval is bound: AI briefs are off. */
+  briefs: BriefServices | null;
+  /**
+   * The passages index AI evidence would come from right now (the active manifest's,
+   * when the retriever accepts it), or null: AI is unavailable (`paused`/`dependency`).
+   */
+  aiEvidence: () => Promise<EvidenceDataset | null>;
   onUnknownFacetValue: (facet: FacetKey, value: string) => void;
 }
 

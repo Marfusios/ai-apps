@@ -53,6 +53,13 @@ export const ERROR_MESSAGES = {
   challenge_required: 'A quick check is needed before this AI search.',
   challenge_failed: "The quick check didn't go through. Try again.",
   sign_in_required: 'Sign in to ask the AI.',
+  ai_paused: 'AI search is temporarily unavailable.',
+  trial_used: 'Your free AI searches are used up.',
+  free_searches_paused: 'Free AI searches are used up for today.',
+  quota_exhausted: "You've used your AI searches for now.",
+  in_flight: 'An AI search is already running. Wait for it to finish.',
+  conflict: 'This request conflicts with an earlier one.',
+  refinement_limit: 'This brief has used its three refinements. Start a new search to keep going.',
 } as const satisfies Record<ErrorResponse['error'], string>;
 
 export function sendError(

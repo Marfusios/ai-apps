@@ -414,9 +414,9 @@ pnpm test:e2e:real    # Playwright against the real API server and the fixture i
 
 ### API contracts and the mock API
 
-`shared/contracts/{config,search,cases,dashboard,ai}.ts` are the Zod contracts of the
+`shared/contracts/{config,search,cases,dashboard,ai,briefs}.ts` are the Zod contracts of the
 public API (`GET /api/config`, `/api/search`, `/api/cases/:ntsbNo`,
-`/api/dashboard`, `/api/ai/status`). Every object is strict, `ev_id` never appears, and the case
+`/api/dashboard`, `/api/ai/status`, and the [AI brief](#ai-briefs) routes). Every object is strict, `ev_id` never appears, and the case
 detail is NTSB-only by construction (a test walks the schema for AI fields). The
 web client validates every response against them. `shared/case-view.ts` builds the
 deterministic headline, finding text and data cautions; `shared/vocab.ts` holds the
@@ -432,8 +432,13 @@ simple stand-in for the analyzer.
 `web/src/mocks/handlers.ts` serves it through MSW, in the dev mock mode and in tests;
 production builds contain no mock code. `GET /api/ai/status` answers one of the
 hand-written samples in `web/mock/ai-status.ts` (a fresh anonymous visitor by
-default; `createHandlers({ aiStatus })` picks another). A unit test fails when the committed mock
-files are out of date.
+default; `createHandlers({ aiStatus })` picks another). The brief routes are answered by
+`web/mock/briefs.ts`: an in-memory brief server with hand-written readings of the four
+seed cases whose quotes are located in the fixture texts, the server's own static
+replies and reading templates, a checklist that moves one row per poll
+(`createHandlers({ briefPolls })`), and question keywords that select the other outcomes
+(withheld, out of scope, operational, counting, comparison, clarification, no results).
+A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
@@ -477,6 +482,8 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
 | `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
 | `GET /api/ai/status` | `AiStatusResponse` for this visitor ([anonymous gate](#anonymous-gate-and-ai-status)) | `no-store` |
+| `POST /api/briefs`, `POST /api/briefs/:id/refine` | `StartBriefResponse` ([AI briefs](#ai-briefs)) | `no-store` |
+| `GET /api/briefs/:id?step=n`, `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, `POST /api/briefs/:id/cancel` | the step, the case context, 204; read owner only | `no-store` |
 
 Every response is validated against its contract before it is sent. ETags are the
 dataset revision plus a hash of the body, and a matching `If-None-Match` gets 304.
@@ -582,7 +589,9 @@ reset `aviation_test`'s corpus, so do not run them at the same time.
 `server/ai/` holds the provider interface (`provider.ts`) that the scope, compose
 and check stages call, the Anthropic adapter (`anthropic.ts`), a deterministic fake
 for tests (`fake.ts`, allowed only with `NODE_ENV=test`) and versioned prompts
-(`prompts/*.v1.ts`). Each stage validates its bounded input, sends the question and
+(`prompts/{scope,compose,check}.v2.ts`; v1 was never sent to a model). The scope stage
+returns the intent, validated filters, a `keywordText` query for the keyword channel
+and at most one ambiguity as allowlisted tokens. Each stage validates its bounded input, sends the question and
 passages as delimited untrusted data in the user turn, and returns a Zod-validated
 object with normalized usage (input, output including thinking, cache write, cache
 read), provider, model and prompt version. The OpenAI adapter is not built yet.
@@ -667,8 +676,8 @@ retention are in migrations 0008 and 0009.
   own remaining searches, never amounts. While a request of the principal is in
   flight, only global pauses are reported. `pruneControls` deletes idempotency records
   after 24 hours, buckets and anti-abuse records after their window plus 7 days, trial
-  identities after 30 days, redeemed Turnstile tokens after 15 minutes, and ledger
-  lines and closed reservations after 90 days. The API server runs `expireLeases` and
+  identities after 30 days, redeemed Turnstile tokens after 15 minutes, AI briefs once
+  they expire (24 hours), and ledger lines and closed reservations after 90 days. The API server runs `expireLeases` and
   `pruneControls` itself about every 10 minutes, under a PostgreSQL advisory lock
   (`server/quota/maintenance.ts`; the app role already holds the grants);
   `pnpm worker prune-controls` runs them once by hand.
@@ -694,7 +703,11 @@ log what keeps any part off (setting names only). The tables are in migration 00
 - **Gate.** An AI route calls `ctx.ai.gate.check(request, reply, body.turnstileToken)`
   before `admitPaidRequest` for a visitor who is not signed in, and sends a refusal
   with `sendGateRefusal`. In order, and before any reservation, quota or spend: the
-  login-required mode (403 `sign_in_required`); a token is required (403
+  login-required mode (403 `sign_in_required`); availability for the cookie's trial or
+  a new visitor, from `aiStatus`, before any token work: the kill switch and budgets
+  (503 `ai_paused`), a used-up trial (429 `trial_used`) and the anonymous share (429
+  `free_searches_paused`), so such a request never claims a token or creates a trial;
+  a token is required (403
   `challenge_required`) and claimed once under a keyed HMAC, so a reused token is
   refused without calling Cloudflare (403 `challenge_failed`); Cloudflare's siteverify
   checks it with an idempotency key, and the server requires the hostname of
@@ -727,8 +740,60 @@ log what keeps any part off (setting names only). The tables are in migration 00
   `anonymous_share`, `login_required`), `retryAt` only when known, and `remaining`
   (`{kind: 'trial', left, limit, started}`, `started` once the browser holds a trial,
   or the account's day and month counts). It never carries amounts and never sets a
-  cookie. It reports `paused`/`dependency` when the provider check, the quota secrets,
-  quota storage or (for anonymous visitors) Turnstile are missing.
+  cookie. It reports `paused`/`dependency` when the provider check, a language-model
+  provider, the quota secrets, quota storage, an evidence index (the active manifest
+  names no passages index, or evidence retrieval is not bound or refuses it) or (for
+  anonymous visitors) Turnstile are missing.
+
+### AI briefs
+
+`server/briefs/` runs a brief (DESIGN §2, §5; UI_DESIGN §4.3–§4.6): one question plus
+at most three refinements, each a step through the anonymous gate, admission, and
+the pipeline (`pipeline.ts`, `runBriefStep`):
+
+1. **Scope** (10 s): the planner's intent. Anything but a case search ends with a
+   static reply from server templates (`static-replies.ts`; clarification readings
+   from `clarify.ts`, never model text) and gives the free search back.
+2. **Retrieve** (8 s): the `EvidenceRetriever` port (`evidence.ts`; at most 6 cases
+   and 12 passages, query-embedding usage reported through a callback). Every passage
+   is checked against its stored section revision (`resolvePassage`).
+3. **Compose** (35 s): the full input is counted with the provider's own counter;
+   above 16,000 tokens the candidates are packed again under a smaller budget.
+4. **Validate**: `validateComposition` (`validate.ts`, rule `quote-ws-v1`: a quote is a
+   substring of its passage after collapsing whitespace runs on both sides; UTF-16
+   spans through an offset map; the first of repeated matches is used and the count
+   recorded; every NTSB-number-shaped token in generated text must be allowlisted),
+   then the check stage (12 s) over every claim. Only `supported` with no problems
+   shows the summary; anything else returns the case cards with the summary withheld.
+   There is no repair loop.
+
+The step has a 60-second deadline. Stage results are written as they complete
+(`brief_steps`), and only stage status and counts are visible until the end. Each
+stage's usage is settled as itemized ledger lines; a call without reliable usage
+(timeout, abort) settles the full reservation as uncertain. Scope replies, empty
+results and failures before any spend give the free search back; withheld
+summaries, cancellations and failures after spending keep it.
+
+Paid requests check, before any token work or spend: a cross-site request (by
+`Sec-Fetch-Site`, or `Origin` when the browser sends no fetch metadata) is 403; the
+body is strict; AI must be able to run (503 `unavailable`); a refinement needs the
+read owner, a free refinement slot (409 `refinement_limit`) and no running step (429
+`in_flight`). Admission refusals map to `trial_used`, `quota_exhausted`,
+`free_searches_paused`, `ai_paused`, `rate_limited`, `in_flight` and `conflict`; a
+trial that expired since the gate asks for a new check (403 `challenge_required`).
+
+`POST /api/briefs` waits for the scope stage only: a static reply comes back at once
+(200 `scope_reply`), an in-scope question answers 202 `started`, and the page polls
+`GET /api/briefs/:id` (its own limit of 150 a minute per network identity). Briefs
+belong to their read owner (the trial in the cookie; 404 for anyone else), pin the
+generation and passages index they started on, and expire after 24 hours. The app
+role cannot update a brief: the read owner moves once, from a trial to an account,
+through `move_brief_read_owner()` (compare-and-set, for the sign-in handover). A
+step's billing principal, reservation and request never change, and a finished step
+is immutable. Migration 0014 holds the tables, guards, grants and retention.
+
+Evidence retrieval is not bound yet: without `AppDeps.briefs` the brief routes answer
+503 and `GET /api/ai/status` reports `dependency`.
 
 ## Deployment with Docker Compose
 

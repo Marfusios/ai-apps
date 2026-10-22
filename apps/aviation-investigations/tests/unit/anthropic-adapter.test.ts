@@ -9,9 +9,9 @@ import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { PHASE_GROUPS } from '../../shared/codes.js';
 import { createFakeProvider, DEFAULT_FAKE_USAGE } from '../../server/ai/fake.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v1.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v1.js';
-import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v1.js';
+import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v2.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v2.js';
+import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
   CheckOutputSchema,
   ComposeOutputSchema,
@@ -71,7 +71,7 @@ const scopeOutput: ScopeOutput = {
   intent: 'case_search',
   mechanicalCause: true,
   filters: {},
-  terms: ['power loss', 'maintenance'],
+  keywordText: 'engine power loss maintenance',
   ambiguity: { type: 'timing_window', values: ['30d_or_10h'] },
 };
 
@@ -82,8 +82,10 @@ const composeOutput: ComposeOutput = {
     {
       ntsbNo: 'DFW08TA066',
       why: 'Power loss after maintenance.',
-      quotes: [{ passageId: 'p-dfw-1', quote: 'The contract mechanic failed.' }],
-      attribution: 'investigators',
+      quotes: [{ passageId: 'p-dfw-1', quote: 'The contract mechanic failed.', speaker: 'investigators' }],
+      maintenance: 'investigator_attributed',
+      symptom: 'total_power_loss',
+      timing: { basis: 'flight_hours', value: 5.1, bound: 'exact' },
     },
   ],
   gaps: [],
@@ -306,7 +308,7 @@ describe('Anthropic adapter results', () => {
       usage: { inputTokens: 900, outputTokens: 120, cacheWriteTokens: 1_200, cacheReadTokens: 300 },
       provider: 'anthropic',
       model: HAIKU,
-      promptVersion: 'scope.v1',
+      promptVersion: 'scope.v2',
       stopReason: 'end_turn',
       warnings: [],
     });
@@ -328,7 +330,7 @@ describe('Anthropic adapter results', () => {
     const result = await p.compose(composeInput, ctx('compose'));
     expect(result.output).toEqual(composeOutput);
     expect(result.model).toBe(OPUS);
-    expect(result.promptVersion).toBe('compose.v1');
+    expect(result.promptVersion).toBe('compose.v2');
   });
 
   it('adapter maps refusal to StageError', async () => {
@@ -645,7 +647,7 @@ describe('fake provider', () => {
     });
     const first = await fake.scope(scopeInput, ctx('scope'));
     const second = await fake.scope(scopeInput, ctx('scope'));
-    expect(first).toMatchObject({ output: scopeOutput, provider: 'fake', model: HAIKU, promptVersion: 'scope.v1' });
+    expect(first).toMatchObject({ output: scopeOutput, provider: 'fake', model: HAIKU, promptVersion: 'scope.v2' });
     expect(second.output.intent).toBe('out_of_scope');
     expect(second.usage.outputTokens).toBe(7);
     await expect(fake.scope(scopeInput, ctx('scope'))).rejects.toThrow(/no scripted scope step left/);
