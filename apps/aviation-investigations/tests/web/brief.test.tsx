@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiStatusResponse } from '../../shared/contracts/ai';
-import { BriefStepResponseSchema } from '../../shared/contracts/briefs';
+import { BRIEF_FILTER_FACETS, BriefStepResponseSchema } from '../../shared/contracts/briefs';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_MIDAIR_QUESTION, MOCK_SEED_QUESTION, RESULT_SAMPLES } from '../../web/mock/briefs';
@@ -24,6 +24,18 @@ import {
 import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, type PollState } from '../../web/src/features/brief/api';
 import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
 import { attributionAmbiguous, evidenceAttribution, quoteAttribution } from '../../web/src/features/brief/display';
+import {
+  FILTER_FACETS,
+  UNSETTLED_TTL_MS,
+  canonicalFilters,
+  forgetUnsettled,
+  rememberUnsettled,
+  resetUnsettledForTests,
+  unsettledId,
+  unsettledKey,
+} from '../../web/src/features/ai/unsettled';
+import { canonicalFilters as serverCanonicalFilters } from '../../server/briefs/intent';
+import { IDEMPOTENCY_TTL_MS } from '../../server/quota/policy';
 import { ApiError } from '../../web/src/api';
 import { chipsContext } from '../../web/src/pages/Brief';
 import { Checklist, CHECKLIST_NOTE } from '../../web/src/features/brief/Checklist';
@@ -70,6 +82,7 @@ function installTurnstile(delay = 20): FakeTurnstile {
 
 afterEach(() => {
   delete window.turnstile;
+  resetUnsettledForTests();
 });
 
 /** A fresh mock API (trial, briefs) for one test. */
@@ -1049,10 +1062,12 @@ describe('Round-2 minors', { timeout: 20_000 }, () => {
     expect(within(notes).getByRole('button', { name: 'Try again' })).toBeTruthy();
   });
 
-  it('a refinement key is tied to its brief and change', () => {
-    // The key a lost refinement is remembered under includes the brief (useRefine).
+  it('a refinement key is tied to its brief and change', async () => {
     const change = { kind: 'text', text: 'only helicopters' } as const;
-    expect(JSON.stringify(['brief-a', change])).not.toBe(JSON.stringify(['brief-b', change]));
+    const a = await unsettledId({ kind: 'refine', briefId: '00000000-0000-4000-8000-00000000000a', change });
+    const b = await unsettledId({ kind: 'refine', briefId: '00000000-0000-4000-8000-00000000000b', change });
+    const other = await unsettledId({ kind: 'refine', briefId: '00000000-0000-4000-8000-00000000000a', change: { kind: 'text', text: 'only airplanes' } });
+    expect(new Set([a, b, other]).size).toBe(3);
   });
 
   it('an aircraft-scoped key the record does not list is never shown as both aircraft', () => {
@@ -1069,5 +1084,130 @@ describe('Round-2 minors', { timeout: 20_000 }, () => {
     expect(attributionAmbiguous(aircraft, { scope: 'aircraft', aircraftKey: 2 })).toBe(false);
     expect(attributionAmbiguous(aircraft, { scope: 'event', multiAircraft: true })).toBe(true);
     expect(attributionAmbiguous(aircraft.slice(0, 1), { scope: 'aircraft', aircraftKey: 7 })).toBe(false);
+  });
+});
+
+describe('Unknown-outcome keys for the tab (web/src/features/ai/unsettled.ts)', { timeout: 20_000 }, () => {
+  const LOST = 'Engine power loss after maintenance, lost response';
+
+  /** Records each brief POST's idempotency key, then lets the mock answer. */
+  function recordPosts(): string[] {
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return undefined;
+      }),
+    );
+    return keys;
+  }
+
+  async function loseOnHome() {
+    const app = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: LOST } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText('If it went through, Try again opens it without using another search.', {}, SLOW)).toBeTruthy();
+    return app;
+  }
+
+  it('a lost response on Home, then the same question from Explore, reuses the key (paid once)', async () => {
+    freshApi();
+    installTurnstile();
+    const keys = recordPosts();
+    const { router } = await loseOnHome();
+    // Another page, another control: Explore's search bar, with no filters set.
+    await act(() => router.navigate(`/explore?${new URLSearchParams({ q: LOST }).toString()}`));
+    const bar = await screen.findByRole('search');
+    fireEvent.click(await within(bar).findByRole('button', { name: /^Ask AI\s*·\s*2 free$/ }, SLOW));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
+    // Settled by the 2xx: nothing is left for the tab.
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: LOST, filters: {} }))).toBeNull();
+  });
+
+  it('a different question gets a new key', async () => {
+    freshApi();
+    installTurnstile();
+    const keys = recordPosts();
+    const { router } = await loseOnHome();
+    await act(() => router.navigate(`/explore?${new URLSearchParams({ q: 'Rotor failure after an oil change' }).toString()}`));
+    const bar = await screen.findByRole('search');
+    fireEvent.click(await within(bar).findByRole('button', { name: /^Ask AI\s*·\s*2 free$/ }, SLOW));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+    // The lost question's key is still there for when it is asked again.
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: LOST }))).toBe(keys[0]);
+  });
+
+  it('stores a hash of the normalised request, never the question', async () => {
+    freshApi();
+    installTurnstile();
+    await loseOnHome();
+    const names = Object.keys(window.sessionStorage);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(/^casebook-ai-unsettled:[0-9a-f]{64}$/);
+    const stored = window.sessionStorage.getItem(names[0] as string) ?? '';
+    expect(Object.keys(JSON.parse(stored))).toEqual(['key', 'at']);
+    expect(`${names[0]}${stored}`.toLowerCase()).not.toContain('engine');
+    expect(`${names[0]}${stored}`.toLowerCase()).not.toContain('maintenance');
+  });
+
+  it('the same request is the same however its filters are ordered', async () => {
+    const a = await unsettledId({ kind: 'create', question: 'Q', filters: { phase: ['landing', 'takeoff'], category: ['HELI'] } });
+    const b = await unsettledId({ kind: 'create', question: 'Q', filters: { category: ['HELI'], phase: ['takeoff', 'landing'], injury: [] } });
+    expect(a).toBe(b);
+    expect(await unsettledId({ kind: 'create', question: 'Q' })).toBe(await unsettledId({ kind: 'create', question: 'Q', filters: {} }));
+    // The server hashes the same canonical filters, and keeps its record as long.
+    const f = { phase: ['landing', 'takeoff'], category: ['HELI', 'AIR'], yearTo: 2020 } as Parameters<typeof canonicalFilters>[0];
+    expect(canonicalFilters(f)).toEqual(serverCanonicalFilters(f));
+    expect(FILTER_FACETS).toEqual(BRIEF_FILTER_FACETS);
+    expect(UNSETTLED_TTL_MS).toBe(IDEMPOTENCY_TTL_MS);
+  });
+
+  it('an entry expires with the server\'s idempotency record', async () => {
+    const id = await unsettledId({ kind: 'create', question: 'Q' });
+    const t0 = Date.UTC(2026, 9, 22, 10, 0, 0);
+    rememberUnsettled(id, 'key-00000001', t0);
+    expect(unsettledKey(id, t0 + UNSETTLED_TTL_MS - 1)).toBe('key-00000001');
+    // Remembered again under the same key, it keeps its first time.
+    rememberUnsettled(id, 'key-00000001', t0 + 60_000);
+    expect(unsettledKey(id, t0 + UNSETTLED_TTL_MS)).toBeNull();
+    expect(Object.keys(window.sessionStorage)).toHaveLength(0);
+    // Remembering another request prunes expired entries too.
+    const other = await unsettledId({ kind: 'create', question: 'R' });
+    rememberUnsettled(id, 'key-00000002', t0);
+    rememberUnsettled(other, 'key-00000003', t0 + UNSETTLED_TTL_MS + 1);
+    expect(Object.keys(window.sessionStorage)).toHaveLength(1);
+    forgetUnsettled(other);
+    expect(unsettledKey(other)).toBeNull();
+  });
+
+  it('storage that throws falls back to memory', async () => {
+    const id = await unsettledId({ kind: 'create', question: 'Q' });
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    try {
+      rememberUnsettled(id, 'key-00000004');
+      expect(unsettledKey(id)).toBe('key-00000004');
+      forgetUnsettled(id);
+      expect(unsettledKey(id)).toBeNull();
+    } finally {
+      if (descriptor) Object.defineProperty(window, 'sessionStorage', descriptor);
+    }
+    // A store that refuses writes (quota) keeps the entry in memory too.
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError');
+    });
+    rememberUnsettled(id, 'key-00000005');
+    expect(unsettledKey(id)).toBe('key-00000005');
+    setItem.mockRestore();
   });
 });

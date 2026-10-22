@@ -530,7 +530,11 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   same idempotency key; if that replay is a 409 `conflict` (the earlier attempt never
   completed), it is sent once more under a new key. The key is kept until a 2xx or that
   409 settles it: a refused retry (a failed or cancelled check, a paused or used-up status,
-  a known refusal of the replay) leaves it for the next ask. A 503 `unavailable` or `ai_paused`
+  a known refusal of the replay) leaves it for the next ask. Such keys are kept for the
+  tab (`web/src/features/ai/unsettled.ts`: `sessionStorage`, or memory when storage is
+  unavailable) under a hash of the normalised request (question and canonical filters, or
+  brief and change), so the same request from any page or control replays them; they
+  expire after 24 hours, with the server's idempotency record. A 503 `unavailable` or `ai_paused`
   released the admission and spent nothing: the paused copy shows, and the next ask uses
   a new key. The site
   key comes from `/api/config`, and Cloudflare's script loads only when an AI request

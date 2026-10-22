@@ -1,13 +1,15 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import { rememberQuestion } from '../brief/memory';
+import { forgetUnsettled, rememberUnsettled, unsettledId, unsettledKey } from './unsettled';
 import { newIdempotencyKey, useAiRequest } from './useAiRequest';
 
 /**
  * Ask AI from a question box: starts a brief and opens `/briefs/:id` (UI_DESIGN §4.3).
  * When a request got no answer (its outcome is unknown), asking the same question with
- * the same filters again reuses its idempotency key, so a request the server already
+ * the same filters again, from this or any other control in the tab (web/src/features/ai/
+ * unsettled.ts), reuses its idempotency key, so a request the server already
  * admitted is replayed instead of paid for twice; if that replay answers 409 `conflict`
  * (the earlier attempt did not complete), it is sent once more under a new key. The key
  * is kept until a 2xx or that 409 settles it: a refusal before sending (a failed or
@@ -20,8 +22,6 @@ export function useAskAi() {
   const request = useAiRequest();
   const navigate = useNavigate();
   const { run, setNotice } = request;
-  // Keys of requests whose outcome is unknown, by what they asked (question and filters).
-  const unsettled = useRef(new Map<string, string>());
 
   const ask = useCallback(
     async (question: string, filters?: BriefFilters): Promise<void> => {
@@ -30,8 +30,9 @@ export function useAskAi() {
         setNotice({ kind: 'empty' });
         return;
       }
-      const what = JSON.stringify([q, filters ?? null]);
-      const earlier = unsettled.current.get(what);
+      // Requests with an unknown outcome are remembered for the tab, whichever control sent them.
+      const id = await unsettledId({ kind: 'create', question: q, filters });
+      const earlier = unsettledKey(id);
       let idempotencyKey = earlier ?? newIdempotencyKey();
       const result = await run(
         async (turnstileToken) => {
@@ -44,7 +45,7 @@ export function useAskAi() {
               replaying: true,
               // A replay answered 409: the earlier attempt never completed, so ask under a new key.
               onConflict: () => {
-                unsettled.current.delete(what);
+                forgetUnsettled(id);
                 idempotencyKey = newIdempotencyKey();
               },
             }
@@ -53,10 +54,10 @@ export function useAskAi() {
       if (!result.ok) {
         // Only an unknown outcome is remembered. Nothing sent, or a known refusal, settles
         // nothing about an earlier send: its key stays for the next ask.
-        if (result.outcomeUnknown) unsettled.current.set(what, idempotencyKey);
+        if (result.outcomeUnknown) rememberUnsettled(id, idempotencyKey);
         return;
       }
-      unsettled.current.delete(what);
+      forgetUnsettled(id);
       rememberQuestion(result.value.briefId, q, filters);
       navigate(`/briefs/${result.value.briefId}`);
     },

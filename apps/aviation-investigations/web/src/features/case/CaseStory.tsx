@@ -389,10 +389,19 @@ function Provenance({ detail }: { detail: CaseDetail }) {
   );
 }
 
-/** Scrolls once to the cited passage when the AI context is ready (focus stays on the headline). */
+/**
+ * Scrolls to the cited passage once per visit to a case, when its AI context is ready (focus
+ * stays on the headline). The drawer starts every case at the top, so coming back to a case
+ * (‹ ›, even before the other case showed its passage) scrolls again.
+ */
 function useOpenAtCited(ai: AiCaseContext | undefined, ntsbNo: string, enabled: boolean): void {
   const done = useRef<string | null>(null);
+  const visiting = useRef<string | null>(null);
   useEffect(() => {
+    if (visiting.current !== ntsbNo) {
+      visiting.current = ntsbNo;
+      done.current = null;
+    }
     if (!enabled || ai?.state !== 'ready') return;
     const key = `${ai.briefId}:${ai.step}:${ntsbNo}`;
     if (done.current === key) return;

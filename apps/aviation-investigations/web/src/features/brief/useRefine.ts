@@ -1,8 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import type { RefinementChange } from '../../../../shared/contracts/briefs';
 import { CASES_PARAM } from '../explore/url-state';
+import { forgetUnsettled, rememberUnsettled, unsettledId, unsettledKey } from '../ai/unsettled';
 import { newIdempotencyKey, useAiRequest } from '../ai/useAiRequest';
 import { refineBrief } from './api';
 
@@ -21,14 +22,12 @@ export function useRefine(briefId: string) {
   const [params] = useSearchParams();
   const { run } = request;
   const cases = params.get(CASES_PARAM);
-  // Keys of refinements whose outcome is unknown, by brief and change: a key is never
-  // reused for another brief or another change.
-  const unsettled = useRef(new Map<string, string>());
-
   const refine = useCallback(
     async (change: RefinementChange): Promise<boolean> => {
-      const what = JSON.stringify([briefId, change]);
-      const earlier = unsettled.current.get(what);
+      // Refinements with an unknown outcome are remembered for the tab, by brief and change,
+      // so a key is never reused for another brief or another change.
+      const id = await unsettledId({ kind: 'refine', briefId, change });
+      const earlier = unsettledKey(id);
       let idempotencyKey = earlier ?? newIdempotencyKey();
       const result = await run(
         (turnstileToken) => refineBrief(briefId, { ...change, turnstileToken, idempotencyKey }),
@@ -37,7 +36,7 @@ export function useRefine(briefId: string) {
               replaying: true,
               // A replay answered 409: the earlier attempt never completed, so send it under a new key.
               onConflict: () => {
-                unsettled.current.delete(what);
+                forgetUnsettled(id);
                 idempotencyKey = newIdempotencyKey();
               },
             }
@@ -45,10 +44,10 @@ export function useRefine(briefId: string) {
       );
       if (!result.ok) {
         // Only an unknown outcome is remembered; a refusal leaves an earlier key alone.
-        if (result.outcomeUnknown) unsettled.current.set(what, idempotencyKey);
+        if (result.outcomeUnknown) rememberUnsettled(id, idempotencyKey);
         return false;
       }
-      unsettled.current.delete(what);
+      forgetUnsettled(id);
       await queryClient.invalidateQueries({ queryKey: ['brief', briefId] });
       const next = new URLSearchParams();
       if (cases) next.set(CASES_PARAM, cases);

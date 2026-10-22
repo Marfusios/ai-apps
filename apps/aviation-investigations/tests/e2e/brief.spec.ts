@@ -147,14 +147,23 @@ test('case number citation opens drawer at passage', async ({ page }) => {
   await expect(dialog.locator('[data-cited]').first()).toBeFocused();
   await expect(dialog.locator('[data-cited]').first()).toContainText('The engine had  been replaced 5.1 hours prior to the accident');
 
-  // ‹ › keep opening each case at its cited passage, also when its context is already loaded.
+  // ‹ › keep opening each case at its cited passage, also when its context is already loaded:
+  // straight back before the next case has shown its passage, and back after it has.
+  const citedMark = () => page.getByRole('dialog').locator('[data-cited] mark.hit').first();
   await dialog.getByRole('button', { name: 'Next case' }).click();
   await expect(page).toHaveURL(/case=MIA08LA156/);
-  await expect(page.getByRole('dialog').locator('[data-cited] mark.hit').first()).toBeInViewport();
   await page.getByRole('dialog').getByRole('button', { name: 'Previous case' }).click();
   await expect(page).toHaveURL(/case=DFW08TA066/);
-  await expect(page.getByRole('dialog').locator('[data-cited] mark.hit').first()).toBeInViewport();
-  await expect(page.getByRole('dialog').locator('[data-cited] mark.hit').first()).toContainText('castellated nut');
+  await expect(citedMark()).toContainText('castellated nut');
+  await expect(citedMark()).toBeInViewport();
+  await page.getByRole('dialog').getByRole('button', { name: 'Next case' }).click();
+  await expect(page.getByRole('dialog', { name: /^MIA08LA156: / })).toBeVisible();
+  await expect(citedMark()).toContainText('check valve');
+  await expect(citedMark()).toBeInViewport();
+  await page.getByRole('dialog').getByRole('button', { name: 'Previous case' }).click();
+  await expect(page.getByRole('dialog', { name: /^DFW08TA066: / })).toBeVisible();
+  await expect(citedMark()).toContainText('castellated nut');
+  await expect(citedMark()).toBeInViewport();
 
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
