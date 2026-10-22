@@ -6,9 +6,10 @@
  *   and `GET /api/ai/status` (server/routes/ai-status.ts). AI routes get the anonymous
  *   gate (server/identity/gate.ts) from `ApiContext.ai`.
  * - AI briefs under `/api/briefs` (server/routes/briefs.ts) when `AppDeps.briefs` binds
- *   an evidence retriever. Polling a brief (`GET /api/briefs/:id`, about once a second
- *   while a step runs) has its own network-identity limit (`pollRateLimit`) so a running
- *   brief cannot use up the browsing limit; every other route shares `rateLimit`.
+ *   an evidence retriever and the dataset reports its passages index servable. Polling
+ *   a brief (`GET /api/briefs/:id`, about once a second while a step runs) has its own
+ *   network-identity limit (`pollRateLimit`) so a running brief cannot use up the
+ *   browsing limit; every other route shares `rateLimit`.
  * - The web client from `dist/web` with an SPA fallback: any other GET that accepts
  *   HTML gets the page (`index.html` with a per-response style nonce). Hashed assets
  *   are cached for a year; the page is revalidated.
@@ -39,7 +40,7 @@ import type { AppConfig } from '../shared/config.js';
 import type { FacetKey } from '../shared/contracts/search.js';
 import type { AiRuntime } from './ai/runtime.js';
 import type { EvidenceDataset } from './briefs/evidence.js';
-import { manifestEvidence, type BriefServices } from './briefs/services.js';
+import { servableEvidence, type BriefServices } from './briefs/services.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
 import type { Db } from './db/client.js';
 import { CLIENT_IP_HEADER, compileTrustedProxies, isLoopback, resolveNetworkIdentity } from './http/network-identity.js';
@@ -79,7 +80,8 @@ export interface AppDeps {
   briefs?: BriefServices | null;
   /**
    * Test seam: which evidence index AI would use. Default: the active manifest's passages
-   * index, when the briefs' retriever accepts it.
+   * index when the dataset resolver reports it servable and the briefs' retriever accepts
+   * it (`servableEvidence`).
    */
   aiEvidence?: () => Promise<EvidenceDataset | null>;
   /** Built web client (`dist/web`); null or a missing directory serves the API only. */
@@ -214,7 +216,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     log: app.log,
     ai: deps.ai ?? null,
     briefs,
-    aiEvidence: deps.aiEvidence ?? (() => manifestEvidence(briefs, () => datasets.activeManifest())),
+    aiEvidence: deps.aiEvidence ?? (() => servableEvidence(briefs, () => datasets.current())),
     onUnknownFacetValue: (facet: FacetKey, value: string) =>
       app.log.warn({ facet, value: value.slice(0, 16) }, 'facet value outside the vocabulary left out of the buckets'),
   };

@@ -9,7 +9,8 @@
  * `dependency` (and no retry time) when AI cannot run at all: the startup check failed,
  * no language-model provider is available, the quota policy is missing its secrets,
  * quota storage cannot be read, there is no evidence index to search (the active
- * manifest names no passages index, or evidence retrieval is not bound or refuses it),
+ * manifest names no passages index, the dataset reports it not servable, or evidence
+ * retrieval is not bound or refuses it),
  * or, for an anonymous visitor who would otherwise be offered AI, Turnstile is not
  * configured.
  * The response is per visitor: `no-store`, and it never sets a cookie.

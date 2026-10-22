@@ -4,9 +4,12 @@
  * 1. **Scope** (10 s): the planner classifies the question. Anything other than a case
  *    search ends here with a static reply (server/briefs/static-replies.ts) and gives the
  *    free search back (`releaseQuota`); its cost is still settled.
- * 2. **Retrieve** (8 s): the `EvidenceRetriever` port returns at most 6 cases / 12
- *    passages. Each passage's provenance is checked against its stored section revision
- *    before it can be quoted. Query-embedding usage is recorded through the port's callback.
+ * 2. **Retrieve** (8 s): the `EvidenceRetriever` port (hybrid retrieval,
+ *    server/briefs/retriever.ts) returns at most 6 cases / 12 passages: the question
+ *    (and text refinement) feeds the dense channel, the scope stage's `keywordText` the
+ *    BM25 channel. Each passage's provenance is checked against its stored section
+ *    revision before it can be quoted. Query-embedding usage is recorded once, through
+ *    the port's callback.
  * 3. **Compose** (35 s): the full compose input is counted with the provider's own token
  *    counter; above the 16,000-token cap the same candidates are packed again with a
  *    smaller evidence budget (amendment A11). One model call.
@@ -121,7 +124,8 @@ interface Meta {
   timingsMs: Record<string, number>;
   repacks: number;
   provenanceDropped: number;
-  failure?: { stage: string; category: string };
+  /** `reason`: retrieval's fixed failure reason, when it has one. */
+  failure?: { stage: string; category: string; reason?: string };
   clarificationDropped?: boolean;
   validation?: { ruleVersion: string; codes: string[] };
   check?: { supported: boolean; problems: { kind: string; reason: string }[] };
@@ -279,7 +283,11 @@ class Run {
 
   private failedEnd(stage: string, err: unknown): StageEnd {
     if (this.cancelled) return this.cancelledEnd();
-    this.meta.failure = { stage, category: this.failureCategory(err) };
+    this.meta.failure = {
+      stage,
+      category: this.failureCategory(err),
+      ...(err instanceof RetrievalFailure && err.reason ? { reason: err.reason } : {}),
+    };
     // Nothing spent: the search is given back ("This didn't use one of your searches").
     return { status: 'failed', stage: 'failed', result: { kind: 'failed', countedAsSearch: this.spent }, release: !this.spent };
   }

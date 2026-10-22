@@ -843,8 +843,9 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    static reply from server templates (`static-replies.ts`; clarification readings
    from `clarify.ts`, never model text) and gives the free search back.
 2. **Retrieve** (8 s): the `EvidenceRetriever` port (`evidence.ts`; at most 6 cases
-   and 12 passages, query-embedding usage reported through a callback). Every passage
-   is checked against its stored section revision (`resolvePassage`).
+   and 12 passages, query-embedding usage reported through a callback), bound to
+   [hybrid retrieval](#evidence-retrieval-hybrid-search) in `retriever.ts`. Every
+   passage is checked against its stored section revision (`resolvePassage`).
 3. **Compose** (35 s): the full input is counted with the provider's own counter;
    above 16,000 tokens the candidates are packed again under a smaller budget.
 4. **Validate**: `validateComposition` (`validate.ts`, rule `quote-ws-v1`: a quote is a
@@ -880,8 +881,30 @@ through `move_brief_read_owner()` (compare-and-set, for the sign-in handover). A
 step's billing principal, reservation and request never change, and a finished step
 is immutable. Migration 0014 holds the tables, guards, grants and retention.
 
-Evidence retrieval is not bound yet: without `AppDeps.briefs` the brief routes answer
-503 and `GET /api/ai/status` reports `dependency`.
+**Evidence binding** (`retriever.ts`, wired in `server/main.ts` with the OpenAI query
+embedder):
+
+- The dense channel embeds the question (with the text refinement in effect); the
+  BM25 channel searches the scope stage's `keywordText`. A question and refinement
+  over the 1,000-token query cap are cut to their longest prefix that fits
+  (`fitQueryText`), so the step does not fail after its scope stage was paid for.
+- The query embedding is settled exactly once, from retrieval's `onQueryEmbedding`
+  callback, which runs before any search: an Elasticsearch, packing or provenance
+  failure afterwards keeps that one `embed` line, and `billing: uncertain` settles
+  the step at its full reservation. A failed embedding is settled by its
+  `QueryEmbeddingError` billing (`none`, the billed `usage`, or `uncertain`).
+- A re-pack for the compose cap packs the same candidates again; nothing is embedded
+  twice.
+- Failures become a `RetrievalFailure` with a fixed kind (`unavailable`, `timeout`,
+  `failed`) and reason (`index_mismatch`, `incomplete_search`, `embedding`, …) in the
+  step's `meta`; the underlying message (index names, contract values, upstream text)
+  is dropped.
+
+AI is available only while the dataset reports the active passages index servable
+(`PinnedDataset.passages`, the passages contract for `OPENAI_EMBEDDING_MODEL` and
+`OPENAI_EMBEDDING_DIMENSIONS`) and the retriever accepts it. Otherwise, or without
+`OPENAI_API_KEY`, or when no dataset can be served at all, the brief routes answer 503
+`unavailable` and `GET /api/ai/status` reports `dependency`, never saying why.
 
 ## Deployment with Docker Compose
 

@@ -564,7 +564,9 @@ generation 1 serves `cases-v3` and `passages-v1`.**
   manifest changes; a transient failure is checked again after 30 s, in the
   background, while requests get the last answer.
 
-No route reads the passages index yet: retrieval is not bound to the AI routes.
+Only the AI brief routes read the passages index, through hybrid retrieval, and only
+while the dataset reports it servable; otherwise AI answers 503 `unavailable` and its
+status reports `dependency` (README, "AI briefs").
 
 ### 2.12 Retrieval
 

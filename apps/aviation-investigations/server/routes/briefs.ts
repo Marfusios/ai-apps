@@ -9,7 +9,8 @@
  *    SameSite=Lax; this is the explicit check for custom POST endpoints, DESIGN §7);
  * 2. the body is validated (strict schemas);
  * 3. AI must be able to run: the startup check, the quota policy, the anonymous gate, a
- *    provider and an evidence index the retriever accepts (503 `unavailable` otherwise);
+ *    provider and an evidence index that the dataset reports servable and the retriever
+ *    accepts (503 `unavailable` otherwise, never saying why);
  * 4. refinements: the read owner, the three-refinement limit and one step at a time
  *    are checked before any token work;
  * 5. the anonymous gate (server/identity/gate.ts): availability (kill switch, budgets,

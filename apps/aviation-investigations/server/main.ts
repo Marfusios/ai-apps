@@ -9,14 +9,23 @@
  *
  * A live deployment must run in tunnel mode: with APP_ENV=live the server refuses to
  * start unless TRUSTED_PROXY_CIDRS is set.
+ *
+ * AI briefs read their evidence through hybrid retrieval (server/briefs/retriever.ts)
+ * with the OpenAI query embedder (OPENAI_API_KEY, OPENAI_EMBEDDING_MODEL and
+ * OPENAI_EMBEDDING_DIMENSIONS). The dataset resolver checks the active passages index
+ * against the same model and dimensions; without the key AI briefs stay off.
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Client } from '@elastic/elasticsearch';
 import { loadConfig, type AppConfig } from '../shared/config.js';
+import { createOpenAIQueryEmbedder } from './ai/embeddings.js';
 import { createAiRuntime } from './ai/runtime.js';
 import { buildApp } from './app.js';
-import { closeDb, createDb } from './db/client.js';
+import { createHybridRetriever } from './briefs/retriever.js';
+import { createBriefServices, type BriefServices } from './briefs/services.js';
+import { closeDb, createDb, type Db } from './db/client.js';
 import { startControlMaintenance } from './quota/maintenance.js';
 import { startTracing } from './observability/tracing.js';
 import { createEsClient } from './search/es.js';
@@ -27,6 +36,18 @@ function serverConfig(): AppConfig {
   if ((process.env.AVIATION_ENV_FILES ?? '').trim() !== '') return loadConfig();
   const local = resolve(APP_DIR, '.env.local');
   return loadConfig({ files: existsSync(local) ? [local] : [] });
+}
+
+/** Evidence retrieval for AI briefs, or why there is none (setting names only). */
+function briefServices(config: AppConfig, db: Db, es: Client): { services: BriefServices | null; problem: string | null } {
+  const { apiKey, embeddingModel: model, embeddingDimensions: dims } = config.ai.openai;
+  if (!apiKey) return { services: null, problem: 'OPENAI_API_KEY is not set: AI briefs have no query embeddings' };
+  try {
+    const embedder = createOpenAIQueryEmbedder({ apiKey, model, dims });
+    return { services: createBriefServices(db, { retriever: createHybridRetriever({ es, embedder }) }), problem: null };
+  } catch {
+    return { services: null, problem: 'OPENAI_EMBEDDING_MODEL has no known price: AI briefs have no query embeddings' };
+  }
 }
 
 function fail(message: string): never {
@@ -45,17 +66,19 @@ async function main(): Promise<void> {
   const tracing = startTracing(config);
   const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api' });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 10_000, maxRetries: 1 });
-  // AI briefs need an evidence retriever (`briefs`), bound to hybrid retrieval in a later
-  // change; until then the brief routes answer 503 and AI status reports `dependency`.
+  const evidence = briefServices(config, db, es);
   const app = buildApp({
     config,
     db,
     es,
     ai: createAiRuntime(config, { db }),
+    briefs: evidence.services,
     embedding: { model: config.ai.openai.embeddingModel, dims: config.ai.openai.embeddingDimensions },
     webRoot: resolve(APP_DIR, 'dist/web'),
     logger: { level: config.nodeEnv === 'production' ? 'info' : 'debug' },
   });
+
+  if (evidence.problem) app.log.warn({ problem: evidence.problem }, 'AI feature off');
 
   // Retention and lease expiry of the control tables (server/quota/maintenance.ts): advisory-locked, never fatal.
   const maintenance = startControlMaintenance(db, app.log);

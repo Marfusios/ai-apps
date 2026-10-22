@@ -15,11 +15,12 @@ export interface ApiContext {
   log: FastifyBaseLogger;
   /** AI startup check, quota policy, trial identities, the anonymous gate and the provider; null: AI is off. */
   ai: AiRuntime | null;
-  /** Evidence retrieval and the brief runs; null until retrieval is bound: AI briefs are off. */
+  /** Evidence retrieval and the brief runs; null without a query embedder: AI briefs are off. */
   briefs: BriefServices | null;
   /**
    * The passages index AI evidence would come from right now (the active manifest's,
-   * when the retriever accepts it), or null: AI is unavailable (`paused`/`dependency`).
+   * when the dataset reports it servable and the retriever accepts it), or null: AI is
+   * unavailable (`paused`/`dependency`, and 503 `unavailable` for brief requests).
    */
   aiEvidence: () => Promise<EvidenceDataset | null>;
   onUnknownFacetValue: (facet: FacetKey, value: string) => void;

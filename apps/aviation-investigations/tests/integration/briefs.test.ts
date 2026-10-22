@@ -1,14 +1,16 @@
 /**
- * AI briefs end to end through the HTTP routes, with the fake language-model provider
- * and a fake evidence retriever (tests/support/fake-retriever.ts) over the fixture
- * corpus in aviation_test. Retrieval itself (Task 10) is not exercised here; the
- * pipeline's provenance check, validation, settlement and storage are.
+ * AI briefs end to end through the HTTP routes, with the fake language-model provider,
+ * over the fixture corpus in aviation_test published with a cases index and a passages
+ * index (fake vectors under the production model name, so the dataset resolver's
+ * passages contract check is the real one).
  *
- * The fixture generation is published with a placeholder passages-index name (no
- * Elasticsearch is read: the routes use the manifest row and the retriever port).
+ * Most tests read evidence through a fake retriever (tests/support/fake-retriever.ts)
+ * to script failures; they exercise the pipeline's provenance check, validation,
+ * settlement and storage. "Hybrid retrieval behind the port" runs the real binding
+ * (server/briefs/retriever.ts) over the fixture passages index with the fake embedder.
  */
 import { randomBytes } from 'node:crypto';
-import { Client } from '@elastic/elasticsearch';
+import { errors, type Client, type estypes } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -28,18 +30,21 @@ import type { ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/prov
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
 import { buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
-import { RetrievalFailure } from '../../server/briefs/evidence.js';
+import { QueryEmbeddingError, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
+import { countTokens } from '../../server/ai/tokens.js';
+import { RetrievalFailure, type EmbeddingUsage, type EvidenceQuery, type EvidenceRetriever } from '../../server/briefs/evidence.js';
+import { createHybridRetriever } from '../../server/briefs/retriever.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
 import { OUT_OF_SCOPE_LINES, OPERATIONAL_LINES, OPERATIONAL_TITLE } from '../../server/briefs/static-replies.js';
 import { moveBriefReadOwner } from '../../server/briefs/store.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { publishManifest } from '../../server/db/generations.js';
 import { pruneControls, setAiSwitch } from '../../server/quota/index.js';
-import { loadFixtureGeneration } from '../support/api-dataset.js';
+import { FIXTURE_EMBEDDING, deleteIndices, fixtureEmbedder, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
 import { FakeRetriever, type FakeRetrieverOptions } from '../support/fake-retriever.js';
 import { FakeSiteverify, REAL_SECRET, REAL_SITE_KEY } from '../support/fake-siteverify.js';
 import { sqlState } from './corpus-helpers.js';
-import { resetControls, resetCorpus, testDb } from './helpers.js';
+import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDb, testEs, testEsReader } from './helpers.js';
 
 const IDENTITY_SECRET = 'test-identity-hmac-secret-0123456789';
 const NETWORK_SECRET = 'test-network-hmac-secret-0123456789';
@@ -72,20 +77,29 @@ let appDb: Db;
 let ingest: Db;
 let migrator: Db;
 let generationId: number;
-const es = new Client({ node: 'http://localhost:9' }); // never used: briefs read no index here
+let dataset: FixtureDataset & { passagesIndex: string };
+const PREFIX = `${TEST_INDEX_PREFIX}briefs${RUN}`;
+/** The API's client (read key) and the index builder's (write key). */
+let es: Client;
+let writer: Client;
 const harnesses: Harness[] = [];
 
 beforeAll(async () => {
   appDb = testDb('app');
   ingest = testDb('ingest');
   migrator = testDb('migrator');
-  generationId = await loadFixtureGeneration(ingest);
-  await publishManifest(ingest, generationId, `aviation-test-briefs${RUN}-cases`, `aviation-test-briefs${RUN}-passages`);
-});
+  es = testEsReader();
+  writer = testEs();
+  const published = await publishFixtureDataset(ingest, writer, PREFIX, { passages: true });
+  if (!published.passagesIndex) throw new Error('the fixture dataset has no passages index');
+  dataset = { ...published, passagesIndex: published.passagesIndex };
+  generationId = dataset.generationId;
+}, 180_000);
 
 afterAll(async () => {
+  await deleteIndices(writer, PREFIX);
   await resetCorpus();
-  await Promise.all([closeDb(appDb), closeDb(ingest), closeDb(migrator), es.close()]);
+  await Promise.all([closeDb(appDb), closeDb(ingest), closeDb(migrator), es.close(), writer.close()]);
 });
 
 beforeEach(async () => {
@@ -123,12 +137,21 @@ interface Harness {
   llm: FakeProvider;
   retriever: FakeRetriever;
   svc: BriefServices;
+  /** The server's log lines (JSON). */
+  logs: string[];
 }
 
-function harness(
-  script: FakeScript,
-  opts: { retriever?: Partial<FakeRetrieverOptions>; timeouts?: Partial<{ scope: number; retrieve: number; compose: number; check: number; total: number }>; trialRequests?: number } = {},
-): Harness {
+interface HarnessOptions {
+  retriever?: Partial<FakeRetrieverOptions>;
+  /** Evidence through this retriever instead of the fake one (the hybrid binding). */
+  evidence?: EvidenceRetriever;
+  /** The configured embedding the dataset resolver checks the passages index against (default `FIXTURE_EMBEDDING`; null: none). */
+  embedding?: { model: string; dims: number } | null;
+  timeouts?: Partial<{ scope: number; retrieve: number; compose: number; check: number; total: number }>;
+  trialRequests?: number;
+}
+
+function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
   const sv = new FakeSiteverify(now, { hostname: HOST, action: TURNSTILE_ACTION });
   const llm = createFakeProvider(script);
   const ai = createAiRuntime(aiConfig(opts.trialRequests === undefined ? {} : { trialRequests: opts.trialRequests }), {
@@ -138,16 +161,20 @@ function harness(
     now,
   });
   const retriever = new FakeRetriever(appDb, { cases: SEEDS, ...opts.retriever });
-  const svc = createBriefServices(appDb, { retriever, ...(opts.timeouts ? { timeouts: opts.timeouts } : {}) });
+  const svc = createBriefServices(appDb, { retriever: opts.evidence ?? retriever, ...(opts.timeouts ? { timeouts: opts.timeouts } : {}) });
+  const embedding = opts.embedding === undefined ? FIXTURE_EMBEDDING : opts.embedding;
+  const logs: string[] = [];
   const app = buildApp({
     config: { appUrl: `https://${HOST}`, trustedProxyCidrs: [] },
     db: appDb,
     es,
     ai,
     briefs: svc,
+    ...(embedding ? { embedding } : {}),
+    logger: { level: 'debug', stream: { write: (line: string) => void logs.push(line) } },
     rateLimit: { limit: 100_000, windowMs: 60_000 },
   });
-  const h = { app, ai, sv, llm, retriever, svc };
+  const h = { app, ai, sv, llm, retriever, svc, logs };
   harnesses.push(h);
   return h;
 }
@@ -347,7 +374,7 @@ describe('POST /api/briefs: the pipeline', () => {
     // The scope stage's keyword text and the question went to retrieval, pinned to the brief's generation.
     expect(h.retriever.queries).toHaveLength(1);
     expect(h.retriever.queries[0]).toMatchObject({
-      dataset: { generationId, passagesIndex: `aviation-test-briefs${RUN}-passages` },
+      dataset: { generationId, passagesIndex: dataset.passagesIndex },
       keywordText: 'engine power loss maintenance',
       text: 'Engine power loss shortly after maintenance',
       filters: {},
@@ -751,14 +778,14 @@ describe('admission order', () => {
     expect(h.sv.calls).toHaveLength(0);
 
     // A keyword-only manifest: no passages index at all.
-    await publishManifest(ingest, generationId, `aviation-test-briefs${RUN}-cases`, null);
+    await publishManifest(ingest, generationId, dataset.casesIndex, null);
     try {
       const keywordOnly = harness(answering());
       expect((await inject<{ state: string; reason?: string }>(keywordOnly, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'paused', reason: 'dependency' });
       expect((await ask(keywordOnly, 'Engine power loss')).status).toBe(503);
       expect(keywordOnly.retriever.queries).toHaveLength(0);
     } finally {
-      await publishManifest(ingest, generationId, `aviation-test-briefs${RUN}-cases`, `aviation-test-briefs${RUN}-passages`);
+      await publishManifest(ingest, generationId, dataset.casesIndex, dataset.passagesIndex);
     }
     const ok = harness(answering());
     expect((await inject<{ state: string }>(ok, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'available' });
@@ -796,6 +823,239 @@ describe('admission order', () => {
     const long = await inject<{ error: string }>(h, 'POST', '/api/briefs', { body: { question: 'x'.repeat(1_501), idempotencyKey: key() } });
     expect(long.status).toBe(400);
     expect(h.sv.calls).toHaveLength(0);
+  });
+});
+
+describe('hybrid retrieval behind the port', () => {
+  /** The motivating question (DESIGN §3) as the scope stage reads it: 2008, keyword text for BM25. */
+  const SEED_QUESTION = 'Find 2008 investigations involving engine power loss shortly after maintenance';
+  const SEED_KEYWORDS = 'engine power loss maintenance overhaul replaced mechanic';
+  const SEED_SCOPE = scopeOut({ filters: { yearFrom: 2008, yearTo: 2008 }, keywordText: SEED_KEYWORDS });
+  const evidenceQuery = (over: Partial<EvidenceQuery> = {}): EvidenceQuery => ({
+    dataset: { generationId, passagesIndex: dataset.passagesIndex },
+    text: SEED_QUESTION,
+    keywordText: SEED_KEYWORDS,
+    filters: { yearFrom: 2008, yearTo: 2008 },
+    ...over,
+  });
+  const live = () => new AbortController().signal;
+
+  /**
+   * The API's client with `search` observed: every request body is recorded, and
+   * `tamper` may fail the n-th search (1-based) or change its response.
+   */
+  function searchSpy(tamper: (n: number, res: estypes.SearchResponse) => Error | void = () => undefined) {
+    const bodies: estypes.SearchRequest[] = [];
+    const client = new Proxy(es, {
+      get(target, prop) {
+        if (prop === 'search') {
+          return async (body: estypes.SearchRequest, opts?: unknown) => {
+            bodies.push(body);
+            const n = bodies.length;
+            const res = (await target.search(body, opts as never)) as estypes.SearchResponse;
+            const err = tamper(n, res);
+            if (err) throw err;
+            return res;
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const keywordQueries = () =>
+      bodies.flatMap((b) => {
+        const must = (b.query?.bool?.must ?? []) as { multi_match?: { query: string } }[];
+        return must.flatMap((m) => (m.multi_match ? [m.multi_match.query] : []));
+      });
+    return { client, bodies, keywordQueries };
+  }
+
+  /** The fixture embedder with its results changed (e.g. no usage report). */
+  function embedderWith(change: (r: EmbedResult) => EmbedResult): Embedder & { calls: string[][] } {
+    const base = fixtureEmbedder();
+    return { ...base, calls: base.calls, embed: async (texts) => change(await base.embed(texts)) };
+  }
+
+  function failingEmbedder(err: () => Error): Embedder & { calls: number } {
+    const e = { model: FIXTURE_EMBEDDING.model, dims: FIXTURE_EMBEDDING.dims, usdPerMillionTokens: 0.02, calls: 0, embed: async () => {
+      e.calls += 1;
+      throw err();
+    } };
+    return e;
+  }
+
+  async function failureOf(p: Promise<unknown>): Promise<RetrievalFailure> {
+    const err = await p.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(RetrievalFailure);
+    const f = err as RetrievalFailure;
+    expect(f.message).not.toMatch(/SENTINEL|aviation-test|passages-v1|chunk-v2/);
+    return f;
+  }
+
+  it('seed question returns groups and four seed cases in fixture corpus', async () => {
+    const embedder = fixtureEmbedder();
+    const spy = searchSpy();
+    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: createHybridRetriever({ es: spy.client, embedder }) });
+    expect((await inject<{ state: string }>(h, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'available' });
+    const { briefId, cookie, step } = await askAndWait(h, SEED_QUESTION);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+
+    // Every US, answer-eligible 2008 case of the fixtures: the four seeds and the two-airplane SEA08LA057.
+    const found = result.cases.map((c) => c.case.ntsbNo);
+    expect(found).toEqual(expect.arrayContaining(SEEDS));
+    expect(new Set(found)).toEqual(new Set([...SEEDS, 'SEA08LA057']));
+    expect(found).not.toContain('ENG08WA029'); // 2008, but not a US event
+    expect(result.grouping).toBe('mechanical');
+    const groups = new Map(result.groups.map((g) => [g.kind, g.caseNumbers]));
+    expect(new Set(groups.get('causal'))).toEqual(new Set(['DFW08TA066', 'NYC08LA106']));
+    expect(groups.get('defect_not_causal')).toEqual(['MIA08LA156']);
+    expect(groups.get('no_fault')).toEqual(['DEN08LA103']);
+    expect(groups.get('insufficient')).toEqual(['SEA08LA057']);
+    // Real passages passed the provenance chain and the quote rule: each quote sits at its span.
+    for (const c of result.cases) {
+      expect(c.reading?.quotes.length).toBeGreaterThan(0);
+      for (const q of c.reading!.quotes) expect(q.span.end).toBeGreaterThan(q.span.start);
+    }
+    expect(step.checklist).toMatchObject({ verified: 'passed', searched: { cases: 5 } });
+
+    // The dense channel embedded the question once; BM25 searched the scope stage's keyword text.
+    expect(embedder.calls).toEqual([[queryEmbeddingInput(SEED_QUESTION)]]);
+    expect(spy.keywordQueries()).toEqual([SEED_KEYWORDS]);
+    expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
+    const embed = await rows<{ model: string; tokens: unknown }>(sql`SELECT model, tokens FROM cost_ledger WHERE stage = 'embed'`);
+    expect(embed).toEqual([{ model: FIXTURE_EMBEDDING.model, tokens: { input: countTokens(queryEmbeddingInput(SEED_QUESTION)) } }]);
+
+    // The case context reads the stored passages, highlighted.
+    const dfw = result.cases.find((c) => c.case.ntsbNo === 'DFW08TA066')!;
+    const quote = dfw.reading!.quotes[0]!;
+    const ctx = await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DFW08TA066`, { cookie });
+    expect(ctx.status).toBe(200);
+    const cited = CaseContextResponseSchema.parse(ctx.json).passages.find((p) => p.passageId === quote.passageId)!;
+    expect(cited.text.slice(cited.highlights[0]!.start, cited.highlights[0]!.end)).toBe(quote.text);
+  });
+
+  it('settles the query embedding once, from the callback, whatever fails after it', async () => {
+    const usages: EmbeddingUsage[] = [];
+    const embedder = fixtureEmbedder();
+    const retrieved = await createHybridRetriever({ es, embedder }).retrieve(evidenceQuery(), live(), (u) => usages.push(u));
+    expect(usages).toEqual([{ provider: 'openai', model: FIXTURE_EMBEDDING.model, tokens: countTokens(queryEmbeddingInput(SEED_QUESTION)), usd: 0, billing: 'reported' }]);
+    expect(retrieved.bundle.cases.map((c) => c.ntsbNo)).toEqual(expect.arrayContaining(SEEDS));
+    expect(retrieved.bundle.cases.every((c) => c.passages.some((p) => p.role === 'probable_cause'))).toBe(true);
+    // A re-pack reuses the candidates: a smaller bundle, no second embedding.
+    const budget = Math.floor(retrieved.bundle.evidenceTokens / 2);
+    const smaller = await retrieved.repack(budget, live());
+    expect(smaller.evidenceTokens).toBeLessThanOrEqual(budget);
+    expect(embedder.calls).toHaveLength(1);
+    expect(usages).toHaveLength(1);
+
+    // A channel, the evidence fetch or a completeness check failing after the embedding.
+    const cases: [number, (res: estypes.SearchResponse) => Error | void, string][] = [
+      [1, () => new errors.ConnectionError('SENTINEL_UPSTREAM'), 'search'],
+      [3, () => new Error('SENTINEL_UPSTREAM'), 'other'],
+      [3, (res) => void (res.timed_out = true), 'incomplete_search'],
+    ];
+    for (const [at, fail, reason] of cases) {
+      const seen: EmbeddingUsage[] = [];
+      const spy = searchSpy((n, res) => (n === at ? fail(res) : undefined));
+      const f = await failureOf(createHybridRetriever({ es: spy.client, embedder: fixtureEmbedder() }).retrieve(evidenceQuery(), live(), (u) => seen.push(u)));
+      expect(f).toMatchObject({ kind: 'failed', embedding: 'none', reason });
+      expect(seen).toHaveLength(1);
+    }
+
+    // A usage report the provider did not give: handed on once, as uncertain.
+    const seen: EmbeddingUsage[] = [];
+    const unsure = embedderWith((r) => ({ ...r, usageUncertain: true }));
+    await createHybridRetriever({ es, embedder: unsure }).retrieve(evidenceQuery(), live(), (u) => seen.push(u));
+    expect(seen).toEqual([expect.objectContaining({ billing: 'uncertain' })]);
+  });
+
+  it('a failed embedding is settled by its own billing; refusals before it charge nothing', async () => {
+    const run = async (embedder: Embedder, q: EvidenceQuery = evidenceQuery(), signal = live()) => {
+      const seen: EmbeddingUsage[] = [];
+      const f = await failureOf(createHybridRetriever({ es, embedder }).retrieve(q, signal, (u) => seen.push(u)));
+      return { f, seen };
+    };
+    const provider = (billing: 'none' | 'usage' | 'uncertain', billed: number | null = null) =>
+      failingEmbedder(() => new QueryEmbeddingError('SENTINEL_UPSTREAM', { kind: 'api', status: 500 }, billing, billed));
+
+    expect(await run(provider('none'))).toMatchObject({ f: { kind: 'failed', embedding: 'none', reason: 'embedding' }, seen: [] });
+    expect(await run(provider('uncertain'))).toMatchObject({ f: { kind: 'failed', embedding: 'uncertain', reason: 'embedding' }, seen: [] });
+    // Processed and billed, but unusable: the provider's billed tokens, handed on once.
+    const billed = await run(provider('usage', 9));
+    expect(billed.f).toMatchObject({ kind: 'failed', embedding: 'none' });
+    expect(billed.seen).toEqual([{ provider: 'openai', model: FIXTURE_EMBEDDING.model, tokens: 9, usd: (9 * 0.02) / 1_000_000, billing: 'reported' }]);
+    // Any other failure of a called embedder may have been billed.
+    expect(await run(failingEmbedder(() => new Error('SENTINEL_UPSTREAM')))).toMatchObject({ f: { embedding: 'uncertain' }, seen: [] });
+
+    // Refused before the embedder is called: nothing sent, nothing charged, no index name passed on.
+    for (const [passagesIndex, reason] of [
+      [null, 'no_passages_index'],
+      [dataset.casesIndex, 'index_mismatch'],
+      [`${PREFIX}-missing-passages`, 'index_mismatch'],
+    ] as const) {
+      const embedder = failingEmbedder(() => new Error('never called'));
+      const r = await run(embedder, evidenceQuery({ dataset: { generationId, passagesIndex: passagesIndex as string } }));
+      expect(r).toMatchObject({ f: { kind: 'unavailable', embedding: 'none', reason }, seen: [] });
+      expect(embedder.calls).toBe(0);
+    }
+    const cancelled = new AbortController();
+    cancelled.abort();
+    expect(await run(fixtureEmbedder(), evidenceQuery(), cancelled.signal)).toMatchObject({ f: { kind: 'timeout', reason: 'aborted' } });
+  });
+
+  it('a retrieval failure after the embedding keeps one embed line; an uncertain embedding settles in full', async () => {
+    const spy = searchSpy((n) => (n === 3 ? new Error('SENTINEL_UPSTREAM') : undefined));
+    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: createHybridRetriever({ es: spy.client, embedder: fixtureEmbedder() }) });
+    const { briefId, step } = await askAndWait(h, SEED_QUESTION);
+    expect(step.result).toEqual({ kind: 'failed', countedAsSearch: true });
+    expect(await ledgerStages()).toEqual([['scope', 'embed']]);
+    expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'retrieve', category: 'failed', reason: 'other' } });
+    expect(h.logs.join('\n')).not.toContain('SENTINEL');
+
+    const unsure = harness(answering({ scope: { output: SEED_SCOPE } }), {
+      evidence: createHybridRetriever({ es, embedder: embedderWith((r) => ({ ...r, usageUncertain: true })) }),
+    });
+    advance(MIN);
+    const second = await askAndWait(unsure, SEED_QUESTION, { cookie: null });
+    expect(second.step.result?.kind).toBe('answer');
+    const settled = (await reservations())[1]!;
+    expect(settled).toMatchObject({ status: 'settled', uncertain: true });
+    expect(settled.charged).toBe(settled.usd);
+    expect((await ledgerStages())[1]!.filter((s) => s === 'embed')).toHaveLength(1);
+  });
+
+  it('AI stays off unless the dataset reports the passages index servable, and never says why', async () => {
+    const refused = async (h: Harness) => {
+      expect((await inject<{ state: string; reason?: string }>(h, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'paused', reason: 'dependency' });
+      const r = await ask(h, SEED_QUESTION);
+      expect(r.status).toBe(503);
+      expect(r.json).toEqual({ error: 'unavailable', message: expect.any(String) });
+      expect(JSON.stringify(r.json)).not.toMatch(/aviation-test|passages|index/i);
+      expect(h.sv.calls).toHaveLength(0);
+      expect(h.retriever.queries).toHaveLength(0);
+    };
+    // The index breaks the contract for the configured dimensions (incompatible), or no embedding is configured.
+    const wrongDims = harness(answering(), { embedding: { model: FIXTURE_EMBEDDING.model, dims: 512 } });
+    await refused(wrongDims);
+    expect(wrongDims.logs.some((l) => l.includes('passages index not servable') && l.includes('"code":"incompatible"'))).toBe(true);
+    await refused(harness(answering(), { embedding: null }));
+
+    // No servable dataset at all (the cases index is gone): the same refusal, nothing logged about it.
+    const missing = `${PREFIX}-missing-cases`;
+    await publishManifest(ingest, generationId, missing, dataset.passagesIndex);
+    try {
+      const gone = harness(answering());
+      await refused(gone);
+      expect(gone.logs.join('\n')).not.toContain(missing);
+    } finally {
+      await publishManifest(ingest, generationId, dataset.casesIndex, dataset.passagesIndex);
+    }
+    const ok = harness(answering());
+    expect((await inject<{ state: string }>(ok, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'available' });
   });
 });
 

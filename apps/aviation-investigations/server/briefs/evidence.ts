@@ -2,7 +2,8 @@
  * The ports the brief pipeline reads evidence through.
  *
  * `EvidenceRetriever` is the narrow interface to hybrid retrieval (Task 10's
- * `retrieveEvidence`, bound in phase 2). It fits two properties of that code:
+ * `retrieveEvidence`, bound in server/briefs/retriever.ts). It fits two properties of
+ * that code:
  * - query-embedding usage is reported through the caller's `onEmbeddingUsage` callback
  *   as soon as the embedding succeeds, so a later Elasticsearch or packing failure
  *   cannot lose a paid stage; a failed embedding is reported by `RetrievalFailure`'s
@@ -91,7 +92,23 @@ export interface RetrievedEvidence {
 
 export type RetrievalFailureKind = 'unavailable' | 'timeout' | 'failed';
 
-/** Retrieval did not produce a bundle. `embedding` says whether a failed embedding may have been billed. */
+/** Why retrieval failed, as a fixed category for the step's record (never an error message). */
+export type RetrievalFailureReason =
+  | 'no_passages_index'
+  | 'index_mismatch'
+  | 'aborted'
+  | 'query_too_long'
+  | 'embedding'
+  | 'incomplete_search'
+  | 'malformed_passage'
+  | 'search'
+  | 'other';
+
+/**
+ * Retrieval did not produce a bundle. `embedding` says whether a failed embedding may
+ * have been billed. The message is fixed text: it reaches no client, but it must not
+ * carry index names, contract values or upstream text either.
+ */
 export class RetrievalFailure extends Error {
   override readonly name = 'RetrievalFailure';
   constructor(
@@ -99,6 +116,7 @@ export class RetrievalFailure extends Error {
     /** `none`: no embedding was billed by this failure (or it was reported through the callback first). */
     readonly embedding: 'none' | 'uncertain',
     message = `retrieval failed: ${kind}`,
+    readonly reason?: RetrievalFailureReason,
   ) {
     super(message);
   }
