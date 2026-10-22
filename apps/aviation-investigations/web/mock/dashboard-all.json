@@ -1,0 +1,341 @@
+{
+ "dataset": {
+  "revision": "fx-5b4a93ded6e99a06",
+  "snapshotDate": "2026-10-16"
+ },
+ "cohort": "all",
+ "total": 26,
+ "years": [
+  {
+   "year": 2008,
+   "completed": 5,
+   "other": 0
+  },
+  {
+   "year": 2009,
+   "completed": 2,
+   "other": 0
+  },
+  {
+   "year": 2010,
+   "completed": 0,
+   "other": 1
+  },
+  {
+   "year": 2011,
+   "completed": 0,
+   "other": 0
+  },
+  {
+   "year": 2012,
+   "completed": 2,
+   "other": 0
+  },
+  {
+   "year": 2013,
+   "completed": 0,
+   "other": 0
+  },
+  {
+   "year": 2014,
+   "completed": 2,
+   "other": 0
+  },
+  {
+   "year": 2015,
+   "completed": 0,
+   "other": 0
+  },
+  {
+   "year": 2016,
+   "completed": 0,
+   "other": 0
+  },
+  {
+   "year": 2017,
+   "completed": 0,
+   "other": 0
+  },
+  {
+   "year": 2018,
+   "completed": 2,
+   "other": 0
+  },
+  {
+   "year": 2019,
+   "completed": 0,
+   "other": 0
+  },
+  {
+   "year": 2020,
+   "completed": 1,
+   "other": 0
+  },
+  {
+   "year": 2021,
+   "completed": 0,
+   "other": 0
+  },
+  {
+   "year": 2022,
+   "completed": 0,
+   "other": 1
+  },
+  {
+   "year": 2023,
+   "completed": 1,
+   "other": 1
+  },
+  {
+   "year": 2024,
+   "completed": 4,
+   "other": 0
+  },
+  {
+   "year": 2025,
+   "completed": 1,
+   "other": 1
+  },
+  {
+   "year": 2026,
+   "completed": 1,
+   "other": 1
+  }
+ ],
+ "phase": [
+  {
+   "facet": "phase",
+   "value": "en_route",
+   "label": "En route",
+   "count": 8
+  },
+  {
+   "facet": "phase",
+   "value": "approach",
+   "label": "Approach",
+   "count": 7
+  },
+  {
+   "facet": "phase",
+   "value": "initial_climb",
+   "label": "Initial climb",
+   "count": 6
+  },
+  {
+   "facet": "phase",
+   "value": "maneuvering",
+   "label": "Maneuvering",
+   "count": 3
+  },
+  {
+   "facet": "phase",
+   "value": "landing",
+   "label": "Landing",
+   "count": 3
+  },
+  {
+   "facet": "phase",
+   "value": "unknown",
+   "label": "Unknown",
+   "count": 1
+  },
+  {
+   "facet": "phase",
+   "value": "blank",
+   "label": "No defining event",
+   "count": 1
+  }
+ ],
+ "injury": [
+  {
+   "facet": "injury",
+   "value": "NONE",
+   "label": "None",
+   "count": 13
+  },
+  {
+   "facet": "injury",
+   "value": "FATL",
+   "label": "Fatal",
+   "count": 8
+  },
+  {
+   "facet": "injury",
+   "value": "MINR",
+   "label": "Minor",
+   "count": 3
+  },
+  {
+   "facet": "injury",
+   "value": "SERS",
+   "label": "Serious",
+   "count": 1
+  },
+  {
+   "facet": "injury",
+   "value": "blank",
+   "label": "Not reported",
+   "count": 1
+  }
+ ],
+ "weather": [
+  {
+   "facet": "conditions",
+   "value": "VMC",
+   "label": "VMC",
+   "count": 22
+  },
+  {
+   "facet": "conditions",
+   "value": "IMC",
+   "label": "IMC",
+   "count": 2
+  },
+  {
+   "facet": "conditions",
+   "value": "blank",
+   "label": "Not reported",
+   "count": 2
+  }
+ ],
+ "category": [
+  {
+   "facet": "category",
+   "value": "AIR",
+   "label": "Airplane",
+   "count": 22
+  },
+  {
+   "facet": "category",
+   "value": "HELI",
+   "label": "Helicopter",
+   "count": 4
+  },
+  {
+   "facet": "category",
+   "value": "blank",
+   "label": "Not reported",
+   "count": 1
+  }
+ ],
+ "coverage": {
+  "probableCause": {
+   "count": 21,
+   "of": 26
+  },
+  "metar": {
+   "count": 9,
+   "of": 26
+  },
+  "coordinates": {
+   "count": 25,
+   "of": 26
+  },
+  "multiAircraft": 3
+ },
+ "map": {
+  "width": 1000,
+  "height": 637,
+  "projection": "albers-lower48",
+  "points": [
+   [
+    572.9,
+    195.4
+   ],
+   [
+    486.3,
+    435.1
+   ],
+   [
+    408.9,
+    204.2
+   ],
+   [
+    597.1,
+    314.5
+   ],
+   [
+    574.5,
+    313.8
+   ],
+   [
+    439.1,
+    510.5
+   ],
+   [
+    574.8,
+    494.9
+   ],
+   [
+    440.1,
+    249.1
+   ],
+   [
+    429.7,
+    474.4
+   ],
+   [
+    489.1,
+    422.9
+   ],
+   [
+    596,
+    229
+   ],
+   [
+    809,
+    285.6
+   ],
+   [
+    473.9,
+    325.5
+   ],
+   [
+    359.6,
+    480.2
+   ],
+   [
+    882.3,
+    193.3
+   ],
+   [
+    722,
+    468.8
+   ],
+   [
+    701,
+    418.8
+   ],
+   [
+    704.3,
+    417.7
+   ],
+   [
+    792.2,
+    541.6
+   ],
+   [
+    91.2,
+    269.8
+   ],
+   [
+    144.7,
+    264.1
+   ],
+   [
+    226.3,
+    119.1
+   ],
+   [
+    88.6,
+    252.4
+   ],
+   [
+    240.8,
+    397.4
+   ]
+  ],
+  "withoutCoordinates": 1,
+  "outsideFrame": 1
+ }
+}

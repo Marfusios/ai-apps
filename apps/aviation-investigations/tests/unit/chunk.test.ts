@@ -5,6 +5,7 @@ import {
   DEFAULT_CHUNK_OPTIONS,
   chunkSection,
   chunkSectionDetailed,
+  gluedHeadingStarts,
   splitSentences,
   type PassageDraft,
   type SectionText,
@@ -119,7 +120,7 @@ describe('chunkSection', () => {
   it('pins the options CHUNKER_VERSION stands for', () => {
     // Changing them (or the algorithm) changes passage ids: bump CHUNKER_VERSION with them.
     expect({ version: CHUNKER_VERSION, ...DEFAULT_CHUNK_OPTIONS }).toEqual({
-      version: 'chunk-v1',
+      version: 'chunk-v2',
       targetTokens: 650,
       maxTokens: 800,
       minTokens: 200,
@@ -302,6 +303,68 @@ describe('chunkSection', () => {
       'See Fig. 3 and Oct. 5 records. done.',
       '(End)',
     ]);
+  });
+
+  it('keeps astral characters whole: offsets never fall inside a surrogate pair', () => {
+    const insideSurrogatePair = (text: string, i: number) =>
+      i > 0 && i < text.length && /[\ud800-\udbff]/.test(text[i - 1] ?? '') && /[\udc00-\udfff]/.test(text[i] ?? '');
+    const astral = ['\u{1F6E9}\uFE0F', '\u{1D400}\u{1D401}', '\u{1F600}', '\u{20000}'];
+    const text = narrative(41, 20)
+      .split(' ')
+      .map((w, i) => (i % 7 === 0 ? `${w}${astral[i % astral.length]}` : w))
+      .join(' ');
+    const s = section(text);
+    const passages = chunkSection(s);
+    expect(passages.length).toBeGreaterThan(1);
+    expectRoundTrip(s, passages);
+    expectCoverage(s, passages);
+    for (const p of passages) {
+      expect(insideSurrogatePair(text, p.start)).toBe(false);
+      expect(insideSurrogatePair(text, p.end)).toBe(false);
+    }
+    // Astral letters and digits without whitespace: cut between characters, never inside one.
+    const blob = '\u{1D400}1'.repeat(1500);
+    const only = section(blob);
+    const { passages: cut, stats } = chunkSectionDetailed(only);
+    expect(stats.forcedCharSplits).toBeGreaterThan(0);
+    expectRoundTrip(only, cut);
+    expectCoverage(only, cut);
+    for (const p of cut) {
+      expect(p.tokens).toBeLessThanOrEqual(maxTokens);
+      expect(insideSurrogatePair(blob, p.start)).toBe(false);
+      expect(insideSurrogatePair(blob, p.end)).toBe(false);
+    }
+  });
+
+  it('finds headings glued to their text, and not acronyms, plurals or case numbers', () => {
+    const starts = (t: string) => gluedHeadingStarts(t, 0, t.length).map((i) => t.slice(i, i + 12));
+    expect(starts('ft msl. PERSONNEL INFORMATIONThe pilot')).toEqual(['PERSONNEL IN']);
+    expect(starts('HISTORY OF FLIGHTOn December 14')).toEqual(['HISTORY OF F']);
+    expect(starts('the airplane. WRECKAGE AND IMPACT INFORMATIONThe airplane')).toEqual(['WRECKAGE AND']);
+    expect(starts('Review of METARs, NOTAMs and SEA08LA057 in IMC, then VMC.')).toEqual([]);
+  });
+
+  it('prefers cutting right before a glued heading (a soft paragraph start)', () => {
+    const headings = ['HISTORY OF FLIGHT', 'PERSONNEL INFORMATION', 'AIRCRAFT INFORMATION', 'METEOROLOGICAL INFORMATION', 'WRECKAGE AND IMPACT INFORMATION'];
+    // One paragraph, as HTML conversion leaves it: "...last sentence. HEADINGThe next...",
+    // each heading's part about one passage long, so a cut at each heading is in reach.
+    const part = (h: string, seed: number) => {
+      let body = narrative(seed, 1, { sep: ' ' });
+      for (let k = 1; countTokens(`${h}${body}`) < 440; k += 1) body = `${body} ${narrative(seed * 100 + k, 1, { sep: ' ' })}`;
+      return `${h}${body}`;
+    };
+    const text = headings.map((h, i) => part(h, 60 + i)).join(' ');
+    const s = section(text);
+    const passages = chunkSection(s);
+    expect(passages.length).toBeGreaterThan(2);
+    expectRoundTrip(s, passages);
+    const starts = new Set(gluedHeadingStarts(text, 0, text.length));
+    expect(starts.size).toBe(headings.length);
+    // Every cut lands right before a heading: the passage ends where the heading's unit begins.
+    for (const p of passages.slice(0, -1)) {
+      const next = text.slice(p.end).search(/\S/) + p.end;
+      expect(starts.has(next)).toBe(true);
+    }
   });
 
   it('is deterministic', () => {

@@ -43,17 +43,30 @@ CREATE INDEX "passages_section_idx" ON "passages" USING btree ("section_id","gen
 -- Hand-written below: sealing and grants (drizzle-kit does not generate them).
 --
 -- passages is a projection of one verified generation's sections. Instead of foreign
--- keys (which would also tie the corpus tables to it for TRUNCATE), statement
--- triggers check every inserted row against the generation and its section, reject
--- updates, and allow deletes only of rows whose generation is gone. A trigger on
+-- keys (which would also tie the corpus tables to it for TRUNCATE), a statement
+-- trigger checks every inserted row against its generation and section, rejects
+-- updates, and allows deletes only of rows whose generation is gone. A trigger on
 -- dataset_generations removes a generation's passages when prune_generation()
 -- deletes the generation.
+--
+-- Pruning cannot race an insert: the insert trigger locks the referenced generation
+-- rows FOR SHARE until the inserting transaction ends. prune_generation() locks the
+-- generation row FOR UPDATE before deleting anything, so it waits for open inserts
+-- (and then removes their committed rows with the generation); an insert that comes
+-- after a prune waits for it and then finds the generation gone (READ COMMITTED), or
+-- fails with a serialization error (REPEATABLE READ). Status changes of the
+-- generation also wait, so the verified status checked here holds until commit.
+-- The function is SECURITY DEFINER because row locks need UPDATE rights that
+-- aviation_ingest does not have on dataset_generations.
 CREATE FUNCTION passages_write_guard() RETURNS trigger
-LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   bad record;
 BEGIN
   IF TG_OP = 'INSERT' THEN
+    PERFORM 1 FROM dataset_generations g
+      WHERE g.id IN (SELECT DISTINCT n.generation_id FROM new_rows n)
+      ORDER BY g.id FOR SHARE;
     SELECT n.generation_id, g.status INTO bad FROM new_rows n
       LEFT JOIN dataset_generations g ON g.id = n.generation_id
       WHERE g.id IS NULL OR g.status NOT IN ('verified', 'published') OR g.verification_status IS DISTINCT FROM 'ok'
@@ -62,12 +75,20 @@ BEGIN
       RAISE EXCEPTION 'passages need a verified generation: generation % is %', bad.generation_id, coalesce(bad.status, 'missing')
         USING ERRCODE = '55000';
     END IF;
+    -- Offsets are UTF-16 code units: characters plus one more for each astral character.
+    WITH sec AS (
+      SELECT s.generation_id, s.section_id, s.ntsb_no, s.revision_id, s.sha256, s.kind, s.scope, s.aircraft_key,
+             char_length(s.text) + char_length(regexp_replace(s.text, '[^\U00010000-\U0010FFFF]', '', 'g')) AS units
+        FROM case_sections s
+       WHERE (s.generation_id, s.section_id) IN (SELECT DISTINCT n.generation_id, n.section_id FROM new_rows n)
+    )
     SELECT n.generation_id, n.passage_id, n.section_id INTO bad FROM new_rows n
-      LEFT JOIN case_sections s ON s.generation_id = n.generation_id AND s.section_id = n.section_id
+      LEFT JOIN sec s ON s.generation_id = n.generation_id AND s.section_id = n.section_id
       LEFT JOIN cases c ON c.generation_id = n.generation_id AND c.ntsb_no = n.ntsb_no
       WHERE s.section_id IS NULL OR c.ntsb_no IS NULL OR s.ntsb_no <> n.ntsb_no
          OR s.revision_id <> n.revision_id OR s.sha256 <> n.section_sha OR s.kind <> n.section_kind
          OR s.scope <> n.scope OR s.aircraft_key IS DISTINCT FROM n.aircraft_key
+         OR n.start >= n."end" OR n."end" > s.units
          OR NOT c.is_us OR NOT c.answer_eligible
          OR (n.scope = 'aircraft' AND (SELECT count(*) FROM case_aircraft a
                WHERE a.generation_id = n.generation_id AND a.ntsb_no = n.ntsb_no) <> 1)
@@ -109,7 +130,8 @@ CREATE TRIGGER dataset_generations_passages_cleanup AFTER DELETE ON dataset_gene
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION passages_write_guard(), passages_generation_cleanup() FROM PUBLIC;
 --> statement-breakpoint
--- aviation_ingest builds passages and fills the cache: insert and read only.
+-- aviation_ingest builds passages and fills the cache: insert and read only. REVOKE
+-- ALL also covers MAINTAIN on PostgreSQL 17 and is valid on 16.
 REVOKE ALL ON TABLE "passages", "embedding_cache" FROM aviation_ingest;
 --> statement-breakpoint
 GRANT SELECT, INSERT ON TABLE "passages", "embedding_cache" TO aviation_ingest;

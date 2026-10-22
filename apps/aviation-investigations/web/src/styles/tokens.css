@@ -1,0 +1,111 @@
+/*
+ * "Sectional" design tokens (UI_DESIGN §2.2). Day is the default; night is the
+ * "Panel" theme (§2.8), selected by data-theme="night" on <html> or any element.
+ * Components never use raw colours: index.css maps these into the Tailwind theme,
+ * and base.css builds the signature details from them.
+ */
+
+:root,
+[data-theme="day"] {
+  color-scheme: light;
+
+  /* UI_DESIGN §2.2 */
+  --paper: #F3EEE1;
+  --raised: #FBF8F0;
+  --tint: #E8E2CC;
+  --ink: #1E2A36;
+  --muted: #58616B;
+  --blue: #1F519A;
+  --on-blue: #FFFFFF;
+  --magenta: #A0166C;
+  --on-magenta: #FFFFFF;
+  --hairline: rgba(31, 81, 154, .20);
+  --hatch: rgba(30, 42, 54, .13);
+  --magenta-soft: rgba(160, 22, 108, .35);
+  --blue-wash: rgba(31, 81, 154, .12);
+  --grid: rgba(31, 81, 154, .055);
+  --tray: #1E2A36;
+  --placard: transparent;
+
+  /* Derived from the approved mockups (Builder). */
+  --rule: rgba(30, 42, 54, .30);
+  --caution-edge: rgba(30, 42, 54, .45);
+  --magenta-wash: rgba(160, 22, 108, .04);
+  --tray-ink: #F3EEE1;
+  --tray-accent: #9DBCF0;
+  --shade: rgba(30, 42, 54, .16);
+  --header-bg: rgba(243, 238, 225, .92);
+  --toolbar: rgba(243, 238, 225, .6);
+  --strip-edge: rgba(30, 42, 54, .40);
+  --strip-line: rgba(30, 42, 54, .22);
+  --ask-shadow: 0 1px 0 rgba(31, 81, 154, .15), 0 10px 30px -18px rgba(30, 42, 54, .45);
+  --drawer-shadow: -30px 0 60px -30px rgba(30, 42, 54, .55);
+  --sheet-shadow: 0 -18px 40px -24px rgba(30, 42, 54, .55);
+
+  /* Signature details (§2.5, §2.8). */
+  --graticule:
+    repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 56px),
+    repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 56px);
+  --header-rule: var(--blue);
+  --tick: var(--blue);
+  --tick-opacity: .7;
+  --bezel: none;
+  --placard-ink: initial;
+  --placard-border: none;
+  --placard-highlight: none;
+  --placard-pad: 0;
+
+  /* Dashboard dot map: dots overlap, so the alpha is part of the token. */
+  --map-dot: #1F519A;
+  --map-dot-alpha: .6;
+}
+
+[data-theme="night"] {
+  color-scheme: dark;
+
+  /* UI_DESIGN §2.2, night "Panel" */
+  --paper: #1B1D20;
+  --raised: #24272B;
+  --tint: #2C3034;
+  --ink: #EDEDEA;
+  --muted: #9EA3A9;
+  --blue: #93B9F7;
+  --on-blue: #101418;
+  --magenta: #F07DC6;
+  --on-magenta: #1B0814;
+  --hairline: rgba(255, 255, 255, .10);
+  --hatch: rgba(237, 237, 234, .15);
+  --magenta-soft: rgba(240, 125, 198, .45);
+  --blue-wash: rgba(147, 185, 247, .16);
+  --grid: transparent;
+  --tray: #111214;
+  --placard: #0E0F11;
+
+  /* Derived from the approved mockups (Builder). */
+  --rule: rgba(237, 237, 234, .28);
+  --caution-edge: rgba(237, 237, 234, .34);
+  --magenta-wash: rgba(240, 125, 198, .06);
+  --tray-ink: #EDEDEA;
+  --tray-accent: #93B9F7;
+  --shade: rgba(0, 0, 0, .50);
+  --header-bg: #141618;
+  --toolbar: #1F2226;
+  --strip-edge: rgba(255, 255, 255, .16);
+  --strip-line: rgba(255, 255, 255, .10);
+  --ask-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 1px 0 rgba(0, 0, 0, .6);
+  --drawer-shadow: -30px 0 60px -30px rgba(0, 0, 0, .9);
+  --sheet-shadow: 0 -18px 40px -24px rgba(0, 0, 0, .9);
+
+  /* Panel: no graticule; placards, bezels and a near-white tick scale instead. */
+  --graticule: none;
+  --header-rule: rgba(255, 255, 255, .22);
+  --tick: #EDEDEA;
+  --tick-opacity: .35;
+  --bezel: inset 0 1px 0 rgba(255, 255, 255, .05), 0 1px 0 rgba(0, 0, 0, .6);
+  --placard-ink: #F4F4F2;
+  --placard-border: 1px solid rgba(255, 255, 255, .16);
+  --placard-highlight: inset 0 1px 0 rgba(255, 255, 255, .06);
+  --placard-pad: 1px 7px;
+  --map-dot: #93B9F7;
+  --map-dot-alpha: .85;
+}

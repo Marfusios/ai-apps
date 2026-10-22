@@ -14,7 +14,6 @@ import {
   PASSAGES_MAPPING,
   PASSAGES_SETTINGS,
   buildPassageDocument,
-  newPassagesBuildId,
   passagesAlias,
   passagesIndexFingerprint,
   passagesIndexName,
@@ -139,18 +138,21 @@ describe('passages index definition', () => {
     });
     expect(PASSAGES_MAPPING.properties?.text).toMatchObject({ analyzer: 'aviation_english', search_analyzer: 'aviation_english_search' });
     expect(PASSAGES_MAPPING.properties?.aircraft).toMatchObject({ type: 'nested', dynamic: 'strict' });
+    // Event-scoped passages list their aircraft outside the nested field.
+    expect(PASSAGES_MAPPING.properties?.event_aircraft).toMatchObject({ type: 'object', dynamic: 'strict' });
+    const analysis = PASSAGES_SETTINGS.analysis as { analyzer: Record<string, { char_filter?: string[] }> };
+    expect(analysis.analyzer.aviation_english?.char_filter).toEqual(['aviation_glued_heading']);
     expect(PASSAGES_SETTINGS['mapping.exclude_source_vectors']).toBe(true);
     expect(passagesIndexFingerprint('text-embedding-3-small')).not.toBe(passagesIndexFingerprint('fake-embedding-v1'));
   });
 
-  it('names indices per generation and build', () => {
-    const id = newPassagesBuildId(new Date('2026-10-22T01:02:03.004Z'));
-    expect(id).toMatch(/^20261022010203004-[0-9a-f]{8}$/);
-    expect(passagesIndexName('aviation', 1, id)).toBe(`aviation-passages-v1-g1-${id}`);
+  it('names indices per generation and build, like the cases index', () => {
+    const at = new Date('2026-10-22T01:02:03.004Z');
+    expect(passagesIndexName('aviation', 1, at, '0a1b2c3d')).toBe('aviation-passages-v1-g1-20261022010203004-0a1b2c3d');
     expect(passagesAlias('aviation')).toBe('aviation-passages');
-    expect(() => passagesIndexName('aviation', 0, id)).toThrow();
-    expect(() => passagesIndexName('Aviation', 1, id)).toThrow();
-    expect(() => passagesIndexName('aviation', 1, 'x')).toThrow();
+    expect(() => passagesIndexName('aviation', 0, at, '0a1b2c3d')).toThrow();
+    expect(() => passagesIndexName('Aviation', 1, at, '0a1b2c3d')).toThrow();
+    expect(() => passagesIndexName('aviation', 1, at, 'x')).toThrow();
   });
 
   it('builds documents with the copied filters and only the raw passage text', () => {
@@ -168,6 +170,13 @@ describe('passages index definition', () => {
       text: p.text,
     });
     expect(doc.text).not.toContain('Event (2 aircraft)');
+    // Event-scoped: nothing in the nested field, so a nested aircraft filter never matches it.
+    expect(doc.aircraft).toEqual([]);
+    expect(doc.event_aircraft.map((a) => a.make)).toEqual(['BOMBARDIER INC', 'SIKORSKY']);
+    const single = buildCasePassages(record('NYC08LA106')).passages[0] as NonNullable<typeof p>;
+    const own = buildPassageDocument(single, new Float32Array(PASSAGES_EMBEDDING_DIMS).fill(0.5));
+    expect(own.aircraft.map((a) => a.make)).toEqual(['Raytheon']);
+    expect(own.event_aircraft).toEqual([]);
     expect(doc.embedding).toHaveLength(PASSAGES_EMBEDDING_DIMS);
     expect(Object.keys(doc).sort()).toEqual(Object.keys(PASSAGES_MAPPING.properties ?? {}).sort());
     expect(() => buildPassageDocument(p, new Float32Array(3))).toThrow(/dimensions/);

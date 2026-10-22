@@ -1,6 +1,9 @@
+import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
+import { describeWorkerError } from '../../worker/errors.js';
 import {
   EMBEDDING_LIMITS,
+  EmbeddingDeferredError,
   EmbeddingRequestError,
   RESERVATION_SAFETY_FACTOR,
   batchByLimits,
@@ -16,12 +19,10 @@ import {
   SpendRefusedError,
   ceilUsd,
   createDryRunSpendGate,
-  createLedgerSpendGate,
   createMemorySpendGate,
   type SpendGate,
 } from '../../worker/index/spend-gate.js';
 import { countTokens } from '../../worker/index/tokens.js';
-import type { Db } from '../../server/db/client.js';
 
 const DIMS = 8;
 const PRICE = 0.02;
@@ -77,10 +78,12 @@ function logged(gate: SpendGate, events: string[]): SpendGate {
   };
 }
 
+/** An embedder on a scripted fetch, an in-memory gate and a fake clock that sleeping advances. */
 function embedderWith(steps: Step[], allowance = 1) {
   const events: string[] = [];
   const memory = createMemorySpendGate(allowance);
   const sleeps: number[] = [];
+  const clock = { now: Date.parse('2026-10-22T12:00:00Z') };
   const { fetch, requests } = scriptedFetch(steps, events);
   const embedder = createOpenAIEmbedder({
     apiKey: API_KEY,
@@ -90,11 +93,14 @@ function embedderWith(steps: Step[], allowance = 1) {
     purpose: 'test',
     fetch,
     baseURL: 'http://embeddings.test/v1',
+    now: () => clock.now,
     sleep: async (ms) => {
       sleeps.push(ms);
+      events.push(`sleep ${ms}`);
+      clock.now += ms;
     },
   });
-  return { embedder, events, memory, sleeps, requests };
+  return { embedder, events, memory, sleeps, requests, clock };
 }
 
 const TEXTS = ['Probable cause · CESSNA 172S · Landing\nThe pilot’s failure to flare.', 'Analysis · PIPER PA-28\nFuel exhaustion.'];
@@ -123,8 +129,8 @@ describe('OpenAI embedder', () => {
     await embedder.embed(TEXTS);
     const reserve = `reserve ${RESERVE.toFixed(6)}`;
     expect(events).toEqual([
-      reserve, 'fetch', 'settle 0.000000',
-      reserve, 'fetch', 'settle uncertain',
+      reserve, 'fetch', 'settle 0.000000', 'sleep 1000',
+      reserve, 'fetch', 'settle uncertain', 'sleep 2000',
       reserve, 'fetch', `settle ${ceilUsd((TOKENS * PRICE) / 1e6).toFixed(6)}`,
     ]);
     expect(memory.records.map((r) => [r.status, r.chargedUsd])).toEqual([
@@ -134,6 +140,12 @@ describe('OpenAI embedder', () => {
     ]);
     expect(memory.chargedUsd('indexing')).toBeCloseTo(RESERVE + ceilUsd((TOKENS * PRICE) / 1e6), 9);
     expect(sleeps).toEqual([1000, 2000]);
+  });
+
+  it('treats a 408 as uncertain and retryable', async () => {
+    const { embedder, memory } = embedderWith([{ status: 408 }, { status: 200, body: okBody(2, TOKENS) }]);
+    await embedder.embed(TEXTS);
+    expect(memory.records.map((r) => r.status)).toEqual(['uncertain', 'settled']);
   });
 
   it('gives up after three attempts, leaving uncertain attempts charged at their reservation', async () => {
@@ -163,13 +175,87 @@ describe('OpenAI embedder', () => {
     }
   });
 
-  it('honours Retry-After within the delay cap', async () => {
-    const { embedder, sleeps } = embedderWith([
-      { status: 429, headers: { 'retry-after': '7' }, body: { error: { message: 'slow', type: 'requests', code: 'rate_limit_exceeded' } } },
+  it('honours a long Retry-After in full; only the local backoff is capped', async () => {
+    const limited = { error: { message: 'slow', type: 'requests', code: 'rate_limit_exceeded' } };
+    const { embedder, sleeps, events } = embedderWith([
+      { status: 429, headers: { 'retry-after': '120' }, body: limited },
+      { status: 429, headers: { 'retry-after-ms': '450000' }, body: limited },
       { status: 200, body: okBody(2, TOKENS) },
     ]);
     await embedder.embed(TEXTS);
-    expect(sleeps).toEqual([7000]);
+    expect(sleeps).toEqual([120_000, 450_000]);
+    // No request is sent before the provider's deadline has passed.
+    expect(events.filter((e) => e === 'fetch' || e.startsWith('sleep'))).toEqual(['fetch', 'sleep 120000', 'fetch', 'sleep 450000', 'fetch']);
+
+    const backoff = embedderWith([{ status: 503 }, { status: 503 }, { status: 200, body: okBody(2, TOKENS) }]);
+    const capped = createOpenAIEmbedder({
+      apiKey: API_KEY, model: 'text-embedding-3-small', dims: DIMS, gate: createMemorySpendGate(1), purpose: 't',
+      baseURL: 'http://embeddings.test/v1', fetch: scriptedFetch([{ status: 503 }, { status: 503 }, { status: 200, body: okBody(2, TOKENS) }], []).fetch,
+      baseDelayMs: 50_000, maxBackoffMs: 60_000, sleep: async (ms) => void backoff.sleeps.push(ms),
+    });
+    await capped.embed(TEXTS);
+    expect(backoff.sleeps).toEqual([50_000, 60_000]);
+  });
+
+  it('stops resumably when the provider asks to wait longer than the limit, with nothing left open', async () => {
+    const { embedder, events, memory, clock } = embedderWith([
+      { status: 429, headers: { 'retry-after': String(11 * 60) }, body: { error: { message: 'slow', type: 'requests', code: 'rate_limit_exceeded' } } },
+      { status: 200, body: okBody(2, TOKENS) },
+    ]);
+    const err = await embedder.embed(TEXTS).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EmbeddingDeferredError);
+    expect((err as EmbeddingDeferredError).retryAt.getTime()).toBe(clock.now + 11 * 60_000);
+    expect(String((err as Error).message)).toMatch(/rerun after .* cached/);
+    expect(events.filter((e) => e === 'fetch')).toHaveLength(1);
+    expect(memory.records.map((r) => [r.status, r.chargedUsd])).toEqual([['settled', 0]]);
+  });
+
+  it('waits for the token rate limit to reset before the next request, or stops when the reset is too far', async () => {
+    const low = (reset: string) => ({ status: 200, body: okBody(2, TOKENS), headers: { 'x-ratelimit-remaining-tokens': '10', 'x-ratelimit-reset-tokens': reset } });
+    const { embedder, events } = embedderWith([low('2m0s'), { status: 200, body: okBody(2, TOKENS) }]);
+    await embedder.embed(TEXTS);
+    await embedder.embed(TEXTS);
+    expect(events.filter((e) => e === 'fetch' || e.startsWith('sleep') || e.startsWith('reserve'))).toEqual([
+      `reserve ${RESERVE.toFixed(6)}`, 'fetch', 'sleep 120000', `reserve ${RESERVE.toFixed(6)}`, 'fetch',
+    ]);
+
+    const far = embedderWith([low('15m0s'), { status: 200, body: okBody(2, TOKENS) }]);
+    await far.embedder.embed(TEXTS);
+    await expect(far.embedder.embed(TEXTS)).rejects.toBeInstanceOf(EmbeddingDeferredError);
+    // Stopped before reserving or sending anything.
+    expect(far.events.filter((e) => e === 'fetch')).toHaveLength(1);
+    expect(far.memory.records).toHaveLength(1);
+  });
+
+  it('keeps provider messages, keys and inputs out of errors and the worker error line', async () => {
+    const KEY = 'sk-proj-SENTINELKEY0123456789';
+    const INPUT = 'INPUT-SENTINEL narrative text';
+    const leaky = (status: number) => ({
+      status,
+      body: { error: { message: `Incorrect API key provided: ${KEY}. Input was: ${INPUT}`, type: 'invalid_request_error', code: `bad code ${INPUT}` } },
+      headers: { 'x-request-id': `req ${KEY}` },
+    });
+    const lost = { throw: Object.assign(new TypeError(`fetch failed for ${KEY} ${INPUT}`), { cause: new Error(`${KEY} ${INPUT}`) }) };
+    for (const steps of [[leaky(401)], [leaky(400)], [leaky(500), leaky(500), leaky(500)], [lost, lost, lost]] as Step[][]) {
+      const events: string[] = [];
+      const embedder = createOpenAIEmbedder({
+        apiKey: KEY,
+        model: 'text-embedding-3-small',
+        dims: DIMS,
+        gate: createMemorySpendGate(1),
+        purpose: 'test',
+        fetch: scriptedFetch(steps, events).fetch,
+        baseURL: 'http://embeddings.test/v1',
+        sleep: async () => undefined,
+        log: (m) => events.push(m),
+      });
+      const err = await embedder.embed([INPUT]).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(EmbeddingRequestError);
+      expect((err as Error).cause).toBeUndefined();
+      for (const text of [describeWorkerError(err), inspect(err, { depth: 10 }), JSON.stringify(err), ...events]) {
+        expect(text).not.toContain('SENTINEL');
+      }
+    }
   });
 
   it('sends nothing when the reservation is refused', async () => {
@@ -196,7 +282,7 @@ describe('OpenAI embedder', () => {
   it('refuses a model without a known price', () => {
     expect(() =>
       createOpenAIEmbedder({ apiKey: API_KEY, model: 'text-embedding-9', dims: DIMS, gate: createMemorySpendGate(1), purpose: 't' }),
-    ).toThrow(/no price/);
+    ).toThrow(/text-embedding-9/);
   });
 });
 
@@ -254,10 +340,9 @@ describe('spend gates', () => {
     await expect(gate.settle({ reservationId: 'nope', fencingToken: 'x' }, { usd: 0 })).rejects.toThrow(/unknown/);
   });
 
-  it('never lets a dry run reserve, and fails closed until the ledger is wired', async () => {
+  it('never lets a dry run reserve', async () => {
     const dry = createDryRunSpendGate(createMemorySpendGate(20));
     await expect(dry.reserve({ category: 'indexing', usd: 0.001, purpose: 'x' })).rejects.toBeInstanceOf(SpendRefusedError);
     expect(await dry.remainingUsd('indexing')).toBe(20);
-    expect(() => createLedgerSpendGate({} as Db)).toThrow(/wired at merge/);
   });
 });

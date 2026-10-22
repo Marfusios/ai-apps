@@ -1,0 +1,72 @@
+/**
+ * Building blocks shared by the public API contracts (config, search, cases,
+ * dashboard). Every object schema is strict: an unexpected key fails validation,
+ * so nothing (an internal `ev_id`, an AI field) can ride along unnoticed.
+ *
+ * Public responses carry NTSB data only. AI context is a separate private read
+ * (UI_DESIGN §3) and has no place in these schemas.
+ */
+import { z } from 'zod';
+import { PHASE_GROUPS, type PhaseGroup } from '../codes.js';
+import type { CompletionClass } from '../completion.js';
+
+/** Event-level public case number, e.g. `DFW08TA066`. Never the internal `ev_id`. */
+export const NtsbNoSchema = z.string().regex(/^[A-Z0-9]{5,20}$/, 'not an NTSB case number');
+
+export const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+
+/** ISO date-time without an invented zone (the source has none), e.g. `2008-03-11T12:00:00`. */
+export const IsoDateTimeSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, 'expected YYYY-MM-DDTHH:MM:SS');
+
+export const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'expected sha256 hex');
+
+export const PhaseGroupSchema = z.enum(PHASE_GROUPS as readonly [PhaseGroup, ...PhaseGroup[]]);
+
+export const COMPLETION_CLASSES = ['completed', 'in_progress', 'status_unknown', 'other_status'] as const satisfies
+  readonly CompletionClass[];
+export const CompletionClassSchema = z.enum(COMPLETION_CLASSES);
+
+/**
+ * A coded NTSB value with its display label. `code` is the value as published
+ * (trimmed, upper-case), null when blank; `label` is the product label from the
+ * dictionary, the "not reported" wording for blank, or the raw code when the
+ * vocabulary does not know it.
+ */
+export const CodedSchema = z.strictObject({
+  code: z.string().max(16).nullable(),
+  label: z.string().min(1).max(120),
+});
+export type Coded = z.infer<typeof CodedSchema>;
+
+/**
+ * Completion facts (UI_DESIGN §4.2). Status, probable-cause availability and the
+ * mapping are separate facts; the badge never claims more than `class` says.
+ */
+export const CompletionSchema = z.strictObject({
+  class: CompletionClassSchema,
+  /** `NTSB_Admin.rec_stat` as published; shown on every badge other than COMPLETED. */
+  rawStatus: z.string().max(8).nullable(),
+  hasProbableCause: z.boolean(),
+  mappingVersion: z.string().min(1).max(40),
+  /** False while the completed-status mapping is provisional (amendment A5). */
+  mappingVerified: z.boolean(),
+});
+export type Completion = z.infer<typeof CompletionSchema>;
+
+/** The dataset generation a response was built from. */
+export const DatasetSchema = z.strictObject({
+  /** Changes whenever any published record changes; part of ETags and cache keys. */
+  revision: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/),
+  /** Date of the NTSB snapshot the generation was loaded from. */
+  snapshotDate: IsoDateSchema,
+});
+export type Dataset = z.infer<typeof DatasetSchema>;
+
+/** Body of every 4xx/5xx JSON response. `message` is plain text for people. */
+export const ErrorResponseSchema = z.strictObject({
+  error: z.enum(['bad_request', 'not_found', 'rate_limited', 'unavailable', 'internal']),
+  message: z.string().max(500),
+  /** For `bad_request`: which parameters failed. */
+  issues: z.array(z.strictObject({ path: z.string().max(80), message: z.string().max(200) })).max(20).optional(),
+});
+export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

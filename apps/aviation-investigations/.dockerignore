@@ -1,0 +1,21 @@
+# Build context for the application image (Dockerfile). Credentials, data and
+# local outputs never enter it.
+.env
+.env.*
+*.env
+*.env.*
+data/
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+tests/
+docs/
+docker/
+.git
+.gitignore
+.dockerignore
+Dockerfile
+compose*.yaml
+*.log

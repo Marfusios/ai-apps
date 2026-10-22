@@ -1,3 +1,4 @@
+import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -6,7 +7,18 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['tests/unit/**/*.test.ts', 'tests/web/**/*.test.{ts,tsx}'],
+          include: ['tests/unit/**/*.test.ts'],
+        },
+      },
+      {
+        plugins: [react()],
+        test: {
+          name: 'web',
+          environment: 'jsdom',
+          include: ['tests/web/**/*.test.{ts,tsx}'],
+          setupFiles: ['tests/web/setup.ts'],
+          // Stylesheets are read as text (`?raw`) by the token and print tests.
+          css: { include: [/\.css(\?|$)/] },
         },
       },
       {

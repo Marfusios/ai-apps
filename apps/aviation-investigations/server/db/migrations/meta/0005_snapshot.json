@@ -1,5 +1,5 @@
 {
-  "id": "9de04ca3-d0f2-4b46-b49a-d5cef7ff3576",
+  "id": "5c24d18a-fc07-44cd-996b-e5163966726e",
   "prevId": "453fb095-6088-4241-a5fe-533a001d5f8a",
   "version": "7",
   "dialect": "postgresql",
@@ -1929,177 +1929,48 @@
       },
       "isRLSEnabled": false
     },
-    "public.embedding_cache": {
-      "name": "embedding_cache",
+    "public.report_links": {
+      "name": "report_links",
       "schema": "",
       "columns": {
-        "cache_key": {
-          "name": "cache_key",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "dims": {
-          "name": "dims",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "template_version": {
-          "name": "template_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "vector": {
-          "name": "vector",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "embedding_cache_key_check": {
-          "name": "embedding_cache_key_check",
-          "value": "\"embedding_cache\".\"cache_key\" ~ '^[0-9a-f]{64}$'"
-        },
-        "embedding_cache_vector_check": {
-          "name": "embedding_cache_vector_check",
-          "value": "\"embedding_cache\".\"dims\" between 1 and 4096 and octet_length(\"embedding_cache\".\"vector\") = \"embedding_cache\".\"dims\" * 4"
-        },
-        "embedding_cache_labels_check": {
-          "name": "embedding_cache_labels_check",
-          "value": "\"embedding_cache\".\"model\" ~ '^\\S{1,100}$' and \"embedding_cache\".\"template_version\" ~ '^\\S{1,100}$'"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.passages": {
-      "name": "passages",
-      "schema": "",
-      "columns": {
-        "generation_id": {
-          "name": "generation_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "passage_id": {
-          "name": "passage_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "chunker_version": {
-          "name": "chunker_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "ntsb_no": {
           "name": "ntsb_no",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "section_id": {
-          "name": "section_id",
+        "aircraft_ntsb_no": {
+          "name": "aircraft_ntsb_no",
           "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "revision_id": {
-          "name": "revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "section_sha": {
-          "name": "section_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "section_kind": {
-          "name": "section_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "scope": {
-          "name": "scope",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "aircraft_key": {
-          "name": "aircraft_key",
-          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
-        "aircraft_specific": {
-          "name": "aircraft_specific",
-          "type": "boolean",
+        "report_id": {
+          "name": "report_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "start": {
-          "name": "start",
-          "type": "integer",
+        "source": {
+          "name": "source",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "end": {
-          "name": "end",
-          "type": "integer",
+        "source_file_sha256": {
+          "name": "source_file_sha256",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "part": {
-          "name": "part",
-          "type": "integer",
+        "retrieved_at": {
+          "name": "retrieved_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         },
-        "parts": {
-          "name": "parts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "continuation": {
-          "name": "continuation",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_count": {
-          "name": "token_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
+        "imported_at": {
+          "name": "imported_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -2107,17 +1978,11 @@
         }
       },
       "indexes": {
-        "passages_section_idx": {
-          "name": "passages_section_idx",
+        "report_links_ntsb_no_idx": {
+          "name": "report_links_ntsb_no_idx",
           "columns": [
             {
-              "expression": "section_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "generation_id",
+              "expression": "ntsb_no",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2130,37 +1995,27 @@
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "passages_pk": {
-          "name": "passages_pk",
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "report_links_uq": {
+          "name": "report_links_uq",
+          "nullsNotDistinct": true,
           "columns": [
-            "generation_id",
-            "passage_id"
+            "ntsb_no",
+            "aircraft_ntsb_no",
+            "report_id"
           ]
         }
       },
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "passages_ids_check": {
-          "name": "passages_ids_check",
-          "value": "\"passages\".\"passage_id\" ~ '^[0-9a-f]{64}$' and \"passages\".\"revision_id\" ~ '^[0-9a-f]{64}$' and \"passages\".\"section_sha\" ~ '^[0-9a-f]{64}$'"
+        "report_links_report_id_check": {
+          "name": "report_links_report_id_check",
+          "value": "\"report_links\".\"report_id\" ~ '^[0-9]{1,9}$'"
         },
-        "passages_section_check": {
-          "name": "passages_section_check",
-          "value": "starts_with(\"passages\".\"section_id\", \"passages\".\"ntsb_no\" || ':') and \"passages\".\"chunker_version\" ~ '^\\S+$'"
-        },
-        "passages_kind_check": {
-          "name": "passages_kind_check",
-          "value": "\"passages\".\"section_kind\" in ('factual', 'analysis', 'probable_cause')"
-        },
-        "passages_scope_check": {
-          "name": "passages_scope_check",
-          "value": "(\"passages\".\"scope\" = 'aircraft' and \"passages\".\"aircraft_key\" is not null and \"passages\".\"aircraft_specific\")\n        or (\"passages\".\"scope\" = 'event' and \"passages\".\"aircraft_key\" is null and not \"passages\".\"aircraft_specific\")"
-        },
-        "passages_span_check": {
-          "name": "passages_span_check",
-          "value": "\"passages\".\"start\" >= 0 and \"passages\".\"end\" > \"passages\".\"start\" and \"passages\".\"part\" between 1 and \"passages\".\"parts\"\n        and (not \"passages\".\"continuation\" or \"passages\".\"part\" > 1) and \"passages\".\"token_count\" between 1 and 8192"
+        "report_links_sha_check": {
+          "name": "report_links_sha_check",
+          "value": "\"report_links\".\"source_file_sha256\" ~ '^[0-9a-f]{64}$'"
         }
       },
       "isRLSEnabled": false

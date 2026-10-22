@@ -1,15 +1,28 @@
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations } from '../server/db/generations.js';
+import { runMigrations } from '../server/db/migrate.js';
+import { readAiSwitch, setAiSwitch } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
-import { workerConfig } from './config.js';
+import { APP_DIR, workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
-import { EMBEDDING_PRICES, createOpenAIEmbedder } from './index/embed.js';
+import { createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
 import { MAX_INPUT_TOKENS } from './index/passages.js';
-import { planPassages, rebuildPassagesIndex, type PassagePlan, type PassagesIndexReport } from './index/passages-index.js';
+import {
+  PASSAGES_BUILD_MIN_POOL,
+  planPassages,
+  rebuildPassagesIndex,
+  type PassagePlan,
+  type PassagesIndexReport,
+} from './index/passages-index.js';
 import { createLedgerSpendGate } from './index/spend-gate.js';
-import { extractArchive, isTerminating } from './ingest/extract.js';
-import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
+import { cleanupStalePins, declareAbandoned, deleteUnusedIndices, reconcileAlias } from './index/publications.js';
+import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
+import { extractArchive, isTerminating, setExtractEnvironment } from './ingest/extract.js';
+import { describeWorkerError } from './errors.js';
+import { loadFromExtract, type LoadReport } from './ingest/load.js';
 import { STALE_RUN_MINUTES, failStaleRuns, listRunningRuns } from './ingest/runs.js';
 import { readProfile, verifyCorpus, type VerifyReport } from './ingest/verify.js';
 
@@ -18,21 +31,28 @@ const USAGE = [
   '  worker extract --archive <zip> --sha256 <hex> --out <dir>',
   '  worker load --from <extractDir>',
   '  worker verify --generation <id> [--profile <file>]',
+  '  worker report-links --seed',
+  '  worker report-links --export <file> --case-col <name> (--id-col <name> | --url-col <name>) [--aircraft-col <name>] [--date-col <name>] --retrieved-at <ISO date>',
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
   '  worker index cases --generation <id>',
   '  worker index passages --generation <id> [--dry-run | --confirm-cost]',
+  '  worker index reconcile --alias <alias> [--declare-abandoned <attempt-id> --reason <text>]',
+  '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
+  '  worker index cleanup-builds --older-than <hours>',
+  '  worker ai-switch [--on | --off --note <text>]',
+  '  worker migrate',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
-function ingestDb(): Db {
+function ingestDb(max = 2): Db {
   const url = workerConfig().databaseIngestUrl;
   if (!url) throw new Error('DATABASE_INGEST_URL is not set; run pnpm services:setup');
-  return createDb(url, { max: 2, applicationName: 'aviation-worker' });
+  return createDb(url, { max, applicationName: 'aviation-worker' });
 }
 
-async function withDb<T>(fn: (db: Db) => Promise<T>): Promise<T> {
-  const db = ingestDb();
+async function withDb<T>(fn: (db: Db) => Promise<T>, max = 2): Promise<T> {
+  const db = ingestDb(max);
   try {
     return await fn(db);
   } finally {
@@ -78,10 +98,21 @@ function printVerify(r: VerifyReport): void {
   console.log(`report: ${r.reportPath}`);
 }
 
+function printLinks(r: ImportReport): void {
+  console.log(`report links (${r.source}, ${r.layout}) against generation ${r.generationId}`);
+  console.log(`  file sha256 ${r.sourceFileSha256}, retrieved ${r.retrievedAt.toISOString()}`);
+  console.log(`  label: ${r.sourceLabel}`);
+  console.log(`  rows ${r.rows}, matched ${r.matched}, inserted ${r.inserted}, already present ${r.alreadyPresent}`);
+  if (!r.dateChecked) console.warn(`  WARNING: ${r.dateUnchecked} row(s) were not date-checked (no --date-col or no event date); matches rest on case number alone`);
+  for (const u of r.unmatched) console.log(`  unmatched ${u.ntsbNo} -> ${u.reportId} (${u.reason})`);
+  for (const i of r.invalid) console.log(`  invalid row ${i.row}: ${i.reason}`);
+}
+
 function printIndex(r: IndexReport): void {
   const lines: [string, string | number][] = [
     ['index', r.index],
-    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasReconciled ? ' (confirmed by read-back)' : ''}`],
+    ['build', r.buildId],
+    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasVerified ? '' : ' (committed; read-back failed)'}`],
     ['previous indices (kept)', r.previousIndices.join(', ') || 'none'],
     ['generation', r.generationId],
     ['version', `${r.version} (${r.fingerprint.slice(0, 12)})`],
@@ -140,12 +171,14 @@ function printPlan(p: PassagePlan): void {
 function printPassagesIndex(r: PassagesIndexReport): void {
   const lines: [string, string | number][] = [
     ['index', r.index],
-    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasReconciled ? ' (confirmed by read-back)' : ''}`],
+    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasVerified ? '' : ' (committed, not read back)'}`],
+    ['build', `${r.buildId} (switch attempt ${r.attemptId ?? 'none'})`],
     ['previous indices (kept)', r.previousIndices.join(', ') || 'none'],
     ['generation', r.generationId],
     ['version', `${r.version} (${r.fingerprint.slice(0, 12)}), ${r.model} ${r.dims} dims`],
     ['passages', `${int(r.passages)} (${int(r.passagesAlreadyStored)} already stored)`],
-    ['cache hits', int(r.cacheHits)],
+    ['cache hits (distinct inputs cached before this build)', int(r.cacheHits)],
+    ['deduplicated (passages sharing an input)', int(r.deduplicated)],
     ['embedded', `${int(r.embedded.inputs)} inputs, ${int(r.embedded.tokens)} tokens, ${int(r.embedded.requests)} requests, ${usd(r.embedded.usd)}`],
     ['duration', `${(r.durationMs / 1000).toFixed(1)} s`],
   ];
@@ -155,8 +188,7 @@ function printPassagesIndex(r: PassagesIndexReport): void {
 async function indexPassages(id: number, confirmCost: boolean): Promise<number> {
   const config = workerConfig();
   const { embeddingModel: model, embeddingDimensions: dims } = config.ai.openai;
-  const price = EMBEDDING_PRICES[model];
-  if (price === undefined) throw new Error(`no price for embedding model ${model}`);
+  const price = embeddingUsdPerMillion(model);
   if (!confirmCost) {
     const plan = await withDb((db) =>
       planPassages(db, { generationId: id, embedding: { model, dims, usdPerMillionTokens: price }, log: (m) => console.error(m) }),
@@ -166,14 +198,13 @@ async function indexPassages(id: number, confirmCost: boolean): Promise<number> 
     return 0;
   }
   return withDb(async (db) => {
-    // Fails closed until the spend ledger is wired: nothing is sent before a gate exists.
-    const gate = createLedgerSpendGate(db);
+    const gate = createLedgerSpendGate(db, { budgets: config.ai.budgets, provider: 'openai', model, stage: 'embed' });
     const embedder = createOpenAIEmbedder({
       apiKey: config.ai.openai.apiKey ?? '',
       model,
       dims,
       gate,
-      purpose: `index passages g${id}`,
+      purpose: `passages-g${id}`,
       log: (m) => console.error(m),
     });
     const es = createEsClient(config.elasticsearch, 'write', { requestTimeoutMs: 120_000 });
@@ -191,7 +222,7 @@ async function indexPassages(id: number, confirmCost: boolean): Promise<number> 
       await es.close();
     }
     return 0;
-  });
+  }, PASSAGES_BUILD_MIN_POOL);
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -210,6 +241,7 @@ async function main(argv: string[]): Promise<number> {
       console.error(USAGE);
       return 2;
     }
+    setExtractEnvironment(workerConfig().appEnv);
     const manifest = await extractArchive({ archive: values.archive, sha256: values.sha256, out: values.out });
     for (const [table, t] of Object.entries(manifest.tables)) {
       console.log(`${table}: ${t.rows} rows, ${t.columns} columns, ${t.bytes} bytes`);
@@ -239,44 +271,176 @@ async function main(argv: string[]): Promise<number> {
       return 2;
     }
     const profile = values.profile ? readProfile(values.profile) : undefined;
-    const report = await withDb((db) => verifyCorpus(db, id, profile ? { profile } : {}));
+    // AVIATION_VERIFY_DIR (absolute or app-relative); the ingest container sets a writable one.
+    const verifyDir = workerConfig().verifyDir;
+    const outDir = verifyDir ? resolve(APP_DIR, verifyDir) : undefined;
+    const report = await withDb((db) =>
+      verifyCorpus(db, id, { ...(profile ? { profile } : {}), ...(outDir ? { outDir } : {}) }),
+    );
     printVerify(report);
     return report.ok && !report.conflict ? 0 : 1;
   }
-  if (command === 'index') {
-    const [target, ...args] = rest;
+  if (command === 'report-links') {
     const { values } = parseArgs({
-      args,
+      args: rest,
       options: {
-        generation: { type: 'string' },
-        ...(target === 'passages' ? { 'dry-run': { type: 'boolean' }, 'confirm-cost': { type: 'boolean' } } : {}),
+        seed: { type: 'boolean' },
+        export: { type: 'string' },
+        'case-col': { type: 'string' },
+        'id-col': { type: 'string' },
+        'url-col': { type: 'string' },
+        'aircraft-col': { type: 'string' },
+        'date-col': { type: 'string' },
+        'retrieved-at': { type: 'string' },
       },
       strict: true,
     });
-    const id = Number(values.generation);
-    if ((target !== 'cases' && target !== 'passages') || !values.generation || !Number.isSafeInteger(id) || id < 1) {
+    const file = values.export;
+    const retrievedAt = values['retrieved-at'] ? new Date(values['retrieved-at']) : undefined;
+    const caseCol = values['case-col'];
+    const idCol = values['id-col'];
+    const urlCol = values['url-col'];
+    const valid = file
+      ? !values.seed && caseCol && !!idCol !== !!urlCol && retrievedAt && !Number.isNaN(retrievedAt.getTime())
+      : values.seed && !caseCol && !idCol && !urlCol && !retrievedAt;
+    if (!valid) {
       console.error(USAGE);
       return 2;
     }
+    const seedFile = fileURLToPath(new URL('../fixtures/report-links-seed.json', import.meta.url));
+    const report = await withDb((db) =>
+      file && caseCol && retrievedAt
+        ? importAviationSearchExport(db, file, {
+            retrievedAt,
+            mapping: {
+              caseCol,
+              ...(idCol ? { idCol } : {}),
+              ...(urlCol ? { urlCol } : {}),
+              ...(values['aircraft-col'] ? { aircraftCol: values['aircraft-col'] } : {}),
+              ...(values['date-col'] ? { dateCol: values['date-col'] } : {}),
+            },
+          })
+        : importSeedLinks(db, seedFile),
+    );
+    printLinks(report);
+    return report.unmatched.length || report.invalid.length ? 1 : 0;
+  }
+  if (command === 'index') {
+    const [target, ...args] = rest;
+    const config = workerConfig().elasticsearch;
+    if (target === 'cases') {
+      const { values } = parseArgs({ args, options: { generation: { type: 'string' } }, strict: true });
+      const id = Number(values.generation);
+      if (!values.generation || !Number.isSafeInteger(id) || id < 1) {
+        console.error(USAGE);
+        return 2;
+      }
+      const es = createEsClient(config, 'write', { requestTimeoutMs: 120_000 });
+      try {
+        const report = await withDb((db) =>
+          rebuildCasesIndex(es, db, { generationId: id, prefix: config.indexPrefix, log: (m) => console.error(m) }),
+        );
+        printIndex(report);
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
     if (target === 'passages') {
-      const flags = values as { 'dry-run'?: boolean; 'confirm-cost'?: boolean };
-      if (flags['dry-run'] && flags['confirm-cost']) {
+      const { values } = parseArgs({
+        args,
+        options: { generation: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'confirm-cost': { type: 'boolean' } },
+        strict: true,
+      });
+      const id = Number(values.generation);
+      if (!values.generation || !Number.isSafeInteger(id) || id < 1) {
+        console.error(USAGE);
+        return 2;
+      }
+      if (values['dry-run'] && values['confirm-cost']) {
         console.error('--dry-run and --confirm-cost exclude each other');
         return 2;
       }
-      return indexPassages(id, flags['confirm-cost'] === true);
+      return indexPassages(id, values['confirm-cost'] === true);
     }
-    const config = workerConfig().elasticsearch;
-    const es = createEsClient(config, 'write', { requestTimeoutMs: 120_000 });
-    try {
-      const report = await withDb((db) =>
-        rebuildCasesIndex(es, db, { generationId: id, prefix: config.indexPrefix, log: (m) => console.error(m) }),
-      );
-      printIndex(report);
-    } finally {
-      await es.close();
+    if (target === 'reconcile') {
+      const { values } = parseArgs({
+        args,
+        options: { alias: { type: 'string' }, 'declare-abandoned': { type: 'string' }, reason: { type: 'string' } },
+        strict: true,
+      });
+      const declared = values['declare-abandoned'] === undefined ? null : Number(values['declare-abandoned']);
+      if (!values.alias || (declared !== null && (!Number.isSafeInteger(declared) || declared < 1 || !values.reason))) {
+        console.error(USAGE);
+        return 2;
+      }
+      const alias = values.alias;
+      const es = createEsClient(config, 'write');
+      try {
+        if (declared !== null) {
+          const reason = values.reason as string;
+          await withDb((db) => declareAbandoned(db, alias, declared, reason));
+          // An operator's assertion: logged with its reason; it unblocks switching and deletes nothing.
+          console.log(`attempt ${declared} of ${alias} declared abandoned: ${reason}`);
+          return 0;
+        }
+        const r = await withDb((db) => reconcileAlias(es, db, alias));
+        console.log(`alias: ${r.alias} -> ${r.targets.join(', ') || 'nothing'}`);
+        console.log(`committed: ${r.committed.map((c) => `${c.id} (${c.indexName})`).join(', ') || 'none'}`);
+        for (const u of r.unresolved) {
+          console.log(`unknown: attempt ${u.id} (${u.indexName})${u.declared ? ' declared abandoned' : ''}`);
+        }
+        if (r.blocked) {
+          console.log(
+            `alias ${alias} stays blocked. Rerun once the request may have completed, or declare an attempt abandoned: ` +
+              `pnpm worker index reconcile --alias ${alias} --declare-abandoned <attempt-id> --reason <text>`,
+          );
+          return 1;
+        }
+      } finally {
+        await es.close();
+      }
+      return 0;
     }
-    return 0;
+    if (target === 'delete-unused') {
+      const { values } = parseArgs({
+        args,
+        options: { 'older-than': { type: 'string' }, alias: { type: 'string', multiple: true }, yes: { type: 'boolean' } },
+        strict: true,
+      });
+      const hours = Number(values['older-than']);
+      if (values['older-than'] === undefined || !Number.isFinite(hours) || hours < 0) {
+        console.error(USAGE);
+        return 2;
+      }
+      const es = createEsClient(config, 'write');
+      try {
+        const r = await withDb((db) =>
+          deleteUnusedIndices(es, db, { olderThanHours: hours, yes: values.yes === true, ...(values.alias ? { aliases: values.alias } : {}) }),
+        );
+        if (r.dryRun) console.log(`would delete (dry run; pass --yes): ${r.wouldDelete.join(', ') || 'none'}`);
+        else console.log(`deleted: ${r.deleted.join(', ') || 'none'}`);
+        if (r.missing.length > 0) console.log(`already missing: ${r.missing.join(', ')}`);
+        for (const k of r.refused) console.log(`kept ${k.indexName}: ${k.reason}`);
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
+    if (target === 'cleanup-builds') {
+      const { values } = parseArgs({ args, options: { 'older-than': { type: 'string' } }, strict: true });
+      const hours = Number(values['older-than']);
+      if (values['older-than'] === undefined || !Number.isFinite(hours) || hours < 0) {
+        console.error(USAGE);
+        return 2;
+      }
+      const r = await withDb((db) => cleanupStalePins(db, { olderThanHours: hours }));
+      console.log(`pins removed: ${r.pinsRemoved.map((p) => `${p.buildId} (generation ${p.generationId})`).join(', ') || 'none'}`);
+      console.log(`running builds skipped: ${r.skippedRunning.join(', ') || 'none'}`);
+      return 0;
+    }
+    console.error(USAGE);
+    return 2;
   }
   if (command === 'generations') {
     parseArgs({ args: rest, options: {}, strict: true });
@@ -310,6 +474,35 @@ async function main(argv: string[]): Promise<number> {
     console.log(ids.length === 0 ? 'no stale runs' : `marked failed: ${ids.join(', ')}`);
     return 0;
   }
+  if (command === 'ai-switch') {
+    const { values } = parseArgs({
+      args: rest,
+      options: { on: { type: 'boolean' }, off: { type: 'boolean' }, note: { type: 'string' } },
+      strict: true,
+    });
+    if ((values.on && values.off) || (values.note !== undefined && !values.off)) {
+      console.error(USAGE);
+      return 2;
+    }
+    const state = await withDb((db) =>
+      values.on || values.off ? setAiSwitch(db, values.on === true, values.note ?? null) : readAiSwitch(db),
+    );
+    const note = state.note ? ` (${state.note})` : '';
+    console.log(`interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`);
+    return 0;
+  }
+  if (command === 'migrate') {
+    // Schema migrations as aviation_migrator (DATABASE_MIGRATOR_URL); the URL is never printed.
+    parseArgs({ args: rest, options: {}, strict: true });
+    const url = workerConfig().databaseMigratorUrl;
+    if (!url) {
+      console.error('DATABASE_MIGRATOR_URL is not set');
+      return 2;
+    }
+    await runMigrations(url);
+    console.log(`migrations applied to ${new URL(url).pathname.slice(1)}`);
+    return 0;
+  }
   console.error(USAGE);
   return 2;
 }
@@ -321,7 +514,7 @@ main(process.argv.slice(2)).then(
   (err: unknown) => {
     // A signal handler owns the exit (it waits for container removal and sets the code).
     if (isTerminating()) return;
-    console.error(describeLoadError(err));
+    console.error(describeWorkerError(err));
     process.exit(1);
   },
 );

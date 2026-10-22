@@ -32,5 +32,13 @@ REVOKE ALL ON FUNCTION pin_generation(bigint, text, timestamptz), unpin_generati
 -- The API role gets EXECUTE in the task that pins generations for live briefs.
 GRANT EXECUTE ON FUNCTION pin_generation(bigint, text, timestamptz), unpin_generation(bigint, text) TO aviation_ingest;
 --> statement-breakpoint
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE "generation_pins"
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE "generation_pins"
   FROM aviation_ingest, aviation_app;
+--> statement-breakpoint
+DO $$
+BEGIN
+  -- MAINTAIN exists from PostgreSQL 17 on; the shared server runs 16.
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    EXECUTE 'REVOKE MAINTAIN ON TABLE "generation_pins" FROM aviation_ingest, aviation_app';
+  END IF;
+END $$;

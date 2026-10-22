@@ -749,10 +749,15 @@ flowchart LR
 ```
 
 Use a multi-stage non-root image. Fastify serves built Vite assets and `/api/*`
-on the same origin; the dev server is not deployed. Compose project `ai-aviation`
-groups clear `app`, `ingest`, and one-shot `extract` services. Avoid global `container_name` values so
-multiple checkouts can coexist. Offer a reproducible local service profile with
-pinned PostgreSQL/Elasticsearch and configurable connections to existing services.
+on the same origin; the dev server is not deployed. One Compose project per
+environment (`ai-aviation-dev`, `ai-aviation-live`) groups clear `aviation-app`,
+`aviation-ingest`, and one-shot `extract` services and connects to the shared
+PostgreSQL, Elasticsearch and Langfuse over their Docker networks, with a database
+(`aviation_<env>`), index prefix (`ai-aviation-<env>`) and Langfuse project per
+environment. Avoid global `container_name` values so environments and
+checkouts can coexist. An optional project `ai-aviation-local` offers pinned
+PostgreSQL/Elasticsearch for contributors and offline tests. See the
+[runbook](RUNBOOK.md).
 
 Run Langfuse as separate reusable infrastructure under Compose project
 `ai-observability`, with isolated projects/credentials and its own resource budget.
@@ -771,7 +776,9 @@ hostname with `APP_URL`; keep machine-specific addresses/tunnel secrets outside 
 The HTTP process receives an Elasticsearch read credential limited to aviation
 indices; ingestion uses a separate writer. Validate TLS using the configured CA.
 PostgreSQL roles are limited to the app database; HTTP has no migration/ingestion
-or shared-cluster administration privileges. No Docker socket, host-home mounts,
+or shared-cluster administration privileges. On a shared cluster, per-environment
+login roles may connect only to their environment's database and act as the
+NOLOGIN group roles the migrations grant to. No Docker socket, host-home mounts,
 or file containing unrelated provider keys. Scope worker credentials separately.
 
 Add CSP/security headers, safe text rendering, parameterized SQL, explicit response

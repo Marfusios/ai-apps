@@ -13,7 +13,10 @@
  *   600-ish target like the other sections.
  * - **Longer sections** are cut into sentences grouped in paragraphs (every line break
  *   ends a paragraph; NTSB narratives use single and double line breaks alike). Short
- *   heading lines ("HISTORY OF FLIGHT") stay with the paragraph after them. The
+ *   heading lines ("HISTORY OF FLIGHT") stay with the paragraph after them. A heading
+ *   glued to its text ("AIRCRAFT INFORMATIONThe airplane", common after HTML
+ *   conversion; `GLUED_HEADING_PATTERN`) starts a new unit there and counts as a
+ *   paragraph start, so a cut can fall just before it; the text is not changed. The
  *   sentences are packed into passages of about the same size: with `k` passages
  *   needed at `targetTokens`, each aims at the even share of the section, within
  *   `minTokens`..`maxTokens`, preferring a paragraph end near that size over a
@@ -33,9 +36,10 @@
  * part of every passage id.
  */
 import type { SectionKind } from '../../server/db/queries/case-records.js';
+import { GLUED_HEADING_PATTERN } from './analysis.js';
 import { countTokens } from './tokens.js';
 
-export const CHUNKER_VERSION = 'chunk-v1';
+export const CHUNKER_VERSION = 'chunk-v2';
 
 export interface ChunkOptions {
   targetTokens: number;
@@ -316,13 +320,62 @@ function splitUnit(text: string, s: number, e: number, total: number, o: ChunkOp
   return out;
 }
 
+const GLUED = new RegExp(GLUED_HEADING_PATTERN, 'gu');
+/** A word of capitals (and `&`, `/`, `'`, `(`, `)`, `-`), no digits or lower case. */
+const CAPS_WORD = /^[A-Z&/'()-]*[A-Z][A-Z&/'()-]*$/u;
+const GLUED_HEADING_MAX_WORDS = 8;
+const GLUED_HEADING_MAX_CHARS = 80;
+
+/** Starts of the headings glued to the text after them inside `[s, e)` (the first word of each capitals run). */
+export function gluedHeadingStarts(text: string, s: number, e: number): number[] {
+  const out: number[] = [];
+  GLUED.lastIndex = s;
+  for (let m = GLUED.exec(text); m !== null && m.index < e; m = GLUED.exec(text)) {
+    const at = m.index;
+    GLUED.lastIndex = at + 1;
+    let start = at;
+    while (start > s && !isWs(text[start - 1])) start -= 1;
+    if (!CAPS_WORD.test(text.slice(start, at))) continue;
+    for (let words = 1; words < GLUED_HEADING_MAX_WORDS; words += 1) {
+      let j = start;
+      while (j > s && text[j - 1] === ' ') j -= 1;
+      if (j === start || j <= s) break;
+      let k = j;
+      while (k > s && !isWs(text[k - 1])) k -= 1;
+      if (!CAPS_WORD.test(text.slice(k, j))) break;
+      start = k;
+    }
+    if (at - start <= GLUED_HEADING_MAX_CHARS) out.push(start);
+  }
+  return out;
+}
+
+/** Sentences of `[ps, pe)` also split where a glued heading starts; true marks such a start. */
+function units(text: string, ps: number, pe: number): [number, number, boolean][] {
+  const headings = new Set(gluedHeadingStarts(text, ps, pe));
+  const out: [number, number, boolean][] = [];
+  for (const [ss, se] of sentences(text, ps, pe)) {
+    let a = ss;
+    for (const h of [...headings].filter((x) => x > ss && x < se).sort((x, y) => x - y)) {
+      let end = h;
+      while (end > a && isWs(text[end - 1])) end -= 1;
+      if (end > a) out.push([a, end, headings.has(a)]);
+      a = h;
+    }
+    out.push([a, se, headings.has(a)]);
+  }
+  return out;
+}
+
 /** Atoms of `[from, to)`: paragraphs, then sentences, oversized sentences split. */
 function atomize(text: string, from: number, to: number, o: ChunkOptions, stats: ChunkStats): Atom[] {
   const atoms: Atom[] = [];
   for (const [ps, pe] of paragraphs(text, from, to)) {
     const heading = isHeading(text.slice(ps, pe));
     let first = true;
-    for (const [ss, se] of heading ? ([[ps, pe]] as [number, number][]) : sentences(text, ps, pe)) {
+    for (const [ss, se, glued] of heading ? ([[ps, pe, false]] as [number, number, boolean][]) : units(text, ps, pe)) {
+      // A glued heading starts a section of the original document: a soft paragraph start.
+      if (glued) first = true;
       const tokens = countTokens(text.slice(ss, se));
       if (tokens <= o.maxTokens) {
         atoms.push({ start: ss, end: se, tokens, paraStart: first, heading, piece: 0 });

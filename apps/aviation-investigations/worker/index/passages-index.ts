@@ -3,16 +3,20 @@
  * cases, with their embeddings, for filtered kNN and BM25 retrieval (DESIGN §5;
  * amendments A2, A3, A6, A7, A10, A12, A16).
  *
- * - Index `<prefix>-passages-v1-g<generation>-<build id>` (build id: UTC timestamp and
- *   random suffix, unique per invocation), alias `<prefix>-passages` ("built last",
- *   for operators; the API reads index names from the active `dataset_manifests`
- *   row). The alias switch and the generation pin are the cases index's machinery.
+ * - Index `<prefix>-passages-v1-g<generation>-<UTC timestamp>-<build id>`, alias
+ *   `<prefix>-passages` ("built last", for operators; the API reads index names from
+ *   the active `dataset_manifests` row). Builds use the cases index's machinery
+ *   (`publications.ts`, `aliases.ts`): a recorded build with its own liveness lock,
+ *   a generation pin `index-build:<build id>` without expiry that must still exist
+ *   when the alias switches, recorded switch attempts, and automatic deletion only of
+ *   an index that was never part of an alias request.
  * - One document per passage, `_id` = `passage_id`. Text uses the cases analyzers
  *   (`aviation_english`, A12). `embedding` is a 1,536-dimension `dense_vector`
  *   (cosine, `int8_hnsw`); vectors are kept out of `_source`. Event filter fields are
- *   copied onto every passage; `aircraft` is nested: an aircraft-scoped passage
- *   carries its one aircraft, an event-scoped passage every aircraft of the event and
- *   `aircraft_specific: false`, so retrieval can exclude it under an aircraft filter.
+ *   copied onto every passage. Only an aircraft-scoped passage fills the nested
+ *   `aircraft` field (its one aircraft); an event-scoped passage lists the event's
+ *   aircraft under the plain object field `event_aircraft` and has
+ *   `aircraft_specific: false`, so a nested aircraft filter can never match it.
  * - `planPassages` is the dry run: it reads the generation (one repeatable-read
  *   snapshot, nothing written, nothing pinned), builds every passage and reports
  *   counts, exact token totals (headers and overlap included), percentiles, A16
@@ -24,7 +28,7 @@
  *   inputs), stores them in the cache as they arrive, bulk-loads the index, checks
  *   it against what was built and switches the alias.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { Client, estypes } from '@elastic/elasticsearch';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import pg from 'pg';
@@ -32,9 +36,18 @@ import type { Db } from '../../server/db/client.js';
 import { VERIFIER_VERSION } from '../../server/db/generations.js';
 import { streamCaseRecords, type SectionKind } from '../../server/db/queries/case-records.js';
 import { datasetGenerations, passages as passagesTable } from '../../server/db/schema/index.js';
-import { AliasSwitchError, switchAlias, type SwitchAliasOptions } from './aliases.js';
+import { AliasSwitchError, blockedMessage, blockingAttempts, switchAlias, type SwitchAliasOptions } from './aliases.js';
 import { AVIATION_ANALYSIS, NAME_NORMALIZER, aviationTextField } from './analysis.js';
-import { GenerationNotIndexableError, INDEXABLE_STATUSES, pinIndexableGeneration, unpin } from './cases-index.js';
+import {
+  GenerationNotIndexableError,
+  INDEXABLE_STATUSES,
+  UnresolvedAliasError,
+  assertPinned,
+  newBuildId,
+  pinIndexableGeneration,
+  unpin,
+} from './cases-index.js';
+import { buildPinReason, checkBuildId, deleteUnsubmittedIndex, recordBuild, withBuildLock } from './publications.js';
 import { CHUNKER_VERSION, DEFAULT_CHUNK_OPTIONS } from './chunk.js';
 import { EMBEDDING_LIMITS, batchByLimits, embeddingUsd, reservationUsd, type Embedder } from './embed.js';
 import { countCachedKeys, embeddingCacheKey, lookupEmbeddings, storeEmbeddings } from './embedding-cache.js';
@@ -52,10 +65,13 @@ import { TOKENIZER } from './tokens.js';
 export const PASSAGES_INDEX_VERSION = 'passages-v1';
 /** The embedding the mapping is built for (DESIGN §5: `text-embedding-3-small`, 1,536 dimensions). */
 export const PASSAGES_EMBEDDING_DIMS = 1536;
-/** A paid build can take a while; its pin outlives it if the process dies, then expires. */
-export const PASSAGES_BUILD_PIN_HOURS = 6;
-/** Two-key advisory lock namespace: one passages build per generation at a time. */
+/** Two-key advisory lock namespace: one passages build per generation at a time (no double spending). */
 export const PASSAGES_BUILD_LOCK_NAMESPACE = 731_190_520;
+/**
+ * Pool connections a build needs at once: the build's liveness lock, the snapshot
+ * stream, and the writes (passages, cache) made while the stream is open.
+ */
+export const PASSAGES_BUILD_MIN_POOL = 3;
 
 // ---------------------------------------------------------------------------
 // Document
@@ -85,7 +101,10 @@ export interface PassageDoc {
   highest_injury: string | null;
   wx_cond: string | null;
   light: string | null;
+  /** Nested: the one aircraft of an aircraft-scoped passage; empty when event-scoped. */
   aircraft: PassageAircraft[];
+  /** Plain object (not nested): every aircraft of an event-scoped passage's event; empty when aircraft-scoped. */
+  event_aircraft: PassageAircraft[];
 }
 
 /** float32 values with 9 significant digits: exact for float32, about half the JSON of a float64 rendering. */
@@ -112,7 +131,8 @@ export function buildPassageDocument(p: CasePassage, vector: Float32Array): Pass
     text: p.text,
     embedding: vectorJson(vector),
     ...p.filters,
-    aircraft: p.aircraft,
+    aircraft: p.aircraftSpecific ? p.aircraft : [],
+    event_aircraft: p.aircraftSpecific ? [] : p.aircraft,
   };
 }
 
@@ -121,6 +141,16 @@ export function buildPassageDocument(p: CasePassage, vector: Float32Array): Pass
 
 const keyword = (): estypes.MappingKeywordProperty => ({ type: 'keyword' });
 const nameKeyword = (): estypes.MappingKeywordProperty => ({ type: 'keyword', normalizer: NAME_NORMALIZER });
+const aircraftProperties = (): Record<string, estypes.MappingProperty> => ({
+  aircraft_key: { type: 'integer' },
+  category: keyword(),
+  make: nameKeyword(),
+  model: nameKeyword(),
+  far_part: keyword(),
+  purpose: keyword(),
+  eng_types: keyword(),
+  defining_phase_group: keyword(),
+});
 
 export const PASSAGES_MAPPING: estypes.MappingTypeMapping = {
   dynamic: 'strict',
@@ -155,20 +185,8 @@ export const PASSAGES_MAPPING: estypes.MappingTypeMapping = {
     highest_injury: keyword(),
     wx_cond: keyword(),
     light: keyword(),
-    aircraft: {
-      type: 'nested',
-      dynamic: 'strict',
-      properties: {
-        aircraft_key: { type: 'integer' },
-        category: keyword(),
-        make: nameKeyword(),
-        model: nameKeyword(),
-        far_part: keyword(),
-        purpose: keyword(),
-        eng_types: keyword(),
-        defining_phase_group: keyword(),
-      },
-    },
+    aircraft: { type: 'nested', dynamic: 'strict', properties: aircraftProperties() },
+    event_aircraft: { type: 'object', dynamic: 'strict', properties: aircraftProperties() },
   },
 };
 
@@ -203,7 +221,6 @@ export function passagesIndexFingerprint(model: string): string {
 // Names
 
 const PREFIX = /^[a-z0-9][a-z0-9._-]*$/;
-const BUILD_ID = /^\d{17}-[0-9a-f]{8}$/;
 
 function checkPrefix(prefix: string): void {
   if (!PREFIX.test(prefix) || prefix.length > 100) throw new Error(`invalid index prefix: ${JSON.stringify(prefix)}`);
@@ -214,17 +231,13 @@ export function passagesAlias(prefix: string): string {
   return `${prefix}-passages`;
 }
 
-/** `<yyyymmddhhmmssmmm UTC>-<8 hex>`: sortable and unique per invocation. */
-export function newPassagesBuildId(at: Date = new Date()): string {
-  return `${at.toISOString().replace(/\D/g, '')}-${randomBytes(4).toString('hex')}`;
-}
-
-/** `<prefix>-passages-v1-g<generation>-<build id>`. */
-export function passagesIndexName(prefix: string, generationId: number, buildId: string): string {
+/** `<prefix>-passages-v1-g<generation>-<yyyymmddhhmmssmmm UTC>-<build id>`, like the cases index. */
+export function passagesIndexName(prefix: string, generationId: number, at: Date, buildId: string): string {
   checkPrefix(prefix);
+  checkBuildId(buildId);
   if (!Number.isSafeInteger(generationId) || generationId < 1) throw new Error('invalid generation id');
-  if (!BUILD_ID.test(buildId)) throw new Error(`invalid build id: ${JSON.stringify(buildId)}`);
-  return `${prefix}-${PASSAGES_INDEX_VERSION}-g${generationId}-${buildId}`;
+  const stamp = at.toISOString().replace(/\D/g, '');
+  return `${prefix}-${PASSAGES_INDEX_VERSION}-g${generationId}-${stamp}-${buildId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -472,9 +485,12 @@ export interface RebuildPassagesOptions {
   windowSize?: number;
   /** Bulk request body limit in bytes (default 8 MiB). */
   maxBulkBytes?: number;
+  /** Clock for the index name (tests). */
   now?: () => Date;
+  /** Build id (tests); default random. It names the index and the pin. */
+  buildId?: string;
   log?: (message: string) => void;
-  alias?: SwitchAliasOptions;
+  alias?: Pick<SwitchAliasOptions, 'lockTimeoutMs' | 'readAttempts' | 'readRetryDelayMs'>;
   /** Test seam: runs once the generation is pinned, before planning. */
   afterPin?: () => Promise<void> | void;
 }
@@ -482,10 +498,13 @@ export interface RebuildPassagesOptions {
 export interface PassagesIndexReport {
   index: string;
   alias: string;
-  previousIndices: string[];
-  aliasReconciled: boolean;
-  generationId: number;
   buildId: string;
+  /** The committed `index_switch_attempts` row. */
+  attemptId: number | null;
+  previousIndices: string[];
+  /** A read-back after the committed switch showed exactly the new index. */
+  aliasVerified: boolean;
+  generationId: number;
   version: string;
   fingerprint: string;
   model: string;
@@ -493,20 +512,22 @@ export interface PassagesIndexReport {
   passages: number;
   /** Passage rows that already existed in PostgreSQL (an earlier build of this generation and chunker). */
   passagesAlreadyStored: number;
-  /** Distinct inputs resolved from `embedding_cache`. */
+  /** Distinct inputs found in `embedding_cache` when first met (cached before this build). */
   cacheHits: number;
+  /** Passages whose exact input another passage of this build already had: embedded once. */
+  deduplicated: number;
   embedded: { inputs: number; tokens: number; requests: number; usd: number };
   plan: PassagePlan;
   durationMs: number;
 }
 
 /**
- * Hold the per-generation build lock; fail fast if another build holds it. The lock
- * lives on its own session outside the pool, which the snapshot stream and the
- * writes of the build need (two connections).
+ * Hold the per-generation passages lock: a second build of the same generation fails
+ * fast instead of paying for the same embeddings. It lives on its own session, outside
+ * the pool the build needs.
  */
-async function withBuildLock<T>(db: Db, generationId: number, fn: () => Promise<T>): Promise<T> {
-  const client = new pg.Client({ ...db.$client.options, application_name: 'aviation-passages-build-lock' });
+async function withGenerationLock<T>(db: Db, generationId: number, fn: () => Promise<T>): Promise<T> {
+  const client = new pg.Client({ ...db.$client.options, application_name: 'aviation-passages-generation-lock' });
   await client.connect();
   try {
     const r = await client.query<{ ok: boolean }>('select pg_try_advisory_lock($1, $2) as ok', [PASSAGES_BUILD_LOCK_NAMESPACE, generationId]);
@@ -570,6 +591,7 @@ async function storePassages(db: Db, generationId: number, batch: readonly CaseP
 
 const BULK_RETRIES = 3;
 
+/** Bulk-create documents; retries 429s. Errors name passages and error types, never document content. */
 async function bulkCreate(es: Client, index: string, docs: readonly PassageDoc[], log: (m: string) => void): Promise<void> {
   let pending = docs;
   for (let attempt = 0; pending.length > 0; attempt += 1) {
@@ -583,7 +605,7 @@ async function bulkCreate(es: Client, index: string, docs: readonly PassageDoc[]
       if (!result?.error) return;
       const doc = pending[i] as PassageDoc;
       if (result.status === 429) retry.push(doc);
-      else failed.push(`${doc.passage_id}: ${result.error.type} ${(result.error.reason ?? '').slice(0, 200)}`.trim());
+      else failed.push(`${doc.passage_id}: ${String(result.error.type).slice(0, 80)}`);
     });
     if (failed.length > 0) throw new Error(`bulk indexing failed for ${failed.length} passage(s): ${failed.slice(0, 5).join('; ')}`);
     if (attempt + 1 >= BULK_RETRIES) throw new Error(`bulk indexing still rejected (429) after ${BULK_RETRIES} attempts`);
@@ -597,6 +619,7 @@ interface Expected {
   passages: number;
   byKindScope: Map<string, number>;
   eventScoped: number;
+  /** Nested aircraft: one per aircraft-scoped passage. */
   nestedAircraft: number;
 }
 
@@ -615,10 +638,14 @@ async function verifyIndex(es: Client, index: string, want: Expected): Promise<v
   const got = new Map((Array.isArray(buckets) ? buckets : []).map((b) => [`${b.key[0]}/${b.key[1]}`, b.doc_count]));
   const nested = (res.aggregations?.aircraft as estypes.AggregationsNestedAggregate | undefined)?.doc_count ?? -1;
   const count = async (query: estypes.QueryDslQueryContainer) => (await es.count({ index, query })).count;
+  const nestedAny: estypes.QueryDslQueryContainer = { nested: { path: 'aircraft', query: { match_all: {} } } };
   const checks: [string, number, number][] = [
     ['passages', want.passages, total],
     ['nested aircraft', want.nestedAircraft, nested],
     ['event-scoped (aircraft_specific false)', want.eventScoped, await count({ term: { aircraft_specific: false } })],
+    ['event-scoped with nested aircraft', 0, await count({ bool: { filter: [{ term: { aircraft_specific: false } }, nestedAny] } })],
+    ['aircraft-scoped with event aircraft', 0, await count({ bool: { filter: [{ term: { aircraft_specific: true } }, { exists: { field: 'event_aircraft.aircraft_key' } }] } })],
+    ['event-scoped without event aircraft', 0, await count({ bool: { filter: [{ term: { aircraft_specific: false } }], must_not: [{ exists: { field: 'event_aircraft.aircraft_key' } }] } })],
     ['with an embedding', want.passages, await count({ exists: { field: 'embedding' } })],
     ['not answer-eligible', 0, await count({ bool: { must_not: { term: { answer_eligible: true } } } })],
     ['non-US', 0, await count({ bool: { must_not: { term: { country: 'USA' } } } })],
@@ -632,22 +659,32 @@ async function verifyIndex(es: Client, index: string, want: Expected): Promise<v
   }
 }
 
+function checkPool(db: Db): void {
+  const max = db.$client.options.max ?? 10;
+  if (max < PASSAGES_BUILD_MIN_POOL) {
+    throw new Error(`a passages build needs a pool of at least ${PASSAGES_BUILD_MIN_POOL} connections (this one has ${max})`);
+  }
+}
+
 /**
  * Build a passages index for one verified generation and move the alias to it.
  *
- * 1. Take the per-generation build lock; check and pin the generation (as the cases
- *    index does).
- * 2. Plan (the dry run). Stop with `CostNotConfirmedError` unless `confirmCost`, and
+ * 1. Take the per-generation passages lock and this build's liveness lock; refuse
+ *    while the alias is blocked by an unresolved switch attempt; record the build.
+ * 2. Check and pin the generation for this build (`index-build:<build id>`, no
+ *    expiry), as the cases index does.
+ * 3. Plan (the dry run). Stop with `CostNotConfirmedError` unless `confirmCost`, and
  *    with `SpendRefusedError` if the plan's reservations exceed the remaining indexing
  *    budget. An empty plan is refused.
- * 3. Create the index and stream the generation again: store passages, resolve
- *    vectors (cache first, then the embedder for misses, each distinct input once),
- *    cache new vectors, bulk-load documents.
- * 4. Verify the index and the stored passages against what was built; switch the alias.
+ * 4. Create the index and stream the generation again: store passages, resolve
+ *    vectors (cache first, then the embedder for misses, each distinct input once,
+ *    in the plan's request boundaries), cache new vectors, bulk-load documents.
+ * 5. Verify the index and the stored passages against what was built; switch the
+ *    alias (refused if the build's pin is gone); remove the pin.
  *
- * Until the alias request is sent, any failure deletes the new index; afterwards the
- * index is deleted only when the alias certainly does not point at it. Embeddings
- * already paid for stay in the cache, so a rerun does not pay for them again.
+ * The only automatic deletion: if the build fails before its index was part of any
+ * alias request, the index is deleted. Embeddings already paid for stay in the cache,
+ * so a rerun does not pay for them again.
  */
 export async function rebuildPassagesIndex(
   es: Client,
@@ -659,53 +696,64 @@ export async function rebuildPassagesIndex(
   const log = opts.log ?? (() => undefined);
   const { generationId, prefix } = opts;
   if (embedder.dims !== PASSAGES_EMBEDDING_DIMS) throw new Error(`the passages mapping needs ${PASSAGES_EMBEDDING_DIMS} dimensions, not ${embedder.dims}`);
+  checkPool(db);
+  const buildId = opts.buildId ?? newBuildId();
   const alias = passagesAlias(prefix);
-  const buildId = newPassagesBuildId((opts.now ?? (() => new Date()))());
-  const index = passagesIndexName(prefix, generationId, buildId);
-  const pinReason = `index:${index}`;
+  const index = passagesIndexName(prefix, generationId, (opts.now ?? (() => new Date()))(), buildId);
+  const pinReason = buildPinReason(buildId);
   const spec: EmbeddingSpec = { model: embedder.model, dims: embedder.dims, usdPerMillionTokens: embedder.usdPerMillionTokens };
 
-  return withBuildLock(db, generationId, async () => {
-    await pinIndexableGeneration(db, generationId, pinReason, new Date(Date.now() + PASSAGES_BUILD_PIN_HOURS * 3_600_000));
-    try {
-      await opts.afterPin?.();
-      const plan = await planPassages(db, { generationId, embedding: spec, batchSize: opts.batchSize, log });
-      if (plan.passages === 0) throw new GenerationNotIndexableError(generationId, 'it has no answer-eligible US passages');
-      if (!opts.confirmCost) throw new CostNotConfirmedError(plan);
-      const remaining = await opts.gate.remainingUsd('indexing');
-      if (plan.reservationUsd > remaining) {
-        throw new SpendRefusedError(
-          `the build reserves up to $${plan.reservationUsd.toFixed(6)} but $${remaining.toFixed(6)} of the indexing budget is left`,
-        );
-      }
-      const fingerprint = passagesIndexFingerprint(embedder.model);
+  return withGenerationLock(db, generationId, () =>
+    withBuildLock(db, buildId, async () => {
+      const blocking = await blockingAttempts(db.$client, alias);
+      if (blocking.length > 0) throw new UnresolvedAliasError(blockedMessage(alias, blocking));
+      await recordBuild(db, { indexName: index, alias, buildId, generationId });
 
-      await es.indices.create({
-        index,
-        settings: { ...PASSAGES_SETTINGS, refresh_interval: '-1' },
-        mappings: {
-          ...PASSAGES_MAPPING,
-          _meta: {
-            index_version: PASSAGES_INDEX_VERSION,
-            fingerprint,
-            generation_id: generationId,
-            build_id: buildId,
-            chunker_version: CHUNKER_VERSION,
-            input_template_version: EMBEDDING_INPUT_TEMPLATE_VERSION,
-            embedding_model: embedder.model,
-            embedding_dims: embedder.dims,
-          },
-        },
-      });
-      log(`created ${index}`);
-
-      const want: Expected = { passages: 0, byKindScope: new Map(), eventScoped: 0, nestedAircraft: 0 };
-      const embedded = { inputs: 0, tokens: 0, requests: 0, usd: 0 };
-      let cacheHits = 0;
-      let alreadyStored = 0;
+      let pinned = false;
+      let submitted = false;
       try {
+        await pinIndexableGeneration(db, generationId, pinReason);
+        pinned = true;
+        await opts.afterPin?.();
+        const plan = await planPassages(db, { generationId, embedding: spec, batchSize: opts.batchSize, log });
+        if (plan.passages === 0) throw new GenerationNotIndexableError(generationId, 'it has no answer-eligible US passages');
+        if (!opts.confirmCost) throw new CostNotConfirmedError(plan);
+        const remaining = await opts.gate.remainingUsd('indexing');
+        if (plan.reservationUsd > remaining) {
+          throw new SpendRefusedError(
+            `the build reserves up to $${plan.reservationUsd.toFixed(6)} but $${remaining.toFixed(6)} of the indexing budget is left`,
+          );
+        }
+        const fingerprint = passagesIndexFingerprint(embedder.model);
+
+        await es.indices.create({
+          index,
+          settings: { ...PASSAGES_SETTINGS, refresh_interval: '-1' },
+          mappings: {
+            ...PASSAGES_MAPPING,
+            _meta: {
+              index_version: PASSAGES_INDEX_VERSION,
+              fingerprint,
+              generation_id: generationId,
+              build_id: buildId,
+              chunker_version: CHUNKER_VERSION,
+              input_template_version: EMBEDDING_INPUT_TEMPLATE_VERSION,
+              embedding_model: embedder.model,
+              embedding_dims: embedder.dims,
+            },
+          },
+        });
+        log(`created ${index}`);
+
+        const want: Expected = { passages: 0, byKindScope: new Map(), eventScoped: 0, nestedAircraft: 0 };
+        const embedded = { inputs: 0, tokens: 0, requests: 0, usd: 0 };
+        let cacheHits = 0;
+        let deduplicated = 0;
+        let alreadyStored = 0;
         const windowSize = opts.windowSize ?? 480;
         const maxBulkBytes = opts.maxBulkBytes ?? 8 * 1024 * 1024;
+        /** Every input key met in this build. */
+        const seen = new Set<string>();
         /** Passages waiting for the vector of their input, by cache key. */
         const pending = new Map<string, { input: string; tokens: number; passages: CasePassage[] }>();
         /** Cache misses in first-seen order, not yet embedded. */
@@ -745,40 +793,55 @@ export async function rebuildPassagesIndex(
             embedded.usd += embeddingUsd(res.tokens, embedder.usdPerMillionTokens);
             await storeEmbeddings(
               db,
-              batch.map((key, i) => ({ key, vector: res.vectors[i] as Float32Array })),
+              batch.map((key, j) => ({ key, vector: res.vectors[j] as Float32Array })),
               embedder.model,
               embedder.dims,
               EMBEDDING_INPUT_TEMPLATE_VERSION,
             );
             misses.splice(0, batch.length);
-            for (const [i, key] of batch.entries()) await resolve(key, res.vectors[i] as Float32Array);
+            for (const [j, key] of batch.entries()) await resolve(key, res.vectors[j] as Float32Array);
             log(`embedded ${embedded.inputs}/${plan.toEmbed.inputs} inputs (${embedded.tokens} tokens)`);
           }
         };
         const processWindow = async () => {
           if (window.length === 0) return;
           alreadyStored += await storePassages(db, generationId, window);
+          /** Keys met for the first time in this build: cache hits or misses. */
           const fresh: string[] = [];
+          /** Keys met before whose vector was already released: read back from the cache. */
+          const again: string[] = [];
           for (const p of window) {
             const key = cacheKeyOf(p, spec);
-            const entry = pending.get(key);
-            if (entry) entry.passages.push(p);
-            else {
-              pending.set(key, { input: p.input, tokens: p.inputTokens, passages: [p] });
-              fresh.push(key);
-            }
             want.passages += 1;
             want.byKindScope.set(`${p.kind}/${p.scope}`, (want.byKindScope.get(`${p.kind}/${p.scope}`) ?? 0) + 1);
-            if (!p.aircraftSpecific) want.eventScoped += 1;
-            want.nestedAircraft += p.aircraft.length;
+            if (p.aircraftSpecific) want.nestedAircraft += p.aircraft.length;
+            else want.eventScoped += 1;
+            const entry = pending.get(key);
+            if (seen.has(key)) deduplicated += 1;
+            if (entry) {
+              entry.passages.push(p);
+              continue;
+            }
+            pending.set(key, { input: p.input, tokens: p.inputTokens, passages: [p] });
+            if (seen.has(key)) again.push(key);
+            else {
+              seen.add(key);
+              fresh.push(key);
+            }
           }
           window = [];
-          const hits = await lookupEmbeddings(db, fresh, embedder.model, embedder.dims);
-          cacheHits += hits.size;
+          const hits = await lookupEmbeddings(db, [...fresh, ...again], embedder.model, embedder.dims);
+          for (const key of again) {
+            const v = hits.get(key);
+            if (!v) throw new Error(`embedding ${key} was cached by this build but is missing`);
+            await resolve(key, v);
+          }
           for (const key of fresh) {
             const v = hits.get(key);
-            if (v) await resolve(key, v);
-            else misses.push(key);
+            if (v) {
+              cacheHits += 1;
+              await resolve(key, v);
+            } else misses.push(key);
           }
           await embedMisses(false);
         };
@@ -805,41 +868,50 @@ export async function rebuildPassagesIndex(
         await es.indices.putSettings({ index, settings: { refresh_interval: '1s' } });
         await es.indices.refresh({ index });
         await verifyIndex(es, index, want);
-      } catch (err) {
-        await es.indices.delete({ index }).catch(() => undefined);
-        throw err;
-      }
 
-      let switched;
-      try {
-        switched = await switchAlias(es, db, alias, index, opts.alias);
+        let switched;
+        try {
+          switched = await switchAlias(es, db, alias, index, {
+            ...opts.alias,
+            buildId,
+            beforeSwitch: (client) => assertPinned(client, generationId, pinReason),
+          });
+        } catch (err) {
+          if (!(err instanceof AliasSwitchError && err.outcome === 'not_submitted')) submitted = true;
+          throw err;
+        }
+        submitted = true;
+        log(`alias ${alias} -> ${index}${switched.previous.length ? ` (was ${switched.previous.join(', ')})` : ''}`);
+        if (!switched.verified) log(`alias ${alias}: switch committed but could not be read back`);
+        return {
+          index,
+          alias,
+          buildId,
+          attemptId: switched.attemptId,
+          previousIndices: switched.previous,
+          aliasVerified: switched.verified,
+          generationId,
+          version: PASSAGES_INDEX_VERSION,
+          fingerprint,
+          model: embedder.model,
+          dims: embedder.dims,
+          passages: want.passages,
+          passagesAlreadyStored: alreadyStored,
+          cacheHits,
+          deduplicated,
+          embedded,
+          plan,
+          durationMs: Date.now() - started,
+        };
       } catch (err) {
-        if (err instanceof AliasSwitchError && err.outcome === 'not_switched') {
-          await es.indices.delete({ index }).catch(() => undefined);
+        if (!submitted) {
+          // Never part of an alias request: the only index a build deletes on its own.
+          await deleteUnsubmittedIndex(es, db.$client, index).catch((e: unknown) => log(`cleanup of ${index} failed: ${String(e)}`));
         }
         throw err;
+      } finally {
+        if (pinned) await unpin(db, generationId, pinReason, log);
       }
-      log(`alias ${alias} -> ${index}${switched.previous.length ? ` (was ${switched.previous.join(', ')})` : ''}`);
-      return {
-        index,
-        alias,
-        previousIndices: switched.previous,
-        aliasReconciled: switched.reconciled,
-        generationId,
-        buildId,
-        version: PASSAGES_INDEX_VERSION,
-        fingerprint,
-        model: embedder.model,
-        dims: embedder.dims,
-        passages: want.passages,
-        passagesAlreadyStored: alreadyStored,
-        cacheHits,
-        embedded,
-        plan,
-        durationMs: Date.now() - started,
-      };
-    } finally {
-      await unpin(db, generationId, pinReason, log);
-    }
-  });
+    }),
+  );
 }
