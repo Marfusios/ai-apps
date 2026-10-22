@@ -10,6 +10,7 @@ import {
   type PassageDraft,
   type SectionText,
 } from '../../worker/index/chunk.js';
+import { GLUED_HEADING_PATTERN, GLUED_HEADING_REPLACE } from '../../worker/index/analysis.js';
 import { MAX_INPUT_TOKENS, buildCasePassages } from '../../worker/index/passages.js';
 import { countTokens, encodeLength } from '../../worker/index/tokens.js';
 import { fixtureCaseRecords } from '../support/case-records.js';
@@ -342,6 +343,18 @@ describe('chunkSection', () => {
     expect(starts('HISTORY OF FLIGHTOn December 14')).toEqual(['HISTORY OF F']);
     expect(starts('the airplane. WRECKAGE AND IMPACT INFORMATIONThe airplane')).toEqual(['WRECKAGE AND']);
     expect(starts('Review of METARs, NOTAMs and SEA08LA057 in IMC, then VMC.')).toEqual([]);
+  });
+
+  it('agrees with the analyzer char filter on where glued headings split', () => {
+    const samples = [
+      'ft msl. PERSONNEL INFORMATIONThe pilot; HISTORY OF FLIGHTOn December; TESTS AND RESEARCHAircraft',
+      'METARs, NOTAMs, SEA08LA057, IMC, VMC, CFITs, ABCs, USAir, McDONNELL DOUGLAS',
+    ];
+    for (const t of samples) {
+      const zeroWidth = t.replace(new RegExp(GLUED_HEADING_PATTERN, 'gu'), ' ');
+      expect(t.replace(new RegExp(GLUED_HEADING_REPLACE.pattern, 'gu'), GLUED_HEADING_REPLACE.replacement)).toBe(zeroWidth);
+    }
+    expect(samples[1]?.replace(new RegExp(GLUED_HEADING_PATTERN, 'gu'), ' ')).toBe(samples[1]);
   });
 
   it('prefers cutting right before a glued heading (a soft paragraph start)', () => {

@@ -287,8 +287,10 @@ pnpm worker index cleanup-builds --older-than <hours>
   `sequence_phase_groups` lists every phase in the sequence. Make, model and city use
   a normalizer (whitespace collapsed, ASCII-folded, upper case), so "Cessna" and
   "CESSNA" are one value.
-- **Text analysis** (`worker/index/analysis.ts`). Indexing: standard tokenizer,
-  lowercase, possessive stemmer, English stop words minus negations (`no`, `not`
+- **Text analysis** (`worker/index/analysis.ts`). Indexing: a char filter that
+  separates headings glued to their text ("AIRCRAFT INFORMATIONThe" → "AIRCRAFT
+  INFORMATION The"; plurals such as "METARs", case numbers and acronyms untouched,
+  offsets exact), standard tokenizer, lowercase, possessive stemmer, English stop words minus negations (`no`, `not`
   and the other negations are always kept), a few stem overrides (icing → ice,
   conditions → condition, ...), then the conservative light English (KStem) stemmer,
   which keeps generator/general and engine/engineer apart. Searching adds a small
@@ -307,55 +309,70 @@ pnpm worker index passages --generation <id>                 # dry run (default)
 pnpm worker index passages --generation <id> --confirm-cost  # paid: OPENAI_API_KEY, aviation_ingest, ELASTICSEARCH_WRITE_API_KEY
 ```
 
-- **Scope.** Only answer-eligible US cases of a verified generation get passages. The
-  generation is checked and pinned like the cases build, and one passages build per
-  generation runs at a time (an advisory lock).
+- **Scope and builds.** Only answer-eligible US cases of a verified generation get
+  passages. A build works like the cases build: it is recorded in `index_builds`,
+  holds its liveness lock, pins the generation as `index-build:<build id>` until it
+  finishes, switches the alias only while that pin exists and records the attempt,
+  and deletes its index on its own only if the index never reached an alias request.
+  One passages build per generation runs at a time (an advisory lock), and a build
+  needs a connection pool of at least 3.
 - **Chunking** (`worker/index/chunk.ts`, `CHUNKER_VERSION`). Each section is chunked on
   its own; exact `cl100k_base` token counts (`js-tiktoken`). A section of at most 800
   tokens, probable causes included, is one passage. Longer sections are cut into
   paragraphs (line breaks; hard-wrapped lines are joined) and sentences (abbreviations,
   initials and decimals do not end one), then packed into passages of even size
   around a 650-token target, between 200 and 800, preferring paragraph ends and never
-  ending on a heading line. Each passage after the first repeats up to 80 tokens of
-  whole trailing sentences of the previous one. A sentence or probable cause over 800
-  tokens is split at the nearest clause boundary below an even share (else a word
-  boundary) into passages marked `continuation`; nothing is truncated. Offsets are
-  UTF-16 indices into the section text and `text === section.text.slice(start, end)`.
+  ending on a heading line. A heading glued to its text by HTML conversion
+  ("AIRCRAFT INFORMATIONThe airplane") counts as a paragraph start, so a cut can fall
+  right before it; the text itself is never changed. Each passage after the first
+  repeats up to 80 tokens of whole trailing sentences of the previous one. A sentence
+  or probable cause over 800 tokens is split at the nearest clause boundary below an
+  even share (else a word boundary) into passages marked `continuation`; nothing is
+  truncated. Offsets are UTF-16 indices into the section text (never inside a
+  surrogate pair) and `text === section.text.slice(start, end)`.
 - **Attribution.** In a single-aircraft event passages are aircraft-scoped and
-  aircraft-specific. In a multi-aircraft event every section is event-scoped, so its
-  passages carry every aircraft, say "Event (n aircraft)" in their header and have
-  `aircraft_specific: false`: retrieval must exclude them whenever an aircraft filter
-  is active.
+  aircraft-specific, with their aircraft in the nested `aircraft` field. In a
+  multi-aircraft event every section is event-scoped: its passages say "Event (n
+  aircraft)" in their header, have `aircraft_specific: false`, leave `aircraft` empty
+  and list the event's aircraft in the plain `event_aircraft` field, so a nested
+  aircraft filter can never match them.
 - **Embedding input** is `"<section> · <make model | Event (n aircraft)> · <defining
   phase(s)>"` + newline + passage text; only the raw text is stored and cited.
   `text-embedding-3-small` at 1,536 dimensions, through the official SDK with SDK
-  retries off; our own retry handles 429, 5xx and connection failures (backoff or
-  `Retry-After`, at most 3 attempts). Requests hold at most 96 inputs and 250,000
-  tokens; an input is at most 8,192 tokens.
+  retries off; our own retry handles 429, 408, 5xx and connection failures, at most 3
+  attempts. A provider deadline (`Retry-After`, or the token limit's reset) is waited
+  out in full, only the local backoff is capped, and a deadline over 10 minutes stops
+  the run with the time to rerun it. Requests hold at most 96 inputs and 250,000
+  tokens; an input is at most 8,192 tokens. Errors keep only the HTTP status, a
+  provider error code and the request id: no provider message (a 401 message quotes
+  part of the key), no input text, no wrapped SDK error.
 - **Cache.** `embedding_cache` is keyed by sha256 of the exact input, model,
   dimensions and `EMBEDDING_INPUT_TEMPLATE_VERSION`; a changed header misses it.
   Identical inputs are embedded once, vectors are cached as they arrive, and a rebuild
-  pays only for misses.
+  pays only for misses. Reports count cache hits (inputs cached before the build) and
+  deduplicated passages separately.
 - **Spend.** Every attempt reserves its maximum cost (exact tokens × $0.02/M × 1.1)
-  on the spend gate before it is sent, and settles: the reported usage, zero after a
-  4xx, or the whole reservation when the outcome is uncertain (5xx, timeout, lost
-  connection). The paid run refuses when the planned reservations exceed the remaining
-  indexing budget. The gate is an interface (`worker/index/spend-gate.ts`); the
-  PostgreSQL ledger is connected when the cost-control work lands, and until then
-  `--confirm-cost` stops before any request.
+  on the indexing ledger (`reserveSpend`) before it is sent, and settles
+  (`settleSpend`): the reported usage, zero after a 4xx other than 408, or the whole
+  reservation when the outcome is uncertain (408, 5xx, timeout, lost connection). A
+  busy ledger is retried a few times, then the attempt is refused. The paid run
+  refuses when the planned reservations exceed what is left of the indexing and
+  evaluation allowance (`remainingCategoryUsd`).
 - **Storage.** `passages` (PostgreSQL) holds one row per passage of a generation,
   keyed `(generation_id, passage_id)`, with `passage_id` = sha256(revision id, start,
   end, chunker version). Triggers accept rows only for a verified generation and a
-  matching section of an answer-eligible US case, reject updates, and delete a
-  generation's passages when pruning deletes the generation.
-- **Index.** `<prefix>-passages-v1-g<generation>-<build id>`, alias `<prefix>-passages`
-  (moved like the cases alias). Strict mapping: passage and section ids, kind, scope,
+  matching section of an answer-eligible US case, with offsets inside the section
+  text, reject updates, and delete a generation's passages when pruning deletes the
+  generation. An insert locks its generation row until it commits, so pruning waits
+  for it (or the insert fails once pruning has removed the generation).
+- **Index.** `<prefix>-passages-v1-g<generation>-<UTC timestamp>-<build id>`, alias
+  `<prefix>-passages`. Strict mapping: passage and section ids, kind, scope,
   `aircraft_specific`, offsets, `part`/`parts`/`continuation`, `text` with the cases
   analyzers, `embedding` (`dense_vector`, 1,536, cosine, `int8_hnsw`, kept out of
   `_source`), the event filters (`country`, `ev_year`, `ev_date`, `state`,
-  `answer_eligible`, `defining_phase_groups`, `highest_injury`, `wx_cond`, `light`)
-  and nested `aircraft`. The build checks the loaded index and the stored rows against
-  what it built before the alias moves.
+  `answer_eligible`, `defining_phase_groups`, `highest_injury`, `wx_cond`, `light`),
+  nested `aircraft` and object `event_aircraft`. The build checks the loaded index
+  and the stored rows against what it built before the alias moves.
 
 Integration test files run one at a time: they share `aviation_test` and the
 `aviation-test-*` indices, and some of them reset both.

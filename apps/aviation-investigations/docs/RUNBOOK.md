@@ -373,8 +373,16 @@ pnpm ingest load --from data/work/<dir>
 pnpm ingest verify --generation <id>     # report written to data/reports/<env>/
 pnpm ingest generations
 pnpm ingest index cases --generation <id>  # cases index <prefix>-cases-v3-g<id>-...; alias <prefix>-cases
+pnpm ingest index passages --generation <id>                 # dry run: passages, tokens, cost; writes nothing
+pnpm ingest index passages --generation <id> --confirm-cost  # paid embeddings; passages index <prefix>-passages-v1-g<id>-...
 pnpm ingest index reconcile --alias <alias>
 ```
+
+`index passages --confirm-cost` meters every embedding request on the indexing
+ledger (shared with evaluations, `AI_INGESTION_MONTHLY_BUDGET_USD`) and refuses
+when the planned reservations exceed what is left. If OpenAI asks for a wait longer
+than 10 minutes, the run stops and prints when to rerun it; vectors paid for so far
+are cached in `embedding_cache`, so the rerun pays only for the rest.
 
 The `index` commands (README, "Cases index") use the environment's write API key,
 so they create and switch only `ai-aviation-<env>-*` indices. A build deletes only

@@ -11,6 +11,7 @@ import {
 } from '../../worker/index/passages.js';
 import {
   PASSAGES_EMBEDDING_DIMS,
+  PASSAGES_INDEX_VERSION,
   PASSAGES_MAPPING,
   PASSAGES_SETTINGS,
   buildPassageDocument,
@@ -126,7 +127,20 @@ describe('passage header and embedding input', () => {
   });
 });
 
+/**
+ * The passages index definition (mapping, analysis, chunker, input template, model)
+ * this version was built with. Changing any of them changes it: bump
+ * PASSAGES_INDEX_VERSION (and CHUNKER_VERSION or the template version when those
+ * changed) and update the pin.
+ */
+const PINNED = { version: 'passages-v1', fingerprint: '57d731b28445deb4369951a92c767414376b6d78cc312c1cdea4a8b822375b5b' };
+
 describe('passages index definition', () => {
+  it('matches the pinned definition', () => {
+    expect(PASSAGES_INDEX_VERSION).toBe(PINNED.version);
+    expect(passagesIndexFingerprint('text-embedding-3-small'), 'definition changed: bump the versions and the pin').toBe(PINNED.fingerprint);
+  });
+
   it('maps strictly, with the cases analyzer, a 1,536-dim int8 HNSW cosine vector and nested aircraft', () => {
     expect(PASSAGES_MAPPING.dynamic).toBe('strict');
     expect(PASSAGES_MAPPING.properties?.embedding).toEqual({

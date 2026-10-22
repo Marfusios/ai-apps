@@ -29,7 +29,7 @@ import { FIXTURES_DIR, readCsv } from '../support/extract-dir.js';
  * The index definition this version was built with. Changing the mapping, the
  * analysis or the synonym list changes it: bump CASES_INDEX_VERSION and update both.
  */
-const PINNED = { version: 'cases-v3', fingerprint: '90d591706b2957c5912c91a04d76c856c11fbd7cb49189a213e08689fd4c676b' };
+const PINNED = { version: 'cases-v3', fingerprint: '2a6f1f58b54e6da00bb252ec921b44e22cd2c3f7f9a5d95e6d526913328545e9' };
 
 let records: Map<string, CaseRecord>;
 

@@ -59,8 +59,9 @@ const total = (r: estypes.SearchResponse) => (typeof r.hits.total === 'number' ?
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function ownIndices(): Promise<string[]> {
-  const found = await es.cat.indices({ index: `${PREFIX}-*`, format: 'json', h: 'index' });
-  return found.map((f) => f.index ?? '').sort();
+  // Index-level API: the writer key has no cluster privilege, so `_cat/indices` is refused.
+  const found = await es.indices.get({ index: `${PREFIX}-*`, expand_wildcards: 'all', allow_no_indices: true, ignore_unavailable: true });
+  return Object.keys(found).sort();
 }
 
 async function resetCache(): Promise<void> {
@@ -116,10 +117,8 @@ async function waitForLockWait(observer: pg.Client, pid: number, query: Promise<
   );
   for (let i = 0; i < 200; i += 1) {
     if (settled) throw new Error(`session ${pid} did not wait for a lock (${settled})`);
-    const r = await observer.query<{ waiting: boolean }>(
-      `select wait_event_type = 'Lock' as waiting from pg_stat_activity where pid = $1`,
-      [pid],
-    );
+    // pg_locks, not pg_stat_activity: the group role a login acts as cannot see the login's other sessions there.
+    const r = await observer.query<{ waiting: boolean }>(`select exists (select 1 from pg_locks where pid = $1 and not granted) as waiting`, [pid]);
     if (r.rows[0]?.waiting) return;
     await sleep(25);
   }
