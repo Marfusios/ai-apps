@@ -197,7 +197,7 @@ describe('passages-v2: an event qualifies when every aircraft satisfies every ai
     const wpr = [...c.keyword, ...c.vector].filter((h) => h.ntsbNo === 'WPR15FA010');
     expect(wpr.length).toBeGreaterThan(0);
     for (const h of wpr) expect(h).toMatchObject({ scope: 'event', aircraftSpecific: false, aircraftKey: null });
-    expect(c).toMatchObject({ indexVersion: 'passages-v2', eventAircraftQualification: true });
+    expect(c).toMatchObject({ indexVersion: 'passages-v2', chunkerVersion: 'chunk-v2', eventAircraftQualification: true });
   });
 
   it('a mixed helicopter/airplane event matches neither a HELI-only nor an AIR-only filter', async () => {
@@ -331,7 +331,7 @@ describe('passages-v1 keeps the exclusion', () => {
   it('never returns an event-scoped passage under an aircraft filter, however the event’s aircraft look', async () => {
     for (const category of [['HELI'], ['AIR'], ['AIR', 'HELI']]) {
       const c = await retrieveCandidates(es, embedder, { dataset: v1Dataset(), text: 'join up maneuver midair collision', filters: { category }, params: { perChannel: 100 } });
-      expect(c).toMatchObject({ indexVersion: 'passages-v1', eventAircraftQualification: false });
+      expect(c).toMatchObject({ indexVersion: 'passages-v1', chunkerVersion: 'chunk-v2', eventAircraftQualification: false });
       const hits: PassageHit[] = [...c.keyword, ...c.vector];
       expect(hits.length).toBeGreaterThan(0);
       expect(hits.filter((h) => !h.aircraftSpecific)).toEqual([]);

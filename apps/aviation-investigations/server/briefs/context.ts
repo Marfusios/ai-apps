@@ -5,8 +5,10 @@
  * step stored: the validated reading of the case, the passages it was checked against
  * (with the quote spans to highlight), its gap notes, and labelled lines from server
  * templates. Each line links to the passages its own claim was checked on (gate G6 #5),
- * never just the first quote. A case on the sheet or a case a gap note is about has a
- * context; a withheld step returns the NTSB passages with no reading.
+ * never just the first quote: a TIMING line its fact's passages, a CRITERIA line the
+ * passage set its criterion claim cited (G6 #3). A case on the sheet or a case a gap
+ * note is about has a context; a withheld step returns the NTSB passages with no
+ * reading.
  */
 import type {
   CaseContextResponse,
@@ -40,10 +42,17 @@ const SYMPTOM_LINE: Readonly<Record<Exclude<Symptom, 'other'>, string>> = {
   failure_to_climb: 'Unable to climb',
 };
 
-const CRITERION_LINE: Readonly<Record<CriterionDecision['criterion'], Record<CriterionDecision['decision'], string>>> = {
-  timing_window: { matches: 'Within your timing window', unknown: 'Timing window not established by the passages' },
-  first_flight_only: { matches: 'On the first flight after maintenance, as asked', unknown: 'First flight not established by the passages' },
-  failure_type: { matches: 'The failure you asked about', unknown: 'Failure type not established by the passages' },
+/**
+ * Definite wording only for a decision the facts settle (an approximate value never
+ * matches: server/briefs/criteria.ts); an unconfirmed one says so first.
+ */
+export const CRITERION_LINE: Readonly<Record<CriterionDecision['criterion'], Record<CriterionDecision['decision'], string>>> = {
+  timing_window: { matches: 'Within your timing window', unconfirmed: 'Unconfirmed: the passages do not establish your timing window' },
+  first_flight_only: {
+    matches: 'On the first flight after maintenance, as asked',
+    unconfirmed: 'Unconfirmed: the passages do not establish the first flight',
+  },
+  failure_type: { matches: 'The failure you asked about', unconfirmed: 'Unconfirmed: the passages do not establish the failure type' },
 };
 
 export function timingLine(t: TimingChip): string {
@@ -51,7 +60,7 @@ export function timingLine(t: TimingChip): string {
   const v = t.value === null ? '' : timingValueText(t.value);
   switch (t.basis) {
     case 'flight_hours':
-      return `${bound}${v} flight hours after the maintenance`;
+      return `${bound}${v} flight ${t.value === 1 ? 'hour' : 'hours'} after the maintenance`;
     case 'calendar_days':
       return `${bound}${v} ${t.value === 1 ? 'day' : 'days'} after the maintenance`;
     case 'first_flight':
@@ -76,10 +85,12 @@ export function readingLines(reading: CaseReading, dims: StoredDimensions | unde
   if (dims?.symptom && dims.symptom.value !== 'other') {
     lines.push({ label: 'SYMPTOM', text: SYMPTOM_LINE[dims.symptom.value], passageIds: dims.symptom.passageIds });
   }
-  if (reading.timing) lines.push({ label: 'TIMING', text: timingLine(reading.timing), passageIds: dims?.timingPassageIds ?? [] });
+  for (const t of reading.timing) {
+    lines.push({ label: 'TIMING', text: timingLine(t), passageIds: dims?.timing?.find((x) => x.basis === t.basis)?.passageIds ?? [] });
+  }
   for (const c of reading.criteria) {
-    const passageIds =
-      c.criterion === 'failure_type' ? (dims?.symptom?.passageIds ?? []) : c.decision === 'matches' ? (dims?.timingPassageIds ?? []) : [];
+    // The passage set the criterion's own claim cited, never the symptom's or timing's.
+    const passageIds = dims?.criteria?.find((x) => x.criterion === c.criterion)?.passageIds ?? [];
     lines.push({ label: 'CRITERIA', text: CRITERION_LINE[c.criterion][c.decision], passageIds });
   }
   const account = reading.quotes.find((q) => q.speaker !== 'investigators');
@@ -90,7 +101,7 @@ export function readingLines(reading: CaseReading, dims: StoredDimensions | unde
       passageIds: [account.passageId],
     });
   }
-  return lines.slice(0, 8);
+  return lines.slice(0, 12);
 }
 
 /** The context of `ntsbNo` in a finished step, or null when the step has no such case. */

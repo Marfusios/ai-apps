@@ -1,9 +1,9 @@
 /**
  * Static replies to scope outcomes that are not a case search (UI_DESIGN §4.3 "Scope
- * outcomes", §5 "Operational question"). Server templates only: the copy below plus
- * validated values (filter codes, case numbers checked against the dataset, readings
- * from server/briefs/clarify.ts). None is chat and none uses a free search; each still
- * counts toward the abuse rate limits.
+ * outcomes", §5 "Operational question"), and the abstention's copy. Server templates
+ * only: the copy below plus validated values (filter codes, case numbers checked against
+ * the dataset, readings from server/briefs/clarify.ts). No scope reply is chat and none
+ * uses a free search; each still counts toward the abuse rate limits.
  */
 import type { BriefFilters, Reading, ScopeReply } from '../../shared/contracts/briefs.js';
 import { CLARIFICATION_LABEL, CLARIFICATION_LINE } from './clarify.js';
@@ -26,6 +26,17 @@ export const OPERATIONAL_SUGGESTIONS = [
 ] as const;
 
 export const STATISTICS_LINES = ['Counting questions are answered from the data directly, not by the AI.'] as const;
+
+/**
+ * The explicit abstention (`no_match`): a statement about the cases this search
+ * retrieved, never a claim that no matching investigation exists. It counts as a
+ * search because the paid analysis ran.
+ */
+export const NO_MATCH_LINES = [
+  'None of the cases this search retrieved has passages that support your question as asked.',
+  'This is not proof that no such investigation exists: try rewording the question or changing the filters.',
+  'This counted as a search, because the AI analysis ran.',
+] as const;
 
 export function outOfScopeReply(): ScopeReply {
   return { kind: 'out_of_scope', lines: [...OUT_OF_SCOPE_LINES], keywordSearchLabel: KEYWORD_SEARCH_LABEL };

@@ -11,6 +11,7 @@ import {
 } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
+import { NO_MATCH_LINES } from '../../server/briefs/static-replies.js';
 import { matchQuote } from '../../server/briefs/validate.js';
 import { MockBriefs, MOCK_SEED_QUESTION, RESULT_SAMPLES, SCOPE_REPLY_SAMPLES, seedAnswer } from '../../web/mock/briefs.js';
 import cases from '../../web/mock/cases.json' with { type: 'json' };
@@ -65,6 +66,11 @@ describe('brief request contracts', () => {
     expect(ComposeOutputSchema.safeParse({ ...ok, html: '<b>' }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], quotes: [] }] }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], timing: '5.1 FH' }] }).success).toBe(false);
+    // Chronology: independent typed facts, each with its passages.
+    const chronology = { flightHours: { value: 20, bound: 'exact', passageIds: ['p1'] }, calendarDays: { value: 40, bound: 'exact', passageIds: ['p1'] } };
+    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], chronology }] }).success).toBe(true);
+    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], chronology: { ...chronology, weeks: 6 } }] }).success).toBe(false);
+    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], chronology: { flight: { value: 2, passageIds: ['p1'] } } }] }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], maintenance: 'investigator_attributed' }] }).success).toBe(false);
   });
 
@@ -111,6 +117,12 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
     expect(stages).toEqual(['retrieve', 'compose', 'validate', 'validate', 'done']);
     const context = CaseContextResponseSchema.parse(mock.context(s.briefId, 1, 'DEN08LA103').body);
     expect(context.lines.map((l) => l.label)).toEqual(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'CRITERIA', 'ACCOUNT']);
+    // An unconfirmed criterion says so first, with the passage set its claim was checked on.
+    expect(context.lines.find((l) => l.label === 'CRITERIA')).toEqual({
+      label: 'CRITERIA',
+      text: 'Unconfirmed: the passages do not establish your timing window',
+      passageIds: ['mock-DEN08LA103-analysis', 'mock-DEN08LA103-probable_cause'],
+    });
     expect(context.passages[0]!.highlights).toHaveLength(2);
     // Each line links to its own passages; a gap-only case has a context too.
     expect(context.lines.find((l) => l.label === 'EVIDENCE')!.passageIds).toEqual(['mock-DEN08LA103-analysis', 'mock-DEN08LA103-probable_cause']);
@@ -126,7 +138,11 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
 
     const abstained = StartBriefResponseSchema.parse(mock.create({ question: 'Show me no match', idempotencyKey: 'key-00000009' }).body);
     mock.read(abstained.briefId);
-    expect(BriefStepResponseSchema.parse(mock.read(abstained.briefId).body).result).toMatchObject({ kind: 'no_match', gaps: [{ ntsbNo: 'NYC08LA106' }] });
+    expect(BriefStepResponseSchema.parse(mock.read(abstained.briefId).body).result).toMatchObject({
+      kind: 'no_match',
+      lines: [...NO_MATCH_LINES],
+      gaps: [{ ntsbNo: 'NYC08LA106' }],
+    });
 
     for (const [question, kind] of [
       ['Write a poem about clouds', 'out_of_scope'],

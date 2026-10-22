@@ -14,7 +14,7 @@
  * - "how many", "how often" or "trend": counting (statistics);
  * - "compare" with case numbers: a comparison reply;
  * - "soon after": a clarification with two readings;
- * - "no match": the answer model's explicit abstention (no case supports the question);
+ * - "no match": the answer model's explicit abstention (no retrieved case supports the question);
  * - "nothing": no results.
  */
 import {
@@ -39,6 +39,7 @@ import type { CaseRow } from '../../shared/contracts/search.js';
 import { clarificationReadings, timingWindowLabel } from '../../server/briefs/clarify.js';
 import { readingLines } from '../../server/briefs/context.js';
 import {
+  NO_MATCH_LINES,
   clarificationReply,
   comparisonReply,
   operationalReply,
@@ -121,21 +122,25 @@ const SEED_DIMENSIONS: Readonly<Record<string, Parameters<typeof readingLines>[1
     evidencePassageIds: [analysisId('DFW08TA066'), causeId('DFW08TA066')],
     maintenance: { relation: 'investigator_attributed', passageIds: [causeId('DFW08TA066')] },
     symptom: { value: 'total_power_loss', passageIds: [analysisId('DFW08TA066')] },
-    timingPassageIds: [analysisId('DFW08TA066')],
+    timing: [{ basis: 'flight_hours', passageIds: [analysisId('DFW08TA066')] }],
+    criteria: [{ criterion: 'timing_window', decision: 'matches', passageIds: [analysisId('DFW08TA066')] }],
   },
   MIA08LA156: {
     ntsbNo: 'MIA08LA156',
     evidencePassageIds: [analysisId('MIA08LA156')],
     maintenance: { relation: 'preceding_not_established', passageIds: [analysisId('MIA08LA156')] },
     symptom: { value: 'partial_power_loss', passageIds: [analysisId('MIA08LA156'), causeId('MIA08LA156')] },
-    timingPassageIds: [analysisId('MIA08LA156')],
+    timing: [{ basis: 'first_flight', passageIds: [analysisId('MIA08LA156')] }],
+    // Unconfirmed: the claim was checked on every supplied passage of the case.
+    criteria: [{ criterion: 'timing_window', decision: 'unconfirmed', passageIds: [analysisId('MIA08LA156'), causeId('MIA08LA156')] }],
   },
   DEN08LA103: {
     ntsbNo: 'DEN08LA103',
     evidencePassageIds: [analysisId('DEN08LA103'), causeId('DEN08LA103')],
     maintenance: { relation: 'preceding_not_established', passageIds: [analysisId('DEN08LA103')] },
     symptom: { value: 'partial_power_loss', passageIds: [analysisId('DEN08LA103')] },
-    timingPassageIds: [analysisId('DEN08LA103')],
+    timing: [{ basis: 'subsequent_flight', passageIds: [analysisId('DEN08LA103')] }],
+    criteria: [{ criterion: 'timing_window', decision: 'unconfirmed', passageIds: [analysisId('DEN08LA103'), causeId('DEN08LA103')] }],
   },
 };
 
@@ -146,7 +151,7 @@ function seedCards(): CaseCard[] {
       reading: {
         glyph: 'causal',
         why: 'The engine stopped producing power 5.1 hours after a contract facility replaced it.',
-        timing: { basis: 'flight_hours', value: 5.1, bound: 'exact', label: '5.1 FH' },
+        timing: [{ basis: 'flight_hours', value: 5.1, bound: 'exact', label: '5.1 FH' }],
         quotes: [
           quote(
             'DFW08TA066',
@@ -164,7 +169,7 @@ function seedCards(): CaseCard[] {
       reading: {
         glyph: 'defect_not_causal',
         why: 'Power was lost on the test flight after maintenance, and a fuel-system defect was found without a causal link.',
-        timing: { basis: 'first_flight', value: null, bound: 'exact', label: '1ST FLIGHT' },
+        timing: [{ basis: 'first_flight', value: null, bound: 'exact', label: '1ST FLIGHT' }],
         quotes: [
           quote(
             'MIA08LA156',
@@ -174,7 +179,7 @@ function seedCards(): CaseCard[] {
           quote('MIA08LA156', 'analysis', 'During both test phases, the engine accelerated normally without any hesitation or interruption in power.'),
         ],
         evidence: { scope: 'aircraft', aircraftKey: 1 },
-        criteria: [{ criterion: 'timing_window', decision: 'unknown' }],
+        criteria: [{ criterion: 'timing_window', decision: 'unconfirmed' }],
       },
     },
     {
@@ -182,13 +187,13 @@ function seedCards(): CaseCard[] {
       reading: {
         glyph: 'no_fault',
         why: 'The engine lost power days after maintenance and test flights, and the reason was never determined.',
-        timing: { basis: 'subsequent_flight', value: null, bound: 'exact', label: 'LATER FLIGHT' },
+        timing: [{ basis: 'subsequent_flight', value: null, bound: 'exact', label: 'LATER FLIGHT' }],
         quotes: [
           quote('DEN08LA103', 'analysis', 'The reason for the loss of engine power was not determined.'),
           quote('DEN08LA103', 'analysis', 'The pilot stated, "I am now sure the engine was trying to seize up and I was again forced to land."', 'pilot'),
         ],
         evidence: { scope: 'aircraft', aircraftKey: 1 },
-        criteria: [{ criterion: 'timing_window', decision: 'unknown' }],
+        criteria: [{ criterion: 'timing_window', decision: 'unconfirmed' }],
       },
     },
   ];
@@ -203,11 +208,11 @@ export function seedAnswer(filters: BriefFilters = {}): Extract<BriefResult, { k
     grouping: 'mechanical',
     summary: [
       { kind: 'text', text: 'In one investigation, a mechanic left a control-rod nut unsecured after an engine change, and investigators found that it caused the power loss ' },
-      { kind: 'case', ntsbNo: 'DFW08TA066' },
+      { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false },
       { kind: 'text', text: '. In another, a fuel-system check valve was installed backwards, but engine runs with it either way were normal, so no causal link was established ' },
-      { kind: 'case', ntsbNo: 'MIA08LA156' },
+      { kind: 'case', ntsbNo: 'MIA08LA156', unconfirmed: true },
       { kind: 'text', text: '. In the third, the reason for the power loss was never determined ' },
-      { kind: 'case', ntsbNo: 'DEN08LA103' },
+      { kind: 'case', ntsbNo: 'DEN08LA103', unconfirmed: true },
       { kind: 'text', text: '.' },
     ],
     groups: [
@@ -227,12 +232,16 @@ const NYC_GAP = {
   passageIds: [analysisId('NYC08LA106')],
 };
 
-/** The explicit abstention: no case supports the question as asked; the retrieved cases as plain cards. */
+/**
+ * The explicit abstention: no retrieved case supports the question as asked (the
+ * server's copy says so about the retrieved cases only); the retrieved cases as plain cards.
+ */
 export function seedNoMatch(filters: BriefFilters = {}): Extract<BriefResult, { kind: 'no_match' }> {
   return {
     kind: 'no_match',
     interpretations: INTERPRETATIONS,
     filters,
+    lines: [...NO_MATCH_LINES],
     cases: [...SEED_CASES, 'NYC08LA106'].map(plainCard),
     gaps: [NYC_GAP],
   };

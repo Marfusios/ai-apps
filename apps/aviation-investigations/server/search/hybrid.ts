@@ -456,6 +456,8 @@ export interface CandidateResult {
   index: string;
   /** The index's version (its contract decided the filter). */
   indexVersion: string;
+  /** The chunker version of the index's contract: the canonical `passages` rows its passages come from. */
+  chunkerVersion: string;
   /** Whether the filter lets event-scoped passages of qualifying events satisfy aircraft facets. */
   eventAircraftQualification: boolean;
   params: RetrievalParams;
@@ -531,6 +533,7 @@ export async function retrieveCandidates(es: Client, embedder: Embedder | QueryE
   return {
     index,
     indexVersion: contract.indexVersion,
+    chunkerVersion: contract.chunkerVersion,
     eventAircraftQualification: contract.eventAircraftQualification,
     params,
     filter,

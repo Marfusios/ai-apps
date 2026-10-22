@@ -1,8 +1,10 @@
 /**
  * A stand-in for hybrid retrieval behind the brief pipeline's `EvidenceRetriever` port,
  * for scripting cases and failures. It returns the cases it is told to return, built
- * from the fixture generation's canonical `passages` rows (the approved chunker) and
- * their section text in PostgreSQL, the way packing builds a bundle: each case reserves
+ * from the fixture generation's canonical `passages` rows (under the chunker of the
+ * served index's passages contract, as `served` reports it, and reported to the
+ * pipeline the same way) and their section text in PostgreSQL, the way packing builds a
+ * bundle: each case reserves
  * its first analysis passage (its "best retrieved" passage, ranked) and every
  * probable-cause passage. So the pipeline's provenance and completeness checks and the
  * quote validation run on real fixture narratives (CRLF and all).
@@ -19,12 +21,13 @@ import {
   type EmbeddingUsage,
   type EvidenceBundle,
   type EvidenceCase,
+  type EvidenceDataset,
   type EvidencePassage,
   type EvidenceQuery,
   type EvidenceRetriever,
   type RetrievedEvidence,
 } from '../../server/briefs/evidence.js';
-import { PASSAGES_CONTRACT } from '../../server/search/passages-contract.js';
+import type { PassagesContract } from '../../server/search/passages-contract.js';
 
 export const FAKE_EMBEDDING: Readonly<EmbeddingUsage> = Object.freeze({
   provider: 'openai',
@@ -46,6 +49,11 @@ export interface FakeRetrieverOptions {
   embedding?: EmbeddingUsage | null;
   /** Change a bundle before it is returned (`repack`: true for re-packed bundles). */
   tamper?: (bundle: EvidenceBundle, repack: boolean) => EvidenceBundle;
+  /**
+   * The served index's passages contract, as hybrid retrieval's
+   * `assertServablePassagesIndex` returns it (the harness asks the real check).
+   */
+  served: (dataset: EvidenceDataset) => Promise<Pick<PassagesContract, 'chunkerVersion'>>;
 }
 
 export class FakeRetriever implements EvidenceRetriever {
@@ -78,18 +86,20 @@ export class FakeRetriever implements EvidenceRetriever {
     }
     const numbers = typeof o.cases === 'function' ? o.cases(query) : o.cases;
     const tamper = o.tamper ?? ((b: EvidenceBundle) => b);
-    const bundle = tamper(await this.bundle(query.dataset.generationId, numbers, Infinity), false);
+    const { chunkerVersion } = await o.served(query.dataset);
+    const bundle = tamper(await this.bundle(query.dataset.generationId, chunkerVersion, numbers, Infinity), false);
     return {
       bundle,
+      chunkerVersion,
       repack: async (maxEvidenceTokens: number) => {
         this.repacks.push(maxEvidenceTokens);
-        return tamper(await this.bundle(query.dataset.generationId, numbers, maxEvidenceTokens), true);
+        return tamper(await this.bundle(query.dataset.generationId, chunkerVersion, numbers, maxEvidenceTokens), true);
       },
     };
   }
 
-  /** The canonical passages of `numbers` as a packed bundle. */
-  private async bundle(generationId: number, numbers: readonly string[], maxTokens: number): Promise<EvidenceBundle> {
+  /** The canonical passages of `numbers` (one chunker) as a packed bundle. */
+  private async bundle(generationId: number, chunkerVersion: string, numbers: readonly string[], maxTokens: number): Promise<EvidenceBundle> {
     const rows =
       numbers.length === 0
         ? []
@@ -115,7 +125,7 @@ export class FakeRetriever implements EvidenceRetriever {
             .where(
               and(
                 eq(passages.generationId, generationId),
-                eq(passages.chunkerVersion, PASSAGES_CONTRACT.chunkerVersion),
+                eq(passages.chunkerVersion, chunkerVersion),
                 inArray(passages.ntsbNo, [...numbers]),
                 inArray(passages.sectionKind, ['analysis', 'probable_cause']),
               ),

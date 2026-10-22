@@ -479,7 +479,8 @@ One calm reading column, about 640px, centred. From top to bottom:
    Editing an interpretation chip is a refinement and is metered (DESIGN §2).
 3. **AI SUMMARY · CHECK THE CITED PASSAGES:** serif text with a 3px magenta
    left rule. Case numbers in the text are blue mono citations. Clicking one
-   opens the drawer scrolled to the cited passage.
+   opens the drawer scrolled to the cited passage. A citation of an unconfirmed
+   case (see the case card) carries an UNCONFIRMED tag.
 4. **A results label:** for example "6 examples found · not every matching
    investigation". This is required by DESIGN §5.
 5. **Evidence groups:** a glyph, the group name in bold, the count in muted
@@ -489,8 +490,13 @@ One calm reading column, about 640px, centred. From top to bottom:
    (Proposed).
 6. **Case cards**, each containing:
    - Header row: case number, aircraft, place · date, and a Compare checkbox.
-   - **WHY IT MATCHED** in magenta: one line from the AI, plus a timing chip
-     when relevant.
+   - **WHY IT MATCHED** in magenta: one line from the AI, plus timing chips,
+     one per time relation the passages state (flight hours, days, which flight
+     after the maintenance, or "NOT QUANTIFIED" for words only).
+   - **UNCONFIRMED** label when the passages do not settle one of the reader's
+     criteria (no time since maintenance stated, or only an approximate one such
+     as "about eight hours"). Such a case is never presented as a confirmed
+     match; the drawer's CRITERIA line says what the passages do not establish.
    - The quoted NTSB passage: serif, 2px ink-alpha left rule, labelled "NTSB ·
      ANALYSIS" (or the section name).
    - A footer row:
@@ -510,6 +516,13 @@ One calm reading column, about 640px, centred. From top to bottom:
 9. **Compare tray:** a dark `tray` bar fixed to the bottom of the viewport. It
    shows the ticked case numbers, "2 of 4" and "Compare →". Ticking a fifth case
    shows "Compare holds four cases. Remove one first." (Proposed)
+
+**No supported match**: when the AI finds that none of the retrieved cases'
+passages supports the question as asked, the sheet shows the retrieved cases as
+plain cards and its gap notes, under server copy that speaks about the
+retrieved cases only ("None of the cases this search retrieved has passages that
+support your question as asked."), never that no such investigation exists. It
+counts as a search, because the AI analysis ran.
 
 **Questions that aren't about mechanical cause** (Proposed): group by
 mechanical evidence only when the scope step says the question concerns a

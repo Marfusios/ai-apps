@@ -5,13 +5,15 @@
  *   section labels from the canonical passage rows);
  * - the check input (gate G6 #1, #5): every claim the reader would see as a claim with
  *   the passages it says it rests on (summary sentences, `why` lines, classifications,
- *   maintenance, symptom, timing, attribution, criteria and gaps), every verified
- *   passage of each case those claims are about, and the reader's criteria as server
- *   templates; never the question, the planner's output or earlier answers;
+ *   maintenance, symptom, each chronology fact, attribution, every criterion decision
+ *   and gaps), every verified passage of each case those claims are about, and the
+ *   reader's criteria as server templates; never the question, the planner's output or
+ *   earlier answers;
  * - the briefing-sheet result (cards, groups, summary segments, chips, labels), with
- *   accepted quotes shown whole and timing values shown exactly as checked;
+ *   accepted quotes shown whole, timing values shown exactly as checked, and cases a
+ *   criterion is unconfirmed for flagged on their card and their summary citations;
  * - the evidence a finished step keeps for the case context, with each structured
- *   claim's own passages.
+ *   claim's own passages and each criterion's checked passage set.
  */
 import { buildHeadline, aircraftName } from '../../shared/case-view.js';
 import {
@@ -20,9 +22,9 @@ import {
   type BriefResult,
   type CaseCard,
   type CaseReading,
+  type ChronologyAmount,
   type ComposeCase,
   type ComposeOutput,
-  type ComposeTiming,
   type CriterionDecision,
   type GlyphKind,
   type GroupKind,
@@ -35,8 +37,10 @@ import {
 } from '../../shared/contracts/briefs.js';
 import { SECTION_LABEL } from '../../shared/contracts/search.js';
 import type { CheckInput, ClaimKind, ComposeInput } from '../ai/provider.js';
+import type { CriterionCheck } from './criteria.js';
 import type { CaseSummary, EvidencePassage } from './evidence.js';
 import { splitSentences } from './sentences.js';
+import { NO_MATCH_LINES } from './static-replies.js';
 import type { StoredDimensions, StoredEvidence, StoredPassage } from './store.js';
 import type { AllowedPassage, ResolvedCitation } from './validate.js';
 
@@ -124,39 +128,57 @@ export function timingValueText(v: number): string {
 
 const BOUND_WORD = { exact: '', about: 'about ', at_most: 'at most ', at_least: 'at least ' } as const;
 
-function timingClaim(t: ComposeTiming): string {
-  const b = BOUND_WORD[t.bound];
-  switch (t.basis) {
-    case 'flight_hours':
-      return `The event happened ${b}${timingValueText(t.value ?? 0)} flight hours after the relevant maintenance.`;
-    case 'calendar_days':
-      return `The event happened ${b}${timingValueText(t.value ?? 0)} calendar days after the relevant maintenance.`;
-    case 'first_flight':
-      return 'The event happened on the first flight after the relevant maintenance.';
-    case 'subsequent_flight':
-      return 'The event happened on a later flight after the relevant maintenance, not the first.';
-    case 'qualitative':
-      return 'The passages describe the time between the relevant maintenance and the event only in words, without a number.';
+type Chronology = NonNullable<ComposeCase['chronology']>;
+
+/** One stated chronology fact: its chip basis, its checker claim and the passages that state it. */
+export interface ChronologyFact {
+  basis: TimingChip['basis'];
+  amount: ChronologyAmount | null;
+  claim: string;
+  passageIds: string[];
+}
+
+/** The case's stated chronology facts in display order: flight hours, calendar days, flight, words. */
+export function chronologyFacts(c: Chronology | undefined): ChronologyFact[] {
+  if (!c) return [];
+  const out: ChronologyFact[] = [];
+  const amount = (a: ChronologyAmount, unit: string) =>
+    `The event happened ${BOUND_WORD[a.bound]}${timingValueText(a.value)} ${unit}${a.value === 1 ? '' : 's'} after the relevant maintenance.`;
+  if (c.flightHours) out.push({ basis: 'flight_hours', amount: c.flightHours, claim: amount(c.flightHours, 'flight hour'), passageIds: [...c.flightHours.passageIds] });
+  if (c.calendarDays) out.push({ basis: 'calendar_days', amount: c.calendarDays, claim: amount(c.calendarDays, 'calendar day'), passageIds: [...c.calendarDays.passageIds] });
+  if (c.flight?.value === 'first') {
+    out.push({ basis: 'first_flight', amount: null, claim: 'The event happened on the first flight after the relevant maintenance.', passageIds: [...c.flight.passageIds] });
+  } else if (c.flight) {
+    out.push({ basis: 'subsequent_flight', amount: null, claim: 'The event happened on a later flight after the relevant maintenance, not the first.', passageIds: [...c.flight.passageIds] });
   }
+  if (c.qualitative) {
+    out.push({
+      basis: 'qualitative',
+      amount: null,
+      claim: 'The passages describe the time between the relevant maintenance and the event in words, without a number.',
+      passageIds: [...c.qualitative.passageIds],
+    });
+  }
+  return out;
 }
 
 const BOUND_PREFIX = { exact: '', about: '≈ ', at_most: '≤ ', at_least: '≥ ' } as const;
 
-/** "5.1 FH", "≤ 17 DAYS", "1ST FLIGHT", "LATER FLIGHT", "NOT QUANTIFIED". */
-export function timingChip(t: ComposeTiming): TimingChip {
-  const prefix = BOUND_PREFIX[t.bound];
-  const value = t.value ?? null;
+/** "5.1 FH", "≤ 17 DAYS", "≈ 8 FH", "1ST FLIGHT", "LATER FLIGHT", "NOT QUANTIFIED". */
+export function timingChip(f: Pick<ChronologyFact, 'basis' | 'amount'>): TimingChip {
+  const a = f.amount;
+  const prefix = a ? BOUND_PREFIX[a.bound] : '';
   const label =
-    t.basis === 'flight_hours'
-      ? `${prefix}${timingValueText(value ?? 0)} FH`
-      : t.basis === 'calendar_days'
-        ? `${prefix}${timingValueText(value ?? 0)} ${value === 1 ? 'DAY' : 'DAYS'}`
-        : t.basis === 'first_flight'
+    f.basis === 'flight_hours'
+      ? `${prefix}${timingValueText(a?.value ?? 0)} FH`
+      : f.basis === 'calendar_days'
+        ? `${prefix}${timingValueText(a?.value ?? 0)} ${a?.value === 1 ? 'DAY' : 'DAYS'}`
+        : f.basis === 'first_flight'
           ? '1ST FLIGHT'
-          : t.basis === 'subsequent_flight'
+          : f.basis === 'subsequent_flight'
             ? 'LATER FLIGHT'
             : 'NOT QUANTIFIED';
-  return { basis: t.basis, value: t.basis === 'flight_hours' || t.basis === 'calendar_days' ? value : null, bound: t.bound, label };
+  return { basis: f.basis, value: a ? a.value : null, bound: a ? a.bound : 'exact', label };
 }
 
 // ---------------------------------------------------------------------------
@@ -209,8 +231,8 @@ export interface CheckOptions {
   mechanicalCause: boolean;
   /** The reader's criteria as server templates (server/briefs/criteria.ts `criteriaLines`). */
   criteria: string[];
-  /** Per case, the semantic criteria the checker must confirm (`evaluateCase(...).claims`). */
-  criterionClaims: ReadonlyMap<string, readonly string[]>;
+  /** Per presented case, every criterion decision as a claim with its cited passages (`evaluateCase`). */
+  criterionChecks: ReadonlyMap<string, readonly CriterionCheck[]>;
 }
 
 /**
@@ -220,8 +242,9 @@ export interface CheckOptions {
  * Each claim cites what it says it rests on: a summary sentence the passages of the
  * cases it marks; a `why` line its case's quoted passages; a structured value its own
  * passages (all of its case's passages for a statement of absence or insufficiency);
- * an attribution claim its quote's passage; a criterion claim all of its case's
- * passages; a gap note its passages. `overflow`: some claim did not fit the input
+ * an attribution claim its quote's passage; a criterion decision the facts that decided
+ * it, or all of its case's passages when unknown or semantic; a gap note its passages.
+ * `overflow`: some claim did not fit the input
  * bounds; it would go unchecked, so the caller must treat the check as inconclusive.
  */
 export function checkInput(
@@ -266,8 +289,8 @@ export function checkInput(
       add('maintenance', n, MAINTENANCE_CLAIM[k.maintenance.relation], own(k.maintenance.passageIds, n));
     }
     if (opts.mechanicalCause && k.symptom && k.symptom.value !== 'other') add('symptom', n, SYMPTOM_CLAIM[k.symptom.value], own(k.symptom.passageIds, n));
-    if (k.timing) add('timing', n, timingClaim(k.timing), own(k.timing.passageIds, n));
-    for (const text of opts.criterionClaims.get(n) ?? []) add('criterion', n, text, all(n));
+    for (const f of chronologyFacts(k.chronology)) add('timing', n, f.claim, own(f.passageIds, n));
+    for (const c of opts.criterionChecks.get(n) ?? []) add('criterion', n, c.claim, own(c.passageIds, n));
   }
   for (const cit of citations) {
     const speaker = c.cases[cit.caseIndex]?.quotes[cit.quoteIndex]?.speaker ?? 'investigators';
@@ -316,14 +339,14 @@ export function plainCard(c: VerifiedCase): CaseCard {
   return { case: c.summary.row, report: c.summary.report, excerpt: excerptOf(c), reading: null };
 }
 
-/** Summary text as text segments and case citations. */
-export function summarySegments(summary: string): SummarySegment[] {
+/** Summary text as text segments and case citations; `unconfirmed`: cases a criterion is unconfirmed for. */
+export function summarySegments(summary: string, unconfirmed: ReadonlySet<string> = new Set()): SummarySegment[] {
   const out: SummarySegment[] = [];
   let last = 0;
   for (const m of summary.matchAll(MARKER)) {
     const text = summary.slice(last, m.index);
     if (text.trim() !== '') out.push({ kind: 'text', text });
-    out.push({ kind: 'case', ntsbNo: m[1]! });
+    out.push({ kind: 'case', ntsbNo: m[1]!, unconfirmed: unconfirmed.has(m[1]!) });
     last = (m.index ?? 0) + m[0].length;
   }
   const tail = summary.slice(last);
@@ -340,6 +363,11 @@ export interface AnswerInput {
   filters: BriefFilters;
   /** Per presented case, its criteria decisions (none fails: that withholds the summary). */
   criteria: ReadonlyMap<string, CriterionDecision[]>;
+}
+
+/** Cases with an unconfirmed criterion: labelled on their card and on every summary citation. */
+function unconfirmedCases(criteria: ReadonlyMap<string, CriterionDecision[]>): Set<string> {
+  return new Set([...criteria].filter(([, ds]) => ds.some((d) => d.decision === 'unconfirmed')).map(([n]) => n));
 }
 
 function reading(k: ComposeCase, ci: number, a: AnswerInput, vc: VerifiedCase, group: GroupKind | undefined): CaseReading {
@@ -374,7 +402,7 @@ function reading(k: ComposeCase, ci: number, a: AnswerInput, vc: VerifiedCase, g
   return {
     glyph,
     why: k.why,
-    timing: k.timing ? timingChip(k.timing) : null,
+    timing: chronologyFacts(k.chronology).map(timingChip),
     quotes,
     evidence,
     criteria: a.criteria.get(k.ntsbNo) ?? [],
@@ -399,7 +427,7 @@ export function answerResult(a: AnswerInput): Extract<BriefResult, { kind: 'answ
     interpretations: a.interpretations,
     filters: a.filters,
     grouping: a.mechanicalCause ? 'mechanical' : 'examples',
-    summary: summarySegments(c.summary),
+    summary: summarySegments(c.summary, unconfirmedCases(a.criteria)),
     groups,
     cases: cards,
     gaps: gapsOf(c),
@@ -412,19 +440,30 @@ export function noMatchResult(
   cases: readonly VerifiedCase[],
   context: { interpretations: InterpretationChip[]; filters: BriefFilters },
 ): Extract<BriefResult, { kind: 'no_match' }> {
-  return { kind: 'no_match', ...context, cases: cases.map(plainCard), gaps: gapsOf(c) };
+  return { kind: 'no_match', ...context, lines: [...NO_MATCH_LINES], cases: cases.map(plainCard), gaps: gapsOf(c) };
 }
 
-/** Each presented case's structured claims with their own passages, for the case context. */
-export function storedDimensions(c: ComposeOutput, mechanicalCause: boolean): StoredDimensions[] {
-  const groupOf = new Map<string, GroupKind>();
-  for (const g of c.groups) for (const n of g.caseNumbers) groupOf.set(n, g.kind);
+/**
+ * Each presented case's structured claims with their own passages, for the case
+ * context: its chronology facts (in chip order) and each criterion decision with the
+ * passage set its claim cited, kept apart from the symptom and timing support.
+ */
+export function storedDimensions(
+  c: ComposeOutput,
+  mechanicalCause: boolean,
+  criterionChecks: ReadonlyMap<string, readonly CriterionCheck[]>,
+): StoredDimensions[] {
   return c.cases.map((k) => ({
     ntsbNo: k.ntsbNo,
     evidencePassageIds: [...k.evidencePassageIds],
     ...(mechanicalCause && k.maintenance ? { maintenance: { relation: k.maintenance.relation, passageIds: [...k.maintenance.passageIds] } } : {}),
     ...(mechanicalCause && k.symptom ? { symptom: { value: k.symptom.value, passageIds: [...k.symptom.passageIds] } } : {}),
-    ...(k.timing ? { timingPassageIds: [...k.timing.passageIds] } : {}),
+    timing: chronologyFacts(k.chronology).map((f) => ({ basis: f.basis, passageIds: f.passageIds })),
+    criteria: (criterionChecks.get(k.ntsbNo) ?? []).map((x) => ({
+      criterion: x.criterion,
+      decision: x.decision === 'matches' ? ('matches' as const) : ('unconfirmed' as const),
+      passageIds: [...x.passageIds],
+    })),
   }));
 }
 

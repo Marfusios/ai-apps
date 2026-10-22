@@ -10,6 +10,8 @@
  * (server/briefs/retriever.ts) over the fixture passages index with the fake embedder.
  */
 import { randomBytes } from 'node:crypto';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { errors, type Client, type estypes } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -28,18 +30,27 @@ import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
 import type { CheckInput, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
-import { buildApp } from '../../server/app.js';
+import { SHUTDOWN_GRACE_MS, buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
 import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
 import { countTokens } from '../../server/ai/tokens.js';
-import { RetrievalFailure, type EmbeddingUsage, type EvidenceQuery, type EvidenceRetriever } from '../../server/briefs/evidence.js';
+import { createCaseCatalog } from '../../server/briefs/catalog.js';
+import {
+  RetrievalFailure,
+  type CaseCatalog,
+  type EmbeddingUsage,
+  type EvidenceDataset,
+  type EvidenceQuery,
+  type EvidenceRetriever,
+} from '../../server/briefs/evidence.js';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
-import { OUT_OF_SCOPE_LINES, OPERATIONAL_LINES, OPERATIONAL_TITLE } from '../../server/briefs/static-replies.js';
-import { moveBriefReadOwner } from '../../server/briefs/store.js';
+import { NO_MATCH_LINES, OUT_OF_SCOPE_LINES, OPERATIONAL_LINES, OPERATIONAL_TITLE } from '../../server/briefs/static-replies.js';
+import { failOrphanedSteps, moveBriefReadOwner } from '../../server/briefs/store.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { publishManifest } from '../../server/db/generations.js';
 import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
+import { assertServablePassagesIndex } from '../../server/search/hybrid.js';
 import { FIXTURE_EMBEDDING, deleteIndices, fixtureEmbedder, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
 import { FakeRetriever, type FakeRetrieverOptions } from '../support/fake-retriever.js';
 import { FakeSiteverify, REAL_SECRET, REAL_SITE_KEY } from '../support/fake-siteverify.js';
@@ -151,7 +162,14 @@ interface HarnessOptions {
   trialRequests?: number;
   /** Which evidence index a new brief pins (default: the dataset resolver's servable index). */
   aiEvidence?: () => Promise<{ generationId: number; passagesIndex: string } | null>;
+  /** Wrap the PostgreSQL case catalog. */
+  catalog?: (real: CaseCatalog) => CaseCatalog;
+  /** The grace closing gives aborted steps (default `SHUTDOWN_GRACE_MS`). */
+  shutdownGraceMs?: number;
 }
+
+/** The served index's passages contract, from hybrid retrieval's own check. */
+const servedContract = async (d: EvidenceDataset) => (await assertServablePassagesIndex(es, d, FIXTURE_EMBEDDING)).contract;
 
 function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
   const sv = new FakeSiteverify(now, { hostname: HOST, action: TURNSTILE_ACTION });
@@ -162,8 +180,12 @@ function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
     llm,
     now,
   });
-  const retriever = new FakeRetriever(appDb, { cases: SEEDS, ...opts.retriever });
-  const svc = createBriefServices(appDb, { retriever: opts.evidence ?? retriever, ...(opts.timeouts ? { timeouts: opts.timeouts } : {}) });
+  const retriever = new FakeRetriever(appDb, { cases: SEEDS, served: servedContract, ...opts.retriever });
+  const svc = createBriefServices(appDb, {
+    retriever: opts.evidence ?? retriever,
+    ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
+    ...(opts.catalog ? { catalog: opts.catalog(createCaseCatalog(appDb)) } : {}),
+  });
   const embedding = opts.embedding === undefined ? FIXTURE_EMBEDDING : opts.embedding;
   const logs: string[] = [];
   const app = buildApp({
@@ -176,6 +198,7 @@ function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
     ...(opts.aiEvidence ? { aiEvidence: opts.aiEvidence } : {}),
     logger: { level: 'debug', stream: { write: (line: string) => void logs.push(line) } },
     rateLimit: { limit: 100_000, windowMs: 60_000 },
+    ...(opts.shutdownGraceMs !== undefined ? { shutdownGraceMs: opts.shutdownGraceMs } : {}),
   });
   const h = { app, ai, sv, llm, retriever, svc, logs };
   harnesses.push(h);
@@ -372,7 +395,24 @@ function contradict(c: ComposeOutput, dfw: ComposeInput['cases'][number]): void 
 function timing51(c: ComposeOutput, dfw: ComposeInput['cases'][number]): void {
   const k = c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
   const stating = dfw.passages.find((p) => p.text.includes('5.1 hours')) ?? dfw.passages[0]!;
-  k.timing = { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: [stating.passageId] };
+  k.chronology = { flightHours: { value: 5.1, bound: 'exact', passageIds: [stating.passageId] } };
+}
+
+/** Passages that state a chronology fact ("5.1 hours prior", "12 hours since installation", "depart again"). */
+const STATES_CHRONOLOGY = /\b\d+(?:\.\d+)?\s+hours\b|\bmonths? prior\b|\bdepart again\b|\bsecond flight\b/i;
+
+/**
+ * A checker that reads the whole case for criterion claims, as the check prompt asks: "the
+ * passages do not establish whether..." is contradicted when any passage of the case
+ * states a time since the maintenance or which flight it was.
+ */
+function judgeCriteria(input: CheckInput): FakeResult<{ supported: boolean; problems: { claimIndex: number; reason: 'contradicted' }[] }> {
+  const problems = input.claims.flatMap((claim, i) => {
+    if (claim.kind !== 'criterion' || !claim.text.startsWith('The passages do not establish')) return [];
+    const settled = input.passages.some((p) => p.ntsbNo === claim.ntsbNo && STATES_CHRONOLOGY.test(p.text));
+    return settled ? [{ claimIndex: i, reason: 'contradicted' as const }] : [];
+  });
+  return { output: { supported: problems.length === 0, problems } };
 }
 
 /**
@@ -427,7 +467,9 @@ describe('POST /api/briefs: the pipeline', () => {
     });
     // The checker saw claims of every kind, never the question.
     const check = h.llm.calls.find((c) => c.stage === 'check')!.input as { claims: { kind: string }[] };
-    expect(new Set(check.claims.map((c) => c.kind))).toEqual(new Set(['summary', 'why', 'classification', 'maintenance', 'symptom', 'attribution']));
+    expect(new Set(check.claims.map((c) => c.kind))).toEqual(new Set(['summary', 'why', 'classification', 'maintenance', 'symptom', 'criterion', 'attribution']));
+    // No case states a time since its maintenance: each unconfirmed timing decision is a claim on all of its case's passages.
+    expect(check.claims.filter((c) => c.kind === 'criterion')).toHaveLength(SEEDS.length);
     expect(JSON.stringify(check)).not.toContain('shortly after maintenance');
 
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
@@ -456,7 +498,12 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(cited.text.slice(cited.highlights[0]!.start, cited.highlights[0]!.end)).toBe(quote.text);
     // Each line links to the passages its own claim was checked on.
     expect(context.lines.map((l) => l.label)).toEqual(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'CRITERIA']);
-    expect(context.lines[3]).toEqual({ label: 'CRITERIA', text: 'Timing window not established by the passages', passageIds: [] });
+    // Unconfirmed: labelled so, linking the passage set the claim was checked on (all of the case's).
+    expect(context.lines[3]).toEqual({
+      label: 'CRITERIA',
+      text: 'Unconfirmed: the passages do not establish your timing window',
+      passageIds: context.passages.map((p) => p.passageId),
+    });
     expect((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/CEN19FA024`, { cookie })).status).toBe(404);
   });
 
@@ -691,6 +738,34 @@ describe('scope outcomes', () => {
 });
 
 describe('refinements', () => {
+  it('a text refinement’s comparison numbers come from the question and the refinement', async () => {
+    const h = harness({
+      scope: [
+        { output: scopeOut() },
+        // XYZ99ZZ999 is in neither text: the planner cannot add it.
+        { output: scopeOut({ intent: 'case_comparison', caseNumbers: ['DFW08TA066', 'NYC08LA106', 'XYZ99ZZ999'], ambiguity: undefined }) },
+      ],
+      compose: (input) => composition(input),
+      check: SUPPORTED,
+    });
+    const first = await askAndWait(h, 'What went wrong in DFW08TA066 after its engine change?');
+    advance(MIN);
+    const r = await refine(h, first.briefId, first.cookie, { kind: 'text', text: 'Compare it with NYC08LA106' });
+    expect(r.json).toMatchObject({ kind: 'scope_reply', reply: { kind: 'case_comparison', found: ['DFW08TA066', 'NYC08LA106'], notFound: [] } });
+  });
+
+  it('a refinement over the query embedding cap is refused before any spend', async () => {
+    const h = harness(answering());
+    const first = await askAndWait(h);
+    advance(MIN);
+    const calls = h.sv.calls.length;
+    const before = await count('reservations');
+    const r = await refine(h, first.briefId, first.cookie, { kind: 'text', text: '発動機の出力が整備直後に失われた事例。'.repeat(75).slice(0, 1_500) });
+    expect([r.status, (r.json as unknown as { message: string }).message]).toEqual([400, 'The question is too long to search. Shorten it and try again.']);
+    expect(h.sv.calls.length).toBe(calls);
+    expect(await count('reservations')).toBe(before);
+  });
+
   it('fourth refinement rejected', async () => {
     const h = harness(answering(), { trialRequests: 10 });
     const first = await askAndWait(h);
@@ -1328,10 +1403,201 @@ describe('gate G6: evidence semantics through the routes', () => {
     });
     // The pinned reading was enforced in code: the checker was never asked about step 2.
     expect(h.llm.calls.filter((c) => c.stage === 'check')).toHaveLength(1);
-    // A case whose timing the passages do not settle is shown, flagged as not established.
+    // A case whose timing the passages do not settle is shown, labelled unconfirmed.
     if (first.step.result?.kind === 'answer') {
-      expect(first.step.result.cases[0]!.reading?.criteria).toEqual([{ criterion: 'timing_window', decision: 'unknown' }]);
+      expect(first.step.result.cases[0]!.reading?.criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
     }
+  });
+
+  it('G6 regression (a): 5.1 hours stated, a one-hour reading and no stated fact: the unknown decision is checked on every passage and fails', async () => {
+    const checks: CheckInput[] = [];
+    const h = harness(
+      answering({
+        scope: { output: scopeOut({ ambiguity: { type: 'timing_window', values: ['1h'] } }) },
+        check: (input) => {
+          checks.push(input);
+          return judgeCriteria(input);
+        },
+      }),
+    );
+    const { briefId, step } = await askAndWait(h);
+    // The composition stated no chronology: that settles nothing, and the checker rejects "not established".
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    const dfw = checks[0]!.passages.filter((p) => p.ntsbNo === 'DFW08TA066');
+    expect(dfw.some((p) => p.text.includes('5.1 hours'))).toBe(true);
+    const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'DFW08TA066')!;
+    expect(claim).toEqual({
+      kind: 'criterion',
+      ntsbNo: 'DFW08TA066',
+      text: 'The passages do not establish whether the event happened within 1 flight hour after the relevant maintenance.',
+      passageIds: dfw.map((p) => p.passageId),
+    });
+    expect(checks[0]!.criteria).toEqual(['Timing: the event happened within 1 flight hour after the relevant maintenance.']);
+    const meta = (await stepRow(briefId)).meta;
+    expect(meta).toMatchObject({
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown' }]),
+      check: { supported: false, problems: expect.arrayContaining([{ kind: 'criterion', reason: 'contradicted' }]) },
+    });
+  });
+
+  it('G6 regression (b): a stated later flight fails first-flight-only; left out, the unknown decision fails the check', async () => {
+    const checks: CheckInput[] = [];
+    /** NYC08LA106 after its fuel pump: 12 hours since installation, and it departed again. */
+    const nycLater = (c: ComposeOutput, input: ComposeInput, withFlight: boolean) => {
+      const nyc = input.cases.find((x) => x.ntsbNo === 'NYC08LA106')!;
+      const stating = nyc.passages.find((p) => STATES_CHRONOLOGY.test(p.text)) ?? nyc.passages[0]!;
+      c.cases.find((x) => x.ntsbNo === 'NYC08LA106')!.chronology = {
+        flightHours: { value: 12, bound: 'exact', passageIds: [stating.passageId] },
+        ...(withFlight ? { flight: { value: 'later' as const, passageIds: [stating.passageId] } } : {}),
+      };
+    };
+    const h = harness(
+      answering({
+        scope: { output: scopeOut({ ambiguity: { type: 'timing_window', values: ['first_flight'] } }) },
+        compose: [(input) => composition(input, (c) => nycLater(c, input, true)), (input) => composition(input, (c) => nycLater(c, input, false))],
+        check: (input) => {
+          checks.push(input);
+          return judgeCriteria(input);
+        },
+      }),
+    );
+    const first = await askAndWait(h);
+    expect(first.step.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
+    expect((await stepRow(first.briefId)).meta).toMatchObject({
+      criteria: expect.arrayContaining([{ ntsbNo: 'NYC08LA106', criterion: 'first_flight_only', decision: 'does_not_match' }]),
+    });
+    expect(checks).toHaveLength(0);
+    advance(MIN);
+    const second = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect(second.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'NYC08LA106')!;
+    expect(claim.text).toBe('The passages do not establish whether the event happened on the first flight after the relevant maintenance.');
+    expect(claim.passageIds).toEqual(checks[0]!.passages.filter((p) => p.ntsbNo === 'NYC08LA106').map((p) => p.passageId));
+    expect((await stepRow(second.briefId)).meta).toMatchObject({ check: { problems: expect.arrayContaining([{ kind: 'criterion', reason: 'contradicted' }]) } });
+  });
+
+  it('G6 regression (c): 40 days and 20 flight hours against the default 30 days OR 10 hours do not match', async () => {
+    const h = harness(
+      answering({
+        compose: (input) =>
+          composition(input, (c) => {
+            const p = input.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.passages[0]!;
+            c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.chronology = {
+              calendarDays: { value: 40, bound: 'exact', passageIds: [p.passageId] },
+              flightHours: { value: 20, bound: 'exact', passageIds: [p.passageId] },
+            };
+          }),
+      }),
+    );
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
+    expect((await stepRow(briefId)).meta).toMatchObject({
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
+    });
+    expect(h.llm.calls.some((c) => c.stage === 'check')).toBe(false);
+  });
+
+  it('G6 #2: an approximate value is shown unconfirmed, never as within the window', async () => {
+    const checks: CheckInput[] = [];
+    const h = harness(
+      answering({
+        scope: { output: scopeOut({ ambiguity: { type: 'timing_window', values: ['9h'] } }) },
+        compose: (input) =>
+          composition(input, (c) => {
+            const p = input.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.passages[0]!;
+            c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.chronology = { flightHours: { value: 8, bound: 'about', passageIds: [p.passageId] } };
+          }),
+        check: (input) => {
+          checks.push(input);
+          return SUPPORTED;
+        },
+      }),
+    );
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    const dfw = result.cases.find((c) => c.case.ntsbNo === 'DFW08TA066')!.reading!;
+    expect(dfw.timing).toEqual([{ basis: 'flight_hours', value: 8, bound: 'about', label: '≈ 8 FH' }]);
+    expect(dfw.criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
+    expect(result.summary).toContainEqual({ kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: true });
+    expect(checks[0]!.claims.filter((c) => c.kind === 'criterion' && c.ntsbNo === 'DFW08TA066').map((c) => c.text)).toEqual([
+      'The passages do not establish whether the event happened within 9 flight hours after the relevant maintenance.',
+    ]);
+    const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DFW08TA066`, { cookie })).json);
+    expect(ctx.lines.filter((l) => l.label === 'TIMING' || l.label === 'CRITERIA').map((l) => l.text)).toEqual([
+      'About 8 flight hours after the maintenance',
+      'Unconfirmed: the passages do not establish your timing window',
+    ]);
+    expect(JSON.stringify(ctx.lines)).not.toContain('Within your timing window');
+  });
+
+  it('G6 #3: a semantic failure-type decision (no structured symptom) keeps and links its checked passages', async () => {
+    const checks: CheckInput[] = [];
+    const h = harness(
+      answering({
+        scope: { output: scopeOut({ ambiguity: { type: 'failure_type', values: ['total_power_loss'] } }) },
+        compose: (input) =>
+          composition(input, (c) => {
+            for (const k of c.cases) delete k.symptom;
+          }),
+        check: (input) => {
+          checks.push(input);
+          return SUPPORTED;
+        },
+      }),
+    );
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    expect(result.cases.find((c) => c.case.ntsbNo === 'DFW08TA066')!.reading!.criteria).toEqual([{ criterion: 'failure_type', decision: 'matches' }]);
+    const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'DFW08TA066')!;
+    expect(claim.text).toBe('This event involved a total loss of engine power.');
+    const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DFW08TA066`, { cookie })).json);
+    expect(ctx.lines.find((l) => l.label === 'SYMPTOM')).toBeUndefined();
+    const line = ctx.lines.find((l) => l.label === 'CRITERIA')!;
+    expect(line).toEqual({ label: 'CRITERIA', text: 'The failure you asked about', passageIds: claim.passageIds });
+    expect(line.passageIds).toEqual(ctx.passages.map((p) => p.passageId));
+  });
+
+  it('the bundle is checked under the chunker of the served index’s contract', async () => {
+    const h = harness(answering());
+    const ok = await askAndWait(h);
+    expect(ok.step.result?.kind).toBe('answer');
+    expect((await stepRow(ok.briefId)).meta).toMatchObject({ chunkerVersion: (await servedContract(dataset)).chunkerVersion });
+    // A port reporting another chunker: no canonical row under it holds these passages.
+    const fake = new FakeRetriever(appDb, { cases: SEEDS, served: servedContract });
+    const other: EvidenceRetriever = {
+      available: (d) => fake.available(d),
+      retrieve: async (q, signal, onUsage) => ({ ...(await fake.retrieve(q, signal, onUsage)), chunkerVersion: 'chunk-other' }),
+    };
+    const h2 = harness(answering(), { evidence: other });
+    advance(MIN);
+    const refused = await askAndWait(h2, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect(refused.step.result).toEqual({ kind: 'failed', countedAsSearch: true });
+    expect((await stepRow(refused.briefId)).meta).toMatchObject({
+      chunkerVersion: 'chunk-other',
+      failure: { stage: 'retrieve', category: 'integrity', reason: 'no_passage' },
+    });
+  });
+
+  it('a result outside its contract fails the step cleanly and still settles', async () => {
+    const h = harness(answering(), {
+      catalog: (real) => ({
+        ...real,
+        async summaries(g, numbers) {
+          const m = await real.summaries(g, numbers);
+          const dfw = m.get('DFW08TA066');
+          // A card field the result contract refuses (an empty report label).
+          if (dfw) m.set('DFW08TA066', { ...dfw, report: { ...dfw.report, label: '' } as typeof dfw.report });
+          return m;
+        },
+      }),
+    });
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toEqual({ kind: 'failed', countedAsSearch: true });
+    expect(await stepRow(briefId)).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'result_contract' } } });
+    expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: false }]);
+    expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
   });
 
   it('an uncited summary sentence → withheld', async () => {
@@ -1352,7 +1618,7 @@ describe('gate G6: evidence semantics through the routes', () => {
             const dfw = c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
             dfw.evidencePassageIds = [cause.passageId];
             dfw.maintenance = { relation: 'investigator_attributed', passageIds: [cause.passageId] };
-            dfw.timing = { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: [analysis.passageId] };
+            dfw.chronology = { flightHours: { value: 5.1, bound: 'exact', passageIds: [analysis.passageId] } };
             // NYC08LA106 is left out of the answer and noted as a gap.
             c.cases = c.cases.filter((x) => x.ntsbNo !== 'NYC08LA106');
             c.groups = c.groups.map((g) => ({ ...g, caseNumbers: g.caseNumbers.filter((n) => n !== 'NYC08LA106') })).filter((g) => g.caseNumbers.length > 0);
@@ -1373,7 +1639,23 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(line('EVIDENCE').passageIds).toEqual([cause]);
     expect(line('MAINTENANCE').passageIds).toEqual([cause]);
     expect(line('TIMING')).toEqual({ label: 'TIMING', text: '5.1 flight hours after the maintenance', passageIds: [dfwQuote.passageId] });
-    expect(line('CRITERIA')).toMatchObject({ text: 'Within your timing window' });
+    // The criterion's own checked passages: the fact that decided it (G6 #3).
+    expect(line('CRITERIA')).toEqual({ label: 'CRITERIA', text: 'Within your timing window', passageIds: [dfwQuote.passageId] });
+    // A case whose passages state no time is shown, labelled unconfirmed, on its card and its summary citation.
+    const den = result.cases.find((c) => c.case.ntsbNo === 'DEN08LA103')!.reading!;
+    expect(den.criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
+    expect(result.summary.filter((x) => x.kind === 'case')).toEqual(
+      expect.arrayContaining([
+        { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false },
+        { kind: 'case', ntsbNo: 'DEN08LA103', unconfirmed: true },
+      ]),
+    );
+    const denCtx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DEN08LA103`, { cookie })).json);
+    expect(denCtx.lines.find((l) => l.label === 'CRITERIA')).toEqual({
+      label: 'CRITERIA',
+      text: 'Unconfirmed: the passages do not establish your timing window',
+      passageIds: denCtx.passages.map((p) => p.passageId),
+    });
     // A gap-only case opens in the drawer with its gap and its passages.
     const gap = await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/NYC08LA106`, { cookie });
     expect(gap.status).toBe(200);
@@ -1403,7 +1685,10 @@ describe('gate G6: evidence semantics through the routes', () => {
       }),
     );
     const { briefId, step } = await askAndWait(h);
-    expect(step.result).toMatchObject({ kind: 'no_match', gaps: [{ ntsbNo: 'NYC08LA106' }] });
+    expect(step.result).toMatchObject({ kind: 'no_match', lines: [...NO_MATCH_LINES], gaps: [{ ntsbNo: 'NYC08LA106' }] });
+    // About the retrieved cases only, never "no such investigation exists".
+    expect(NO_MATCH_LINES[0]).toContain('cases this search retrieved');
+    expect(NO_MATCH_LINES[1]).toContain('not proof that no such investigation exists');
     if (step.result?.kind === 'no_match') expect(step.result.cases.map((c) => c.case.ntsbNo)).toEqual(SEEDS);
     expect(checks[0]!.claims.map((c) => c.kind)).toEqual(['gap']);
     expect(new Set(checks[0]!.passages.map((p) => p.ntsbNo))).toEqual(new Set(['NYC08LA106']));
@@ -1450,12 +1735,17 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(h.llm.calls.some((c) => c.stage === 'compose')).toBe(false);
   });
 
-  it('a check input over its cap is inconclusive: withheld, nothing billed for the check', async () => {
+  it('a check input over its cap is inconclusive: withheld with the cap failure recorded, the evidence kept whole', async () => {
     const h = harness(answering({ counts: { check: 18_001 } }));
-    const { briefId, step } = await askAndWait(h);
+    const { briefId, cookie, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
-    expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'check', category: 'cap_exceeded' } });
+    expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'check', category: 'cap_exceeded', inputTokens: 18_001 } });
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose']]);
+    // Nothing was pruned to fit: every case keeps every passage it was retrieved with.
+    for (const n of SEEDS) {
+      const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/${n}`, { cookie })).json);
+      expect(ctx.passages.map((p) => p.section).sort(), n).toEqual(['analysis', 'probable_cause']);
+    }
   });
 });
 
@@ -1483,6 +1773,80 @@ describe('orphaned and interrupted steps', () => {
     expect(pass).toMatchObject({ ran: true, orphanedSteps: 1, failed: [] });
     expect(await stepRow(first.briefId, 2)).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { category: 'orphaned' } } });
     expect((await stepRow(first.briefId, 3)).status).toBe('answered');
+  });
+
+  it('the maintenance pass leaves a fresh step with a closed reservation and an old step with an open one alone', async () => {
+    const h = harness(answering());
+    const first = await askAndWait(h);
+    const closed = (
+      await rows<{ reservation_id: number }>(sql`SELECT reservation_id::int AS reservation_id FROM brief_steps WHERE brief_id = ${first.briefId}::uuid AND n = 1`)
+    )[0]!.reservation_id;
+    const open = (
+      await rows<{ id: number }>(sql`
+        INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day, quota_counted, created_at)
+        VALUES ('interactive', 'trial', ${'f'.repeat(64)}, 0.14, 'open', ${new Date(clock.getTime() + 90_000)}, '2026-11-01', true, ${clock})
+        RETURNING id::int AS id`)
+    )[0]!.id;
+    const owner = (await rows<{ read_owner: string }>(sql`SELECT read_owner FROM briefs WHERE id = ${first.briefId}::uuid`))[0]!.read_owner;
+    const request = JSON.stringify({ origin: 'text', question: 'q', refinement: 'r', readings: {} });
+    const old = new Date(clock.getTime() - 3 * MIN);
+    await migrator.execute(sql`
+      INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, created_at, updated_at)
+      VALUES (${first.briefId}::uuid, 2, ${owner}, 'trial', ${closed}, ${request}::jsonb, ${clock}, ${clock}),
+             (${first.briefId}::uuid, 3, ${owner}, 'trial', ${open}, ${request}::jsonb, ${old}, ${old})`);
+    // Fresh with a closed reservation: still live. Old with an open reservation: its run may still settle.
+    expect(await failOrphanedSteps(appDb, clock)).toBe(0);
+    expect((await stepRow(first.briefId, 2)).status).toBe('running');
+    expect((await stepRow(first.briefId, 3)).status).toBe('running');
+    // Once the first is old too, only it is failed.
+    expect(await failOrphanedSteps(appDb, new Date(clock.getTime() + 3 * MIN))).toBe(1);
+    expect((await stepRow(first.briefId, 2)).status).toBe('failed');
+    expect((await stepRow(first.briefId, 3)).status).toBe('running');
+  });
+
+  it('closing a listening server under live traffic aborts the running step, settles it and drains within the grace', async () => {
+    const h = harness(answering({ scope: { hang: true } }), { timeouts: { scope: 30_000 } });
+    harnesses.splice(harnesses.indexOf(h), 1);
+    await h.app.listen({ host: '127.0.0.1', port: 0 });
+    const { port } = h.app.server.address() as AddressInfo;
+    const agent = new http.Agent({ keepAlive: true });
+    const send = (method: 'GET' | 'POST', path: string, body?: object) =>
+      new Promise<{ status: number; connection: string | undefined; body: string }>((resolve, reject) => {
+        const payload = body ? JSON.stringify(body) : undefined;
+        const req = http.request(
+          { host: '127.0.0.1', port, method, path, agent, headers: payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {} },
+          (res) => {
+            let text = '';
+            res.setEncoding('utf8');
+            res.on('data', (d: string) => (text += d));
+            res.on('end', () => resolve({ status: res.statusCode ?? 0, connection: res.headers.connection, body: text }));
+          },
+        );
+        req.on('error', reject);
+        req.end(payload);
+      });
+    try {
+      // An idle keep-alive connection, then a request in flight on another: the POST waits for the scope stage.
+      expect((await send('GET', '/api/health')).connection).toBe('keep-alive');
+      const posted = send('POST', '/api/briefs', { question: 'Engine power loss shortly after maintenance', turnstileToken: h.sv.issue(), idempotencyKey: key() });
+      await until(() => h.llm.calls.some((c) => c.stage === 'scope'));
+      expect(h.svc.runs.size).toBe(1);
+      const t0 = Date.now();
+      await h.app.close();
+      const took = Date.now() - t0;
+      expect(took).toBeLessThan(SHUTDOWN_GRACE_MS);
+      // The request in flight got its answer, and its connection was closed with it.
+      const res = await posted;
+      expect([res.status, res.connection]).toEqual([202, 'close']);
+      expect(JSON.parse(res.body)).toMatchObject({ kind: 'started', step: 1, stage: 'failed' });
+      expect(h.svc.runs.size).toBe(0);
+      const briefId = (JSON.parse(res.body) as { briefId: string }).briefId;
+      expect(await stepRow(briefId)).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'shutdown' } } });
+      // The aborted scope call may have been billed: settled in full, the search kept.
+      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+    } finally {
+      agent.destroy();
+    }
   });
 
   it('closing the server aborts running steps, which fail and settle within the grace', async () => {
@@ -1553,7 +1917,8 @@ describe('admission: the paced daily budget and other checks before spend', () =
     const pinnedIndex = `aviation-test-briefs${RUN}-pinned`;
     const h = harness(answering(), {
       aiEvidence: async () => ({ generationId, passagesIndex: pinnedIndex }),
-      retriever: { available: (d) => d.passagesIndex !== pinnedIndex },
+      // The pinned name is not a real index; its evidence comes from the fixture index.
+      retriever: { available: (d) => d.passagesIndex !== pinnedIndex, served: () => servedContract(dataset) },
     });
     const first = await askAndWait(h);
     expect(first.step.result?.kind).toBe('answer');

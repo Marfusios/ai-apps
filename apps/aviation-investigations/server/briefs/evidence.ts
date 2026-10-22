@@ -90,6 +90,12 @@ export interface EvidenceBundle {
 
 export interface RetrievedEvidence {
   bundle: EvidenceBundle;
+  /**
+   * The chunker version of the served index's passages contract (the contract
+   * `assertServablePassagesIndex` matched, v1 or v2): the canonical `passages` rows the
+   * pipeline checks the bundle against are read under it.
+   */
+  chunkerVersion: string;
   /** Pack the same candidates again under a smaller evidence-token budget. */
   repack(maxEvidenceTokens: number, signal: AbortSignal): Promise<EvidenceBundle>;
 }

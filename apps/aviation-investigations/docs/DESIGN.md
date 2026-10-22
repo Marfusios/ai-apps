@@ -124,6 +124,10 @@ For “shortly,” suggest a visible, editable interpretation such as **within 3
 calendar days OR 10 flight hours**, plus an optional first-flight constraint.
 Qualitative intervals remain a separate “timing not quantified” group. Never
 silently substitute inspection date or hours since inspection for maintenance.
+Timing facts are recorded independently (a case can state both calendar days and
+flight hours, and which flight it was); an approximate value (“about eight hours”)
+supplies no bound, so it never confirms a window. A case whose passages do not
+settle a criterion is shown as unconfirmed, never as a match.
 
 The [data assessment](DATA_REVIEW.md) gives four real seed cases. DFW08TA066
 supports a maintenance-related causal fault; DEN08LA103 an undetermined cause

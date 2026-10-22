@@ -9,7 +9,8 @@
  *    (and text refinement) feeds the dense channel, the scope stage's `keywordText` the
  *    BM25 channel. Query-embedding usage is recorded once, through the port's callback.
  *    **The bundle is then checked, fail closed** (gate G6 #2, #4): every passage against
- *    its canonical `passages` row and section revision (`resolvePassage`), at most 6
+ *    its canonical `passages` row (under the chunker of the served index's passages
+ *    contract, which the port reports) and section revision (`resolvePassage`), at most 6
  *    cases and 12 passages, and every case holding its best retrieved passage and all its
  *    probable-cause passages. Any violation fails the step; nothing is dropped or cut.
  * 3. **Compose** (35 s): the full compose input is counted with the provider's own token
@@ -19,8 +20,12 @@
  * 4. **Validate**: `validateComposition` (code); then the reader's criteria in code
  *    (server/briefs/criteria.ts: a presented case outside the timing window, first-flight
  *    requirement or failure type withholds the summary); then the model checker (12 s)
- *    over every claim, with every verified passage of each case and the criteria. Only
- *    `supported: true` with no problems passes.
+ *    over every claim, with every verified passage of each case and the criteria. Every
+ *    criterion decision is a claim, an unconfirmed one included ("the passages do not
+ *    establish whether..."), so a fact the composition left out settles nothing. Only
+ *    `supported: true` with no problems passes. A check input over the checker's cap
+ *    withholds the summary with the cap failure in the step's `meta`; the evidence is
+ *    never cut to fit.
  * 5. **Settle**: itemized ledger lines per stage; any call without reliable usage makes
  *    the settlement uncertain, charging the full reservation (Task 15).
  *
@@ -67,9 +72,8 @@ import { microsToNumeric, toMicros } from '../quota/pacing.js';
 import { PIPELINE_DEADLINE_MS, type QuotaPolicy } from '../quota/policy.js';
 import { releaseQuota, type Admission } from '../quota/admit.js';
 import { settle, type SpendLine } from '../quota/settle.js';
-import { PASSAGES_CONTRACT } from '../search/passages-contract.js';
 import { clarificationReadings, composeInterpretations, interpretationChips } from './clarify.js';
-import { criteriaLines, evaluateCase } from './criteria.js';
+import { criteriaLines, evaluateCase, type CriterionCheck } from './criteria.js';
 import { RetrievalFailure, type CaseCatalog, type EvidenceBundle, type EvidenceRetriever, type RetrievedEvidence } from './evidence.js';
 import { resolveIntent, retrievalText, scopeInput, type StepIntent, type StepRequest } from './intent.js';
 import { answerResult, checkInput, composeInput, noMatchResult, plainCard, storedDimensions, storedEvidence, type VerifiedCase } from './render.js';
@@ -100,7 +104,7 @@ export const MAX_REPACKS = 2;
 export const MAX_BUNDLE_CASES = 6;
 export const MAX_BUNDLE_PASSAGES = 12;
 
-/** The abort reason a server shutdown gives running steps (server/app.ts `onClose`). */
+/** The abort reason a server shutdown gives running steps (server/app.ts `preClose`). */
 export const SHUTDOWN_REASON = 'shutdown';
 
 export interface PipelineLog {
@@ -120,8 +124,6 @@ export interface BriefDeps {
   timeouts?: Partial<StageTimeouts>;
   /** Salt of the brief hash in traces (never the raw brief id). */
   traceSalt?: string;
-  /** The chunker version of the served passages (default the approved contract's). */
-  chunkerVersion?: string;
 }
 
 /** What the scope stage decided, for a caller waiting to answer the request. */
@@ -160,8 +162,13 @@ interface Meta {
   models: Partial<Record<LlmStage, string>>;
   timingsMs: Record<string, number>;
   repacks: number;
-  /** `reason`: a fixed failure reason (retrieval's, or the bundle check's), when there is one. */
-  failure?: { stage: string; category: string; reason?: string };
+  /**
+   * `reason`: a fixed failure reason (retrieval's, or the bundle check's), when there is
+   * one; `inputTokens`: the counted input of a stage refused over its cap.
+   */
+  failure?: { stage: string; category: string; reason?: string; inputTokens?: number };
+  /** The chunker of the served index's passages contract the bundle was checked under. */
+  chunkerVersion?: string;
   clarificationDropped?: boolean;
   outcome?: ComposeOutput['outcome'];
   validation?: { ruleVersion: string; codes: string[] };
@@ -241,7 +248,6 @@ class Run {
   private readonly started = performance.now();
   private readonly signal: AbortSignal;
   private readonly cancel: AbortSignal;
-  private readonly chunkerVersion: string;
   private readonly lines: SpendLine[] = [];
   private uncertain = false;
   private spent = false;
@@ -266,7 +272,6 @@ class Run {
   ) {
     this.t = { ...STAGE_TIMEOUTS, ...deps.timeouts };
     this.cancel = hooks.signal ?? NEVER;
-    this.chunkerVersion = deps.chunkerVersion ?? PASSAGES_CONTRACT.chunkerVersion;
     if (hooks.requestId) this.meta.requestId = hooks.requestId;
     this.signal = AbortSignal.any([this.cancel, AbortSignal.timeout(this.t.total)]);
   }
@@ -328,7 +333,8 @@ class Run {
               ? 'timeout'
               : 'unexpected';
     const reason = err instanceof RetrievalFailure ? err.reason : err instanceof BundleIntegrityError ? err.reason : undefined;
-    return { stage, category, ...(reason ? { reason } : {}) };
+    const inputTokens = err instanceof StageError && err.category === 'cap_exceeded' ? err.countedInputTokens : null;
+    return { stage, category, ...(reason ? { reason } : {}), ...(inputTokens !== null ? { inputTokens } : {}) };
   }
 
   private async stage(stage: 'retrieve' | 'compose' | 'validate', checklist: Checklist, intent?: StepIntent): Promise<boolean> {
@@ -438,7 +444,8 @@ class Run {
           s.setAttrs({ caseCount: out.bundle.cases.length, passageCount: out.bundle.passages });
           return out;
         });
-        cases = await this.verify(retrieved.bundle);
+        this.meta.chunkerVersion = retrieved.chunkerVersion;
+        cases = await this.verify(retrieved.bundle, retrieved.chunkerVersion);
       } catch (err) {
         if (err instanceof RetrievalFailure) {
           if (err.embedding === 'uncertain') {
@@ -507,7 +514,7 @@ class Run {
             const target = Math.max(1, Math.floor(bundle.evidenceTokens * (STAGE_CAPS.answer.input / count) * 0.9));
             bundle = await retrieved.repack(target, signal);
             this.meta.repacks += 1;
-            cases = await this.verify(bundle);
+            cases = await this.verify(bundle, retrieved.chunkerVersion);
             if (cases.length === 0) throw new BundleIntegrityError('empty_after_repack');
             this.evidence = storedEvidence(cases, null);
             input = build(cases);
@@ -545,21 +552,22 @@ class Run {
     this.meta.validation = { ruleVersion: validated.ruleVersion, codes: validated.ok ? [] : validated.reasons.map((r) => r.code) };
     if (!validated.ok) return this.withheldEnd('citation_check', cases, intent);
 
+    // Every criterion decision of every presented case, each a claim for the checker.
     const decisions = new Map<string, CriterionDecision[]>();
-    const criterionClaims = new Map<string, string[]>();
+    const criterionChecks = new Map<string, CriterionCheck[]>();
     this.meta.criteria = [];
     let outside = false;
     for (const k of composition.cases) {
-      const e = evaluateCase(intent.readings, k, intent.mechanicalCause);
-      for (const d of e.decisions) {
+      const checks = evaluateCase(intent.readings, k, intent.mechanicalCause, (byCase.get(k.ntsbNo)?.passages ?? []).map((p) => p.passageId));
+      for (const d of checks) {
         this.meta.criteria.push({ ntsbNo: k.ntsbNo, criterion: d.criterion, decision: d.decision });
         if (d.decision === 'does_not_match') outside = true;
       }
       decisions.set(
         k.ntsbNo,
-        e.decisions.map((d) => ({ criterion: d.criterion, decision: d.decision === 'matches' ? 'matches' : 'unknown' })),
+        checks.map((d) => ({ criterion: d.criterion, decision: d.decision === 'matches' ? 'matches' : 'unconfirmed' })),
       );
-      criterionClaims.set(k.ntsbNo, e.claims);
+      criterionChecks.set(k.ntsbNo, checks);
     }
     // A case outside the reader's criteria is never presented as a match.
     if (outside) return this.withheldEnd('criteria_check', cases, intent);
@@ -568,7 +576,7 @@ class Run {
     const { input, claims, overflow } = checkInput(composition, validated.citations, byCase, {
       mechanicalCause: intent.mechanicalCause,
       criteria: criteriaLines(intent.readings),
-      criterionClaims,
+      criterionChecks,
     });
     if (overflow) {
       // A claim that cannot be checked is never shown.
@@ -593,6 +601,8 @@ class Run {
         // Conservative: any problem, or "supported" without being sure of every claim, withholds.
         if (!out.output.supported || out.output.problems.length > 0) return this.withheldEnd('evidence_check', cases, intent);
       } catch (err) {
+        // Over the checker's cap (counted, unbilled) or a failed call: withheld with the
+        // failure recorded; the complete evidence is kept, never cut to fit (ruling 5).
         this.chargeFailure(err, 'check', true);
         this.meta.failure = this.failureOf('check', err);
         this.meta.timingsMs.check = Math.round(performance.now() - t0);
@@ -606,7 +616,7 @@ class Run {
       this.evidence = storedEvidence(cases, QUOTE_MATCH_RULE_VERSION);
       return { status: 'no_match', stage: 'done', result: noMatchResult(composition, cases, context), release: false };
     }
-    this.evidence = storedEvidence(cases, QUOTE_MATCH_RULE_VERSION, storedDimensions(composition, intent.mechanicalCause));
+    this.evidence = storedEvidence(cases, QUOTE_MATCH_RULE_VERSION, storedDimensions(composition, intent.mechanicalCause, criterionChecks));
     return {
       status: 'answered',
       stage: 'done',
@@ -634,8 +644,9 @@ class Run {
       case 'corpus_statistics':
         return statisticsReply(intent.filters);
       case 'case_comparison': {
-        // Only numbers the reader actually wrote (case-insensitive); the planner cannot add one.
-        const written = (this.req.origin === 'text' && this.req.refinement ? this.req.refinement : this.req.question).toUpperCase();
+        // Only numbers the reader actually wrote (case-insensitive), in the question or the
+        // text refinement in effect; the planner cannot add one.
+        const written = [this.req.question, ...(this.req.refinement ? [this.req.refinement] : [])].join('\n').toUpperCase();
         const asked = (scope.caseNumbers ?? []).filter((n) => written.includes(n.toUpperCase()));
         if (asked.length === 0) {
           intent.intent = 'case_search';
@@ -662,7 +673,7 @@ class Run {
    * probable-cause passage it has. Any violation throws `BundleIntegrityError`; nothing is
    * dropped or cut.
    */
-  private async verify(bundle: EvidenceBundle): Promise<VerifiedCase[]> {
+  private async verify(bundle: EvidenceBundle, chunkerVersion: string): Promise<VerifiedCase[]> {
     const { catalog } = this.deps;
     const g = this.brief.generationId;
     const all = bundle.cases.flatMap((c) => c.passages);
@@ -672,8 +683,8 @@ class Run {
     if (new Set(numbers).size !== numbers.length) throw new BundleIntegrityError('duplicate_case');
     if (new Set(all.map((p) => p.passageId)).size !== all.length) throw new BundleIntegrityError('duplicate_passage');
     const [canonical, causes, summaries] = await Promise.all([
-      catalog.passages(g, this.chunkerVersion, all.map((p) => p.passageId)),
-      catalog.causePassageIds(g, this.chunkerVersion, numbers),
+      catalog.passages(g, chunkerVersion, all.map((p) => p.passageId)),
+      catalog.causePassageIds(g, chunkerVersion, numbers),
       catalog.summaries(g, numbers),
     ]);
     const out: VerifiedCase[] = [];

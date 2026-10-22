@@ -27,6 +27,12 @@
  *   applies the tunnel peer check first) and the HTTP parser's (`clientErrorHandler`).
  * - `Cache-Control` of per-visitor routes (AI, briefs, auth, account) is forced to
  *   `private, no-store` from the matched route (server/http/cache-headers.ts).
+ * - Closing (server/main.ts allows itself 10 s) first aborts running brief steps and
+ *   waits up to `SHUTDOWN_GRACE_MS` for them to fail, settle and record their state
+ *   (`preClose`, before the HTTP drain, so it works under live traffic). The drain is
+ *   then bounded: idle keep-alive connections close at once (`forceCloseConnections:
+ *   'idle'`), every response sent while closing carries `Connection: close`, and
+ *   connections still open after `DRAIN_GRACE_MS` are closed.
  *
  * Fastify runs with `trustProxy: false`; `request.ip` is never used.
  */
@@ -103,6 +109,15 @@ export interface AppDeps {
 
 /** Within the 10 s the process allows itself on shutdown (server/main.ts), for aborted brief steps to settle. */
 export const SHUTDOWN_GRACE_MS = 8_000;
+/** After the steps settled, how long responses still in flight may take before their connections are closed. */
+export const DRAIN_GRACE_MS = 1_000;
+/**
+ * Idle keep-alive timeout. Above the Cloudflare Tunnel connector's 90 s idle keep-alive
+ * to the origin, so the origin never closes a connection the connector may still reuse
+ * (a request sent on it would fail at the edge). Closing does not wait for it: idle
+ * connections are closed at once and responses sent while closing end their connection.
+ */
+export const KEEP_ALIVE_TIMEOUT_MS = 95_000;
 
 /** Route patterns of the web client: the page and the static files (`@fastify/static`'s wildcard). */
 export const ASSET_ROUTES: ReadonlySet<string> = new Set(['/', '/index.html', '/*']);
@@ -185,6 +200,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 16 * 1024,
     return503OnClosing: true,
+    forceCloseConnections: 'idle',
+    keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
     // The HTTP parser's own refusals (before routing) carry the security headers too.
     clientErrorHandler: makeClientErrorHandler(headers, { trusted }),
     routerOptions: { ignoreTrailingSlash: true, maxParamLength: 64 },
@@ -229,19 +246,32 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   app.decorateRequest('networkIdentity', null);
 
-  // Shutdown: running brief steps are aborted (they fail, settle and record their state)
-  // and awaited within the grace the process gives itself before exiting (server/main.ts).
-  app.addHook('onClose', async () => {
-    if (!briefs || briefs.runs.size === 0) return;
-    for (const run of briefs.runs.values()) run.controller.abort(SHUTDOWN_REASON);
-    let timer: NodeJS.Timeout | undefined;
-    await Promise.race([
-      briefs.settled(),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
-      }),
-    ]);
-    clearTimeout(timer);
+  // Shutdown, before the HTTP drain (which would otherwise wait for requests that wait
+  // for the steps): running brief steps are aborted (they fail, settle and record their
+  // state) and awaited within the grace the process gives itself (server/main.ts). Then
+  // the drain is bounded: responses sent from now on end their connection, and whatever
+  // is still open after DRAIN_GRACE_MS is closed.
+  let closing = false;
+  let drain: NodeJS.Timeout | undefined;
+  app.addHook('preClose', async () => {
+    closing = true;
+    if (briefs && briefs.runs.size > 0) {
+      for (const run of briefs.runs.values()) run.controller.abort(SHUTDOWN_REASON);
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        briefs.settled(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+    drain = setTimeout(() => app.server.closeAllConnections(), DRAIN_GRACE_MS);
+    drain.unref();
+  });
+  app.addHook('onClose', async () => clearTimeout(drain));
+  app.addHook('onSend', async (_request, reply) => {
+    if (closing) reply.header('connection', 'close');
   });
 
   app.addHook('onRequest', async (request, reply) => {

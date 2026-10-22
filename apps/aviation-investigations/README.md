@@ -881,27 +881,37 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    and 12 passages, query-embedding usage reported through a callback), bound to
    [hybrid retrieval](#evidence-retrieval-hybrid-search) in `retriever.ts`. The bundle
    is then checked, fail closed: every passage against its canonical `passages` row
-   (id derivation, section kind, scope, aircraft, offsets) and section revision
+   under the chunker of the served index's passages contract (v1 or v2, as the port
+   reports it; id derivation, section kind, scope, aircraft, offsets) and section revision
    (`resolvePassage`), at most 6 cases and 12 passages, and every case holding its best
    retrieved passage and all its probable-cause passages. A violation fails the step;
    nothing is dropped or cut.
 3. **Compose** (35 s): the full input is counted with the provider's own counter;
    above 16,000 tokens the candidates are packed again under a smaller budget, and the
    re-packed bundle is checked like the first. The answer model may abstain
-   (`no_supported_match`): the case cards and its checked gap notes are shown.
+   (`no_supported_match`): the case cards and its checked gap notes are shown, with
+   server copy saying that none of the retrieved cases supports the question as asked
+   (not that no such investigation exists); it counts as a search.
 4. **Validate**: `validateComposition` (`validate.ts`, rule `quote-ws-v2`: a quote of at
    least three words is a substring of its passage after collapsing whitespace runs on
    both sides; it resolves to at most 600 code units of source text, shown whole; UTF-16
    spans through an offset map; the first of repeated matches is used and the count
    recorded; every claim cites passages of its own case; every summary sentence cites a
-   case; timing values have one decimal place for flight hours and whole days; every
+   case, and case markers after the punctuation always end a sentence; each stated
+   chronology fact (flight hours, calendar days, which flight, wording) cites its own
+   passages, with one decimal place for flight hours and whole days; every
    NTSB-number-shaped token in generated text must be allowlisted). Then the reader's
    criteria in code (`criteria.ts`: the timing window, first-flight requirement and
-   failure type in effect; a presented case outside them withholds the summary, an
-   unsettled one is shown as not established). Then the check stage (12 s) over every
-   claim, with every verified passage of each case and the criteria as server
-   templates. Only `supported` with no problems shows the summary; anything else
-   returns the case cards with the summary withheld. There is no repair loop.
+   failure type in effect, decided from the stated facts; an approximate value decides
+   nothing; a presented case outside them withholds the summary). Every decision is
+   then a server-template claim, including "the passages do not establish whether…",
+   so a fact the composition left out settles nothing: the check stage (12 s) judges
+   every claim against every verified passage of each case, with the criteria as
+   server templates. Only `supported` with no problems shows the summary; anything else
+   (a check input over its cap included, recorded in the step's `meta`, the evidence
+   never cut to fit) returns the case cards with the summary withheld. A case whose
+   passages do not settle a criterion is shown labelled unconfirmed, on its card and
+   its summary citations. There is no repair loop.
 
 The step has a 60-second deadline. Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
@@ -912,8 +922,11 @@ are sent), empty results and failures before any spend give the free search back
 withheld summaries, abstentions, cancellations and failures after spending keep it.
 A step still running 120 s after it started has lost its process: it reads as failed,
 no longer blocks a refinement, and the maintenance pass marks it failed once its
-reservation is closed. Closing the server aborts running steps (they fail and settle)
-and waits up to 8 s for them.
+reservation is closed. Closing the server first aborts running steps (they fail and
+settle) and waits up to 8 s for them, before the HTTP drain; the drain is then bounded
+(idle keep-alive connections close at once, responses sent while closing close their
+connection, and anything still open after 1 s is closed). The keep-alive timeout is
+95 s, above the Cloudflare Tunnel connector's 90 s idle timeout to the origin.
 
 Paid requests check, before any token work or spend: a cross-site request (by
 `Sec-Fetch-Site`, or `Origin` when the browser sends no fetch metadata) is 403; the

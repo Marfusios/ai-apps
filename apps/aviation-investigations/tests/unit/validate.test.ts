@@ -71,7 +71,7 @@ function composition(over: Partial<ComposeOutput> = {}): ComposeOutput {
         evidencePassageIds: ['p-dfw', 'p-dfw-cause'],
         maintenance: { relation: 'investigator_attributed', passageIds: ['p-dfw-cause'] },
         symptom: { value: 'total_power_loss', passageIds: ['p-dfw'] },
-        timing: { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: ['p-dfw'] },
+        chronology: { flightHours: { value: 5.1, bound: 'exact', passageIds: ['p-dfw'] } },
       },
       {
         ntsbNo: 'DEN08LA103',
@@ -209,7 +209,7 @@ describe('validateComposition', () => {
     out.cases[0]!.quotes[0] = { passageId: 'p-none', quote: 'anything at all here', speaker: 'investigators' };
     expect(check(out)).toEqual(['unknown_passage']);
     const cited = composition();
-    cited.cases[0]!.timing!.passageIds = ['p-den'];
+    cited.cases[0]!.chronology!.flightHours!.passageIds = ['p-den'];
     expect(check(cited)).toEqual(['foreign_passage']);
     const invented = composition();
     invented.cases[0]!.maintenance!.passageIds = ['p-invented'];
@@ -220,9 +220,17 @@ describe('validateComposition', () => {
     const noSupport = composition();
     noSupport.cases[0]!.evidencePassageIds = [];
     expect(check(noSupport)).toEqual(['missing_support']);
-    const timing = composition();
-    timing.cases[0]!.timing!.passageIds = [];
-    expect(check(timing)).toEqual(['missing_support']);
+    // Every stated chronology fact cites the passages that state it.
+    for (const fact of [
+      { flightHours: { value: 5.1, bound: 'exact' as const, passageIds: [] } },
+      { calendarDays: { value: 40, bound: 'exact' as const, passageIds: [] } },
+      { flight: { value: 'later' as const, passageIds: [] } },
+      { qualitative: { passageIds: [] } },
+    ]) {
+      const timing = composition();
+      timing.cases[0]!.chronology = fact;
+      expect(check(timing), Object.keys(fact)[0]).toEqual(['missing_support']);
+    }
     const absent = composition();
     absent.cases[1]!.maintenance = { relation: 'no_evidence', passageIds: [] };
     expect(check(absent)).toEqual([]);
@@ -314,15 +322,22 @@ describe('validateComposition', () => {
     expect(check(out)).toEqual([]);
   });
 
-  it('timing values go with numeric bases only, at the allowed precision (one canonical number)', () => {
+  it('chronology facts are independent, typed and at the allowed precision (one canonical number)', () => {
     const out = composition();
-    out.cases[0]!.timing = { basis: 'flight_hours', bound: 'exact', passageIds: ['p-dfw'] };
-    expect(check(out)).toEqual(['timing_shape']);
-    out.cases[0]!.timing = { basis: 'first_flight', value: 1, bound: 'exact', passageIds: ['p-dfw'] };
-    expect(check(out)).toEqual(['timing_shape']);
-    out.cases[0]!.timing = { basis: 'flight_hours', value: 5.10001, bound: 'exact', passageIds: ['p-dfw'] };
+    // "40 days and 20 flight hours" and "the second flight": three facts, each with its passages.
+    out.cases[0]!.chronology = {
+      flightHours: { value: 20, bound: 'exact', passageIds: ['p-dfw'] },
+      calendarDays: { value: 40, bound: 'exact', passageIds: ['p-dfw'] },
+      flight: { value: 'later', passageIds: ['p-dfw'] },
+    };
+    expect(check(out)).toEqual([]);
+    out.cases[0]!.chronology = { flightHours: { bound: 'exact', passageIds: ['p-dfw'] } } as never;
+    expect(check(out)).toEqual(['schema']);
+    out.cases[0]!.chronology = { flight: { value: 'second', passageIds: ['p-dfw'] } } as never;
+    expect(check(out)).toEqual(['schema']);
+    out.cases[0]!.chronology = { flightHours: { value: 5.10001, bound: 'exact', passageIds: ['p-dfw'] } };
     expect(check(out)).toEqual(['timing_precision']);
-    out.cases[0]!.timing = { basis: 'calendar_days', value: 17.5, bound: 'about', passageIds: ['p-dfw'] };
+    out.cases[0]!.chronology = { calendarDays: { value: 17.5, bound: 'about', passageIds: ['p-dfw'] } };
     expect(check(out)).toEqual(['timing_precision']);
     expect(timingValueAllowed('flight_hours', 5.1)).toBe(true);
     expect(timingValueAllowed('flight_hours', 12)).toBe(true);
@@ -373,6 +388,29 @@ describe('sentence splitting', () => {
       'Four?',
     ]);
     expect(splitSentences('Loose nut. [[case:A1B2C3]] Next one.')).toEqual(['Loose nut. [[case:A1B2C3]]', 'Next one.']);
+    expect(splitSentences('Capt. Jones flew cylinder No. 2 at approx. 500 feet, vs. 300 planned.')).toHaveLength(1);
+  });
+
+  it('case markers after the punctuation always end the sentence, even after an abbreviation', () => {
+    const summary = 'The engine failed after an overhaul in the U.S. [[case:DFW08TA066]] Maintenance is always to blame.';
+    expect(splitSentences(summary)).toEqual(['The engine failed after an overhaul in the U.S. [[case:DFW08TA066]]', 'Maintenance is always to blame.']);
+    expect(splitSentences('Seen by Mr. [[case:DFW08TA066]] Nobody else.')).toEqual(['Seen by Mr. [[case:DFW08TA066]]', 'Nobody else.']);
+    // So the uncited sentence is caught.
+    const out = composition({ summary });
+    out.cases = out.cases.slice(0, 1);
+    out.groups = [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }];
+    expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({ ok: false, reasons: [{ code: 'uncited_summary', path: 'summary.1' }] });
+  });
+
+  it('words that often end a sentence are not abbreviations; "No." is one only before a number', () => {
+    expect(splitSentences('The engine ran for 10 min. Maintenance is always to blame [[case:DFW08TA066]].')).toEqual([
+      'The engine ran for 10 min.',
+      'Maintenance is always to blame [[case:DFW08TA066]].',
+    ]);
+    for (const word of ['no', 'min', 'max', 'est', 'St', 'sec', 'hr', 'ft', 'etc']) {
+      expect(splitSentences(`It was ${word}. Another one.`), word).toEqual([`It was ${word}.`, 'Another one.']);
+    }
+    expect(splitSentences('The answer was no. Cylinder No. 2 failed.')).toEqual(['The answer was no.', 'Cylinder No. 2 failed.']);
   });
 });
 

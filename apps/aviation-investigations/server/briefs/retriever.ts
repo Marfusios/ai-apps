@@ -24,6 +24,9 @@
  *   message. The underlying error is dropped: `RetrievalUnavailableError` quotes index
  *   names and contract values, and Elasticsearch errors carry response bodies, so none
  *   of it reaches a response, the step's record or a log.
+ * - **The chunker** the pipeline checks the bundle under is the served index's contract's
+ *   (`CandidateResult.chunkerVersion`, from `assertServablePassagesIndex`), never a
+ *   constant: passages-v1 and passages-v2 indexes can both be served.
  * - **`available(dataset)`** checks the passages contract for this embedder's model
  *   and dimensions (bounded; a passed check is remembered by retrieval). The routes ask
  *   it only after the dataset resolver reported the manifest's passages index
@@ -234,6 +237,8 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
         }
         return {
           bundle,
+          // The served index's own contract (v1 and v2 can both be servable).
+          chunkerVersion: candidates.chunkerVersion,
           async repack(maxEvidenceTokens: number, repackSignal: AbortSignal) {
             try {
               const smaller = retrievalParams({ ...candidates.params, maxEvidenceTokens });

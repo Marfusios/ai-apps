@@ -88,7 +88,7 @@ const composeOutput: ComposeOutput = {
       evidencePassageIds: ['p-dfw-1'],
       maintenance: { relation: 'investigator_attributed', passageIds: ['p-dfw-1'] },
       symptom: { value: 'total_power_loss', passageIds: ['p-dfw-1'] },
-      timing: { basis: 'flight_hours', value: 5.1, bound: 'exact', passageIds: ['p-dfw-1'] },
+      chronology: { flightHours: { value: 5.1, bound: 'exact', passageIds: ['p-dfw-1'] }, flight: { value: 'first', passageIds: ['p-dfw-1'] } },
     },
   ],
   gaps: [],

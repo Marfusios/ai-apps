@@ -78,11 +78,23 @@ export type Symptom = (typeof SYMPTOMS)[number];
 export const FAILURE_TYPES = ['total_power_loss', 'partial_power_loss', 'rough_running', 'failure_to_climb'] as const;
 export type FailureType = (typeof FAILURE_TYPES)[number];
 
-/** Timing since the relevant maintenance (DESIGN §3). Unknown timing is left out. */
+/**
+ * Timing since the relevant maintenance (DESIGN §3), as the chips show it: one chip per
+ * chronology fact the passages state (flight hours, calendar days, which flight, or
+ * wording without a number). Facts no passage states are left out.
+ */
 export const TIMING_BASES = ['flight_hours', 'calendar_days', 'first_flight', 'subsequent_flight', 'qualitative'] as const;
 export type TimingBasis = (typeof TIMING_BASES)[number];
+/**
+ * How a stated number bounds the time: `exact` ("5.1 hours"), `about` ("about eight
+ * hours": no bound the window can use), `at_most` ("less than ten hours"), `at_least`
+ * ("more than two months").
+ */
 export const TIMING_BOUNDS = ['exact', 'about', 'at_most', 'at_least'] as const;
 export type TimingBound = (typeof TIMING_BOUNDS)[number];
+/** Which flight after the relevant maintenance: the first, or a later one ("second flight"). */
+export const FLIGHT_ORDERS = ['first', 'later'] as const;
+export type FlightOrder = (typeof FLIGHT_ORDERS)[number];
 
 // ---------------------------------------------------------------------------
 // Shared pieces
@@ -378,15 +390,19 @@ export const CRITERIA = ['timing_window', 'first_flight_only', 'failure_type'] a
 export type Criterion = (typeof CRITERIA)[number];
 
 /**
- * How a presented case stands against one criterion. `matches`: decided in code from
- * the case's checked structured values, or confirmed by the evidence checker for a
- * semantic criterion. `unknown`: the supplied passages do not settle it (for example
- * timing stated only in words); the UI shows it as not established, never as a match.
- * A case that does not match is never presented as one (the summary is withheld).
+ * How a presented case stands against one criterion. Every decision is a server-template
+ * claim the evidence checker confirmed against all of the case's supplied passages.
+ * `matches`: decided in code from the case's checked chronology facts or symptom, or a
+ * semantic criterion. `unconfirmed`: the supplied passages do not settle it (timing
+ * stated only in words or approximately, or not at all); the card shows the case
+ * labelled UNCONFIRMED, its summary citations are flagged `unconfirmed`, and it is never
+ * presented as a confirmed match. A case that does not match is never presented as one
+ * (the summary is withheld).
  */
+export const CRITERION_DECISIONS = ['matches', 'unconfirmed'] as const;
 export const CriterionDecisionSchema = z.strictObject({
   criterion: z.enum(CRITERIA),
-  decision: z.enum(['matches', 'unknown']),
+  decision: z.enum(CRITERION_DECISIONS),
 });
 export type CriterionDecision = z.infer<typeof CriterionDecisionSchema>;
 
@@ -396,7 +412,8 @@ export const CaseReadingSchema = z.strictObject({
   glyph: z.enum(GLYPH_KINDS).nullable(),
   /** WHY IT MATCHED: one validated, evidence-checked line. */
   why: z.string().min(1).max(300),
-  timing: TimingChipSchema.nullable(),
+  /** One chip per chronology fact the passages state, in the order flight hours, days, flight, words. */
+  timing: z.array(TimingChipSchema).max(4),
   quotes: z.array(BriefQuoteSchema).min(1).max(3),
   evidence: EvidenceAttributionSchema,
   /** One decision per criterion in effect (none when the brief has no reading). */
@@ -419,10 +436,14 @@ export const EvidenceGroupSchema = z.strictObject({
   caseNumbers: z.array(NtsbNoSchema).max(MAX_BRIEF_CASES),
 });
 
-/** Summary text with case citations as server-owned case numbers (rendered as blue mono citations). */
+/**
+ * Summary text with case citations as server-owned case numbers (rendered as blue mono
+ * citations). `unconfirmed`: the cited case's passages do not settle one of the reader's
+ * criteria, so the citation carries the UNCONFIRMED label wherever the summary cites it.
+ */
 export const SummarySegmentSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('text'), text: z.string().min(1).max(1_500) }),
-  z.strictObject({ kind: z.literal('case'), ntsbNo: NtsbNoSchema }),
+  z.strictObject({ kind: z.literal('case'), ntsbNo: NtsbNoSchema, unconfirmed: z.boolean() }),
 ]);
 export type SummarySegment = z.infer<typeof SummarySegmentSchema>;
 
@@ -474,13 +495,17 @@ export const BriefResultSchema = z.discriminatedUnion('kind', [
     cases: z.array(CaseCardSchema).min(1).max(MAX_BRIEF_CASES),
   }),
   /**
-   * The answer model found no retrieved case that supports the question as asked (an
-   * explicit abstention). The cases it was given are listed as plain cards, with
-   * checked notes on near misses. This counts as a search.
+   * The answer model found no retrieved case whose passages support the question as
+   * asked (an explicit abstention). `lines` (server templates,
+   * server/briefs/static-replies.ts `NO_MATCH_LINES`) say so about the retrieved cases
+   * only: it is not proof that no matching investigation exists. The cases it was given
+   * are listed as plain cards, with checked notes on near misses. This counts as a
+   * search: the paid analysis ran.
    */
   z.strictObject({
     kind: z.literal('no_match'),
     ...resultContext,
+    lines: z.array(Line).min(1).max(3),
     cases: z.array(CaseCardSchema).min(1).max(MAX_BRIEF_CASES),
     gaps: z.array(GapSchema).max(2),
   }),
@@ -539,8 +564,10 @@ export const ContextPassageSchema = z.strictObject({
 
 /**
  * A labelled line of WHY IT'S IN YOUR RESULTS (server templates). `passageIds` are the
- * passages that line's claim was checked on (its own support, not the first quote);
- * empty for a statement about what the supplied passages lack.
+ * passages that line's claim was checked on (its own support, not the first quote): a
+ * CRITERIA line links the passage set its criterion claim cited (every supplied passage
+ * of the case for an unconfirmed or semantic criterion); empty for a maintenance
+ * statement about what the supplied passages lack.
  */
 export const ContextLineSchema = z.strictObject({
   label: z.enum(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'CRITERIA', 'ACCOUNT']),
@@ -558,7 +585,7 @@ export const CaseContextResponseSchema = z.strictObject({
   ntsbNo: NtsbNoSchema,
   /** Null when the step's summary was withheld or the case is only in a gap note. */
   reading: CaseReadingSchema.nullable(),
-  lines: z.array(ContextLineSchema).max(8),
+  lines: z.array(ContextLineSchema).max(12),
   /** Gap notes about this case, with the passages they rest on. */
   gaps: z.array(GapSchema).max(2),
   passages: z.array(ContextPassageSchema).min(1).max(MAX_BRIEF_PASSAGES),
@@ -583,18 +610,31 @@ export const ComposeQuoteSchema = z.strictObject({
   speaker: z.enum(SPEAKERS),
 });
 
-/**
- * Time from the relevant maintenance to the event. `value` is required for
- * `flight_hours` (at most one decimal place) and `calendar_days` (whole days), absent
- * otherwise; the value checked, stored and displayed is exactly this number.
- */
-export const ComposeTimingSchema = z.strictObject({
-  basis: z.enum(TIMING_BASES),
-  value: z.number().min(0).max(100_000).optional(),
+/** A stated amount of time: the value checked, stored and displayed is exactly this number. */
+const ChronologyAmountSchema = z.strictObject({
+  value: z.number().min(0).max(100_000),
   bound: z.enum(TIMING_BOUNDS),
   passageIds: SupportSchema,
 });
-export type ComposeTiming = z.infer<typeof ComposeTimingSchema>;
+export type ChronologyAmount = z.infer<typeof ChronologyAmountSchema>;
+
+/**
+ * The time from the relevant maintenance to the event, as independently stated facts:
+ * each optional, each with the passages that state it, so "40 days and 20 flight hours"
+ * is two facts. A fact no passage states is left out; leaving one out never settles a
+ * criterion (the evidence checker confirms that the passages do not establish it).
+ */
+export const ComposeChronologySchema = z.strictObject({
+  /** Flight hours since the maintenance (at most one decimal place). */
+  flightHours: ChronologyAmountSchema.optional(),
+  /** Calendar days since the maintenance (whole days). */
+  calendarDays: ChronologyAmountSchema.optional(),
+  /** Which flight after the maintenance: the first, or a later one ("second flight"). */
+  flight: z.strictObject({ value: z.enum(FLIGHT_ORDERS), passageIds: SupportSchema }).optional(),
+  /** Wording without a number ("shortly after", "a few weeks later"). */
+  qualitative: z.strictObject({ passageIds: SupportSchema }).optional(),
+});
+export type ComposeChronology = z.infer<typeof ComposeChronologySchema>;
 
 export const ComposeCaseSchema = z.strictObject({
   ntsbNo: ComposeCaseNumberSchema,
@@ -606,14 +646,16 @@ export const ComposeCaseSchema = z.strictObject({
   /** Mechanical questions only. */
   maintenance: z.strictObject({ relation: z.enum(MAINTENANCE_RELATIONS), passageIds: SupportSchema }).optional(),
   symptom: z.strictObject({ value: z.enum(SYMPTOMS), passageIds: SupportSchema }).optional(),
-  /** Only when a passage states the time since the relevant maintenance. */
-  timing: ComposeTimingSchema.optional(),
+  /** Every time relation between the relevant maintenance and the event that a passage states. */
+  chronology: ComposeChronologySchema.optional(),
 });
 export type ComposeCase = z.infer<typeof ComposeCaseSchema>;
 
 /**
- * `answer`: at least one case supports the question as asked. `no_supported_match`: none
- * does (an explicit abstention): no summary, groups or cases, optionally gap notes.
+ * `answer`: at least one case's passages support the question and contradict none of
+ * the reader's criteria (a criterion they do not settle leaves the case unconfirmed).
+ * `no_supported_match`: none does (an explicit abstention): no summary, groups or
+ * cases, optionally gap notes.
  */
 export const COMPOSE_OUTCOMES = ['answer', 'no_supported_match'] as const;
 

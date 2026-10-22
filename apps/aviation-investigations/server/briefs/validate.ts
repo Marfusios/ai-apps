@@ -121,7 +121,6 @@ export type ValidationCode =
   | 'quote_too_long'
   | 'malformed_quote'
   | 'quote_not_found'
-  | 'timing_shape'
   | 'timing_precision'
   | 'bad_marker'
   | 'marker_unknown_case'
@@ -464,13 +463,19 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
       support(k.maintenance.passageIds, k.ntsbNo, `cases.${ci}.maintenance.passageIds`, cited ? 1 : 0);
     }
     if (k.symptom) support(k.symptom.passageIds, k.ntsbNo, `cases.${ci}.symptom.passageIds`, 1);
-    const t = k.timing;
-    if (t) {
-      support(t.passageIds, k.ntsbNo, `cases.${ci}.timing.passageIds`, 1);
-      const numeric = t.basis === 'flight_hours' || t.basis === 'calendar_days';
-      if (numeric !== (t.value !== undefined)) fail('timing_shape', `cases.${ci}.timing`);
-      else if (t.value !== undefined && !timingValueAllowed(t.basis, t.value)) fail('timing_precision', `cases.${ci}.timing.value`);
+    // Chronology: each stated fact cites the passages that state it; values at their precision.
+    const t = k.chronology;
+    const at = `cases.${ci}.chronology`;
+    if (t?.flightHours) {
+      support(t.flightHours.passageIds, k.ntsbNo, `${at}.flightHours.passageIds`, 1);
+      if (!timingValueAllowed('flight_hours', t.flightHours.value)) fail('timing_precision', `${at}.flightHours.value`);
     }
+    if (t?.calendarDays) {
+      support(t.calendarDays.passageIds, k.ntsbNo, `${at}.calendarDays.passageIds`, 1);
+      if (!timingValueAllowed('calendar_days', t.calendarDays.value)) fail('timing_precision', `${at}.calendarDays.value`);
+    }
+    if (t?.flight) support(t.flight.passageIds, k.ntsbNo, `${at}.flight.passageIds`, 1);
+    if (t?.qualitative) support(t.qualitative.passageIds, k.ntsbNo, `${at}.qualitative.passageIds`, 1);
   });
 
   // Gaps: about a case in the bundle, resting on that case's passages.

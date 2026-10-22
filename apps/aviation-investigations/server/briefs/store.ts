@@ -6,7 +6,15 @@
  * step, to a step's billing principal or request, and any direct update of a brief.
  */
 import { and, asc, desc, eq, gt, isNull, sql } from 'drizzle-orm';
-import type { BriefResult, Checklist, MaintenanceRelation, Symptom } from '../../shared/contracts/briefs.js';
+import type {
+  BriefResult,
+  Checklist,
+  Criterion,
+  CriterionDecision,
+  MaintenanceRelation,
+  Symptom,
+  TimingBasis,
+} from '../../shared/contracts/briefs.js';
 import type { Db, DbOrTx } from '../db/client.js';
 import { briefSteps, briefs, type BriefStepStage, type BriefStepStatus } from '../db/schema/index.js';
 import type { StepIntent, StepRequest } from './intent.js';
@@ -44,7 +52,10 @@ export interface StoredDimensions {
   evidencePassageIds: string[];
   maintenance?: { relation: MaintenanceRelation; passageIds: string[] };
   symptom?: { value: Symptom; passageIds: string[] };
-  timingPassageIds?: string[];
+  /** Each stated chronology fact (one per timing chip) with the passages that state it. */
+  timing?: { basis: TimingBasis; passageIds: string[] }[];
+  /** Each criterion decision with the passage set its checker claim cited (not the symptom's or timing's). */
+  criteria?: { criterion: Criterion; decision: CriterionDecision['decision']; passageIds: string[] }[];
 }
 
 export interface StoredEvidence {
