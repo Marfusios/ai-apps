@@ -1,13 +1,16 @@
+import { useQuery } from '@tanstack/react-query';
 import { Outlet, ScrollRestoration } from 'react-router';
+import { configQuery } from './api';
 import { Footer } from './components/Footer';
 import { Header } from './components/Header';
 
 /**
- * The global frame (UI_DESIGN §3) around every route. The AI counter, sign-in and
- * snapshot date arrive with the API and auth work; until then the header slots are
- * empty and the footer omits the date.
+ * The global frame (UI_DESIGN §3) around every route. The snapshot date comes from
+ * `/api/config`; the AI counter and sign-in arrive with briefs and auth, so those
+ * header slots are empty for now.
  */
 export function AppShell() {
+  const config = useQuery(configQuery());
   return (
     <div className="flex min-h-dvh flex-col">
       <a href="#main" className="skip-link">
@@ -17,7 +20,7 @@ export function AppShell() {
       <main id="main" tabIndex={-1} className="flex flex-1 flex-col pt-2 outline-none">
         <Outlet />
       </main>
-      <Footer snapshotDate={null} />
+      <Footer snapshotDate={config.data?.snapshotDate ?? null} />
       <ScrollRestoration />
     </div>
   );

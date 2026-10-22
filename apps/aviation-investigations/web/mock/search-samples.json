@@ -1,0 +1,5011 @@
+{
+ "default": {
+  "query": {},
+  "response": {
+   "dataset": {
+    "revision": "fx-5b4a93ded6e99a06",
+    "snapshotDate": "2026-10-01"
+   },
+   "total": 21,
+   "page": 1,
+   "pageSize": 20,
+   "rows": [
+    {
+     "ntsbNo": "WPR26LA114",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2026-03-02",
+     "city": "Carefree",
+     "state": {
+      "code": "AZ",
+      "label": "Arizona"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR26LA114",
+       "registration": "N636DB",
+       "make": "AMERICAN CHAMPION AIRCRAFT",
+       "model": "8GCBC",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "landing",
+        "phaseDetail": {
+         "code": "552",
+         "label": "Landing, landing roll"
+        },
+        "event": {
+         "code": "096",
+         "label": "Nose over/nose down"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "landing"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "NITE",
+      "label": "Night"
+     },
+     "highestInjury": {
+      "code": "MINR",
+      "label": "Minor"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s decision to operate the airplane with a known mechanical defect, and the improper application of the main wheel brakes, which resulted in the airplane nosing over.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "DCA25MA108",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2025-01-30",
+     "city": "Washington",
+     "state": {
+      "code": "DC",
+      "label": "District of Columbia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "DCA25MA108A",
+       "registration": "N709PS",
+       "make": "BOMBARDIER INC",
+       "model": "CL-600-2C10",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "121",
+        "label": "Part 121 air carrier"
+       },
+       "purpose": {
+        "code": null,
+        "label": "Not reported"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "500",
+         "label": "Approach"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      },
+      {
+       "aircraftKey": 2,
+       "aircraftNtsbNo": "DCA25MA108B",
+       "registration": "UNREG",
+       "make": "SIKORSKY",
+       "model": "UH60",
+       "category": {
+        "code": "HELI",
+        "label": "Helicopter"
+       },
+       "farPart": {
+        "code": "ARMF",
+        "label": "Armed forces"
+       },
+       "purpose": {
+        "code": null,
+        "label": "Not reported"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "400",
+         "label": "En route"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach",
+      "en_route"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "NITE",
+      "label": "Night"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The Federal Aviation Administration’s (FAA) placement of a helicopter route in close proximity to a runway approach path; their failure to regularly review and evaluate helicopter routes and available data, and their failure to act on recommendations to mitigate the risk of a midair collision near Ronald Reagan Washington",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": true
+     }
+    },
+    {
+     "ntsbNo": "ERA25LA016",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-10-16",
+     "city": "Newnan",
+     "state": {
+      "code": "GA",
+      "label": "Georgia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ERA25LA016",
+       "registration": "N41370",
+       "make": "PIPER",
+       "model": "PA-28-151",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat during the engine run-up, which resulted in a partial loss of power due to carburetor icing during takeoff.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "ERA24LA303",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-07-10",
+     "city": "Thomasville",
+     "state": {
+      "code": "GA",
+      "label": "Georgia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ERA24LA303",
+       "registration": "N4JZ",
+       "make": "JONES",
+       "model": "LONG-EZ",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "402",
+         "label": "En route, cruise"
+        },
+        "event": {
+         "code": "338",
+         "label": "Part(s) separation from aircraft"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The in-flight separation of one of the wooden propeller blades for unknown reasons.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24FA190",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-06-12",
+     "city": "Elk River",
+     "state": {
+      "code": "ID",
+      "label": "Idaho"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24FA190",
+       "registration": "N34903",
+       "make": "CESSNA",
+       "model": "177B",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "120",
+         "label": "Controlled flight into terrain/object (CFIT)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s failure to maintain clearance from terrain while climbing in mountainous terrain during moderately high density altitude conditions, and conditions conducive to severe carburetor icing.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24LA154",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-05-16",
+     "city": "Lakeport",
+     "state": {
+      "code": "CA",
+      "label": "California"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24LA154",
+       "registration": "N4448L",
+       "make": "CESSNA",
+       "model": "172G",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "191",
+         "label": "Fuel starvation"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat, which resulted in a total loss of engine power shortly after takeoff due to fuel starvation as a result of carburetor ice.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN24FA064",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2023-12-14",
+     "city": "Christoval",
+     "state": {
+      "code": "TX",
+      "label": "Texas"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN24FA064",
+       "registration": "N188PC",
+       "make": "PILATUS",
+       "model": "PC-12/45",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "501",
+         "label": "Approach, IFR initial approach"
+        },
+        "event": {
+         "code": "240",
+         "label": "Loss of control in flight"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "IMC",
+      "label": "IMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s loss of control due to spatial disorientation while operating in instrument meteorological conditions. Contributing to the accident were the controller’s failure to issue an appropriate intercept angle for the final approach course, failure to advise the pilot that vectors would take the airplane through the",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": true
+     }
+    },
+    {
+     "ntsbNo": "CEN20LA361",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2020-08-24",
+     "city": "Crowley",
+     "state": {
+      "code": "LA",
+      "label": "Louisiana"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN20LA361",
+       "registration": "N639RR",
+       "make": "Cessna",
+       "model": "R182",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "AOBV",
+        "label": "Aerial observation"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "400",
+         "label": "En route"
+        },
+        "event": {
+         "code": "342",
+         "label": "Loss of engine power (partial)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The failure of the No. 4 cylinder exhaust valve that resulted in a partial loss of engine power. Based on available evidence, the reason for the failed valve was not determined.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN19FA024",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2018-11-04",
+     "city": "Uvalde",
+     "state": {
+      "code": "TX",
+      "label": "Texas"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN19FA024",
+       "registration": "N417WT",
+       "make": "Bell",
+       "model": "206",
+       "category": {
+        "code": "HELI",
+        "label": "Helicopter"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "400",
+         "label": "En route"
+        },
+        "event": {
+         "code": "120",
+         "label": "Controlled flight into terrain/object (CFIT)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "NITE",
+      "label": "Night"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot's controlled flight into terrain during night visual meteorological conditions. Contributing to the accident was the pilot improper decision to inhibit the helicopter's terrain warning systems and flight at low altitude.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN19FA009",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2018-10-17",
+     "city": "Fulton",
+     "state": {
+      "code": "MO",
+      "label": "Missouri"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN19FA009",
+       "registration": "N923SH",
+       "make": "Robinson",
+       "model": "R22",
+       "category": {
+        "code": "HELI",
+        "label": "Helicopter"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "INST",
+        "label": "Instructional"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "maneuvering",
+        "phaseDetail": {
+         "code": "450",
+         "label": "Maneuvering"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "maneuvering"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "A total loss of engine power due to carburetor icing, the pilot's delayed application of carburetor heat, and the pilot's delay in entering an autorotation following the loss of engine power, which resulted in a main rotor stall due to low rotor rpm and an uncontrolled descent into terrain.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "ANC15LA005",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2014-11-27",
+     "city": "Nikiski",
+     "state": {
+      "code": "AK",
+      "label": "Alaska"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ANC15LA005",
+       "registration": "N9720P",
+       "make": "PIPER",
+       "model": "PA 18-150",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "135",
+        "label": "Part 135 air taxi and commuter"
+       },
+       "purpose": {
+        "code": null,
+        "label": "Not reported"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "508",
+         "label": "Approach, VFR pattern final"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "SERS",
+      "label": "Serious"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The total loss of engine power due to carburetor icing, which resulted from the pilot’s failure to use carburetor heat while operating at low-power settings in an area conducive to carburetor icing.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR15FA010",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2014-10-12",
+     "city": "Yerington",
+     "state": {
+      "code": "NV",
+      "label": "Nevada"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR15FA010A",
+       "registration": "N3558C",
+       "make": "CESSNA",
+       "model": "170B",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "402",
+         "label": "En route, cruise"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      },
+      {
+       "aircraftKey": 2,
+       "aircraftNtsbNo": "WPR15FA010B",
+       "registration": "N991TP",
+       "make": "PETTIT",
+       "model": "SAVANNAH",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route",
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The failure of the Savannah pilot to maintain awareness of the position of the Cessna while attempting a join up maneuver. Contributing to the accident was the impaired decision-making of the Savannah's pilot due to the combined effects of licit and illicit medications. Also contributing to the accident was the failure",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": true
+     }
+    },
+    {
+     "ntsbNo": "CEN13FA030",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2012-10-25",
+     "city": "Maryland Heights",
+     "state": {
+      "code": "MO",
+      "label": "Missouri"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN13FA030",
+       "registration": "N55620",
+       "make": "PIPER",
+       "model": "PA-28-140",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "500",
+         "label": "Approach"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "NITE",
+      "label": "Night"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s failure to activate the carburetor heat while operating in conditions conducive to carburetor icing, which resulted in a loss of engine power due to carburetor ice.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN12LA175",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2012-02-24",
+     "city": "Rapid City",
+     "state": {
+      "code": "SD",
+      "label": "South Dakota"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN12LA175",
+       "registration": "N20GG",
+       "make": "PIPER",
+       "model": "PA-28-161",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "INST",
+        "label": "Instructional"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "401",
+         "label": "En route, climb to cruise"
+        },
+        "event": {
+         "code": "341",
+         "label": "Loss of engine power (total)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route"
+     ],
+     "conditions": {
+      "code": "IMC",
+      "label": "IMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The loss of engine power during climb due to carburetor icing. Contributing to the accident was the limited travel of the carburetor heat valve which prevented application of maximum carburetor heat.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN09CA566",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2009-09-06",
+     "city": "Mondovi",
+     "state": {
+      "code": "WI",
+      "label": "Wisconsin"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN09CA566",
+       "registration": "N3549W",
+       "make": "PIPER",
+       "model": "J3C-65",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "508",
+         "label": "Approach, VFR pattern final"
+        },
+        "event": {
+         "code": "240",
+         "label": "Loss of control in flight"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot's failure to maintain adequate airspeed while in the traffic pattern, which resulted in an aerodynamic stall.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN09FA115",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2009-01-03",
+     "city": "Justin",
+     "state": {
+      "code": "TX",
+      "label": "Texas"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN09FA115",
+       "registration": "N99YK",
+       "make": "NANCHANG CHINA",
+       "model": "CJ-6",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "507",
+         "label": "Approach, VFR pattern base"
+        },
+        "event": {
+         "code": "241",
+         "label": "Aerodynamic stall/spin"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot's failure to maintain adequate airspeed while maneuvering on approach, which resulted in an accelerated stall and subsequent loss of control.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "MIA08LA156",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2008-08-01",
+     "city": "Peachtree City",
+     "state": {
+      "code": "GA",
+      "label": "Georgia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "MIA08LA156",
+       "registration": "N227RD",
+       "make": "DIAMOND",
+       "model": "DA-20-C1",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "FLTS",
+        "label": "Flight test"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "507",
+         "label": "Approach, VFR pattern base"
+        },
+        "event": {
+         "code": "342",
+         "label": "Loss of engine power (partial)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "MINR",
+      "label": "Minor"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "A partial loss of engine power for undetermined reasons.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "DEN08LA103",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2008-06-12",
+     "city": "Lyons",
+     "state": {
+      "code": "KS",
+      "label": "Kansas"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "DEN08LA103",
+       "registration": "N9639G",
+       "make": "CESSNA",
+       "model": "A188B",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "137",
+        "label": "Part 137 agricultural"
+       },
+       "purpose": {
+        "code": "AAPL",
+        "label": "Aerial application"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "maneuvering",
+        "phaseDetail": {
+         "code": "450",
+         "label": "Maneuvering"
+        },
+        "event": {
+         "code": "342",
+         "label": "Loss of engine power (partial)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "maneuvering"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "the loss of engine power for undetermined reasons.  A contributing factor was the dirt embankment.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "NYC08LA106",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2008-02-20",
+     "city": "Pahokee",
+     "state": {
+      "code": "FL",
+      "label": "Florida"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "NYC08LA106",
+       "registration": "N36GJ",
+       "make": "Raytheon",
+       "model": "A36",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "402",
+         "label": "En route, cruise"
+        },
+        "event": {
+         "code": "341",
+         "label": "Loss of engine power (total)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot's decision to depart with a known deficiency with the engine, which resulted in a loss of engine power.  Contributing to the accident was the loss of engine power due to the failure of the engine-driven fuel pump.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "DFW08TA066",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2008-02-08",
+     "city": "Valentine",
+     "state": {
+      "code": "TX",
+      "label": "Texas"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "DFW08TA066",
+       "registration": "N66372",
+       "make": "Hughes",
+       "model": "OH-6",
+       "category": {
+        "code": "HELI",
+        "label": "Helicopter"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PUBF",
+        "label": "Public use, federal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "maneuvering",
+        "phaseDetail": {
+         "code": "450",
+         "label": "Maneuvering"
+        },
+        "event": {
+         "code": "341",
+         "label": "Loss of engine power (total)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "maneuvering"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "MINR",
+      "label": "Minor"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The contract mechanic's failure to properly secure the castellated nut that attached the governor lever control rod to the idler bell crank.  Contributing to the accident was the lack of maintenance oversight by the operator.",
+      "highlights": [],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    }
+   ],
+   "facets": {
+    "completion": [
+     {
+      "value": "completed_with_cause",
+      "label": "Completed, with probable cause",
+      "count": 21
+     },
+     {
+      "value": "completed_without_cause",
+      "label": "Completed, no probable-cause text",
+      "count": 1
+     },
+     {
+      "value": "other_status",
+      "label": "Other status",
+      "count": 4
+     }
+    ],
+    "phase": [
+     {
+      "value": "en_route",
+      "label": "En route",
+      "count": 7
+     },
+     {
+      "value": "approach",
+      "label": "Approach",
+      "count": 7
+     },
+     {
+      "value": "initial_climb",
+      "label": "Initial climb",
+      "count": 5
+     },
+     {
+      "value": "maneuvering",
+      "label": "Maneuvering",
+      "count": 3
+     },
+     {
+      "value": "landing",
+      "label": "Landing",
+      "count": 2
+     }
+    ],
+    "injury": [
+     {
+      "value": "NONE",
+      "label": "None",
+      "count": 9
+     },
+     {
+      "value": "FATL",
+      "label": "Fatal",
+      "count": 8
+     },
+     {
+      "value": "MINR",
+      "label": "Minor",
+      "count": 3
+     },
+     {
+      "value": "SERS",
+      "label": "Serious",
+      "count": 1
+     }
+    ],
+    "conditions": [
+     {
+      "value": "VMC",
+      "label": "VMC",
+      "count": 19
+     },
+     {
+      "value": "IMC",
+      "label": "IMC",
+      "count": 2
+     }
+    ],
+    "light": [
+     {
+      "value": "DAYL",
+      "label": "Day",
+      "count": 17
+     },
+     {
+      "value": "NITE",
+      "label": "Night",
+      "count": 4
+     }
+    ],
+    "category": [
+     {
+      "value": "AIR",
+      "label": "Airplane",
+      "count": 18
+     },
+     {
+      "value": "HELI",
+      "label": "Helicopter",
+      "count": 4
+     }
+    ],
+    "engine": [
+     {
+      "value": "REC",
+      "label": "Reciprocating",
+      "count": 17
+     },
+     {
+      "value": "TS",
+      "label": "Turboshaft",
+      "count": 3
+     },
+     {
+      "value": "TP",
+      "label": "Turboprop",
+      "count": 1
+     },
+     {
+      "value": "TF",
+      "label": "Turbofan",
+      "count": 1
+     }
+    ],
+    "far_part": [
+     {
+      "value": "091",
+      "label": "Part 91",
+      "count": 18
+     },
+     {
+      "value": "121",
+      "label": "Part 121 air carrier",
+      "count": 1
+     },
+     {
+      "value": "135",
+      "label": "Part 135 air taxi and commuter",
+      "count": 1
+     },
+     {
+      "value": "137",
+      "label": "Part 137 agricultural",
+      "count": 1
+     },
+     {
+      "value": "ARMF",
+      "label": "Armed forces",
+      "count": 1
+     }
+    ],
+    "purpose": [
+     {
+      "value": "PERS",
+      "label": "Personal",
+      "count": 13
+     },
+     {
+      "value": "INST",
+      "label": "Instructional",
+      "count": 2
+     },
+     {
+      "value": "AAPL",
+      "label": "Aerial application",
+      "count": 1
+     },
+     {
+      "value": "AOBV",
+      "label": "Aerial observation",
+      "count": 1
+     },
+     {
+      "value": "FLTS",
+      "label": "Flight test",
+      "count": 1
+     },
+     {
+      "value": "PUBF",
+      "label": "Public use, federal",
+      "count": 1
+     },
+     {
+      "value": "blank",
+      "label": "Not reported",
+      "count": 2
+     }
+    ],
+    "state": [
+     {
+      "value": "TX",
+      "label": "Texas",
+      "count": 4
+     },
+     {
+      "value": "GA",
+      "label": "Georgia",
+      "count": 3
+     },
+     {
+      "value": "CA",
+      "label": "California",
+      "count": 2
+     },
+     {
+      "value": "MO",
+      "label": "Missouri",
+      "count": 2
+     },
+     {
+      "value": "AK",
+      "label": "Alaska",
+      "count": 1
+     },
+     {
+      "value": "AZ",
+      "label": "Arizona",
+      "count": 1
+     },
+     {
+      "value": "DC",
+      "label": "District of Columbia",
+      "count": 1
+     },
+     {
+      "value": "FL",
+      "label": "Florida",
+      "count": 1
+     },
+     {
+      "value": "ID",
+      "label": "Idaho",
+      "count": 1
+     },
+     {
+      "value": "KS",
+      "label": "Kansas",
+      "count": 1
+     },
+     {
+      "value": "LA",
+      "label": "Louisiana",
+      "count": 1
+     },
+     {
+      "value": "NV",
+      "label": "Nevada",
+      "count": 1
+     },
+     {
+      "value": "SD",
+      "label": "South Dakota",
+      "count": 1
+     },
+     {
+      "value": "WI",
+      "label": "Wisconsin",
+      "count": 1
+     }
+    ]
+   },
+   "mentionedIn": {
+    "anywhere": 21,
+    "probable_cause": 21
+   },
+   "years": [
+    {
+     "year": 2008,
+     "completed": 5,
+     "other": 0
+    },
+    {
+     "year": 2009,
+     "completed": 2,
+     "other": 0
+    },
+    {
+     "year": 2010,
+     "completed": 0,
+     "other": 1
+    },
+    {
+     "year": 2011,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2012,
+     "completed": 2,
+     "other": 0
+    },
+    {
+     "year": 2013,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2014,
+     "completed": 2,
+     "other": 0
+    },
+    {
+     "year": 2015,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2016,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2017,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2018,
+     "completed": 2,
+     "other": 0
+    },
+    {
+     "year": 2019,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2020,
+     "completed": 1,
+     "other": 0
+    },
+    {
+     "year": 2021,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2022,
+     "completed": 0,
+     "other": 1
+    },
+    {
+     "year": 2023,
+     "completed": 1,
+     "other": 1
+    },
+    {
+     "year": 2024,
+     "completed": 4,
+     "other": 0
+    },
+    {
+     "year": 2025,
+     "completed": 1,
+     "other": 1
+    },
+    {
+     "year": 2026,
+     "completed": 1,
+     "other": 1
+    }
+   ],
+   "multiAircraft": 3,
+   "relaxations": []
+  }
+ },
+ "carburetor-icing": {
+  "query": {
+   "q": "carburetor icing"
+  },
+  "response": {
+   "dataset": {
+    "revision": "fx-5b4a93ded6e99a06",
+    "snapshotDate": "2026-10-01"
+   },
+   "total": 7,
+   "page": 1,
+   "pageSize": 20,
+   "rows": [
+    {
+     "ntsbNo": "ERA25LA016",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-10-16",
+     "city": "Newnan",
+     "state": {
+      "code": "GA",
+      "label": "Georgia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ERA25LA016",
+       "registration": "N41370",
+       "make": "PIPER",
+       "model": "PA-28-151",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat during the engine run-up, which resulted in a partial loss of power due to carburetor icing during takeoff.",
+      "highlights": [
+       {
+        "start": 30,
+        "end": 40
+       },
+       {
+        "start": 121,
+        "end": 137
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24FA190",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-06-12",
+     "city": "Elk River",
+     "state": {
+      "code": "ID",
+      "label": "Idaho"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24FA190",
+       "registration": "N34903",
+       "make": "CESSNA",
+       "model": "177B",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "120",
+         "label": "Controlled flight into terrain/object (CFIT)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s failure to maintain clearance from terrain while climbing in mountainous terrain during moderately high density altitude conditions, and conditions conducive to severe carburetor icing.",
+      "highlights": [
+       {
+        "start": 180,
+        "end": 196
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24LA154",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-05-16",
+     "city": "Lakeport",
+     "state": {
+      "code": "CA",
+      "label": "California"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24LA154",
+       "registration": "N4448L",
+       "make": "CESSNA",
+       "model": "172G",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "191",
+         "label": "Fuel starvation"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat, which resulted in a total loss of engine power shortly after takeoff due to fuel starvation as a result of carburetor ice.",
+      "highlights": [
+       {
+        "start": 30,
+        "end": 40
+       },
+       {
+        "start": 154,
+        "end": 168
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN19FA009",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2018-10-17",
+     "city": "Fulton",
+     "state": {
+      "code": "MO",
+      "label": "Missouri"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN19FA009",
+       "registration": "N923SH",
+       "make": "Robinson",
+       "model": "R22",
+       "category": {
+        "code": "HELI",
+        "label": "Helicopter"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "INST",
+        "label": "Instructional"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "maneuvering",
+        "phaseDetail": {
+         "code": "450",
+         "label": "Maneuvering"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "maneuvering"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "A total loss of engine power due to carburetor icing, the pilot's delayed application of carburetor heat, and the pilot's delay in entering an autorotation following the loss of engine power, which resulted in a main rotor stall due to low rotor rpm and an uncontrolled descent into terrain.",
+      "highlights": [
+       {
+        "start": 36,
+        "end": 52
+       },
+       {
+        "start": 89,
+        "end": 99
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "ANC15LA005",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2014-11-27",
+     "city": "Nikiski",
+     "state": {
+      "code": "AK",
+      "label": "Alaska"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ANC15LA005",
+       "registration": "N9720P",
+       "make": "PIPER",
+       "model": "PA 18-150",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "135",
+        "label": "Part 135 air taxi and commuter"
+       },
+       "purpose": {
+        "code": null,
+        "label": "Not reported"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "508",
+         "label": "Approach, VFR pattern final"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "SERS",
+      "label": "Serious"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The total loss of engine power due to carburetor icing, which resulted from the pilot’s failure to use carburetor heat while operating at low-power settings in an area conducive to carburetor icing.",
+      "highlights": [
+       {
+        "start": 38,
+        "end": 54
+       },
+       {
+        "start": 103,
+        "end": 113
+       },
+       {
+        "start": 181,
+        "end": 197
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN13FA030",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2012-10-25",
+     "city": "Maryland Heights",
+     "state": {
+      "code": "MO",
+      "label": "Missouri"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN13FA030",
+       "registration": "N55620",
+       "make": "PIPER",
+       "model": "PA-28-140",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "500",
+         "label": "Approach"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "NITE",
+      "label": "Night"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s failure to activate the carburetor heat while operating in conditions conducive to carburetor icing, which resulted in a loss of engine power due to carburetor ice.",
+      "highlights": [
+       {
+        "start": 36,
+        "end": 46
+       },
+       {
+        "start": 95,
+        "end": 111
+       },
+       {
+        "start": 161,
+        "end": 175
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN12LA175",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2012-02-24",
+     "city": "Rapid City",
+     "state": {
+      "code": "SD",
+      "label": "South Dakota"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN12LA175",
+       "registration": "N20GG",
+       "make": "PIPER",
+       "model": "PA-28-161",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "INST",
+        "label": "Instructional"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "401",
+         "label": "En route, climb to cruise"
+        },
+        "event": {
+         "code": "341",
+         "label": "Loss of engine power (total)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route"
+     ],
+     "conditions": {
+      "code": "IMC",
+      "label": "IMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The loss of engine power during climb due to carburetor icing. Contributing to the accident was the limited travel of the carburetor heat valve which prevented application of maximum carburetor heat.",
+      "highlights": [
+       {
+        "start": 45,
+        "end": 61
+       },
+       {
+        "start": 122,
+        "end": 132
+       },
+       {
+        "start": 183,
+        "end": 193
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    }
+   ],
+   "facets": {
+    "completion": [
+     {
+      "value": "completed_with_cause",
+      "label": "Completed, with probable cause",
+      "count": 7
+     },
+     {
+      "value": "other_status",
+      "label": "Other status",
+      "count": 2
+     }
+    ],
+    "phase": [
+     {
+      "value": "initial_climb",
+      "label": "Initial climb",
+      "count": 3
+     },
+     {
+      "value": "approach",
+      "label": "Approach",
+      "count": 2
+     },
+     {
+      "value": "en_route",
+      "label": "En route",
+      "count": 1
+     },
+     {
+      "value": "maneuvering",
+      "label": "Maneuvering",
+      "count": 1
+     }
+    ],
+    "injury": [
+     {
+      "value": "FATL",
+      "label": "Fatal",
+      "count": 3
+     },
+     {
+      "value": "NONE",
+      "label": "None",
+      "count": 3
+     },
+     {
+      "value": "SERS",
+      "label": "Serious",
+      "count": 1
+     }
+    ],
+    "conditions": [
+     {
+      "value": "VMC",
+      "label": "VMC",
+      "count": 6
+     },
+     {
+      "value": "IMC",
+      "label": "IMC",
+      "count": 1
+     }
+    ],
+    "light": [
+     {
+      "value": "DAYL",
+      "label": "Day",
+      "count": 6
+     },
+     {
+      "value": "NITE",
+      "label": "Night",
+      "count": 1
+     }
+    ],
+    "category": [
+     {
+      "value": "AIR",
+      "label": "Airplane",
+      "count": 6
+     },
+     {
+      "value": "HELI",
+      "label": "Helicopter",
+      "count": 1
+     }
+    ],
+    "engine": [
+     {
+      "value": "REC",
+      "label": "Reciprocating",
+      "count": 7
+     }
+    ],
+    "far_part": [
+     {
+      "value": "091",
+      "label": "Part 91",
+      "count": 6
+     },
+     {
+      "value": "135",
+      "label": "Part 135 air taxi and commuter",
+      "count": 1
+     }
+    ],
+    "purpose": [
+     {
+      "value": "PERS",
+      "label": "Personal",
+      "count": 4
+     },
+     {
+      "value": "INST",
+      "label": "Instructional",
+      "count": 2
+     },
+     {
+      "value": "blank",
+      "label": "Not reported",
+      "count": 1
+     }
+    ],
+    "state": [
+     {
+      "value": "MO",
+      "label": "Missouri",
+      "count": 2
+     },
+     {
+      "value": "AK",
+      "label": "Alaska",
+      "count": 1
+     },
+     {
+      "value": "CA",
+      "label": "California",
+      "count": 1
+     },
+     {
+      "value": "GA",
+      "label": "Georgia",
+      "count": 1
+     },
+     {
+      "value": "ID",
+      "label": "Idaho",
+      "count": 1
+     },
+     {
+      "value": "SD",
+      "label": "South Dakota",
+      "count": 1
+     }
+    ]
+   },
+   "mentionedIn": {
+    "anywhere": 7,
+    "probable_cause": 7
+   },
+   "years": [
+    {
+     "year": 2008,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2009,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2010,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2011,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2012,
+     "completed": 2,
+     "other": 0
+    },
+    {
+     "year": 2013,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2014,
+     "completed": 1,
+     "other": 0
+    },
+    {
+     "year": 2015,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2016,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2017,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2018,
+     "completed": 1,
+     "other": 0
+    },
+    {
+     "year": 2019,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2020,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2021,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2022,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2023,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2024,
+     "completed": 3,
+     "other": 0
+    },
+    {
+     "year": 2025,
+     "completed": 0,
+     "other": 1
+    },
+    {
+     "year": 2026,
+     "completed": 0,
+     "other": 1
+    }
+   ],
+   "multiAircraft": 0,
+   "relaxations": []
+  }
+ },
+ "carburetor-icing-probable-cause": {
+  "query": {
+   "q": "carburetor icing",
+   "mentionedIn": "probable_cause"
+  },
+  "response": {
+   "dataset": {
+    "revision": "fx-5b4a93ded6e99a06",
+    "snapshotDate": "2026-10-01"
+   },
+   "total": 7,
+   "page": 1,
+   "pageSize": 20,
+   "rows": [
+    {
+     "ntsbNo": "ERA25LA016",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-10-16",
+     "city": "Newnan",
+     "state": {
+      "code": "GA",
+      "label": "Georgia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ERA25LA016",
+       "registration": "N41370",
+       "make": "PIPER",
+       "model": "PA-28-151",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat during the engine run-up, which resulted in a partial loss of power due to carburetor icing during takeoff.",
+      "highlights": [
+       {
+        "start": 30,
+        "end": 40
+       },
+       {
+        "start": 121,
+        "end": 137
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24FA190",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-06-12",
+     "city": "Elk River",
+     "state": {
+      "code": "ID",
+      "label": "Idaho"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24FA190",
+       "registration": "N34903",
+       "make": "CESSNA",
+       "model": "177B",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "120",
+         "label": "Controlled flight into terrain/object (CFIT)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s failure to maintain clearance from terrain while climbing in mountainous terrain during moderately high density altitude conditions, and conditions conducive to severe carburetor icing.",
+      "highlights": [
+       {
+        "start": 180,
+        "end": 196
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24LA154",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-05-16",
+     "city": "Lakeport",
+     "state": {
+      "code": "CA",
+      "label": "California"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24LA154",
+       "registration": "N4448L",
+       "make": "CESSNA",
+       "model": "172G",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "191",
+         "label": "Fuel starvation"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat, which resulted in a total loss of engine power shortly after takeoff due to fuel starvation as a result of carburetor ice.",
+      "highlights": [
+       {
+        "start": 30,
+        "end": 40
+       },
+       {
+        "start": 154,
+        "end": 168
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN19FA009",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2018-10-17",
+     "city": "Fulton",
+     "state": {
+      "code": "MO",
+      "label": "Missouri"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN19FA009",
+       "registration": "N923SH",
+       "make": "Robinson",
+       "model": "R22",
+       "category": {
+        "code": "HELI",
+        "label": "Helicopter"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "INST",
+        "label": "Instructional"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "maneuvering",
+        "phaseDetail": {
+         "code": "450",
+         "label": "Maneuvering"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "maneuvering"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "A total loss of engine power due to carburetor icing, the pilot's delayed application of carburetor heat, and the pilot's delay in entering an autorotation following the loss of engine power, which resulted in a main rotor stall due to low rotor rpm and an uncontrolled descent into terrain.",
+      "highlights": [
+       {
+        "start": 36,
+        "end": 52
+       },
+       {
+        "start": 89,
+        "end": 99
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "ANC15LA005",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2014-11-27",
+     "city": "Nikiski",
+     "state": {
+      "code": "AK",
+      "label": "Alaska"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ANC15LA005",
+       "registration": "N9720P",
+       "make": "PIPER",
+       "model": "PA 18-150",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "135",
+        "label": "Part 135 air taxi and commuter"
+       },
+       "purpose": {
+        "code": null,
+        "label": "Not reported"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "508",
+         "label": "Approach, VFR pattern final"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "SERS",
+      "label": "Serious"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The total loss of engine power due to carburetor icing, which resulted from the pilot’s failure to use carburetor heat while operating at low-power settings in an area conducive to carburetor icing.",
+      "highlights": [
+       {
+        "start": 38,
+        "end": 54
+       },
+       {
+        "start": 103,
+        "end": 113
+       },
+       {
+        "start": 181,
+        "end": 197
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN13FA030",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2012-10-25",
+     "city": "Maryland Heights",
+     "state": {
+      "code": "MO",
+      "label": "Missouri"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN13FA030",
+       "registration": "N55620",
+       "make": "PIPER",
+       "model": "PA-28-140",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "500",
+         "label": "Approach"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "NITE",
+      "label": "Night"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s failure to activate the carburetor heat while operating in conditions conducive to carburetor icing, which resulted in a loss of engine power due to carburetor ice.",
+      "highlights": [
+       {
+        "start": 36,
+        "end": 46
+       },
+       {
+        "start": 95,
+        "end": 111
+       },
+       {
+        "start": 161,
+        "end": 175
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "CEN12LA175",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2012-02-24",
+     "city": "Rapid City",
+     "state": {
+      "code": "SD",
+      "label": "South Dakota"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "CEN12LA175",
+       "registration": "N20GG",
+       "make": "PIPER",
+       "model": "PA-28-161",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "INST",
+        "label": "Instructional"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "401",
+         "label": "En route, climb to cruise"
+        },
+        "event": {
+         "code": "341",
+         "label": "Loss of engine power (total)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route"
+     ],
+     "conditions": {
+      "code": "IMC",
+      "label": "IMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The loss of engine power during climb due to carburetor icing. Contributing to the accident was the limited travel of the carburetor heat valve which prevented application of maximum carburetor heat.",
+      "highlights": [
+       {
+        "start": 45,
+        "end": 61
+       },
+       {
+        "start": 122,
+        "end": 132
+       },
+       {
+        "start": 183,
+        "end": 193
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    }
+   ],
+   "facets": {
+    "completion": [
+     {
+      "value": "completed_with_cause",
+      "label": "Completed, with probable cause",
+      "count": 7
+     }
+    ],
+    "phase": [
+     {
+      "value": "initial_climb",
+      "label": "Initial climb",
+      "count": 3
+     },
+     {
+      "value": "approach",
+      "label": "Approach",
+      "count": 2
+     },
+     {
+      "value": "en_route",
+      "label": "En route",
+      "count": 1
+     },
+     {
+      "value": "maneuvering",
+      "label": "Maneuvering",
+      "count": 1
+     }
+    ],
+    "injury": [
+     {
+      "value": "FATL",
+      "label": "Fatal",
+      "count": 3
+     },
+     {
+      "value": "NONE",
+      "label": "None",
+      "count": 3
+     },
+     {
+      "value": "SERS",
+      "label": "Serious",
+      "count": 1
+     }
+    ],
+    "conditions": [
+     {
+      "value": "VMC",
+      "label": "VMC",
+      "count": 6
+     },
+     {
+      "value": "IMC",
+      "label": "IMC",
+      "count": 1
+     }
+    ],
+    "light": [
+     {
+      "value": "DAYL",
+      "label": "Day",
+      "count": 6
+     },
+     {
+      "value": "NITE",
+      "label": "Night",
+      "count": 1
+     }
+    ],
+    "category": [
+     {
+      "value": "AIR",
+      "label": "Airplane",
+      "count": 6
+     },
+     {
+      "value": "HELI",
+      "label": "Helicopter",
+      "count": 1
+     }
+    ],
+    "engine": [
+     {
+      "value": "REC",
+      "label": "Reciprocating",
+      "count": 7
+     }
+    ],
+    "far_part": [
+     {
+      "value": "091",
+      "label": "Part 91",
+      "count": 6
+     },
+     {
+      "value": "135",
+      "label": "Part 135 air taxi and commuter",
+      "count": 1
+     }
+    ],
+    "purpose": [
+     {
+      "value": "PERS",
+      "label": "Personal",
+      "count": 4
+     },
+     {
+      "value": "INST",
+      "label": "Instructional",
+      "count": 2
+     },
+     {
+      "value": "blank",
+      "label": "Not reported",
+      "count": 1
+     }
+    ],
+    "state": [
+     {
+      "value": "MO",
+      "label": "Missouri",
+      "count": 2
+     },
+     {
+      "value": "AK",
+      "label": "Alaska",
+      "count": 1
+     },
+     {
+      "value": "CA",
+      "label": "California",
+      "count": 1
+     },
+     {
+      "value": "GA",
+      "label": "Georgia",
+      "count": 1
+     },
+     {
+      "value": "ID",
+      "label": "Idaho",
+      "count": 1
+     },
+     {
+      "value": "SD",
+      "label": "South Dakota",
+      "count": 1
+     }
+    ]
+   },
+   "mentionedIn": {
+    "anywhere": 7,
+    "probable_cause": 7
+   },
+   "years": [
+    {
+     "year": 2008,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2009,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2010,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2011,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2012,
+     "completed": 2,
+     "other": 0
+    },
+    {
+     "year": 2013,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2014,
+     "completed": 1,
+     "other": 0
+    },
+    {
+     "year": 2015,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2016,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2017,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2018,
+     "completed": 1,
+     "other": 0
+    },
+    {
+     "year": 2019,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2020,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2021,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2022,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2023,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2024,
+     "completed": 3,
+     "other": 0
+    },
+    {
+     "year": 2025,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2026,
+     "completed": 0,
+     "other": 0
+    }
+   ],
+   "multiAircraft": 0,
+   "relaxations": []
+  }
+ },
+ "carburetor-icing-initial-climb": {
+  "query": {
+   "q": "carburetor icing",
+   "phase": "initial_climb"
+  },
+  "response": {
+   "dataset": {
+    "revision": "fx-5b4a93ded6e99a06",
+    "snapshotDate": "2026-10-01"
+   },
+   "total": 3,
+   "page": 1,
+   "pageSize": 20,
+   "rows": [
+    {
+     "ntsbNo": "ERA25LA016",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-10-16",
+     "city": "Newnan",
+     "state": {
+      "code": "GA",
+      "label": "Georgia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "ERA25LA016",
+       "registration": "N41370",
+       "make": "PIPER",
+       "model": "PA-28-151",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "190",
+         "label": "Fuel related"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat during the engine run-up, which resulted in a partial loss of power due to carburetor icing during takeoff.",
+      "highlights": [
+       {
+        "start": 30,
+        "end": 40
+       },
+       {
+        "start": 121,
+        "end": 137
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24FA190",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-06-12",
+     "city": "Elk River",
+     "state": {
+      "code": "ID",
+      "label": "Idaho"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24FA190",
+       "registration": "N34903",
+       "make": "CESSNA",
+       "model": "177B",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "120",
+         "label": "Controlled flight into terrain/object (CFIT)"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s failure to maintain clearance from terrain while climbing in mountainous terrain during moderately high density altitude conditions, and conditions conducive to severe carburetor icing.",
+      "highlights": [
+       {
+        "start": 180,
+        "end": 196
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    },
+    {
+     "ntsbNo": "WPR24LA154",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2024-05-16",
+     "city": "Lakeport",
+     "state": {
+      "code": "CA",
+      "label": "California"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR24LA154",
+       "registration": "N4448L",
+       "make": "CESSNA",
+       "model": "172G",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "SUBS",
+        "label": "Substantial damage"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "191",
+         "label": "Fuel starvation"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "NONE",
+      "label": "None"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "The pilot’s inadequate use of carburetor heat, which resulted in a total loss of engine power shortly after takeoff due to fuel starvation as a result of carburetor ice.",
+      "highlights": [
+       {
+        "start": 30,
+        "end": 40
+       },
+       {
+        "start": 154,
+        "end": 168
+       }
+      ],
+      "truncatedStart": false,
+      "truncatedEnd": false
+     }
+    }
+   ],
+   "facets": {
+    "completion": [
+     {
+      "value": "completed_with_cause",
+      "label": "Completed, with probable cause",
+      "count": 3
+     },
+     {
+      "value": "other_status",
+      "label": "Other status",
+      "count": 1
+     }
+    ],
+    "phase": [
+     {
+      "value": "initial_climb",
+      "label": "Initial climb",
+      "count": 3
+     },
+     {
+      "value": "approach",
+      "label": "Approach",
+      "count": 2
+     },
+     {
+      "value": "en_route",
+      "label": "En route",
+      "count": 1
+     },
+     {
+      "value": "maneuvering",
+      "label": "Maneuvering",
+      "count": 1
+     }
+    ],
+    "injury": [
+     {
+      "value": "NONE",
+      "label": "None",
+      "count": 2
+     },
+     {
+      "value": "FATL",
+      "label": "Fatal",
+      "count": 1
+     }
+    ],
+    "conditions": [
+     {
+      "value": "VMC",
+      "label": "VMC",
+      "count": 3
+     }
+    ],
+    "light": [
+     {
+      "value": "DAYL",
+      "label": "Day",
+      "count": 3
+     }
+    ],
+    "category": [
+     {
+      "value": "AIR",
+      "label": "Airplane",
+      "count": 3
+     }
+    ],
+    "engine": [
+     {
+      "value": "REC",
+      "label": "Reciprocating",
+      "count": 3
+     }
+    ],
+    "far_part": [
+     {
+      "value": "091",
+      "label": "Part 91",
+      "count": 3
+     }
+    ],
+    "purpose": [
+     {
+      "value": "PERS",
+      "label": "Personal",
+      "count": 3
+     }
+    ],
+    "state": [
+     {
+      "value": "CA",
+      "label": "California",
+      "count": 1
+     },
+     {
+      "value": "GA",
+      "label": "Georgia",
+      "count": 1
+     },
+     {
+      "value": "ID",
+      "label": "Idaho",
+      "count": 1
+     }
+    ]
+   },
+   "mentionedIn": {
+    "anywhere": 3,
+    "probable_cause": 3
+   },
+   "years": [
+    {
+     "year": 2008,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2009,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2010,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2011,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2012,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2013,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2014,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2015,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2016,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2017,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2018,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2019,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2020,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2021,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2022,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2023,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2024,
+     "completed": 3,
+     "other": 0
+    },
+    {
+     "year": 2025,
+     "completed": 0,
+     "other": 1
+    },
+    {
+     "year": 2026,
+     "completed": 0,
+     "other": 0
+    }
+   ],
+   "multiAircraft": 0,
+   "relaxations": []
+  }
+ },
+ "midair-all-records": {
+  "query": {
+   "q": "midair",
+   "completion": "any"
+  },
+  "response": {
+   "dataset": {
+    "revision": "fx-5b4a93ded6e99a06",
+    "snapshotDate": "2026-10-01"
+   },
+   "total": 2,
+   "page": 1,
+   "pageSize": 20,
+   "rows": [
+    {
+     "ntsbNo": "DCA25MA108",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2025-01-30",
+     "city": "Washington",
+     "state": {
+      "code": "DC",
+      "label": "District of Columbia"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "DCA25MA108A",
+       "registration": "N709PS",
+       "make": "BOMBARDIER INC",
+       "model": "CL-600-2C10",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "121",
+        "label": "Part 121 air carrier"
+       },
+       "purpose": {
+        "code": null,
+        "label": "Not reported"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "approach",
+        "phaseDetail": {
+         "code": "500",
+         "label": "Approach"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      },
+      {
+       "aircraftKey": 2,
+       "aircraftNtsbNo": "DCA25MA108B",
+       "registration": "UNREG",
+       "make": "SIKORSKY",
+       "model": "UH60",
+       "category": {
+        "code": "HELI",
+        "label": "Helicopter"
+       },
+       "farPart": {
+        "code": "ARMF",
+        "label": "Armed forces"
+       },
+       "purpose": {
+        "code": null,
+        "label": "Not reported"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "400",
+         "label": "En route"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "approach",
+      "en_route"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "NITE",
+      "label": "Night"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "probable_cause",
+      "label": "Probable cause",
+      "text": "evaluate helicopter routes and available data, and their failure to act on recommendations to mitigate the risk of a midair collision near Ronald Reagan Washington National Airport (DCA); as well as the air traffic system’s overreliance on visual separation in order to promote efficient traffic flow without consideration for the limitations of the see-and-avoid",
+      "highlights": [
+       {
+        "start": 117,
+        "end": 123
+       }
+      ],
+      "truncatedStart": true,
+      "truncatedEnd": true
+     }
+    },
+    {
+     "ntsbNo": "WPR15FA010",
+     "eventType": {
+      "code": "ACC",
+      "label": "Accident"
+     },
+     "date": "2014-10-12",
+     "city": "Yerington",
+     "state": {
+      "code": "NV",
+      "label": "Nevada"
+     },
+     "country": "USA",
+     "aircraft": [
+      {
+       "aircraftKey": 1,
+       "aircraftNtsbNo": "WPR15FA010A",
+       "registration": "N3558C",
+       "make": "CESSNA",
+       "model": "170B",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "en_route",
+        "phaseDetail": {
+         "code": "402",
+         "label": "En route, cruise"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      },
+      {
+       "aircraftKey": 2,
+       "aircraftNtsbNo": "WPR15FA010B",
+       "registration": "N991TP",
+       "make": "PETTIT",
+       "model": "SAVANNAH",
+       "category": {
+        "code": "AIR",
+        "label": "Airplane"
+       },
+       "farPart": {
+        "code": "091",
+        "label": "Part 91"
+       },
+       "purpose": {
+        "code": "PERS",
+        "label": "Personal"
+       },
+       "damage": {
+        "code": "DEST",
+        "label": "Destroyed"
+       },
+       "definingEvent": {
+        "phase": "initial_climb",
+        "phaseDetail": {
+         "code": "350",
+         "label": "Initial climb"
+        },
+        "event": {
+         "code": "250",
+         "label": "Midair collision"
+        }
+       }
+      }
+     ],
+     "definingPhases": [
+      "en_route",
+      "initial_climb"
+     ],
+     "conditions": {
+      "code": "VMC",
+      "label": "VMC"
+     },
+     "light": {
+      "code": "DAYL",
+      "label": "Day"
+     },
+     "highestInjury": {
+      "code": "FATL",
+      "label": "Fatal"
+     },
+     "completion": {
+      "class": "completed",
+      "rawStatus": "B",
+      "hasProbableCause": true,
+      "mappingVersion": "v1-empirical",
+      "mappingVerified": false
+     },
+     "snippet": {
+      "section": "factual",
+      "label": "Factual",
+      "text": "daylight time, a Cessna 170B, N3558C, and an experimental amateur built Pettit Savannah, N991TP, collided in midair about 12 miles north of Yerington, Nevada. The commercial pilot, sole occupant of the Cessna, and the private pilot, sole occupant of the Savannah, were fatally injured. Both the Cessna and Savannah impacted terrain and were destroyed. Both airplanes",
+      "highlights": [
+       {
+        "start": 109,
+        "end": 115
+       }
+      ],
+      "truncatedStart": true,
+      "truncatedEnd": true
+     }
+    }
+   ],
+   "facets": {
+    "completion": [
+     {
+      "value": "completed_with_cause",
+      "label": "Completed, with probable cause",
+      "count": 2
+     }
+    ],
+    "phase": [
+     {
+      "value": "en_route",
+      "label": "En route",
+      "count": 2
+     },
+     {
+      "value": "initial_climb",
+      "label": "Initial climb",
+      "count": 1
+     },
+     {
+      "value": "approach",
+      "label": "Approach",
+      "count": 1
+     }
+    ],
+    "injury": [
+     {
+      "value": "FATL",
+      "label": "Fatal",
+      "count": 2
+     }
+    ],
+    "conditions": [
+     {
+      "value": "VMC",
+      "label": "VMC",
+      "count": 2
+     }
+    ],
+    "light": [
+     {
+      "value": "DAYL",
+      "label": "Day",
+      "count": 1
+     },
+     {
+      "value": "NITE",
+      "label": "Night",
+      "count": 1
+     }
+    ],
+    "category": [
+     {
+      "value": "AIR",
+      "label": "Airplane",
+      "count": 2
+     },
+     {
+      "value": "HELI",
+      "label": "Helicopter",
+      "count": 1
+     }
+    ],
+    "engine": [
+     {
+      "value": "REC",
+      "label": "Reciprocating",
+      "count": 1
+     },
+     {
+      "value": "TF",
+      "label": "Turbofan",
+      "count": 1
+     },
+     {
+      "value": "TS",
+      "label": "Turboshaft",
+      "count": 1
+     }
+    ],
+    "far_part": [
+     {
+      "value": "121",
+      "label": "Part 121 air carrier",
+      "count": 1
+     },
+     {
+      "value": "091",
+      "label": "Part 91",
+      "count": 1
+     },
+     {
+      "value": "ARMF",
+      "label": "Armed forces",
+      "count": 1
+     }
+    ],
+    "purpose": [
+     {
+      "value": "PERS",
+      "label": "Personal",
+      "count": 1
+     },
+     {
+      "value": "blank",
+      "label": "Not reported",
+      "count": 1
+     }
+    ],
+    "state": [
+     {
+      "value": "DC",
+      "label": "District of Columbia",
+      "count": 1
+     },
+     {
+      "value": "NV",
+      "label": "Nevada",
+      "count": 1
+     }
+    ]
+   },
+   "mentionedIn": {
+    "anywhere": 2,
+    "probable_cause": 1
+   },
+   "years": [
+    {
+     "year": 2008,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2009,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2010,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2011,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2012,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2013,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2014,
+     "completed": 1,
+     "other": 0
+    },
+    {
+     "year": 2015,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2016,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2017,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2018,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2019,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2020,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2021,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2022,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2023,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2024,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2025,
+     "completed": 1,
+     "other": 0
+    },
+    {
+     "year": 2026,
+     "completed": 0,
+     "other": 0
+    }
+   ],
+   "multiAircraft": 2,
+   "relaxations": []
+  }
+ },
+ "no-results": {
+  "query": {
+   "q": "carburetor icing",
+   "phase": "landing",
+   "injury": "FATL"
+  },
+  "response": {
+   "dataset": {
+    "revision": "fx-5b4a93ded6e99a06",
+    "snapshotDate": "2026-10-01"
+   },
+   "total": 0,
+   "page": 1,
+   "pageSize": 20,
+   "rows": [],
+   "facets": {
+    "completion": [
+     {
+      "value": "completed_with_cause",
+      "label": "Completed, with probable cause",
+      "count": 0
+     }
+    ],
+    "phase": [
+     {
+      "value": "initial_climb",
+      "label": "Initial climb",
+      "count": 1
+     },
+     {
+      "value": "maneuvering",
+      "label": "Maneuvering",
+      "count": 1
+     },
+     {
+      "value": "approach",
+      "label": "Approach",
+      "count": 1
+     },
+     {
+      "value": "landing",
+      "label": "Landing",
+      "count": 0
+     }
+    ],
+    "injury": [
+     {
+      "value": "FATL",
+      "label": "Fatal",
+      "count": 0
+     }
+    ],
+    "conditions": [],
+    "light": [],
+    "category": [],
+    "engine": [],
+    "far_part": [],
+    "purpose": [],
+    "state": []
+   },
+   "mentionedIn": {
+    "anywhere": 0,
+    "probable_cause": 0
+   },
+   "years": [
+    {
+     "year": 2008,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2009,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2010,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2011,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2012,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2013,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2014,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2015,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2016,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2017,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2018,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2019,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2020,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2021,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2022,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2023,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2024,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2025,
+     "completed": 0,
+     "other": 0
+    },
+    {
+     "year": 2026,
+     "completed": 0,
+     "other": 0
+    }
+   ],
+   "multiAircraft": 0,
+   "relaxations": [
+    {
+     "drop": "completion",
+     "count": 0
+    },
+    {
+     "drop": "phase",
+     "count": 3
+    },
+    {
+     "drop": "injury",
+     "count": 0
+    }
+   ]
+  }
+ }
+}

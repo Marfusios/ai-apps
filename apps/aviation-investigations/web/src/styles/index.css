@@ -83,6 +83,12 @@
   --color-caution-edge: var(--caution-edge);
   --color-shade: var(--shade);
   --color-header: var(--header-bg);
+  --color-toolbar: var(--toolbar);
+  --color-strip-edge: var(--strip-edge);
+  --color-strip-line: var(--strip-line);
+  --shadow-ask: var(--ask-shadow);
+  --shadow-drawer: var(--drawer-shadow);
+  --shadow-sheet: var(--sheet-shadow);
   --color-transparent: transparent;
   --color-current: currentColor;
 }

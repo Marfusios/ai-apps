@@ -104,7 +104,10 @@ government works) from the 2026-10-16 `avall.zip` snapshot, exactly as extracted
 HTML-narrative, non-US and P/blank/B-without-cause examples.
 `fixtures/ntsb-malformed/` is synthetic. `pnpm fixtures:build --from <extraction dir>`
 regenerates both; the event list and the reason for each is in
-`scripts/build-fixtures.ts`.
+`scripts/build-fixtures.ts`. `fixtures/ntsb-ui/` adds 11 public events the interface
+examples and end-to-end tests search for (carburetor icing in and outside the
+probable cause, status P records, traffic-pattern stalls); `pnpm fixtures:build-ui
+--from <extraction dir>` regenerates it (`scripts/build-ui-fixtures.ts`).
 
 `worker/ingest/normalize.ts` turns projected tables into canonical cases. It fails
 on missing columns, duplicate composite keys and blank or duplicate case numbers,
@@ -124,14 +127,48 @@ and Tailwind CSS 4. It implements the "Sectional" design system from
 [UI_DESIGN.md](docs/UI_DESIGN.md) §2: tokens in `web/src/styles/tokens.css` (day on
 `:root`, night "Panel" on `[data-theme="night"]`), mapped into the Tailwind theme in
 `web/src/styles/index.css`, which clears Tailwind's default palette, type scale and
-breakpoints. Components never use raw colours. Pages are placeholders until the
-API exists.
+breakpoints. Components never use raw colours.
+
+Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with facet
+counts, the case drawer and the compare tray), the full case page and Compare
+(flight strips with NTSB columns, "Same in all", sort and Print for class), plus
+About and Privacy. They show NTSB data only; Ask AI is present but disabled until
+briefs arrive. View state is in the URL: the search keys of `SearchRequest`
+(`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`, `sort`, `page`), the
+open case (`case`) and the compare selection (`cases`). Phones get a "Filters (n)"
+sheet, a full-screen case sheet and a compare bar.
 
 ```sh
 pnpm dev:web          # Vite dev server; /api is proxied to the API server
+WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/mock
 pnpm build:web        # production build into dist/web
-pnpm test:web         # component tests (jsdom, offline)
+pnpm test:web         # component tests (jsdom, offline, MSW)
+pnpm test:e2e         # Playwright against the dev server in mock mode
 ```
+
+### API contracts and the mock API
+
+`shared/contracts/{config,search,cases,dashboard}.ts` are the Zod contracts of the
+public API (`GET /api/config`, `/api/search`, `/api/cases/:ntsbNo`,
+`/api/dashboard`). Every object is strict, `ev_id` never appears, and the case
+detail is NTSB-only by construction (a test walks the schema for AI fields). The
+web client validates every response against them. `shared/case-view.ts` builds the
+deterministic headline, finding text and data cautions; `shared/vocab.ts` holds the
+code labels from the NTSB data dictionary.
+
+`pnpm mock:build` normalizes `fixtures/ntsb` and `fixtures/ntsb-ui` with
+`normalizeCorpus` and writes contract-valid responses to `web/mock/*.json` (config,
+both dashboard cohorts, every case detail, a search index and sample searches).
+`web/mock/engine.ts` answers any search over that index with the real counting
+rules (distinct events, disjunctive facets, defining-event phase, multi-aircraft
+overlap, "remove one filter" totals) and a simple stand-in for the analyzer.
+`web/src/mocks/handlers.ts` serves it through MSW, in the dev mock mode and in tests;
+production builds contain no mock code. A unit test fails when the committed mock
+files are out of date.
+
+`pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
+It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
+`--with-deps` on a fresh Linux machine).
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`

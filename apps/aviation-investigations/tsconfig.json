@@ -22,6 +22,7 @@
     "evals",
     "vitest.config.ts",
     "vite.config.ts",
+    "playwright.config.ts",
     "web/vite"
   ],
   "exclude": ["tests/web"]

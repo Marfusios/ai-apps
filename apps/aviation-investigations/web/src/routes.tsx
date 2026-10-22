@@ -1,24 +1,18 @@
 import type { RouteObject } from 'react-router';
 import { AppShell } from './AppShell';
-import { CasePlaceholder, ComingSoon, HomePlaceholder, NotFound } from './pages/Placeholder';
+import { About } from './pages/About';
+import { Home } from './pages/Home';
+import { ComingSoon, NotFound } from './pages/Placeholder';
+import { Privacy } from './pages/Privacy';
 
 /**
- * Routes from UI_DESIGN §3. View state (query, facets, open case, brief step,
- * compared cases) lives in the query string, so each view is one route here.
- * Replace a placeholder `element` with the real page as it arrives.
+ * Routes from UI_DESIGN §3. View state (query, facets, open case, compared cases,
+ * and later the brief step) lives in the query string, so each view is one route.
  */
 const pages: RouteObject[] = [
-  { index: true, element: <HomePlaceholder /> },
-  {
-    path: 'explore',
-    element: (
-      <ComingSoon
-        eyebrow="Keyword search"
-        title="Explore"
-        description="Search completed NTSB investigations by keyword, with counts for phase, injury, conditions and year."
-      />
-    ),
-  },
+  { index: true, element: <Home /> },
+  // Explore, case and compare load on first use, which keeps the home page light.
+  { path: 'explore', lazy: async () => ({ Component: (await import('./pages/Explore')).Explore }) },
   {
     path: 'briefs/:id',
     element: (
@@ -29,17 +23,8 @@ const pages: RouteObject[] = [
       />
     ),
   },
-  { path: 'cases/:ntsbNo', element: <CasePlaceholder /> },
-  {
-    path: 'compare',
-    element: (
-      <ComingSoon
-        eyebrow="Compare"
-        title="Compare"
-        description="Up to four investigations side by side as flight strips, ready to print for class."
-      />
-    ),
-  },
+  { path: 'cases/:ntsbNo', lazy: async () => ({ Component: (await import('./pages/CasePage')).CasePage }) },
+  { path: 'compare', lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
   {
     path: 'dashboard',
     element: (
@@ -60,22 +45,8 @@ const pages: RouteObject[] = [
       />
     ),
   },
-  {
-    path: 'privacy',
-    element: (
-      <ComingSoon eyebrow="Privacy" title="Privacy" description="What Aviation Casebook keeps, for how long, and why." />
-    ),
-  },
-  {
-    path: 'about',
-    element: (
-      <ComingSoon
-        eyebrow="About"
-        title="About"
-        description="An independent educational project built on public NTSB investigation data. It is not an NTSB service."
-      />
-    ),
-  },
+  { path: 'privacy', element: <Privacy /> },
+  { path: 'about', element: <About /> },
 ];
 
 /** The living style guide; only in development builds (the branch is removed from production bundles). */
@@ -91,6 +62,8 @@ const devPages: RouteObject[] = import.meta.env.DEV
 export const routes: RouteObject[] = [
   {
     element: <AppShell />,
+    // Shown for the moment a lazily loaded page is fetched on first load.
+    hydrateFallbackElement: <div className="min-h-dvh" />,
     children: [...pages, ...devPages, { path: '*', element: <NotFound /> }],
   },
 ];

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link, useParams } from 'react-router';
-import { CompassMark } from '../components/CompassMark';
+import { Link } from 'react-router';
 import { Placard } from '../components/Placard';
 
 interface ComingSoonProps {
@@ -26,32 +25,6 @@ export function ComingSoon({ eyebrow, title, heading, description }: ComingSoonP
         </p>
       </div>
     </section>
-  );
-}
-
-/** Home, "Clear sky" (UI_DESIGN §4.1), until search arrives. */
-export function HomePlaceholder() {
-  return (
-    <section className="flex flex-1 flex-col items-center justify-center px-4 py-16 text-center">
-      <title>Aviation Casebook</title>
-      <CompassMark />
-      <h1 className="mt-3.5 font-serif text-display font-semibold tracking-headline">Learn from the record.</h1>
-      <p className="mt-3 max-w-[46ch] text-muted">
-        Keyword search and AI briefs over completed NTSB investigations are coming soon.
-      </p>
-    </section>
-  );
-}
-
-export function CasePlaceholder() {
-  const { ntsbNo = '' } = useParams();
-  return (
-    <ComingSoon
-      eyebrow="Case"
-      title={`Case ${ntsbNo}`}
-      heading={<span className="font-mono tracking-mono">{ntsbNo}</span>}
-      description="The full investigation in story order: what happened, the flight, and what investigators established, in the NTSB's words."
-    />
   );
 }
 

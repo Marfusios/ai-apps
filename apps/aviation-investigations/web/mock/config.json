@@ -1,0 +1,13 @@
+{
+ "turnstileSiteKey": null,
+ "googleEnabled": false,
+ "snapshotDate": "2026-10-01",
+ "datasetRevision": "fx-5b4a93ded6e99a06",
+ "coverage": {
+  "defaultCohort": 21,
+  "otherRecords": 5,
+  "yearFrom": 2008,
+  "yearTo": 2026,
+  "provisional": true
+ }
+}

@@ -23,6 +23,12 @@ exports[`print > print stylesheet hides graticule 1`] = `
     --caution-edge: rgba(30, 42, 54, .45);
     --shade: transparent;
     --header-bg: #FFFFFF;
+    --toolbar: transparent;
+    --strip-edge: rgba(30, 42, 54, .40);
+    --strip-line: rgba(30, 42, 54, .22);
+    --ask-shadow: none;
+    --drawer-shadow: none;
+    --sheet-shadow: none;
     --grid: transparent;
     --graticule: none;
     --header-rule: #1E2A36;
@@ -48,6 +54,15 @@ exports[`print > print stylesheet hides graticule 1`] = `
 
   [data-print="hide"] {
     display: none !important;
+  }
+
+  [data-print="only"] {
+    display: block !important;
+  }
+
+  /* Compare strips and case sections never split across pages (UI_DESIGN §7). */
+  [data-print="keep"] {
+    break-inside: avoid;
   }
 }"
 `;
