@@ -43,14 +43,22 @@
  * **Held out by case**, as the silver set: questions sharing a relevant case, and a
  * paraphrase with its original, form one group assigned whole to `dev` or `holdout`
  * (`assignSplits`); its required tags are every area, both classes and every area and
- * class pair, and the set is refused unless each of them reaches both splits.
+ * class pair, and the set is refused unless each of them reaches both splits. Once the
+ * set is frozen (`splitsFrozen`, protocol section 6), every committed question keeps
+ * its split on later builds: only new questions are placed, and a spec edit that would
+ * join questions frozen in both splits is refused.
+ *
+ * `source` records the generation's identity (archive sha256, mapping and
+ * normalization versions) next to its id, and a run re-derives every question's labels
+ * on its target before anything is embedded (`generation.ts`).
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { BLANK } from '../../../shared/contracts/search.js';
 import { RetrievalFiltersSchema } from '../../../server/search/filters.js';
+import { GENERATION_IDENTITY_FIELDS, type GenerationSource, type QuestionLabels } from '../generation.js';
 import { RECALL_GATE_MAX_RELEVANT } from '../metrics.js';
-import { assignSplits, type GroupedSplits } from '../silver.js';
+import { assignSplits, type GroupedSplits, type Split } from '../silver.js';
 
 export const CODED_VERSION = 'coded-v1';
 export const REFERENCE = 'coded-reference';
@@ -175,13 +183,17 @@ export const CodedDatasetSchema = z.strictObject({
   reference: z.literal(REFERENCE),
   description: z.string(),
   caveat: z.literal(CAVEAT),
+  /** The generation the labels were derived from: its id and identity (`generation.ts`). */
   source: z.strictObject({
     generationId: z.number().int().positive(),
+    ...GENERATION_IDENTITY_FIELDS,
     answerEligibleCases: z.number().int().positive(),
     builder: z.string(),
     specSha256: z.string().regex(/^[0-9a-f]{64}$/),
   }),
   limits: z.strictObject({ narrowMax: z.number().int() }),
+  /** Frozen splits (protocol section 6): rebuilds keep every question in its split and place only new ones. */
+  splitsFrozen: z.boolean(),
   questions: z.array(CodedItemSchema).min(1),
 });
 export type CodedDataset = z.infer<typeof CodedDatasetSchema>;
@@ -417,6 +429,41 @@ export function codeStats(corpus: CodedCorpus, codes: readonly { kind: Clause['k
   return out;
 }
 
+/**
+ * A code set frozen from what generation 1's cohort holds ("every modifier seen",
+ * "every code with the Maintenance personnel modifier seen"): `pattern` matches every
+ * code of its kind, `codes` is the frozen list.
+ */
+export interface CodeFamily {
+  name: string;
+  /** A regular expression over the ten-digit finding code. */
+  pattern: string;
+  codes: readonly string[];
+}
+
+/**
+ * Finding codes of a frozen family that occur in the cohort but are not in its frozen
+ * list: a later generation coded something new of the same kind. Warnings, never
+ * labels (the set stays frozen).
+ */
+export function familyWarnings(corpus: CodedCorpus, families: readonly CodeFamily[]): string[] {
+  const cases = new Map<string, Set<string>>();
+  for (const f of corpus.findings) if (f.code !== null) cases.set(f.code, (cases.get(f.code) ?? new Set()).add(f.ntsbNo));
+  const out: string[] = [];
+  for (const family of families) {
+    const re = new RegExp(family.pattern, 'u');
+    const frozen = new Set(family.codes);
+    for (const code of [...cases.keys()].filter((c) => re.test(c) && !frozen.has(c)).sort()) {
+      out.push(`code family "${family.name}": ${code} occurs in ${cases.get(code)?.size} cohort case(s) but is not in the frozen set`);
+    }
+  }
+  return out;
+}
+
+/** The labels a coded dataset records, in the shape `targetProblems` compares. */
+export const codedLabels = (d: CodedDataset): Map<string, QuestionLabels> =>
+  new Map(d.questions.map((q) => [q.id, { relevant: q.relevant, unreachable: q.unreachable }]));
+
 // ---------------------------------------------------------------------------
 // Descriptions and checks
 
@@ -577,13 +624,21 @@ export const tagsOf = (q: { area: Area; class: QuestionClass; filters: CodedFilt
   ...(paraphrase ? ['paraphrase'] : []),
 ];
 
+export interface AssembleOptions {
+  /** Frozen splits of the committed set: each listed question keeps its split. */
+  pinned?: ReadonlyMap<string, Split>;
+  /** Mark the result frozen (`splitsFrozen`). */
+  splitsFrozen?: boolean;
+}
+
 /** Pure: the dataset from every question's derivation and the code statistics of the cohort. */
 export function assembleCoded(
-  source: { generationId: number; answerEligibleCases: number; builder: string },
+  source: GenerationSource & { answerEligibleCases: number; builder: string },
   specs: readonly CodedQuestionSpec[],
   paraphrases: readonly CodedParaphraseSpec[],
   derived: ReadonlyMap<string, Derivation>,
   stats: ReadonlyMap<string, CodeStats>,
+  opts: AssembleOptions = {},
 ): CodedBuild {
   const problems = specProblems(specs, paraphrases);
   const rejected: CodedBuild['rejected'] = [];
@@ -651,15 +706,27 @@ export function assembleCoded(
     drafts.map((q) => ({ id: q.id, tags: [...q.tags, areaClass(q)], expected: q.relevant })),
     links,
     REQUIRED_SPLIT_TAGS,
+    opts.pinned,
   );
+  problems.push(...grouped.conflicts.map((c) => `split: ${c}; frozen splits cannot be kept (edit the specs, or rebuild with --reassign-splits)`));
   const dataset: CodedDataset = {
     version: CODED_VERSION,
     reference: REFERENCE,
     description: DESCRIPTION,
     caveat: CAVEAT,
-    source: { ...source, specSha256: specSha256(specs, paraphrases) },
+    source: {
+      generationId: source.generationId,
+      archiveSha256: source.archiveSha256,
+      mappingVersion: source.mappingVersion,
+      fieldNormalizationVersion: source.fieldNormalizationVersion,
+      citationTextVersion: source.citationTextVersion,
+      answerEligibleCases: source.answerEligibleCases,
+      builder: source.builder,
+      specSha256: specSha256(specs, paraphrases),
+    },
     limits: { narrowMax: NARROW_MAX },
-    questions: drafts.map((q) => ({ ...q, group: grouped.group.get(q.id) as string, split: grouped.split.get(q.id) as 'dev' | 'holdout' })),
+    splitsFrozen: opts.splitsFrozen ?? false,
+    questions: drafts.map((q) => ({ ...q, group: grouped.group.get(q.id) as string, split: grouped.split.get(q.id) as Split })),
   };
   const parsed = CodedDatasetSchema.safeParse(dataset);
   problems.push(

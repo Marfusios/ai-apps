@@ -11,12 +11,15 @@
  *
  * **Fails closed.** Before anything is embedded it validates the dataset
  * (`datasetProblems`), resolves the target (the active manifest's passages index, or
- * `--passages-index`, whose generation comes from its `_meta`), requires that the
- * target generation is the one the silver set was built from, and checks the passages
- * contract for the configured embedding model and dimensions. Any problem stops the
- * run (exit 1) with nothing paid. `--exploratory` continues past dataset problems and
- * a generation mismatch, and the report is then marked `gating: false`; an index that
- * breaks the contract always stops the run (retrieval would refuse it). A
+ * `--passages-index`, whose generation comes from its `_meta`), checks the passages
+ * contract for the configured embedding model and dimensions, and verifies the labels
+ * on the target: the target generation's id and identity (archive sha256, mapping and
+ * normalization versions) must be the ones the silver set was built from, and every
+ * question's criteria, re-run read-only on the target (`rederiveSilver`, about 25 s),
+ * must give the dataset's expected cases (`generation.ts`). Any problem stops the run
+ * (exit 1) with nothing paid. `--exploratory` continues past dataset, generation and
+ * label problems, and the report is then marked `gating: false` with the reasons; an
+ * index that breaks the contract always stops the run (retrieval would refuse it). A
  * `--fake-embedder` run is never gating either.
  *
  * - Embeds each RAG question once with the configured model (`OPENAI_EMBEDDING_MODEL`,
@@ -49,11 +52,12 @@ import { createEsClient } from '../../server/search/es.js';
 import { CANDIDATE_STAGE_PER_CHANNEL, RETRIEVAL_DEFAULTS, numCandidates } from '../../server/search/hybrid.js';
 import { APP_DIR } from '../../worker/config.js';
 import { describeWorkerError } from '../../worker/errors.js';
-import { DEFAULT_DATASET } from './build-silver.js';
+import { DEFAULT_DATASET, rederiveSilver, silverLabels } from './build-silver.js';
 import { runCodedEvaluation } from './coded/run.js';
 import { evalConfig } from './config.js';
 import { MODES, evaluateRetrieval, type EvaluationResult } from './evaluate.js';
-import { describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, stamp } from './harness.js';
+import { targetProblems } from './generation.js';
+import { checkTarget, describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, stamp } from './harness.js';
 import { DatasetSchema, datasetProblems, needsEventAircraftQualification, type Dataset } from './silver.js';
 
 export { precomputedEmbedder } from './harness.js';
@@ -187,9 +191,9 @@ async function runSilverEvaluation(opts: RunOptions): Promise<number> {
       );
     }
     const items = selected.filter((q) => !unreachable.includes(q.id));
-    if (target.generationId !== dataset.source.generationId) {
-      problems.push(`generation: the silver set was built from generation ${dataset.source.generationId}; the target is generation ${target.generationId}`);
-    }
+    // The dataset's labels re-derived on the target generation (read-only): generation ids are per-database sequences.
+    const verified = await checkTarget(config.databaseUrl, target.generationId, (client) => rederiveSilver(client, target.generationId, dataset));
+    problems.push(...targetProblems('silver', { source: dataset.source, labels: silverLabels(dataset) }, verified));
     if (problems.length > 0) {
       for (const p of problems) console.error(p);
       if (!exploratory) {
@@ -225,7 +229,7 @@ async function runSilverEvaluation(opts: RunOptions): Promise<number> {
     for (const q of dataset.questions) groups.set(q.group, (groups.get(q.group) ?? 0) + 1);
     const report = {
       kind: 'eval-retrieval',
-      version: 2,
+      version: 3,
       gating,
       nonGatingReasons: gating ? [] : reasons,
       startedAt: started.toISOString(),
@@ -243,6 +247,8 @@ async function runSilverEvaluation(opts: RunOptions): Promise<number> {
         paraphrases: items.filter((q) => q.paraphrase_of !== undefined).length,
         groups: Object.fromEntries([...groups.entries()].sort(([a], [b]) => Number(a.slice(1)) - Number(b.slice(1)))),
         adjudication: dataset.adjudication,
+        /** The target generation's identity; every question's expected cases were re-derived there before anything was embedded. */
+        target: { source: verified.source, questionsRederived: verified.labels.size, ms: verified.ms },
       },
       index: indexReport(run),
       embedder: { kind: fake ? 'fake' : 'openai', model, dims, inputs: plan.inputs.length, countedTokens: plan.inputTokens, billed },

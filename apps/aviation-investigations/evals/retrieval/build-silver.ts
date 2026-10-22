@@ -17,6 +17,11 @@
  * (`assignSplits`); the build prints every group. Fails when a rule derives fewer
  * than `MIN_EXPECTED` or more than `MAX_EXPECTED` cases (never capped), or when the
  * set breaks a coverage rule (`datasetProblems`).
+ *
+ * `source` records the generation's identity (archive sha256, mapping and
+ * normalization versions) next to its id; `rederiveSilver` re-runs every question's
+ * recorded criteria on a run's target so the run can refuse labels that do not hold
+ * there (`generation.ts`).
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -24,6 +29,7 @@ import { parseArgs } from 'node:util';
 import pg from 'pg';
 import { APP_DIR } from '../../worker/config.js';
 import { evalConfig } from './config.js';
+import { readGenerationSource, type GenerationSource, type QuestionLabels } from './generation.js';
 import { PARAPHRASES, QUESTIONS } from './questions.js';
 import {
   DatasetSchema,
@@ -35,6 +41,7 @@ import {
   datasetProblems,
   describeCriteria,
   rulesSha256,
+  type Criteria,
   type Dataset,
   type DatasetItem,
   type GroupedSplits,
@@ -58,6 +65,42 @@ export interface SilverBuild {
   problems: string[];
 }
 
+/**
+ * In one read-only, repeatable-read snapshot of `generationId`: the generation's
+ * identity, its answer-eligible case count and the cases each rule derives (identical
+ * rules are run once).
+ */
+async function deriveInSnapshot(
+  client: pg.ClientBase,
+  generationId: number,
+  rules: readonly { id: string; criteria: Criteria }[],
+): Promise<{ source: GenerationSource; answerEligibleCases: number; derived: Map<string, string[]> }> {
+  await client.query('begin transaction isolation level repeatable read read only');
+  try {
+    const source = await readGenerationSource(client, generationId);
+    const [row] = (await client.query<{ n: number }>('select count(*)::int as n from cases where generation_id = $1 and answer_eligible', [generationId])).rows;
+    const answerEligibleCases = row?.n ?? 0;
+    if (answerEligibleCases === 0) throw new Error(`generation ${generationId} has no answer-eligible cases`);
+    const byRule = new Map<string, string[]>();
+    const derived = new Map<string, string[]>();
+    for (const rule of rules) {
+      const key = JSON.stringify(rule.criteria);
+      let cases = byRule.get(key);
+      if (!cases) {
+        const q = compileCriteria(rule.criteria);
+        cases = (await client.query<{ ntsb_no: string }>(q.text, [generationId, ...q.values])).rows.map((r) => r.ntsb_no);
+        byRule.set(key, cases);
+      }
+      derived.set(rule.id, cases);
+    }
+    await client.query('commit');
+    return { source, answerEligibleCases, derived };
+  } catch (err) {
+    await client.query('rollback').catch(() => undefined);
+    throw err;
+  }
+}
+
 /** Derive every question's expected cases in one read-only snapshot of `generationId`. */
 export async function buildSilver(
   client: pg.ClientBase,
@@ -65,32 +108,32 @@ export async function buildSilver(
   specs: readonly QuestionSpec[] = QUESTIONS,
   paraphrases: readonly ParaphraseSpec[] = PARAPHRASES,
 ): Promise<SilverBuild> {
-  await client.query('begin transaction isolation level repeatable read read only');
-  let n: number;
-  const derived = new Map<string, string[]>();
-  try {
-    const [row] = (await client.query<{ n: number }>('select count(*)::int as n from cases where generation_id = $1 and answer_eligible', [generationId])).rows;
-    n = row?.n ?? 0;
-    if (n === 0) throw new Error(`generation ${generationId} has no answer-eligible cases`);
-    for (const spec of specs) {
-      const q = compileCriteria(spec.criteria);
-      const rows = await client.query<{ ntsb_no: string }>(q.text, [generationId, ...q.values]);
-      derived.set(spec.id, rows.rows.map((r) => r.ntsb_no));
-    }
-    await client.query('commit');
-  } catch (err) {
-    await client.query('rollback').catch(() => undefined);
-    throw err;
-  }
-  return assembleSilver(generationId, n, specs, paraphrases, derived);
+  const { source, answerEligibleCases, derived } = await deriveInSnapshot(client, generationId, specs);
+  return assembleSilver({ ...source, answerEligibleCases }, specs, paraphrases, derived);
 }
+
+/**
+ * Every question's expected cases re-derived on `generationId` from the criteria the
+ * dataset records (read-only snapshot): what a run compares with the dataset before
+ * anything is embedded.
+ */
+export async function rederiveSilver(client: pg.ClientBase, generationId: number, dataset: Dataset): Promise<{ labels: Map<string, QuestionLabels> }> {
+  const { derived } = await deriveInSnapshot(
+    client,
+    generationId,
+    dataset.questions.map((q) => ({ id: q.id, criteria: q.derivation.criteria })),
+  );
+  return { labels: new Map([...derived].map(([id, relevant]) => [id, { relevant }])) };
+}
+
+/** The labels a silver dataset records, in the shape `targetProblems` compares. */
+export const silverLabels = (d: Dataset): Map<string, QuestionLabels> => new Map(d.questions.map((q) => [q.id, { relevant: q.expected }]));
 
 type Draft = Omit<DatasetItem, 'group' | 'split'>;
 
 /** Pure: the dataset from each rule's derived cases. */
 export function assembleSilver(
-  generationId: number,
-  answerEligibleCases: number,
+  source: GenerationSource & { answerEligibleCases: number },
   specs: readonly QuestionSpec[],
   paraphrases: readonly ParaphraseSpec[],
   derived: ReadonlyMap<string, readonly string[]>,
@@ -141,8 +184,12 @@ export function assembleSilver(
     description: DESCRIPTION,
     adjudication: 'pending-expert',
     source: {
-      generationId,
-      answerEligibleCases,
+      generationId: source.generationId,
+      archiveSha256: source.archiveSha256,
+      mappingVersion: source.mappingVersion,
+      fieldNormalizationVersion: source.fieldNormalizationVersion,
+      citationTextVersion: source.citationTextVersion,
+      answerEligibleCases: source.answerEligibleCases,
       builder: 'evals/retrieval/build-silver.ts',
       rulesSha256: rulesSha256(specs, paraphrases),
     },

@@ -98,7 +98,11 @@ export interface CodedEvaluation {
   sizes: number[];
   params: RetrievalParams;
   questions: CodedQuestionResult[];
-  /** summary[size][mode][group]; groups: all, dev, holdout, narrow, broad, <split>/<class>, area:<area>, tag:<tag>. */
+  /**
+   * summary[size][mode][group]; groups: all, dev, holdout, narrow, broad, <split>/<class>,
+   * area:<area> and tag:<tag>, each also per class (area:<area>/<class>, tag:<tag>/<class>).
+   * A group with no question is left out.
+   */
   summary: CodedSummary;
   table: CodedTableRow[];
   queryEmbedding: { tokens: number; usd: number };
@@ -210,9 +214,13 @@ export function summarizeCoded(questions: readonly CodedQuestionResult[], sizes:
   for (const split of ['dev', 'holdout'] as const) {
     for (const cls of ['narrow', 'broad'] as const) groups.set(`${split}/${cls}`, (q) => q.split === split && q.class === cls);
   }
-  for (const area of AREAS) groups.set(`area:${area}`, (q) => q.area === area);
+  const withClasses = (name: string, member: (q: CodedQuestionResult) => boolean) => {
+    groups.set(name, member);
+    for (const cls of ['narrow', 'broad'] as const) groups.set(`${name}/${cls}`, (q) => member(q) && q.class === cls);
+  };
+  for (const area of AREAS) withClasses(`area:${area}`, (q) => q.area === area);
   for (const tag of [...new Set(questions.flatMap((q) => q.tags))].filter((t) => !CLASS_AND_AREA_TAGS.has(t)).sort()) {
-    groups.set(`tag:${tag}`, (q) => q.tags.includes(tag));
+    withClasses(`tag:${tag}`, (q) => q.tags.includes(tag));
   }
   const out: CodedSummary = {};
   for (const size of sizes) {

@@ -717,7 +717,16 @@ match and a multi-aircraft event must match as a whole (one question, helicopter
 midair collisions, relies on the `passages-v2` qualification and records 15 mixed
 events as unreachable). Absence of a code is not a negative judgement: precision is
 coded precision. `pnpm eval:retrieval --track coded` runs it with the silver run's
-checks, plus a check that the dataset was built from the committed specs.
+checks, plus a check that the dataset was built from the committed specs. Its splits
+are frozen: rebuilds keep every committed question in its split.
+
+Both runs verify their labels on the target before anything is embedded. Each dataset
+records its generation's id and identity (archive sha256 and the completion mapping,
+field normalization and citation text versions; ids are per-database sequences), and
+the run re-derives every question's labels on the target generation, read-only, from
+the rules or code sets the dataset records. A different identity, or labels that
+differ for any question, stop a gating run; `--exploratory` continues and names the
+reasons in the non-gating report.
 
 ## 3. How Elasticsearch is composed
 

@@ -197,7 +197,12 @@ describe('silver set rules', () => {
       ['big', Array.from({ length: 25 }, (_, i) => `D${String(i).padStart(6, '0')}`)],
       ['struct', ['C9AAAA']],
     ].map(([k, v]) => [k as string, (v as string[]).map((n) => (n.length < 6 ? `${n}XXXXX` : n))]));
-    const built = assembleSilver(1, 100, specs, [{ id: 'one-p', of: 'one', question: 'the same question in other words', avoids: ['one'] }], derived);
+    const built = assembleSilver(
+      { generationId: 1, archiveSha256: 'a'.repeat(64), mappingVersion: 'v1-empirical', fieldNormalizationVersion: 'v1', citationTextVersion: 'v1', answerEligibleCases: 100 },
+      specs,
+      [{ id: 'one-p', of: 'one', question: 'the same question in other words', avoids: ['one'] }],
+      derived,
+    );
     const byId = new Map(built.dataset.questions.map((q) => [q.id, q]));
     // The shared case C2 stays in both questions; they land in one group.
     expect(byId.get('one')?.expected).toEqual(['C1XXXXX', 'C2XXXXX']);
@@ -209,6 +214,34 @@ describe('silver set rules', () => {
     expect(built.rejected).toEqual([{ id: 'big', count: 25 }]);
     expect(byId.has('big')).toBe(false);
     expect(built.problems.some((p) => p.includes('never capped'))).toBe(true);
+    // The generation's identity is recorded next to its id.
+    expect(built.dataset.source).toMatchObject({ generationId: 1, archiveSha256: 'a'.repeat(64), mappingVersion: 'v1-empirical', fieldNormalizationVersion: 'v1', citationTextVersion: 'v1' });
+  });
+
+  it('keeps pinned groups in their split, places a question that joins one with it, and reports groups pinned to both', () => {
+    const items = [
+      { id: 'a', tags: ['negation'], expected: ['C1'] },
+      { id: 'b', tags: ['negation'], expected: ['C2'] },
+      { id: 'c', tags: ['negation'], expected: ['C3'] },
+    ];
+    const free = assignSplits(items);
+    // Pin every question to the opposite of its free split: the pins win.
+    const flipped = new Map(items.map((q) => [q.id, free.split.get(q.id) === 'dev' ? ('holdout' as const) : ('dev' as const)]));
+    const pinned = assignSplits(items, [], undefined, flipped);
+    for (const q of items) expect(pinned.split.get(q.id), q.id).toBe(flipped.get(q.id));
+    expect(pinned.conflicts).toEqual([]);
+    // Labels stay in sha256 order of the groups, pinned or not.
+    expect([...pinned.group.entries()]).toEqual([...free.group.entries()]);
+    // A new question sharing a case with a pinned one follows its group.
+    const grown = assignSplits([...items, { id: 'new', tags: ['negation'], expected: ['C2', 'C9'] }], [], undefined, flipped);
+    expect(grown.split.get('new')).toBe(flipped.get('b'));
+    // A new question joining questions pinned to both splits is a conflict.
+    const both = new Map([['a', 'dev' as const], ['b', 'holdout' as const]]);
+    const joined = assignSplits([...items, { id: 'bridge', tags: ['negation'], expected: ['C1', 'C2'] }], [], undefined, both);
+    expect(joined.conflicts).toHaveLength(1);
+    expect(joined.conflicts[0]).toMatch(/joins questions pinned to dev \(a\) and to holdout \(b\)/);
+    // Without pins nothing changes and nothing conflicts.
+    expect(assignSplits(items).conflicts).toEqual([]);
   });
 
   it('requires filters to state what the rule states', () => {

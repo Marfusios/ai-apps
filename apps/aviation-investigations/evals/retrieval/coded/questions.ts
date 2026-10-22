@@ -19,7 +19,7 @@
  * phase group ("takeoff accidents"). `cause_factor` and description suffixes are never
  * labels.
  */
-import type { Clause, CodeSet, CodedParaphraseSpec, CodedQuestionSpec } from './coded.js';
+import type { Clause, CodeFamily, CodeSet, CodedParaphraseSpec, CodedQuestionSpec } from './coded.js';
 
 /** The ten-digit finding codes of one eight-digit finding with each listed modifier. */
 const withModifiers = (finding: string, modifiers: readonly string[]): string[] => modifiers.map((m) => `${finding}${m}`);
@@ -82,6 +82,21 @@ const PILOT_DECISION = ['0204152044'];
 const INSTRUCTOR_DECISION = ['0204152040'];
 /** Personnel issues - Task performance - Planning/preparation - Fuel planning - Pilot. */
 const PILOT_FUEL_PLANNING = ['0206103044'];
+
+/**
+ * The sets above that were frozen from what generation 1's cohort holds. The builder
+ * and the runner warn when a target generation holds a code of the same kind outside
+ * the frozen list (`familyWarnings`); the sets never grow by themselves.
+ */
+export const CODE_FAMILIES: readonly CodeFamily[] = [
+  { name: 'Conducive to carburetor icing, every modifier', pattern: '^03031030[0-9]{2}$', codes: CARB_ICING },
+  { name: 'High density altitude, every modifier', pattern: '^03031020[0-9]{2}$', codes: DENSITY_ALTITUDE },
+  { name: 'Conducive to structural icing, every modifier', pattern: '^03031025[0-9]{2}$', codes: STRUCTURAL_ICING },
+  { name: 'Wind - Gusts, every modifier', pattern: '^03034045[0-9]{2}$', codes: GUSTS },
+  { name: 'Wind - Tailwind, every modifier', pattern: '^03034015[0-9]{2}$', codes: TAILWIND },
+  { name: 'Fuel system, every subsection, Failure or Malfunction', pattern: '^010228[0-9]{2}0[12]$', codes: FUEL_SYSTEM_FAILURE },
+  { name: 'Personnel issues with the Maintenance personnel modifier', pattern: '^02[0-9]{6}41$', codes: MAINTENANCE_PERSONNEL },
+];
 
 const FUEL_EXHAUSTION = event('192');
 const FUEL_STARVATION = event('191');
@@ -260,12 +275,12 @@ export const CODED_QUESTIONS: readonly CodedQuestionSpec[] = [
   },
   {
     id: 'sys-magneto-failure-2014-2016',
-    question: 'From 2014 to 2016, which accidents have a finding of a failure or malfunction of a magneto?',
+    question: 'From 2014 to 2016, which accidents have a finding of a failure or malfunction of a magneto/distributor?',
     area: 'aircraft_systems',
     class: 'narrow',
     filters: { yearFrom: 2014, yearTo: 2016 },
     codeSet: one(finding(MAGNETO_FAILURE, false)),
-    wording: ['failure or malfunction', 'magneto'],
+    wording: ['failure or malfunction', 'magneto/distributor'],
     note: 'Failure and Malfunction modifiers of "Ignition system - Magneto/distributor".',
   },
 

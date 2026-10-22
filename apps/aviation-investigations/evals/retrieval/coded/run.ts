@@ -6,12 +6,15 @@
  *
  * **Fails closed** before anything is embedded (`codedPreflight`): a dataset that does
  * not parse or breaks a dataset rule (`codedDatasetProblems`), a dataset built from other
- * question specs than the committed ones, a target generation other than the one the
- * set was built from, and questions that need the event-level aircraft qualification
- * on an index without it (`passages-v1`) stop the run with nothing paid; an index that
- * breaks the passages contract always stops it. `--exploratory` continues past the
- * others (without the unreachable questions) and marks the report non-gating, as does
- * `--fake-embedder`.
+ * question specs than the committed ones, a target generation whose id or identity
+ * (archive sha256, mapping and normalization versions) differs from the one the set
+ * was built from, any question whose labels re-derived on the target (read-only,
+ * `rederiveCoded`) differ from the dataset's, and questions that need the event-level
+ * aircraft qualification on an index without it (`passages-v1`) stop the run with
+ * nothing paid; an index that breaks the passages contract always stops it.
+ * `--exploratory` continues past the others (without the unreachable questions) and
+ * marks the report non-gating with the reasons, as does `--fake-embedder`. New codes
+ * of a frozen code family in the target generation are printed as warnings.
  *
  * The questions are embedded once each, metered on the ledger under `evaluation`; the
  * report `data/work/eval-retrieval-coded-<UTC>.json` is labelled `coded-reference` and
@@ -27,11 +30,12 @@ import { CANDIDATE_STAGE_PER_CHANNEL, RETRIEVAL_DEFAULTS, numCandidates } from '
 import { APP_DIR } from '../../../worker/config.js';
 import { evalConfig } from '../config.js';
 import { MODES } from '../evaluate.js';
-import { describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, stamp } from '../harness.js';
+import { targetProblems, type TargetCheck } from '../generation.js';
+import { checkTarget, describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, stamp } from '../harness.js';
 import { NDCG_ENUMERATION_LIMIT, RECALL_TARGET } from '../metrics.js';
 import type { RunOptions } from '../run.js';
-import { DEFAULT_CODED_DATASET } from './build-coded.js';
-import { CAVEAT, CodedDatasetSchema, REFERENCE, codedDatasetProblems, specSha256, type CodedDataset, type CodedItem } from './coded.js';
+import { DEFAULT_CODED_DATASET, rederiveCoded } from './build-coded.js';
+import { CAVEAT, CodedDatasetSchema, REFERENCE, codedDatasetProblems, codedLabels, specSha256, type CodedDataset, type CodedItem } from './coded.js';
 import { evaluateCoded, type CodedEvaluation } from './evaluate.js';
 import { CODED_PARAPHRASES, CODED_QUESTIONS } from './questions.js';
 
@@ -59,10 +63,14 @@ export interface CodedPreflight {
   notRun: string[];
 }
 
-/** Pure: what a run of `dataset` against the target would evaluate, and what makes it invalid. */
+/**
+ * Pure: what a run of `dataset` against the target would evaluate, and what makes it
+ * invalid. `target` is the target generation's identity and every question's labels
+ * re-derived there (`checkTarget` with `rederiveCoded`).
+ */
 export function codedPreflight(
   dataset: CodedDataset,
-  opts: { split: 'all' | 'dev' | 'holdout'; targetGeneration: number; eventAircraftQualification: boolean; specSha256: string },
+  opts: { split: 'all' | 'dev' | 'holdout'; eventAircraftQualification: boolean; specSha256: string; target: TargetCheck },
 ): CodedPreflight {
   const problems = codedDatasetProblems(dataset).map((p) => `dataset: ${p}`);
   if (dataset.source.specSha256 !== opts.specSha256) {
@@ -73,9 +81,7 @@ export function codedPreflight(
   if (notRun.length > 0) {
     problems.push(`index: no event-level aircraft qualification; ${notRun.length} question(s) need it (${notRun.join(', ')}) and are not run`);
   }
-  if (opts.targetGeneration !== dataset.source.generationId) {
-    problems.push(`generation: the coded set was built from generation ${dataset.source.generationId}; the target is generation ${opts.targetGeneration}`);
-  }
+  problems.push(...targetProblems('coded', { source: dataset.source, labels: codedLabels(dataset) }, opts.target));
   return { problems, items: selected.filter((q) => !notRun.includes(q.id)), notRun };
 }
 
@@ -93,29 +99,32 @@ export function parseCodedDataset(raw: string): { dataset: CodedDataset } | { is
 
 const num = (x: number | null | undefined) => (x === null || x === undefined ? '   -  ' : x.toFixed(3).padStart(6));
 
+/** The summary group of `group`'s questions of one class (`all` has the bare class names). */
+export const classGroup = (group: string, cls: 'narrow' | 'broad'): string => (group === 'all' ? cls : `${group}/${cls}`);
+
 function printCoded(r: CodedEvaluation): void {
   console.log(`\n${REFERENCE} scores: retrieval of coded facts; absence of a code is not a negative judgement`);
   for (const group of ['all', 'dev', 'holdout', 'tag:paraphrase']) {
     const n = r.summary[String(r.sizes[0])]?.hybrid[group]?.questions ?? 0;
     if (n === 0) continue;
     console.log(`\n${group === 'tag:paraphrase' ? 'paraphrases only' : group} (${n} questions)`);
-    console.log('  per channel  mode     | narrow: R@20  >=90%  (n) | broad: P@6   nDCG@6  R@20 diag (ceiling) (n) | all: coded precision');
+    console.log('  per channel  mode     | narrow: R@20  >=90%  (n) | broad: coded P@6  coded nDCG@6  R@20 diag (ceiling) (n) | all: coded precision');
     for (const size of r.sizes) {
       for (const mode of MODES) {
         const s = r.summary[String(size)]?.[mode];
-        const narrow = s?.[group === 'all' ? 'narrow' : group === 'tag:paraphrase' ? 'tag:paraphrase' : `${group}/narrow`];
-        const broad = s?.[group === 'all' ? 'broad' : group === 'tag:paraphrase' ? 'tag:paraphrase' : `${group}/broad`];
+        const narrow = s?.[classGroup(group, 'narrow')];
+        const broad = s?.[classGroup(group, 'broad')];
         const all = s?.[group];
         console.log(
           `  ${String(size).padStart(11)}  ${mode.padEnd(8)} |  ${pct(narrow?.recallGate.mean)} ${pct(narrow?.recallGate.atTarget)} (${narrow?.recallGate.questions ?? 0}) |` +
-            ` ${pct(broad?.strictP6?.lower)} ${pct(broad?.ndcg6?.lower)} ${pct(broad?.recallDiagnostic.mean)} (${pct(broad?.recallDiagnostic.ceiling)}) (${broad?.recallDiagnostic.questions ?? 0}) |` +
+            `     ${pct(broad?.strictP6?.lower)}       ${pct(broad?.ndcg6?.lower)} ${pct(broad?.recallDiagnostic.mean)} (${pct(broad?.recallDiagnostic.ceiling)}) (${broad?.questions ?? 0}) |` +
             ` ${pct(all?.precisionReturned?.lower)}`,
         );
       }
     }
   }
   for (const size of r.sizes) {
-    console.log(`\nper question, ${size} per channel: R@20 keyword / vector / hybrid; hybrid bundle: P@6, nDCG@6, coded precision`);
+    console.log(`\nper question, ${size} per channel: R@20 keyword / vector / hybrid; hybrid bundle: coded P@6, coded nDCG@6, coded precision`);
     for (const q of r.questions) {
       const m = q.sizes[String(size)]?.modes;
       if (!m) continue;
@@ -154,11 +163,14 @@ export async function runCodedEvaluation(opts: RunOptions): Promise<number> {
       console.error(`${run.refused}; nothing embedded`);
       return 1;
     }
+    // The dataset's labels re-derived on the target generation (read-only): generation ids are per-database sequences.
+    const target = await checkTarget(config.databaseUrl, run.target.generationId, (client) => rederiveCoded(client, run.target.generationId, dataset));
+    for (const w of target.warnings) console.warn(`warning: ${w}`);
     const pre = codedPreflight(dataset, {
       split,
-      targetGeneration: run.target.generationId,
       eventAircraftQualification: run.contract.eventAircraftQualification,
       specSha256: specSha256(CODED_QUESTIONS, CODED_PARAPHRASES),
+      target,
     });
     if (pre.problems.length > 0) {
       for (const p of pre.problems) console.error(p);
@@ -215,7 +227,10 @@ export async function runCodedEvaluation(opts: RunOptions): Promise<number> {
         broad: count('broad'),
         paraphrases: items.filter((q) => q.paraphrase_of !== undefined).length,
         notRunWithoutEventAircraftQualification: pre.notRun,
+        splitsFrozen: dataset.splitsFrozen,
         groups: Object.fromEntries([...groups.entries()].sort(([a], [b]) => Number(a.slice(1)) - Number(b.slice(1)))),
+        /** The target generation's identity; every question's labels were re-derived there before anything was embedded. */
+        target: { source: target.source, questionsRederived: target.labels.size, warnings: target.warnings, ms: target.ms },
       },
       index: indexReport(run),
       embedder: { kind: fake ? 'fake' : 'openai', model, dims, inputs: plan.inputs.length, countedTokens: plan.inputTokens, billed },

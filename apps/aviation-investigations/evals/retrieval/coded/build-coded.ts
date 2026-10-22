@@ -5,31 +5,44 @@
  * case, read in one read-only, repeatable-read snapshot. Deterministic: the same
  * generation always gives the same file.
  *
- *   pnpm eval:retrieval:coded [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]
+ *   pnpm eval:retrieval:coded [--env-files <a,b>] [--generation <id>] [--out <file>]
+ *     [--dry-run | --check] [--freeze-splits] [--reassign-splits]
  *
  * - `--generation`: default the active manifest's generation.
  * - `--dry-run`: print the table only. `--check`: exit 1 when the file differs.
+ * - Splits: when the committed file is frozen (`splitsFrozen`, protocol section 6),
+ *   every question it holds keeps its split and only new questions are placed; a spec
+ *   edit that joins questions frozen in both splits fails. `--freeze-splits` marks the
+ *   result frozen; `--reassign-splits` places every group afresh (a deliberate,
+ *   reviewable change that `--check` reports as a difference).
  * - Connects with `DATABASE_URL` (the read-only app role). Prints case counts, codes
  *   and group membership (public NTSB data), never configuration values.
  *
- * The snapshot reads the cohort's cases (year, state), aircraft (category, defining
- * phase group), findings (code, description, `in_probable_cause`) and sequence rows
- * (event code, description). `cause_factor` is never read. Labels come from codes
- * only; descriptions are recorded as the text seen. Fails when a question's count does
- * not fit its class (never capped), when a spec breaks a wording rule, or when the set
- * breaks a coverage or split rule (`codedDatasetProblems`).
+ * The snapshot reads the generation's identity (`dataset_generations`), and the
+ * cohort's cases (year, state), aircraft (category, defining phase group), findings
+ * (code, description, `in_probable_cause`) and sequence rows (event code,
+ * description). `cause_factor` is never read. Labels come from codes only;
+ * descriptions are recorded as the text seen. Fails when a question's count does not
+ * fit its class (never capped), when a spec breaks a wording rule, or when the set
+ * breaks a coverage or split rule (`codedDatasetProblems`). Warns when the generation
+ * holds a code of a frozen family outside its frozen list (`CODE_FAMILIES`).
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import pg from 'pg';
+import { z } from 'zod';
 import { APP_DIR } from '../../../worker/config.js';
 import { evalConfig } from '../config.js';
+import { readGenerationSource, type GenerationSource, type QuestionLabels } from '../generation.js';
+import type { Split } from '../silver.js';
 import {
   assembleCoded,
   codeStats,
   deriveQuestion,
+  familyWarnings,
   indexCorpus,
+  type AssembleOptions,
   type CodedBuild,
   type CodedCorpus,
   type CodedDataset,
@@ -37,7 +50,7 @@ import {
   type CodedQuestionSpec,
   type Derivation,
 } from './coded.js';
-import { CODED_PARAPHRASES, CODED_QUESTIONS } from './questions.js';
+import { CODED_PARAPHRASES, CODED_QUESTIONS, CODE_FAMILIES } from './questions.js';
 
 export const DEFAULT_CODED_DATASET = resolve(APP_DIR, 'evals/retrieval/coded/dataset.json');
 export const BUILDER = 'evals/retrieval/coded/build-coded.ts';
@@ -57,10 +70,11 @@ export const CORPUS_QUERIES = {
               where q.generation_id = $1 and c.answer_eligible and c.is_us order by q.ntsb_no, q.aircraft_key, q.occurrence_no`,
 } as const;
 
-/** Read the answer-eligible US cohort of `generationId` in one read-only, repeatable-read snapshot. */
-export async function loadCodedCorpus(client: pg.ClientBase, generationId: number): Promise<CodedCorpus> {
+/** The generation's identity and its answer-eligible US cohort, in one read-only, repeatable-read snapshot. */
+export async function loadCodedCorpus(client: pg.ClientBase, generationId: number): Promise<{ source: GenerationSource; corpus: CodedCorpus }> {
   await client.query('begin transaction isolation level repeatable read read only');
   try {
+    const source = await readGenerationSource(client, generationId);
     const cases = await client.query<{ ntsb_no: string; ev_year: number | null; state: string | null }>(CORPUS_QUERIES.cases, [generationId]);
     if (cases.rows.length === 0) throw new Error(`generation ${generationId} has no answer-eligible US cases`);
     const aircraft = await client.query<{ ntsb_no: string; aircraft_key: number; category: string | null; defining_phase_group: string | null }>(
@@ -77,10 +91,13 @@ export async function loadCodedCorpus(client: pg.ClientBase, generationId: numbe
     );
     await client.query('commit');
     return {
-      cases: cases.rows.map((r) => ({ ntsbNo: r.ntsb_no, evYear: r.ev_year, state: r.state })),
-      aircraft: aircraft.rows.map((r) => ({ ntsbNo: r.ntsb_no, aircraftKey: r.aircraft_key, category: r.category, definingPhaseGroup: r.defining_phase_group })),
-      findings: findings.rows.map((r) => ({ ntsbNo: r.ntsb_no, aircraftKey: r.aircraft_key, code: r.code, description: r.description, inProbableCause: r.in_probable_cause })),
-      sequence: sequence.rows.map((r) => ({ ntsbNo: r.ntsb_no, aircraftKey: r.aircraft_key, eventCode: r.event_code, description: r.description })),
+      source,
+      corpus: {
+        cases: cases.rows.map((r) => ({ ntsbNo: r.ntsb_no, evYear: r.ev_year, state: r.state })),
+        aircraft: aircraft.rows.map((r) => ({ ntsbNo: r.ntsb_no, aircraftKey: r.aircraft_key, category: r.category, definingPhaseGroup: r.defining_phase_group })),
+        findings: findings.rows.map((r) => ({ ntsbNo: r.ntsb_no, aircraftKey: r.aircraft_key, code: r.code, description: r.description, inProbableCause: r.in_probable_cause })),
+        sequence: sequence.rows.map((r) => ({ ntsbNo: r.ntsb_no, aircraftKey: r.aircraft_key, eventCode: r.event_code, description: r.description })),
+      },
     };
   } catch (err) {
     await client.query('rollback').catch(() => undefined);
@@ -90,10 +107,11 @@ export async function loadCodedCorpus(client: pg.ClientBase, generationId: numbe
 
 /** Pure: every question derived over the corpus, then the dataset. */
 export function buildCodedFromCorpus(
-  generationId: number,
+  source: GenerationSource,
   corpus: CodedCorpus,
   specs: readonly CodedQuestionSpec[] = CODED_QUESTIONS,
   paraphrases: readonly CodedParaphraseSpec[] = CODED_PARAPHRASES,
+  opts: AssembleOptions = {},
 ): CodedBuild {
   const index = indexCorpus(corpus);
   const derived = new Map<string, Derivation>(specs.map((s) => [s.id, deriveQuestion(index, s)]));
@@ -101,18 +119,56 @@ export function buildCodedFromCorpus(
     corpus,
     specs.flatMap((s) => s.codeSet.clauses.flatMap((c) => c.codes.map((code) => ({ kind: c.kind, code })))),
   );
-  return assembleCoded({ generationId, answerEligibleCases: corpus.cases.length, builder: BUILDER }, specs, paraphrases, derived, stats);
+  return assembleCoded({ ...source, answerEligibleCases: corpus.cases.length, builder: BUILDER }, specs, paraphrases, derived, stats, opts);
 }
 
-export async function buildCoded(client: pg.ClientBase, generationId: number): Promise<CodedBuild> {
-  return buildCodedFromCorpus(generationId, await loadCodedCorpus(client, generationId));
+export async function buildCoded(client: pg.ClientBase, generationId: number, opts: AssembleOptions = {}): Promise<CodedBuild & { warnings: string[] }> {
+  const { source, corpus } = await loadCodedCorpus(client, generationId);
+  return { ...buildCodedFromCorpus(source, corpus, CODED_QUESTIONS, CODED_PARAPHRASES, opts), warnings: familyWarnings(corpus, CODE_FAMILIES) };
+}
+
+/**
+ * Every question's labels re-derived on `generationId` from the code set and filters
+ * the dataset records (read-only snapshot), and the frozen-family warnings of that
+ * generation: what a run compares with the dataset before anything is embedded.
+ */
+export async function rederiveCoded(client: pg.ClientBase, generationId: number, dataset: CodedDataset): Promise<{ labels: Map<string, QuestionLabels>; warnings: string[] }> {
+  const { corpus } = await loadCodedCorpus(client, generationId);
+  const index = indexCorpus(corpus);
+  const labels = new Map<string, QuestionLabels>();
+  for (const q of dataset.questions) {
+    const d = deriveQuestion(index, q);
+    labels.set(q.id, { relevant: d.relevant, unreachable: d.unreachable });
+  }
+  return { labels, warnings: familyWarnings(corpus, CODE_FAMILIES) };
+}
+
+/** Only what freezing needs from a committed file, so a later schema change cannot drop the pins. */
+const FrozenSplitsSchema = z.object({
+  splitsFrozen: z.boolean().optional(),
+  questions: z.array(z.object({ id: z.string(), split: z.enum(['dev', 'holdout']) })),
+});
+
+/**
+ * The frozen splits of a committed dataset file: `frozen` and every question's split
+ * when the file is frozen; nothing for a missing or unfrozen file.
+ */
+export function frozenSplits(text: string | null): { frozen: boolean; pinned: Map<string, Split> } {
+  if (text === null) return { frozen: false, pinned: new Map() };
+  const parsed = FrozenSplitsSchema.safeParse(JSON.parse(text));
+  if (!parsed.success) throw new Error('the committed coded dataset has no readable splits; its frozen assignment cannot be kept');
+  const frozen = parsed.data.splitsFrozen === true;
+  return { frozen, pinned: frozen ? new Map(parsed.data.questions.map((q) => [q.id, q.split])) : new Map() };
 }
 
 export const serializeCodedDataset = (d: CodedDataset): string => `${JSON.stringify(d, null, 2)}\n`;
 
 function printBuild(built: CodedBuild): void {
   const d = built.dataset;
-  console.log(`coded set ${d.version} from generation ${d.source.generationId} (${d.source.answerEligibleCases} answer-eligible cases)`);
+  console.log(
+    `coded set ${d.version} from generation ${d.source.generationId} (${d.source.answerEligibleCases} answer-eligible cases; archive ${d.source.archiveSha256.slice(0, 12)}, ` +
+      `mapping ${d.source.mappingVersion}, normalization ${d.source.fieldNormalizationVersion}, citation text ${d.source.citationTextVersion}); splits ${d.splitsFrozen ? 'frozen' : 'not frozen'}`,
+  );
   const byId = new Map(d.questions.map((q) => [q.id, q]));
   for (const g of built.groups) {
     console.log(`${g.id} ${g.split} (${g.questions.length} question${g.questions.length === 1 ? '' : 's'})`);
@@ -145,12 +201,17 @@ async function main(argv: string[]): Promise<number> {
       out: { type: 'string' },
       'dry-run': { type: 'boolean' },
       check: { type: 'boolean' },
+      'freeze-splits': { type: 'boolean' },
+      'reassign-splits': { type: 'boolean' },
     },
     strict: true,
   });
   const config = evalConfig(values['env-files']);
   if (!config.databaseUrl) throw new Error('DATABASE_URL is not set');
   const out = values.out ? resolve(values.out) : DEFAULT_CODED_DATASET;
+  const committed = existsSync(out) ? readFileSync(out, 'utf8') : null;
+  const { frozen, pinned: committedPins } = frozenSplits(committed);
+  const pinned = values['reassign-splits'] ? new Map<string, Split>() : committedPins;
   const client = new pg.Client({ connectionString: config.databaseUrl, application_name: 'aviation-eval-coded' });
   await client.connect();
   try {
@@ -163,15 +224,18 @@ async function main(argv: string[]): Promise<number> {
       if (!r.rows[0]) throw new Error('no dataset manifest is active; pass --generation');
       generationId = Number(r.rows[0].generation_id);
     }
-    const built = await buildCoded(client, generationId);
+    const built = await buildCoded(client, generationId, { pinned, splitsFrozen: values['freeze-splits'] === true || frozen });
     printBuild(built);
+    const ids = new Set(built.dataset.questions.map((q) => q.id));
+    for (const id of pinned.keys()) if (!ids.has(id)) console.warn(`warning: frozen question ${id} is no longer in the set`);
+    for (const w of built.warnings) console.warn(`warning: ${w}`);
     if (built.problems.length > 0) {
       for (const p of built.problems) console.error(`problem: ${p}`);
       return 1;
     }
     const text = serializeCodedDataset(built.dataset);
     if (values.check) {
-      const current = existsSync(out) ? readFileSync(out, 'utf8') : '';
+      const current = committed ?? '';
       if (current === text) {
         console.log(`${out} is up to date`);
         return 0;

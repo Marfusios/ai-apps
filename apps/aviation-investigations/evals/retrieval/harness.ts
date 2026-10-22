@@ -1,10 +1,12 @@
 /**
  * Steps every retrieval evaluation track shares (`run.ts`): resolving the target
- * passages index and its contract before anything is embedded, planning the query
+ * passages index and its contract, and re-deriving the dataset's labels on the target
+ * generation (`checkTarget`), before anything is embedded; planning the query
  * embeddings, and embedding them up front, free (`--fake-embedder`) or metered on the
  * ledger under `evaluation`. Configuration values are never printed.
  */
 import type { Client } from '@elastic/elasticsearch';
+import pg from 'pg';
 import type { AppConfig } from '../../shared/config.js';
 import { queryEmbeddingInput, type Embedder } from '../../server/ai/embeddings.js';
 import { countTokens } from '../../server/ai/tokens.js';
@@ -15,6 +17,7 @@ import { IndexMetaError, readIndexMeta, type IndexMeta } from '../../server/sear
 import { PassagesIndexIncompatibleError, checkPassagesIndex, type PassagesContract } from '../../server/search/passages-contract.js';
 import { batchByLimits, createFakeEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion, reservationUsd } from '../../worker/index/embed.js';
 import { createLedgerSpendGate } from '../../worker/index/spend-gate.js';
+import { readGenerationSource, type QuestionLabels, type TargetCheck } from './generation.js';
 
 /** An embedder answering from vectors computed up front (each question is embedded once). */
 export function precomputedEmbedder(base: Pick<Embedder, 'model' | 'dims' | 'usdPerMillionTokens'>, vectors: ReadonlyMap<string, Float32Array>): Embedder {
@@ -78,6 +81,28 @@ export async function resolveRunTarget(
   } catch (err) {
     if (err instanceof PassagesIndexIncompatibleError || err instanceof IndexMetaError) return { refused: err.message };
     throw err;
+  }
+}
+
+/**
+ * The target generation's identity and every question's labels re-derived there by
+ * `rederive` (its own read-only snapshot), read with `databaseUrl` (the app role).
+ * `targetProblems` compares them with the dataset; nothing is written.
+ */
+export async function checkTarget(
+  databaseUrl: string,
+  generationId: number,
+  rederive: (client: pg.ClientBase) => Promise<{ labels: ReadonlyMap<string, QuestionLabels>; warnings?: string[] }>,
+): Promise<TargetCheck & { ms: number }> {
+  const client = new pg.Client({ connectionString: databaseUrl, application_name: 'aviation-eval-verify' });
+  await client.connect();
+  const started = Date.now();
+  try {
+    const source = await readGenerationSource(client, generationId);
+    const { labels, warnings } = await rederive(client);
+    return { source, labels, warnings: warnings ?? [], ms: Date.now() - started };
+  } finally {
+    await client.end();
   }
 }
 

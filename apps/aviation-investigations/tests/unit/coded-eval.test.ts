@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CORPUS_QUERIES, buildCodedFromCorpus } from '../../evals/retrieval/coded/build-coded.js';
+import { CORPUS_QUERIES, buildCodedFromCorpus, frozenSplits } from '../../evals/retrieval/coded/build-coded.js';
 import {
   AREAS,
   CAVEAT,
@@ -21,9 +21,11 @@ import {
   assembleCoded,
   codeStats,
   codedDatasetProblems,
+  codedLabels,
   commonWordSuffix,
   deriveQuestion,
   describeCodeSet,
+  familyWarnings,
   indexCorpus,
   normalizeFindingDescription,
   specProblems,
@@ -35,8 +37,9 @@ import {
   type Derivation,
 } from '../../evals/retrieval/coded/coded.js';
 import { codedTable, summarizeCoded, type CodedQuestionResult } from '../../evals/retrieval/coded/evaluate.js';
-import { CODED_PARAPHRASES, CODED_QUESTIONS } from '../../evals/retrieval/coded/questions.js';
-import { codedPreflight, parseCodedDataset } from '../../evals/retrieval/coded/run.js';
+import { CODED_PARAPHRASES, CODED_QUESTIONS, CODE_FAMILIES } from '../../evals/retrieval/coded/questions.js';
+import { classGroup, codedPreflight, parseCodedDataset } from '../../evals/retrieval/coded/run.js';
+import { targetProblems, type GenerationSource, type TargetCheck } from '../../evals/retrieval/generation.js';
 import { codedReference, scoreQuestion } from '../../evals/retrieval/metrics.js';
 import { runOptions } from '../../evals/retrieval/run.js';
 
@@ -218,7 +221,8 @@ const spec = (id: string, over: Partial<CodedQuestionSpec> = {}): CodedQuestionS
 const derivation = (relevant: string[]): Derivation => ({ relevant, unreachable: [], multiAircraftRelevant: 0, perCode: new Map([[`finding:${CARB}`, relevant.length]]) });
 const cases = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(4, '0')}`);
 const stats = new Map([[`finding:${CARB}`, { descriptions: ['Conducive to carburetor icing-Effect on equipment'], cohortCases: 99, cohortCasesInProbableCause: 50 }]]);
-const SOURCE = { generationId: 1, answerEligibleCases: 100, builder: 'test' };
+const IDENTITY: GenerationSource = { generationId: 1, archiveSha256: 'a'.repeat(64), mappingVersion: 'v1-empirical', fieldNormalizationVersion: 'v1', citationTextVersion: 'v1' };
+const SOURCE = { ...IDENTITY, answerEligibleCases: 100, builder: 'test' };
 
 describe('coded set assembly', () => {
   it('keeps full relevant sets, rejects counts outside the class (never capped), and copies labels to paraphrases', () => {
@@ -254,6 +258,45 @@ describe('coded set assembly', () => {
     );
     expect(built.dataset.reference).toBe(REFERENCE);
     expect(built.dataset.caveat).toBe(CAVEAT);
+  });
+
+  it('keeps frozen splits: pinned questions stay put, the set is marked frozen, and groups pinned to both splits are refused', () => {
+    const specs = [spec('a'), spec('b'), spec('c')];
+    const derived = new Map([
+      ['a', derivation(['C0000001'])],
+      ['b', derivation(['C0000002'])],
+      ['c', derivation(['C0000003'])],
+    ]);
+    const free = assembleCoded(SOURCE, specs, [], derived, stats);
+    expect(free.dataset.splitsFrozen).toBe(false);
+    const flip = (s: string | undefined) => (s === 'dev' ? ('holdout' as const) : ('dev' as const));
+    const pins = new Map(free.dataset.questions.map((q) => [q.id, flip(q.split)]));
+    const frozen = assembleCoded(SOURCE, specs, [], derived, stats, { pinned: pins, splitsFrozen: true });
+    expect(frozen.dataset.splitsFrozen).toBe(true);
+    for (const q of frozen.dataset.questions) expect(q.split, q.id).toBe(pins.get(q.id));
+    // A spec edit that joins questions frozen in both splits.
+    const edited = new Map([...derived, ['c', derivation(['C0000001', 'C0000002'])]]);
+    const both = assembleCoded(SOURCE, specs, [], edited, stats, { pinned: new Map([['a', 'dev' as const], ['b', 'holdout' as const]]), splitsFrozen: true });
+    expect(both.problems.join('\n')).toMatch(/split: group g\d+ joins questions pinned to dev \(a\) and to holdout \(b\); frozen splits cannot be kept/);
+  });
+
+  it('reads frozen splits from a committed file whatever else its schema holds', () => {
+    expect(frozenSplits(null)).toEqual({ frozen: false, pinned: new Map() });
+    expect(frozenSplits(JSON.stringify({ questions: [{ id: 'a', split: 'dev', extra: 1 }] }))).toEqual({ frozen: false, pinned: new Map() });
+    expect(frozenSplits(JSON.stringify({ splitsFrozen: true, other: 'x', questions: [{ id: 'a', split: 'dev' }, { id: 'b', split: 'holdout' }] }))).toEqual({
+      frozen: true,
+      pinned: new Map([['a', 'dev'], ['b', 'holdout']]),
+    });
+    expect(() => frozenSplits(JSON.stringify({ splitsFrozen: true }))).toThrow(/no readable splits/);
+  });
+
+  it('warns about codes of a frozen family the frozen list does not hold', () => {
+    const families = [{ name: 'carburetor icing', pattern: '^03031030[0-9]{2}$', codes: [CARB] }];
+    // CARB_OP (0303103082) is in the cohort, of the family, and not frozen.
+    expect(familyWarnings(corpus, families)).toEqual([`code family "carburetor icing": ${CARB_OP} occurs in 1 cohort case(s) but is not in the frozen set`]);
+    expect(familyWarnings(corpus, [{ ...families[0] as (typeof families)[number], codes: [CARB, CARB_OP] }])).toEqual([]);
+    // Every committed family's frozen codes are of its own kind.
+    for (const f of CODE_FAMILIES) for (const code of f.codes) expect(code, f.name).toMatch(new RegExp(f.pattern, 'u'));
   });
 
   it('groups questions sharing a case, and paraphrases with their originals, in one split', () => {
@@ -302,6 +345,10 @@ describe('the committed coded set', () => {
     const d = committed();
     expect(d.source.specSha256).toBe(specSha256(CODED_QUESTIONS, CODED_PARAPHRASES));
     expect(d.reference).toBe('coded-reference');
+    // Frozen splits (protocol section 6), and the generation's identity next to its id.
+    expect(d.splitsFrozen).toBe(true);
+    expect(d.source).toMatchObject({ generationId: 1, mappingVersion: 'v1-empirical', fieldNormalizationVersion: 'v1', citationTextVersion: 'v1' });
+    expect(d.source.archiveSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(codedDatasetProblems(d)).toEqual([]);
     expect(specProblems(CODED_QUESTIONS, CODED_PARAPHRASES)).toEqual([]);
     expect(JSON.stringify(d)).not.toMatch(/expert/i);
@@ -393,7 +440,16 @@ const item = (id: string, over: Partial<CodedItem> = {}): CodedItem => ({
 describe('coded runner preflight (fails closed before embedding)', () => {
   const clean = committed();
   const sha = specSha256(CODED_QUESTIONS, CODED_PARAPHRASES);
-  const base = { split: 'all' as const, targetGeneration: clean.source.generationId, eventAircraftQualification: true, specSha256: sha };
+  const identity: GenerationSource = {
+    generationId: clean.source.generationId,
+    archiveSha256: clean.source.archiveSha256,
+    mappingVersion: clean.source.mappingVersion,
+    fieldNormalizationVersion: clean.source.fieldNormalizationVersion,
+    citationTextVersion: clean.source.citationTextVersion,
+  };
+  /** The target as a re-derivation on the same generation would find it. */
+  const sameTarget: TargetCheck = { source: identity, labels: codedLabels(clean), warnings: [] };
+  const base = { split: 'all' as const, eventAircraftQualification: true, specSha256: sha, target: sameTarget };
 
   it('passes the committed set against its generation on a passages-v2 index', () => {
     const pre = codedPreflight(clean, base);
@@ -402,10 +458,34 @@ describe('coded runner preflight (fails closed before embedding)', () => {
     expect(codedPreflight(clean, { ...base, split: 'holdout' }).items.every((q) => q.split === 'holdout')).toBe(true);
   });
 
-  it('reports a generation mismatch, other question specs, and questions a passages-v1 index cannot reach', () => {
-    expect(codedPreflight(clean, { ...base, targetGeneration: clean.source.generationId + 1 }).problems).toEqual([
-      `generation: the coded set was built from generation ${clean.source.generationId}; the target is generation ${clean.source.generationId + 1}`,
+  it('refuses labels that do not hold on the target: another generation, another archive or version, or other re-derived cases', () => {
+    const target = (over: Partial<GenerationSource>, labels = codedLabels(clean)): TargetCheck => ({ source: { ...identity, ...over }, labels, warnings: [] });
+    expect(codedPreflight(clean, { ...base, target: target({ generationId: identity.generationId + 1 }) }).problems).toEqual([
+      `generation: the coded set was built from generation ${identity.generationId}; the target is generation ${identity.generationId + 1}`,
     ]);
+    expect(codedPreflight(clean, { ...base, target: target({ archiveSha256: 'f'.repeat(64), mappingVersion: 'v2', fieldNormalizationVersion: 'v2', citationTextVersion: 'v2' }) }).problems).toEqual([
+      `generation: the coded set was built from source archive sha256 ${identity.archiveSha256}; the target generation has ${'f'.repeat(64)}`,
+      `generation: the coded set was built from completion mapping version ${identity.mappingVersion}; the target generation has v2`,
+      `generation: the coded set was built from field normalization version ${identity.fieldNormalizationVersion}; the target generation has v2`,
+      `generation: the coded set was built from citation text version ${identity.citationTextVersion}; the target generation has v2`,
+    ]);
+    // One question derives another case on the target; another loses an unreachable case; a third was not re-derived.
+    const q = clean.questions.find((x) => x.id === 'occ-midair-nevada') as CodedItem;
+    const heli = clean.questions.find((x) => x.id === 'occ-midair-helicopters') as CodedItem;
+    const labels = codedLabels(clean);
+    labels.set(q.id, { relevant: [...q.relevant.slice(1), 'ZZZ99XX999'], unreachable: [] });
+    labels.set(heli.id, { relevant: heli.relevant, unreachable: heli.unreachable.slice(1) });
+    labels.delete('occ-cfit-utah');
+    expect(codedPreflight(clean, { ...base, target: target({}, labels) }).problems).toEqual([
+      `labels: occ-midair-nevada: the target derives ${q.relevant.length} positive cases, the dataset has ${q.relevant.length}: +1 (ZZZ99XX999) -1 (${q.relevant[0]})`,
+      `labels: occ-midair-helicopters: unreachable cases differ on the target: -1 (${heli.unreachable[0]})`,
+      'labels: occ-cfit-utah was not re-derived on the target',
+    ]);
+    // The same comparison serves the silver set (no unreachable cases).
+    expect(targetProblems('silver', { source: identity, labels: new Map([['s', { relevant: ['A0000001'] }]]) }, target({}, new Map([['s', { relevant: ['A0000001'] }]])))).toEqual([]);
+  });
+
+  it('reports other question specs, and questions a passages-v1 index cannot reach', () => {
     expect(codedPreflight(clean, { ...base, specSha256: '0'.repeat(64) }).problems).toEqual([
       'dataset: built from other question specs than the committed ones; rebuild it with pnpm eval:retrieval:coded',
     ]);
@@ -477,6 +557,13 @@ describe('coded summaries', () => {
     expect(s['50']?.hybrid['holdout/broad']?.recallDiagnostic).toEqual({ questions: 1, mean: 0.2, ceiling: 0.6667 });
     expect(s['50']?.hybrid['area:occurrence']?.questions).toBe(2);
     expect(s['50']?.hybrid['tag:paraphrase']?.questions).toBe(2);
+    // Every area and tag group is also split by class, so a block never mixes narrow and broad questions.
+    expect(s['50']?.hybrid[classGroup('tag:paraphrase', 'narrow')]).toMatchObject({ questions: 1, recallGate: { questions: 1, mean: 1 } });
+    expect(s['50']?.hybrid[classGroup('tag:paraphrase', 'broad')]).toMatchObject({ questions: 1, strictP6: { lower: 1, upper: 1 }, recallGate: { questions: 0 } });
+    expect(s['50']?.hybrid[classGroup('area:occurrence', 'broad')]?.questions).toBe(1);
+    expect(classGroup('all', 'narrow')).toBe('narrow');
+    // n1 returns its one coded case: strict P@6 is 1/6.
+    expect(s['50']?.hybrid['tag:paraphrase/narrow']?.strictP6).toEqual({ lower: 0.1667, upper: 0.1667 });
     const table = codedTable(qs, [50]);
     expect(table).toHaveLength(6);
     expect(table.find((r) => r.id === 'b1' && r.mode === 'hybrid')).toMatchObject({ recallAt20: 0.2, recallGate: 'diagnostic', recallCeiling: 20 / 30, strictP6: 1, codedPrecision: 1, ndcg6: 1, returned: 6 });
@@ -485,12 +572,12 @@ describe('coded summaries', () => {
 
 describe('building from a corpus', () => {
   it('derives every committed question over a corpus and reports the coverage problems of a tiny one', () => {
-    const built = buildCodedFromCorpus(1, corpus);
+    const built = buildCodedFromCorpus(IDENTITY, corpus);
     // Only the two-helicopter midair fits its class in the synthetic cohort; the mixed event is unreachable under the filter.
     expect(built.dataset.questions.filter((q) => !q.paraphrase_of).map((q) => q.id)).toEqual(['occ-midair-helicopters']);
     expect(built.dataset.questions[0]).toMatchObject({ relevant: ['FIX18CO005'], unreachable: ['FIX15AK004'], needsEventAircraftQualification: true });
     expect(built.rejected).toHaveLength(CODED_QUESTIONS.length - 1);
-    expect(built.dataset.source).toMatchObject({ generationId: 1, answerEligibleCases: 7, specSha256: specSha256(CODED_QUESTIONS, CODED_PARAPHRASES) });
+    expect(built.dataset.source).toMatchObject({ ...IDENTITY, answerEligibleCases: 7, specSha256: specSha256(CODED_QUESTIONS, CODED_PARAPHRASES) });
     expect(built.problems).toEqual(expect.arrayContaining(['env-carb-icing-cause-michigan: the code set derives no case', `only 1 questions (at least ${MIN_QUESTIONS})`]));
   });
 });

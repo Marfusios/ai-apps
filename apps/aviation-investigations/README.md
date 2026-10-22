@@ -474,7 +474,12 @@ Both commands take `--env-files a,b` (otherwise `AVIATION_ENV_FILES`, otherwise
 and meters the embeddings on the ledger under `evaluation` (`DATABASE_INGEST_URL`).
 It fails closed before embedding anything: dataset problems, a target generation
 other than the one the silver set was built from, or an index that breaks the
-passages contract stop the run. So do questions tagged `multi_aircraft_filtered`
+passages contract stop the run. Generation ids are per-database sequences, so each
+dataset also records its generation's identity (`source`: archive sha256, completion
+mapping, field normalization and citation text versions), and every run re-derives
+the labels on its target, read-only, before paying for anything: a different identity,
+or any question whose labels differ there, stops it (the silver set's 76 rules take
+about 25 seconds; the coded set's about 1 second). So do questions tagged `multi_aircraft_filtered`
 (an aircraft filter over multi-aircraft events) on a `passages-v1` index, which cannot
 reach their cases. `--exploratory` continues past these problems (without those
 questions) and marks the report `gating: false`. The report holds every ranking, bundle and
@@ -531,11 +536,21 @@ pnpm eval:retrieval --track coded                  # checks, then plan only (43 
 pnpm eval:retrieval --track coded --confirm-cost   # embed and write data/work/eval-retrieval-coded-<UTC>.json
 ```
 
-The coded run takes the same options and fails closed in the same way, and also stops
-when the dataset was built from other question specs than the committed ones. Its
-report holds the metric definitions, the summary per split, class, area and tag, a
-per-question table, and every ranking, bundle and Elasticsearch body (query vectors
-elided).
+The coded run takes the same options and fails closed in the same way, including the
+label re-derivation on the target, and also stops when the dataset was built from other
+question specs than the committed ones. Its report holds the metric definitions, the
+summary per split, class, area and tag (each also per class), a per-question table, the
+target generation's identity, and every ranking, bundle and Elasticsearch body (query
+vectors elided).
+
+The coded set's splits are frozen (`splitsFrozen`, protocol section 6): a rebuild keeps
+every committed question in its split and places only new questions, and a spec edit
+that would join questions frozen in both splits fails the build (and `--check`).
+`--freeze-splits` freezes a set, and `--reassign-splits` deliberately places every group
+afresh. Code sets taken from what generation 1 holds ("every modifier seen", "every code
+with the Maintenance personnel modifier") are frozen too: the builder and the run warn
+when a generation holds a code of the same kind outside the frozen list
+(`CODE_FAMILIES`), and never add it.
 
 ### Web client
 

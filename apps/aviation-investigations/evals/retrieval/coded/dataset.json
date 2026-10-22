@@ -5,13 +5,18 @@
   "caveat": "Coded-reference labels: exact membership in each question's frozen code set over the answer-eligible cohort. Absence of a code is not a negative relevance judgement: uncoded cases are \"not coded\", neither credited nor penalised in recall, and precision is coded precision. These scores measure retrieval of coded facts, not adjudicated relevance.",
   "source": {
     "generationId": 1,
+    "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+    "mappingVersion": "v1-empirical",
+    "fieldNormalizationVersion": "v1",
+    "citationTextVersion": "v1",
     "answerEligibleCases": 24291,
     "builder": "evals/retrieval/coded/build-coded.ts",
-    "specSha256": "7a1e81f4390bba028cecfdbc2e9ebb15b4731511a7a587b2f5324478646b2ee3"
+    "specSha256": "9410da39e9a319a61e7433192c237a8e6391db909ee958c3d44f234c74145e49"
   },
   "limits": {
     "narrowMax": 20
   },
+  "splitsFrozen": true,
   "questions": [
     {
       "id": "env-carb-icing-cause-michigan",
@@ -2547,7 +2552,7 @@
     },
     {
       "id": "sys-magneto-failure-2014-2016",
-      "question": "From 2014 to 2016, which accidents have a finding of a failure or malfunction of a magneto?",
+      "question": "From 2014 to 2016, which accidents have a finding of a failure or malfunction of a magneto/distributor?",
       "tags": [
         "aircraft_systems",
         "narrow"
@@ -2556,7 +2561,7 @@
       "class": "narrow",
       "wording": [
         "failure or malfunction",
-        "magneto"
+        "magneto/distributor"
       ],
       "filters": {
         "yearFrom": 2014,

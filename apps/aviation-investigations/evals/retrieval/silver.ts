@@ -37,6 +37,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { RetrievalFiltersSchema } from '../../server/search/filters.js';
+import { GENERATION_IDENTITY_FIELDS } from './generation.js';
 
 export const SILVER_VERSION = 'silver-v1';
 export const MIN_EXPECTED = 1;
@@ -167,8 +168,10 @@ export const DatasetSchema = z.strictObject({
   version: z.literal(SILVER_VERSION),
   description: z.string(),
   adjudication: z.literal('pending-expert'),
+  /** The generation the labels were derived from: its id and identity (`generation.ts`). */
   source: z.strictObject({
     generationId: z.number().int().positive(),
+    ...GENERATION_IDENTITY_FIELDS,
     answerEligibleCases: z.number().int().nonnegative(),
     builder: z.string(),
     rulesSha256: z.string().regex(/^[0-9a-f]{64}$/),
@@ -293,13 +296,17 @@ export function satisfiesTextCriterion(criteria: Criteria, passages: readonly { 
 // ---------------------------------------------------------------------------
 // Held out by case
 
+export type Split = 'dev' | 'holdout';
+
 export interface GroupedSplits {
   /** Split per question id. */
-  split: Map<string, 'dev' | 'holdout'>;
-  /** Group label per question id (`g1`, `g2`, …, numbered in assignment order). */
+  split: Map<string, Split>;
+  /** Group label per question id (`g1`, `g2`, …, numbered in sha256 order of the groups). */
   group: Map<string, string>;
-  /** Question ids per group, in assignment order. */
-  groups: { id: string; questions: string[]; split: 'dev' | 'holdout' }[];
+  /** Question ids per group, in label order. */
+  groups: { id: string; questions: string[]; split: Split }[];
+  /** Groups that join questions pinned to both splits (each placed with most of its pins). */
+  conflicts: string[];
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -317,11 +324,18 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
  *
  * `requiredTags` defaults to the silver set's `REQUIRED_TAGS`; the coded-reference set
  * passes its own (`coded/coded.ts`).
+ *
+ * `pinned` freezes splits (protocol section 6): a group holding a pinned question keeps
+ * that split and is counted first, so only groups without a pin are placed by the
+ * rules above; a question added to a pinned group follows it. A group joining
+ * questions pinned to both splits is a conflict (reported, placed with most of its
+ * pins). Without pins the result is the one above.
  */
 export function assignSplits(
   items: readonly { id: string; tags: readonly string[]; expected: readonly string[]; section?: Section }[],
   links: readonly [string, string][] = [],
   requiredTags: readonly string[] = REQUIRED_TAGS,
+  pinned: ReadonlyMap<string, Split> = new Map(),
 ): GroupedSplits {
   const parent = new Map<string, string>(items.map((q) => [q.id, q.id]));
   const find = (x: string): string => {
@@ -352,23 +366,50 @@ export function assignSplits(
     .map((ids) => [...ids].sort())
     .map((ids) => ({ ids, key: sha(ids.join('\n')), tag: byId.get(ids[0] as string)?.tags[0] ?? 'none' }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  const out: GroupedSplits = { split: new Map(), group: new Map(), groups: [] };
+  const out: GroupedSplits = { split: new Map(), group: new Map(), groups: [], conflicts: [] };
   const total = { dev: 0, holdout: 0 };
   const perTag = new Map<string, { dev: number; holdout: number }>();
   /** RAG questions per required tag and split. */
   const required = new Map<string, { dev: number; holdout: number }>(requiredTags.map((t) => [t, { dev: 0, holdout: 0 }]));
-  ordered.forEach((g, i) => {
-    const rag = g.ids.map((id) => byId.get(id)).filter((q) => q !== undefined && (q.section ?? 'rag') === 'rag');
-    const tags = requiredTags.filter((tag) => rag.some((q) => q?.tags.includes(tag)));
-    const lacking = (s: 'dev' | 'holdout') => tags.filter((tag) => (required.get(tag) as { dev: number; holdout: number })[s] === 0).length;
+  const ragOf = (g: (typeof ordered)[number]) => g.ids.map((id) => byId.get(id)).filter((q) => q !== undefined && (q.section ?? 'rag') === 'rag');
+  const tagsOf = (g: (typeof ordered)[number]) => requiredTags.filter((tag) => ragOf(g).some((q) => q?.tags.includes(tag)));
+  const count = (g: (typeof ordered)[number], split: Split) => {
     const t = perTag.get(g.tag) ?? { dev: 0, holdout: 0 };
-    const gap = lacking('holdout') - lacking('dev');
-    const split =
-      gap < 0 ? 'dev' : gap > 0 ? 'holdout' : t.dev < t.holdout ? 'dev' : t.holdout < t.dev ? 'holdout' : total.dev <= total.holdout ? 'dev' : 'holdout';
     t[split] += g.ids.length;
     total[split] += g.ids.length;
     perTag.set(g.tag, t);
-    for (const tag of tags) (required.get(tag) as { dev: number; holdout: number })[split] += rag.filter((q) => q?.tags.includes(tag)).length;
+    const rag = ragOf(g);
+    for (const tag of tagsOf(g)) (required.get(tag) as { dev: number; holdout: number })[split] += rag.filter((q) => q?.tags.includes(tag)).length;
+  };
+  const splits: (Split | undefined)[] = ordered.map(() => undefined);
+  // Pinned groups first: they keep their split and count towards the balance.
+  ordered.forEach((g, i) => {
+    const pins = g.ids.flatMap((id) => {
+      const p = pinned.get(id);
+      return p ? [[id, p] as const] : [];
+    });
+    if (pins.length === 0) return;
+    const dev = pins.filter(([, p]) => p === 'dev').map(([id]) => id);
+    const holdout = pins.filter(([, p]) => p === 'holdout').map(([id]) => id);
+    if (dev.length > 0 && holdout.length > 0) {
+      out.conflicts.push(`group g${i + 1} joins questions pinned to dev (${dev.join(', ')}) and to holdout (${holdout.join(', ')})`);
+    }
+    splits[i] = dev.length >= holdout.length ? 'dev' : 'holdout';
+    count(g, splits[i] as Split);
+  });
+  ordered.forEach((g, i) => {
+    if (splits[i]) return;
+    const tags = tagsOf(g);
+    const lacking = (s: Split) => tags.filter((tag) => (required.get(tag) as { dev: number; holdout: number })[s] === 0).length;
+    const t = perTag.get(g.tag) ?? { dev: 0, holdout: 0 };
+    const gap = lacking('holdout') - lacking('dev');
+    const split: Split =
+      gap < 0 ? 'dev' : gap > 0 ? 'holdout' : t.dev < t.holdout ? 'dev' : t.holdout < t.dev ? 'holdout' : total.dev <= total.holdout ? 'dev' : 'holdout';
+    splits[i] = split;
+    count(g, split);
+  });
+  ordered.forEach((g, i) => {
+    const split = splits[i] as Split;
     const label = `g${i + 1}`;
     out.groups.push({ id: label, questions: g.ids, split });
     for (const id of g.ids) {

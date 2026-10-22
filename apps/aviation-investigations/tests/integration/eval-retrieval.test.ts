@@ -18,6 +18,7 @@ import { CORPUS_QUERIES, loadCodedCorpus } from '../../evals/retrieval/coded/bui
 import { assembleCoded, codeStats, deriveQuestion, indexCorpus, type CodedCorpus, type CodedDataset, type CodedQuestionSpec } from '../../evals/retrieval/coded/coded.js';
 import { evaluateCoded } from '../../evals/retrieval/coded/evaluate.js';
 import { evaluateRetrieval } from '../../evals/retrieval/evaluate.js';
+import { readGenerationSource, type GenerationSource } from '../../evals/retrieval/generation.js';
 import { SILVER_VERSION, type Dataset, type DatasetItem } from '../../evals/retrieval/silver.js';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
 import { createFakeEmbedder } from '../../worker/index/embed.js';
@@ -37,6 +38,8 @@ let es: Client;
 let fixtureDir: string;
 let generationId: number;
 let index: string;
+/** The fixture generation's identity, as a dataset built from it records it. */
+let fixtureSource: GenerationSource;
 
 const item = (id: string, question: string, expected: string[], pattern: string, over: Partial<DatasetItem> = {}): DatasetItem => ({
   id,
@@ -74,7 +77,22 @@ beforeAll(async () => {
   fixtureDir = await makeExtractDir();
   generationId = await loadVerified(ingest, fixtureDir, work);
   index = (await rebuildPassagesIndex(es, ingest, embedder, { generationId, prefix: PREFIX, gate: createMemorySpendGate(1), confirmCost: true })).index;
+  const client = new pg.Client({ connectionString: testDbUrl('app') });
+  await client.connect();
+  try {
+    fixtureSource = await readGenerationSource(client, generationId);
+  } finally {
+    await client.end();
+  }
 }, 180_000);
+
+/** `pnpm eval:retrieval` as a child process against the fixture index (fake or no embeddings), with the test environment's read access. */
+const runCli = (args: string[], env: Record<string, string> = {}) =>
+  spawnSync(process.execPath, [join(APP_DIR, 'node_modules/tsx/dist/cli.mjs'), 'evals/retrieval/run.ts', '--passages-index', index, ...args], {
+    cwd: APP_DIR,
+    encoding: 'utf8',
+    env: { ...process.env, DATABASE_URL: testDbUrl('app'), ELASTICSEARCH_READ_API_KEY: testEsApiKey('read'), ...env },
+  });
 
 afterAll(async () => {
   const found = await es.indices.get({ index: `${PREFIX}-*`, expand_wildcards: 'all', allow_no_indices: true, ignore_unavailable: true });
@@ -129,28 +147,37 @@ describe('retrieval evaluation', () => {
       version: SILVER_VERSION,
       description: 'fixture',
       adjudication: 'pending-expert',
-      source: { generationId, answerEligibleCases: 12, builder: 'test', rulesSha256: '0'.repeat(64) },
+      source: { ...fixtureSource, answerEligibleCases: 12, builder: 'test', rulesSha256: '0'.repeat(64) },
       limits: { minExpected: 1, maxExpected: 20 },
       questions,
     };
     const datasetFile = join(work, 'dataset.json');
     writeFileSync(datasetFile, JSON.stringify(dataset));
     const out = join(work, 'out');
-    const cli = (...args: string[]) =>
-      spawnSync(process.execPath, [join(APP_DIR, 'node_modules/tsx/dist/cli.mjs'), 'evals/retrieval/run.ts', '--dataset', datasetFile, '--passages-index', index, '--out-dir', out, ...args], {
-        cwd: APP_DIR,
-        encoding: 'utf8',
-        env: { ...process.env, DATABASE_URL: testDbUrl('app'), ELASTICSEARCH_READ_API_KEY: testEsApiKey('read') },
-      });
+    const cli = (...args: string[]) => runCli(['--dataset', datasetFile, '--out-dir', out, ...args]);
 
     // The fixture set breaks the silver-set rules (no paraphrases, tags in one split): the
-    // run stops before embedding anything, in plan mode and in a paid run alike.
+    // run stops before embedding anything, in plan mode and in a paid run alike. Its
+    // labels hold on the target: every rule re-run there gives its expected cases.
     for (const args of [[], ['--confirm-cost']]) {
       const refused = cli(...args);
       expect(refused.status, refused.stderr).toBe(1);
       expect(refused.stderr).toMatch(/dataset: only 0 paraphrases/);
       expect(refused.stderr).toContain('nothing embedded');
+      expect(refused.stderr).not.toMatch(/^(labels|generation):/m);
     }
+    expect(existsSync(out)).toBe(false);
+
+    // Labels that do not hold on the target, and an index that breaks the passages contract, stop the run too.
+    const tampered = join(work, 'dataset-tampered.json');
+    writeFileSync(tampered, JSON.stringify({ ...dataset, questions: questions.map((q) => (q.id === 'fixture-0' ? { ...q, expected: ['NYC08LA106'] } : q)) }));
+    const wrongLabels = runCli(['--dataset', tampered, '--out-dir', out, '--confirm-cost']);
+    expect(wrongLabels.status).toBe(1);
+    expect(wrongLabels.stderr).toContain('labels: fixture-0: the target derives 1 positive cases, the dataset has 1: +1 (DFW08TA066) -1 (NYC08LA106)');
+    const refusedIndex = runCli(['--dataset', datasetFile, '--out-dir', out, '--confirm-cost'], { OPENAI_EMBEDDING_DIMENSIONS: '1024' });
+    expect(refusedIndex.status).toBe(1);
+    expect(refusedIndex.stderr).toContain('breaks the passages contract');
+    expect(refusedIndex.stderr).toContain('nothing embedded');
     expect(existsSync(out)).toBe(false);
 
     const run = cli('--fake-embedder', '--exploratory', '--sizes', '10,20', '--split', 'dev');
@@ -172,6 +199,7 @@ describe('retrieval evaluation', () => {
     });
     expect(report.nonGatingReasons).toEqual(expect.arrayContaining(['--exploratory', '--fake-embedder']));
     expect(report.nonGatingReasons.some((r) => r.startsWith('dataset: '))).toBe(true);
+    expect(report).toMatchObject({ dataset: { target: { source: fixtureSource, questionsRederived: 40 } } });
     expect(Object.keys(report.summary)).toEqual(['10', '20']);
     expect(report.questions.every((q) => q.split === 'dev')).toBe(true);
     // No vector anywhere in the report: no run of 50 numbers.
@@ -217,15 +245,17 @@ describe('coded-reference track', () => {
   beforeAll(async () => {
     const client = new pg.Client({ connectionString: testDbUrl('app') });
     await client.connect();
+    let source: GenerationSource;
     try {
-      corpus = await loadCodedCorpus(client, generationId);
+      ({ source, corpus } = await loadCodedCorpus(client, generationId));
     } finally {
       await client.end();
     }
+    expect(source).toEqual(fixtureSource);
     const index = indexCorpus(corpus);
     const derived = new Map(CODED_SPECS.map((s) => [s.id, deriveQuestion(index, s)]));
     const stats = codeStats(corpus, CODED_SPECS.flatMap((s) => s.codeSet.clauses.flatMap((c) => c.codes.map((code) => ({ kind: c.kind, code })))));
-    coded = assembleCoded({ generationId, answerEligibleCases: corpus.cases.length, builder: 'test' }, CODED_SPECS, [], derived, stats).dataset;
+    coded = assembleCoded({ ...source, answerEligibleCases: corpus.cases.length, builder: 'test' }, CODED_SPECS, [], derived, stats).dataset;
   });
 
   it('reads the answer-eligible US cohort in one read-only snapshot, never cause_factor, and derives labels from codes', () => {
@@ -280,21 +310,35 @@ describe('coded-reference track', () => {
     const datasetFile = join(work, 'coded.json');
     writeFileSync(datasetFile, JSON.stringify(coded));
     const out = join(work, 'coded-out');
-    const cli = (file: string, ...args: string[]) =>
-      spawnSync(process.execPath, [join(APP_DIR, 'node_modules/tsx/dist/cli.mjs'), 'evals/retrieval/run.ts', '--track', 'coded', '--dataset', file, '--passages-index', index, '--out-dir', out, ...args], {
-        cwd: APP_DIR,
-        encoding: 'utf8',
-        env: { ...process.env, DATABASE_URL: testDbUrl('app'), ELASTICSEARCH_READ_API_KEY: testEsApiKey('read') },
-      });
+    const cli = (file: string, ...args: string[]) => runCli(['--track', 'coded', '--dataset', file, '--out-dir', out, ...args]);
 
     // The fixture set breaks the coverage rules and was not built from the committed specs: no embedding, in plan mode or paid.
+    // Its labels hold on the target: every question re-derived there gives the same cases.
     for (const args of [[], ['--confirm-cost']]) {
       const refused = cli(datasetFile, ...args);
       expect(refused.status, refused.stderr).toBe(1);
       expect(refused.stderr).toMatch(/dataset: only 4 questions/);
       expect(refused.stderr).toContain('dataset: built from other question specs');
       expect(refused.stderr).toContain('nothing embedded');
+      expect(refused.stderr).not.toMatch(/^(labels|generation):/m);
     }
+    // Labels that do not hold on the target: a missing positive, and another archive.
+    const midair = coded.questions.find((q) => q.id === 'fx-midair') as (typeof coded.questions)[number];
+    const wrongLabels = join(work, 'coded-wrong-labels.json');
+    writeFileSync(wrongLabels, JSON.stringify({ ...coded, questions: coded.questions.map((q) => (q.id === 'fx-midair' ? { ...q, relevant: midair.relevant.slice(1) } : q)) }));
+    const labels = cli(wrongLabels, '--confirm-cost');
+    expect(labels.status).toBe(1);
+    expect(labels.stderr).toContain(`labels: fx-midair: the target derives 3 positive cases, the dataset has 2: +1 (${midair.relevant[0]})`);
+    const otherArchive = join(work, 'coded-other-archive.json');
+    writeFileSync(otherArchive, JSON.stringify({ ...coded, source: { ...coded.source, archiveSha256: '0'.repeat(64) } }));
+    const archive = cli(otherArchive, '--confirm-cost');
+    expect(archive.status).toBe(1);
+    expect(archive.stderr).toContain(`generation: the coded set was built from source archive sha256 ${'0'.repeat(64)}; the target generation has ${fixtureSource.archiveSha256}`);
+    // An index that breaks the passages contract.
+    const refusedIndex = runCli(['--track', 'coded', '--dataset', datasetFile, '--out-dir', out, '--confirm-cost'], { OPENAI_EMBEDDING_DIMENSIONS: '1024' });
+    expect(refusedIndex.status).toBe(1);
+    expect(refusedIndex.stderr).toContain('breaks the passages contract');
+    expect(refusedIndex.stderr).toContain('nothing embedded');
     // Another generation than the one the set was built from.
     const otherGeneration = join(work, 'coded-other-generation.json');
     writeFileSync(otherGeneration, JSON.stringify({ ...coded, source: { ...coded.source, generationId: generationId + 1 } }));
@@ -330,10 +374,21 @@ describe('coded-reference track', () => {
     });
     expect(report.nonGatingReasons).toEqual(expect.arrayContaining(['--exploratory', '--fake-embedder']));
     expect(report.nonGatingReasons.some((r) => r.startsWith('dataset: '))).toBe(true);
+    expect(report).toMatchObject({ dataset: { splitsFrozen: false, target: { source: fixtureSource, questionsRederived: 4, warnings: [] } } });
     expect(Object.keys(report.summary)).toEqual(['10', '20']);
     expect(report.table).toHaveLength(4 * 2 * 3);
     expect(text).not.toMatch(/(-?\d\.\d+,\s*){50}/);
     expect(text).toContain('1536-dimension query vector elided');
     expect(text).not.toMatch(/expert/i);
-  }, 120_000);
+    expect(run.stdout).toContain('coded P@6');
+
+    // Exploratory runs continue past labels that do not hold, but the report says why it is not gating.
+    const exploratoryOut = join(work, 'coded-out-exploratory');
+    const lenient = runCli(['--track', 'coded', '--dataset', wrongLabels, '--out-dir', exploratoryOut, '--fake-embedder', '--exploratory', '--sizes', '10']);
+    expect(lenient.status, lenient.stderr).toBe(0);
+    const [lenientFile] = readdirSync(exploratoryOut);
+    const lenientReport = JSON.parse(readFileSync(join(exploratoryOut, lenientFile as string), 'utf8')) as { gating: boolean; nonGatingReasons: string[] };
+    expect(lenientReport.gating).toBe(false);
+    expect(lenientReport.nonGatingReasons.some((r) => r.startsWith('labels: fx-midair: the target derives 3 positive cases'))).toBe(true);
+  }, 180_000);
 });
