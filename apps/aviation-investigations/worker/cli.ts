@@ -5,7 +5,10 @@ import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
 import { readAiSwitch, setAiSwitch } from '../server/quota/switch.js';
+import { createEsClient } from '../server/search/es.js';
 import { APP_DIR, workerConfig } from './config.js';
+import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
+import { cleanupStalePins, declareAbandoned, deleteUnusedIndices, reconcileAlias } from './index/publications.js';
 import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
 import { extractArchive, isTerminating, setExtractEnvironment } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
@@ -21,6 +24,10 @@ const USAGE = [
   '  worker report-links --export <file> --case-col <name> (--id-col <name> | --url-col <name>) [--aircraft-col <name>] [--date-col <name>] --retrieved-at <ISO date>',
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
+  '  worker index cases --generation <id>',
+  '  worker index reconcile --alias <alias> [--declare-abandoned <attempt-id> --reason <text>]',
+  '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
+  '  worker index cleanup-builds --older-than <hours>',
   '  worker ai-switch [--on | --off --note <text>]',
   '  worker migrate',
 ].join('\n');
@@ -87,6 +94,26 @@ function printLinks(r: ImportReport): void {
   if (!r.dateChecked) console.warn(`  WARNING: ${r.dateUnchecked} row(s) were not date-checked (no --date-col or no event date); matches rest on case number alone`);
   for (const u of r.unmatched) console.log(`  unmatched ${u.ntsbNo} -> ${u.reportId} (${u.reason})`);
   for (const i of r.invalid) console.log(`  invalid row ${i.row}: ${i.reason}`);
+}
+
+function printIndex(r: IndexReport): void {
+  const lines: [string, string | number][] = [
+    ['index', r.index],
+    ['build', r.buildId],
+    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasVerified ? '' : ' (committed; read-back failed)'}`],
+    ['previous indices (kept)', r.previousIndices.join(', ') || 'none'],
+    ['generation', r.generationId],
+    ['version', `${r.version} (${r.fingerprint.slice(0, 12)})`],
+    ['documents (US events)', r.documents],
+    ['aircraft', r.aircraft],
+    ['answer-eligible', r.answerEligible],
+    ['multi-aircraft events (aircraft facets overlap)', r.multiAircraftEvents],
+    ['events with several defining phases', r.eventsWithSeveralDefiningPhases],
+    ['events without a defining phase', r.eventsWithoutDefiningPhase],
+    ['unparsed defining-event labels', r.unparsedEventLabels],
+    ['duration', `${(r.durationMs / 1000).toFixed(1)} s`],
+  ];
+  for (const [k, v] of lines) console.log(`${k}: ${v}`);
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -188,6 +215,106 @@ async function main(argv: string[]): Promise<number> {
     );
     printLinks(report);
     return report.unmatched.length || report.invalid.length ? 1 : 0;
+  }
+  if (command === 'index') {
+    const [target, ...args] = rest;
+    const config = workerConfig().elasticsearch;
+    if (target === 'cases') {
+      const { values } = parseArgs({ args, options: { generation: { type: 'string' } }, strict: true });
+      const id = Number(values.generation);
+      if (!values.generation || !Number.isSafeInteger(id) || id < 1) {
+        console.error(USAGE);
+        return 2;
+      }
+      const es = createEsClient(config, 'write', { requestTimeoutMs: 120_000 });
+      try {
+        const report = await withDb((db) =>
+          rebuildCasesIndex(es, db, { generationId: id, prefix: config.indexPrefix, log: (m) => console.error(m) }),
+        );
+        printIndex(report);
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
+    if (target === 'reconcile') {
+      const { values } = parseArgs({
+        args,
+        options: { alias: { type: 'string' }, 'declare-abandoned': { type: 'string' }, reason: { type: 'string' } },
+        strict: true,
+      });
+      const declared = values['declare-abandoned'] === undefined ? null : Number(values['declare-abandoned']);
+      if (!values.alias || (declared !== null && (!Number.isSafeInteger(declared) || declared < 1 || !values.reason))) {
+        console.error(USAGE);
+        return 2;
+      }
+      const alias = values.alias;
+      const es = createEsClient(config, 'write');
+      try {
+        if (declared !== null) {
+          const reason = values.reason as string;
+          await withDb((db) => declareAbandoned(db, alias, declared, reason));
+          // An operator's assertion: logged with its reason; it unblocks switching and deletes nothing.
+          console.log(`attempt ${declared} of ${alias} declared abandoned: ${reason}`);
+          return 0;
+        }
+        const r = await withDb((db) => reconcileAlias(es, db, alias));
+        console.log(`alias: ${r.alias} -> ${r.targets.join(', ') || 'nothing'}`);
+        console.log(`committed: ${r.committed.map((c) => `${c.id} (${c.indexName})`).join(', ') || 'none'}`);
+        for (const u of r.unresolved) {
+          console.log(`unknown: attempt ${u.id} (${u.indexName})${u.declared ? ' declared abandoned' : ''}`);
+        }
+        if (r.blocked) {
+          console.log(
+            `alias ${alias} stays blocked. Rerun once the request may have completed, or declare an attempt abandoned: ` +
+              `pnpm worker index reconcile --alias ${alias} --declare-abandoned <attempt-id> --reason <text>`,
+          );
+          return 1;
+        }
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
+    if (target === 'delete-unused') {
+      const { values } = parseArgs({
+        args,
+        options: { 'older-than': { type: 'string' }, alias: { type: 'string', multiple: true }, yes: { type: 'boolean' } },
+        strict: true,
+      });
+      const hours = Number(values['older-than']);
+      if (values['older-than'] === undefined || !Number.isFinite(hours) || hours < 0) {
+        console.error(USAGE);
+        return 2;
+      }
+      const es = createEsClient(config, 'write');
+      try {
+        const r = await withDb((db) =>
+          deleteUnusedIndices(es, db, { olderThanHours: hours, yes: values.yes === true, ...(values.alias ? { aliases: values.alias } : {}) }),
+        );
+        if (r.dryRun) console.log(`would delete (dry run; pass --yes): ${r.wouldDelete.join(', ') || 'none'}`);
+        else console.log(`deleted: ${r.deleted.join(', ') || 'none'}`);
+        if (r.missing.length > 0) console.log(`already missing: ${r.missing.join(', ')}`);
+        for (const k of r.refused) console.log(`kept ${k.indexName}: ${k.reason}`);
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
+    if (target === 'cleanup-builds') {
+      const { values } = parseArgs({ args, options: { 'older-than': { type: 'string' } }, strict: true });
+      const hours = Number(values['older-than']);
+      if (values['older-than'] === undefined || !Number.isFinite(hours) || hours < 0) {
+        console.error(USAGE);
+        return 2;
+      }
+      const r = await withDb((db) => cleanupStalePins(db, { olderThanHours: hours }));
+      console.log(`pins removed: ${r.pinsRemoved.map((p) => `${p.buildId} (generation ${p.generationId})`).join(', ') || 'none'}`);
+      console.log(`running builds skipped: ${r.skippedRunning.join(', ') || 'none'}`);
+      return 0;
+    }
+    console.error(USAGE);
+    return 2;
   }
   if (command === 'generations') {
     parseArgs({ args: rest, options: {}, strict: true });
