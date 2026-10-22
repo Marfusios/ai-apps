@@ -2,8 +2,8 @@
 
 How NTSB data becomes the PostgreSQL corpus and the two Elasticsearch indices, and
 why each step works the way it does. Written 2026-10-22 against implementation
-snapshot `fc450ec`; sections 2.11, 2.12, 5 and 6 were updated when hybrid retrieval
-(Task 10) was merged. The numbers come from generation 1 in the shared `dev`
+snapshot `fc450ec`; sections 2.4, 2.11, 2.12, 5 and 6 were updated at `f69d8a3`,
+when hybrid retrieval (Task 10) was merged. The numbers come from generation 1 in the shared `dev`
 environment, loaded from the NTSB `avall.zip` archive. Paths are relative to
 `apps/aviation-investigations/`.
 
@@ -255,8 +255,8 @@ recorded. Publication requires a current `ok` from `VERIFIER_VERSION` (`verify-v
 **Generation 1: all 74,087 source texts were reconstructed and hash-verified, and the
 snapshot profile matched.**
 
-**Retention (not yet running).** `pruneGenerations` is implemented, but no worker
-command or scheduled job calls it yet. When invoked, it would:
+**Retention.** `pnpm worker prune-generations [--dry-run]` runs `pruneGenerations`;
+run it after publishing a new generation. It:
 
 - keep the two most recently published generations and delete older published or
   retired ones;
@@ -265,7 +265,8 @@ command or scheduled job calls it yet. When invoked, it would:
   seal or latest verification;
 - never delete loading, active or pinned generations.
 
-Its absence does not affect generation 1.
+Control data (usage buckets, leases, Turnstile redemptions and expired briefs) is
+pruned by a periodic job in the API server, serialized by an advisory lock.
 
 ### 2.5 Report links
 
@@ -587,7 +588,8 @@ provisionally (section 5); every value is in `RETRIEVAL_DEFAULTS`.
   `total` fails retrieval.
 - **Stage 1, case candidates.** The question is embedded once (template `query-v1`:
   whitespace collapsed, no header, at most 1,000 tokens). BM25 over passage `text`
-  and kNN (`num_candidates` = 4 × k) each return 50 passages live; the evaluation
+  (with the search terms the brief's scope stage extracts, when there are any) and
+  kNN (`num_candidates` = 4 × k) each return 50 passages live; the evaluation
   also runs 100. Reciprocal rank fusion, `sum(1 / (60 + rank))`, runs in TypeScript
   (native RRF needs a paid license), and the fused list is deduplicated to cases at
   their best passage.
@@ -712,7 +714,14 @@ until a relevance audit and candidate-discovery work (planned) improve recall. G
 
 **Remaining work:**
 
-- **Retention.** Wire `pruneGenerations` to an operator command or a scheduled job.
+- **Retrieval quality.** Candidate recall is far below the 90% target
+  (section 2.12). The planned order is a blinded audit of the labels, the scope-stage
+  search terms, better candidate discovery (notably for maintenance timelines), then
+  a bounded reranker.
+- **Multi-aircraft events under aircraft filters.** G5 approved letting an
+  event-scoped passage match when every aircraft of the event satisfies the filter.
+  That needs a nested event-aircraft representation and a passages rebuild, from the
+  cache, so without paid embeddings.
 
 **Known limits:**
 
