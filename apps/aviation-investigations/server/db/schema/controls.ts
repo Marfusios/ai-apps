@@ -1,14 +1,15 @@
 /**
  * Cost and abuse controls (DESIGN §7–§9): the shared spend ledger, reservations with
  * leases and fencing tokens, usage buckets, idempotency records, trial identities,
- * the anti-abuse identity record and the AI kill switch.
+ * redeemed Turnstile tokens, the anti-abuse identity record and the AI kill switch.
  *
  * Principals and networks are stored only as HMACs (`server/quota/policy.ts`). Money is
  * USD `numeric(12,6)`. Budgets are counted by `accounting_day`, the UTC day a
  * reservation was made, so a request admitted before midnight stays in that day's
  * and month's totals however late it settles. Grants, row-level security, guard
  * triggers and the pruning function are in migration 0008; migration 0009 limits
- * aviation_ingest to indexing and evaluation rows and adds `spend_totals()`.
+ * aviation_ingest to indexing and evaluation rows and adds `spend_totals()`; migration
+ * 0013 adds the trial cookie hash, Turnstile redemptions and the anonymous switch.
  */
 import { sql } from 'drizzle-orm';
 import {
@@ -53,12 +54,17 @@ const inList = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`
 const tsz = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
 const usd = (name: string) => numeric(name, { precision: 12, scale: 6 });
 
-/** The AI kill switch: exactly one row (id 1), seeded enabled. A missing row means paused. */
+/**
+ * The AI kill switch: exactly one row (id 1), seeded enabled. A missing row means paused.
+ * `anonymous_enabled` off is the login-required emergency mode (DESIGN §7): anonymous
+ * trials are refused while signed-in AI continues (migration 0013).
+ */
 export const aiSwitch = pgTable(
   'ai_switch',
   {
     id: smallint('id').primaryKey(),
     enabled: boolean('enabled').notNull(),
+    anonymousEnabled: boolean('anonymous_enabled').notNull().default(true),
     /** Operator note; never shown to users. */
     note: text('note'),
     updatedAt: tsz('updated_at').notNull().defaultNow(),
@@ -70,13 +76,17 @@ export const aiSwitch = pgTable(
 );
 
 /**
- * Anonymous trial identities (DESIGN §7): a random id carried in a signed cookie,
- * the AI requests it has used, and a 30-day expiry.
+ * Anonymous trial identities (DESIGN §7), created only after a successful Turnstile
+ * challenge (server/identity/). The browser holds a signed cookie with a random value;
+ * only `cookie_hash`, a keyed HMAC of that value, is stored, so the table cannot be
+ * turned back into cookies. `id` is an internal key (the quota principal), never sent
+ * to the browser. Also the AI requests used and a 30-day expiry.
  */
 export const trialIdentities = pgTable(
   'trial_identities',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    cookieHash: text('cookie_hash').notNull().unique('trial_identities_cookie_hash_key'),
     createdAt: tsz('created_at').notNull(),
     requestsUsed: integer('requests_used').notNull().default(0),
     expiresAt: tsz('expires_at').notNull(),
@@ -84,7 +94,30 @@ export const trialIdentities = pgTable(
   (t) => [
     check('trial_identities_used_check', sql`${t.requestsUsed} >= 0`),
     check('trial_identities_expiry_check', sql`${t.expiresAt} > ${t.createdAt}`),
+    check('trial_identities_cookie_hash_check', sql`${t.cookieHash} ~ ${sql.raw(HEX64)}`),
     index('trial_identities_expires_idx').on(t.expiresAt),
+  ],
+);
+
+/**
+ * Turnstile tokens already presented (DESIGN §8: tokens are single-use). A keyed HMAC
+ * of each token is claimed before it is verified, so a replayed token is refused
+ * without calling Cloudflare, also with the test keys, which accept any token. Kept a
+ * little longer than a token lives (5 minutes); retention deletes them.
+ */
+export const turnstileRedemptions = pgTable(
+  'turnstile_redemptions',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    redeemedAt: tsz('redeemed_at').notNull(),
+    expiresAt: tsz('expires_at').notNull(),
+  },
+  (t) => [
+    check(
+      'turnstile_redemptions_values_check',
+      sql`${t.tokenHash} ~ ${sql.raw(HEX64)} and ${t.expiresAt} > ${t.redeemedAt}`,
+    ),
+    index('turnstile_redemptions_expires_idx').on(t.expiresAt),
   ],
 );
 
@@ -313,5 +346,6 @@ export const CONTROL_TABLES = [
   'reservations',
   'usage_buckets',
   'trial_identities',
+  'turnstile_redemptions',
   'abuse_records',
 ] as const;

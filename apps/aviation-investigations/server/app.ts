@@ -2,7 +2,9 @@
  * The HTTP server: the public API and the built web client on one origin.
  *
  * - `GET /api/health`, `/api/config`, `/api/search`, `/api/cases/:ntsbNo` and
- *   `/api/dashboard`, each pinned to the active dataset manifest (server/dataset.ts).
+ *   `/api/dashboard`, each pinned to the active dataset manifest (server/dataset.ts),
+ *   and `GET /api/ai/status` (server/routes/ai-status.ts). AI routes get the anonymous
+ *   gate (server/identity/gate.ts) from `ApiContext.ai`.
  * - The web client from `dist/web` with an SPA fallback: any other GET that accepts
  *   HTML gets the page (`index.html` with a per-response style nonce). Hashed assets
  *   are cached for a year; the page is revalidated.
@@ -28,6 +30,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyServerOptions } from 'fastify';
 import type { AppConfig } from '../shared/config.js';
 import type { FacetKey } from '../shared/contracts/search.js';
+import type { AiRuntime } from './ai/runtime.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
 import type { Db } from './db/client.js';
 import { CLIENT_IP_HEADER, compileTrustedProxies, isLoopback, resolveNetworkIdentity } from './http/network-identity.js';
@@ -35,6 +38,7 @@ import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
 import { contentSecurityPolicy, securityHeaders } from './http/security-headers.js';
 import { SearchTimedOutError } from './search/timeout.js';
+import { aiStatusRoutes } from './routes/ai-status.js';
 import { caseRoutes } from './routes/cases.js';
 import { configRoutes } from './routes/config.js';
 import type { ApiContext } from './routes/context.js';
@@ -55,6 +59,8 @@ export interface AppDeps {
   db: Db;
   /** Elasticsearch with the read key only. */
   es: Client;
+  /** AI runtime (server/ai/runtime.ts); absent: AI is reported unavailable. */
+  ai?: AiRuntime | null;
   /** Built web client (`dist/web`); null or a missing directory serves the API only. */
   webRoot?: string | null;
   logger?: FastifyServerOptions['logger'];
@@ -162,6 +168,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     es: deps.es,
     datasets,
     log: app.log,
+    ai: deps.ai ?? null,
     onUnknownFacetValue: (facet: FacetKey, value: string) =>
       app.log.warn({ facet, value: value.slice(0, 16) }, 'facet value outside the vocabulary left out of the buckets'),
   };
@@ -230,6 +237,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   searchRoutes(app, ctx);
   caseRoutes(app, ctx);
   dashboardRoutes(app, ctx);
+  aiStatusRoutes(app, ctx);
+  for (const problem of deps.ai?.problems ?? ['AI is not configured']) app.log.warn({ problem }, 'AI feature off');
+  if (deps.ai?.gate?.testKeys) app.log.warn('Turnstile test keys in use: every challenge passes (development only)');
 
   const webRoot = deps.webRoot ?? null;
   const indexFile = webRoot ? join(webRoot, 'index.html') : null;

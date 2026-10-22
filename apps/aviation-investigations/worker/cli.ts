@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
-import { readAiSwitch, setAiSwitch } from '../server/quota/switch.js';
+import { readAiSwitch, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
 import { APP_DIR, workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
@@ -42,7 +42,7 @@ const USAGE = [
   '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
   '  worker index cleanup-builds --older-than <hours>',
   '  worker publish --generation <id> --cases-index <name> [--passages-index <name>]',
-  '  worker ai-switch [--on | --off --note <text>]',
+  '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]]',
   '  worker migrate',
 ].join('\n');
 
@@ -515,18 +515,41 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'ai-switch') {
     const { values } = parseArgs({
       args: rest,
-      options: { on: { type: 'boolean' }, off: { type: 'boolean' }, note: { type: 'string' } },
+      options: {
+        on: { type: 'boolean' },
+        off: { type: 'boolean' },
+        note: { type: 'string' },
+        // The login-required emergency mode: `--anonymous off` refuses anonymous trials.
+        anonymous: { type: 'string' },
+      },
       strict: true,
     });
-    if ((values.on && values.off) || (values.note !== undefined && !values.off)) {
+    const anonymous = values.anonymous;
+    const noteAllowed = values.off === true || anonymous === 'off';
+    if (
+      (values.on && values.off) ||
+      (anonymous !== undefined && anonymous !== 'on' && anonymous !== 'off') ||
+      (values.note !== undefined && !noteAllowed)
+    ) {
       console.error(USAGE);
       return 2;
     }
-    const state = await withDb((db) =>
-      values.on || values.off ? setAiSwitch(db, values.on === true, values.note ?? null) : readAiSwitch(db),
-    );
+    const state = await withDb(async (db) => {
+      if (values.on || values.off) await setAiSwitch(db, values.on === true, values.note ?? null);
+      if (anonymous !== undefined) {
+        // A note given with --anonymous off is recorded; --anonymous on clears the note
+        // unless interactive AI is still paused (its note stays).
+        const paused = !(await readAiSwitch(db)).enabled;
+        const note = anonymous === 'off' ? (values.off ? undefined : values.note) : paused ? undefined : null;
+        await setAnonymousAi(db, anonymous === 'on', note);
+      }
+      return readAiSwitch(db);
+    });
     const note = state.note ? ` (${state.note})` : '';
-    console.log(`interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`);
+    const free = state.anonymousEnabled ? 'anonymous trials allowed' : 'LOGIN REQUIRED (anonymous trials refused)';
+    console.log(
+      `interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}; ${free}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`,
+    );
     return 0;
   }
   if (command === 'migrate') {

@@ -50,6 +50,9 @@ export const ERROR_MESSAGES = {
   rate_limited: 'Too many requests. Wait a moment and try again.',
   unavailable: 'The service is temporarily unavailable. Try again shortly.',
   internal: 'Something went wrong on our side.',
+  challenge_required: 'A quick check is needed before this AI search.',
+  challenge_failed: "The quick check didn't go through. Try again.",
+  sign_in_required: 'Sign in to ask the AI.',
 } as const satisfies Record<ErrorResponse['error'], string>;
 
 export function sendError(

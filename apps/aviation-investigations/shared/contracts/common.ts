@@ -62,9 +62,26 @@ export const DatasetSchema = z.strictObject({
 });
 export type Dataset = z.infer<typeof DatasetSchema>;
 
-/** Body of every 4xx/5xx JSON response. `message` is plain text for people. */
+/**
+ * Body of every 4xx/5xx JSON response. `message` is plain text for people.
+ *
+ * The anonymous AI gate (server/identity/gate.ts) adds three 403 codes:
+ * `challenge_required` (no Turnstile token was sent), `challenge_failed` (the token was
+ * rejected, expired or already used: get a fresh one) and `sign_in_required` (the
+ * login-required emergency mode refuses anonymous AI).
+ */
 export const ErrorResponseSchema = z.strictObject({
-  error: z.enum(['bad_request', 'forbidden', 'not_found', 'rate_limited', 'unavailable', 'internal']),
+  error: z.enum([
+    'bad_request',
+    'forbidden',
+    'not_found',
+    'rate_limited',
+    'unavailable',
+    'internal',
+    'challenge_required',
+    'challenge_failed',
+    'sign_in_required',
+  ]),
   message: z.string().max(500),
   /** For `bad_request`: which parameters failed. */
   issues: z.array(z.strictObject({ path: z.string().max(80), message: z.string().max(200) })).max(20).optional(),

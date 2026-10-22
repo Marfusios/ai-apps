@@ -1,7 +1,7 @@
 /**
  * Interactive admission (DESIGN §7–§8). One short transaction:
  *
- * 1. Kill switch.
+ * 1. Kill switch, and the login-required emergency mode for trial principals.
  * 2. Lock the principal, network and global buckets in key order.
  * 3. Idempotency, scoped to the principal: the same key and request hash replays the
  *    original admission (no new attempt, quota or money); the same key with another
@@ -59,6 +59,8 @@ export type RejectionReason =
   | 'rate_limited'
   | 'concurrency'
   | 'idempotency_conflict'
+  /** The login-required emergency mode refuses trial principals (403); nothing is counted. */
+  | 'login_required'
   /** A lock wait timed out; nothing was admitted (fail closed, 503). */
   | 'busy';
 
@@ -115,9 +117,13 @@ export interface Rejection {
 
 export type AdmissionResult = Admission | ReplayedAdmission | Rejection;
 
-/** HTTP status for a rejection: 409 for a reused idempotency key, 503 while paused or busy, otherwise 429. */
-export function rejectionStatus(r: Rejection): 409 | 429 | 503 {
+/**
+ * HTTP status for a rejection: 409 for a reused idempotency key, 403 in the login-required
+ * mode, 503 while paused or busy, otherwise 429.
+ */
+export function rejectionStatus(r: Rejection): 403 | 409 | 429 | 503 {
   if (r.reason === 'idempotency_conflict') return 409;
+  if (r.reason === 'login_required') return 403;
   if (r.reason === 'global_paused' || r.reason === 'busy') return 503;
   return 429;
 }
@@ -289,7 +295,9 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
   try {
     return await db.transaction(async (tx): Promise<AdmissionResult> => {
       await setLockTimeout(tx);
-      if (!(await readAiSwitch(tx)).enabled) return { ok: false, reason: 'global_paused', pause: 'maintenance' };
+      const aiSwitch = await readAiSwitch(tx);
+      if (!aiSwitch.enabled) return { ok: false, reason: 'global_paused', pause: 'maintenance' };
+      if (principal.kind === 'trial' && !aiSwitch.anonymousEnabled) return { ok: false, reason: 'login_required' };
 
       const counts = await lockBuckets(tx, [...attempts.map((b) => b.ref), ...requestBuckets]);
 
@@ -506,15 +514,22 @@ export async function setResultRef(db: DbOrTx, admission: Admission, resultRef: 
     WHERE principal_hash = ${admission.principalHash} AND reservation_id = ${admission.reservationId}`);
 }
 
-/** Create a trial identity (after a successful challenge); it expires after `trialDays`. */
+/**
+ * Create a trial identity (after a successful challenge, server/identity/trial.ts); it
+ * expires after `trialDays`. `cookieHash` is the keyed HMAC of the random value in the
+ * visitor's signed cookie (64 hex), the only form in which the cookie is stored.
+ */
 export async function createTrialIdentity(
   db: DbOrTx,
   policy: QuotaPolicy,
+  cookieHash: string,
   now: Date = new Date(),
 ): Promise<{ id: string; expiresAt: Date }> {
+  if (!HEX64.test(cookieHash)) throw new QuotaInputError('Invalid trial cookie hash');
   const expiresAt = new Date(now.getTime() + policy.limits.trialDays * DAY_MS);
   const res = await db.execute(sql`
-    INSERT INTO trial_identities (created_at, requests_used, expires_at) VALUES (${now}, 0, ${expiresAt})
+    INSERT INTO trial_identities (cookie_hash, created_at, requests_used, expires_at)
+    VALUES (${cookieHash}, ${now}, 0, ${expiresAt})
     RETURNING id::text AS id`);
   return { id: (res.rows[0] as { id: string }).id, expiresAt };
 }

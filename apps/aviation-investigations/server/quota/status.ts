@@ -20,10 +20,11 @@ export type AiState = 'available' | 'signed_in_only' | 'paused';
 
 /**
  * `paused`: `daily_budget`, `monthly_budget` or `maintenance` for everyone, `daily_cap` or
- * `monthly_cap` for this account. `signed_in_only`: `trial_used` or `anonymous_share`.
- * (`dependency`, for a failed startup check or unavailable quota storage, is the route's.)
+ * `monthly_cap` for this account. `signed_in_only`: `trial_used`, `anonymous_share`, or
+ * `login_required` (the emergency mode, `setAnonymousAi`). (`dependency`, for a failed
+ * startup check or unavailable quota storage, is the route's.)
  */
-export type AiStatusReason = PauseReason | 'daily_cap' | 'monthly_cap' | 'trial_used' | 'anonymous_share';
+export type AiStatusReason = PauseReason | 'daily_cap' | 'monthly_cap' | 'trial_used' | 'anonymous_share' | 'login_required';
 
 export type AiRemaining =
   | { kind: 'trial'; left: number; limit: number }
@@ -101,7 +102,8 @@ export async function aiStatus(db: DbOrTx, principal: Principal | null, opts: Ai
     remaining,
   });
 
-  if (!(await readAiSwitch(db)).enabled) return status('paused', 'maintenance');
+  const aiSwitch = await readAiSwitch(db);
+  if (!aiSwitch.enabled) return status('paused', 'maintenance');
   const budget = checkInteractiveBudget(
     await spendSnapshot(db, now),
     toMicros(opts.reservationUsd),
@@ -109,6 +111,8 @@ export async function aiStatus(db: DbOrTx, principal: Principal | null, opts: Ai
     now,
   );
   if (!budget.ok) return status('paused', budget.pause, budget.retryAt);
+  // The emergency mode holds for every anonymous visitor, whatever is in flight.
+  if (remaining.kind === 'trial' && !aiSwitch.anonymousEnabled) return status('signed_in_only', 'login_required');
   if (principal !== null && (await hasRequestInFlight(db, principalHash(opts.policy, principal), now))) {
     return status('available');
   }

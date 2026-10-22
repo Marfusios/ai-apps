@@ -61,4 +61,4 @@ export {
   type SpendReservation,
 } from './spend.js';
 export { aiStatus, type AiRemaining, type AiState, type AiStatus, type AiStatusOptions, type AiStatusReason } from './status.js';
-export { readAiSwitch, setAiSwitch, type AiSwitchState } from './switch.js';
+export { readAiSwitch, setAiSwitch, setAnonymousAi, type AiSwitchState } from './switch.js';

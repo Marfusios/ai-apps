@@ -2,6 +2,7 @@
 import type { Client } from '@elastic/elasticsearch';
 import type { FastifyBaseLogger } from 'fastify';
 import type { FacetKey } from '../../shared/contracts/search.js';
+import type { AiRuntime } from '../ai/runtime.js';
 import type { DatasetResolver } from '../dataset.js';
 import type { Db } from '../db/client.js';
 
@@ -10,6 +11,8 @@ export interface ApiContext {
   es: Client;
   datasets: DatasetResolver;
   log: FastifyBaseLogger;
+  /** AI startup check, quota policy, trial identities and the anonymous gate; null: AI is off. */
+  ai: AiRuntime | null;
   onUnknownFacetValue: (facet: FacetKey, value: string) => void;
 }
 

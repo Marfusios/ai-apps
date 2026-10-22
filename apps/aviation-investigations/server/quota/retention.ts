@@ -1,9 +1,10 @@
 /**
  * Retention of the control tables (DESIGN §7), run periodically by the app:
  * idempotency records after 24 hours, quota buckets and anti-abuse records after their
- * window plus 7 days, trial identities after 30 days, ledger lines and closed
- * reservations after 90 days. Open reservations are never pruned. The deletes run in
- * the migrator-owned `prune_controls()`, the only path that may delete ledger lines.
+ * window plus 7 days, trial identities after 30 days, redeemed Turnstile tokens after
+ * 15 minutes, ledger lines and closed reservations after 90 days. Open reservations
+ * are never pruned. The deletes run in the migrator-owned `prune_controls()` (migration
+ * 0013), the only path that may delete ledger lines.
  */
 import { sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/client.js';
@@ -12,6 +13,7 @@ export interface PruneReport {
   idempotency: number;
   usageBuckets: number;
   trialIdentities: number;
+  turnstileRedemptions: number;
   abuseRecords: number;
   costLedger: number;
   leases: number;

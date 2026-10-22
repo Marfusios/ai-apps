@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, type AppConfig } from '../shared/config.js';
+import { createAiRuntime } from './ai/runtime.js';
 import { buildApp } from './app.js';
 import { closeDb, createDb } from './db/client.js';
 import { startTracing } from './observability/tracing.js';
@@ -47,6 +48,7 @@ async function main(): Promise<void> {
     config,
     db,
     es,
+    ai: createAiRuntime(config, { db }),
     webRoot: resolve(APP_DIR, 'dist/web'),
     logger: { level: config.nodeEnv === 'production' ? 'info' : 'debug' },
   });

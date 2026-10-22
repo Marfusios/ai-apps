@@ -5,6 +5,7 @@
  */
 import { keepPreviousData, queryOptions } from '@tanstack/react-query';
 import type { z } from 'zod';
+import { AiStatusResponseSchema } from '../../shared/contracts/ai';
 import { CaseDetailSchema } from '../../shared/contracts/cases';
 import { ErrorResponseSchema, type ErrorResponse } from '../../shared/contracts/common';
 import { ConfigResponseSchema } from '../../shared/contracts/config';
@@ -83,5 +84,18 @@ export const dashboardQuery = (cohort: DashboardRequest['cohort']) =>
     queryKey: ['dashboard', cohort],
     queryFn: ({ signal }) => getJson(`/api/dashboard?cohort=${cohort}`, DashboardResponseSchema, signal),
     staleTime: 10 * 60_000,
+    retry,
+  });
+
+/**
+ * AI availability for this visitor (UI_DESIGN §5): the header counter and the Ask AI
+ * label read it before anyone clicks. Per visitor and never cached by the server;
+ * refetch it after an AI request.
+ */
+export const aiStatusQuery = () =>
+  queryOptions({
+    queryKey: ['ai-status'],
+    queryFn: ({ signal }) => getJson('/api/ai/status', AiStatusResponseSchema, signal),
+    staleTime: 30_000,
     retry,
   });

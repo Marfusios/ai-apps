@@ -412,9 +412,9 @@ pnpm test:e2e:real    # Playwright against the real API server and the fixture i
 
 ### API contracts and the mock API
 
-`shared/contracts/{config,search,cases,dashboard}.ts` are the Zod contracts of the
+`shared/contracts/{config,search,cases,dashboard,ai}.ts` are the Zod contracts of the
 public API (`GET /api/config`, `/api/search`, `/api/cases/:ntsbNo`,
-`/api/dashboard`). Every object is strict, `ev_id` never appears, and the case
+`/api/dashboard`, `/api/ai/status`). Every object is strict, `ev_id` never appears, and the case
 detail is NTSB-only by construction (a test walks the schema for AI fields). The
 web client validates every response against them. `shared/case-view.ts` builds the
 deterministic headline, finding text and data cautions; `shared/vocab.ts` holds the
@@ -428,7 +428,9 @@ rules (distinct events, disjunctive facets, defining-event phase, aircraft facet
 matched on one aircraft, multi-aircraft overlap, "remove one filter" totals) and a
 simple stand-in for the analyzer.
 `web/src/mocks/handlers.ts` serves it through MSW, in the dev mock mode and in tests;
-production builds contain no mock code. A unit test fails when the committed mock
+production builds contain no mock code. `GET /api/ai/status` answers one of the
+hand-written samples in `web/mock/ai-status.ts` (a fresh anonymous visitor by
+default; `createHandlers({ aiStatus })` picks another). A unit test fails when the committed mock
 files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
@@ -468,10 +470,11 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 | Endpoint | Response | Caching |
 | --- | --- | --- |
 | `GET /api/health` | `{status, database, search}` states only; 200, or 503 when either check fails; one probe shared for 2 s | `no-store`; rate limited except over loopback |
-| `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage | `public, max-age=300`, ETag |
+| `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage, the Turnstile site key once the anonymous gate is configured | `public, max-age=300`, ETag |
 | `GET /api/search` | `SearchResponse` | `public, max-age=60`, keyed by the full URL |
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
 | `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
+| `GET /api/ai/status` | `AiStatusResponse` for this visitor ([anonymous gate](#anonymous-gate-and-ai-status)) | `no-store` |
 
 Every response is validated against its contract before it is sent. ETags are the
 dataset revision plus a hash of the body, and a matching `If-None-Match` gets 304.
@@ -655,15 +658,65 @@ retention are in migrations 0008 and 0009.
   own remaining searches, never amounts. While a request of the principal is in
   flight, only global pauses are reported. `pruneControls` deletes idempotency records
   after 24 hours, buckets and anti-abuse records after their window plus 7 days, trial
-  identities after 30 days, and ledger lines and closed reservations after 90 days.
+  identities after 30 days, redeemed Turnstile tokens after 15 minutes, and ledger
+  lines and closed reservations after 90 days.
 
-The kill switch pauses interactive AI only:
+The kill switch pauses interactive AI only. Its second flag is the login-required
+emergency mode (DESIGN §7): anonymous trials are refused (admission `login_required`,
+403; status `signed_in_only` with reason `login_required`) and signed-in AI goes on.
 
 ```sh
-pnpm worker ai-switch                        # show it
-pnpm worker ai-switch --off --note "<why>"   # pause (reason: maintenance)
+pnpm worker ai-switch                                   # show both
+pnpm worker ai-switch --off --note "<why>"              # pause (reason: maintenance)
 pnpm worker ai-switch --on
+pnpm worker ai-switch --anonymous off --note "<why>"    # login required
+pnpm worker ai-switch --anonymous on
 ```
+
+### Anonymous gate and AI status
+
+`server/identity/` admits anonymous visitors to AI (DESIGN §7–§8); `server/ai/runtime.ts`
+builds it at startup with the provider check and the quota policy, and lists in the
+log what keeps any part off (setting names only). The tables are in migration 0013.
+
+- **Gate.** An AI route calls `ctx.ai.gate.check(request, reply, body.turnstileToken)`
+  before `admitPaidRequest` for a visitor who is not signed in, and sends a refusal
+  with `sendGateRefusal`. In order, and before any reservation, quota or spend: the
+  login-required mode (403 `sign_in_required`); a token is required (403
+  `challenge_required`) and claimed once under a keyed HMAC, so a reused token is
+  refused without calling Cloudflare (403 `challenge_failed`); Cloudflare's siteverify
+  checks it with an idempotency key, and the server requires the hostname of
+  `APP_URL`, the action `ask-ai` (`TURNSTILE_ACTION`) and a challenge at most 5
+  minutes old (403 `challenge_failed`). An unreachable, slow (4 s per attempt, two
+  attempts with the same idempotency key) or failing siteverify is 503 `unavailable`
+  (fail closed). Then the visitor's trial comes from the cookie, or, the first time,
+  a trial is created and its cookie set. A failed check never creates a trial or
+  sets a cookie. The pass carries the trial principal and the network identity for
+  admission.
+- **Trial cookie.** A random 32-byte value with an HMAC-SHA256 signature
+  (`v1.<value>.<mac>`, base64url), keys derived from `IDENTITY_HMAC_SECRET` with HKDF,
+  one per purpose. HttpOnly, SameSite=Lax, Path=/, no Domain; Secure and named
+  `__Host-aviation_trial` when `APP_URL` is https (required in live), otherwise
+  `aviation_trial` for local http. Max-Age is the trial's remaining 30 days. Only an
+  HMAC of the value is stored (`trial_identities.cookie_hash`); a malformed, tampered
+  or expired cookie is ignored as if absent. Responses that set it are `no-store`.
+- **Creation limits.** New trials are capped at 5 an hour and 10 a day per network
+  identity (its HMAC; IPv6 per /64) and 500 a day in total
+  (`TRIAL_CREATION_LIMITS`); over a cap the gate answers 429 with `Retry-After`.
+- **Turnstile keys.** `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`; without both,
+  anonymous AI is off. `pnpm services:setup` writes Cloudflare's public test keys to
+  `.env.local` when none are set: every check passes, the widget's fixed dummy token
+  is accepted repeatedly (other tokens stay single-use) and the hostname and action
+  checks do not apply. `APP_ENV=live` refuses test keys, mixed test and real keys, and
+  an http `APP_URL`.
+- **`GET /api/ai/status`** (UI_DESIGN §5) reads the trial cookie and `aiStatus`:
+  `state`, a `reason` (paused: `daily_budget`, `monthly_budget`, `maintenance`,
+  `dependency`, `daily_cap`, `monthly_cap`; signed in only: `trial_used`,
+  `anonymous_share`, `login_required`), `retryAt` only when known, and `remaining`
+  (`{kind: 'trial', left, limit, started}`, `started` once the browser holds a trial,
+  or the account's day and month counts). It never carries amounts and never sets a
+  cookie. It reports `paused`/`dependency` when the provider check, the quota secrets,
+  quota storage or (for anonymous visitors) Turnstile are missing.
 
 ## Deployment with Docker Compose
 

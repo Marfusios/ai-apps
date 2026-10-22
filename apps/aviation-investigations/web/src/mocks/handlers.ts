@@ -5,6 +5,7 @@
  * a production bundle.
  */
 import { delay, http, HttpResponse } from 'msw';
+import type { AiStatusResponse } from '../../../shared/contracts/ai';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import type { ErrorResponse } from '../../../shared/contracts/common';
 import { SearchRequestSchema, paramsToQuery } from '../../../shared/contracts/search';
@@ -13,6 +14,7 @@ import config from '../../mock/config.json';
 import dashboardAll from '../../mock/dashboard-all.json';
 import dashboardDefault from '../../mock/dashboard-default.json';
 import index from '../../mock/search-index.json';
+import { AI_STATUS_SAMPLES } from '../../mock/ai-status';
 import { searchCorpus, type MockCorpus } from '../../mock/engine';
 
 export const mockCorpus: MockCorpus = {
@@ -28,9 +30,11 @@ function error(status: number, body: ErrorResponse): Response {
 export interface HandlerOptions {
   /** Simulated server time per request, so loading states are visible in dev. */
   latencyMs?: number;
+  /** What `GET /api/ai/status` answers (default: a fresh anonymous visitor). */
+  aiStatus?: AiStatusResponse;
 }
 
-export function createHandlers({ latencyMs = 0 }: HandlerOptions = {}) {
+export function createHandlers({ latencyMs = 0, aiStatus = AI_STATUS_SAMPLES.fresh }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);
   };
@@ -62,6 +66,10 @@ export function createHandlers({ latencyMs = 0 }: HandlerOptions = {}) {
       await wait();
       const cohort = new URL(request.url).searchParams.get('cohort');
       return HttpResponse.json(cohort === 'all' ? dashboardAll : dashboardDefault);
+    }),
+    http.get('*/api/ai/status', async () => {
+      await wait();
+      return HttpResponse.json(aiStatus, { headers: { 'cache-control': 'no-store' } });
     }),
   ];
 }

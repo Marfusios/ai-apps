@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
@@ -74,7 +74,7 @@ const newKey = () => `test-key-${++keySeq}`;
 const bodyHash = (question: string) => canonicalRequestHash({ question });
 
 async function newTrial(used = 0, now = T0): Promise<Extract<Principal, { kind: 'trial' }>> {
-  const t = await createTrialIdentity(app, POLICY, now);
+  const t = await createTrialIdentity(app, POLICY, randomBytes(32).toString('hex'), now);
   if (used > 0) await migrator.execute(sql`UPDATE trial_identities SET requests_used = ${used} WHERE id = ${t.id}::uuid`);
   return { kind: 'trial', id: t.id };
 }
@@ -994,6 +994,7 @@ describe('roles and guards', () => {
       // The trial's minute, network hour and day, and global day and month buckets.
       usageBuckets: 5,
       trialIdentities: 1,
+      turnstileRedemptions: 0,
       abuseRecords: 0,
       costLedger: 1,
       leases: 1,

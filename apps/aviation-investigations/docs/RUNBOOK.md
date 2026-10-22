@@ -258,17 +258,17 @@ The generated files supply `APP_ENV`, the three `DATABASE_*` URLs,
 
 ```sh
 APP_VERSION=                     # image tag; live needs an explicit release tag (not dev)
-APP_URL=                         # public origin on live
+APP_URL=                         # public origin on live (https: Turnstile hostname, Secure trial cookie)
 PORT=3000                        # dev only: loopback port of the app
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 BETTER_AUTH_SECRET=
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-TURNSTILE_SECRET_KEY=
+TURNSTILE_SECRET_KEY=            # a widget for APP_URL's hostname; dev may use Cloudflare's test keys, live refuses them
 TURNSTILE_SITE_KEY=
 IP_HMAC_SECRET=
-IDENTITY_HMAC_SECRET=
+IDENTITY_HMAC_SECRET=            # rotating it ends every trial cookie
 AVIATION_TRACING_ENABLED=false   # true adds compose.tracing.yaml
 SHARED_OBSERVABILITY_NETWORK=    # unless the Langfuse file sets it
 TUNNEL_TOKEN=                    # required on live; on dev it switches to tunnel mode
