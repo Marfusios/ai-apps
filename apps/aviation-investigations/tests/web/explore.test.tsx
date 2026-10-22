@@ -24,7 +24,7 @@ describe('Home', () => {
     await waitFor(() => expect(currentUrl(router)).toBe('/explore?q=carburetor+icing'));
     // The coverage line is computed from /api/config.
     renderApp('/');
-    expect(await screen.findByText(/completed US NTSB investigations · 2008 → 2026 · snapshot 01 OCT 2026/)).toBeTruthy();
+    expect(await screen.findByText(/completed US NTSB investigations · 2008 → 2026 · snapshot 16 OCT 2026/)).toBeTruthy();
   });
 
   it('Ask AI is present but disabled, with the later-step tooltip', () => {
@@ -66,6 +66,25 @@ describe('Explore', () => {
     await waitFor(() => expect(currentUrl(router)).toBe('/explore?q=carburetor+icing&injury=FATL'));
   });
 
+  it('a completed record without probable-cause text says so by its badge and where the cause would be', async () => {
+    renderApp('/explore?completion=completed_without_cause');
+    const row = (await screen.findAllByRole('link', { name: 'ENG10WA034' }))[0]?.closest('li') as HTMLElement;
+    expect(within(row).getByText('COMPLETED')).toBeTruthy();
+    expect(within(row).getByText('Probable-cause text unavailable')).toBeTruthy();
+    expect(within(row).getByText('No probable cause on record')).toBeTruthy();
+  });
+
+  it('keeps the More filters fold open, without a toggle, while one of its filters is active', async () => {
+    const { router } = renderApp('/explore?category=AIR');
+    await countLine();
+    const facets = screen.getByRole('complementary', { name: 'Filters' });
+    expect(within(facets).queryByRole('button', { name: /Fewer filters|More filters/ })).toBeNull();
+    expect(within(facets).getByRole('button', { name: /^Airplane, \d+ investigations, selected$/ })).toBeTruthy();
+    fireEvent.click(within(facets).getByRole('button', { name: /^clear\s*Aircraft$/ }));
+    await waitFor(() => expect(currentUrl(router)).toBe('/explore'));
+    expect(within(facets).getByRole('button', { name: /More filters|Fewer filters/ })).toBeTruthy();
+  });
+
   it(`a fifth compare tick shows "${COMPARE_FULL_MESSAGE}"`, async () => {
     const { router } = renderApp('/explore?q=carburetor+icing');
     await countLine();
@@ -93,6 +112,7 @@ describe('Explore', () => {
     trigger.focus();
     fireEvent.click(trigger);
     const dialog = await screen.findByRole('dialog');
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
     const headline = await within(dialog).findByRole('heading', { level: 2, name: /Piper PA-28-151, fuel-related event/ });
     await waitFor(() => expect(document.activeElement).toBe(headline));
     expect(currentUrl(router)).toContain('case=ERA25LA016');

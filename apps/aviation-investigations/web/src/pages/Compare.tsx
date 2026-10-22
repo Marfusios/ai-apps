@@ -92,7 +92,7 @@ function Strip({ detail, order, onRemove }: { detail: CaseDetail; order: number;
           type="button"
           onClick={onRemove}
           data-print="hide"
-          className="float-right -mt-0.5 -mr-1 inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-muted hover:bg-blue-wash hover:text-ink pointer-coarse:size-11"
+          className="float-right -mt-1 -mr-1.5 inline-flex size-6 cursor-pointer items-center justify-center rounded-full text-muted hover:bg-blue-wash hover:text-ink pointer-coarse:size-11"
         >
           <X size={12} strokeWidth={1.5} aria-hidden="true" />
           <span className="sr-only">Remove {detail.ntsbNo} from compare</span>
@@ -144,11 +144,17 @@ function Strip({ detail, order, onRemove }: { detail: CaseDetail; order: number;
         <span className={cx('block', injury.fatal && 'font-bold')}>{injurySummary(detail)}</span>
         <span className="block text-muted">{damage.join(' / ') || 'Damage not reported'}</span>
         {!completed && <StatusBadge kind={detail.completion.class} rawStatus={detail.completion.rawStatus} className="mt-1" />}
+        {completed && !detail.completion.hasProbableCause && (
+          <span className="mt-1 flex flex-wrap items-baseline gap-x-2">
+            <StatusBadge kind="completed" />
+            <span className="text-meta text-muted">Probable-cause text unavailable</span>
+          </span>
+        )}
       </Cell>
       <div className="flex flex-col gap-1 border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1] sm:flex-row sm:items-baseline sm:gap-2.5">
         <span className="flex-none text-[9px] tracking-caps text-muted uppercase">Probable cause</span>
         <p className={cx('min-w-0 flex-1 font-serif text-[13px] leading-[1.45]', !cause && 'text-muted')}>
-          {cause ? preview : completed ? 'Probable-cause text unavailable.' : 'No probable cause on record.'}
+          {cause ? preview : 'No probable cause on record.'}
         </p>
         <span className="flex-none text-meta whitespace-nowrap">{sourceLink(detail)}</span>
       </div>
@@ -326,7 +332,7 @@ export function Compare() {
           </div>
           {same.length > 0 && (
             <p className="mt-3.5 border-t border-dashed border-hairline pt-2 text-ui text-muted">
-              Same in all {numberWord(list.length)}:{' '}
+              {list.length === 2 ? 'Same in both' : `Same in all ${numberWord(list.length)}`}:{' '}
               {same.map((v, i) => (
                 <Fragment key={v}>
                   {i > 0 && ' · '}

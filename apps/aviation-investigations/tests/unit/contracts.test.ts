@@ -61,6 +61,30 @@ describe('CaseDetail contract', () => {
     expect(CaseDetailSchema.safeParse(withVerdict).success).toBe(false);
   });
 
+  it('allows aircraft-scoped sections only in single-aircraft cases (A3)', () => {
+    type Detail = { aircraft: { aircraftKey: number }[]; sections: Record<string, unknown>[] };
+    const single = sampleCase as unknown as Detail;
+    expect(single.sections.every((s) => s.scope === 'aircraft' && s.aircraftKey === 1)).toBe(true);
+    expect(CaseDetailSchema.safeParse(single).success).toBe(true);
+    // The same section pointing at another aircraft, or carrying a key while event-scoped, fails.
+    const wrongKey = { ...single, sections: single.sections.map((s) => ({ ...s, aircraftKey: 2 })) };
+    expect(CaseDetailSchema.safeParse(wrongKey).success).toBe(false);
+    const eventWithKey = { ...single, sections: single.sections.map((s) => ({ ...s, scope: 'event' })) };
+    expect(CaseDetailSchema.safeParse(eventWithKey).success).toBe(false);
+
+    const multi = cases.SEA08LA057 as unknown as Detail;
+    expect(multi.aircraft).toHaveLength(2);
+    expect(multi.sections.every((s) => s.scope === 'event' && s.aircraftKey === null)).toBe(true);
+    expect(CaseDetailSchema.safeParse(multi).success).toBe(true);
+    const attributed = { ...multi, sections: multi.sections.map((s, i) => (i === 0 ? { ...s, scope: 'aircraft', aircraftKey: 1 } : s)) };
+    const result = CaseDetailSchema.safeParse(attributed);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe('aircraft scope is valid only when the case has exactly one aircraft');
+    // A case with no aircraft row cannot have aircraft-scoped text either.
+    const none = { ...single, aircraft: [] };
+    expect(CaseDetailSchema.safeParse(none).success).toBe(false);
+  });
+
   it('labels findings only with the raw in-probable-cause flag, never cause or factor', () => {
     const keys = schemaKeys(CaseDetailSchema);
     expect(keys).toContain('inProbableCause');

@@ -203,8 +203,10 @@ export function toCaseDetail(c: CanonicalCase, ctx: ProjectionContext): CaseDeta
       key: s.key,
       kind: s.kind,
       label: SECTION_LABEL[s.kind],
-      scope: s.scope,
-      aircraftKey: s.aircraftKey,
+      // A3: aircraft scope only with exactly one aircraft. Normalization already
+      // scopes multi-aircraft text to the event; a case with no aircraft row is too.
+      scope: c.aircraft.length === 1 ? s.scope : 'event',
+      aircraftKey: c.aircraft.length === 1 && s.scope === 'aircraft' ? s.aircraftKey : null,
       sourceAircraftKeys: s.sourceAircraftKeys,
       text: s.text,
       revision: s.sha256,

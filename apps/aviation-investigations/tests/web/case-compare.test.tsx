@@ -38,6 +38,14 @@ describe('Case page', () => {
     expect(screen.getByText('No probable cause on record.')).toBeTruthy();
   });
 
+  it('a completed record without probable-cause text: muted line by the badge, empty-field line in the story', async () => {
+    renderApp('/cases/ENG10WA034');
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.getByText('COMPLETED')).toBeTruthy();
+    expect(screen.getByText('Probable-cause text unavailable')).toBeTruthy();
+    expect(screen.getByText('No probable cause on record.')).toBeTruthy();
+  });
+
   it('shows a not-found page for unknown numbers', async () => {
     renderApp('/cases/XXX99XX999');
     expect(await screen.findByText('No investigation has that number.')).toBeTruthy();
@@ -45,6 +53,11 @@ describe('Case page', () => {
 });
 
 describe('Compare page', () => {
+  it('two cases read "Same in both"', async () => {
+    renderApp('/compare?cases=MIA08LA156,DFW08TA066');
+    expect(await screen.findByText(/^Same in both:/)).toBeTruthy();
+  });
+
   it('shows flight strips with NTSB columns, the same-in-all line and sorting', async () => {
     renderApp('/compare?cases=MIA08LA156,DFW08TA066,NYC08LA106,DEN08LA103');
     expect(await screen.findByRole('heading', { name: 'Comparing 4 cases' })).toBeTruthy();

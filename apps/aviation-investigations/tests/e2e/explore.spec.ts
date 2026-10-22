@@ -39,6 +39,7 @@ test('drawer opens from row, Esc closes and focus returns', async ({ page }) => 
   await trigger.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
   await expect(page).toHaveURL(/case=ERA25LA016/);
   const headline = dialog.getByRole('heading', { level: 2 });
   await expect(headline).toContainText('Piper PA-28-151');
@@ -88,6 +89,8 @@ test('phone viewport shows Filters (n) sheet', async ({ page }) => {
   await page.getByRole('button', { name: 'Filters (1)' }).click();
   const sheet = page.getByRole('dialog', { name: 'Filters' });
   await expect(sheet).toBeVisible();
+  await expect(sheet).toHaveAttribute('aria-modal', 'true');
+  await expect(sheet.getByRole('heading', { name: 'Filters' })).toBeFocused();
   await expect(sheet.getByRole('button', { name: 'Show 3 investigations' })).toBeVisible();
   await sheet.getByRole('button', { name: 'Approach, 2 investigations' }).click();
   await expect(page).toHaveURL(/phase=initial_climb%2Capproach/);

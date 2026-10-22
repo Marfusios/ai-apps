@@ -78,6 +78,7 @@ export function CaseDrawer({
         <Dialog.Overlay className="fixed inset-0 z-40 bg-shade" data-print="hide" />
         <Dialog.Content
           aria-describedby={undefined}
+          aria-modal="true"
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             focusPending.current = true;

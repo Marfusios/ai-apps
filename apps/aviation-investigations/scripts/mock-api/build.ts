@@ -19,8 +19,8 @@ import { datasetOf, toCaseDetail, toConfig, toDashboard, toMockDoc } from './pro
 /** Fixture sets merged into the mock corpus (event ids do not overlap). */
 export const MOCK_FIXTURE_DIRS = ['fixtures/ntsb', 'fixtures/ntsb-ui'] as const;
 
-/** Date of the NTSB snapshot the fixtures were taken from (avall.zip listed 2026-10-01). */
-export const MOCK_SNAPSHOT_DATE = '2026-10-01';
+/** Date of the NTSB snapshot the fixtures were taken from (the 2026-10-16 avall.zip). */
+export const MOCK_SNAPSHOT_DATE = '2026-10-16';
 
 /** Sample searches written out as complete request/response pairs. */
 export const SAMPLE_SEARCHES: Readonly<Record<string, Record<string, string>>> = {

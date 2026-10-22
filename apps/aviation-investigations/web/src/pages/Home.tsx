@@ -1,16 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { HOME_EXAMPLES } from '../../../shared/examples';
 import { configQuery } from '../api';
 import { Chip } from '../components/Chip';
 import { CompassMark } from '../components/CompassMark';
 import { SearchBox } from '../components/SearchBox';
 import { formatChartDate, formatCount } from '../lib/format';
 
-/** Home example chips (UI_DESIGN §4.1). They only fill the box; they never run a search. */
-export const EXAMPLES = ['Carb icing on climb-out', 'Stall/spin in the pattern', 'Power loss after maintenance'] as const;
 
-/** Home, "Clear sky" (UI_DESIGN §4.1): compass, headline, the question box and examples. */
+/**
+ * Home, "Clear sky" (UI_DESIGN §4.1): compass, headline, the question box and
+ * examples. Example chips only fill the box; they never run a search.
+ */
 export function Home() {
   const navigate = useNavigate();
   const [value, setValue] = useState('');
@@ -44,7 +46,7 @@ export function Home() {
           className="mt-4 w-full max-w-[660px]"
         />
         <div className="mt-3 flex max-w-[660px] flex-wrap justify-center gap-[7px]" aria-label="Example questions">
-          {EXAMPLES.map((example) => (
+          {HOME_EXAMPLES.map((example) => (
             <Chip key={example} variant="example" onClick={() => fill(example)}>
               {example}
             </Chip>
