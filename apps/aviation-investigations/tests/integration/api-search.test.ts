@@ -5,6 +5,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
@@ -491,7 +492,7 @@ describe('http', () => {
     // Each page has its own style nonce (the dialogs' scroll-lock style), in the CSP and in a meta tag.
     const nonceOf = (r: Got) => {
       const header = /style-src 'self' 'nonce-([A-Za-z0-9+/=]+)'/.exec(String(r.headers['content-security-policy']))?.[1];
-      const meta = /<meta name="csp-nonce" content="([^"]+)">/.exec(r.body)?.[1];
+      const meta = /<meta property="csp-nonce" nonce="([^"]+)">/.exec(r.body)?.[1];
       expect(header).toBeDefined();
       expect(meta).toBe(header);
       return header;
@@ -512,6 +513,7 @@ describe('http', () => {
     for (const url of ['/api/config', '/', '/assets/app-0123abcd.js', '/api/health']) {
       const r = await get(url, { app: tunnel, from: '192.0.2.5', headers: { 'cf-connecting-ip': '198.51.100.1', accept: 'text/html' } });
       expect(r.status, url).toBe(403);
+      expect(ErrorResponseSchema.parse(r.json), url).toEqual({ error: 'forbidden', message: 'This request is not allowed.' });
       expect(r.headers['content-security-policy'], url).toBeDefined();
     }
     // Loopback is not the connector either, except for the container's health check.
@@ -573,6 +575,178 @@ describe('http', () => {
   });
 });
 
+// Access control follows the route the router matched, never the raw request target.
+describe('request targets the router decodes', () => {
+  /** One HTTP/1.1 request over a socket, so the target is sent exactly as written. */
+  async function raw(a: FastifyInstance, target: string, headers: Record<string, string> = {}): Promise<Got> {
+    if (!a.server.listening) await a.listen({ host: LOCAL, port: 0 });
+    const { port } = a.server.address() as { port: number };
+    const text = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, LOCAL, () => {
+        const lines = [`GET ${target} HTTP/1.1`, 'Host: casebook.test', 'Connection: close', ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`)];
+        socket.write(`${lines.join('\r\n')}\r\n\r\n`);
+      });
+      let data = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk: string) => (data += chunk));
+      socket.on('end', () => resolve(data));
+      socket.on('error', reject);
+    });
+    const [head = '', body = ''] = text.split('\r\n\r\n');
+    const [statusLine = '', ...headerLines] = head.split('\r\n');
+    const parsed: Record<string, string> = {};
+    for (const line of headerLines) {
+      const i = line.indexOf(':');
+      parsed[line.slice(0, i).toLowerCase()] = line.slice(i + 1).trim();
+    }
+    let json: unknown = null;
+    try {
+      json = JSON.parse(body);
+    } catch {
+      json = null;
+    }
+    return { status: Number(statusLine.split(' ')[1]), headers: parsed, body, json };
+  }
+
+  it('/%61pi/search shares /api/search’s rate limit: the 61st request in the window is 429', async () => {
+    const limited = makeApp({ rateLimit: { limit: 60, windowMs: 60_000 } });
+    for (let i = 0; i < 60; i++) {
+      const url = i % 2 === 0 ? '/api/search?q=carb' : '/%61pi/search?q=carb';
+      expect((await get(url, { app: limited })).status, `${i} ${url}`).toBe(200);
+    }
+    for (const url of ['/%61pi/search?q=carb', '/api/search?q=carb', '/%61%70%69/%73earch']) {
+      const r = await get(url, { app: limited });
+      expect(r.status, url).toBe(429);
+      expect(ErrorResponseSchema.parse(r.json).error).toBe('rate_limited');
+    }
+  });
+
+  it('tunnel mode: /%61pi/search without the client address is 400, like /api/search', async () => {
+    const tunnel = makeApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: ['203.0.113.0/28'] } });
+    for (const url of ['/api/search', '/%61pi/search', '/%61pi/cases/DFW08TA066', '/%61pi/dashboard', '/api/health']) {
+      const r = await get(url, { app: tunnel, from: '203.0.113.2' });
+      expect(r.status, url).toBe(400);
+      expect(ErrorResponseSchema.parse(r.json).error, url).toBe('bad_request');
+    }
+    expect((await get('/%61pi/search', { app: tunnel, from: '203.0.113.2', headers: { 'cf-connecting-ip': '198.51.100.7' } })).status).toBe(200);
+  });
+
+  it('an absolute-form target to /api/search gets the same identity and rate-limit checks', async () => {
+    const limited = makeApp({ rateLimit: { limit: 3, windowMs: 60_000 } });
+    expect((await raw(limited, 'http://evil.example/api/search?q=carb')).status).toBe(200);
+    expect((await raw(limited, 'HTTP://evil.example/%61pi/search?q=carb')).status).toBe(200);
+    expect((await raw(limited, '/api/search?q=carb')).status).toBe(200);
+    const fourth = await raw(limited, 'http://evil.example/api/search?q=carb');
+    expect(fourth.status).toBe(429);
+    expect(ErrorResponseSchema.parse(fourth.json).error).toBe('rate_limited');
+    expect(fourth.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    // Tunnel mode, the loopback socket as the connector: the API still needs the client address.
+    const tunnel = makeApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: ['127.0.0.0/8'] } });
+    expect((await raw(tunnel, 'http://evil.example/api/search')).status).toBe(400);
+    expect((await raw(tunnel, 'http://evil.example/api/search', { 'CF-Connecting-IP': '198.51.100.8' })).status).toBe(200);
+  });
+
+  it('/%61pi/nope is a JSON 404, not the page', async () => {
+    for (const url of ['/%61pi/nope', '/api/nope', '/%61pi']) {
+      const r = await get(url, { headers: { accept: 'text/html' } });
+      expect(r.status, url).toBe(404);
+      expect(ErrorResponseSchema.parse(r.json), url).toEqual({ error: 'not_found', message: 'Not found.' });
+    }
+    expect((await raw(app, 'http://evil.example/%61pi/nope', { Accept: 'text/html' })).json).toEqual({ error: 'not_found', message: 'Not found.' });
+  });
+
+  it('a malformed URL gets the security headers and a JSON 400', async () => {
+    for (const url of ['/%E0%A4%A', '/api/%ZZ', '/api/search?q=%']) {
+      const r = await get(url);
+      expect(r.status, url).toBe(url.includes('?') ? 200 : 400);
+      if (r.status === 400) {
+        expect(ErrorResponseSchema.parse(r.json), url).toEqual({ error: 'bad_request', message: 'The request URL is not valid.' });
+        expect(r.headers['content-security-policy'], url).toContain("default-src 'self'");
+        expect(r.headers['cache-control'], url).toBe('no-store');
+      }
+    }
+  });
+
+  it('static-file refusals are 404 or 400, never 500', async () => {
+    for (const url of ['/assets/app%00.js', '//api/search', '/assets/..%2f..%2fpackage.json', '/%2e%2e/%2e%2e/package.json']) {
+      const r = await get(url);
+      expect(r.status, url).toBe(404);
+      // Either the router's refusal (JSON) or the plain 404 of a missing file; never a file outside the root.
+      if (r.json !== null) expect(ErrorResponseSchema.parse(r.json).error, url).toBe('not_found');
+      else expect(r.body, url).toBe('Not found');
+    }
+  });
+
+  it('health is rate limited for everyone but loopback, and its probe is shared for a moment', async () => {
+    const limited = makeApp({ rateLimit: { limit: 2, windowMs: 60_000 } });
+    const from = '192.0.2.10';
+    expect((await get('/api/health', { app: limited, from })).status).toBe(200);
+    expect((await get('/api/health', { app: limited, from })).status).toBe(200);
+    expect((await get('/api/health', { app: limited, from })).status).toBe(429);
+    for (let i = 0; i < 5; i++) expect((await get('/api/health', { app: limited })).status).toBe(200);
+    // Concurrent and repeated calls within the cache window run one probe.
+    let counts = 0;
+    const counting = new Proxy(reader, {
+      get(target, prop) {
+        if (prop === 'count') {
+          return (...args: Parameters<Client['count']>) => {
+            counts++;
+            return target.count(...args);
+          };
+        }
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const probed = makeApp({ es: counting, healthCacheMs: 60_000 });
+    await Promise.all(Array.from({ length: 5 }, () => get('/api/health', { app: probed })));
+    for (let i = 0; i < 5; i++) await get('/api/health', { app: probed });
+    expect(counts).toBe(1);
+  });
+
+  it('a search that timed out is a 503, never partial counts', async () => {
+    const timingOut = new Proxy(reader, {
+      get(target, prop) {
+        if (prop === 'search') {
+          return async (params: Parameters<Client['search']>[0]) => {
+            const res = await target.search(params);
+            // Only the API's limited searches (not the dataset's own stats query).
+            return params && 'timeout' in params ? { ...res, timed_out: true } : res;
+          };
+        }
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const slow = makeApp({ es: timingOut as Client });
+    for (const url of ['/api/search?q=carburetor', '/api/dashboard']) {
+      const r = await get(url, { app: slow });
+      expect(r.status, url).toBe(503);
+      expect(ErrorResponseSchema.parse(r.json).error, url).toBe('unavailable');
+    }
+  });
+
+  it('cross-aircraft filters match the mock API (one aircraft must satisfy every aircraft facet)', async () => {
+    const corpus = buildMockCorpus(normalizeCorpus(await readFixtureTables(APP_DIR)));
+    const requests: Record<string, string>[] = [
+      { completion: 'any', category: 'HELI', phase: 'approach' },
+      { completion: 'any', category: 'HELI', phase: 'en_route' },
+      { completion: 'any', category: 'AIR', far_part: 'ARMF' },
+      { completion: 'any', category: 'HELI' },
+      { completion: 'any', engine: 'TS', phase: 'en_route,approach' },
+    ];
+    for (const query of requests) {
+      const real = await search(query);
+      const mock = searchCorpus(corpus, SearchRequestSchema.parse(query));
+      const label = JSON.stringify(query);
+      expect(real.rows.map((r) => r.ntsbNo), label).toEqual(mock.rows.map((r) => r.ntsbNo));
+      expect(real.relaxations, label).toEqual(mock.relaxations);
+      for (const facet of FACET_KEYS) expect(counts(real.facets[facet]), `${label} ${facet}`).toEqual(counts(mock.facets[facet]));
+    }
+    expect((await search({ completion: 'any', category: 'HELI', phase: 'approach' })).rows.map((r) => r.ntsbNo)).not.toContain('DCA25MA108');
+  });
+});
+
 describe('an earlier cases index version', () => {
   it('serves a cases-v2 index (same fields, older analysis) and refuses a fingerprint mismatch', async () => {
     const mapping = await es.indices.getMapping({ index: dataset.casesIndex });
@@ -608,6 +782,7 @@ describe('a lost index', () => {
       expect(ErrorResponseSchema.parse(r.json).error).toBe('unavailable');
       expect(r.body).not.toContain(dataset.casesIndex);
     }
-    expect((await get('/api/health')).json).toMatchObject({ status: 'unavailable', search: 'error' });
+    // A fresh app: health results are shared for a couple of seconds.
+    expect((await get('/api/health', { app: makeApp() })).json).toMatchObject({ status: 'unavailable', search: 'no_dataset' });
   });
 });

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { SearchRequestSchema } from '../../shared/contracts/search.js';
 import { contentSecurityPolicy, securityHeaders } from '../../server/http/security-headers.js';
-import { buildSearchBody, parseQuery, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
+import { FRAGMENT_SIZE, buildSearchBody, parseQuery, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
+import { SEARCH_TIMEOUT, SearchTimedOutError, assertComplete } from '../../server/search/timeout.js';
 import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
 
 const request = (q: Record<string, string>) => SearchRequestSchema.parse(q);
@@ -70,8 +71,17 @@ describe('query text', () => {
     const phaseAgg = JSON.stringify(body.aggs?.facet_phase);
     expect(phaseAgg).not.toContain('"landing"');
     expect(phaseAgg).toContain('"HELI"');
-    expect(body.highlight?.fields).toHaveProperty('probable_cause');
+    // The probable cause comes whole; long sections only as their best passage.
+    expect(body.highlight?.fields).toEqual({
+      probable_cause: { number_of_fragments: 0 },
+      analysis: { number_of_fragments: 1, fragment_size: FRAGMENT_SIZE, boundary_scanner: 'sentence', order: 'score' },
+      factual: { number_of_fragments: 1, fragment_size: FRAGMENT_SIZE, boundary_scanner: 'sentence', order: 'score' },
+    });
     expect(body._source).toBe(false);
+    // Every search has a time limit; partial (timed-out) results are never served.
+    expect(body.timeout).toBe(SEARCH_TIMEOUT);
+    expect(() => assertComplete({ timed_out: true })).toThrow(SearchTimedOutError);
+    expect(() => assertComplete({ timed_out: false })).not.toThrow();
   });
 
   it('asks for probable-cause previews and no highlights without a query', () => {
@@ -83,8 +93,8 @@ describe('query text', () => {
 });
 
 describe('snippets from highlights', () => {
-  const S = '';
-  const E = '';
+  const S = '\uE000';
+  const E = '\uE001';
 
   it('turns markers into offsets', () => {
     expect(unmark(`a ${S}carb${E} b`)).toEqual({ text: 'a carb b', spans: [{ start: 2, end: 6 }] });
@@ -107,15 +117,19 @@ describe('snippets from highlights', () => {
     });
   });
 
-  it('otherwise takes the section value with the most marks, windowed', () => {
-    const long = `${'word '.repeat(100)}${S}carb${E} heat ${S}carb${E}${' tail'.repeat(100)}`;
-    const snippet = snippetFromHighlights({ factual: [`${S}carb${E} once`, long], analysis: [`one ${S}carb${E}`] });
-    expect(snippet?.section).toBe('factual');
-    expect(snippet?.highlights).toHaveLength(2);
-    expect(snippet?.truncatedStart).toBe(true);
-    expect(snippet?.truncatedEnd).toBe(true);
+  it('otherwise takes the passage with the most marks (analysis first on a tie), as an excerpt', () => {
+    const passage = `The pilot applied ${S}carb${E} heat after the ${S}carb${E} temperature fell.`;
+    const snippet = snippetFromHighlights({ factual: [`${S}carb${E} once`, passage], analysis: [`one ${S}carb${E}`] });
+    expect(snippet).toMatchObject({ section: 'factual', label: 'Factual', truncatedStart: true, truncatedEnd: true });
+    expect(snippet?.text).toBe('The pilot applied carb heat after the carb temperature fell.');
     const text = snippet?.text ?? '';
     expect(snippet?.highlights.map((h) => text.slice(h.start, h.end))).toEqual(['carb', 'carb']);
+    const tie = snippetFromHighlights({ factual: [`a ${S}carb${E}`], analysis: [`b ${S}carb${E}`] });
+    expect(tie?.section).toBe('analysis');
+    // A long passage (a sentence without breaks) is still cut to the contract's limits.
+    const long = snippetFromHighlights({ factual: [`${'word '.repeat(300)}${S}carb${E}${' tail'.repeat(300)}`] });
+    expect(long?.text.length).toBeLessThanOrEqual(1200);
+    expect(long?.highlights).toHaveLength(1);
   });
 
   it('is null when no narrative section matched', () => {
@@ -147,5 +161,16 @@ describe('security headers', () => {
     expect(securityHeaders({ hsts: false })).not.toHaveProperty('strict-transport-security');
     expect(securityHeaders({ hsts: true })['strict-transport-security']).toBe('max-age=31536000');
     expect(securityHeaders({ hsts: false })).toMatchObject({ 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin' });
+  });
+});
+
+describe('dashboard map', () => {
+  it('allows a point for every US event in the corpus', async () => {
+    const { DashboardResponseSchema, MAX_MAP_POINTS } = await import('../../shared/contracts/dashboard.js');
+    // 25,407 US events in the 2026-10-16 snapshot; at most one point each.
+    expect(MAX_MAP_POINTS).toBeGreaterThanOrEqual(60_000);
+    const shape = DashboardResponseSchema.shape.map.shape.points;
+    expect(shape.safeParse(Array.from({ length: MAX_MAP_POINTS }, () => [500, 300])).success).toBe(true);
+    expect(shape.safeParse(Array.from({ length: MAX_MAP_POINTS + 1 }, () => [500, 300])).success).toBe(false);
   });
 });

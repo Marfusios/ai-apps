@@ -22,6 +22,7 @@ import type { PinnedDataset } from '../dataset.js';
 import { projectLower48 } from '../projection/map.js';
 import { facetAggs, facetBuckets, facetCounts } from './facets.js';
 import { RequestFilters, bool } from './filters.js';
+import { SEARCH_TIMEOUT, assertComplete } from './timeout.js';
 
 /** The Explore request a dashboard cohort corresponds to. */
 export function cohortRequest(cohort: DashboardRequest['cohort']) {
@@ -46,6 +47,7 @@ export async function buildDashboard(deps: DashboardDeps, pinned: PinnedDataset,
   const res = await deps.es.search({
     index: pinned.manifest.casesIndex,
     size: 0,
+    timeout: SEARCH_TIMEOUT,
     track_total_hits: true,
     query: { term: { country: 'USA' } },
     aggs: {
@@ -64,6 +66,7 @@ export async function buildDashboard(deps: DashboardDeps, pinned: PinnedDataset,
       },
     },
   });
+  assertComplete(res);
   const aggs = res.aggregations as unknown as Record<string, unknown> & {
     cohort: { doc_count: number; probable_cause: { doc_count: number }; coordinates: { doc_count: number }; multi_aircraft: { doc_count: number } };
     years: { buckets: { key: number; doc_count: number; completed: { doc_count: number } }[] };

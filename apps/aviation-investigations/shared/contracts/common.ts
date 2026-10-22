@@ -64,7 +64,7 @@ export type Dataset = z.infer<typeof DatasetSchema>;
 
 /** Body of every 4xx/5xx JSON response. `message` is plain text for people. */
 export const ErrorResponseSchema = z.strictObject({
-  error: z.enum(['bad_request', 'not_found', 'rate_limited', 'unavailable', 'internal']),
+  error: z.enum(['bad_request', 'forbidden', 'not_found', 'rate_limited', 'unavailable', 'internal']),
   message: z.string().max(500),
   /** For `bad_request`: which parameters failed. */
   issues: z.array(z.strictObject({ path: z.string().max(80), message: z.string().max(200) })).max(20).optional(),

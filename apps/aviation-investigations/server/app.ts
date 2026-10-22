@@ -6,11 +6,17 @@
  * - The web client from `dist/web` with an SPA fallback: any other GET that accepts
  *   HTML gets the page (`index.html` with a per-response style nonce). Hashed assets
  *   are cached for a year; the page is revalidated.
- * - Every request is checked first by network identity (server/http/network-identity.ts):
- *   in tunnel mode only the trusted connector may connect (403 otherwise), and the API
- *   requires a valid `CF-Connecting-IP` (400). The API (but not the health check or the
- *   static files) is rate limited per network identity.
- * - Every response carries the security headers (server/http/security-headers.ts).
+ * - Access is decided from the route the router matched (the decoded path), never from
+ *   the raw request target, so `/%61pi/search` or an absolute-form `http://x/api/search`
+ *   get exactly the checks of `/api/search`. Default deny: every matched route needs a
+ *   network identity (server/http/network-identity.ts) and is rate limited, except
+ *   - the web client's routes (`ASSET_ROUTES`: the page and the static files) and the
+ *     not-found handler (the SPA page or a 404), which need no client address and are
+ *     not limited, and
+ *   - `GET /api/health` from loopback (the container's own health check).
+ *   In tunnel mode only the trusted connector may connect at all (403 otherwise).
+ * - Every response carries the security headers (server/http/security-headers.ts),
+ *   including the router's own errors for malformed URLs (`frameworkErrors`).
  *
  * Fastify runs with `trustProxy: false`; `request.ip` is never used.
  */
@@ -28,6 +34,7 @@ import { CLIENT_IP_HEADER, compileTrustedProxies, isLoopback, resolveNetworkIden
 import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
 import { contentSecurityPolicy, securityHeaders } from './http/security-headers.js';
+import { SearchTimedOutError } from './search/timeout.js';
 import { caseRoutes } from './routes/cases.js';
 import { configRoutes } from './routes/config.js';
 import type { ApiContext } from './routes/context.js';
@@ -55,22 +62,49 @@ export interface AppDeps {
   rateLimit?: { limit: number; windowMs: number };
   /** How long the active manifest is reused (default 5 s). */
   manifestTtlMs?: number;
+  /** How long a health probe result is shared (default `HEALTH_CACHE_MS`). */
+  healthCacheMs?: number;
   now?: () => number;
 }
 
-const API_PREFIX = '/api/';
-const HEALTH = '/api/health';
+/** Route patterns of the web client: the page and the static files (`@fastify/static`'s wildcard). */
+export const ASSET_ROUTES: ReadonlySet<string> = new Set(['/', '/index.html', '/*']);
+const HEALTH_ROUTE = '/api/health';
 
-const isApi = (url: string): boolean => url === '/api' || url.startsWith(API_PREFIX);
-const pathOf = (url: string): string => url.split('?', 1)[0] ?? url;
+type Access = 'asset' | 'health' | 'api';
+
+/** The access class of a request, from its matched route; an unmatched request is the not-found handler. */
+function accessOf(route: string | undefined): Access {
+  if (route === undefined || ASSET_ROUTES.has(route)) return 'asset';
+  if (route === HEALTH_ROUTE) return 'health';
+  return 'api';
+}
+
+/**
+ * The path the router sees: the request target without an absolute-form scheme and
+ * authority or the query, percent-decoded (left as is when malformed). Used only to
+ * choose a JSON or a page 404; access control uses the matched route.
+ */
+export function routerPath(target: string): string {
+  let path = target.replace(/^https?:\/\/[^/?#]*/i, '');
+  path = path.split(/[?#]/, 1)[0] ?? '';
+  if (!path.startsWith('/')) path = `/${path}`;
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+const isApiPath = (path: string): boolean => path === '/api' || path.startsWith('/api/');
 
 /**
  * The service, not the request, is at fault: Elasticsearch transport failures, an
- * index that is missing or overloaded, PostgreSQL connection failures, or no
- * servable dataset.
+ * index that is missing or overloaded, a search that timed out, PostgreSQL connection
+ * failures, or no servable dataset.
  */
 function isUnavailable(err: unknown): boolean {
-  if (err instanceof DatasetUnavailableError) return true;
+  if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError) return true;
   const e = err as { name?: string; code?: string; meta?: { statusCode?: number } };
   if (['ConnectionError', 'TimeoutError', 'NoLivingConnectionsError'].includes(e.name ?? '')) return true;
   if (e.name === 'ResponseError' && [404, 429, 502, 503, 504].includes(e.meta?.statusCode ?? 0)) return true;
@@ -84,7 +118,24 @@ const isRequestError = (err: unknown): boolean => {
   return typeof e.code === 'string' && e.code.startsWith('FST_') && typeof e.statusCode === 'number' && e.statusCode >= 400 && e.statusCode < 500;
 };
 
+/** A 4xx status carried by an error (`@fastify/static` and `send` use `status`/`statusCode`). */
+function clientStatus(err: unknown): number | null {
+  const e = err as { statusCode?: unknown; status?: unknown };
+  const status = typeof e.statusCode === 'number' ? e.statusCode : typeof e.status === 'number' ? e.status : null;
+  return status !== null && status >= 400 && status < 500 ? status : null;
+}
+
 export function buildApp(deps: AppDeps): FastifyInstance {
+  const trusted = compileTrustedProxies(deps.config.trustedProxyCidrs);
+  const headers = securityHeaders({ hsts: deps.config.appUrl.startsWith('https://') });
+  const withHeaders = (reply: FastifyReply): FastifyReply => {
+    for (const [name, value] of Object.entries(headers)) {
+      // A page sets its own CSP (with its style nonce).
+      if (!reply.hasHeader(name)) reply.header(name, value);
+    }
+    return reply;
+  };
+
   const app = Fastify({
     logger: deps.logger ?? false,
     trustProxy: false,
@@ -93,10 +144,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     bodyLimit: 16 * 1024,
     return503OnClosing: true,
     routerOptions: { ignoreTrailingSlash: true, maxParamLength: 64 },
+    // The router's own refusals (a malformed URL) get the security headers and an ErrorResponse.
+    frameworkErrors: (error, _request, reply) => {
+      withHeaders(reply);
+      if (clientStatus(error) !== null) void sendError(reply, 400, 'bad_request', { message: 'The request URL is not valid.' });
+      else void sendError(reply, 500, 'internal');
+    },
   });
 
-  const trusted = compileTrustedProxies(deps.config.trustedProxyCidrs);
-  const headers = securityHeaders({ hsts: deps.config.appUrl.startsWith('https://') });
   const limiter = new RateLimiter({ ...(deps.rateLimit ?? { limit: 60, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const datasets = new DatasetResolver(deps.db, deps.es, {
     ...(deps.manifestTtlMs !== undefined ? { manifestTtlMs: deps.manifestTtlMs } : {}),
@@ -114,44 +169,40 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.decorateRequest('networkIdentity', null);
 
   app.addHook('onRequest', async (request, reply) => {
-    const path = pathOf(request.url);
+    // The route the router matched on the decoded path; the raw target is never consulted.
+    const access = accessOf(request.routeOptions.url);
     const peer = request.raw.socket.remoteAddress;
     // The container's own health check connects over loopback, never through the tunnel.
-    if (path === HEALTH && isLoopback(peer)) return;
-    const header = request.headers[CLIENT_IP_HEADER];
-    const identity = resolveNetworkIdentity(peer, header, trusted);
+    if (access === 'health' && isLoopback(peer)) return;
+    const identity = resolveNetworkIdentity(peer, request.headers[CLIENT_IP_HEADER], trusted);
     if (!identity.ok) {
       if (identity.status === 403) {
         request.log.warn({ reason: identity.reason }, 'request refused');
-        return sendError(reply, 403, 'bad_request', { message: 'Forbidden.' });
+        return sendError(reply, 403, 'forbidden');
       }
-      // A missing or invalid client address is refused on the API; static files need none.
-      if (isApi(path)) return sendError(reply, 400, 'bad_request', { message: 'The client address is missing or invalid.' });
-      return;
+      // The page and static files need no client address; everything else does.
+      if (access === 'asset') return;
+      return sendError(reply, 400, 'bad_request', { message: 'The client address is missing or invalid.' });
     }
     request.networkIdentity = identity.identity;
-    if (isApi(path) && path !== HEALTH) {
-      const decision = limiter.take(identity.identity);
-      if (!decision.ok) {
-        reply.header('retry-after', String(decision.retryAfterSeconds));
-        return sendError(reply, 429, 'rate_limited', { retryAfter: decision.retryAfterSeconds });
-      }
+    if (access === 'asset') return;
+    const decision = limiter.take(identity.identity);
+    if (!decision.ok) {
+      reply.header('retry-after', String(decision.retryAfterSeconds));
+      return sendError(reply, 429, 'rate_limited', { retryAfter: decision.retryAfterSeconds });
     }
   });
 
   app.addHook('onSend', async (_request, reply, payload) => {
-    for (const [name, value] of Object.entries(headers)) {
-      // A page sets its own CSP (with its style nonce).
-      if (!reply.hasHeader(name)) reply.header(name, value);
-    }
+    withHeaders(reply);
     return payload;
   });
 
   app.addHook('onResponse', async (request, reply) => {
-    const path = pathOf(request.url);
-    if (!isApi(path)) return;
+    const route = request.routeOptions.url;
+    if (accessOf(route) === 'asset') return;
     request.log.info(
-      { method: request.method, route: request.routeOptions.url ?? 'unmatched', status: reply.statusCode, ms: Math.round(reply.elapsedTime) },
+      { method: request.method, route, status: reply.statusCode, ms: Math.round(reply.elapsedTime) },
       'api request',
     );
   });
@@ -165,11 +216,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const status = (err as { statusCode: number }).statusCode;
       return status === 404 ? sendError(reply, 404, 'not_found') : sendError(reply, status, 'bad_request');
     }
+    // The static files' refusals (a path outside the root, a NUL byte, ...) are the request's fault.
+    const status = clientStatus(err);
+    if (status !== null && accessOf(request.routeOptions.url) === 'asset' && (err as Error).name !== 'ResponseError') {
+      return [403, 404, 410].includes(status) ? sendError(reply, 404, 'not_found') : sendError(reply, 400, 'bad_request');
+    }
     request.log.error({ err: { name: (err as Error).name, type: (err as { meta?: { body?: { error?: { type?: string } } } }).meta?.body?.error?.type } }, 'request failed');
     return sendError(reply, 500, 'internal');
   });
 
-  healthRoutes(app, ctx);
+  healthRoutes(app, ctx, deps.healthCacheMs);
   configRoutes(app, ctx);
   searchRoutes(app, ctx);
   caseRoutes(app, ctx);
@@ -180,10 +236,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const template = indexFile && existsSync(indexFile) ? readFileSync(indexFile, 'utf8') : null;
   if (webRoot !== null && template === null) app.log.warn('no built web client found; serving the API only (run pnpm build:web)');
 
-  /** The SPA page, with a fresh style nonce in its CSP and in a meta tag (security-headers.ts). */
+  /**
+   * The SPA page, with a fresh style nonce in its CSP and as the `nonce` attribute of
+   * `<meta property="csp-nonce">` (security-headers.ts). Browsers hide that attribute
+   * from the DOM; the client reads the element's `nonce` property (web/src/csp-nonce.ts).
+   */
   const sendPage = (reply: FastifyReply, page: string) => {
+    // Base64 of random bytes: no character that could leave the attribute value.
     const nonce = randomBytes(18).toString('base64');
-    const html = page.replace('</head>', `<meta name="csp-nonce" content="${nonce}"></head>`);
+    const html = page.replace('</head>', `<meta property="csp-nonce" nonce="${nonce}"></head>`);
     return reply
       .code(200)
       .header('content-security-policy', contentSecurityPolicy({ styleNonce: nonce }))
@@ -212,8 +273,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   }
 
   app.setNotFoundHandler(async (request, reply) => {
-    const path = pathOf(request.url);
-    if (isApi(path)) return sendError(reply, 404, 'not_found');
+    // Decide on the path the router saw: `/%61pi/nope` is an API 404, not the page.
+    const path = routerPath(request.url);
+    if (isApiPath(path)) return sendError(reply, 404, 'not_found');
     const wantsPage =
       (request.method === 'GET' || request.method === 'HEAD') &&
       !/\.[A-Za-z0-9]{1,8}$/.test(path) &&

@@ -29,6 +29,12 @@ const share = z.strictObject({ count: z.number().int().nonnegative(), of: z.numb
 /** Map frame: an Albers equal-area projection of the lower 48 onto 1000×637. */
 export const MAP_FRAME = { width: 1000, height: 637 } as const;
 
+/**
+ * Most map points a response may carry: above every US event in the corpus (25,407 in
+ * the 2026-10-16 snapshot; one point per event at most), with room for growth.
+ */
+export const MAX_MAP_POINTS = 60_000;
+
 export const DashboardResponseSchema = z.strictObject({
   dataset: DatasetSchema,
   cohort: z.enum(DASHBOARD_COHORTS),
@@ -52,7 +58,7 @@ export const DashboardResponseSchema = z.strictObject({
     height: z.literal(MAP_FRAME.height),
     projection: z.literal('albers-lower48'),
     /** Projected [x, y] points, rounded to one decimal; events without coordinates are left out. */
-    points: z.array(z.tuple([z.number().min(0).max(MAP_FRAME.width), z.number().min(0).max(MAP_FRAME.height)])).max(40_000),
+    points: z.array(z.tuple([z.number().min(0).max(MAP_FRAME.width), z.number().min(0).max(MAP_FRAME.height)])).max(MAX_MAP_POINTS),
     /** Events with no validated coordinates. */
     withoutCoordinates: z.number().int().nonnegative(),
     /** Events with coordinates outside the lower 48 (Alaska, Hawaii, territories, waters). */

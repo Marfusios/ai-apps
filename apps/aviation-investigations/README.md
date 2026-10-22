@@ -424,8 +424,9 @@ code labels from the NTSB data dictionary.
 `normalizeCorpus` and writes contract-valid responses to `web/mock/*.json` (config,
 both dashboard cohorts, every case detail, a search index and sample searches).
 `web/mock/engine.ts` answers any search over that index with the real counting
-rules (distinct events, disjunctive facets, defining-event phase, multi-aircraft
-overlap, "remove one filter" totals) and a simple stand-in for the analyzer.
+rules (distinct events, disjunctive facets, defining-event phase, aircraft facets
+matched on one aircraft, multi-aircraft overlap, "remove one filter" totals) and a
+simple stand-in for the analyzer.
 `web/src/mocks/handlers.ts` serves it through MSW, in the dev mock mode and in tests;
 production builds contain no mock code. A unit test fails when the committed mock
 files are out of date.
@@ -466,7 +467,7 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 
 | Endpoint | Response | Caching |
 | --- | --- | --- |
-| `GET /api/health` | `{status, database, search}` states only; 200, or 503 when either check fails | `no-store`; not rate limited |
+| `GET /api/health` | `{status, database, search}` states only; 200, or 503 when either check fails; one probe shared for 2 s | `no-store`; rate limited except over loopback |
 | `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage | `public, max-age=300`, ETag |
 | `GET /api/search` | `SearchResponse` | `public, max-age=60`, keyed by the full URL |
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
@@ -477,9 +478,12 @@ dataset revision plus a hash of the body, and a matching `If-None-Match` gets 30
 Search uses a short public cache rather than `no-store`: results change only when a
 new manifest is published, and the canonical query string makes equal searches share
 an entry. Errors are `ErrorResponse` bodies with fixed messages and `no-store`; a
-missing index or an unreachable database or search engine is a 503, never a 404 or
-an internal message. The log has one line per API request (method, route, status,
-duration), without client addresses or query strings.
+missing index, an unreachable database or search engine, or a search that ran out of
+its 5-second Elasticsearch `timeout` (`timed_out`, partial counts) is a 503, never a
+404, partial data or an internal message. The router's own refusals (a malformed URL)
+get the same headers and a JSON 400, and the static files' refusals are 404 or 400.
+The log has one line per API request (method, route pattern, status, duration),
+without client addresses or query strings.
 
 - **Dataset pinning (A6).** Each request resolves the active `dataset_manifests` row
   (reused for 5 seconds) and reads only that generation and its cases index, never
@@ -516,21 +520,31 @@ duration), without client addresses or query strings.
   `RCKT`, engine `HR` and `LR`) are selectable and labelled with the raw code; a
   value outside the vocabulary is left out of the buckets and logged once. Rows come
   from PostgreSQL for the page's case numbers. Snippets come from the section
-  highlights (private-use markers turned into offsets): the probable cause when the
-  words match there, otherwise the section value with the most marks
+  highlights (private-use markers turned into offsets): the probable cause, which
+  Elasticsearch returns whole, when the words match there; otherwise the analysis or
+  factual passage (one best passage of about 300 characters, so long sections never
+  come back whole) with the most marks, shown as an excerpt with ellipses on both sides
   (`shared/snippet.ts`, shared with the mock API).
 - **Dashboard** (`server/search/dashboard.ts`). Bars are the facet counts of the
   cohort's empty search, from the same code, so a bar opened in Explore shows its
   count. METAR coverage and coordinates come from PostgreSQL for the same generation;
   points are projected to the 1000×637 lower-48 frame on the server, and Alaska,
-  Hawaii, territories and waters count as outside the frame.
+  Hawaii, territories and waters count as outside the frame. A response carries at
+  most `MAX_MAP_POINTS` (60,000; the corpus has about 25,400 US events).
+- **Access by route** (`server/app.ts`). The checks follow the route the router
+  matched on the decoded path, never the raw request target, so `/%61pi/search` and an
+  absolute-form `GET http://host/api/search` are treated exactly like `/api/search`.
+  Default deny: every matched route needs a network identity and is rate limited,
+  except the web client's routes (`ASSET_ROUTES`: the page and the static files) and
+  the not-found handler (the page or a 404), which need no client address and are not
+  limited, and `GET /api/health` over loopback (the container's health check). Whether
+  a 404 is JSON or the page also follows the decoded path (`/%61pi/nope` is a JSON 404).
 - **Network identity** (`server/http/network-identity.ts`). Without trusted proxies
   the bucket key is the socket address. With `TRUSTED_PROXY_CIDRS` (tunnel mode) only
-  peers inside those networks are served (403 otherwise, static files included), and
-  the API requires one valid `CF-Connecting-IP` from them (400 when missing or
-  invalid); nothing falls back to a shared bucket. IPv4-mapped addresses are
-  unwrapped and IPv6 is reduced to its /64. The container's own health check over
-  loopback is the one exception.
+  peers inside those networks are served (403 `forbidden` otherwise, static files
+  included), and the API requires one valid `CF-Connecting-IP` from them (400 when
+  missing or invalid); nothing falls back to a shared bucket. IPv4-mapped addresses
+  are unwrapped and IPv6 is reduced to its /64.
 - **Rate limit.** 60 API requests a minute per network identity (an in-memory token
   bucket); the 61st gets 429 with `Retry-After` and `retryAfter` in the body.
 - **Security headers** (`server/http/security-headers.ts`). `default-src 'self'`;
@@ -538,8 +552,9 @@ duration), without client addresses or query strings.
   `img-src 'self' data:`; `connect-src 'self'`; `frame-ancestors 'none'`; no
   `unsafe-inline` or `unsafe-eval`. The dialogs' scroll lock (Radix) inserts a
   `<style>` element with computed values, so each HTML page gets a fresh style nonce
-  in its CSP and in `<meta name="csp-nonce">`, which `web/src/csp-nonce.ts` hands to
-  that library; scripts never accept it. Zod runs without compiled parsers
+  in its CSP and as the `nonce` attribute of `<meta property="csp-nonce">` (read
+  through the element's `nonce` property, since browsers hide the attribute), which
+  `web/src/csp-nonce.ts` hands to that library; scripts never accept it. Zod runs without compiled parsers
   (`web/src/zod-config.ts`), which would otherwise probe `new Function`. Also
   `X-Content-Type-Options`, `Referrer-Policy: same-origin`, `Permissions-Policy`,
   `X-Frame-Options`, and HSTS when `APP_URL` is HTTPS.

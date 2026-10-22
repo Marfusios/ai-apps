@@ -7,8 +7,9 @@
  * sets style properties through the CSSOM, which CSP does not restrict. The one
  * exception is the dialog scroll lock (Radix → react-remove-scroll), which inserts a
  * `<style>` element with computed values that no hash can cover: each HTML page gets
- * a fresh random nonce in its CSP (`style-src 'self' 'nonce-…'`) and in a
- * `<meta name="csp-nonce">` the client hands to that library (web/src/csp-nonce.ts).
+ * a fresh random nonce in its CSP (`style-src 'self' 'nonce-…'`) and as the `nonce`
+ * of `<meta property="csp-nonce">`, which the client hands to that library
+ * (web/src/csp-nonce.ts).
  * Scripts never accept the nonce.
  */
 import { CSP_SCRIPT_HASHES } from '../../web/src/csp-hashes.js';

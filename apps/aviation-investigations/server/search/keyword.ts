@@ -34,6 +34,7 @@ import { readCaseRows } from '../db/queries/case-views.js';
 import type { PinnedDataset } from '../dataset.js';
 import { facetAggs, facetBuckets, facetCounts } from './facets.js';
 import { RequestFilters, bool, type Except, type Query } from './filters.js';
+import { SEARCH_TIMEOUT, assertComplete } from './timeout.js';
 
 /** Narrative fields a snippet can come from, by kind. */
 export const SECTION_FIELDS = ['probable_cause', 'analysis', 'factual'] as const satisfies readonly SectionKind[];
@@ -44,8 +45,15 @@ export const TEXT_FIELDS = [...SECTION_FIELDS, 'findings_text'] as const;
 const MAX_PHRASES = 8;
 
 /** Highlight markers: private-use characters that never occur in NTSB text. */
-const MARK_START = '';
-const MARK_END = '';
+const MARK_START = '\uE000';
+const MARK_END = '\uE001';
+
+/**
+ * Analysis and factual sections can be tens of kilobytes: Elasticsearch returns one
+ * best-scoring passage of about this many characters (sentence boundaries) instead of
+ * the whole value. The probable cause is short and comes whole.
+ */
+export const FRAGMENT_SIZE = 300;
 
 export interface ParsedQuery {
   words: string;
@@ -103,26 +111,33 @@ export function unmark(marked: string): { text: string; spans: Span[] } | null {
   return open === -1 ? { text, spans } : null;
 }
 
-const SNIPPET_RANK: Readonly<Record<SectionKind, number>> = { probable_cause: 0, analysis: 1, factual: 2 };
-
 /**
  * The row snippet from a hit's highlights: the probable cause when the words match
- * there, otherwise the section value with the most marks (analysis before factual on
- * a tie). Null when no narrative section matched (e.g. only a finding did).
+ * there (the whole value, windowed like the mock API), otherwise the analysis or
+ * factual passage with the most marks (analysis first on a tie). A passage is part of
+ * a longer section whose bounds the highlighter does not report, so it is marked as
+ * truncated on both sides. Null when no narrative section matched (e.g. only a
+ * finding did).
  */
 export function snippetFromHighlights(highlight: Record<string, string[]> | undefined): Snippet | null {
   if (!highlight) return null;
+  for (const value of highlight.probable_cause ?? []) {
+    const parsed = unmark(value);
+    if (parsed && parsed.spans.length > 0) {
+      return excerptSnippet('probable_cause', parsed.text, mergeSpans(parsed.spans, parsed.text), true);
+    }
+  }
   let best: { kind: SectionKind; text: string; spans: Span[] } | null = null;
-  for (const kind of [...SECTION_FIELDS].sort((a, b) => SNIPPET_RANK[a] - SNIPPET_RANK[b])) {
+  for (const kind of ['analysis', 'factual'] as const) {
     for (const value of highlight[kind] ?? []) {
       const parsed = unmark(value);
       if (!parsed || parsed.spans.length === 0) continue;
       const spans = mergeSpans(parsed.spans, parsed.text);
-      if (kind === 'probable_cause') return excerptSnippet(kind, parsed.text, spans, true);
       if (!best || spans.length > best.spans.length) best = { kind, text: parsed.text, spans };
     }
   }
-  return best ? excerptSnippet(best.kind, best.text, best.spans, false) : null;
+  if (!best) return null;
+  return { ...excerptSnippet(best.kind, best.text, best.spans, true), truncatedStart: true, truncatedEnd: true };
 }
 
 function sortOf(sort: SearchRequest['sort']): estypes.SortCombinations[] {
@@ -183,6 +198,7 @@ export function buildSearchBody(index: string, request: SearchRequest): SearchBo
     index,
     from: (request.page - 1) * request.pageSize,
     size: request.pageSize,
+    timeout: SEARCH_TIMEOUT,
     track_total_hits: true,
     query,
     post_filter: bool(f.filters()),
@@ -196,9 +212,15 @@ export function buildSearchBody(index: string, request: SearchRequest): SearchBo
             pre_tags: [MARK_START],
             post_tags: [MARK_END],
             encoder: 'default',
-            number_of_fragments: 0,
             require_field_match: true,
-            fields: Object.fromEntries(sections.map((s) => [s, {}])),
+            fields: Object.fromEntries(
+              sections.map((s) => [
+                s,
+                s === 'probable_cause'
+                  ? { number_of_fragments: 0 }
+                  : { number_of_fragments: 1, fragment_size: FRAGMENT_SIZE, boundary_scanner: 'sentence', order: 'score' },
+              ]),
+            ),
           },
         }
       : {}),
@@ -223,6 +245,7 @@ export interface KeywordSearchDeps {
 export async function keywordSearch(deps: KeywordSearchDeps, pinned: PinnedDataset, request: SearchRequest): Promise<SearchResponse> {
   const { body, filters, hasText } = buildSearchBody(pinned.manifest.casesIndex, request);
   const res = await deps.es.search<{ probable_cause?: string[] }>(body);
+  assertComplete(res);
   const aggs = res.aggregations as unknown as Aggs;
   const total = typeof res.hits.total === 'number' ? res.hits.total : (res.hits.total?.value ?? 0);
 

@@ -45,6 +45,7 @@ export function sendJson(request: FastifyRequest, reply: FastifyReply, value: un
 
 export const ERROR_MESSAGES = {
   bad_request: 'The request is not valid.',
+  forbidden: 'This request is not allowed.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Wait a moment and try again.',
   unavailable: 'The service is temporarily unavailable. Try again shortly.',
