@@ -4,6 +4,7 @@ import { listGenerations } from '../server/db/generations.js';
 import { createEsClient } from '../server/search/es.js';
 import { workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
+import { cleanupStaleBuilds, reconcileAlias } from './index/publications.js';
 import { extractArchive, isTerminating } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
 import { STALE_RUN_MINUTES, failStaleRuns, listRunningRuns } from './ingest/runs.js';
@@ -17,6 +18,8 @@ const USAGE = [
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
   '  worker index cases --generation <id>',
+  '  worker index reconcile --alias <alias> [--settle-seconds <n>]',
+  '  worker index cleanup-builds --older-than <hours>',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -76,7 +79,8 @@ function printVerify(r: VerifyReport): void {
 function printIndex(r: IndexReport): void {
   const lines: [string, string | number][] = [
     ['index', r.index],
-    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasReconciled ? ' (confirmed by read-back)' : ''}`],
+    ['build', r.buildId],
+    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasVerified ? '' : ' (committed; read-back failed)'}`],
     ['previous indices (kept)', r.previousIndices.join(', ') || 'none'],
     ['generation', r.generationId],
     ['version', `${r.version} (${r.fingerprint.slice(0, 12)})`],
@@ -143,23 +147,70 @@ async function main(argv: string[]): Promise<number> {
   }
   if (command === 'index') {
     const [target, ...args] = rest;
-    const { values } = parseArgs({ args, options: { generation: { type: 'string' } }, strict: true });
-    const id = Number(values.generation);
-    if (target !== 'cases' || !values.generation || !Number.isSafeInteger(id) || id < 1) {
-      console.error(USAGE);
-      return 2;
-    }
     const config = workerConfig().elasticsearch;
-    const es = createEsClient(config, 'write', { requestTimeoutMs: 120_000 });
-    try {
-      const report = await withDb((db) =>
-        rebuildCasesIndex(es, db, { generationId: id, prefix: config.indexPrefix, log: (m) => console.error(m) }),
-      );
-      printIndex(report);
-    } finally {
-      await es.close();
+    if (target === 'cases') {
+      const { values } = parseArgs({ args, options: { generation: { type: 'string' } }, strict: true });
+      const id = Number(values.generation);
+      if (!values.generation || !Number.isSafeInteger(id) || id < 1) {
+        console.error(USAGE);
+        return 2;
+      }
+      const es = createEsClient(config, 'write', { requestTimeoutMs: 120_000 });
+      try {
+        const report = await withDb((db) =>
+          rebuildCasesIndex(es, db, { generationId: id, prefix: config.indexPrefix, log: (m) => console.error(m) }),
+        );
+        printIndex(report);
+      } finally {
+        await es.close();
+      }
+      return 0;
     }
-    return 0;
+    if (target === 'reconcile') {
+      const { values } = parseArgs({
+        args,
+        options: { alias: { type: 'string' }, 'settle-seconds': { type: 'string' } },
+        strict: true,
+      });
+      const settle = values['settle-seconds'] === undefined ? 60 : Number(values['settle-seconds']);
+      if (!values.alias || !Number.isFinite(settle) || settle < 0) {
+        console.error(USAGE);
+        return 2;
+      }
+      const alias = values.alias;
+      const es = createEsClient(config, 'write');
+      try {
+        console.error(`waiting ${settle} s for pending alias requests of ${alias} to settle`);
+        const r = await withDb((db) => reconcileAlias(es, db, alias, { settleMs: settle * 1000 }));
+        console.log(`alias: ${r.alias} -> ${r.targets.join(', ') || 'nothing'}`);
+        console.log(`committed: ${r.committed.join(', ') || 'none'}`);
+        console.log(`abandoned (deleted by cleanup-builds): ${r.abandoned.join(', ') || 'none'}`);
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
+    if (target === 'cleanup-builds') {
+      const { values } = parseArgs({ args, options: { 'older-than': { type: 'string' } }, strict: true });
+      const hours = Number(values['older-than']);
+      if (values['older-than'] === undefined || !Number.isFinite(hours) || hours < 0) {
+        console.error(USAGE);
+        return 2;
+      }
+      const es = createEsClient(config, 'write');
+      try {
+        const r = await withDb((db) => cleanupStaleBuilds(es, db, { olderThanHours: hours }));
+        console.log(`pins removed: ${r.pinsRemoved.map((p) => `${p.buildId} (generation ${p.generationId})`).join(', ') || 'none'}`);
+        console.log(`indices deleted: ${r.indicesDeleted.join(', ') || 'none'}`);
+        console.log(`running builds skipped: ${r.skippedRunning.join(', ') || 'none'}`);
+        if (r.keptTargets.length > 0) console.log(`kept (alias targets; check manually): ${r.keptTargets.join(', ')}`);
+      } finally {
+        await es.close();
+      }
+      return 0;
+    }
+    console.error(USAGE);
+    return 2;
   }
   if (command === 'generations') {
     parseArgs({ args: rest, options: {}, strict: true });
