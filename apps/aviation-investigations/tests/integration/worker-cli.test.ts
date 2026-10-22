@@ -44,6 +44,17 @@ describe('worker maintenance commands', () => {
     await expect(worker('prune-generations', '--grace-hours', 'soon')).rejects.toMatchObject({ code: 2 });
   });
 
+  it('brief-diagnose takes a brief id and a step, and reports a missing step', async () => {
+    // Usage errors exit 2 before connecting; the content itself is covered in briefs.test.ts.
+    await expect(worker('brief-diagnose')).rejects.toMatchObject({ code: 2 });
+    await expect(worker('brief-diagnose', 'not-a-uuid')).rejects.toMatchObject({ code: 2 });
+    await expect(worker('brief-diagnose', '0b7e2a4c-1f3d-4e5a-9b6c-7d8e9f0a1b2c', '--step', '9')).rejects.toMatchObject({ code: 2 });
+    await expect(worker('brief-diagnose', '0b7e2a4c-1f3d-4e5a-9b6c-7d8e9f0a1b2c')).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('no such brief step'),
+    });
+  });
+
   it('prune-controls expires leases and prunes as the app role', async () => {
     const { stdout } = await worker('prune-controls');
     expect(stdout).toMatch(/^leases expired: \d+ \(charged [\d.]+ USD\)$/m);

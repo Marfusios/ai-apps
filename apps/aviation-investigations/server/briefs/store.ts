@@ -5,7 +5,7 @@
  * conditional on the step still running; the database refuses changes to a finished
  * step, to a step's billing principal or request, and any direct update of a brief.
  */
-import { and, asc, desc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, gt, isNull, sql } from 'drizzle-orm';
 import type {
   BriefResult,
   Checklist,
@@ -89,7 +89,42 @@ export interface StepRow {
   finishedAt: Date | null;
 }
 
-const toStep = (r: typeof briefSteps.$inferSelect): StepRow => ({
+/**
+ * What a withheld step keeps for developers (`diagnostics`, migration 0016;
+ * `pnpm worker brief-diagnose`). It is model output about the public NTSB passages of
+ * the step; no route reads it (`STEP_COLUMNS` leaves it out), and it is pruned with its
+ * brief.
+ */
+export interface StepDiagnostics {
+  /** Why the summary was withheld. */
+  reason: 'citation_check' | 'criteria_check' | 'evidence_check';
+  /** The composition the answer model returned, before any mapping (passage aliases as it saw them). */
+  composition: unknown;
+  /** Alias → canonical passage id of the bundle the model saw. */
+  aliases: Record<string, string>;
+  /** The summary as the validator split it: a `summary.<i>` reason names entry `i`. */
+  summarySentences: string[];
+  /** For `evidence_check`: the claims the checker was given, in index order (with aliases). */
+  claims?: { kind: string; ntsbNo?: string; text: string; passageIds: string[] }[];
+}
+
+/**
+ * jsonb refuses NUL and unpaired surrogates; model text in the diagnostics has them
+ * replaced (U+FFFD), so what the model wrote can never fail the step's final write.
+ */
+const UNSTORABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function storable(v: unknown): unknown {
+  if (typeof v === 'string') return v.replace(UNSTORABLE, '\uFFFD');
+  if (Array.isArray(v)) return v.map(storable);
+  if (v !== null && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [storable(k) as string, storable(x)]));
+  return v;
+}
+
+/** Every column a step read returns: all but `diagnostics`, which only `readStepDiagnostics` reads. */
+const { diagnostics: _diagnostics, ...STEP_COLUMNS } = getTableColumns(briefSteps);
+
+const toStep = (r: Omit<typeof briefSteps.$inferSelect, 'diagnostics'>): StepRow => ({
   ...r,
   billingKind: r.billingKind as PrincipalKind,
   request: r.request as StepRequest,
@@ -164,13 +199,13 @@ export async function readBrief(db: DbOrTx, id: string, now: Date): Promise<Brie
 }
 
 export async function readStepById(db: DbOrTx, stepId: string): Promise<StepRow | null> {
-  const [row] = await db.select().from(briefSteps).where(eq(briefSteps.id, stepId));
+  const [row] = await db.select(STEP_COLUMNS).from(briefSteps).where(eq(briefSteps.id, stepId));
   return row ? toStep(row) : null;
 }
 
 /** Step `n` of a brief, or its latest step when `n` is undefined. */
 export async function readStep(db: DbOrTx, briefId: string, n?: number): Promise<StepRow | null> {
-  const q = db.select().from(briefSteps);
+  const q = db.select(STEP_COLUMNS).from(briefSteps);
   const [row] =
     n === undefined
       ? await q.where(eq(briefSteps.briefId, briefId)).orderBy(desc(briefSteps.n)).limit(1)
@@ -193,7 +228,7 @@ export async function listSteps(
 /** Step `n` (or the latest) with the number of steps in its brief, in one query (polling). */
 export async function readStepWithCount(db: DbOrTx, briefId: string, n?: number): Promise<{ step: StepRow; steps: number } | null> {
   const count = sql<number>`(select count(*)::int from ${briefSteps} s where s.brief_id = ${briefId}::uuid)`;
-  const q = db.select({ row: briefSteps, steps: count }).from(briefSteps);
+  const q = db.select({ row: STEP_COLUMNS, steps: count }).from(briefSteps);
   const [r] =
     n === undefined
       ? await q.where(eq(briefSteps.briefId, briefId)).orderBy(desc(briefSteps.n)).limit(1)
@@ -264,6 +299,8 @@ export interface StepFinish {
   meta: Record<string, unknown>;
   /** USD charged, as a `numeric(12,6)` literal; null when settlement did not finish. */
   costUsd: string | null;
+  /** A withheld step's rejected composition (server-side only). */
+  diagnostics?: StepDiagnostics | null;
   now: Date;
 }
 
@@ -282,12 +319,30 @@ export async function finishStep(db: Db, stepId: string, f: StepFinish): Promise
       model: f.model,
       meta: f.meta,
       costUsd: f.costUsd,
+      ...(f.diagnostics ? { diagnostics: storable(f.diagnostics) } : {}),
       updatedAt: f.now,
       finishedAt: f.now,
     })
     .where(and(eq(briefSteps.id, stepId), eq(briefSteps.status, 'running')))
     .returning({ id: briefSteps.id });
   return rows.length === 1;
+}
+
+/**
+ * A step with its diagnostics, for the operator command `pnpm worker brief-diagnose`
+ * only (never a route). Null when the brief has no such step (or it was pruned).
+ */
+export async function readStepDiagnostics(
+  db: DbOrTx,
+  briefId: string,
+  n?: number,
+): Promise<{ step: StepRow; diagnostics: StepDiagnostics | null } | null> {
+  const q = db.select({ row: STEP_COLUMNS, diagnostics: briefSteps.diagnostics }).from(briefSteps);
+  const [r] =
+    n === undefined
+      ? await q.where(eq(briefSteps.briefId, briefId)).orderBy(desc(briefSteps.n)).limit(1)
+      : await q.where(and(eq(briefSteps.briefId, briefId), eq(briefSteps.n, n)));
+  return r ? { step: toStep(r.row), diagnostics: (r.diagnostics as StepDiagnostics | null) ?? null } : null;
 }
 
 /** Mark a running step for cancellation; false when it is not running. */

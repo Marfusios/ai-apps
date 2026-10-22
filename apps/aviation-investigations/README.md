@@ -162,7 +162,12 @@ pnpm worker generations                              # generations, plus runs st
 pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running by a dead process
 pnpm worker prune-generations [--dry-run] [--grace-hours <n>]  # retention by publication, see "Retention"
 pnpm worker prune-controls                           # lease expiry and control-data retention (also run by the API)
+pnpm worker brief-diagnose <brief-id> [--step <n>]   # why a withheld summary was withheld (by hand; docs/RUNBOOK.md)
 ```
+
+`prune-controls` and `brief-diagnose` connect as `aviation_app` (`DATABASE_URL`)
+instead: the briefs and control tables are the app's, and `aviation_ingest` cannot
+read them.
 
 - **Dataset generations.** Every load writes a new generation in one transaction:
   it inserts the generation as `loading`, inserts every row, records its ingestion
@@ -931,7 +936,11 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    both sides; it resolves to at most 600 code units of source text, shown whole; UTF-16
    spans through an offset map; the first of repeated matches is used and the count
    recorded; every claim cites passages of its own case; every summary sentence cites a
-   case, and case markers after the punctuation always end a sentence; each stated
+   case, and case markers on either side of the punctuation always end a sentence
+   (`sentences.ts`: a sentence ends at `.`, `!` or `?` before whitespace; otherwise a
+   period before a lower-case letter or a digit, or after "St.", "Mt.", "Ft.", "Inc.",
+   "approx.", a title, a dotted abbreviation such as "U.S.C." or an initial, does not end
+   one, so "2 hrs. after", "No. 2 engine" and "St. Louis" stay whole); each stated
    chronology fact (flight hours, calendar days, which flight, wording) cites its own
    passages, with one decimal place for flight hours and whole days; every
    NTSB-number-shaped token in generated text must be allowlisted). Then the reader's
@@ -945,7 +954,13 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    (a check input over its cap included, recorded in the step's `meta`, the evidence
    never cut to fit) returns the case cards with the summary withheld. A case whose
    passages do not settle a criterion is shown labelled unconfirmed, on its card and
-   its summary citations. There is no repair loop.
+   its summary citations. There is no repair loop. A withheld summary is diagnosable:
+   the step's `meta` lists each validation reason with its path (`summary.2`,
+   `cases.1.why`) and the summary's sentence count, the checker's problems with their
+   claim index, and each stage's stop reason; the rejected composition itself is kept
+   server-side (`brief_steps.diagnostics`, migration 0016; never in a response, trace or
+   log, pruned with the brief) for `pnpm worker brief-diagnose`
+   (docs/OBSERVABILITY_AND_EVALUATION.md).
 
 The step has a 60-second deadline. Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
@@ -988,7 +1003,7 @@ role cannot update a brief: the read owner moves once, from a trial to an accoun
 through `move_brief_read_owner()` (compare-and-set, for the sign-in handover). A
 step's billing principal, reservation and request never change, and a finished step
 is immutable. Migration 0014 holds the tables, guards, grants and retention; 0015 adds
-the `no_match` step status.
+the `no_match` step status; 0016 the server-side `diagnostics` of a withheld step.
 
 **Evidence binding** (`retriever.ts`, wired in `server/main.ts` with the OpenAI query
 embedder):

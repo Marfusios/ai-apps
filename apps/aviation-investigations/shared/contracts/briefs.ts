@@ -476,6 +476,7 @@ export const WITHHELD_REASONS = [
   /** The answer model refused, was cut off, timed out or returned unusable output. */
   'compose_failed',
 ] as const;
+export type WithheldReason = (typeof WITHHELD_REASONS)[number];
 
 const resultContext = {
   interpretations: z.array(InterpretationChipSchema).max(3),

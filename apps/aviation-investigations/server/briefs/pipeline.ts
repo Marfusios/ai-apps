@@ -47,7 +47,12 @@
  * cancellations and failures after spending keep it.
  *
  * Traces carry only content-free attributes (server/observability): stage, provider,
- * model, prompt version, token counts, cost, outcome and counts.
+ * model, prompt version, token counts, cost, stop reason, outcome and counts, with the
+ * GenAI usage and cost keys derived from them on model calls; a withheld step adds its
+ * reason and codes. The step's `meta` records each validation reason with its path and
+ * the summary's sentence count; a withheld step also keeps its rejected composition, with
+ * what the validator and checker saw, in the server-side `diagnostics` column
+ * (`StepDiagnostics`; read only by `pnpm worker brief-diagnose`).
  */
 import {
   BriefResultSchema,
@@ -56,6 +61,7 @@ import {
   type ComposeOutput,
   type CriterionDecision,
   type ScopeReply,
+  type WithheldReason,
 } from '../../shared/contracts/briefs.js';
 import type { Db } from '../db/client.js';
 import { stageCostUsd, STAGE_CAPS } from '../ai/pricing.js';
@@ -68,9 +74,10 @@ import {
   type ScopeOutput,
   type StageResult,
   type StageUsage,
+  type StageWarning,
 } from '../ai/provider.js';
-import { hashBrief, type FailureCategory, type FailureStage } from '../observability/attributes.js';
-import { stageSpan, startRequestSpan, type StageSpanHandle } from '../observability/tracing.js';
+import { enumList, hashBrief, stopReasonOf, type FailureCategory, type FailureStage, type StopReason } from '../observability/attributes.js';
+import { stageSpan, startRequestSpan, type AllowedAttrs, type StageSpanHandle } from '../observability/tracing.js';
 import type { BriefStepStatus } from '../db/schema/index.js';
 import { microsToNumeric, toMicros } from '../quota/pacing.js';
 import { PIPELINE_DEADLINE_MS, type QuotaPolicy } from '../quota/policy.js';
@@ -83,7 +90,7 @@ import { RetrievalFailure, type CaseCatalog, type EvidenceBundle, type EvidenceR
 import { resolveIntent, retrievalText, scopeInput, type StepIntent, type StepRequest } from './intent.js';
 import { answerResult, checkInput, composeInput, noMatchResult, plainCard, storedDimensions, storedEvidence, type VerifiedCase } from './render.js';
 import { clarificationReply, comparisonReply, operationalReply, outOfScopeReply, statisticsReply } from './static-replies.js';
-import { finishStep, readBrief, readStepById, writeStage, type StoredEvidence } from './store.js';
+import { finishStep, readBrief, readStepById, writeStage, type StepDiagnostics, type StoredEvidence } from './store.js';
 import { QUOTE_MATCH_RULE_VERSION, resolvePassage, validateComposition, type AllowedPassage, type Allowlist } from './validate.js';
 
 /** Per-stage timeouts and the total deadline, in milliseconds (DESIGN §8). */
@@ -180,12 +187,28 @@ interface Meta {
    * (`output_tokens_details.thinking_tokens`), when it reports them.
    */
   thinkingTokens?: Partial<Record<LlmStage, number>>;
+  /** Per stage, the provider's stop reason when a response arrived (STOP_REASONS; `other` for anything else). */
+  stopReasons?: Partial<Record<LlmStage, StopReason>>;
+  /** Per stage, the adapter's warnings (STAGE_WARNINGS), when there are any. */
+  warnings?: Partial<Record<LlmStage, StageWarning[]>>;
   clarificationDropped?: boolean;
   outcome?: ComposeOutput['outcome'];
-  validation?: { ruleVersion: string; codes: string[] };
+  /**
+   * The code checks: every reason's code (`codes`) and, with it, where (`reasons`: a path
+   * such as `summary.2` or `cases.1.why`, never text), and how many sentences the
+   * validator split the summary into (`summary.<i>` names sentence `i`, from 0).
+   */
+  validation?: { ruleVersion: string; codes: string[]; reasons: { code: string; path: string }[]; summarySentences: number };
   criteria?: { ntsbNo: string; criterion: string; decision: string }[];
-  check?: { supported: boolean; problems: { kind: string; reason: string }[] };
+  /** The checker's verdict; `claimIndex` names the claim in the step's diagnostics. */
+  check?: { supported: boolean; problems: { claimIndex: number; kind: string; reason: string }[] };
   settlement?: { status: string; uncertain?: boolean };
+}
+
+/** Why a withheld step's summary was withheld, with its fixed codes (WITHHELD_CODES). */
+interface Withheld {
+  reason: WithheldReason;
+  codes: string[];
 }
 
 const NEVER = new AbortController().signal;
@@ -268,6 +291,9 @@ class Run {
   private intent: StepIntent | null = null;
   private evidence: StoredEvidence | null = null;
   private readonly meta: Meta = { promptVersions: {}, models: {}, timingsMs: {}, repacks: 0 };
+  private withheld: Withheld | null = null;
+  /** A withheld composition, for developers only (`StepDiagnostics`). */
+  private diagnostics: StepDiagnostics | null = null;
 
   constructor(
     private readonly deps: BriefDeps,
@@ -307,12 +333,20 @@ class Run {
     this.meta.models[stage] = r.model;
     this.lines.push({ usd: stageCostUsd(r.model, r.usage), provider: r.provider, model: r.model, stage, tokens: tokensOf(r.usage) });
     this.noteThinking(stage, r.usage);
+    this.noteStop(stage, r.stopReason, r.warnings);
     this.spent = true;
   }
 
   /** The provider's reported reasoning tokens of a billed call, for calibration (never billed separately). */
   private noteThinking(stage: LlmStage, usage: StageUsage): void {
     if (usage.thinkingTokens !== undefined) this.meta.thinkingTokens = { ...this.meta.thinkingTokens, [stage]: usage.thinkingTokens };
+  }
+
+  /** A response's stop reason and the adapter's warnings, as fixed values. */
+  private noteStop(stage: LlmStage, stopReason: string | null, warnings: readonly StageWarning[]): void {
+    const reason = stopReasonOf(stopReason);
+    if (reason) this.meta.stopReasons = { ...this.meta.stopReasons, [stage]: reason };
+    if (warnings.length > 0) this.meta.warnings = { ...this.meta.warnings, [stage]: [...warnings] };
   }
 
   /**
@@ -329,6 +363,7 @@ class Run {
     }
     this.meta.promptVersions[stage] = err.promptVersion;
     this.meta.models[stage] = err.model;
+    this.noteStop(stage, err.stopReason, err.warnings);
     if (err.billing.kind === 'usage') {
       this.lines.push({ usd: stageCostUsd(err.model, err.billing.usage), provider: err.provider, model: err.model, stage, tokens: tokensOf(err.billing.usage) });
       this.noteThinking(stage, err.billing.usage);
@@ -364,10 +399,17 @@ class Run {
     try {
       return await fn();
     } catch (err) {
-      const version = err instanceof StageError ? { promptVersion: err.promptVersion } : {};
+      // A failed call's prompt version and, when a response arrived, its usage, cost and stop reason.
+      const call: AllowedAttrs =
+        err instanceof StageError
+          ? {
+              promptVersion: err.promptVersion,
+              ...(err.billing.kind === 'usage' ? callAttrs(err.model, err.billing.usage, err.stopReason, err.warnings) : stopAttrs(err.stopReason, err.warnings)),
+            }
+          : {};
       const stopped = this.stopped;
-      if (stopped === 'cancelled') s.setAttrs({ outcome: 'cancelled', ...version });
-      else s.setAttrs({ failure: stopped === 'shutdown' ? 'shutdown' : this.categoryOf(err), ...version });
+      if (stopped === 'cancelled') s.setAttrs({ outcome: 'cancelled', ...call });
+      else s.setAttrs({ failure: stopped === 'shutdown' ? 'shutdown' : this.categoryOf(err), ...call });
       throw err;
     }
   }
@@ -395,12 +437,20 @@ class Run {
     return { status: 'failed', stage: 'failed', result: { kind: 'failed', countedAsSearch: this.spent }, release: !this.spent };
   }
 
+  /**
+   * The end of a withheld summary. `codes`: its fixed codes (validation codes, failed
+   * criteria, check problem reasons) for the request span and the log line;
+   * `diagnostics`: the rejected composition, kept server-side for developers.
+   */
   private withheldEnd(
-    reason: 'citation_check' | 'criteria_check' | 'evidence_check' | 'compose_failed',
+    reason: WithheldReason,
     cases: VerifiedCase[],
     intent: StepIntent,
+    why: { codes?: readonly string[]; diagnostics?: StepDiagnostics } = {},
   ): StageEnd {
     if (this.stopped) return this.stoppedEnd();
+    this.withheld = { reason, codes: [...new Set(why.codes ?? [])] };
+    this.diagnostics = why.diagnostics ?? null;
     this.checklist = { ...this.checklist, ...(reason === 'compose_failed' ? {} : { written: true }), verified: 'withheld' };
     return {
       status: 'withheld',
@@ -437,7 +487,7 @@ class Run {
         r = await stageSpan('brief.scope', { stage: 'scope', provider: llm.name, model: llm.models.scope }, (s) =>
           this.recorded(s, async () => {
             const out = await llm.scope(scopeInput(req), stageCtx('scope', signal, budget));
-            s.setAttrs({ promptVersion: out.promptVersion, ...usageAttrs(out.usage), outcome: out.output.intent });
+            s.setAttrs({ promptVersion: out.promptVersion, ...callAttrs(out.model, out.usage, out.stopReason, out.warnings), outcome: out.output.intent });
             return out;
           }),
         );
@@ -571,7 +621,7 @@ class Run {
             s.setAttrs({ caseCount: cases.length, passageCount: input.cases.reduce((n, c) => n + c.passages.length, 0) });
             called = true;
             const out = await llm.compose(input, ctx);
-            s.setAttrs({ promptVersion: out.promptVersion, ...usageAttrs(out.usage), outcome: out.output.outcome });
+            s.setAttrs({ promptVersion: out.promptVersion, ...callAttrs(out.model, out.usage, out.stopReason, out.warnings), outcome: out.output.outcome });
             this.charge('compose', out);
             return out.output;
           }),
@@ -604,10 +654,27 @@ class Run {
       passages: new Map(cases.flatMap((c) => c.passages.map((p): [string, AllowedPassage] => [aliases.toModel.get(p.passageId)!, p.allowed]))),
       cases: new Set(cases.flatMap((c) => [c.ntsbNo, ...c.summary.aircraftNumbers])),
     };
-    const checked = validateComposition(composition, allow, { mechanicalCause: intent.mechanicalCause });
-    this.meta.validation = { ruleVersion: checked.ruleVersion, codes: checked.ok ? [] : checked.reasons.map((r) => r.code) };
-    if (!checked.ok) return this.withheldEnd('citation_check', cases, intent);
-    composition = compositionFromModel(composition, aliases);
+    const written = composition;
+    const checked = validateComposition(written, allow, { mechanicalCause: intent.mechanicalCause });
+    const reasons = checked.ok ? [] : checked.reasons;
+    this.meta.validation = {
+      ruleVersion: checked.ruleVersion,
+      codes: reasons.map((r) => r.code),
+      reasons: reasons.map((r) => ({ code: r.code, path: r.path })),
+      summarySentences: checked.summarySentences.length,
+    };
+    // What a developer needs to see why a summary was withheld (server-side only).
+    const diagnostics = (reason: StepDiagnostics['reason'], claims?: StepDiagnostics['claims']): StepDiagnostics => ({
+      reason,
+      composition: written,
+      aliases: Object.fromEntries(aliases.fromModel),
+      summarySentences: checked.summarySentences,
+      ...(claims ? { claims } : {}),
+    });
+    if (!checked.ok) {
+      return this.withheldEnd('citation_check', cases, intent, { codes: reasons.map((r) => r.code), diagnostics: diagnostics('citation_check') });
+    }
+    composition = compositionFromModel(written, aliases);
     const validated = { ...checked, citations: citationsFromModel(checked.citations, aliases) };
 
     // Every criterion decision of every presented case, each a claim for the checker.
@@ -628,7 +695,10 @@ class Run {
       criterionChecks.set(k.ntsbNo, checks);
     }
     // A case outside the reader's criteria is never presented as a match.
-    if (outside) return this.withheldEnd('criteria_check', cases, intent);
+    if (outside) {
+      const failed = this.meta.criteria.filter((d) => d.decision === 'does_not_match').map((d) => d.criterion);
+      return this.withheldEnd('criteria_check', cases, intent, { codes: failed, diagnostics: diagnostics('criteria_check') });
+    }
 
     const context = { interpretations: interpretationChips(intent.readings), filters: intent.filters };
     const { input, claims, overflow } = checkInput(composition, validated.citations, byCase, {
@@ -636,10 +706,13 @@ class Run {
       criteria: criteriaLines(intent.readings),
       criterionChecks,
     });
+    // The check input as the checker reads it (passage aliases); its claims, by index, are a withheld step's diagnostics.
+    const forModel = checkForModel(input, aliases);
+    const checkDiagnostics = () => diagnostics('evidence_check', forModel.claims);
     if (overflow) {
       // A claim that cannot be checked is never shown.
       this.meta.failure = { stage: 'check', category: 'claims_overflow' };
-      return this.withheldEnd('evidence_check', cases, intent);
+      return this.withheldEnd('evidence_check', cases, intent, { diagnostics: checkDiagnostics() });
     }
     if (input.claims.length > 0) {
       const t0 = performance.now();
@@ -647,8 +720,12 @@ class Run {
       try {
         const out = await stageSpan('brief.check', { stage: 'check', provider: llm.name, model: llm.models.check }, (s) =>
           this.recorded(s, async () => {
-            const r = await llm.check(checkForModel(input, aliases), stageCtx('check', signal, budget));
-            s.setAttrs({ promptVersion: r.promptVersion, ...usageAttrs(r.usage), outcome: r.output.supported && r.output.problems.length === 0 ? 'supported' : 'problems' });
+            const r = await llm.check(forModel, stageCtx('check', signal, budget));
+            s.setAttrs({
+              promptVersion: r.promptVersion,
+              ...callAttrs(r.model, r.usage, r.stopReason, r.warnings),
+              outcome: r.output.supported && r.output.problems.length === 0 ? 'supported' : 'problems',
+            });
             return r;
           }),
         );
@@ -656,10 +733,12 @@ class Run {
         this.meta.timingsMs.check = Math.round(performance.now() - t0);
         this.meta.check = {
           supported: out.output.supported,
-          problems: out.output.problems.map((p) => ({ kind: claims[p.claimIndex]?.kind ?? 'unknown', reason: p.reason })),
+          problems: out.output.problems.map((p) => ({ claimIndex: p.claimIndex, kind: claims[p.claimIndex]?.kind ?? 'unknown', reason: p.reason })),
         };
         // Conservative: any problem, or "supported" without being sure of every claim, withholds.
-        if (!out.output.supported || out.output.problems.length > 0) return this.withheldEnd('evidence_check', cases, intent);
+        if (!out.output.supported || out.output.problems.length > 0) {
+          return this.withheldEnd('evidence_check', cases, intent, { codes: out.output.problems.map((p) => p.reason), diagnostics: checkDiagnostics() });
+        }
       } catch (err) {
         // Over the checker's cap (counted, unbilled) or a failed call: withheld with the
         // failure recorded; the complete evidence is kept, never cut to fit (ruling 5).
@@ -668,7 +747,7 @@ class Run {
         this.meta.timingsMs.check = Math.round(performance.now() - t0);
         if (this.stopped) return this.stoppedEnd();
         this.meta.failure = this.failureOf('check', err);
-        return this.withheldEnd('evidence_check', cases, intent);
+        return this.withheldEnd('evidence_check', cases, intent, { diagnostics: checkDiagnostics() });
       }
     }
     if (this.stopped) return this.stoppedEnd();
@@ -812,10 +891,12 @@ class Run {
     // A failure counts as a search unless its search was given back.
     if (end.result.kind === 'failed') end.result = { kind: 'failed', countedAsSearch: !released };
     const failure = this.meta.failure;
+    const withheld = end.status === 'withheld' ? this.withheld : null;
     this.span.setAttrs({
       outcome: end.status,
       ...(chargedUsd !== null ? { usd: chargedUsd } : {}),
       ...(failure ? { failure: failure.category, failureStage: failure.stage } : {}),
+      ...(withheld ? { withheld: withheld.reason, withheldCodes: enumList(withheld.codes) } : {}),
     });
     const written = await finishStep(db, this.stepId, {
       stage: end.stage,
@@ -828,6 +909,7 @@ class Run {
       model: this.meta.models.compose ?? null,
       meta: { ...this.meta },
       costUsd: chargedUsd === null ? null : microsToNumeric(toMicros(chargedUsd)),
+      diagnostics: withheld ? this.diagnostics : null,
       now: this.now(),
     }).catch((err: unknown) => {
       this.log.warn({ err: { name: (err as Error)?.name } }, 'brief step: the final state could not be written');
@@ -835,7 +917,13 @@ class Run {
     });
     if (!written) this.log.warn({}, 'brief step: final state not written (step no longer running)');
     this.log.info(
-      { status: end.status, charged: chargedUsd, released, ...(failure ? { failure: { stage: failure.stage, category: failure.category } } : {}) },
+      {
+        status: end.status,
+        charged: chargedUsd,
+        released,
+        ...(failure ? { failure: { stage: failure.stage, category: failure.category } } : {}),
+        ...(withheld ? { withheld: { reason: withheld.reason, codes: withheld.codes } } : {}),
+      },
       'brief step finished',
     );
     return { status: end.status, chargedUsd, released };
@@ -850,4 +938,16 @@ function usageAttrs(u: StageUsage) {
     cacheReadTokens: u.cacheReadTokens,
     ...(u.thinkingTokens !== undefined ? { thinkingTokens: u.thinkingTokens } : {}),
   };
+}
+
+/** A response's stop reason and warnings as span attributes (fixed values). */
+function stopAttrs(stopReason: string | null, warnings: readonly StageWarning[]): AllowedAttrs {
+  const reason = stopReasonOf(stopReason);
+  const listed = enumList(warnings);
+  return { ...(reason ? { stopReason: reason } : {}), ...(listed ? { warnings: listed } : {}) };
+}
+
+/** A billed call's span attributes: usage, the stage's cost (`usd`), stop reason and warnings. */
+function callAttrs(model: string, u: StageUsage, stopReason: string | null, warnings: readonly StageWarning[]): AllowedAttrs {
+  return { ...usageAttrs(u), usd: stageCostUsd(model, u), ...stopAttrs(stopReason, warnings) };
 }

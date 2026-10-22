@@ -191,7 +191,9 @@ monitoring scores cannot retroactively protect an answer already shown to a user
   30-day backup expiry and restores must reapply deletions/expiry before access. Verify the
   deployed edition's deletion mechanism rather than assume a free automatic TTL.
   Adding content-rich production tracing later requires an explicit capture and
-  retention design update and matching privacy notice.
+  retention design update and matching privacy notice. A withheld summary's rejected
+  composition is not telemetry: it stays in the application database with its brief
+  (see "Diagnosing one" below).
 - **One spending boundary.** The PostgreSQL ledger remains authoritative. All
   experiments and background model judges reserve/settle spend through the shared
   gate and consume the proposed $20/month indexing/evaluation allocation. Enforce the
@@ -281,7 +283,8 @@ hash (`hashBrief`). `scripts/trace-smoke.ts` sends one synthetic span by hand.
 | Where | Keys |
 | --- | --- |
 | Resource (every span) | `service.name` = `aviation-casebook`; `deployment.environment` and `deployment.environment.name` = `APP_ENV` (`dev` or `live`). Set explicitly: the SDK default (`unknown_service:<node path>`) would export a filesystem path. |
-| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `thinkingTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage` |
+| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `thinkingTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage`, `stopReason`, `warnings`, `withheld`, `withheldCodes` |
+| GenAI keys (model-call spans only, derived) | `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cost` |
 | Instrumentation scope | `aviation-casebook` |
 
 `failure` is the fixed category of a failed stage (`FAILURE_CATEGORIES`): from a provider
@@ -304,3 +307,59 @@ or log field.
 (`usage.output_tokens_details.thinking_tokens`), when it reports one; it is also kept
 per stage in the step's `meta.thinkingTokens`, to calibrate the answer stage's thinking
 allowance. `outputTokens` stays the billed total.
+
+`stopReason` is a model call's stop reason when a response arrived (`STOP_REASONS`:
+Anthropic's `end_turn`, `max_tokens`, `stop_sequence`, `tool_use`, `pause_turn`,
+`refusal`, `model_context_window_exceeded`, and `other` for anything new), and
+`warnings` the adapter's `+`-joined warnings (`STAGE_WARNINGS`: `cache_write_over_prefix_max`
+when the provider wrote more cache tokens than the reservation assumes). Both are also
+in the step's `meta.stopReasons` and `meta.warnings`, per stage. A billed failure's stage
+span keeps its usage, cost and stop reason too (a `truncated` compose shows
+`stopReason: max_tokens`).
+
+**Token and cost views.** A model call's span (`brief.scope`, `brief.compose`,
+`brief.check`: the spans with a `model`) also carries the OpenTelemetry GenAI keys that
+Langfuse maps to a generation's model, usage and cost: `gen_ai.request.model`;
+`gen_ai.usage.input_tokens`, the whole prompt (uncached input plus cache writes and
+reads); `gen_ai.usage.output_tokens`, the billed output with thinking; and
+`gen_ai.usage.cost`, the stage's USD cost, which Langfuse stores as the `total` cost
+instead of inferring one from its own price table. `server/observability/tracing.ts`
+derives them from the span's sanitized attributes (`genAiAttributes`); they cannot be
+set directly. They are metadata: Langfuse reads content only from keys such as
+`langfuse.observation.input`/`output`, `gen_ai.prompt`/`completion` and
+`input.value`/`output.value`, none of which is approved, and a unit test checks every
+exported key against the approved list (`SPAN_ATTR_KEYS`). The request span and
+retrieval carry no GenAI keys, so no cost is counted twice; the query embedding's cost
+is in the ledger and in the request span's `usd`.
+
+**Withheld summaries.** `brief.step` carries `withheld`, the reason
+(`citation_check`, `criteria_check`, `evidence_check` or `compose_failed`), and
+`withheldCodes`, its fixed codes `+`-joined (as many as fit 64 characters): the
+validation codes of a citation check (`VALIDATION_CODES`), the criteria a case failed
+(`timing_window`, `first_flight_only`, `failure_type`), or the checker's problem reasons
+(`CHECK_REASONS`). The `brief step finished` log line has
+`withheld: {reason, codes}` with every code. Neither holds text.
+
+**Diagnosing one.** The step's `meta.validation` records each validation reason with
+its path (`reasons: [{code, path}]`, e.g. `summary.2`, `cases.1.why`,
+`cases.0.quotes.1.quote`) and `summarySentences`, how many sentences the validator
+split the summary into (`summary.<i>` is sentence `i`, from 0); `meta.check.problems`
+gives each problem's `claimIndex`. The text those point at is kept apart, in the step's
+`diagnostics` column (migration 0016), only for a summary withheld after a composition
+existed (a citation, criteria or evidence check): the composition as the answer model
+returned it (passage aliases as it saw them), the alias map, the summary sentences as
+the validator split them, and for an evidence check the claims the checker read, by
+index. It is model output about public NTSB passages and may restate the reader's
+question.
+
+- **Where it lives:** in the step's `brief_steps` row in PostgreSQL only. No route
+  selects the column (step reads list their columns without it), and it never reaches a
+  trace, a log line or the browser.
+- **Who can read it:** the roles that can read `brief_steps`: `aviation_app` (the API's
+  role) and `aviation_migrator`, which owns the schema; `aviation_ingest` cannot. `pnpm worker brief-diagnose
+  <brief-id> [--step <n>]` prints it to the operator who runs it by hand (RUNBOOK,
+  "Diagnosing a withheld summary"); nothing runs it automatically.
+- **When it is pruned:** with its brief. `prune_controls()` deletes expired briefs and
+  their steps (24 hours after the brief was created; the API's maintenance pass runs
+  about every 10 minutes). A finished step's diagnostics are immutable, like the rest of
+  its row.

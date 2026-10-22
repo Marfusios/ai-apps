@@ -10,6 +10,7 @@ import { expireLeases } from '../server/quota/settle.js';
 import { readAiSwitch, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
 import { formatPreflight, runAiPreflight } from './ai-preflight.js';
+import { diagnoseBrief, validDiagnoseArgs } from './brief-diagnose.js';
 import { APP_DIR, workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
 import { cacheOnlyEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
@@ -51,6 +52,7 @@ const USAGE = [
   '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]]',
   '  worker migrate',
   '  worker ai-preflight',
+  '  worker brief-diagnose <brief-id> [--step <n>]',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -660,6 +662,31 @@ async function main(argv: string[]): Promise<number> {
     const over = rows.filter((r) => !r.ok);
     console.log(over.length === 0 ? 'ai-preflight: every request fits its cap' : `ai-preflight: FAILED, ${over.length} over the cap`);
     return over.length === 0 ? 0 : 1;
+  }
+  if (command === 'brief-diagnose') {
+    // A developer's tool, run by hand only: why a withheld step's summary was withheld, with
+    // the text each reason points at (worker/brief-diagnose.ts). Read-only, as aviation_app
+    // (DATABASE_URL); aviation_ingest cannot read briefs.
+    const { values, positionals } = parseArgs({ args: rest, options: { step: { type: 'string' } }, allowPositionals: true, strict: true });
+    const step = values.step === undefined ? undefined : /^\d$/.test(values.step) ? Number(values.step) : Number.NaN;
+    if (positionals.length !== 1 || !validDiagnoseArgs(positionals[0]!, step)) {
+      console.error(USAGE);
+      return 2;
+    }
+    const url = workerConfig().databaseUrl;
+    if (!url) throw new Error('DATABASE_URL is not set (the aviation_app login); run pnpm services:setup');
+    const db = createDb(url, { max: 1, applicationName: 'aviation-worker-diagnose' });
+    try {
+      const lines = await diagnoseBrief(db, positionals[0]!, step);
+      if (!lines) {
+        console.error('no such brief step (an expired brief is pruned with its steps)');
+        return 1;
+      }
+      for (const line of lines) console.log(line);
+    } finally {
+      await closeDb(db);
+    }
+    return 0;
   }
   if (command === 'migrate') {
     // Schema migrations as aviation_migrator (DATABASE_MIGRATOR_URL); the URL is never printed.

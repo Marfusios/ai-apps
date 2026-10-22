@@ -109,6 +109,21 @@ The implementation review must cover these. It must check in particular that no
 reachable model, including any refusal-fallback target, lacks an allowlisted
 price.
 
+**Withheld-summary diagnostics** (Task 16, after the first paid end-to-end run; also
+unreviewed). A withheld summary keeps its rejected composition in
+`brief_steps.diagnostics` (migration 0016): model output about public NTSB passages,
+which may restate the reader's question, with the passage alias map, the summary
+sentences as the validator split them and, for an evidence check, the claims the checker
+read. It is the same class of data as the step's `request` and `result` and shares
+their controls. It lives only in the application database: no route selects the column
+and it never reaches a trace, a log line, a response or the browser (the step's `meta`,
+spans and log carry only fixed codes and paths). `aviation_app` and the schema owner
+`aviation_migrator` can read it; `aviation_ingest` cannot. The 0014 guard makes it
+immutable once its step finishes, and `prune_controls()` deletes it with its brief 24
+hours after the brief was created. Only `pnpm worker brief-diagnose`, run by hand with
+the app role's credentials, prints it, to that operator's terminal. The implementation
+review must cover it.
+
 ## Required implementation review before launch
 
 Review a fixed code commit and deployment configuration with Claude Fable or Opus,

@@ -15,7 +15,7 @@ import {
   SPEAKERS,
   type ComposeOutput,
 } from '../../shared/contracts/briefs.js';
-import { STAGE_CAPS } from './pricing.js';
+import { CACHED_PREFIX_MAX, STAGE_CAPS } from './pricing.js';
 
 export { ComposeOutputSchema, GLYPH_KINDS, GROUP_KINDS, type ComposeOutput };
 
@@ -56,7 +56,13 @@ export interface StageUsage {
  * Non-fatal findings for logs and traces. `cache_write_over_prefix_max`: the provider
  * wrote more cache tokens than `CACHED_PREFIX_MAX`, the size the reservation assumes.
  */
-export type StageWarning = 'cache_write_over_prefix_max';
+export const STAGE_WARNINGS = ['cache_write_over_prefix_max'] as const;
+export type StageWarning = (typeof STAGE_WARNINGS)[number];
+
+/** The warnings of a billed call, from its usage. */
+export function usageWarnings(usage: StageUsage): StageWarning[] {
+  return usage.cacheWriteTokens > CACHED_PREFIX_MAX ? ['cache_write_over_prefix_max'] : [];
+}
 
 export interface StageResult<T> {
   output: T;
@@ -64,6 +70,7 @@ export interface StageResult<T> {
   provider: LlmProviderName;
   model: string;
   promptVersion: string;
+  /** The provider's stop reason (`end_turn` for a stage that succeeded with Anthropic). */
   stopReason: string;
   warnings: StageWarning[];
 }
@@ -406,7 +413,10 @@ export interface StageErrorInfo {
   model: string;
   promptVersion: string;
   billing: StageBilling;
+  /** The provider's stop reason, when a response arrived. */
   stopReason?: string | null;
+  /** A billed response's warnings (`usageWarnings`). */
+  warnings?: StageWarning[];
   /** Refusal category from `stop_details`; the explanation text is not kept. */
   refusalCategory?: string | null;
   status?: number;
@@ -424,6 +434,7 @@ export class StageError extends Error {
   readonly promptVersion: string;
   readonly billing: StageBilling;
   readonly stopReason: string | null;
+  readonly warnings: StageWarning[];
   readonly refusalCategory: string | null;
   readonly status: number | null;
   readonly countedInputTokens: number | null;
@@ -439,6 +450,7 @@ export class StageError extends Error {
     this.promptVersion = info.promptVersion;
     this.billing = info.billing;
     this.stopReason = info.stopReason ?? null;
+    this.warnings = info.warnings ?? [];
     this.refusalCategory = info.refusalCategory ?? null;
     this.status = info.status ?? null;
     this.countedInputTokens = info.countedInputTokens ?? null;

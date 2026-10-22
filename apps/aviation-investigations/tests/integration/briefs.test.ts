@@ -31,6 +31,7 @@ import {
   type StartBriefResponse,
 } from '../../shared/contracts/briefs.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
 import { startTracing } from '../../server/observability/tracing.js';
@@ -39,7 +40,7 @@ import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../ser
 import { SHUTDOWN_GRACE_MS, buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
 import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
-import { RESERVATIONS, STAGE_CAPS } from '../../server/ai/pricing.js';
+import { CACHED_PREFIX_MAX, RESERVATIONS, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { createCaseCatalog } from '../../server/briefs/catalog.js';
 import {
@@ -53,7 +54,9 @@ import {
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
 import { NO_MATCH_LINES, OUT_OF_SCOPE_LINES, OPERATIONAL_LINES, OPERATIONAL_TITLE } from '../../server/briefs/static-replies.js';
-import { failOrphanedSteps, moveBriefReadOwner } from '../../server/briefs/store.js';
+import { failOrphanedSteps, moveBriefReadOwner, type StepDiagnostics } from '../../server/briefs/store.js';
+import { SPAN_ATTR_KEYS } from '../../server/observability/attributes.js';
+import { diagnoseBrief } from '../../worker/brief-diagnose.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { publishManifest } from '../../server/db/generations.js';
 import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
@@ -511,6 +514,15 @@ async function stepRow(briefId: string, n = 1) {
     }>(sql`SELECT status, stage, cost_usd::text AS cost_usd, meta, intent, result FROM brief_steps WHERE brief_id = ${briefId}::uuid AND n = ${n}`)
   )[0]!;
 }
+
+/** A step's server-side diagnostics (no route reads them; the migrator does here). */
+async function diagnosticsOf(briefId: string, n = 1): Promise<StepDiagnostics | null> {
+  return (await rows<{ diagnostics: StepDiagnostics | null }>(sql`SELECT diagnostics FROM brief_steps WHERE brief_id = ${briefId}::uuid AND n = ${n}`))[0]!
+    .diagnostics;
+}
+
+/** The step's `brief step finished` log line. */
+const finishedLine = (h: Harness) => h.logs.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.msg === 'brief step finished');
 
 // ---------------------------------------------------------------------------
 
@@ -1501,6 +1513,7 @@ describe('storage', () => {
     expect(await sqlState(appDb.execute(sql`UPDATE brief_steps SET billing_principal = ${'a'.repeat(64)}`))).toBe('42501');
     expect(await sqlState(appDb.execute(sql`UPDATE brief_steps SET request = '{}'::jsonb`))).toBe('42501');
     expect(await sqlState(appDb.execute(sql`UPDATE brief_steps SET result = '{"kind":"cancelled"}'::jsonb`))).toBe('55000');
+    expect(await sqlState(appDb.execute(sql`UPDATE brief_steps SET diagnostics = '{}'::jsonb`))).toBe('55000');
     expect(await sqlState(migrator.execute(sql`UPDATE brief_steps SET billing_principal = ${'a'.repeat(64)}`))).toBe('55000');
     expect(await sqlState(migrator.execute(sql`DELETE FROM brief_steps`))).toBe('55000');
     expect(await sqlState(ingest.execute(sql`SELECT count(*) FROM briefs`))).toBe('42501');
@@ -1532,12 +1545,14 @@ describe('storage', () => {
       INSERT INTO briefs (read_owner, read_owner_kind, generation_id, passages_index, created_at, expires_at)
       VALUES (${owner}, 'trial', ${generationId}, 'aviation-test-old', ${past}, ${new Date(past.getTime() + 24 * 60 * MIN)})
       RETURNING id::text AS id`);
+    // A step with diagnostics: they share its row, so they go with the brief.
     await migrator.execute(sql`
-      INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, created_at, updated_at)
-      VALUES (${inserted[0]!.id}::uuid, 1, ${owner}, 'trial', 1, '{"origin":"question"}'::jsonb, ${past}, ${past})`);
+      INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, diagnostics, created_at, updated_at)
+      VALUES (${inserted[0]!.id}::uuid, 1, ${owner}, 'trial', 1, '{"origin":"question"}'::jsonb, '{"reason":"citation_check"}'::jsonb, ${past}, ${past})`);
     const report = await pruneControls(appDb);
     expect(report).toMatchObject({ briefs: 1, briefSteps: 1 });
     expect(await count('briefs')).toBe(0);
+    expect(await count('brief_steps')).toBe(0);
   });
 });
 
@@ -1615,7 +1630,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     const meta = (await stepRow(briefId)).meta;
     expect(meta).toMatchObject({
       criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown' }]),
-      check: { supported: false, problems: expect.arrayContaining([{ kind: 'criterion', reason: 'contradicted' }]) },
+      check: { supported: false, problems: expect.arrayContaining([{ claimIndex: expect.any(Number), kind: 'criterion', reason: 'contradicted' }]) },
     });
   });
 
@@ -1652,7 +1667,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'NYC08LA106')!;
     expect(claim.text).toBe('The passages do not establish whether the event happened on the first flight after the relevant maintenance.');
     expect(claim.passageIds).toEqual(checks[0]!.passages.filter((p) => p.ntsbNo === 'NYC08LA106').map((p) => p.passageId));
-    expect((await stepRow(second.briefId)).meta).toMatchObject({ check: { problems: expect.arrayContaining([{ kind: 'criterion', reason: 'contradicted' }]) } });
+    expect((await stepRow(second.briefId)).meta).toMatchObject({ check: { problems: expect.arrayContaining([{ claimIndex: expect.any(Number), kind: 'criterion', reason: 'contradicted' }]) } });
   });
 
   it('G6 regression (c): 40 days and 20 flight hours against the default 30 days OR 10 hours do not match', async () => {
@@ -1674,6 +1689,12 @@ describe('gate G6: evidence semantics through the routes', () => {
       criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
     });
     expect(h.llm.calls.some((c) => c.stage === 'check')).toBe(false);
+    // Diagnosable: the failed criterion is the withheld code; the developer's command shows the case's chronology.
+    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'criteria_check', codes: ['timing_window'] } });
+    expect(await diagnosticsOf(briefId)).toMatchObject({ reason: 'criteria_check' });
+    const report = (await diagnoseBrief(appDb, briefId))!.join('\n');
+    expect(report).toContain('DFW08TA066 timing_window: does_not_match');
+    expect(report).toMatch(/chronology: .*"calendarDays":\{[^}]*"value":40\b/);
     // The whole AI summary is withheld, not just that case: every retrieved case is a plain NTSB card.
     if (step.result?.kind !== 'withheld') throw new Error('expected a withheld summary');
     expect(step.result.cases.map((c) => [c.case.ntsbNo, c.reading])).toEqual(SEEDS.map((n) => [n, null]));
@@ -1996,6 +2017,150 @@ describe('gate G6: evidence semantics through the routes', () => {
     for (const n of SEEDS) {
       const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/${n}`, { cookie })).json);
       expect(ctx.passages.map((p) => p.section).sort(), n).toEqual(['analysis', 'probable_cause']);
+    }
+  });
+});
+
+describe('diagnosable withholding and model-call telemetry', () => {
+  it('a withheld composition is kept server-side with the split the validator used; meta, span and log name the reasons without text', async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = startTracing(tracingConfig(), { exporter, scheduledDelayMillis: 10 });
+    try {
+      const UNCITED = 'Maintenance is often to blame.';
+      const h = harness(answering({ compose: (input) => composition(input, (c) => (c.summary = `${c.summary} ${UNCITED}`)) }));
+      const { briefId, cookie, step } = await askAndWait(h);
+      expect(step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+      // The meta: each reason with its path, and the sentence count; never the text.
+      const row = await stepRow(briefId);
+      expect(row.meta.validation).toEqual({
+        ruleVersion: 'quote-ws-v2',
+        codes: ['uncited_summary'],
+        reasons: [{ code: 'uncited_summary', path: 'summary.4' }],
+        summarySentences: 5,
+      });
+      expect(JSON.stringify(row.meta)).not.toContain('blame');
+      // The diagnostics: the composition as the model wrote it (passage aliases), the alias map and the split.
+      const d = (await diagnosticsOf(briefId))!;
+      expect(d.reason).toBe('citation_check');
+      expect(d.summarySentences).toHaveLength(5);
+      expect(d.summarySentences[4]).toBe(UNCITED);
+      const written = d.composition as ComposeOutput;
+      expect(written.summary).toContain(UNCITED);
+      expect(written.cases[0]!.quotes[0]!.passageId).toMatch(/^P\d+$/);
+      expect(d.aliases[written.cases[0]!.quotes[0]!.passageId]).toMatch(/^[0-9a-f]{64}$/);
+      expect(d).not.toHaveProperty('claims');
+      // No route returns them: the step read and the case context.
+      for (const r of [await read(h, briefId, cookie), await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/${SEEDS[0]}`, { cookie })]) {
+        expect(r.status).toBe(200);
+        expect(JSON.stringify(r.json)).not.toContain('blame');
+        expect(JSON.stringify(r.json)).not.toContain('diagnostics');
+      }
+      // The log line and the request span carry the reason and its codes, fixed values only.
+      expect(finishedLine(h)).toMatchObject({ status: 'withheld', withheld: { reason: 'citation_check', codes: ['uncited_summary'] } });
+      expect(h.logs.join('\n')).not.toContain('blame');
+      await new Promise((r) => setTimeout(r, 100));
+      const spans = exporter.getFinishedSpans();
+      expect(spans.find((sp) => sp.name === 'brief.step')!.attributes).toMatchObject({
+        outcome: 'withheld',
+        withheld: 'citation_check',
+        withheldCodes: 'uncited_summary',
+      });
+      expect(JSON.stringify(spans.map((sp) => sp.attributes))).not.toContain('blame');
+      // The developer's command prints the reason with the offending sentence.
+      const report = (await diagnoseBrief(appDb, briefId))!.join('\n');
+      expect(report).toContain(`brief ${briefId}, step 1: withheld (citation_check)`);
+      expect(report).toContain('uncited_summary at summary.4');
+      expect(report).toContain(`sentence 4: ${JSON.stringify(UNCITED)}`);
+    } finally {
+      await tracing.shutdown();
+    }
+  });
+
+  it('a withheld check keeps the claims the checker read, by index; its problems name them', async () => {
+    const h = harness(answering({ check: { output: { supported: false, problems: [{ claimIndex: 1, reason: 'contradicted' }] } } }));
+    const { briefId, step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    expect((await stepRow(briefId)).meta.check).toEqual({ supported: false, problems: [{ claimIndex: 1, kind: 'summary', reason: 'contradicted' }] });
+    const d = (await diagnosticsOf(briefId))!;
+    expect(d.reason).toBe('evidence_check');
+    // Exactly the claims the checker was given, passage aliases included.
+    expect(d.claims).toEqual((h.llm.calls.find((c) => c.stage === 'check')!.input as CheckInput).claims);
+    expect(d.claims![1]).toMatchObject({ kind: 'summary', text: expect.stringContaining('Power was lost after maintenance') });
+    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted'] } });
+    const report = (await diagnoseBrief(appDb, briefId))!.join('\n');
+    expect(report).toContain('contradicted at claim 1 (summary');
+    expect(report).toContain(`claim: ${JSON.stringify(d.claims![1]!.text)}`);
+  });
+
+  it('each model call’s stop reason, warnings, usage and cost: in the meta and on its span, with the GenAI keys; an answer keeps no diagnostics', async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = startTracing(tracingConfig(), { exporter, scheduledDelayMillis: 10 });
+    try {
+      const big = { inputTokens: 9_000, cacheWriteTokens: CACHED_PREFIX_MAX + 1, cacheReadTokens: 300, outputTokens: 2_600 };
+      const h = harness(answering({ compose: (input) => ({ ...composition(input), usage: big }) }));
+      const { briefId, step } = await askAndWait(h);
+      expect(step.result?.kind).toBe('answer');
+      const meta = (await stepRow(briefId)).meta;
+      expect(meta.stopReasons).toEqual({ scope: 'end_turn', compose: 'end_turn', check: 'end_turn' });
+      expect(meta.warnings).toEqual({ compose: ['cache_write_over_prefix_max'] });
+      expect(meta.validation).toMatchObject({ codes: [], reasons: [], summarySentences: 4 });
+      expect(await diagnosticsOf(briefId)).toBeNull();
+      expect(finishedLine(h)).not.toHaveProperty('withheld');
+      await new Promise((r) => setTimeout(r, 100));
+      const spans = exporter.getFinishedSpans();
+      const ledger = await rows<{ stage: string; usd: string }>(sql`SELECT stage, usd::text AS usd FROM cost_ledger`);
+      for (const stage of ['scope', 'compose', 'check'] as const) {
+        const a = spans.find((sp) => sp.name === `brief.${stage}`)!.attributes;
+        const usage = stage === 'compose' ? big : { inputTokens: 1_000, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 100 };
+        expect(a, stage).toMatchObject({
+          stopReason: 'end_turn',
+          'gen_ai.request.model': h.llm.models[stage === 'compose' ? 'answer' : stage],
+          'gen_ai.usage.input_tokens': usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens,
+          'gen_ai.usage.output_tokens': usage.outputTokens,
+        });
+        // The stage's cost: its ledger line, and Langfuse's cost key.
+        expect(a['gen_ai.usage.cost'], stage).toBe(a.usd);
+        expect(Number(ledger.find((l) => l.stage === stage)!.usd)).toBeCloseTo(a.usd as number, 5);
+      }
+      expect(spans.find((sp) => sp.name === 'brief.compose')!.attributes).toMatchObject({ warnings: 'cache_write_over_prefix_max' });
+      const root = spans.find((sp) => sp.name === 'brief.step')!.attributes;
+      expect(Object.keys(root).filter((k) => k.startsWith('gen_ai.'))).toEqual([]);
+      expect(root).not.toHaveProperty('withheld');
+      for (const k of new Set(spans.flatMap((sp) => Object.keys(sp.attributes)))) expect(SPAN_ATTR_KEYS).toContain(k);
+    } finally {
+      await tracing.shutdown();
+    }
+  });
+
+  it('a billed failure keeps its stop reason, usage and cost on its span; no composition, so no diagnostics', async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracing = startTracing(tracingConfig(), { exporter, scheduledDelayMillis: 10 });
+    try {
+      const h = harness(answering({ compose: { fail: 'truncated' } }));
+      const { briefId, step } = await askAndWait(h);
+      expect(step.result).toMatchObject({ kind: 'withheld', reason: 'compose_failed' });
+      expect((await stepRow(briefId)).meta).toMatchObject({
+        stopReasons: { scope: 'end_turn', compose: 'max_tokens' },
+        failure: { stage: 'compose', category: 'truncated' },
+      });
+      expect(await diagnosticsOf(briefId)).toBeNull();
+      expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'compose_failed', codes: [] } });
+      await new Promise((r) => setTimeout(r, 100));
+      const spans = exporter.getFinishedSpans();
+      const compose = spans.find((sp) => sp.name === 'brief.compose')!;
+      expect(compose.attributes).toMatchObject({
+        failure: 'truncated',
+        stopReason: 'max_tokens',
+        'gen_ai.usage.input_tokens': 1_000,
+        'gen_ai.usage.output_tokens': 100,
+      });
+      expect(compose.attributes['gen_ai.usage.cost']).toBe(compose.attributes.usd);
+      expect(compose.status.code).toBe(SpanStatusCode.ERROR);
+      const root = spans.find((sp) => sp.name === 'brief.step')!.attributes;
+      expect(root).toMatchObject({ withheld: 'compose_failed', failure: 'truncated', failureStage: 'compose' });
+      expect(root).not.toHaveProperty('withheldCodes');
+    } finally {
+      await tracing.shutdown();
     }
   });
 });

@@ -2,7 +2,19 @@ import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 import { homedir } from 'node:os';
-import { FAILURE_CATEGORIES, hashBrief, resetTracingStats, sanitizeAttrs, tracingStats } from '../../server/observability/attributes.js';
+import {
+  enumList,
+  FAILURE_CATEGORIES,
+  GEN_AI_ATTR_KEYS,
+  genAiAttributes,
+  hashBrief,
+  resetTracingStats,
+  sanitizeAttrs,
+  SPAN_ATTR_KEYS,
+  stopReasonOf,
+  tracingStats,
+  WITHHELD_CODES,
+} from '../../server/observability/attributes.js';
 import { SERVICE_NAME, stageSpan, startRequestSpan, startTracing } from '../../server/observability/tracing.js';
 
 const QUESTION = 'Why did the pilot lose control after the flaps were retracted near Denver?';
@@ -60,6 +72,91 @@ describe('tracing attributes', () => {
     expect(FAILURE_CATEGORIES).toContain('cap_exceeded');
     expect(out.briefHash).not.toContain('brief-1');
     expect(hashBrief('brief-1', 'salt')).not.toBe(hashBrief('brief-1', 'other'));
+  });
+
+  it('stop reasons, warnings and withheld codes take only their fixed values', () => {
+    expect(
+      sanitizeAttrs({
+        stopReason: 'max_tokens',
+        warnings: 'cache_write_over_prefix_max',
+        withheld: 'citation_check',
+        withheldCodes: 'uncited_summary+quote_not_found+timing_window+contradicted',
+      }),
+    ).toEqual({
+      stopReason: 'max_tokens',
+      warnings: 'cache_write_over_prefix_max',
+      withheld: 'citation_check',
+      withheldCodes: 'uncited_summary+quote_not_found+timing_window+contradicted',
+    });
+    expect(tracingStats.droppedAttrs).toBe(0);
+    // Anything else is dropped whole: an unknown stop reason, warning, reason or code, or text.
+    expect(
+      sanitizeAttrs({ stopReason: 'stopped', warnings: 'cache_write_over_prefix_max+disk', withheld: 'other', withheldCodes: 'uncited_summary+Maintenance' }),
+    ).toEqual({});
+    expect(tracingStats.droppedAttrs).toBe(4);
+    // A provider's new stop reason is recorded as `other`, never as its raw value.
+    expect(stopReasonOf('end_turn')).toBe('end_turn');
+    expect(stopReasonOf('a_new_reason')).toBe('other');
+    expect(stopReasonOf(null)).toBeUndefined();
+    // As many codes as fit 64 characters, each once, in order; nothing for none.
+    const listed = enumList(['uncited_summary', 'uncited_summary', 'unallowlisted_case_number', 'markup_or_link', 'alias_in_text']);
+    expect(listed).toBe('uncited_summary+unallowlisted_case_number+markup_or_link');
+    expect(listed!.length).toBeLessThanOrEqual(64);
+    expect(enumList([])).toBeUndefined();
+    expect(WITHHELD_CODES).toEqual(expect.arrayContaining(['uncited_summary', 'timing_window', 'contradicted']));
+  });
+
+  it('a model call’s span carries the GenAI model, usage and cost keys, derived from its own attributes, and no content key', async () => {
+    const exporter = new InMemorySpanExporter();
+    const h = startTracing(cfg(), { exporter, scheduledDelayMillis: 10 });
+    stop = () => h.shutdown();
+    await startRequestSpan('brief.step', { outcome: 'answered', usd: 0.09 }, async () => {
+      await stageSpan('brief.compose', { stage: 'compose', provider: 'anthropic', model: 'claude-opus-5-5' }, (s) => {
+        s.setAttrs({ inputTokens: 9_000, cacheWriteTokens: 4_800, cacheReadTokens: 200, outputTokens: 2_600, thinkingTokens: 800, usd: 0.0812 });
+        s.setAttrs({ stopReason: 'end_turn', outcome: 'answer' });
+      });
+      await stageSpan('brief.retrieve', { stage: 'retrieve', caseCount: 4 }, () => 1);
+      // A model whose value fails the allowlist derives nothing.
+      await stageSpan('brief.scope', { stage: 'scope', model: QUESTION, inputTokens: 10 }, () => 1);
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    const by = Object.fromEntries(exporter.getFinishedSpans().map((sp) => [sp.name, sp.attributes]));
+    expect(by['brief.compose']).toMatchObject({
+      'gen_ai.request.model': 'claude-opus-5-5',
+      // The whole prompt: uncached input plus cache writes and reads.
+      'gen_ai.usage.input_tokens': 14_000,
+      'gen_ai.usage.output_tokens': 2_600,
+      'gen_ai.usage.cost': 0.0812,
+    });
+    // Only model calls: not the request span (its cost is the step's settlement) or retrieval.
+    for (const name of ['brief.step', 'brief.retrieve', 'brief.scope']) {
+      expect(Object.keys(by[name]!).filter((k) => k.startsWith('gen_ai.')), name).toEqual([]);
+    }
+    // Every exported key is approved; no prompt, completion or other content key exists.
+    const keys = new Set(Object.values(by).flatMap((a) => Object.keys(a)));
+    for (const k of keys) expect(SPAN_ATTR_KEYS).toContain(k);
+    for (const content of [
+      'gen_ai.prompt',
+      'gen_ai.completion',
+      'gen_ai.input.messages',
+      'gen_ai.output.messages',
+      'gen_ai.system_instructions',
+      'gen_ai.tool.call.arguments',
+      'gen_ai.tool.call.result',
+      'langfuse.observation.input',
+      'langfuse.observation.output',
+      'input.value',
+      'output.value',
+      'mlflow.spanInputs',
+      'mlflow.spanOutputs',
+    ]) {
+      expect(SPAN_ATTR_KEYS).not.toContain(content);
+      expect(keys.has(content)).toBe(false);
+    }
+    expect(GEN_AI_ATTR_KEYS.every((k) => k.startsWith('gen_ai.request.') || k.startsWith('gen_ai.usage.'))).toBe(true);
+    // A GenAI key passed directly is not on the allowlist: only the derivation sets one.
+    expect(sanitizeAttrs({ 'gen_ai.usage.input_tokens': 5, 'gen_ai.prompt': QUESTION })).toEqual({});
+    expect(genAiAttributes({ stage: 'retrieve', usd: 0.01 })).toEqual({});
   });
 
   it('the resource is the service and environment only, and no resource or span attribute holds a filesystem path', async () => {

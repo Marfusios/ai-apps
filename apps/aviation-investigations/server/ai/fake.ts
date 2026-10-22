@@ -4,7 +4,6 @@
  * schemas as the real adapter, so a pipeline test fails where production would.
  */
 import type { z } from 'zod';
-import { CACHED_PREFIX_MAX } from './pricing.js';
 import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v3.js';
 import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v3.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
@@ -33,6 +32,7 @@ import {
   type StageModels,
   type StageResult,
   type StageUsage,
+  usageWarnings,
 } from './provider.js';
 
 export const DEFAULT_FAKE_MODELS: StageModels = Object.freeze({
@@ -48,10 +48,13 @@ export const DEFAULT_FAKE_USAGE: Readonly<StageUsage> = Object.freeze({
   cacheReadTokens: 0,
 });
 
-/** What one call produces: an output (with optional usage) or a `StageError`. */
+/**
+ * What one call produces: an output (with optional usage) or a `StageError`. A billed
+ * failure's stop reason defaults to the one the adapter maps to its category.
+ */
 export type FakeResult<O> =
   | { output: O; usage?: Partial<StageUsage> }
-  | { fail: StageErrorCategory; billing?: StageBilling; refusalCategory?: string };
+  | { fail: StageErrorCategory; billing?: StageBilling; refusalCategory?: string; stopReason?: string };
 
 /**
  * One scripted call:
@@ -93,6 +96,14 @@ const UNCERTAIN_ON_FAILURE: readonly StageErrorCategory[] = ['timeout', 'network
 
 const freshUsage = (over?: Partial<StageUsage>): StageUsage => ({ ...DEFAULT_FAKE_USAGE, ...over });
 
+/** The stop reason of a billed failure, as the Anthropic adapter reads it. */
+const FAILURE_STOP_REASON: Partial<Record<StageErrorCategory, string>> = {
+  refusal: 'refusal',
+  truncated: 'max_tokens',
+  invalid_output: 'end_turn',
+  cap_exceeded: 'end_turn',
+};
+
 function defaultBilling(category: StageErrorCategory): StageBilling {
   if (BILLED_ON_FAILURE.includes(category)) return { kind: 'usage', usage: freshUsage() };
   if (UNCERTAIN_ON_FAILURE.includes(category)) return { kind: 'uncertain' };
@@ -128,8 +139,17 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
     const fail = (
       category: StageErrorCategory,
       billing: StageBilling,
-      extra?: { refusalCategory?: string; countedInputTokens?: number },
-    ) => new StageError(category, { ...meta, billing, ...extra });
+      extra?: { refusalCategory?: string; countedInputTokens?: number; stopReason?: string },
+    ) =>
+      new StageError(category, {
+        ...meta,
+        billing,
+        ...extra,
+        // A billed failure had a response: its stop reason and warnings, as the adapter reports them.
+        ...(billing.kind === 'usage'
+          ? { stopReason: extra?.stopReason ?? FAILURE_STOP_REASON[category] ?? null, warnings: usageWarnings(billing.usage) }
+          : {}),
+      });
 
     function prepare(rawInput: I, ctx: StageCtx): { input: I; tokens: number } {
       if (!isValidStageCtx(spec.name, ctx)) throw fail('invalid_input', { kind: 'none' });
@@ -172,7 +192,11 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
       if (signal.aborted) throw fail('timeout', { kind: 'uncertain' }, counted);
       if ('fail' in result) {
         const billing = result.billing ?? defaultBilling(result.fail);
-        throw fail(result.fail, billing, { ...counted, refusalCategory: result.refusalCategory });
+        throw fail(result.fail, billing, {
+          ...counted,
+          ...(result.refusalCategory !== undefined ? { refusalCategory: result.refusalCategory } : {}),
+          ...(result.stopReason !== undefined ? { stopReason: result.stopReason } : {}),
+        });
       }
 
       const usage = freshUsage(result.usage);
@@ -185,7 +209,7 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
         model,
         promptVersion: spec.promptVersion,
         stopReason: 'end_turn',
-        warnings: usage.cacheWriteTokens > CACHED_PREFIX_MAX ? ['cache_write_over_prefix_max'] : [],
+        warnings: usageWarnings(usage),
       };
     }
 

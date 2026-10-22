@@ -19,7 +19,7 @@ import Anthropic, {
 } from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
-import { CACHED_PREFIX_MAX, llmPrice } from './pricing.js';
+import { llmPrice } from './pricing.js';
 import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v3.js';
 import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v3.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
@@ -41,7 +41,7 @@ import {
   type StageModels,
   type StageResult,
   type StageUsage,
-  type StageWarning,
+  usageWarnings,
 } from './provider.js';
 
 type ThinkingParam = Anthropic.Messages.ThinkingConfigParam;
@@ -318,23 +318,23 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
       const usage = normalizeUsage(message.usage);
       const billed = { kind: 'usage', usage } as const;
       const stopReason = message.stop_reason;
+      const warnings = usageWarnings(usage);
+      const responded = { ...after, stopReason, warnings };
       if (stopReason === 'refusal') {
         const refusalCategory = message.stop_details?.category ?? null;
-        throw fail('refusal', billed, { ...after, stopReason, refusalCategory });
+        throw fail('refusal', billed, { ...responded, refusalCategory });
       }
       if (stopReason === 'max_tokens' || stopReason === 'model_context_window_exceeded') {
-        throw fail('truncated', billed, { ...after, stopReason });
+        throw fail('truncated', billed, responded);
       }
-      if (stopReason !== 'end_turn') throw fail('invalid_output', billed, { ...after, stopReason });
+      if (stopReason !== 'end_turn') throw fail('invalid_output', billed, responded);
       // Backstop: the count should already have stopped this.
       if (usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens > ctx.maxInputTokens) {
-        throw fail('cap_exceeded', billed, { ...after, stopReason });
+        throw fail('cap_exceeded', billed, responded);
       }
       const output = message.parsed_output;
-      if (output === null || output === undefined) throw fail('invalid_output', billed, { ...after, stopReason });
+      if (output === null || output === undefined) throw fail('invalid_output', billed, responded);
 
-      const warnings: StageWarning[] =
-        usage.cacheWriteTokens > CACHED_PREFIX_MAX ? ['cache_write_over_prefix_max'] : [];
       return { output, usage, provider: 'anthropic', model, promptVersion: spec.promptVersion, stopReason, warnings };
     }
 

@@ -9,7 +9,7 @@ import {
   type SpanExporter,
 } from '@opentelemetry/sdk-trace';
 import type { AppConfig } from '../../shared/config.js';
-import { safeSpanName, sanitizeAttrs, tracingStats, type AllowedAttrs } from './attributes.js';
+import { genAiAttributes, safeSpanName, sanitizeAttrs, tracingStats, type AllowedAttrs } from './attributes.js';
 
 export type { AllowedAttrs } from './attributes.js';
 
@@ -173,8 +173,10 @@ function safely(fn: () => void): void {
 }
 
 /**
- * Runs `fn` inside a span carrying only allowlisted, content-free attributes. Tracing
- * problems never change `fn`'s result or error; error messages are not recorded.
+ * Runs `fn` inside a span carrying only allowlisted, content-free attributes, plus the
+ * GenAI attributes derived from them on a span with a `model` (Langfuse's token and cost
+ * views). Tracing problems never change `fn`'s result or error; error messages are not
+ * recorded.
  */
 async function runInSpan<T>(
   name: string,
@@ -184,10 +186,17 @@ async function runInSpan<T>(
 ): Promise<T> {
   const t = tracer;
   if (!t) return fn(NOOP_HANDLE);
+  // The span's sanitized attributes so far: a model call's GenAI attributes derive from them.
+  const kept: Record<string, string | number> = {};
+  const apply = (sp: Span, more: AllowedAttrs) => {
+    const clean = sanitizeAttrs(more);
+    Object.assign(kept, clean);
+    sp.setAttributes({ ...clean, ...genAiAttributes(kept) });
+  };
   let span: Span | undefined;
   try {
     span = t.startSpan(safeSpanName(name), {}, root ? trace.deleteSpan(context.active()) : undefined);
-    span.setAttributes(sanitizeAttrs(attrs));
+    apply(span, attrs);
   } catch {
     tracingStats.exportFailures += 1;
   }
@@ -195,7 +204,7 @@ async function runInSpan<T>(
   const started = performance.now();
   const handle: StageSpanHandle = {
     setAttrs(more) {
-      if (s) safely(() => s.setAttributes(sanitizeAttrs(more)));
+      if (s) safely(() => apply(s, more));
     },
   };
   const active = s ? trace.setSpan(context.active(), s) : context.active();

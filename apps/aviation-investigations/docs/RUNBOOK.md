@@ -462,6 +462,29 @@ The extraction image was formerly tagged `aviation-extract:mdbtools-1.0.0`;
 old tag can be removed (`docker image rm aviation-extract:mdbtools-1.0.0`).
 Manifests of earlier extractions keep the old name; loading does not depend on it.
 
+### Diagnosing a withheld summary
+
+A withheld summary shows as `withheld` (with `withheldCodes`) on the `brief.step` span
+and as `withheld: {reason, codes}` on its `brief step finished` log line. To see why,
+with the brief's id, on a host that holds the environment's `DATABASE_URL` (the
+`aviation_app` login; the ingest container does not hold it):
+
+```sh
+AVIATION_ENV_FILES=<the environment's settings file> pnpm worker brief-diagnose <brief-id> [--step <n>]
+```
+
+It reads the step (the latest without `--step`) and prints its reasons with what they
+point at: each validation code with its path and text (the offending summary sentence
+as the validator split it, the `why` line, quote or gap note, the passage alias and its
+id), the failed criteria with the case's chronology, or the checker's problems with
+their claims, then the summary's sentences as split, the failure category and each
+stage's stop reason. The text is the rejected composition (model output about public
+NTSB passages, which may restate the reader's question): it is printed to your terminal
+only. The command is read-only and free, nothing runs it automatically, and it finds
+nothing once the brief has expired: the diagnostics are pruned with it, 24 hours after
+it was created. A summary withheld because the answer call failed (`compose_failed`) has
+no composition; the command prints the failure and the stop reason instead.
+
 ## Costs of the opt-in commands
 
 Nothing in the test suite or in a default command calls a paid provider. These do,
@@ -473,6 +496,7 @@ and each needs an explicit flag or key:
 | `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
 | AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.31 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
+| `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |
 
 Embeddings and evaluations are metered on the indexing ledger and stop at
 `AI_INGESTION_MONTHLY_BUDGET_USD`; vectors already paid for are kept in

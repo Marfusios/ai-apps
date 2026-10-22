@@ -1,4 +1,7 @@
 import { createHmac } from 'node:crypto';
+import { CRITERIA, WITHHELD_REASONS, type WithheldReason } from '../../shared/contracts/briefs.js';
+import { CHECK_REASONS, STAGE_WARNINGS } from '../ai/provider.js';
+import { VALIDATION_CODES } from '../briefs/validate.js';
 
 /**
  * Why a brief step's stage failed: the closed set recorded in the step's `meta.failure`,
@@ -37,10 +40,42 @@ export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
 export const FAILURE_STAGES = ['scope', 'retrieve', 'compose', 'validate', 'check', 'pipeline'] as const;
 export type FailureStage = (typeof FAILURE_STAGES)[number];
 
+/** A provider call's stop reason (Anthropic's values; `other` for anything else). */
+export const STOP_REASONS = ['end_turn', 'max_tokens', 'stop_sequence', 'tool_use', 'pause_turn', 'refusal', 'model_context_window_exceeded', 'other'] as const;
+export type StopReason = (typeof STOP_REASONS)[number];
+
+export function stopReasonOf(raw: string | null | undefined): StopReason | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  return (STOP_REASONS as readonly string[]).includes(raw) ? (raw as StopReason) : 'other';
+}
+
+/**
+ * The codes a withheld summary records with its reason (`withheldCodes`): the validation
+ * codes of a `citation_check`, the criteria a case failed in a `criteria_check`, and the
+ * checker's problem reasons in an `evidence_check`.
+ */
+export const WITHHELD_CODES = [...new Set<string>([...VALIDATION_CODES, ...CRITERIA, ...CHECK_REASONS])];
+
+/**
+ * Values of a closed set joined with `+` (a span attribute holds one string), in order,
+ * without repeats, as many as fit `MAX_ATTR_STRING`; undefined when there are none.
+ */
+export function enumList(values: readonly string[]): string | undefined {
+  let out = '';
+  for (const v of new Set(values)) {
+    const next = out ? `${out}+${v}` : v;
+    if (next.length > MAX_ATTR_STRING) break;
+    out = next;
+  }
+  return out || undefined;
+}
+
 /**
  * The closed set of span attributes. Question, answer and passage text, emails, IPs,
  * cookies, keys and filesystem paths have no place here. `briefHash` is a salted hash
- * (see `hashBrief`); `failure` and `failureStage` take only their enum values.
+ * (see `hashBrief`); `failure`, `failureStage`, `stopReason` and `withheld` take only
+ * their enum values, `warnings` and `withheldCodes` only `+`-joined enum values. A span
+ * with a `model` also carries the GenAI keys derived from these (`genAiAttributes`).
  */
 export interface AllowedAttrs {
   stage?: string;
@@ -64,6 +99,14 @@ export interface AllowedAttrs {
   failureStage?: FailureStage;
   /** Of `outputTokens`, the reasoning the provider reports (`output_tokens_details.thinking_tokens`). */
   thinkingTokens?: number;
+  /** A provider call's stop reason (`STOP_REASONS`). */
+  stopReason?: StopReason;
+  /** A provider call's warnings, `+`-joined (`STAGE_WARNINGS`). */
+  warnings?: string;
+  /** Why a summary was withheld (`WITHHELD_REASONS`), on the request span. */
+  withheld?: WithheldReason;
+  /** Its codes, `+`-joined (`WITHHELD_CODES`). */
+  withheldCodes?: string;
 }
 
 const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
@@ -86,15 +129,56 @@ const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
   failure: 'string',
   failureStage: 'string',
   thinkingTokens: 'number',
+  stopReason: 'string',
+  warnings: 'string',
+  withheld: 'string',
+  withheldCodes: 'string',
 };
 
 /** Attributes that take only the values of a closed set. */
 const ENUMS: Readonly<Partial<Record<keyof AllowedAttrs, ReadonlySet<string>>>> = {
   failure: new Set(FAILURE_CATEGORIES),
   failureStage: new Set(FAILURE_STAGES),
+  stopReason: new Set(STOP_REASONS),
+  withheld: new Set(WITHHELD_REASONS),
+};
+
+/** Attributes that take `+`-joined values of a closed set (`enumList`). */
+const ENUM_LISTS: Readonly<Partial<Record<keyof AllowedAttrs, ReadonlySet<string>>>> = {
+  warnings: new Set(STAGE_WARNINGS),
+  withheldCodes: new Set(WITHHELD_CODES),
 };
 
 export const ALLOWED_ATTR_KEYS: readonly string[] = Object.keys(KINDS);
+
+/**
+ * OpenTelemetry GenAI semantic attributes, which Langfuse maps to a generation's model,
+ * usage and cost (`gen_ai.usage.cost` is Langfuse's key, stored as the `total` cost).
+ * Never set directly: a span with a `model` derives them from its own sanitized
+ * attributes (`genAiAttributes`). Metadata only: no prompt or completion key.
+ */
+export const GEN_AI_ATTR_KEYS = ['gen_ai.request.model', 'gen_ai.usage.input_tokens', 'gen_ai.usage.output_tokens', 'gen_ai.usage.cost'] as const;
+
+/** Every key an exported span can carry: the allowlist and the derived GenAI keys. */
+export const SPAN_ATTR_KEYS: readonly string[] = [...ALLOWED_ATTR_KEYS, ...GEN_AI_ATTR_KEYS];
+
+/**
+ * The GenAI attributes of a model call's span, from its sanitized attributes so far:
+ * `gen_ai.request.model` from `model`; `gen_ai.usage.input_tokens`, the whole prompt
+ * (uncached input plus cache writes and reads, as the semantic conventions count it);
+ * `gen_ai.usage.output_tokens`, the billed output (thinking included); and
+ * `gen_ai.usage.cost`, the stage's USD cost (`usd`). Nothing for a span without a model.
+ */
+export function genAiAttributes(a: Readonly<Record<string, string | number>>): Record<string, string | number> {
+  if (typeof a.model !== 'string') return {};
+  const n = (v: string | number | undefined) => (typeof v === 'number' ? v : 0);
+  return {
+    'gen_ai.request.model': a.model,
+    ...(typeof a.inputTokens === 'number' ? { 'gen_ai.usage.input_tokens': a.inputTokens + n(a.cacheWriteTokens) + n(a.cacheReadTokens) } : {}),
+    ...(typeof a.outputTokens === 'number' ? { 'gen_ai.usage.output_tokens': a.outputTokens } : {}),
+    ...(typeof a.usd === 'number' ? { 'gen_ai.usage.cost': a.usd } : {}),
+  };
+}
 
 export const MAX_ATTR_STRING = 64;
 const MAX_SPAN_NAME = 64;
@@ -127,6 +211,8 @@ export function sanitizeAttrs(attrs: object): Record<string, string | number> {
       ok = typeof value === 'string' && value.length > 0 && value.length <= MAX_ATTR_STRING && VALUE_RE.test(value);
       const allowed = ENUMS[key as keyof AllowedAttrs];
       if (ok && allowed) ok = allowed.has(value as string);
+      const listed = ENUM_LISTS[key as keyof AllowedAttrs];
+      if (ok && listed) ok = (value as string).split('+').every((v) => listed.has(v));
     }
     if (ok) out[key] = value as string | number;
     else tracingStats.droppedAttrs += 1;

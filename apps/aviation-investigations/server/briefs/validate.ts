@@ -102,35 +102,37 @@ export interface ResolvedCitation {
   occurrence: 'first';
 }
 
-export type ValidationCode =
-  | 'schema'
-  | 'outcome_mismatch'
-  | 'unknown_case'
-  | 'duplicate_case'
-  | 'duplicate_group'
-  | 'group_kind_mismatch'
-  | 'group_unknown_case'
-  | 'case_not_grouped'
-  | 'case_in_two_groups'
-  | 'unknown_passage'
-  | 'foreign_passage'
-  | 'missing_support'
-  | 'provenance'
-  | 'empty_quote'
-  | 'quote_too_short'
-  | 'quote_too_long'
-  | 'malformed_quote'
-  | 'quote_not_found'
-  | 'timing_precision'
-  | 'bad_marker'
-  | 'marker_unknown_case'
-  | 'uncited_summary'
-  | 'unallowlisted_case_number'
-  | 'markup_or_link'
-  /** Model prose (summary, `why`, gap notes) names a passage alias (`P3`): ids belong in id fields only. */
-  | 'alias_in_text'
-  | 'gap_unknown_case'
-  | 'gap_foreign_passage';
+/** Why a composition fails validation (content-free codes; also a span attribute and log field). */
+export const VALIDATION_CODES = [
+  'schema',
+  'outcome_mismatch',
+  'unknown_case',
+  'duplicate_case',
+  'duplicate_group',
+  'group_kind_mismatch',
+  'group_unknown_case',
+  'case_not_grouped',
+  'case_in_two_groups',
+  'unknown_passage',
+  'foreign_passage',
+  'missing_support',
+  'provenance',
+  'empty_quote',
+  'quote_too_short',
+  'quote_too_long',
+  'malformed_quote',
+  'quote_not_found',
+  'timing_precision',
+  'bad_marker',
+  'marker_unknown_case',
+  'uncited_summary',
+  'unallowlisted_case_number',
+  'markup_or_link',
+  'alias_in_text',
+  'gap_unknown_case',
+  'gap_foreign_passage',
+] as const;
+export type ValidationCode = (typeof VALIDATION_CODES)[number];
 
 /** A content-free reason: a code and where (a JSON path), never model or passage text. */
 export interface ValidationReason {
@@ -138,9 +140,14 @@ export interface ValidationReason {
   path: string;
 }
 
+/**
+ * `summarySentences`: the summary as the validator split it (server/briefs/sentences.ts;
+ * empty when the composition failed its schema), so a `summary.<i>` reason names entry
+ * `i`. Model text: kept server-side only (the step's `meta` records just the count).
+ */
 export type ValidationResult =
-  | { ok: true; ruleVersion: typeof QUOTE_MATCH_RULE_VERSION; citations: ResolvedCitation[] }
-  | { ok: false; ruleVersion: typeof QUOTE_MATCH_RULE_VERSION; reasons: ValidationReason[] };
+  | { ok: true; ruleVersion: typeof QUOTE_MATCH_RULE_VERSION; citations: ResolvedCitation[]; summarySentences: string[] }
+  | { ok: false; ruleVersion: typeof QUOTE_MATCH_RULE_VERSION; reasons: ValidationReason[]; summarySentences: string[] };
 
 // ---------------------------------------------------------------------------
 // Whitespace normalization with an offset map
@@ -381,8 +388,9 @@ function schemaReasons(issues: readonly { path: readonly PropertyKey[] }[]): Val
 export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: ValidateOptions): ValidationResult {
   const ruleVersion = QUOTE_MATCH_RULE_VERSION;
   const parsed = ComposeOutputSchema.safeParse(out);
-  if (!parsed.success) return { ok: false, ruleVersion, reasons: schemaReasons(parsed.error.issues) };
+  if (!parsed.success) return { ok: false, ruleVersion, reasons: schemaReasons(parsed.error.issues), summarySentences: [] };
   const c = parsed.data;
+  const sentences = splitSentences(c.summary);
   const reasons: ValidationReason[] = [];
   const fail = (code: ValidationCode, path: string) => reasons.push({ code, path });
 
@@ -501,7 +509,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
   if (markers === null) fail('bad_marker', 'summary');
   else {
     markers.forEach((n) => (used.has(n) ? undefined : fail('marker_unknown_case', 'summary')));
-    splitSentences(c.summary).forEach((sentence, si) => {
+    sentences.forEach((sentence, si) => {
       if (!/\[\[case:[A-Z0-9]+\]\]/.test(sentence)) fail('uncited_summary', `summary.${si}`);
     });
   }
@@ -527,5 +535,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     if (ALIAS_TOKEN.test(text.replace(MARKER, ' '))) fail('alias_in_text', path);
   }
 
-  return reasons.length > 0 ? { ok: false, ruleVersion, reasons } : { ok: true, ruleVersion, citations };
+  return reasons.length > 0
+    ? { ok: false, ruleVersion, reasons, summarySentences: sentences }
+    : { ok: true, ruleVersion, citations, summarySentences: sentences };
 }

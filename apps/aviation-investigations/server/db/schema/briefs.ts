@@ -15,7 +15,10 @@
  * Grants, guard triggers, the handover function and retention (`prune_controls()`)
  * are in migration 0014. Question and refinement text live only in `request`; the
  * generated result in `result` and the evidence it was checked against in `evidence`.
- * `meta` is content-free (prompt versions, validation codes, timings).
+ * `meta` is content-free (prompt versions, validation codes and paths, timings).
+ * `diagnostics` (migration 0016) keeps a withheld step's rejected composition for
+ * developers (`pnpm worker brief-diagnose`); no route returns it, and it is pruned with
+ * its brief.
  */
 import { sql } from 'drizzle-orm';
 import { bigint, check, index, jsonb, numeric, pgTable, smallint, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
@@ -88,6 +91,12 @@ export const briefSteps = pgTable(
     result: jsonb('result'),
     /** The evidence the result was validated against, for the case context. */
     evidence: jsonb('evidence'),
+    /**
+     * A withheld step's rejected composition, as the answer model wrote it, with what the
+     * validator and checker saw (`StepDiagnostics`, server/briefs/store.ts). Server-side
+     * only: never selected for a route.
+     */
+    diagnostics: jsonb('diagnostics'),
     provider: text('provider'),
     /** The answer model (the scope and check models are in `meta`). */
     model: text('model'),
