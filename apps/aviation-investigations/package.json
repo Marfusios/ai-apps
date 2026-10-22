@@ -15,6 +15,8 @@
     "services:up": "tsx scripts/services.ts up",
     "services:down": "tsx scripts/services.ts down",
     "services:setup": "tsx scripts/services-setup.ts",
+    "provision:shared": "tsx scripts/provision-shared.ts",
+    "test:pg16": "tsx scripts/test-pg16.ts",
     "app:up": "tsx scripts/compose.ts app-up",
     "app:down": "tsx scripts/compose.ts app-down",
     "app:ps": "tsx scripts/compose.ts app-ps",

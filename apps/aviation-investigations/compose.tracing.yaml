@@ -13,10 +13,10 @@ x-tracing-env: &tracing-env
   LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set LANGFUSE_SECRET_KEY}
 
 services:
-  app:
+  aviation-app:
     environment: *tracing-env
     networks: [observability]
-  ingest:
+  aviation-ingest:
     environment: *tracing-env
     networks: [observability]
 

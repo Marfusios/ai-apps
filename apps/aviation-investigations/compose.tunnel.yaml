@@ -7,7 +7,7 @@
 #
 # `pnpm app:up` adds this file and the profile when TUNNEL_TOKEN is set.
 services:
-  app:
+  aviation-app:
     ports: !reset []
   tunnel:
     environment:

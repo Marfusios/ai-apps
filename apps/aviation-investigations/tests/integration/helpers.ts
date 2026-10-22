@@ -6,6 +6,7 @@ import pg from 'pg';
 import { createDb, type Db } from '../../server/db/client.js';
 import { CONTROL_TABLES } from '../../server/db/schema/index.js';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
+import { readDotenvAllowlisted } from '../../shared/env-files.js';
 
 const APP_DIR = resolve(fileURLToPath(import.meta.url), '../../..');
 
@@ -16,14 +17,30 @@ export function testConfig(): AppConfig {
   return loadConfig({ files: [resolve(APP_DIR, '.env.local')] });
 }
 
-/** Same credentials as the app, pointed at the aviation_test database. */
+/**
+ * Credentials of the local `test` environment (database aviation_test, indices
+ * aviation-test-*), written by `pnpm services:setup`. Nonempty process values win,
+ * so the suite can run against another server (scripts/test-pg16.ts).
+ */
+const TEST_VARS = [
+  'TEST_DATABASE_URL',
+  'TEST_DATABASE_INGEST_URL',
+  'TEST_DATABASE_MIGRATOR_URL',
+  'TEST_ELASTICSEARCH_READ_API_KEY',
+  'TEST_ELASTICSEARCH_WRITE_API_KEY',
+] as const;
+type TestVar = (typeof TEST_VARS)[number];
+
+function testVar(name: TestVar): string | undefined {
+  return process.env[name] || readDotenvAllowlisted(resolve(APP_DIR, '.env.local'), TEST_VARS)[name];
+}
+
+/** URL of the aviation_test login for `role`; it acts as the matching group role. */
 export function testDbUrl(role: 'app' | 'migrator' | 'ingest' = 'app'): string {
-  const c = testConfig();
-  const url = { app: c.databaseUrl, migrator: c.databaseMigratorUrl, ingest: c.databaseIngestUrl }[role];
-  if (!url) throw new Error('Database URLs missing; run pnpm services:up && pnpm services:setup');
-  const u = new URL(url);
-  u.pathname = '/aviation_test';
-  return u.toString();
+  const name = ({ app: 'TEST_DATABASE_URL', migrator: 'TEST_DATABASE_MIGRATOR_URL', ingest: 'TEST_DATABASE_INGEST_URL' } as const)[role];
+  const url = testVar(name);
+  if (!url) throw new Error(`${name} missing; run pnpm services:up && pnpm services:setup`);
+  return url;
 }
 
 export function testPool(role: 'app' | 'migrator' | 'ingest' = 'app'): pg.Pool {
@@ -73,12 +90,12 @@ function esClient(apiKey: string | undefined): Client {
   });
 }
 
-/** Client using the WRITE key (aviation-* only). */
+/** Client using the test environment's WRITE key (aviation-test-* only). */
 export function testEs(): Client {
-  return esClient(testConfig().elasticsearch.writeApiKey);
+  return esClient(testVar('TEST_ELASTICSEARCH_WRITE_API_KEY'));
 }
 
-/** Client using the READ key. */
+/** Client using the test environment's READ key. */
 export function testEsReader(): Client {
-  return esClient(testConfig().elasticsearch.readApiKey);
+  return esClient(testVar('TEST_ELASTICSEARCH_READ_API_KEY'));
 }

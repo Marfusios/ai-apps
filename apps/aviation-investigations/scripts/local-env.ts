@@ -35,3 +35,8 @@ export function ensureSecrets(names: readonly string[]): Record<string, string> 
   if (Object.keys(added).length) writeLocal(added);
   return { ...have, ...added };
 }
+
+/** A local service port: process value, then .env.local, then the default. */
+export function localPort(name: 'POSTGRES_PORT' | 'ELASTICSEARCH_PORT', fallback: number): number {
+  return Number(process.env[name] || readLocal([name])[name] || fallback);
+}

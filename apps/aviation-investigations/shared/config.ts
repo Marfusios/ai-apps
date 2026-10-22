@@ -25,7 +25,7 @@ const envSchema = z.object({
   ELASTICSEARCH_READ_API_KEY: str(),
   ELASTICSEARCH_WRITE_API_KEY: str(),
   ELASTICSEARCH_CA_FILE: str(),
-  ELASTICSEARCH_INDEX_PREFIX: str('aviation'),
+  ELASTICSEARCH_INDEX_PREFIX: str('ai-aviation-dev'),
   AI_LLM_PROVIDER: z.enum(['anthropic', 'openai', 'fake']).default('anthropic'),
   ANTHROPIC_API_KEY: str(),
   ANTHROPIC_SCOPE_MODEL: str('claude-haiku-5-5'),

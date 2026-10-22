@@ -7,9 +7,9 @@
 #   docker compose -p ai-aviation-dev --env-file <dev env file> --profile app up -d --build
 #
 # The pnpm wrappers (app:up, app:down, app:migrate, ingest, extract:image) choose
-# the project, env files and override files. Profiles: `app` (HTTP), `tools`
-# (ingest, migrate, extract-image; one-shot with `run --rm`), `tunnel`
-# (cloudflared). Overrides: compose.tunnel.yaml (no app port, tunnel token
+# the project, env files and override files. Profiles: `app` (aviation-app),
+# `tools` (aviation-ingest, aviation-migrate, extract-image; one-shot with
+# `run --rm`), `tunnel` (cloudflared). Overrides: compose.tunnel.yaml (no app port, tunnel token
 # required) and compose.tracing.yaml (shared observability network).
 #
 # Containers get only the variables listed under their `environment`, never a
@@ -47,11 +47,12 @@ x-app-image: &app-image
       ai-apps.app: aviation-investigations
 
 # Elasticsearch connection shared by app and ingest; each adds its own API key.
+# ELASTICSEARCH_INDEX_PREFIX is ai-aviation-<env> (the shared cluster's `ai-*` template).
 # ELASTICSEARCH_CA_FILE is a host path, mounted read-only (see `volumes`).
 x-elasticsearch-env: &elasticsearch-env
   ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-}
   ELASTICSEARCH_CA_FILE: ${ELASTICSEARCH_CA_FILE:+/run/aviation/elasticsearch-ca.pem}
-  ELASTICSEARCH_INDEX_PREFIX: ${ELASTICSEARCH_INDEX_PREFIX:-}
+  ELASTICSEARCH_INDEX_PREFIX: ${ELASTICSEARCH_INDEX_PREFIX:-ai-aviation-${APP_ENV}}
 
 x-elasticsearch-ca: &elasticsearch-ca ${ELASTICSEARCH_CA_FILE:-/dev/null}:/run/aviation/elasticsearch-ca.pem:ro
 
@@ -62,8 +63,9 @@ x-embeddings-env: &embeddings-env
 
 services:
   # Fastify API and the built web client on one origin. The healthcheck needs the
-  # GET /api/health route of the API server.
-  app:
+  # GET /api/health route of the API server. Service names carry the app's name:
+  # Docker registers them as DNS names on the shared networks too.
+  aviation-app:
     <<: [*service, *hardened, *app-image]
     profiles: [app]
     labels:
@@ -124,11 +126,11 @@ services:
       retries: 3
       start_period: 20s
 
-  # Worker CLI, one-shot: `docker compose --profile tools run --rm ingest <command>`.
+  # Worker CLI, one-shot: `docker compose --profile tools run --rm aviation-ingest <command>`.
   # Ingestion database role and the Elasticsearch writer key. It runs as the host
   # user that owns data/ (AVIATION_UID/AVIATION_GID, set by `pnpm ingest`), reads
   # data/ read-only and writes verification reports to data/reports/<env>.
-  ingest:
+  aviation-ingest:
     <<: [*service, *hardened, *app-image]
     profiles: [tools]
     restart: "no"
@@ -157,9 +159,9 @@ services:
     mem_limit: 2g
     cpus: 2
 
-  # Schema migrations, one-shot: `docker compose --profile tools run --rm migrate`.
+  # Schema migrations, one-shot: `docker compose --profile tools run --rm aviation-migrate`.
   # The only container with the migrator (schema owner) role.
-  migrate:
+  aviation-migrate:
     <<: [*service, *hardened, *app-image]
     profiles: [tools]
     restart: "no"
@@ -201,7 +203,7 @@ services:
     user: "65534:65534"
 
   # Cloudflare Tunnel connector (remotely managed tunnel; its public hostname
-  # routes to http://app:3000). Use with compose.tunnel.yaml.
+  # routes to http://aviation-app:3000). Use with compose.tunnel.yaml.
   tunnel:
     <<: *service
     profiles: [tunnel]

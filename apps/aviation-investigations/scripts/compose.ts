@@ -48,7 +48,6 @@ const REQUIRED: Record<Command, readonly Name[]> = {
     'DATABASE_URL',
     'ELASTICSEARCH_URL',
     'ELASTICSEARCH_READ_API_KEY',
-    'ELASTICSEARCH_INDEX_PREFIX',
   ],
   ingest: ['SHARED_POSTGRES_NETWORK', 'SHARED_ELASTICSEARCH_NETWORK', 'DATABASE_INGEST_URL'],
   migrate: ['SHARED_POSTGRES_NETWORK', 'DATABASE_MIGRATOR_URL'],
@@ -87,6 +86,11 @@ if (appEnv !== 'dev' && appEnv !== 'live') {
 }
 const missing = REQUIRED[command].filter((n) => !values[n]);
 if (missing.length) fail(`missing for ${command}: ${missing.join(', ')} (see docs/RUNBOOK.md)`);
+// The shared cluster's `ai-*` template covers ai-aviation-<env>-* indices; the API keys are limited to them.
+const prefix = values.ELASTICSEARCH_INDEX_PREFIX;
+if (prefix && (command === 'app-up' || command === 'ingest') && prefix !== `ai-aviation-${appEnv}`) {
+  fail(`ELASTICSEARCH_INDEX_PREFIX must be ai-aviation-${appEnv} for APP_ENV=${appEnv}`);
+}
 
 const tunnel = command === 'app-up' && Boolean(values.TUNNEL_TOKEN);
 const tracing = ['true', '1'].includes(values.AVIATION_TRACING_ENABLED ?? '');
@@ -119,7 +123,7 @@ switch (command) {
     tail = ['ps', '-a', ...args];
     break;
   case 'migrate':
-    tail = ['--profile', 'tools', 'run', '--rm', 'migrate', ...args];
+    tail = ['--profile', 'tools', 'run', '--rm', 'aviation-migrate', ...args];
     break;
   case 'ingest': {
     // Reads data/ read-only as the host user that owns it; writes reports to data/reports/<env>.
@@ -131,7 +135,7 @@ switch (command) {
       childEnv.AVIATION_UID = String(uid);
       childEnv.AVIATION_GID = String(gid);
     }
-    tail = ['--profile', 'tools', 'run', '--rm', 'ingest', ...args];
+    tail = ['--profile', 'tools', 'run', '--rm', 'aviation-ingest', ...args];
     break;
   }
   case 'extract-image':

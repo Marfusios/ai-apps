@@ -19,4 +19,12 @@ REVOKE UPDATE, TRUNCATE, REFERENCES, TRIGGER ON TABLE "report_links" FROM aviati
 --> statement-breakpoint
 GRANT SELECT ON TABLE "report_links" TO aviation_app;
 --> statement-breakpoint
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE "report_links" FROM aviation_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE "report_links" FROM aviation_app;
+--> statement-breakpoint
+DO $$
+BEGIN
+  -- MAINTAIN exists from PostgreSQL 17 on; the shared server runs 16.
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    EXECUTE 'REVOKE MAINTAIN ON TABLE "report_links" FROM aviation_app';
+  END IF;
+END $$;

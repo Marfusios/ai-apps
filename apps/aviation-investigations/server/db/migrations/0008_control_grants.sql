@@ -155,10 +155,18 @@ GRANT SELECT ON TABLE "ai_switch" TO aviation_app;
 --> statement-breakpoint
 REVOKE UPDATE ON TABLE "cost_ledger", "ai_switch" FROM aviation_app;
 --> statement-breakpoint
-REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE
+REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE
   "usage_buckets", "leases", "idempotency", "trial_identities", "abuse_records", "reservations",
   "cost_ledger", "ai_switch"
   FROM aviation_app;
+--> statement-breakpoint
+DO $$
+BEGIN
+  -- MAINTAIN exists from PostgreSQL 17 on; the shared server runs 16.
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    EXECUTE 'REVOKE MAINTAIN ON TABLE "usage_buckets", "leases", "idempotency", "trial_identities", "abuse_records", "reservations", "cost_ledger", "ai_switch" FROM aviation_app';
+  END IF;
+END $$;
 --> statement-breakpoint
 -- aviation_ingest gets no access to quota, trial or abuse records. (Its read access to
 -- interactive reservations and ledger lines, which carry principal HMACs, is removed
@@ -173,7 +181,15 @@ GRANT SELECT ON TABLE "ai_switch" TO aviation_ingest;
 --> statement-breakpoint
 GRANT UPDATE ("enabled", "note", "updated_at") ON TABLE "ai_switch" TO aviation_ingest;
 --> statement-breakpoint
-REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE "reservations", "cost_ledger", "ai_switch"
+REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE "reservations", "cost_ledger", "ai_switch"
   FROM aviation_ingest;
+--> statement-breakpoint
+DO $$
+BEGIN
+  -- MAINTAIN exists from PostgreSQL 17 on; the shared server runs 16.
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    EXECUTE 'REVOKE MAINTAIN ON TABLE "reservations", "cost_ledger", "ai_switch" FROM aviation_ingest';
+  END IF;
+END $$;
 --> statement-breakpoint
 GRANT USAGE ON SEQUENCE "reservations_id_seq", "cost_ledger_id_seq" TO aviation_app, aviation_ingest;
