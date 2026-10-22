@@ -1,34 +1,60 @@
 /**
- * Search-time synonyms and stop words for NTSB narrative text (amendment A12).
+ * Search-time synonyms, stem overrides and stop words for NTSB narrative text
+ * (amendment A12).
  *
- * The list is deliberately small and versioned with the index (`CASES_INDEX_VERSION`):
- * changing a rule means a new index version and a rebuild. Rules use the Solr format
- * of Elasticsearch's `synonym_graph` filter and are applied only at search time, before
- * stop words and stemming, so they are written in lower case and unstemmed.
+ * Everything here is versioned with the index (`CASES_INDEX_VERSION`): changing a rule
+ * means a new index version and a rebuild. Synonym rules use the Solr format of
+ * Elasticsearch's `synonym_graph` filter. They run only at search time, after
+ * lowercasing and before stop words and stemming, so they are written in lower case
+ * and unstemmed, with explicit plurals where a plural is common.
  *
- * - Spelling variants of one word are equivalent (`a, b, c`).
- * - Abbreviations expand one way and keep themselves (`abbr => abbr, expansion`): a
- *   search for "imc" also finds "instrument meteorological conditions" as a phrase,
- *   while a search for the spelled-out words keeps its own meaning (all words, any
- *   position) instead of turning into a phrase search.
+ * - Equivalences (`a, b, c`) where every form means the same thing: spelling
+ *   variants (carb/carburetor/carburettor) and abbreviations whose long form is
+ *   unambiguous (IMC, VMC, ATC, IFR, VFR, AGL, MSL, CFIT, CFI). A spelled-out query
+ *   then also finds the abbreviation; note that a multi-word alternative is matched
+ *   as a phrase, so "air traffic control" searches the phrase or "atc".
+ * - One-way rules (`abbr => abbr, expansion`) where the long form is an ordinary word
+ *   that should not pull in an abbreviation with other uses (wx, mx), and for
+ *   "carb ice", whose expansion would otherwise turn every "carburetor icing" query
+ *   into a phrase search.
+ * - Quoted phrases never expand: the fields' `search_quote_analyzer` is the index
+ *   analyzer, so `"carb ice"` matches only those words.
  * - `stall` and `spin` are distinct mechanisms and never synonyms; "stall/spin" is
  *   split into both words by the tokenizer.
  */
 
 export const AVIATION_SYNONYMS: readonly string[] = [
-  'carb, carburetor, carburettor',
+  'carb, carbs, carburetor, carburetors, carburettor, carburettors',
   'carb ice, carb icing => carb ice, carburetor icing, carburettor icing',
-  'cfi => cfi, flight instructor',
+  'cfi, cfis, flight instructor, flight instructors',
+  'imc, instrument meteorological conditions',
+  'vmc, visual meteorological conditions',
+  'atc, air traffic control',
+  'ifr, instrument flight rules',
+  'vfr, visual flight rules',
+  'agl, above ground level',
+  'msl, mean sea level',
+  'cfit, controlled flight into terrain',
   'wx => wx, weather',
-  'imc => imc, instrument meteorological conditions',
-  'vmc => vmc, visual meteorological conditions',
-  'atc => atc, air traffic control',
-  'ifr => ifr, instrument flight rules',
-  'vfr => vfr, visual flight rules',
-  'agl => agl, above ground level',
-  'msl => msl, mean sea level',
-  'cfit => cfit, controlled flight into terrain',
   'mx => mx, maintenance',
+];
+
+/**
+ * Stems fixed before the light English (KStem) stemmer, which leaves these inflections
+ * apart because its dictionary knows them as words ("icing", "conditions") or
+ * mis-stems them ("overheated" -> "overheate"). Applied at index and search time.
+ */
+export const STEM_OVERRIDES: readonly string[] = [
+  'icing => ice',
+  'freezing => freeze',
+  'cracked => crack',
+  'impacted => impact',
+  'determined => determine',
+  'conditions => condition',
+  'landed => land',
+  'disconnected => disconnect',
+  'overheated => overheat',
+  'disoriented => disorientate',
 ];
 
 /** Lucene's English stop set, the `_english_` list of Elasticsearch's `stop` filter. */

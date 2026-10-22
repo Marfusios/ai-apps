@@ -1,7 +1,9 @@
 /**
- * Elasticsearch client factory. The HTTP process uses the read key and workers the
- * write key; `ELASTICSEARCH_API_KEY` is the fallback for either when the scoped key
- * is not set. A CA file, when configured, is the only trusted TLS root.
+ * Elasticsearch client factory. The HTTP process reads with
+ * `ELASTICSEARCH_READ_API_KEY` only: it never falls back to another key, so a missing
+ * read key fails instead of handing the API write privileges. Workers write with
+ * `ELASTICSEARCH_WRITE_API_KEY`, or `ELASTICSEARCH_API_KEY` when that is the only key
+ * an operator configured. A CA file, when configured, is the only trusted TLS root.
  */
 import { readFileSync } from 'node:fs';
 import { Client } from '@elastic/elasticsearch';
@@ -16,21 +18,24 @@ export interface EsClientOptions {
   maxRetries?: number;
 }
 
-const KEY_NAME: Readonly<Record<EsAccess, string>> = {
-  read: 'ELASTICSEARCH_READ_API_KEY',
-  write: 'ELASTICSEARCH_WRITE_API_KEY',
-};
+function apiKeyFor(config: AppConfig['elasticsearch'], access: EsAccess): string {
+  if (access === 'read') {
+    if (!config.readApiKey) throw new Error('ELASTICSEARCH_READ_API_KEY is not set; run pnpm services:setup');
+    return config.readApiKey;
+  }
+  const key = config.writeApiKey ?? config.apiKey;
+  if (!key) throw new Error('ELASTICSEARCH_WRITE_API_KEY is not set; run pnpm services:setup');
+  return key;
+}
 
 export function createEsClient(
   config: AppConfig['elasticsearch'],
   access: EsAccess,
   opts: EsClientOptions = {},
 ): Client {
-  const apiKey = (access === 'read' ? config.readApiKey : config.writeApiKey) ?? config.apiKey;
-  if (!apiKey) throw new Error(`${KEY_NAME[access]} is not set; run pnpm services:setup`);
   return new Client({
     node: config.url,
-    auth: { apiKey },
+    auth: { apiKey: apiKeyFor(config, access) },
     requestTimeout: opts.requestTimeoutMs ?? 30_000,
     maxRetries: opts.maxRetries ?? 2,
     ...(config.caFile ? { tls: { ca: readFileSync(config.caFile) } } : {}),

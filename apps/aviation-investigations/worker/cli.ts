@@ -76,7 +76,7 @@ function printVerify(r: VerifyReport): void {
 function printIndex(r: IndexReport): void {
   const lines: [string, string | number][] = [
     ['index', r.index],
-    ['alias', `${r.alias} -> ${r.index}`],
+    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasReconciled ? ' (confirmed by read-back)' : ''}`],
     ['previous indices (kept)', r.previousIndices.join(', ') || 'none'],
     ['generation', r.generationId],
     ['version', `${r.version} (${r.fingerprint.slice(0, 12)})`],

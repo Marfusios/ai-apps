@@ -3,7 +3,7 @@ import type { estypes } from '@elastic/elasticsearch';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { assembleCaseRecords, type CaseRecord } from '../../server/db/queries/case-records.js';
 import { OCCURRENCE_PHASE_TEXT, occurrenceEventLabel } from '../../shared/occurrences.js';
-import { AVIATION_ANALYSIS, INDEX_ANALYZER, SEARCH_ANALYZER } from '../../worker/index/analysis.js';
+import { AVIATION_ANALYSIS, INDEX_ANALYZER, SEARCH_ANALYZER, SECTION_POSITION_GAP } from '../../worker/index/analysis.js';
 import {
   CASES_INDEX_VERSION,
   CASES_MAPPING,
@@ -19,6 +19,7 @@ import {
   AVIATION_SYNONYMS,
   ENGLISH_STOP_WORDS,
   NEGATION_WORDS,
+  STEM_OVERRIDES,
 } from '../../worker/index/synonyms.js';
 import { fixtureCaseRecords } from '../support/case-records.js';
 import { FIXTURES_DIR, readCsv } from '../support/extract-dir.js';
@@ -27,7 +28,7 @@ import { FIXTURES_DIR, readCsv } from '../support/extract-dir.js';
  * The index definition this version was built with. Changing the mapping, the
  * analysis or the synonym list changes it: bump CASES_INDEX_VERSION and update both.
  */
-const PINNED = { version: 'cases-v1', fingerprint: 'fc079250ad07d4dcbf65c92ef33282582635298e9e5bba257c42a08d75a0317e' };
+const PINNED = { version: 'cases-v2', fingerprint: '9e78b0c12fb6444ed2386ae1f9fddb15b114a71cbcdddbef13ed8ffe24ca75b9' };
 
 let records: Map<string, CaseRecord>;
 
@@ -99,10 +100,11 @@ describe('buildCaseDocument', () => {
       defining_events: ['Loss of engine power (total)'],
       aircraft_count: 1,
     });
-    expect(d.probable_cause).toMatch(/^The contract mechanic's failure/);
-    expect(d.analysis).toBeTruthy();
-    expect(d.factual).toBeTruthy();
-    expect(d.findings_text?.split('\n')).toEqual([
+    expect(d.probable_cause).toHaveLength(1);
+    expect(d.probable_cause[0]).toMatch(/^The contract mechanic's failure/);
+    expect(d.analysis).toHaveLength(1);
+    expect(d.factual).toHaveLength(1);
+    expect(d.findings_text).toEqual([
       'Aircraft-Aircraft propeller/rotor-Rotorcraft flight control-(general)-Incorrect use/operation - C',
       'Aircraft-Aircraft handling/service-Maintenance/inspections-(general)-Incorrect service/maintenance - C',
     ]);
@@ -145,7 +147,7 @@ describe('buildCaseDocument', () => {
       light: null,
       wx_cond: null,
       defining_phase_groups: ['unknown'],
-      probable_cause: null,
+      probable_cause: [],
     });
     expect(d.aircraft[0]).toMatchObject({ category: null, damage: null, eng_types: [] });
 
@@ -154,17 +156,27 @@ describe('buildCaseDocument', () => {
     expect(noSequence.aircraft[0]?.defining_phase_group).toBeNull();
   });
 
-  it('concatenates the sections of each kind, trimmed', () => {
+  it('keeps one value per section of each kind, trimmed', () => {
     const r = record('CEN24FA064');
     const d = buildCaseDocument(r);
-    const kind = (k: string) => r.sections.filter((s) => s.kind === k).map((s) => s.text.trim()).join('\n\n');
-    expect(d.probable_cause).toBe(kind('probable_cause'));
-    expect(d.analysis).toBe(kind('analysis'));
-    expect(d.factual).toBe(kind('factual'));
+    const kind = (k: string) => r.sections.filter((s) => s.kind === k).map((s) => s.text.trim());
+    expect(d.probable_cause).toEqual(kind('probable_cause'));
+    expect(d.analysis).toEqual(kind('analysis'));
+    expect(d.factual).toEqual(kind('factual'));
     // HTML narratives are indexed as their canonical citation text.
-    expect(d.probable_cause).not.toMatch(/<[a-z]/i);
+    expect(d.probable_cause.join(' ')).not.toMatch(/<[a-z]/i);
     // Identical cause texts of two aircraft are one event-scoped section.
-    expect(doc('SEA08LA057').probable_cause).toBe("The departing pilot's inadequate visual lookout.");
+    expect(doc('SEA08LA057').probable_cause).toEqual(["The departing pilot's inadequate visual lookout."]);
+
+    // Two sections of one kind stay two values (never one concatenated string).
+    const dfw = record('DFW08TA066');
+    const cause = dfw.sections.find((x) => x.kind === 'probable_cause');
+    if (!cause) throw new Error('DFW08TA066 has no cause');
+    const two = buildCaseDocument({
+      ...dfw,
+      sections: [...dfw.sections, { ...cause, sectionId: 'x', sectionKey: 'probable_cause/event-2', text: '  Second cause.\n' }],
+    });
+    expect(two.probable_cause).toEqual([cause.text.trim(), 'Second cause.']);
   });
 
   it('never contains the internal ev_id', () => {
@@ -201,19 +213,31 @@ describe('cases index definition', () => {
       'homebuilt', 'make', 'model', 'purpose',
     ]);
     for (const field of ['probable_cause', 'analysis', 'factual', 'findings_text']) {
-      expect(p[field]).toMatchObject({ type: 'text', analyzer: INDEX_ANALYZER, search_analyzer: SEARCH_ANALYZER });
+      expect(p[field]).toEqual({
+        type: 'text',
+        analyzer: INDEX_ANALYZER,
+        search_analyzer: SEARCH_ANALYZER,
+        search_quote_analyzer: INDEX_ANALYZER,
+        index_options: 'offsets',
+        position_increment_gap: SECTION_POSITION_GAP,
+      });
     }
+    expect(SECTION_POSITION_GAP).toBe(100);
     expect(p.location).toEqual({ type: 'geo_point' });
     expect(p.ev_date).toMatchObject({ type: 'date' });
     expect(p).not.toHaveProperty('ev_id');
     expect(CASES_SETTINGS).toMatchObject({ number_of_shards: 1, number_of_replicas: 0 });
 
     const analyzers = AVIATION_ANALYSIS.analyzer as Record<string, { filter: string[] }>;
-    expect(analyzers[INDEX_ANALYZER]?.filter).toEqual(['lowercase', 'aviation_possessive', 'aviation_stop', 'aviation_stemmer']);
+    expect(analyzers[INDEX_ANALYZER]?.filter).toEqual([
+      'lowercase', 'aviation_possessive', 'aviation_stop', 'aviation_stem_overrides', 'aviation_stemmer',
+    ]);
     // Synonyms before stop words and stemming at search time.
     expect(analyzers[SEARCH_ANALYZER]?.filter).toEqual([
-      'lowercase', 'aviation_possessive', 'aviation_synonyms', 'aviation_stop', 'aviation_stemmer',
+      'lowercase', 'aviation_possessive', 'aviation_synonyms', 'aviation_stop', 'aviation_stem_overrides', 'aviation_stemmer',
     ]);
+    // Conservative KStem, not Porter (G3 ruling).
+    expect((AVIATION_ANALYSIS.filter as Record<string, unknown>).aviation_stemmer).toEqual({ type: 'stemmer', language: 'light_english' });
   });
 
   it('is pinned to its version', () => {
@@ -223,7 +247,7 @@ describe('cases index definition', () => {
 
   it('names indices per generation and version', () => {
     const at = new Date('2026-10-22T08:09:10.123Z');
-    expect(casesIndexName('aviation', 42, at)).toBe('aviation-cases-v1-g42-20261022080910123');
+    expect(casesIndexName('aviation', 42, at)).toBe('aviation-cases-v2-g42-20261022080910123');
     expect(casesAlias('aviation')).toBe('aviation-cases');
     expect(() => casesIndexName('Aviation', 1, at)).toThrow(/prefix/);
     expect(() => casesIndexName('aviation-*', 1, at)).toThrow(/prefix/);
@@ -234,6 +258,22 @@ describe('cases index definition', () => {
 describe('synonyms and stop words', () => {
   it('never relate stall and spin', () => {
     for (const rule of AVIATION_SYNONYMS) expect(rule).not.toMatch(/\b(stall|spin)\b/);
+  });
+
+  it('never start or end a term with a stop word', () => {
+    for (const rule of AVIATION_SYNONYMS) {
+      for (const term of rule.split(/=>|,/).map((t) => t.trim())) {
+        const words = term.split(' ');
+        expect(AVIATION_STOP_WORDS, `${rule}: ${term}`).not.toContain(words[0]);
+        expect(AVIATION_STOP_WORDS, `${rule}: ${term}`).not.toContain(words[words.length - 1]);
+      }
+    }
+  });
+
+  it('cover plurals and keep stem overrides one word each', () => {
+    const terms = new Set(AVIATION_SYNONYMS.flatMap((r) => r.split(/=>|,/).map((t) => t.trim())));
+    for (const t of ['carbs', 'carburetors', 'carburettors', 'cfis', 'flight instructors']) expect(terms).toContain(t);
+    for (const rule of STEM_OVERRIDES) expect(rule).toMatch(/^[a-z]+ => [a-z]+$/);
   });
 
   it('are lower case, unstemmed Solr rules', () => {

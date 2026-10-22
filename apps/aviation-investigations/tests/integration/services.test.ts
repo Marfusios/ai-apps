@@ -5,10 +5,14 @@ const INDEX = `${TEST_INDEX_PREFIX}x`;
 const status = (e: unknown) => (e as { meta?: { statusCode?: number } }).meta?.statusCode;
 
 afterAll(async () => {
-  // Wildcard deletes are rejected by default, so list and delete by name.
+  // Only this file's indices: other suites (and other checkouts sharing the local
+  // services) keep their own aviation-test-* indices while they run.
   const es = testEs();
-  const found = await es.cat.indices({ index: `${TEST_INDEX_PREFIX}*`, format: 'json', h: 'index' });
-  for (const { index } of found) if (index) await es.indices.delete({ index });
+  for (const index of [INDEX, `${TEST_INDEX_PREFIX}read`]) {
+    await es.indices.delete({ index }).catch((e: unknown) => {
+      if (status(e) !== 404) throw e;
+    });
+  }
 });
 
 describe('Elasticsearch credentials', () => {

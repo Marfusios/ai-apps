@@ -206,42 +206,56 @@ pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running b
 pnpm worker index cases --generation <id>   # aviation_ingest + ELASTICSEARCH_WRITE_API_KEY
 ```
 
-- **Build.** Only a `verified` (or already `published`) generation is indexed. The
-  command reads the generation's US events in batches of 500 from one repeatable-read
+- **Build.** Under the lifecycle lock the command checks that the generation is
+  `verified` (or already `published`) with a latest verification `ok` by the current
+  verifier, and pins it (`pin_generation`, two hours) so pruning cannot remove it
+  mid-build; the pin is released at the end. A generation without US events is
+  refused. It reads the US events in batches of 500 from one repeatable-read
   snapshot (`server/db/queries/case-records.ts`), creates
-  `<prefix>-cases-v1-g<generation>-<UTC timestamp>` (one shard, no replicas, refresh
+  `<prefix>-cases-v2-g<generation>-<UTC timestamp>` (one shard, no replicas, refresh
   off while loading), bulk-loads it, refreshes it and checks it against the database:
   documents equal the generation's US events, nested aircraft equal its aircraft, and
-  the answer-eligible, multi-aircraft and non-US counts match. Only then does the
-  alias `<prefix>-cases` move to it, in one atomic request; the previous index is
-  kept. On any failure the new index is deleted and the alias is unchanged. The
-  dataset manifest naming both indices is published separately, once the passages
-  index of the same generation exists.
+  the answer-eligible, multi-aircraft and non-US counts match. Any failure up to here
+  deletes the new index.
+- **Alias.** `<prefix>-cases` means "the cases index built last", for operators.
+  The API never reads it: it uses the index names of the active `dataset_manifests`
+  row, published separately once the passages index of the same generation exists.
+  Switches are serialized per alias with a PostgreSQL advisory lock; one `_aliases`
+  request removes every current target and adds the new index, and the outcome is
+  read back. The new index is deleted only when the read-back shows the alias does
+  not include it; if the outcome cannot be read, the index is kept and the command
+  fails naming it. Previous indices are kept.
 - **Documents.** One per US event, keyed by case number (`ev_id` is never indexed).
   Event fields are keywords (`country` is `ev_country` as published, always `USA`),
   `ev_date` a date, `location` a geo point (absent without coordinates). Aircraft are
   `nested`, so one clause matches one aircraft: an airplane filter and a Sikorsky
   filter in one nested query never match an event whose Sikorsky is the helicopter.
-  `probable_cause`, `analysis`, `factual` and `findings_text` hold the canonical
-  section texts of each kind (finding descriptions only). Blank source values are
-  null; facets show them with a `missing` aggregation.
+  `probable_cause`, `analysis`, `factual` and `findings_text` are arrays with one
+  value per section (or finding description) and a position gap of 100 between
+  values, so a phrase never spans two sections. Blank source values are null; facets
+  show them with a `missing` aggregation.
 - **Facets count events.** Aircraft facets aggregate inside `nested` and count with
   `reverse_nested`. An event whose aircraft differ counts once in each of their
   buckets, so aircraft buckets can sum to more than the total (405 US events have
   several aircraft in the 2026-10-16 snapshot). The Phase facet uses
   `defining_phase_groups`, every aircraft's defining phase group (140 US events have
-  several); `sequence_phase_groups` lists every phase in the sequence. Make, model and
-  city use a normalizer (whitespace collapsed, ASCII-folded, upper case), so "Cessna"
-  and "CESSNA" are one value.
+  several); with an aircraft filter active, filter the phase on
+  `aircraft.defining_phase_group` inside the same nested clause.
+  `sequence_phase_groups` lists every phase in the sequence. Make, model and city use
+  a normalizer (whitespace collapsed, ASCII-folded, upper case), so "Cessna" and
+  "CESSNA" are one value.
 - **Text analysis** (`worker/index/analysis.ts`). Indexing: standard tokenizer,
   lowercase, possessive stemmer, English stop words minus negations (`no`, `not`
-  and the other negations are always kept), English stemmer. Searching adds a small
+  and the other negations are always kept), a few stem overrides (icing → ice,
+  conditions → condition, ...), then the conservative light English (KStem) stemmer,
+  which keeps generator/general and engine/engineer apart. Searching adds a small
   `synonym_graph` list (`worker/index/synonyms.ts`) before stop words and stemming:
-  spelling variants such as carb/carburetor/carburettor are equivalent, and
-  abbreviations such as IMC, ATC, CFIT or CFI also match their spelled-out phrase.
-  Stall and spin are never synonyms. Quoted phrases match their own words without
-  synonyms. Changing the mapping, analysis or synonyms needs a new
-  `CASES_INDEX_VERSION`; a unit test pins the definition's fingerprint.
+  spelling variants (carb/carburetor/carburettor, plurals included) and unambiguous
+  abbreviations (IMC, VMC, ATC, IFR, VFR, AGL, MSL, CFIT, CFI) are equivalent to their
+  long forms; wx and mx expand one way only. Stall and spin are never synonyms.
+  Quoted phrases match their own words and never expand synonyms. Changing the
+  mapping, analysis, synonyms or overrides needs a new `CASES_INDEX_VERSION`; a unit
+  test pins the definition's fingerprint.
 
 Integration test files run one at a time: they share `aviation_test` and the
 `aviation-test-*` indices, and some of them reset both.
