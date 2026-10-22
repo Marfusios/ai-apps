@@ -50,7 +50,10 @@ export function Dashboard() {
     setParams(next === 'all' ? { [COHORT_PARAM]: 'all' } : {}, { preventScrollReset: true });
 
   const withData = data?.years.filter((y) => y.completed + y.other > 0) ?? [];
-  const other = completed.data && everything.data ? everything.data.total - completed.data.total : undefined;
+  // Reuse the open cohort's data; the other cohort only supplies the chip counts, which are hidden if it fails.
+  const completedData = cohort === 'default' ? current.data : completed.data;
+  const allData = cohort === 'all' ? current.data : everything.data;
+  const other = completedData && allData ? allData.total - completedData.total : undefined;
 
   return (
     <div className="mx-auto w-full max-w-page px-4 pt-5 pb-12 sm:px-[26px] sm:pt-[22px]">
@@ -58,7 +61,7 @@ export function Dashboard() {
       <h1 className="font-serif text-[26px] leading-[1.1] font-semibold tracking-headline sm:text-[28px]">The record, in questions</h1>
       <CohortChips
         cohort={cohort}
-        completed={completed.data?.total}
+        completed={completedData?.total}
         other={other}
         yearFrom={withData[0]?.year}
         yearTo={withData[withData.length - 1]?.year}
@@ -76,7 +79,7 @@ export function Dashboard() {
         <DashboardSkeleton />
       ) : (
         <>
-          <div className="grid gap-3.5 lg:grid-cols-2">
+          <div className="grid items-start gap-3.5 lg:grid-cols-2">
             <QuestionPanel id="q-years" question="How complete is the recent record?" sentence={yearsSentence(data.years)} wide>
               <YearChart years={data.years} cohort={cohort} />
             </QuestionPanel>
@@ -85,7 +88,6 @@ export function Dashboard() {
               id="q-phase"
               question="When in the flight did it happen?"
               sentence={phaseSentence(data.phase, data.total)}
-              note={overlapSentence(data.coverage.multiAircraft, data.total)}
               open={openLink(cohort, topKnown(data.phase), topKnown(data.phase)?.label.toLowerCase() ?? '')}
             >
               <BarList bars={data.phase} total={data.total} cohort={cohort} label="Phase of the defining event" />
@@ -96,7 +98,11 @@ export function Dashboard() {
                 id="q-injury"
                 question="How serious were the outcomes?"
                 sentence={injurySentence(data.injury, data.total)}
-                open={openLink(cohort, data.injury.find((b) => b.value === 'FATL'), 'fatal')}
+                open={openLink(
+                  cohort,
+                  data.injury.find((b) => b.value === 'FATL'),
+                  'fatal',
+                )}
               >
                 <BarList bars={data.injury} total={data.total} cohort={cohort} label="Highest injury" />
               </QuestionPanel>
@@ -104,7 +110,11 @@ export function Dashboard() {
                 id="q-weather"
                 question="What was the weather?"
                 sentence={weatherSentence(data.weather, data.total)}
-                open={openLink(cohort, data.weather.find((b) => b.value === 'IMC'), 'instrument-conditions')}
+                open={openLink(
+                  cohort,
+                  data.weather.find((b) => b.value === 'IMC'),
+                  'instrument-conditions',
+                )}
               >
                 <BarList bars={data.weather} total={data.total} cohort={cohort} label="Weather conditions" />
               </QuestionPanel>
@@ -132,7 +142,8 @@ export function Dashboard() {
             </QuestionPanel>
           </div>
           <p className="mt-4 text-label text-muted">
-            Snapshot {formatChartDate(data.dataset.snapshotDate)}. Every bar opens the matching cases in Explore. Nothing here ranks aircraft makers.
+            Snapshot {formatChartDate(data.dataset.snapshotDate)}. Every bar opens the matching cases in Explore. Nothing here ranks
+            aircraft makers.
           </p>
         </>
       )}

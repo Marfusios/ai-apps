@@ -23,12 +23,16 @@ export function CohortChips({
   yearTo: number | undefined;
   onCohort: (cohort: Cohort) => void;
 }) {
-  const n = (v: number | undefined): string => (v === undefined ? '…' : formatCount(v));
+  // A count that has not loaded (or failed to load) is left out rather than shown as a placeholder.
+  const withCount = (label: string, count: number | undefined): string =>
+    count === undefined ? label : `${label} · ${formatCount(count)}`;
   const all = cohort === 'all';
   return (
     <div className="mt-2 mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Cohort">
       <Chip variant="filled">
-        {all ? `All US records · ${completed !== undefined && other !== undefined ? formatCount(completed + other) : '…'}` : `Completed investigations · ${n(completed)}`}
+        {all
+          ? withCount('All US records', completed !== undefined && other !== undefined ? completed + other : undefined)
+          : withCount('Completed investigations', completed)}
       </Chip>
       {all ? (
         <Chip variant="add" onClick={() => onCohort('default')}>
@@ -36,11 +40,15 @@ export function CohortChips({
         </Chip>
       ) : (
         <Chip variant="add" onClick={() => onCohort('all')}>
-          + Include {n(other)} other records
+          {other === undefined ? '+ Include other records' : `+ Include ${formatCount(other)} other records`}
         </Chip>
       )}
       <Chip>United States</Chip>
-      {yearFrom !== undefined && yearTo !== undefined && <Chip>{yearFrom} – {yearTo}</Chip>}
+      {yearFrom !== undefined && yearTo !== undefined && (
+        <Chip>
+          {yearFrom} – {yearTo}
+        </Chip>
+      )}
       <Chip>All aircraft</Chip>
     </div>
   );

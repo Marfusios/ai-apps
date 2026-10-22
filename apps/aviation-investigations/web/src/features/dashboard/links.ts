@@ -1,4 +1,10 @@
-import { DEFAULT_COMPLETION, defaultSearchRequest, searchRequestToParams, type FacetKey, type SearchRequest } from '../../../../shared/contracts/search';
+import {
+  DEFAULT_COMPLETION,
+  defaultSearchRequest,
+  searchRequestToParams,
+  type FacetKey,
+  type SearchRequest,
+} from '../../../../shared/contracts/search';
 import type { DashboardRequest } from '../../../../shared/contracts/dashboard';
 
 type Cohort = DashboardRequest['cohort'];

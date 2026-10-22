@@ -51,3 +51,13 @@ test('phone shows one question per card with an open link', async ({ page }) => 
   const overflow = await page.evaluate<boolean>('document.documentElement.scrollWidth > window.innerWidth');
   expect(overflow).toBe(false);
 });
+
+test('all-records year button names the total Explore shows', async ({ page }) => {
+  await page.goto('/dashboard?cohort=all');
+  const bar = page.getByRole('button', {
+    name: /^2023: 1 completed investigation, 1 other record\. Open 2023 in Explore, which shows 2 investigations\.$/,
+  });
+  await bar.click();
+  await expect(page).toHaveURL(/completion=any&yearFrom=2023&yearTo=2023/);
+  await expect(await countLine(page)).toContainText(/^2\b/);
+});

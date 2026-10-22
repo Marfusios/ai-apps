@@ -43,10 +43,7 @@ export function QuestionPanel({
   open?: { href: string; text: string };
 }) {
   return (
-    <section
-      aria-labelledby={id}
-      className={cx('rounded-card border border-hairline bg-raised/80 px-4 py-3.5', wide && 'lg:col-span-2')}
-    >
+    <section aria-labelledby={id} className={cx('rounded-card border border-hairline bg-raised/80 px-4 py-3.5', wide && 'lg:col-span-2')}>
       <h2 id={id} className="mb-0.5 font-serif text-[18px] leading-[1.2] font-semibold">
         {question}
       </h2>
@@ -54,7 +51,10 @@ export function QuestionPanel({
       {children}
       {note && <p className="mt-2 text-label text-muted">{note}</p>}
       {open && (
-        <Link to={open.href} className="mt-2.5 inline-flex text-meta text-blue hover:underline pointer-coarse:min-h-11 pointer-coarse:items-center lg:hidden">
+        <Link
+          to={open.href}
+          className="mt-2.5 inline-flex text-meta text-blue hover:underline pointer-coarse:min-h-11 pointer-coarse:items-center lg:hidden"
+        >
           {open.text} →
         </Link>
       )}

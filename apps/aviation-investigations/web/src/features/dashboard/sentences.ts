@@ -50,7 +50,9 @@ export function injurySentence(injury: readonly DashboardBar[], total: number): 
   const fatal = byValue(injury, 'FATL')?.count ?? 0;
   const none = byValue(injury, 'NONE')?.count ?? 0;
   const noneText =
-    none * 2 > total && total > 0 ? 'more than half had no injuries' : `${formatCount(none)} (${formatPercent(none, total)}) had no injuries`;
+    none * 2 > total && total > 0
+      ? 'more than half had no injuries'
+      : `${formatCount(none)} (${formatPercent(none, total)}) had no injuries`;
   return `**${formatCount(fatal)} investigations (${formatPercent(fatal, total)})** involved a fatality; ${noneText}.`;
 }
 
@@ -77,7 +79,9 @@ export function mapSentence(map: DashboardResponse['map'], total: number): strin
       ? 'Every case has coordinates.'
       : `**${cases(map.withoutCoordinates)}** lack${map.withoutCoordinates === 1 ? 's' : ''} coordinates.`;
   const outside =
-    map.outsideFrame > 0 ? ` ${cases(map.outsideFrame)} ${map.outsideFrame === 1 ? 'falls' : 'fall'} outside the lower 48 (Alaska, Hawaii, territories or waters) and ${map.outsideFrame === 1 ? 'is' : 'are'} not drawn.` : '';
+    map.outsideFrame > 0
+      ? ` ${cases(map.outsideFrame)} ${map.outsideFrame === 1 ? 'falls' : 'fall'} outside the lower 48 (Alaska, Hawaii, territories or waters) and ${map.outsideFrame === 1 ? 'is' : 'are'} not drawn.`
+      : '';
   return `Lower 48 shown: ${formatCount(drawn)} of ${formatCount(total)} cases.${outside} ${lacking}`;
 }
 

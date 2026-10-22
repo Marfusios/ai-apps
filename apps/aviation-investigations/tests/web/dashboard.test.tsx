@@ -60,9 +60,7 @@ describe('Dashboard', () => {
   it('coverage panel says not in this data for flight hours', async () => {
     renderApp('/dashboard');
     const panel = await screen.findByRole('region', { name: 'What can this data tell you?' });
-    expect(panel.textContent).toContain(
-      'How many flights or hours were flown (needed for any risk rate): not in this data',
-    );
+    expect(panel.textContent).toContain('How many flights or hours were flown (needed for any risk rate): not in this data');
     expect(panel.textContent).toContain('AI evidence classification: not used in these charts');
     expect(panel.textContent).toContain('Probable cause text available');
     expect(panel.textContent).toContain('Raw METAR weather text');
@@ -71,7 +69,11 @@ describe('Dashboard', () => {
   it('states multi-aircraft overlap, missing coordinates and the hidden year table', async () => {
     renderApp('/dashboard');
     await screen.findByRole('region', { name: 'Where?' });
-    expect(screen.getAllByText(/involved more than one aircraft/).length).toBeGreaterThan(0);
+    // The overlap note belongs to the aircraft category chart only; phase counts are events.
+    const phase = screen.getByRole('region', { name: 'When in the flight did it happen?' });
+    expect(within(phase).queryByText(/involved more than one aircraft/)).toBeNull();
+    const category = screen.getByRole('region', { name: 'What was flying?' });
+    expect(within(category).getByText(/involved more than one aircraft/)).toBeTruthy();
     expect(screen.getByText(/Lower 48 shown/).textContent).toMatch(/coordinates/);
     expect(screen.getByRole('table', { hidden: true })).toBeTruthy();
     expect(screen.getByText('Other records (in progress or status unknown)')).toBeTruthy();
