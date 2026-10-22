@@ -5,9 +5,9 @@
  * registered selection rule; the scope samples' reservations; the miss classification;
  * the summaries; the configuration loader's key allowlist; the grid checks.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Client, estypes } from '@elastic/elasticsearch';
 import { describe, expect, it } from 'vitest';
 import { createFakeProvider } from '../../server/ai/fake.js';
@@ -25,7 +25,8 @@ import { BASELINE_CONFIG, canonicalConfig, changedKnobs, experimentConfig, isBas
 import { classify, representableVia, thresholdsOf, type Signals } from '../../evals/retrieval/experiments/diagnose.js';
 import { gridConfigs, latencyOf, poolCases, poolCeiling, questionValue, runKey, summarize, type ExperimentItem, type StoredRun } from '../../evals/retrieval/experiments/experiment.js';
 import { candidatesFor, caseRrfFuse, roundRobinCases, uniqueCaseOrder, weightedRrfFuse } from '../../evals/retrieval/experiments/fusion.js';
-import { GRID_VERSION, GridSchema, gridProblems, type Grid } from '../../evals/retrieval/experiments/grid.js';
+import { GRID_VERSION, GridSchema, gridProblems, loadGrid, sha256, type Grid } from '../../evals/retrieval/experiments/grid.js';
+import { CodedDatasetSchema } from '../../evals/retrieval/coded/coded.js';
 import { SCOPE_STAGE_TIMEOUT_MS, ScopeBudgetError, runScopeSamples, scopeInventory } from '../../evals/retrieval/experiments/scope.js';
 import { applyRule, mulberry32, nearestRank, pairedGroupBootstrap, percentile, type BootstrapResult, type VariantEvaluation } from '../../evals/retrieval/experiments/stats.js';
 import { runVariant } from '../../evals/retrieval/experiments/variant.js';
@@ -784,5 +785,40 @@ describe('configuration and grid files', () => {
     expect(problems).toContain('duplicate id p100');
     expect(problems).toContain('same: is the baseline');
     expect(problems.some((p) => p.startsWith('bad: invalid configuration'))).toBe(true);
+  });
+});
+
+describe('the committed registration', () => {
+  const APP_DIR = resolve(import.meta.dirname, '../..');
+  const { grid } = loadGrid(resolve(APP_DIR, 'evals/retrieval/experiments/grid.json'), BASELINE_CONFIG);
+
+  it('is a valid grid whose baseline is production, freezing the committed coded dataset and its generation', () => {
+    const raw = readFileSync(resolve(APP_DIR, grid.frozen.dataset.file), 'utf8');
+    expect(sha256(raw)).toBe(grid.frozen.dataset.sha256);
+    const dataset = CodedDatasetSchema.parse(JSON.parse(raw));
+    expect(dataset.source.specSha256).toBe(grid.frozen.dataset.specSha256);
+    expect(dataset.version).toBe(grid.frozen.dataset.version);
+    expect({
+      id: dataset.source.generationId,
+      archiveSha256: dataset.source.archiveSha256,
+      mappingVersion: dataset.source.mappingVersion,
+      fieldNormalizationVersion: dataset.source.fieldNormalizationVersion,
+      citationTextVersion: dataset.source.citationTextVersion,
+    }).toEqual(grid.frozen.generation);
+    expect(grid.frozen.split).toBe('dev');
+    expect(grid.baseline).toEqual(BASELINE_CONFIG);
+    expect(grid.variants).toHaveLength(37);
+    expect(grid.variants.every((v) => v.target === 'narrowRecall20')).toBe(true);
+    expect(grid.rule).toEqual({ improvementPp: 5, regressionTolerancePp: 2, tieWindowPp: 1, poolImprovementPp: 5 });
+    expect(grid.cost.phaseAUsd).toBe(0.5);
+    // Every pool and single channel reuses the baseline or a variant: no extra configuration runs.
+    const keys = gridConfigs(grid);
+    expect(keys.entries).toHaveLength(1 + grid.variants.length);
+  });
+
+  it('PREREG.md lists exactly the grid’s variants and pools', () => {
+    const prereg = readFileSync(resolve(APP_DIR, 'evals/retrieval/experiments/PREREG.md'), 'utf8');
+    const ids = [...prereg.matchAll(/^\| `([^`]+)` \|/gmu)].map((m) => m[1]);
+    expect(ids).toEqual([...grid.variants.map((v) => v.id), ...grid.pools.map((p) => p.id)]);
   });
 });

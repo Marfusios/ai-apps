@@ -552,6 +552,31 @@ with the Maintenance personnel modifier") are frozen too: the builder and the ru
 when a generation holds a code of the same kind outside the frozen list
 (`CODE_FAMILIES`), and never add it.
 
+**Retrieval experiments** (`evals/retrieval/experiments/`, task 10d). Experiments over
+the coded-reference dev questions, registered before they run: `PREREG.md` explains
+them and `grid.json` freezes the baseline, every variant with its target metric, the
+selection rule, the bootstrap, and the latency and cost limits. They cover fusion and
+depth (passage- or case-level reciprocal rank fusion, passages per channel, kNN
+candidates, the RRF constant, channel weights), case-level BM25 over the cases index
+(narratives, or narratives and `findings_text`) as a third channel or instead of
+passage BM25, bounded candidate pools, and the scope stage's keyword text as BM25 text.
+Every knob is a parameter whose default is today's retrieval: the experiments call the
+production stages with parameters and never change them, and a test holds that the
+default configuration sends exactly the production request bodies. Runs are read-only
+against the target (the ledger records paid calls), refuse a target or dataset other
+than the frozen one, and write their reports to `--out-dir`.
+
+```sh
+pnpm eval:retrieval:experiments preflight                  # free: target, contract, frozen identity, labels re-derived, filter consistency
+pnpm eval:retrieval:experiments scope                      # free dry run: scope-stage input tokens and reservations per question
+pnpm eval:retrieval:experiments scope --confirm-cost       # take the scope samples, every attempt reserved on the ledger
+pnpm eval:retrieval:experiments dev --scope-samples <file> --confirm-cost       # every variant on dev, diagnostics, the rule
+pnpm eval:retrieval:experiments holdout --dev-results <file> --confirm-cost     # once: the selected configuration against the baseline
+```
+
+`--keys-file <file>` reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from a dotenv
+file and never replaces a nonempty process value.
+
 ### Web client
 
 `web/` is a React 19 single-page app built with Vite, React Router, TanStack Query
