@@ -28,7 +28,11 @@ export interface IndexMetaOptions {
 }
 
 export class IndexMetaError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** `missing`: no such index; `not_concrete`: the name is an alias or pattern. */
+    readonly kind: 'missing' | 'not_concrete' = 'missing',
+  ) {
     super(message);
     this.name = 'IndexMetaError';
   }
@@ -50,13 +54,13 @@ export async function readIndexMeta(es: Client, index: string, opts: IndexMetaOp
     found = (await es.indices.getMapping({ index }, transport)) as typeof found;
   } catch (err) {
     if ((err as { meta?: { statusCode?: number } }).meta?.statusCode === 404) {
-      throw new IndexMetaError(`index ${index} does not exist`);
+      throw new IndexMetaError(`index ${index} does not exist`, 'missing');
     }
     throw err;
   }
   const names = Object.keys(found);
   if (names.length !== 1 || names[0] !== index) {
-    throw new IndexMetaError(`${index} is not a concrete index (it resolves to ${names.join(', ') || 'nothing'})`);
+    throw new IndexMetaError(`${index} is not a concrete index (it resolves to ${names.join(', ') || 'nothing'})`, 'not_concrete');
   }
   const meta = found[index]?.mappings?._meta ?? {};
   const generation = meta.generation_id;

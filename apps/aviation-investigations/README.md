@@ -580,7 +580,12 @@ duration), without client addresses or query strings.
   it must hold exactly the generation's `chunk-v2` passage rows. It then calls
   `publishManifest`, which also requires the generation's current verification. The
   API applies the same contract when it loads the manifest: an unservable passages
-  index leaves keyword search working and marks the dataset's passages unservable.
+  index leaves keyword search working and marks the dataset's passages unservable
+  with a fixed code (`not_configured`, `incompatible` or `unavailable`) and a fixed
+  failure category (`timeout`, `transport`, `http_<status>`, `incompatible:<fields>`,
+  …), never upstream error text, in the status and in the log. A broken
+  contract is kept until the manifest changes; a transient failure (a timeout or an
+  Elasticsearch error) is checked again after 30 s, in the background.
 - **Keyword search** (`server/search/keyword.ts`, `filters.ts`, `facets.ts`). The
   words of `q` must all occur in the report: one `multi_match` (`cross_fields`,
   operator `and`) over `probable_cause`, `analysis`, `factual` and `findings_text`

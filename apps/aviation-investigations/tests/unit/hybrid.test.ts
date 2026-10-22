@@ -7,8 +7,18 @@ import {
   createOpenAIQueryEmbedder,
   queryEmbeddingInput,
 } from '../../server/ai/embeddings.js';
-import { PASSAGES_CONTRACT, passagesIndexProblems, type PassagesContract } from '../../server/search/passages-contract.js';
-import type { IndexMeta } from '../../server/search/index-meta.js';
+import { errors } from '@elastic/elasticsearch';
+import {
+  PASSAGES_CONTRACT,
+  PassagesCheckTimeoutError,
+  PassagesIndexIncompatibleError,
+  isDefinitivePassagesFailure,
+  passagesCheckFailure,
+  passagesIndexMismatches,
+  passagesIndexProblems,
+  type PassagesContract,
+} from '../../server/search/passages-contract.js';
+import { IndexMetaError, type IndexMeta } from '../../server/search/index-meta.js';
 import { packEvidence, type PackOptions, type PackablePassage } from '../../server/search/evidence.js';
 import {
   NO_AIRCRAFT,
@@ -325,6 +335,52 @@ describe('refusals', () => {
     expect(() => retrievalParams({ perChannel: 500 })).toThrow(/perChannel/);
     expect(() => retrievalParams({ perChannel: 200, numCandidatesFactor: 60 })).toThrow(/numCandidatesFactor/);
     expect(retrievalParams({ perChannel: 100 }).perChannel).toBe(100);
+  });
+});
+
+describe('passages check failures', () => {
+  it('are fixed categories that never carry upstream text', () => {
+    const meta = { context: null, name: 'es', request: { params: { method: 'GET', path: '/' }, options: {}, id: 1 }, connection: null, attempts: 0, aborted: false };
+    const upstream = (statusCode: number) =>
+      new errors.ResponseError({
+        body: { error: { root_cause: [{ type: 'x', reason: 'SENTINEL_UPSTREAM' }], reason: 'SENTINEL_UPSTREAM' }, status: statusCode },
+        statusCode,
+        headers: {},
+        warnings: null,
+        meta,
+      } as never);
+    expect(upstream(500).message).toContain('SENTINEL_UPSTREAM');
+    const cases: [unknown, string][] = [
+      [upstream(500), 'http_500'],
+      [upstream(42), 'http_unknown'],
+      [new errors.TimeoutError('SENTINEL_UPSTREAM'), 'timeout'],
+      [new PassagesCheckTimeoutError(300), 'timeout'],
+      [new errors.ConnectionError('SENTINEL_UPSTREAM'), 'transport'],
+      [new errors.RequestAbortedError('SENTINEL_UPSTREAM'), 'aborted'],
+      [new Error('SENTINEL_UPSTREAM'), 'unexpected'],
+      ['SENTINEL_UPSTREAM', 'unexpected'],
+      [new IndexMetaError('index SENTINEL_UPSTREAM does not exist', 'missing'), 'index_missing'],
+      [new IndexMetaError('SENTINEL_UPSTREAM resolves to x', 'not_concrete'), 'index_not_concrete'],
+    ];
+    for (const [err, category] of cases) {
+      expect(passagesCheckFailure(err)).toBe(category);
+      expect(passagesCheckFailure(err)).not.toContain('SENTINEL');
+    }
+    const meta2: IndexMeta = {
+      index: 'x',
+      indexVersion: 'SENTINEL_UPSTREAM',
+      fingerprint: null,
+      generationId: 1,
+      buildId: null,
+      embeddingModel: 'text-embedding-3-small',
+      embeddingDims: 1536,
+      chunkerVersion: 'chunk-v2',
+      inputTemplateVersion: 'input-v1',
+    };
+    const incompatible = new PassagesIndexIncompatibleError('x', passagesIndexMismatches(meta2, { generationId: 1, model: 'text-embedding-3-small', dims: 1536 }));
+    expect(passagesCheckFailure(incompatible)).toBe('incompatible:index_version,fingerprint');
+    expect(isDefinitivePassagesFailure(incompatible)).toBe(true);
+    expect(isDefinitivePassagesFailure(upstream(503))).toBe(false);
   });
 });
 

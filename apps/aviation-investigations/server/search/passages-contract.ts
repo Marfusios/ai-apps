@@ -19,8 +19,8 @@
  * `worker publish` also compares the index's document count with the generation's
  * `passages` rows for the approved chunker version.
  */
-import type { Client } from '@elastic/elasticsearch';
-import { readIndexMeta, type IndexMeta, type IndexMetaOptions } from './index-meta.js';
+import { errors, type Client } from '@elastic/elasticsearch';
+import { IndexMetaError, readIndexMeta, type IndexMeta, type IndexMetaOptions } from './index-meta.js';
 
 export interface PassagesContract {
   indexVersion: string;
@@ -50,33 +50,87 @@ export interface PassagesExpectation {
   dims: number;
 }
 
-/** Every way `meta` breaks the contract; empty when the index can be served. */
-export function passagesIndexProblems(meta: IndexMeta, expect: PassagesExpectation, contract: PassagesContract = PASSAGES_CONTRACT): string[] {
-  const out: string[] = [];
+/** The contract fields an index can fail on (fixed names, safe for logs). */
+export type ContractField = 'generation' | 'index_version' | 'chunker' | 'input_template' | 'embedding_model' | 'embedding_dims' | 'fingerprint';
+
+/** Every way `meta` breaks the contract, by field; empty when the index can be served. */
+export function passagesIndexMismatches(
+  meta: IndexMeta,
+  expect: PassagesExpectation,
+  contract: PassagesContract = PASSAGES_CONTRACT,
+): { field: ContractField; problem: string }[] {
+  const out: { field: ContractField; problem: string }[] = [];
   const show = (v: string | number | null) => (v === null ? 'none' : String(v));
-  if (meta.generationId !== expect.generationId) out.push(`generation ${show(meta.generationId)} (expected ${expect.generationId})`);
-  if (meta.indexVersion !== contract.indexVersion) out.push(`index version ${show(meta.indexVersion)} (expected ${contract.indexVersion})`);
-  if (meta.chunkerVersion !== contract.chunkerVersion) out.push(`chunker ${show(meta.chunkerVersion)} (expected ${contract.chunkerVersion})`);
+  const add = (field: ContractField, problem: string) => out.push({ field, problem });
+  if (meta.generationId !== expect.generationId) add('generation', `generation ${show(meta.generationId)} (expected ${expect.generationId})`);
+  if (meta.indexVersion !== contract.indexVersion) add('index_version', `index version ${show(meta.indexVersion)} (expected ${contract.indexVersion})`);
+  if (meta.chunkerVersion !== contract.chunkerVersion) add('chunker', `chunker ${show(meta.chunkerVersion)} (expected ${contract.chunkerVersion})`);
   if (meta.inputTemplateVersion !== contract.inputTemplateVersion) {
-    out.push(`input template ${show(meta.inputTemplateVersion)} (expected ${contract.inputTemplateVersion})`);
+    add('input_template', `input template ${show(meta.inputTemplateVersion)} (expected ${contract.inputTemplateVersion})`);
   }
-  if (meta.embeddingModel !== expect.model) out.push(`embedding model ${show(meta.embeddingModel)} (expected ${expect.model})`);
-  if (meta.embeddingDims !== expect.dims) out.push(`${show(meta.embeddingDims)} dimensions (expected ${expect.dims})`);
+  if (meta.embeddingModel !== expect.model) add('embedding_model', `embedding model ${show(meta.embeddingModel)} (expected ${expect.model})`);
+  if (meta.embeddingDims !== expect.dims) add('embedding_dims', `${show(meta.embeddingDims)} dimensions (expected ${expect.dims})`);
   const key = embeddingKey(expect.model, expect.dims);
   const approved = Object.hasOwn(contract.fingerprints, key) ? contract.fingerprints[key] : undefined;
-  if (approved === undefined) out.push(`no approved fingerprint for ${key}`);
-  else if (meta.fingerprint !== approved) out.push(`fingerprint ${meta.fingerprint ? meta.fingerprint.slice(0, 12) : 'none'} (expected ${approved.slice(0, 12)})`);
+  if (approved === undefined) add('fingerprint', `no approved fingerprint for ${key}`);
+  else if (meta.fingerprint !== approved) add('fingerprint', `fingerprint ${meta.fingerprint ? meta.fingerprint.slice(0, 12) : 'none'} (expected ${approved.slice(0, 12)})`);
   return out;
 }
 
+/** Every way `meta` breaks the contract, as sentences (operator messages); empty when the index can be served. */
+export function passagesIndexProblems(meta: IndexMeta, expect: PassagesExpectation, contract: PassagesContract = PASSAGES_CONTRACT): string[] {
+  return passagesIndexMismatches(meta, expect, contract).map((m) => m.problem);
+}
+
 export class PassagesIndexIncompatibleError extends Error {
+  /** The fields that differ (fixed names, safe for logs). */
+  readonly fields: readonly ContractField[];
+  /** Operator sentences; they quote the index `_meta`. */
+  readonly problems: readonly string[];
   constructor(
     readonly index: string,
-    readonly problems: readonly string[],
+    mismatches: readonly { field: ContractField; problem: string }[],
   ) {
-    super(`${index} breaks the passages contract: ${problems.join('; ')}`);
+    super(`${index} breaks the passages contract: ${mismatches.map((m) => m.problem).join('; ')}`);
     this.name = 'PassagesIndexIncompatibleError';
+    this.fields = [...new Set(mismatches.map((m) => m.field))];
+    this.problems = mismatches.map((m) => m.problem);
   }
+}
+
+/** The check outran its own deadline (the caller's timer, not the client's). */
+export class PassagesCheckTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`the passages index check timed out after ${ms} ms`);
+    this.name = 'PassagesCheckTimeoutError';
+  }
+}
+
+/**
+ * A fixed category for a failed passages check, safe to store and log: no upstream
+ * message, body or cause is ever part of it (an Elasticsearch error message quotes
+ * the server's `root_cause.reason`).
+ * - `incompatible:<fields>` (the contract fields that differ), `index_missing`,
+ *   `index_not_concrete`: definitive;
+ * - `timeout`, `aborted`, `transport`, `http_<status>` (a validated 3-digit status) or
+ *   `http_unknown`, `unexpected`: transient.
+ */
+export function passagesCheckFailure(err: unknown): string {
+  if (err instanceof PassagesIndexIncompatibleError) return `incompatible:${err.fields.join(',')}`;
+  if (err instanceof IndexMetaError) return `index_${err.kind}`;
+  if (err instanceof PassagesCheckTimeoutError || err instanceof errors.TimeoutError) return 'timeout';
+  if (err instanceof errors.RequestAbortedError || (err instanceof Error && err.name === 'AbortError')) return 'aborted';
+  if (err instanceof errors.ResponseError) {
+    const status = err.statusCode;
+    return typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? `http_${status}` : 'http_unknown';
+  }
+  if (err instanceof errors.ConnectionError || err instanceof errors.NoLivingConnectionsError) return 'transport';
+  return 'unexpected';
+}
+
+/** True for the definitive failures: the index breaks the contract or cannot be the index. */
+export function isDefinitivePassagesFailure(err: unknown): boolean {
+  return err instanceof PassagesIndexIncompatibleError || err instanceof IndexMetaError;
 }
 
 /**
@@ -90,7 +144,7 @@ export async function checkPassagesIndex(
   opts: IndexMetaOptions & { contract?: PassagesContract } = {},
 ): Promise<IndexMeta> {
   const meta = await readIndexMeta(es, index, opts);
-  const problems = passagesIndexProblems(meta, expect, opts.contract);
-  if (problems.length > 0) throw new PassagesIndexIncompatibleError(index, problems);
+  const mismatches = passagesIndexMismatches(meta, expect, opts.contract);
+  if (mismatches.length > 0) throw new PassagesIndexIncompatibleError(index, mismatches);
   return meta;
 }

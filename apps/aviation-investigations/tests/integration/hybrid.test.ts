@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Client } from '@elastic/elasticsearch';
+import { errors, type Client } from '@elastic/elasticsearch';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { queryEmbeddingInput } from '../../server/ai/embeddings.js';
 import { SearchRequestSchema } from '../../shared/contracts/search.js';
@@ -283,10 +283,9 @@ describe('the passages contract at publication and in the API', () => {
       const servable = await new DatasetResolver(app, es, { embedding }).current();
       expect(servable.passages).toEqual({ index, servable: true });
       const other = await new DatasetResolver(app, es, { embedding: { model: MODEL, dims: 512 } }).current();
-      expect(other.passages).toMatchObject({ index, servable: false });
-      expect(other.passages?.servable === false && other.passages.reason).toMatch(/1536 dimensions \(expected 512\)/);
+      expect(other.passages).toEqual({ index, servable: false, code: 'incompatible', reason: 'incompatible:embedding_dims,fingerprint' });
       const unconfigured = await new DatasetResolver(app, es).current();
-      expect(unconfigured.passages).toEqual({ index, servable: false, reason: 'no embedding model is configured' });
+      expect(unconfigured.passages).toEqual({ index, servable: false, code: 'not_configured', reason: 'embedding_not_configured' });
       // Keyword search keeps working either way: the dataset itself resolves.
       expect(other.dataset.revision).toBe(servable.dataset.revision);
     } finally {
@@ -294,49 +293,133 @@ describe('the passages contract at publication and in the API', () => {
     }
   });
 
+  /**
+   * The real client, except that reading the passages index mapping follows `mode()`:
+   * pass through, throw, or never answer. Counts the reads of each index's mapping.
+   */
+  type Mode = 'ok' | 'throws' | 'hangs' | 'upstream';
+  /** An Elasticsearch error whose server reason carries a sentinel (G5 sanitising regression). */
+  const upstreamError = () =>
+    new errors.ResponseError({
+      body: { error: { root_cause: [{ type: 'x', reason: 'SENTINEL_UPSTREAM' }], type: 'search_phase_execution_exception', reason: 'SENTINEL_UPSTREAM' }, status: 503 },
+      statusCode: 503,
+      headers: {},
+      warnings: null,
+      meta: { context: null, name: 'es', request: { params: { method: 'GET', path: '/' }, options: {}, id: 1 }, connection: null, attempts: 0, aborted: false },
+    } as never);
+
+  function flakyClient(mode: () => Mode): { client: Client; reads: Map<string, number> } {
+    const reads = new Map<string, number>();
+    const client = new Proxy(es, {
+      get(target, prop) {
+        if (prop === 'indices') {
+          const indices = target.indices;
+          return new Proxy(indices, {
+            get(t, p) {
+              if (p === 'getMapping') {
+                return (params: { index: string }, opts?: unknown) => {
+                  reads.set(params.index, (reads.get(params.index) ?? 0) + 1);
+                  const m = params.index === index ? mode() : 'ok';
+                  if (m === 'throws') return Promise.reject(new Error('connection reset SENTINEL_UPSTREAM'));
+                  if (m === 'upstream') return Promise.reject(upstreamError());
+                  if (m === 'hangs') return new Promise(() => undefined);
+                  return t.getMapping(params, opts as never);
+                };
+              }
+              const v = Reflect.get(t, p) as unknown;
+              return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+            },
+          });
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    return { client, reads };
+  }
+
   it('degrades to unservable passages when their check fails or hangs, and keyword search still answers', async () => {
     const app = createDb(testDbUrl('app'), { max: 2, applicationName: 'aviation-test-hybrid-app' });
     try {
-      for (const mode of ['throws', 'hangs'] as const) {
-        // The real client, except that reading the passages index mapping fails or never answers.
-        const flaky = new Proxy(es, {
-          get(target, prop) {
-            if (prop === 'indices') {
-              const indices = target.indices;
-              return new Proxy(indices, {
-                get(t, p) {
-                  if (p === 'getMapping') {
-                    return (params: { index: string }, opts?: unknown) => {
-                      if (params.index !== index) return t.getMapping(params, opts as never);
-                      if (mode === 'throws') return Promise.reject(new Error('connection reset'));
-                      return new Promise(() => undefined);
-                    };
-                  }
-                  const v = Reflect.get(t, p) as unknown;
-                  return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
-                },
-              });
-            }
-            const v = Reflect.get(target, prop) as unknown;
-            return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-          },
-        });
-        const logged: [string, string][] = [];
+      const expected = { throws: 'unexpected', upstream: 'http_503', hangs: 'timeout' } as const;
+      for (const mode of ['throws', 'upstream', 'hangs'] as const) {
+        const { client: flaky } = flakyClient(() => mode);
+        const logged: unknown[][] = [];
         const resolver = new DatasetResolver(app, flaky, {
           embedding,
           passagesCheckTimeoutMs: 300,
-          onPassagesUnservable: (i, reason) => logged.push([i, reason]),
+          onPassagesUnservable: (...args) => logged.push(args),
         });
         const started = Date.now();
         const pinned = await resolver.current();
         expect(Date.now() - started).toBeLessThan(5_000);
-        expect(pinned.passages).toMatchObject({ index, servable: false });
-        const reason = pinned.passages?.servable === false ? pinned.passages.reason : '';
-        expect(reason).toMatch(mode === 'throws' ? /could not be checked \(Error: connection reset\)/ : /timed out after 300 ms/);
-        expect(logged).toEqual([[index, reason]]);
+        expect(pinned.passages).toEqual({ index, servable: false, code: 'unavailable', reason: expected[mode] });
+        expect(logged).toEqual([[index, 'unavailable', expected[mode]]]);
+        // No upstream text in the stored status or in what is logged.
+        expect(JSON.stringify(pinned.passages)).not.toContain('SENTINEL_UPSTREAM');
+        expect(JSON.stringify(logged)).not.toContain('SENTINEL_UPSTREAM');
         const r = await keywordSearch({ es: flaky, db: app }, pinned, SearchRequestSchema.parse({ q: 'engine' }));
         expect(r.total).toBeGreaterThan(0);
       }
+    } finally {
+      await closeDb(app);
+    }
+  });
+
+  it('checks a transient passages failure again after the retry delay, once for all callers, without reloading keyword facts', async () => {
+    const app = createDb(testDbUrl('app'), { max: 2, applicationName: 'aviation-test-hybrid-app' });
+    try {
+      let mode: Mode = 'upstream';
+      const { client: flaky, reads } = flakyClient(() => mode);
+      let clock = 1_000_000;
+      const resolver = new DatasetResolver(app, flaky, { embedding, passagesRetryMs: 30_000, now: () => clock });
+
+      // First load: a transient error. AI evidence is off, keyword search works.
+      const first = await resolver.current();
+      expect(first.passages).toEqual({ index, servable: false, code: 'unavailable', reason: 'http_503' });
+      expect((await keywordSearch({ es: flaky, db: app }, first, SearchRequestSchema.parse({ q: 'engine' }))).total).toBeGreaterThan(0);
+      expect(reads.get(index)).toBe(1);
+      const casesReads = reads.get(casesIndex);
+
+      // Elasticsearch recovers, but within the retry delay the failure is not re-checked.
+      mode = 'ok';
+      clock += 29_000;
+      expect((await resolver.current()).passages).toMatchObject({ servable: false, code: 'unavailable' });
+      expect(reads.get(index)).toBe(1);
+
+      // After the delay, concurrent callers start one shared re-check and get the last status meanwhile.
+      clock += 2_000;
+      const during = await Promise.all(Array.from({ length: 5 }, () => resolver.current()));
+      for (const d of during) expect(d.passages).toMatchObject({ servable: false });
+      for (let i = 0; i < 50 && (await resolver.current()).passages?.servable !== true; i += 1) await new Promise((r) => setTimeout(r, 20));
+      expect(reads.get(index)).toBe(2);
+      const recovered = await resolver.current();
+      expect(recovered.passages).toEqual({ index, servable: true });
+      // The same resolver instance and the same manifest: no publication in between.
+      expect(recovered.manifest).toEqual(first.manifest);
+      // Same manifest, same keyword facts: the cases index was not read again.
+      expect(recovered.dataset.revision).toBe(first.dataset.revision);
+      expect(reads.get(casesIndex)).toBe(casesReads);
+
+      // A servable answer is kept for the manifest: no further reads.
+      clock += 120_000;
+      expect((await resolver.current()).passages).toEqual({ index, servable: true });
+      expect(reads.get(index)).toBe(2);
+    } finally {
+      await closeDb(app);
+    }
+  });
+
+  it('keeps a definitive incompatibility for the manifest and never re-checks it', async () => {
+    const app = createDb(testDbUrl('app'), { max: 2, applicationName: 'aviation-test-hybrid-app' });
+    try {
+      const { client, reads } = flakyClient(() => 'ok');
+      let clock = 1_000_000;
+      const resolver = new DatasetResolver(app, client, { embedding: { model: MODEL, dims: 512 }, passagesRetryMs: 30_000, now: () => clock });
+      expect((await resolver.current()).passages).toMatchObject({ servable: false, code: 'incompatible' });
+      clock += 300_000;
+      expect((await resolver.current()).passages).toMatchObject({ servable: false, code: 'incompatible' });
+      expect(reads.get(index)).toBe(1);
     } finally {
       await closeDb(app);
     }
