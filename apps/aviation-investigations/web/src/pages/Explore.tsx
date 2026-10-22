@@ -15,11 +15,14 @@ import {
   type SearchResponse,
 } from '../../../shared/contracts/search';
 import { searchQuery } from '../api';
-import { AskAiButton } from '../components/AskAiButton';
 import { Chip } from '../components/Chip';
 import { SearchBox } from '../components/SearchBox';
 import { cx } from '../lib/cx';
 import { formatCount, plural } from '../lib/format';
+import { AiNoticeBox } from '../features/ai/AiNoticeBox';
+import { AskAiButton } from '../features/ai/AskAiButton';
+import { useAskAi } from '../features/ai/useAskAi';
+import { briefFiltersOf } from '../features/brief/filters';
 import { CaseDrawer, type DrawerPosition } from '../features/case/CaseDrawer';
 import { COMPARE_FULL_MESSAGE, CompareTray } from '../features/explore/CompareTray';
 import { Facets, activeFilterCount } from '../features/explore/Facets';
@@ -208,6 +211,12 @@ export function Explore() {
   const [drawerNotice, setDrawerNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
   const state = (location.state ?? {}) as ExploreLocationState;
+  const ai = useAskAi();
+  const [askedFrom, setAskedFrom] = useState<'box' | 'nudge'>('box');
+  const askAi = (question: string, from: 'box' | 'nudge'): void => {
+    setAskedFrom(from);
+    void ai.ask(question, briefFiltersOf(request));
+  };
 
   useEffect(() => setDraft(request.q), [request.q]);
   useEffect(() => setDrawerNotice(null), [openCase]);
@@ -297,6 +306,11 @@ export function Explore() {
   const listParams = new URLSearchParams(params);
   listParams.delete(CASE_PARAM);
   const listHref = `/explore${listParams.size > 0 ? `?${listParams.toString()}` : ''}`;
+  const listHrefFor = (q: string): string => {
+    const next = new URLSearchParams(listParams);
+    if (q.trim()) next.set('q', q.trim());
+    return `/explore${next.size > 0 ? `?${next.toString()}` : ''}`;
+  };
   const total = response?.total ?? 0;
   const noun = isDefaultCohort(request)
     ? total === 1
@@ -316,7 +330,15 @@ export function Explore() {
           <Facets response={response} request={request} onChange={update} />
         </aside>
         <div className="min-w-0">
-          <SearchBox variant="bar" value={draft} onChange={setDraft} onSearch={(value) => update({ q: value.trim() })} />
+          <SearchBox
+            variant="bar"
+            value={draft}
+            onChange={setDraft}
+            onSearch={(value) => update({ q: value.trim() })}
+            onAsk={(value) => askAi(value, 'box')}
+            askPhase={askedFrom === 'box' ? ai.phase : 'idle'}
+          />
+          <AiNoticeBox notice={askedFrom === 'box' ? ai.notice : null} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'box')} className="mt-3" />
 
           <div className="-mx-4 mt-0.5 flex items-center gap-1.5 overflow-x-auto px-4 py-3 lg:hidden">
             <FiltersSheet
@@ -390,8 +412,9 @@ export function Explore() {
               <Pager response={response} onPage={(page) => update({ page })} />
               <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-card border border-magenta-soft bg-magenta-wash px-3 py-2 text-ui">
                 <span>Want these grouped and explained? Ask the AI with these filters.</span>
-                <AskAiButton size="sm" className="ml-auto" />
+                <AskAiButton size="sm" className="ml-auto" onAsk={() => askAi(draft, 'nudge')} phase={askedFrom === 'nudge' ? ai.phase : 'idle'} />
               </div>
+              <AiNoticeBox notice={askedFrom === 'nudge' ? ai.notice : null} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'nudge')} className="mt-3" />
             </>
           )}
         </div>

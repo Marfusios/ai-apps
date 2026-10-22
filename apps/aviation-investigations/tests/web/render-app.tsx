@@ -3,12 +3,12 @@ import { render } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterAll, afterEach, beforeAll } from 'vitest';
-import { createHandlers } from '../../web/src/mocks/handlers';
+import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { routes } from '../../web/src/routes';
 
 /** MSW over the fixture mock API for component tests; call once per test file. */
-export function setupMockApi(): ReturnType<typeof setupServer> {
-  const server = setupServer(...createHandlers());
+export function setupMockApi(options: HandlerOptions = {}): ReturnType<typeof setupServer> {
+  const server = setupServer(...createHandlers(options));
   beforeAll(() => server.listen({ onUnhandledFrame: 'error' }));
   afterEach(() => server.resetHandlers());
   afterAll(() => server.close());

@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router';
+import { BriefIdSchema, MAX_BRIEF_STEPS } from '../../../shared/contracts/briefs';
 import { NtsbNoSchema } from '../../../shared/contracts/common';
 import { caseQuery, isNotFound } from '../api';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { cx } from '../lib/cx';
 import { formatChartDate } from '../lib/format';
+import { caseContextQuery } from '../features/brief/api';
+import type { AiCaseContext } from '../features/case/BriefContext';
 import { CaseStory } from '../features/case/CaseStory';
 import { StorySkeleton } from '../features/case/CaseDrawer';
 import { COMPARE_FULL_MESSAGE, CompareTray } from '../features/explore/CompareTray';
@@ -26,14 +29,45 @@ export function PrintHeader({ title, cases, snapshotDate }: { title: string; cas
   );
 }
 
-/** The full case page (UI_DESIGN §4.5), NTSB data only, in a 680px column. */
+/**
+ * `brief` and `step` of a case or compare link opened from a brief, or null. A link with
+ * a malformed reference reads as a brief that is gone (`invalid`).
+ */
+export function readBriefRef(params: URLSearchParams): { id: string; step: number } | 'invalid' | null {
+  const id = params.get('brief');
+  if (id === null) return null;
+  const raw = params.get('step') ?? '';
+  const step = /^\d$/.test(raw) ? Number(raw) : NaN;
+  if (!BriefIdSchema.safeParse(id).success || !(step >= 1 && step <= MAX_BRIEF_STEPS)) return 'invalid';
+  return { id, step };
+}
+
+/**
+ * The full case page (UI_DESIGN §4.5) in a 680px column: NTSB data only, unless it is
+ * opened from the viewer's own live brief (`?brief=…&step=n`); then that step's AI
+ * context comes from the private endpoint, or a muted note says it is gone.
+ */
 export function CasePage() {
   const { ntsbNo: raw = '' } = useParams();
   const ntsbNo = raw.toUpperCase();
   const valid = NtsbNoSchema.safeParse(ntsbNo).success;
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from;
+  const [params] = useSearchParams();
+  const ref = readBriefRef(params);
+  const brief = ref !== null && ref !== 'invalid' ? ref : null;
+  const from = (location.state as { from?: string } | null)?.from ?? (brief ? `/briefs/${brief.id}?step=${brief.step}` : undefined);
   const query = useQuery({ ...caseQuery(ntsbNo), enabled: valid });
+  const context = useQuery({ ...caseContextQuery(brief?.id ?? '', brief?.step ?? 1, ntsbNo), enabled: valid && brief !== null });
+  const ai: AiCaseContext | undefined =
+    ref === null
+      ? undefined
+      : ref === 'invalid' || !brief || isNotFound(context.error)
+        ? { state: 'gone', briefId: '', step: 1 }
+        : context.isError
+          ? { state: 'error', briefId: brief.id, step: brief.step, retry: () => void context.refetch() }
+          : context.data
+            ? { state: 'ready', briefId: brief.id, step: brief.step, context: context.data }
+            : { state: 'loading', briefId: brief.id, step: brief.step };
   const compare = useCompareSelection();
   const [notice, setNotice] = useState<string | null>(null);
   const inCompare = compare.selected.includes(ntsbNo);
@@ -82,6 +116,8 @@ export function CasePage() {
             <CaseStory
               detail={query.data}
               mode="page"
+              ai={ai}
+              openAtCited={false}
               actions={
                 <div className="mt-3 flex flex-wrap items-center gap-2" data-print="hide">
                   <Button variant="search" size="sm" aria-pressed={inCompare} onClick={toggle}>

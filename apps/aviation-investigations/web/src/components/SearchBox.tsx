@@ -1,7 +1,8 @@
 import { useId, type FormEvent, type KeyboardEvent, type Ref } from 'react';
 import { MAX_QUERY_LENGTH } from '../../../shared/contracts/search';
+import { AskAiButton } from '../features/ai/AskAiButton';
+import type { AiPhase } from '../features/ai/useAiRequest';
 import { cx } from '../lib/cx';
-import { AskAiButton } from './AskAiButton';
 import { Button } from './Button';
 
 export const QUESTION_PLACEHOLDER = 'What happened, and what did investigators establish?';
@@ -11,6 +12,9 @@ export interface SearchBoxProps {
   onChange: (value: string) => void;
   /** Runs the free keyword Search. */
   onSearch: (value: string) => void;
+  /** Runs Ask AI (an explicit click or Ctrl/Cmd+Enter; never plain Enter). */
+  onAsk: (value: string) => void;
+  askPhase?: AiPhase;
   /** `home`: the large question box. `bar`: Explore's one-line box. */
   variant: 'home' | 'bar';
   inputRef?: Ref<HTMLTextAreaElement & HTMLInputElement>;
@@ -20,10 +24,10 @@ export interface SearchBoxProps {
 
 /**
  * The search box with **Search** and **Ask AI** (UI_DESIGN §4.1, §4.2). Enter runs
- * Search, which is free; Ctrl/Cmd+Enter is reserved for Ask AI, so it never runs
- * Search by accident (§3).
+ * Search, which is free; Ask AI needs a click or Ctrl/Cmd+Enter, so nobody spends an
+ * AI search by accident (§3).
  */
-export function SearchBox({ value, onChange, onSearch, variant, inputRef, autoFocus, className }: SearchBoxProps) {
+export function SearchBox({ value, onChange, onSearch, onAsk, askPhase, variant, inputRef, autoFocus, className }: SearchBoxProps) {
   const label = useId();
   const submit = (event: FormEvent): void => {
     event.preventDefault();
@@ -32,8 +36,8 @@ export function SearchBox({ value, onChange, onSearch, variant, inputRef, autoFo
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    if (event.ctrlKey || event.metaKey) return; // Reserved for Ask AI.
-    onSearch(value);
+    if (event.ctrlKey || event.metaKey) onAsk(value);
+    else onSearch(value);
   };
   const field = {
     id: label,
@@ -52,7 +56,7 @@ export function SearchBox({ value, onChange, onSearch, variant, inputRef, autoFo
       <Button variant="search" type="submit">
         Search
       </Button>
-      <AskAiButton />
+      <AskAiButton onAsk={() => onAsk(value)} phase={askPhase} />
     </>
   );
 
