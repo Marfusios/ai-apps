@@ -5,7 +5,9 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { Link, type To } from 'react-router';
 import type { Snippet } from '../../../../shared/contracts/search';
 import { caseQuery, isNotFound } from '../../api';
+import { caseContextQuery } from '../brief/api';
 import { cx } from '../../lib/cx';
+import type { AiCaseContext } from './BriefContext';
 import { CaseStory } from './CaseStory';
 
 export interface DrawerPosition {
@@ -28,6 +30,12 @@ export interface CaseDrawerProps {
   /** Router state for the full page, e.g. where "Back to results" returns. */
   fullPageState?: unknown;
   matched: Snippet | null;
+  /**
+   * The viewer's live brief and step, when the drawer is opened over a brief: its AI
+   * context for the case comes from the private endpoint, and the drawer opens at the
+   * cited passage (UI_DESIGN §4.3, §4.5).
+   */
+  brief?: { id: string; step: number } | null;
 }
 
 const toolButton =
@@ -59,18 +67,37 @@ export function CaseDrawer({
   fullPage,
   fullPageState,
   matched,
+  brief = null,
 }: CaseDrawerProps) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const shown = useRef<string | null>(null);
+  // The element that opened the drawer, for returning focus to exactly it.
+  const opener = useRef<HTMLElement | null>(null);
+  if (ntsbNo && shown.current === null && document.activeElement instanceof HTMLElement) opener.current = document.activeElement;
   if (ntsbNo) shown.current = ntsbNo;
   const query = useQuery({ ...caseQuery(ntsbNo ?? ''), enabled: ntsbNo !== null });
+  const context = useQuery({ ...caseContextQuery(brief?.id ?? '', brief?.step ?? 1, ntsbNo ?? ''), enabled: brief !== null && ntsbNo !== null });
+  const ai: AiCaseContext | undefined = brief
+    ? context.data
+      ? { state: 'ready', briefId: brief.id, step: brief.step, context: context.data }
+      : context.isError
+        ? { state: 'unavailable', briefId: brief.id, step: brief.step }
+        : { state: 'loading', briefId: brief.id, step: brief.step }
+    : undefined;
+  // Over a brief the story scrolls itself to the cited passage, so focusing the headline must not scroll.
+  const focusHeading = (): void => heading.current?.focus(brief ? { preventScroll: true } : undefined);
   // Focus goes to the headline on open; while the case loads, to its placeholder.
   const focusPending = useRef(false);
   useEffect(() => {
     if (!focusPending.current || !heading.current) return;
-    heading.current.focus();
+    focusHeading();
     if (query.data) focusPending.current = false;
   }, [query.data, ntsbNo]);
+  // Each case starts at the top of the drawer (or at its cited passage).
+  useEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+  }, [ntsbNo]);
 
   return (
     <Dialog.Root open={ntsbNo !== null} onOpenChange={(open) => !open && onClose()}>
@@ -82,15 +109,23 @@ export function CaseDrawer({
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             focusPending.current = true;
-            heading.current?.focus();
+            focusHeading();
             if (heading.current && query.data) focusPending.current = false;
           }}
           onCloseAutoFocus={(event) => {
-            // Return focus to the row of the case last shown (‹ › may have moved on).
-            // Case numbers are validated as [A-Z0-9], so they are safe in a selector.
-            const trigger = shown.current
-              ? document.querySelector<HTMLElement>(`[data-case-trigger="${shown.current}"]`)
-              : null;
+            // Return focus to what opened the drawer when it still shows that case, otherwise
+            // to the row of the case last shown (‹ › may have moved on). Case numbers are
+            // validated as [A-Z0-9], so they are safe in a selector.
+            const own = opener.current;
+            opener.current = null;
+            const last = shown.current;
+            shown.current = null;
+            const trigger =
+              own && own.isConnected && own.getAttribute('data-case-trigger') === last
+                ? own
+                : last
+                  ? document.querySelector<HTMLElement>(`[data-case-trigger="${last}"]`)
+                  : null;
             if (trigger) {
               event.preventDefault();
               trigger.focus();
@@ -141,10 +176,10 @@ export function CaseDrawer({
               {compareNotice}
             </p>
           )}
-          <div className="flex-1 overflow-y-auto overscroll-contain px-4 pt-5 pb-8 sm:px-[30px] sm:pt-[22px]">
+          <div ref={body} className="flex-1 overflow-y-auto overscroll-contain px-4 pt-5 pb-8 sm:px-[30px] sm:pt-[22px]">
             {query.data ? (
               <>
-                <CaseStory detail={query.data} mode="drawer" headingRef={heading} matched={matched} />
+                <CaseStory detail={query.data} mode="drawer" headingRef={heading} matched={matched} ai={ai} openAtCited={brief !== null} />
                 <Link to={fullPage} state={fullPageState} className="link mt-4 inline-block text-ui sm:hidden">
                   Open the full case page
                 </Link>

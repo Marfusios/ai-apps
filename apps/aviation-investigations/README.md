@@ -507,12 +507,38 @@ breakpoints. Components never use raw colours.
 
 Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with facet
 counts, the case drawer and the compare tray), the full case page and Compare
-(flight strips with NTSB columns, "Same in all", sort and Print for class), plus
-About and Privacy. They show NTSB data only; Ask AI is present but disabled until
-briefs arrive. View state is in the URL: the search keys of `SearchRequest`
-(`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`, `sort`, `page`), the
-open case (`case`) and the compare selection (`cases`). Phones get a "Filters (n)"
-sheet, a full-screen case sheet and a compare bar.
+(flight strips with NTSB columns, "Same in all", sort and Print for class), the AI
+brief (`/briefs/:id`), plus About and Privacy. View state is in the URL: the search
+keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`,
+`sort`, `page`), the open case (`case`), the compare selection (`cases`) and, for
+briefs, the step (`step`) and the brief a case or compare page was opened from
+(`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
+compare bar.
+
+The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
+
+- **Ask AI and the counter** read `GET /api/ai/status` before anyone clicks ("Ask AI ·
+  3 free", "AI searches left: 2 of 3", "AI back tomorrow"). Ask AI needs a click or
+  Ctrl/Cmd+Enter; Enter runs the free Search.
+- **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from
+  a new widget, which is removed after the request, refusals included. The first
+  request of a trial identity (`started: false`) shows "Quick check before your first
+  AI search"; later ones run invisibly while the button reads "Checking…". The site
+  key comes from `/api/config`, and Cloudflare's script loads only when an AI request
+  needs it, so the Content-Security-Policy must allow `https://challenges.cloudflare.com`
+  as a script and frame source wherever anonymous AI is offered.
+- **The brief page** polls the running step once a second and shows the answer
+  checklist (completions announced politely, once each), then the briefing sheet:
+  the AI summary with case citations, evidence groups, case cards with WHY IT
+  MATCHED, timing chips and UNCONFIRMED labels, gap notes, the step switcher and
+  REFINE. Withheld summaries, the explicit abstention, scope replies, failures and
+  cancels use the server's or UI_DESIGN's copy. Every control that runs the AI on a
+  brief says "· uses 1" before the click.
+- **AI context** for a case (the drawer, the case page, compare's AI columns) comes
+  only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, never merged into the
+  public case data. A citation opens the drawer at the cited passage, with the quoted
+  spans highlighted from their UTF-16 offsets; all AI and NTSB text is rendered as
+  text.
 
 ```sh
 pnpm dev:web          # Vite dev server; /api is proxied to the API server
@@ -543,17 +569,23 @@ simple stand-in for the analyzer.
 `web/src/mocks/handlers.ts` serves it through MSW, in the dev mock mode and in tests;
 production builds contain no mock code. `GET /api/ai/status` answers one of the
 hand-written samples in `web/mock/ai-status.ts` (a fresh anonymous visitor by
-default; `createHandlers({ aiStatus })` picks another). The brief routes are answered by
+default; `createHandlers({ aiStatus })` picks another) and changes like the server's:
+the trial is `started` after the first accepted request, a running search uses one, and
+an anonymous request without a Turnstile token is refused. `/api/config` offers
+Cloudflare's documented always-passing test site key. The brief routes are answered by
 `web/mock/briefs.ts`: an in-memory brief server with hand-written readings of the four
 seed cases whose quotes are located in the fixture texts, the server's own static
 replies and reading templates, a checklist that moves one row per poll
 (`createHandlers({ briefPolls })`), and question keywords that select the other outcomes
-(withheld, out of scope, operational, counting, comparison, clarification, no results).
+(withheld, no match, out of scope, operational, counting, comparison, clarification,
+no results).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
-`--with-deps` on a fresh Linux machine).
+`--with-deps` on a fresh Linux machine). `tests/e2e/brief.spec.ts` installs a local
+stand-in for Cloudflare's widget before the app loads, so the AI tests make no
+network requests.
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`
