@@ -1,0 +1,2180 @@
+{
+  "id": "9de04ca3-d0f2-4b46-b49a-d5cef7ff3576",
+  "prevId": "453fb095-6088-4241-a5fe-533a001d5f8a",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.case_aircraft": {
+      "name": "case_aircraft",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aircraft_key": {
+          "name": "aircraft_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aircraft_ntsb_no": {
+          "name": "aircraft_ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "regis_no": {
+          "name": "regis_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "make": {
+          "name": "make",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "series": {
+          "name": "series",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "far_part": {
+          "name": "far_part",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "damage": {
+          "name": "damage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "homebuilt": {
+          "name": "homebuilt",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "num_engines": {
+          "name": "num_engines",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "date_last_insp": {
+          "name": "date_last_insp",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "afm_hrs": {
+          "name": "afm_hrs",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "afm_hrs_last_insp": {
+          "name": "afm_hrs_last_insp",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "afm_hrs_since": {
+          "name": "afm_hrs_since",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "acft_year": {
+          "name": "acft_year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_changed_at": {
+          "name": "last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "defining_occurrence_no": {
+          "name": "defining_occurrence_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "defining_phase_group": {
+          "name": "defining_phase_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "defining_event_conflict": {
+          "name": "defining_event_conflict",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sequence_phase_groups": {
+          "name": "sequence_phase_groups",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "case_aircraft_case_fk": {
+          "name": "case_aircraft_case_fk",
+          "tableFrom": "case_aircraft",
+          "tableTo": "cases",
+          "columnsFrom": [
+            "generation_id",
+            "ntsb_no"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "ntsb_no"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "case_aircraft_pk": {
+          "name": "case_aircraft_pk",
+          "columns": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "case_aircraft_key_check": {
+          "name": "case_aircraft_key_check",
+          "value": "\"case_aircraft\".\"aircraft_key\" >= 0"
+        },
+        "case_aircraft_defining_check": {
+          "name": "case_aircraft_defining_check",
+          "value": "(\"case_aircraft\".\"defining_occurrence_no\" is null) = (\"case_aircraft\".\"defining_phase_group\" is null) and not (\"case_aircraft\".\"defining_event_conflict\" and \"case_aircraft\".\"defining_occurrence_no\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.case_engines": {
+      "name": "case_engines",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aircraft_key": {
+          "name": "aircraft_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "eng_no": {
+          "name": "eng_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "eng_type": {
+          "name": "eng_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "carb_fuel_injection": {
+          "name": "carb_fuel_injection",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_changed_at": {
+          "name": "last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "case_engines_aircraft_fk": {
+          "name": "case_engines_aircraft_fk",
+          "tableFrom": "case_engines",
+          "tableTo": "case_aircraft",
+          "columnsFrom": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "case_engines_pk": {
+          "name": "case_engines_pk",
+          "columns": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key",
+            "eng_no"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.case_findings": {
+      "name": "case_findings",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aircraft_key": {
+          "name": "aircraft_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "finding_no": {
+          "name": "finding_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "in_probable_cause": {
+          "name": "in_probable_cause",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cause_factor": {
+          "name": "cause_factor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category_no": {
+          "name": "category_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subcategory_no": {
+          "name": "subcategory_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "section_no": {
+          "name": "section_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subsection_no": {
+          "name": "subsection_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "modifier_no": {
+          "name": "modifier_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_changed_at": {
+          "name": "last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "case_findings_aircraft_fk": {
+          "name": "case_findings_aircraft_fk",
+          "tableFrom": "case_findings",
+          "tableTo": "case_aircraft",
+          "columnsFrom": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "case_findings_pk": {
+          "name": "case_findings_pk",
+          "columns": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key",
+            "finding_no"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.case_section_sources": {
+      "name": "case_section_sources",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "section_id": {
+          "name": "section_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_aircraft_key": {
+          "name": "source_aircraft_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_sha256": {
+          "name": "source_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match": {
+          "name": "match",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transformed_from_html": {
+          "name": "transformed_from_html",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_form": {
+          "name": "source_form",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_text": {
+          "name": "source_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_changed_at": {
+          "name": "last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "case_section_sources_aircraft_idx": {
+          "name": "case_section_sources_aircraft_idx",
+          "columns": [
+            {
+              "expression": "ntsb_no",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_aircraft_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "generation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "case_section_sources_section_fk": {
+          "name": "case_section_sources_section_fk",
+          "tableFrom": "case_section_sources",
+          "tableTo": "case_sections",
+          "columnsFrom": [
+            "generation_id",
+            "section_id",
+            "ntsb_no"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "section_id",
+            "ntsb_no"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "case_section_sources_aircraft_fk": {
+          "name": "case_section_sources_aircraft_fk",
+          "tableFrom": "case_section_sources",
+          "tableTo": "case_aircraft",
+          "columnsFrom": [
+            "generation_id",
+            "ntsb_no",
+            "source_aircraft_key"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "case_section_sources_pk": {
+          "name": "case_section_sources_pk",
+          "columns": [
+            "generation_id",
+            "section_id",
+            "source_aircraft_key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "case_section_sources_match_check": {
+          "name": "case_section_sources_match_check",
+          "value": "\"case_section_sources\".\"match\" in ('exact', 'whitespace')"
+        },
+        "case_section_sources_form_check": {
+          "name": "case_section_sources_form_check",
+          "value": "\"case_section_sources\".\"source_form\" in ('canonical', 'canonical_crlf', 'stored') and (\"case_section_sources\".\"source_form\" = 'stored') = (\"case_section_sources\".\"source_text\" is not null)"
+        },
+        "case_section_sources_sha_check": {
+          "name": "case_section_sources_sha_check",
+          "value": "\"case_section_sources\".\"source_sha256\" ~ '^[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.case_sections": {
+      "name": "case_sections",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "section_id": {
+          "name": "section_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "section_key": {
+          "name": "section_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aircraft_key": {
+          "name": "aircraft_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "citation_text_version": {
+          "name": "citation_text_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transformed_from_html": {
+          "name": "transformed_from_html",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_aircraft_keys": {
+          "name": "source_aircraft_keys",
+          "type": "integer[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_changed_at": {
+          "name": "last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "case_sections_case_idx": {
+          "name": "case_sections_case_idx",
+          "columns": [
+            {
+              "expression": "ntsb_no",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "aircraft_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "generation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "case_sections_case_fk": {
+          "name": "case_sections_case_fk",
+          "tableFrom": "case_sections",
+          "tableTo": "cases",
+          "columnsFrom": [
+            "generation_id",
+            "ntsb_no"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "ntsb_no"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "case_sections_aircraft_fk": {
+          "name": "case_sections_aircraft_fk",
+          "tableFrom": "case_sections",
+          "tableTo": "case_aircraft",
+          "columnsFrom": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "case_sections_pk": {
+          "name": "case_sections_pk",
+          "columns": [
+            "generation_id",
+            "section_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "case_sections_case_unique": {
+          "name": "case_sections_case_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "generation_id",
+            "section_id",
+            "ntsb_no"
+          ]
+        },
+        "case_sections_revision_unique": {
+          "name": "case_sections_revision_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "revision_id",
+            "generation_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "case_sections_id_check": {
+          "name": "case_sections_id_check",
+          "value": "\"case_sections\".\"section_id\" = \"case_sections\".\"ntsb_no\" || ':' || \"case_sections\".\"section_key\""
+        },
+        "case_sections_key_check": {
+          "name": "case_sections_key_check",
+          "value": "\"case_sections\".\"section_key\" ~ '^(factual|analysis|probable_cause)/(aircraft|event)-[0-9]+$' and split_part(\"case_sections\".\"section_key\", '/', 1) = \"case_sections\".\"kind\""
+        },
+        "case_sections_kind_check": {
+          "name": "case_sections_kind_check",
+          "value": "\"case_sections\".\"kind\" in ('factual', 'analysis', 'probable_cause')"
+        },
+        "case_sections_key_scope_check": {
+          "name": "case_sections_key_scope_check",
+          "value": "(\"case_sections\".\"scope\" = 'aircraft' and \"case_sections\".\"section_key\" = \"case_sections\".\"kind\" || '/aircraft-' || \"case_sections\".\"aircraft_key\")\n        or (\"case_sections\".\"scope\" = 'event' and \"case_sections\".\"section_key\" ~ ('^' || \"case_sections\".\"kind\" || '/event-[1-9][0-9]*$'))"
+        },
+        "case_sections_scope_check": {
+          "name": "case_sections_scope_check",
+          "value": "(\"case_sections\".\"scope\" = 'aircraft' and \"case_sections\".\"aircraft_key\" is not null and \"case_sections\".\"source_aircraft_keys\" = array[\"case_sections\".\"aircraft_key\"]) or (\"case_sections\".\"scope\" = 'event' and \"case_sections\".\"aircraft_key\" is null and cardinality(\"case_sections\".\"source_aircraft_keys\") >= 1)"
+        },
+        "case_sections_text_check": {
+          "name": "case_sections_text_check",
+          "value": "\"case_sections\".\"text\" ~ '\\S'"
+        },
+        "case_sections_sha_check": {
+          "name": "case_sections_sha_check",
+          "value": "\"case_sections\".\"sha256\" ~ '^[0-9a-f]{64}$' and \"case_sections\".\"revision_id\" ~ '^[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.case_sequence": {
+      "name": "case_sequence",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aircraft_key": {
+          "name": "aircraft_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurrence_no": {
+          "name": "occurrence_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phase_no": {
+          "name": "phase_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phase_group": {
+          "name": "phase_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_code": {
+          "name": "event_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "occurrence_code": {
+          "name": "occurrence_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_defining": {
+          "name": "is_defining",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_changed_at": {
+          "name": "last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "case_sequence_aircraft_fk": {
+          "name": "case_sequence_aircraft_fk",
+          "tableFrom": "case_sequence",
+          "tableTo": "case_aircraft",
+          "columnsFrom": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "columnsTo": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "case_sequence_pk": {
+          "name": "case_sequence_pk",
+          "columns": [
+            "generation_id",
+            "ntsb_no",
+            "aircraft_key",
+            "occurrence_no"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.cases": {
+      "name": "cases",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ev_id": {
+          "name": "ev_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country": {
+          "name": "country",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_us": {
+          "name": "is_us",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "latitude": {
+          "name": "latitude",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "longitude": {
+          "name": "longitude",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ev_type": {
+          "name": "ev_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ev_date": {
+          "name": "ev_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ev_dow": {
+          "name": "ev_dow",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ev_time": {
+          "name": "ev_time",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ev_tmzn": {
+          "name": "ev_tmzn",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "city": {
+          "name": "city",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ev_year": {
+          "name": "ev_year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ev_month": {
+          "name": "ev_month",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "light_cond": {
+          "name": "light_cond",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sky_cond_nonceil": {
+          "name": "sky_cond_nonceil",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sky_nonceil_ht": {
+          "name": "sky_nonceil_ht",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sky_ceil_ht": {
+          "name": "sky_ceil_ht",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sky_cond_ceil": {
+          "name": "sky_cond_ceil",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vis_sm": {
+          "name": "vis_sm",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wx_temp": {
+          "name": "wx_temp",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wx_dew_pt": {
+          "name": "wx_dew_pt",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wind_dir_deg": {
+          "name": "wind_dir_deg",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wind_dir_ind": {
+          "name": "wind_dir_ind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wind_vel_kts": {
+          "name": "wind_vel_kts",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wind_vel_ind": {
+          "name": "wind_vel_ind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gust_ind": {
+          "name": "gust_ind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gust_kts": {
+          "name": "gust_kts",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "altimeter": {
+          "name": "altimeter",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wx_dens_alt": {
+          "name": "wx_dens_alt",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wx_int_precip": {
+          "name": "wx_int_precip",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wx_cond_basic": {
+          "name": "wx_cond_basic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metar": {
+          "name": "metar",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "highest_injury": {
+          "name": "highest_injury",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_f_grnd": {
+          "name": "inj_f_grnd",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_m_grnd": {
+          "name": "inj_m_grnd",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_s_grnd": {
+          "name": "inj_s_grnd",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_tot_f": {
+          "name": "inj_tot_f",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_tot_m": {
+          "name": "inj_tot_m",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_tot_n": {
+          "name": "inj_tot_n",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_tot_s": {
+          "name": "inj_tot_s",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inj_tot_t": {
+          "name": "inj_tot_t",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_changed_at": {
+          "name": "last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw_status": {
+          "name": "raw_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approval_date": {
+          "name": "approval_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "admin_last_changed_at": {
+          "name": "admin_last_changed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completion_class": {
+          "name": "completion_class",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "completion_mapping_version": {
+          "name": "completion_mapping_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "has_probable_cause": {
+          "name": "has_probable_cause",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "completed_with_cause": {
+          "name": "completed_with_cause",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "answer_eligible": {
+          "name": "answer_eligible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "defining_phase_groups": {
+          "name": "defining_phase_groups",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sequence_phase_groups": {
+          "name": "sequence_phase_groups",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_revision": {
+          "name": "source_revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "cases_generation_id_dataset_generations_id_fk": {
+          "name": "cases_generation_id_dataset_generations_id_fk",
+          "tableFrom": "cases",
+          "tableTo": "dataset_generations",
+          "columnsFrom": [
+            "generation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "cases_pk": {
+          "name": "cases_pk",
+          "columns": [
+            "generation_id",
+            "ntsb_no"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "cases_ev_id_unique": {
+          "name": "cases_ev_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "ev_id",
+            "generation_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "cases_ntsb_no_check": {
+          "name": "cases_ntsb_no_check",
+          "value": "\"cases\".\"ntsb_no\" <> '' and \"cases\".\"ntsb_no\" !~ '^\\s|\\s$'"
+        },
+        "cases_ev_id_check": {
+          "name": "cases_ev_id_check",
+          "value": "\"cases\".\"ev_id\" <> '' and \"cases\".\"ev_id\" !~ '^\\s|\\s$'"
+        },
+        "cases_is_us_check": {
+          "name": "cases_is_us_check",
+          "value": "\"cases\".\"is_us\" = coalesce(\"cases\".\"country\" = 'USA', false)"
+        },
+        "cases_location_check": {
+          "name": "cases_location_check",
+          "value": "(\"cases\".\"latitude\" is null) = (\"cases\".\"longitude\" is null)\n        and (\"cases\".\"latitude\" is null or \"cases\".\"latitude\" between -90 and 90)\n        and (\"cases\".\"longitude\" is null or \"cases\".\"longitude\" between -180 and 180)"
+        },
+        "cases_completion_class_check": {
+          "name": "cases_completion_class_check",
+          "value": "\"cases\".\"completion_class\" in ('completed', 'in_progress', 'status_unknown', 'other_status')"
+        },
+        "cases_completed_with_cause_check": {
+          "name": "cases_completed_with_cause_check",
+          "value": "\"cases\".\"completed_with_cause\" = (\"cases\".\"completion_class\" = 'completed' and \"cases\".\"has_probable_cause\")"
+        },
+        "cases_answer_eligible_check": {
+          "name": "cases_answer_eligible_check",
+          "value": "\"cases\".\"answer_eligible\" = (\"cases\".\"is_us\" and \"cases\".\"completed_with_cause\")"
+        },
+        "cases_source_revision_check": {
+          "name": "cases_source_revision_check",
+          "value": "\"cases\".\"source_revision\" ~ '^[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.code_dictionary": {
+      "name": "code_dictionary",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_no": {
+          "name": "entry_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "table_name": {
+          "name": "table_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "column_name": {
+          "name": "column_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meaning": {
+          "name": "meaning",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "code_dictionary_lookup_idx": {
+          "name": "code_dictionary_lookup_idx",
+          "columns": [
+            {
+              "expression": "table_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "column_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "generation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "code_dictionary_generation_id_dataset_generations_id_fk": {
+          "name": "code_dictionary_generation_id_dataset_generations_id_fk",
+          "tableFrom": "code_dictionary",
+          "tableTo": "dataset_generations",
+          "columnsFrom": [
+            "generation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "code_dictionary_pk": {
+          "name": "code_dictionary_pk",
+          "columns": [
+            "generation_id",
+            "entry_no"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "code_dictionary_source_check": {
+          "name": "code_dictionary_source_check",
+          "value": "\"code_dictionary\".\"source\" in ('eadmspub_datadictionary', 'ct_seqevt')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.dataset_generations": {
+      "name": "dataset_generations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "dataset_generations_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "ingestion_run_id": {
+          "name": "ingestion_run_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "archive_sha256": {
+          "name": "archive_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "extract_manifest": {
+          "name": "extract_manifest",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mapping_version": {
+          "name": "mapping_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mapping_verified": {
+          "name": "mapping_verified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "citation_text_version": {
+          "name": "citation_text_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "field_normalization_version": {
+          "name": "field_normalization_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "sealed_at": {
+          "name": "sealed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verification_status": {
+          "name": "verification_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verifier_version": {
+          "name": "verifier_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verification_report_sha256": {
+          "name": "verification_report_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "stats": {
+          "name": "stats",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "dataset_generations_ingestion_run_id_ingestion_runs_id_fk": {
+          "name": "dataset_generations_ingestion_run_id_ingestion_runs_id_fk",
+          "tableFrom": "dataset_generations",
+          "tableTo": "ingestion_runs",
+          "columnsFrom": [
+            "ingestion_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "dataset_generations_run_unique": {
+          "name": "dataset_generations_run_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "ingestion_run_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "dataset_generations_status_check": {
+          "name": "dataset_generations_status_check",
+          "value": "\"dataset_generations\".\"status\" in ('loading', 'loaded', 'verified', 'failed', 'published', 'retired')"
+        },
+        "dataset_generations_archive_check": {
+          "name": "dataset_generations_archive_check",
+          "value": "\"dataset_generations\".\"archive_sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "dataset_generations_sealed_check": {
+          "name": "dataset_generations_sealed_check",
+          "value": "(\"dataset_generations\".\"status\" = 'loading') = (\"dataset_generations\".\"sealed_at\" is null)"
+        },
+        "dataset_generations_verification_check": {
+          "name": "dataset_generations_verification_check",
+          "value": "(\"dataset_generations\".\"verification_status\" is null) = (\"dataset_generations\".\"verified_at\" is null)\n        and (\"dataset_generations\".\"verification_status\" is null) = (\"dataset_generations\".\"verifier_version\" is null)\n        and (\"dataset_generations\".\"verification_status\" is null) = (\"dataset_generations\".\"verification_report_sha256\" is null)\n        and (\"dataset_generations\".\"verification_status\" is null or \"dataset_generations\".\"verification_status\" in ('ok', 'failed'))\n        and (\"dataset_generations\".\"verification_report_sha256\" is null or \"dataset_generations\".\"verification_report_sha256\" ~ '^[0-9a-f]{64}$')\n        and (\"dataset_generations\".\"status\" <> 'verified' or \"dataset_generations\".\"verification_status\" = 'ok')\n        and (\"dataset_generations\".\"status\" <> 'failed' or \"dataset_generations\".\"verification_status\" = 'failed')\n        and (\"dataset_generations\".\"status\" not in ('loading', 'loaded') or \"dataset_generations\".\"verification_status\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.dataset_manifests": {
+      "name": "dataset_manifests",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cases_index": {
+          "name": "cases_index",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "passages_index": {
+          "name": "passages_index",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "dataset_manifests_single_active": {
+          "name": "dataset_manifests_single_active",
+          "columns": [
+            {
+              "expression": "active",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "active",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "dataset_manifests_generation_id_dataset_generations_id_fk": {
+          "name": "dataset_manifests_generation_id_dataset_generations_id_fk",
+          "tableFrom": "dataset_manifests",
+          "tableTo": "dataset_generations",
+          "columnsFrom": [
+            "generation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "dataset_manifests_active_published_check": {
+          "name": "dataset_manifests_active_published_check",
+          "value": "not \"dataset_manifests\".\"active\" or \"dataset_manifests\".\"published_at\" is not null"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.generation_pins": {
+      "name": "generation_pins",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pinned_until": {
+          "name": "pinned_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "generation_pins_generation_id_dataset_generations_id_fk": {
+          "name": "generation_pins_generation_id_dataset_generations_id_fk",
+          "tableFrom": "generation_pins",
+          "tableTo": "dataset_generations",
+          "columnsFrom": [
+            "generation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "generation_pins_pk": {
+          "name": "generation_pins_pk",
+          "columns": [
+            "generation_id",
+            "reason"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "generation_pins_reason_check": {
+          "name": "generation_pins_reason_check",
+          "value": "\"generation_pins\".\"reason\" ~ '\\S' and length(\"generation_pins\".\"reason\") <= 200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.ingestion_runs": {
+      "name": "ingestion_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "ingestion_runs_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "archive_sha256": {
+          "name": "archive_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mapping_version": {
+          "name": "mapping_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "text_normalization_version": {
+          "name": "text_normalization_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "field_normalization_version": {
+          "name": "field_normalization_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "counts": {
+          "name": "counts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ingestion_runs_status_check": {
+          "name": "ingestion_runs_status_check",
+          "value": "\"ingestion_runs\".\"status\" in ('running', 'succeeded', 'failed')"
+        },
+        "ingestion_runs_finished_check": {
+          "name": "ingestion_runs_finished_check",
+          "value": "(\"ingestion_runs\".\"status\" = 'running') = (\"ingestion_runs\".\"finished_at\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.quarantine": {
+      "name": "quarantine",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_no": {
+          "name": "entry_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "table_name": {
+          "name": "table_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "column_name": {
+          "name": "column_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quarantine_generation_id_dataset_generations_id_fk": {
+          "name": "quarantine_generation_id_dataset_generations_id_fk",
+          "tableFrom": "quarantine",
+          "tableTo": "dataset_generations",
+          "columnsFrom": [
+            "generation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "quarantine_run_id_ingestion_runs_id_fk": {
+          "name": "quarantine_run_id_ingestion_runs_id_fk",
+          "tableFrom": "quarantine",
+          "tableTo": "ingestion_runs",
+          "columnsFrom": [
+            "run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quarantine_pk": {
+          "name": "quarantine_pk",
+          "columns": [
+            "generation_id",
+            "entry_no"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "quarantine_action_check": {
+          "name": "quarantine_action_check",
+          "value": "\"quarantine\".\"action\" in ('row_excluded', 'value_nulled', 'value_kept')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.embedding_cache": {
+      "name": "embedding_cache",
+      "schema": "",
+      "columns": {
+        "cache_key": {
+          "name": "cache_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dims": {
+          "name": "dims",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "template_version": {
+          "name": "template_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vector": {
+          "name": "vector",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "embedding_cache_key_check": {
+          "name": "embedding_cache_key_check",
+          "value": "\"embedding_cache\".\"cache_key\" ~ '^[0-9a-f]{64}$'"
+        },
+        "embedding_cache_vector_check": {
+          "name": "embedding_cache_vector_check",
+          "value": "\"embedding_cache\".\"dims\" between 1 and 4096 and octet_length(\"embedding_cache\".\"vector\") = \"embedding_cache\".\"dims\" * 4"
+        },
+        "embedding_cache_labels_check": {
+          "name": "embedding_cache_labels_check",
+          "value": "\"embedding_cache\".\"model\" ~ '^\\S{1,100}$' and \"embedding_cache\".\"template_version\" ~ '^\\S{1,100}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.passages": {
+      "name": "passages",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "passage_id": {
+          "name": "passage_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chunker_version": {
+          "name": "chunker_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ntsb_no": {
+          "name": "ntsb_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "section_id": {
+          "name": "section_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "section_sha": {
+          "name": "section_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "section_kind": {
+          "name": "section_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aircraft_key": {
+          "name": "aircraft_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "aircraft_specific": {
+          "name": "aircraft_specific",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start": {
+          "name": "start",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end": {
+          "name": "end",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "part": {
+          "name": "part",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parts": {
+          "name": "parts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "continuation": {
+          "name": "continuation",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_count": {
+          "name": "token_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "passages_section_idx": {
+          "name": "passages_section_idx",
+          "columns": [
+            {
+              "expression": "section_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "generation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "passages_pk": {
+          "name": "passages_pk",
+          "columns": [
+            "generation_id",
+            "passage_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "passages_ids_check": {
+          "name": "passages_ids_check",
+          "value": "\"passages\".\"passage_id\" ~ '^[0-9a-f]{64}$' and \"passages\".\"revision_id\" ~ '^[0-9a-f]{64}$' and \"passages\".\"section_sha\" ~ '^[0-9a-f]{64}$'"
+        },
+        "passages_section_check": {
+          "name": "passages_section_check",
+          "value": "starts_with(\"passages\".\"section_id\", \"passages\".\"ntsb_no\" || ':') and \"passages\".\"chunker_version\" ~ '^\\S+$'"
+        },
+        "passages_kind_check": {
+          "name": "passages_kind_check",
+          "value": "\"passages\".\"section_kind\" in ('factual', 'analysis', 'probable_cause')"
+        },
+        "passages_scope_check": {
+          "name": "passages_scope_check",
+          "value": "(\"passages\".\"scope\" = 'aircraft' and \"passages\".\"aircraft_key\" is not null and \"passages\".\"aircraft_specific\")\n        or (\"passages\".\"scope\" = 'event' and \"passages\".\"aircraft_key\" is null and not \"passages\".\"aircraft_specific\")"
+        },
+        "passages_span_check": {
+          "name": "passages_span_check",
+          "value": "\"passages\".\"start\" >= 0 and \"passages\".\"end\" > \"passages\".\"start\" and \"passages\".\"part\" between 1 and \"passages\".\"parts\"\n        and (not \"passages\".\"continuation\" or \"passages\".\"part\" > 1) and \"passages\".\"token_count\" between 1 and 8192"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

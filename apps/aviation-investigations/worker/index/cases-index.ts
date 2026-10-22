@@ -339,7 +339,7 @@ export interface IndexReport {
  * (the generation is gone and this refuses) or runs later and skips the pinned
  * generation.
  */
-async function pinIndexableGeneration(db: Db, generationId: number, reason: string, until: Date): Promise<void> {
+export async function pinIndexableGeneration(db: Db, generationId: number, reason: string, until: Date): Promise<void> {
   await withLifecycleLock(db, async (q) => {
     const [g] = await q
       .select({
@@ -367,7 +367,7 @@ async function pinIndexableGeneration(db: Db, generationId: number, reason: stri
   });
 }
 
-async function unpin(db: Db, generationId: number, reason: string, log: (m: string) => void): Promise<void> {
+export async function unpin(db: Db, generationId: number, reason: string, log: (m: string) => void): Promise<void> {
   try {
     await db.execute(sql`select unpin_generation(${generationId}, ${reason})`);
   } catch (err) {

@@ -36,7 +36,7 @@ export function testDb(role: 'app' | 'migrator' | 'ingest' = 'app'): Db {
 
 /** Every table of the corpus schema, for resetting aviation_test between tests. */
 const CORPUS_TABLES = [
-  'quarantine', 'code_dictionary', 'case_section_sources', 'case_sections', 'case_sequence',
+  'passages', 'quarantine', 'code_dictionary', 'case_section_sources', 'case_sections', 'case_sequence',
   'case_findings', 'case_engines', 'case_aircraft', 'cases', 'dataset_manifests', 'generation_pins',
   'dataset_generations', 'ingestion_runs',
 ];
