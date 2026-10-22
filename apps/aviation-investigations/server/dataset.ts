@@ -167,7 +167,11 @@ export class DatasetResolver {
     if (this.passagesEntry?.key !== key) this.passagesEntry = { key, settled: null, inflight: null };
     const entry = this.passagesEntry;
     if (entry.settled) {
-      if (this.now() >= entry.settled.until) entry.inflight ??= this.checkPassages(entry, manifest);
+      if (this.now() >= entry.settled.until) {
+        entry.inflight ??= this.checkPassages(entry, manifest);
+        // Nobody awaits a background re-check; a rejection must not go unhandled.
+        entry.inflight.catch(() => {});
+      }
       return Promise.resolve(entry.settled.status);
     }
     entry.inflight ??= this.checkPassages(entry, manifest);
