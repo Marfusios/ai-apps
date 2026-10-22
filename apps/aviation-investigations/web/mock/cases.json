@@ -247,7 +247,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "af662c56c251f8765166d924ca284297f0d2d988dea149cbc5ef9a410fcdb152",
    "approvalDate": "2015-03-17",
@@ -497,7 +497,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "32dc27ebebc88cb5cbb2b99b0a7031397977bc87c3868ba9bf66da361fea9596",
    "approvalDate": "2009-12-15",
@@ -769,7 +769,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "a10b21dfa4cd85860fb3601ecce21d7211044637b096f8bac08ac2c513784031",
    "approvalDate": "2010-04-22",
@@ -1056,7 +1056,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "885568baa15885f2e71606b0f1019ab513213349cfcf6d0ef9255be428b616b1",
    "approvalDate": "2013-08-13",
@@ -1314,7 +1314,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "d972dde25d50d00440a983c01ab8403c9da25d4999ee72d502881f85ed850d26",
    "approvalDate": "2013-06-19",
@@ -1593,7 +1593,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "31012d5f330f2027cf163a6f42f042ecfb429d93a13369a6ec7cb7fec5525fe4",
    "approvalDate": "2020-12-03",
@@ -1863,7 +1863,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "848aba55584030d22ead8298150484580ec6442e631b072afc9648f104818f1c",
    "approvalDate": "2020-05-19",
@@ -2121,7 +2121,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "a84ba2f2d8842b21a6b9387d8afe082761ecdb65abc95b568d7397974db3e43e",
    "approvalDate": "2021-02-02",
@@ -2285,7 +2285,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "1cea5bdbe12425110ef9fc93c197afe698e4e6ab65450f91cfbf184df6f244e9",
    "approvalDate": null,
@@ -2463,7 +2463,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "aaa1c2c376b7761cac010563856f4ed657747d364740138f6dfb2a4c309ea5d6",
    "approvalDate": null,
@@ -2740,7 +2740,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "237cecb1209e343d5b29382884e8a200927d12fdc6c8268bf3d4739ef11d26bf",
    "approvalDate": "2026-09-08",
@@ -2918,7 +2918,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "f1343dd86012051e117667e2773e633015595c3d1acdbc846b6fc14ae6b05ed3",
    "approvalDate": null,
@@ -3096,7 +3096,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "26d8daa091c435a43b1c7cdba7309ed0b3c4e199d082e9288936fc8bf627666d",
    "approvalDate": null,
@@ -3649,7 +3649,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "fef9e00d8f825e2096f6b5be53bd9fdafb1d2c5e25bb4eedc69bef166e90c471",
    "approvalDate": "2026-01-27",
@@ -3921,7 +3921,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "1cecd00af9533b883dd4d1865f8a59fb06ae520db94335dec0a6b0768c569c76",
    "approvalDate": "2008-12-08",
@@ -4171,7 +4171,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "20e8a2a606216c000dce42ee69cca46b8ab9d8b3f4434f57eb9baf260cba538f",
    "approvalDate": "2008-09-26",
@@ -4346,7 +4346,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "c94dca339eb3327c136c76449f47c5c12956d2e587e5efc93f7c60581f08c22c",
    "approvalDate": "2014-10-27",
@@ -4498,7 +4498,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "f08c756a80a9832ae2b1c3f114e4aec28f5520cfd9f106358efca413d03cf989",
    "approvalDate": "2010-06-24",
@@ -4733,7 +4733,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "338fc354ca758e6b4fb5687bdb9e372bc4d99aa8a7a12ba3ae9639d945b12258",
    "approvalDate": "2026-05-13",
@@ -4990,7 +4990,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "abc4f7e56a8f5101664004ae9cdac7ce9b64b3a73f53b88e402b265313341c8e",
    "approvalDate": "2025-05-06",
@@ -5255,7 +5255,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "72d67f6375ded07a2a73e971f561120516bad5624c7759994a0ca16a7732f58f",
    "approvalDate": "2010-05-06",
@@ -5520,7 +5520,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "7590252922919e57c22813f818b3246d3d7832bc88b26d438947b61cc09a6273",
    "approvalDate": "2009-05-12",
@@ -5843,7 +5843,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "30f68fa25c1a707378e36a3ca7d336ae294846d5b599f25c87388afca6029a18",
    "approvalDate": "2008-04-30",
@@ -6208,7 +6208,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "0a36b4b4b6d44300fe82bd8a5189bd62271d5a4a5a8a1a60a4e4257dc66acc56",
    "approvalDate": "2016-11-02",
@@ -6457,7 +6457,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "d572c5e23e332406466809a1f030a21b43f8f2463119948891fe1cc21803551a",
    "approvalDate": "2026-05-21",
@@ -6729,7 +6729,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "42be46775123b975405a131af283437d9ed1d2ec42d960c8bfcdd1803a428f3e",
    "approvalDate": "2026-04-29",
@@ -6993,7 +6993,7 @@
   },
   "provenance": {
    "source": "NTSB aviation investigation database (avall.mdb)",
-   "snapshotDate": "2026-10-01",
+   "snapshotDate": "2026-10-16",
    "datasetRevision": "fx-5b4a93ded6e99a06",
    "caseRevision": "58e6a34b034d5284d59594f8eb25ff180512fa94fb9058382fb17279c2bf957b",
    "approvalDate": "2026-04-30",

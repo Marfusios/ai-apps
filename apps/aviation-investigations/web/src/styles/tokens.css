@@ -54,6 +54,10 @@
   --placard-border: none;
   --placard-highlight: none;
   --placard-pad: 0;
+
+  /* Dashboard dot map: dots overlap, so the alpha is part of the token. */
+  --map-dot: #1F519A;
+  --map-dot-alpha: .6;
 }
 
 [data-theme="night"] {
@@ -102,4 +106,6 @@
   --placard-border: 1px solid rgba(255, 255, 255, .16);
   --placard-highlight: inset 0 1px 0 rgba(255, 255, 255, .06);
   --placard-pad: 1px 7px;
+  --map-dot: #93B9F7;
+  --map-dot-alpha: .85;
 }

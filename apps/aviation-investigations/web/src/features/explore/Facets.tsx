@@ -347,7 +347,8 @@ export function Facets({ response, request, onChange, expanded = false }: Facets
       {list('injury')}
       {list('conditions')}
       <Years response={response} request={request} onChange={onChange} />
-      {!expanded && (
+      {/* While a More filter is active the fold stays open, so there is no toggle to offer. */}
+      {!expanded && !anyMore && (
         <button
           type="button"
           aria-expanded={showMore}

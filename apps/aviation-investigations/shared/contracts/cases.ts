@@ -46,7 +46,9 @@ export type SequenceStep = z.infer<typeof SequenceStepSchema>;
 /**
  * A narrative section. In a multi-aircraft event every section is event-scoped:
  * `sourceAircraftKeys` records which aircraft's row carried the text (provenance,
- * not attribution). `aircraft` scope only occurs in single-aircraft events.
+ * not attribution). `aircraft` scope is valid only when the case has exactly one
+ * aircraft, and then names that aircraft (amendment A3); `CaseDetailSchema`
+ * enforces this. Event-scoped sections have `aircraftKey: null`.
  */
 export const SectionSchema = z.strictObject({
   /** Unique within the case, e.g. `analysis/event-1`; stable across revisions of the same text. */
@@ -200,5 +202,23 @@ export const CaseDetailSchema = z.strictObject({
   cautions: z.array(CautionSchema).max(10),
   report: ReportLinkSchema,
   provenance: ProvenanceSchema,
+}).superRefine((detail, ctx) => {
+  // Amendment A3 (owner ruling): only a single-aircraft case has aircraft-scoped text.
+  const only = detail.aircraft.length === 1 ? (detail.aircraft[0]?.aircraftKey ?? null) : null;
+  detail.sections.forEach((section, i) => {
+    if (section.scope === 'aircraft' && (only === null || section.aircraftKey !== only)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sections', i, 'scope'],
+        message:
+          only === null
+            ? 'aircraft scope is valid only when the case has exactly one aircraft'
+            : 'an aircraft-scoped section must name the case’s aircraft',
+      });
+    }
+    if (section.scope === 'event' && section.aircraftKey !== null) {
+      ctx.addIssue({ code: 'custom', path: ['sections', i, 'aircraftKey'], message: 'an event-scoped section has no aircraftKey' });
+    }
+  });
 });
 export type CaseDetail = z.infer<typeof CaseDetailSchema>;

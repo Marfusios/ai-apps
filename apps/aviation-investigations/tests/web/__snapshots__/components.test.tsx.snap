@@ -11,6 +11,8 @@ exports[`print > print stylesheet hides graticule 1`] = `
     --ink: #1E2A36;
     --muted: #58616B;
     --blue: #1F519A;
+    --map-dot: #1F519A;
+    --map-dot-alpha: .6;
     --on-blue: #FFFFFF;
     --magenta: #1E2A36;
     --on-magenta: #FFFFFF;

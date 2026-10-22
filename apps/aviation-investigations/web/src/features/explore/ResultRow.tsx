@@ -63,6 +63,12 @@ export function ResultRow({ row, caseTo, inCompare, onToggleCompare }: ResultRow
         <span className="font-bold">{aircraftSummary(row)}</span>
         <span className="text-muted">{placeShort(row.city, row.state, row.country)}</span>
         {!completed && <StatusBadge kind={row.completion.class} rawStatus={row.completion.rawStatus} />}
+        {completed && !row.completion.hasProbableCause && (
+          <span className="inline-flex flex-wrap items-baseline gap-x-2">
+            <StatusBadge kind="completed" />
+            <span className="text-meta text-muted">Probable-cause text unavailable</span>
+          </span>
+        )}
         <label className="touch-target ml-auto flex cursor-pointer items-center gap-[5px] text-meta text-blue">
           <input type="checkbox" className="check" checked={inCompare} onChange={onToggleCompare} />
           Compare<span className="sr-only"> {row.ntsbNo}</span>
@@ -88,9 +94,8 @@ export function ResultRow({ row, caseTo, inCompare, onToggleCompare }: ResultRow
         </div>
       )}
 
-      {!row.completion.hasProbableCause && (
-        <p className="text-meta text-muted">{completed ? 'Probable-cause text unavailable' : 'No probable cause on record'}</p>
-      )}
+      {/* UI_DESIGN §4.2: wherever the field is empty, whatever the status. */}
+      {!row.completion.hasProbableCause && <p className="text-meta text-muted">No probable cause on record</p>}
       {snippet && (
         <p className="font-serif text-body leading-[1.45] text-ink">
           <span className="mr-1.5 font-sans text-[9px] tracking-caps text-muted uppercase">{snippet.label}</span>

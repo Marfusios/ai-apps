@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { SearchRequestSchema, SearchResponseSchema, type SearchResponse } from '../../shared/contracts/search.js';
+import { HOME_EXAMPLES } from '../../shared/examples.js';
 import { buildMockApi, buildMockCorpus, readFixtureTables, serialize, type MockApiFiles } from '../../scripts/mock-api/build.js';
 import { searchCorpus, stem, type MockCorpus } from '../../web/mock/engine.js';
 import { normalizeCorpus } from '../../worker/ingest/normalize.js';
@@ -118,6 +119,14 @@ describe('mock search counting', () => {
     expect(newest.rows[0]?.date && oldest.rows[0]?.date && newest.rows[0].date > oldest.rows[0].date).toBe(true);
     const page2 = search({ pageSize: '5', page: '2' });
     expect(page2.rows[0]?.ntsbNo).not.toBe(newest.rows[0]?.ntsbNo);
+  });
+
+  it('every home example chip returns results (UI_DESIGN §4.2)', () => {
+    // Mock corpus only. Task 8's real-server search test must repeat this against the
+    // Elasticsearch index (all words, stemming, synonyms), as UI_DESIGN §4.2 requires.
+    for (const q of HOME_EXAMPLES) {
+      expect(search({ q }).total, q).toBeGreaterThan(0);
+    }
   });
 
   it('stems like a light English stemmer', () => {

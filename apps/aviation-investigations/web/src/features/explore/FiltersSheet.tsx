@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import type { SearchRequest, SearchResponse } from '../../../../shared/contracts/search';
 import { plural } from '../../lib/format';
 import { Facets } from './Facets';
@@ -21,6 +21,7 @@ export interface FiltersSheetProps {
  */
 export function FiltersSheet({ open, onOpenChange, response, request, onChange, onClearAll, trigger }: FiltersSheetProps) {
   const total = response?.total;
+  const title = useRef<HTMLHeadingElement>(null);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>
@@ -28,11 +29,19 @@ export function FiltersSheet({ open, onOpenChange, response, request, onChange, 
         <Dialog.Overlay className="fixed inset-0 z-40 bg-shade" />
         <Dialog.Content
           aria-describedby={undefined}
+          aria-modal="true"
+          onOpenAutoFocus={(event) => {
+            // Focus the title, not the first button ("Clear all").
+            event.preventDefault();
+            title.current?.focus();
+          }}
           className="sheet fixed inset-x-0 bottom-0 z-50 flex max-h-[88dvh] flex-col rounded-t-box border-t border-hairline bg-raised text-ink shadow-sheet sm:mx-auto sm:max-w-[560px]"
         >
           <div aria-hidden="true" className="mx-auto mt-2 h-1 w-10 rounded-full bg-rule" />
           <div className="flex items-center border-b border-hairline px-4 pt-2 pb-2.5">
-            <Dialog.Title className="text-lead font-bold">Filters</Dialog.Title>
+            <Dialog.Title ref={title} tabIndex={-1} className="text-lead font-bold outline-none focus-visible:outline-2">
+              Filters
+            </Dialog.Title>
             <button
               type="button"
               onClick={onClearAll}

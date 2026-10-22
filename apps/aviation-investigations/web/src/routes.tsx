@@ -25,16 +25,7 @@ const pages: RouteObject[] = [
   },
   { path: 'cases/:ntsbNo', lazy: async () => ({ Component: (await import('./pages/CasePage')).CasePage }) },
   { path: 'compare', lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
-  {
-    path: 'dashboard',
-    element: (
-      <ComingSoon
-        eyebrow="Dashboard"
-        title="The record, in questions"
-        description="How complete the recent record is, when in the flight events happened, and what this data can and cannot tell you."
-      />
-    ),
-  },
+  { path: 'dashboard', lazy: async () => ({ Component: (await import('./pages/Dashboard')).Dashboard }) },
   {
     path: 'account',
     element: (

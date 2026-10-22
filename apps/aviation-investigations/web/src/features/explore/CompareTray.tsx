@@ -40,7 +40,7 @@ export function CompareTray({ selected, onRemove, notice, from }: CompareTrayPro
               <button
                 type="button"
                 onClick={() => onRemove(ntsbNo)}
-                className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-tray-ink/70 hover:bg-tray-ink/10 hover:text-tray-ink"
+                className="inline-flex size-6 cursor-pointer items-center justify-center rounded-full text-tray-ink/70 hover:bg-tray-ink/10 hover:text-tray-ink"
               >
                 <X size={12} strokeWidth={1.5} aria-hidden="true" />
                 <span className="sr-only">Remove {ntsbNo} from compare</span>

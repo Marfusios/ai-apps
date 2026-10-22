@@ -221,13 +221,9 @@ export function NarrativeText({ text, className }: { text: string; className?: s
 
 function ProbableCause({ detail }: { detail: CaseDetail }) {
   const causes = detail.sections.filter((s) => s.kind === 'probable_cause');
-  if (causes.length === 0) {
-    return (
-      <p className="text-ui text-muted">
-        {detail.completion.class === 'completed' ? 'Probable-cause text unavailable.' : 'No probable cause on record.'}
-      </p>
-    );
-  }
+  // UI_DESIGN §4.2: wherever the field is empty, whatever the status. A completed
+  // record also says "Probable-cause text unavailable" by its badge.
+  if (causes.length === 0) return <p className="text-ui text-muted">No probable cause on record.</p>;
   return (
     <div className="space-y-3">
       {causes.map((s, i) => (
@@ -399,6 +395,7 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-meta">
         <span className="font-mono text-[13px] font-bold tracking-mono text-blue">{detail.ntsbNo}</span>
         <StatusBadge kind={detail.completion.class} rawStatus={completed ? undefined : detail.completion.rawStatus} />
+        {completed && !detail.completion.hasProbableCause && <span className="text-muted">Probable-cause text unavailable</span>}
         <span className="text-muted">{detail.eventType.label}</span>
       </div>
       <Heading

@@ -4,7 +4,7 @@
   "response": {
    "dataset": {
     "revision": "fx-5b4a93ded6e99a06",
-    "snapshotDate": "2026-10-01"
+    "snapshotDate": "2026-10-16"
    },
    "total": 21,
    "page": 1,
@@ -2055,7 +2055,7 @@
   "response": {
    "dataset": {
     "revision": "fx-5b4a93ded6e99a06",
-    "snapshotDate": "2026-10-01"
+    "snapshotDate": "2026-10-16"
    },
    "total": 7,
    "page": 1,
@@ -2963,7 +2963,7 @@
   "response": {
    "dataset": {
     "revision": "fx-5b4a93ded6e99a06",
-    "snapshotDate": "2026-10-01"
+    "snapshotDate": "2026-10-16"
    },
    "total": 7,
    "page": 1,
@@ -3866,7 +3866,7 @@
   "response": {
    "dataset": {
     "revision": "fx-5b4a93ded6e99a06",
-    "snapshotDate": "2026-10-01"
+    "snapshotDate": "2026-10-16"
    },
    "total": 3,
    "page": 1,
@@ -4356,7 +4356,7 @@
   "response": {
    "dataset": {
     "revision": "fx-5b4a93ded6e99a06",
-    "snapshotDate": "2026-10-01"
+    "snapshotDate": "2026-10-16"
    },
    "total": 2,
    "page": 1,
@@ -4839,7 +4839,7 @@
   "response": {
    "dataset": {
     "revision": "fx-5b4a93ded6e99a06",
-    "snapshotDate": "2026-10-01"
+    "snapshotDate": "2026-10-16"
    },
    "total": 0,
    "page": 1,
