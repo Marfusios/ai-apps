@@ -1,15 +1,25 @@
 # Build context for the application image (Dockerfile). Credentials, data and
-# local outputs never enter it.
-.env
-.env.*
-*.env
-*.env.*
-data/
-node_modules/
+# local outputs never enter it. The secret patterns mirror the repository's
+# .gitignore, at any depth.
+**/.env
+**/.env.*
+**/*.env
+**/*.env.*
+!.env.example
+**/keys.env
+**/credentials/
+**/secrets/
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/data/
+**/node_modules/
 dist/
 coverage/
 test-results/
 playwright-report/
+*.log
 tests/
 docs/
 docker/
@@ -18,4 +28,3 @@ docker/
 .dockerignore
 Dockerfile
 compose*.yaml
-*.log

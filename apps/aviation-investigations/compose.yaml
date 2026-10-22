@@ -89,6 +89,8 @@ services:
       OPENAI_ANSWER_MODEL: ${OPENAI_ANSWER_MODEL:-}
       OPENAI_CHECK_MODEL: ${OPENAI_CHECK_MODEL:-}
       AVIATION_TRACING_ENABLED: "false"
+      # Peers whose proxy headers are trusted; compose.tunnel.yaml sets EDGE_SUBNET.
+      TRUSTED_PROXY_CIDRS: ""
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -109,7 +111,8 @@ services:
       AI_GLOBAL_CONCURRENCY: ${AI_GLOBAL_CONCURRENCY:-}
     volumes:
       - *elasticsearch-ca
-    # Development access on loopback only; compose.tunnel.yaml removes it.
+    # Development access on loopback only; compose.tunnel.yaml removes it, and the
+    # wrapper always uses that file on live. Plain `docker compose` on live must too.
     ports:
       - "127.0.0.1:${PORT:-3000}:3000"
     networks: [edge, postgres, elasticsearch]
@@ -223,7 +226,8 @@ services:
 
 networks:
   # App ingress and the tunnel connector only; also their outbound route to
-  # Cloudflare and the model, embedding, OAuth and Turnstile APIs.
+  # Cloudflare and the model, embedding, OAuth and Turnstile APIs. In tunnel mode
+  # compose.tunnel.yaml pins its subnet to EDGE_SUBNET.
   edge: {}
   # Outbound route for ingest (embeddings API); no other container joins it.
   egress: {}

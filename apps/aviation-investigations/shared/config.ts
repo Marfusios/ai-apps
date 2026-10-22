@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { readDotenvAllowlisted } from './env-files.js';
@@ -8,12 +9,26 @@ function str(def?: string) {
   return def === undefined ? z.string().optional() : z.string().default(def);
 }
 const num = (def: number) => z.coerce.number().default(def);
+const listOf = (v: string): string[] => v.split(',').map((s) => s.trim()).filter(Boolean);
+/** An IPv4 or IPv6 network in CIDR notation. */
+export function isCidr(value: string): boolean {
+  const m = /^([^/]+)\/(\d{1,3})$/.exec(value);
+  if (!m) return false;
+  const family = isIP(m[1]!);
+  const bits = Number(m[2]);
+  return (family === 4 && bits <= 32) || (family === 6 && bits <= 128);
+}
 const int = (def: number) => z.coerce.number().int().default(def);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ENV: z.enum(['dev', 'live']).default('dev'),
   APP_URL: str('http://localhost:3000'),
+  TRUSTED_PROXY_CIDRS: z
+    .string()
+    .default('')
+    .refine((v) => listOf(v).every(isCidr), 'expected comma-separated CIDRs')
+    .transform(listOf),
   PORT: int(3000).pipe(z.number().min(0).max(65535)),
   DATABASE_URL: str(),
   DATABASE_MIGRATOR_URL: str(),
@@ -76,6 +91,12 @@ export interface AppConfig {
   /** Deployment environment (dev or live): Compose project, database, index prefix. */
   appEnv: Env['APP_ENV'];
   appUrl: string;
+  /**
+   * Networks whose peers are trusted proxies (the tunnel connector's edge subnet).
+   * Proxy headers such as CF-Connecting-IP are honoured only from these peers; when
+   * the list is set (tunnel mode), requests from any other peer are rejected.
+   */
+  trustedProxyCidrs: string[];
   port: number;
   databaseUrl?: string;
   databaseMigratorUrl?: string;
@@ -177,6 +198,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     nodeEnv: e.NODE_ENV,
     appEnv: e.APP_ENV,
     appUrl: e.APP_URL,
+    trustedProxyCidrs: e.TRUSTED_PROXY_CIDRS,
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
     databaseMigratorUrl: e.DATABASE_MIGRATOR_URL,

@@ -19,6 +19,9 @@ There are two modes:
 Names and addresses of the shared services are machine-specific. They live only
 in the env files described below, which are kept outside the repository.
 
+Requirements: Docker Engine with Docker Compose 2.24 or later (`compose.tunnel.yaml`
+uses `!reset`; the wrappers check the version), Node 24 and pnpm for the wrappers.
+
 ## Environments
 
 | | dev | live |
@@ -60,9 +63,21 @@ database:
 - **Database privileges.** `CONNECT` is revoked from `PUBLIC` and granted only to
   the environment's three logins, without grant option; nobody else holds any
   privilege on the database. A `dev` login therefore cannot connect to
-  `aviation_live` or another application's database, and a `dev` migrator login
-  acting as `aviation_migrator` cannot grant itself access (PostgreSQL answers
-  `permission denied`; the integration tests reproduce this attack).
+  `aviation_live`, and a `dev` migrator login acting as `aviation_migrator` cannot
+  grant itself access (PostgreSQL answers `permission denied`; the integration
+  tests reproduce this attack). Other applications' databases are closed to the
+  aviation logins only if they, too, revoke `CONNECT` from `PUBLIC`; `postgres` and
+  `template1` keep it by default, so the logins can connect there (they hold no
+  other privilege). Provisioning does not change other databases. The owner of
+  the shared stack can close that gap in `pg_hba.conf`, for example (PostgreSQL 16
+  accepts regular expressions; the lines go before the general rules):
+
+  ```
+  host  aviation_dev   aviation_dev_app,aviation_dev_ingest,aviation_dev_migrator     samenet  scram-sha-256
+  host  aviation_live  aviation_live_app,aviation_live_ingest,aviation_live_migrator  samenet  scram-sha-256
+  host  all            /^aviation_                                                    all      reject
+  ```
+
 - **Inside the database**, `aviation_migrator` gets `USAGE` and `CREATE` on schema
   `public` and owns schema `drizzle` (the migration journal), which provisioning
   creates. `aviation_ingest` and `aviation_app` get `USAGE` on `public` and, by
@@ -82,8 +97,12 @@ database:
 
 Elasticsearch has one role pair per environment: `aviation_<env>_reader`
 (`read`, `view_index_metadata`) and `aviation_<env>_writer` (`create_index`,
-`write`, `manage`, `read`, plus cluster `monitor`), both on `ai-aviation-<env>-*`,
-with API keys `aviation-<env>-read` and `aviation-<env>-write`.
+`write`, `manage`, `read`), both on `ai-aviation-<env>-*` and with no cluster
+privilege, so neither key can list other tenants' indices, read the cluster state
+or see running tasks (the integration tests check `403` on `_cluster/state`,
+`_tasks` and `_cat/indices`). Their API keys are `aviation-<env>-read` and
+`aviation-<env>-write`; each records a hash of its role definition, and
+provisioning re-mints a key whose definition has changed.
 
 ## Provisioning
 
@@ -92,8 +111,10 @@ environment on the shared servers and writes its connection files. It is
 idempotent and runs from the host with administrative access, which it reads
 only from two explicit files:
 
-- `--pg-admin-env <file>`: `PG_ADMIN_URL` (a superuser, or a role with
-  `CREATEROLE`, `CREATEDB` and membership in the group roles).
+- `--pg-admin-env <file>`: `PG_ADMIN_URL`, which must connect as a superuser (it
+  changes database owners, resets privileges held by other roles and sets default
+  privileges for `aviation_migrator`); the script stops before changing anything
+  otherwise.
 - `--es-admin-env <file>`: `ELASTIC_PASSWORD` (user `elastic`) and
   `ELASTICSEARCH_ADMIN_URL`.
 
@@ -181,7 +202,7 @@ With tracing on (see [Tracing](#tracing)), `aviation-app` and `aviation-ingest` 
 
 | Network | Members | Notes |
 | --- | --- | --- |
-| `edge` | `aviation-app`, `tunnel` | Per project. App ingress and the outbound route to Cloudflare and the model, embedding, OAuth and Turnstile APIs. Nothing else joins it. |
+| `edge` | `aviation-app`, `tunnel` | Per project. App ingress and the outbound route to Cloudflare and the model, embedding, OAuth and Turnstile APIs. Nothing else joins it. Pinned to `EDGE_SUBNET` in tunnel mode. |
 | `egress` | `aviation-ingest` | Per project. Outbound route for the embeddings API. |
 | `postgres` | `aviation-app`, `aviation-ingest`, `aviation-migrate` | External, `SHARED_POSTGRES_NETWORK`. |
 | `elasticsearch` | `aviation-app`, `aviation-ingest` | External, `SHARED_ELASTICSEARCH_NETWORK`. |
@@ -193,6 +214,17 @@ the services are named `aviation-app`, `aviation-ingest` and `aviation-migrate`
 rather than generic names that other stacks on the shared networks might use.
 `dev` and `live` register the same names there; nothing addresses them over the
 shared networks. The tunnel resolves `aviation-app` only on its own project's `edge`.
+
+The app is still reachable on the shared networks: any container there can open
+`aviation-app:3000` without passing through the tunnel. In tunnel mode the edge
+network is pinned to `EDGE_SUBNET` and the app receives it as
+`TRUSTED_PROXY_CIDRS`: only peers in that subnet (the connector) are trusted, so
+their `CF-Connecting-IP` is the client address, and the API server rejects
+requests from every other peer. Pick an unused private (RFC 1918) /28 per
+environment, outside Docker's default address pools (`default-address-pools`) so
+Docker never hands it to another network while the project is down; Docker
+refuses overlapping subnets. Changing it needs
+`pnpm app:down` first, because Docker keeps an existing network's subnet.
 
 ## Env files
 
@@ -225,7 +257,7 @@ The generated files supply `APP_ENV`, the three `DATABASE_*` URLs,
 `SHARED_OBSERVABILITY_NETWORK`. The settings file holds the rest:
 
 ```sh
-APP_VERSION=                     # image tag, for example a release name on live
+APP_VERSION=                     # image tag; live needs an explicit release tag (not dev)
 APP_URL=                         # public origin on live
 PORT=3000                        # dev only: loopback port of the app
 ANTHROPIC_API_KEY=
@@ -239,7 +271,8 @@ IP_HMAC_SECRET=
 IDENTITY_HMAC_SECRET=
 AVIATION_TRACING_ENABLED=false   # true adds compose.tracing.yaml
 SHARED_OBSERVABILITY_NETWORK=    # unless the Langfuse file sets it
-TUNNEL_TOKEN=                    # live: set it to run tunnel mode
+TUNNEL_TOKEN=                    # required on live; on dev it switches to tunnel mode
+EDGE_SUBNET=                     # tunnel mode: a private /28, distinct per environment
 ```
 
 Hosts in the `.docker.env` URLs are the shared services' names on their Docker
@@ -252,9 +285,24 @@ networks, not host loopback addresses. Budget and model variables from
 ## Commands
 
 The pnpm wrappers (`scripts/compose.ts`) choose the project from `APP_ENV`, pass
-the env files, add `compose.tunnel.yaml` when `TUNNEL_TOKEN` is set and
-`compose.tracing.yaml` when `AVIATION_TRACING_ENABLED` is true. They check the
-variables each command needs and never print values.
+the env files, and add `compose.tracing.yaml` when `AVIATION_TRACING_ENABLED` is
+true. They never print values, and they refuse to run when:
+
+- Docker Compose is older than 2.24;
+- `APP_ENV` is not `dev` or `live`, the env files disagree on it, or the shell's
+  `APP_ENV` differs from the files';
+- a variable the command needs is missing;
+- the command's database URL (`DATABASE_URL` for `app:up`, `DATABASE_INGEST_URL`
+  for `ingest`, `DATABASE_MIGRATOR_URL` for `app:migrate`) does not name
+  `aviation_<APP_ENV>` or lacks the `options=-c role=<group>` switch;
+- `ELASTICSEARCH_INDEX_PREFIX` is not `ai-aviation-<APP_ENV>`;
+- on `live`: `APP_VERSION` is missing or `dev` (for `app:up`, `ingest` and
+  `app:migrate`), or `TUNNEL_TOKEN` is missing for `app:up`;
+- in tunnel mode: `EDGE_SUBNET` is missing or not a private, aligned /16 to /29.
+
+`app:up` always runs tunnel mode on `live` (`compose.tunnel.yaml` and the `tunnel`
+profile), so `live` never publishes a port. On `dev` it runs tunnel mode when
+`TUNNEL_TOKEN` is set and otherwise publishes `127.0.0.1:${PORT:-3000}`.
 
 ```sh
 export AVIATION_ENV_FILES=...       # see Env files
@@ -277,7 +325,9 @@ docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile app --profile
 ```
 
 Pass one `--env-file` per file, lowest priority first. `compose.yaml` refuses to
-load without `APP_ENV`. Run `aviation-ingest` with
+load without `APP_ENV`. Plain Compose does not apply the wrappers' checks: on
+`live` always add `-f compose.tunnel.yaml --profile tunnel`, or the app publishes
+its loopback port. Run `aviation-ingest` with
 `AVIATION_UID=$(id -u) AVIATION_GID=$(id -g)` and create `data/reports/<env>`
 first when not using the wrapper.
 
@@ -292,7 +342,7 @@ and the tools (`aviation-ingest`, `aviation-migrate`) work already.
    [Provisioning](#provisioning)) and its Langfuse project; write the settings file.
 2. `pnpm app:migrate`.
 3. Ingest data (next section).
-4. `pnpm app:up`. On `live`, with `TUNNEL_TOKEN` set, this is tunnel mode.
+4. `pnpm app:up` (tunnel mode on `live`).
 
 To update: pull the code, set a new `APP_VERSION` on `live`, run
 `pnpm app:migrate`, then `pnpm app:up`. To roll back, set the previous
@@ -345,10 +395,12 @@ Manifests of earlier extractions keep the old name; loading does not depend on i
 
 1. In Cloudflare Zero Trust, create a remotely managed tunnel and add a public
    hostname whose service is `http://aviation-app:3000`.
-2. Put its token in the live env file as `TUNNEL_TOKEN`, and the public origin in
-   `APP_URL`.
+2. Put its token in the live settings file as `TUNNEL_TOKEN`, the public origin in
+   `APP_URL`, a release tag in `APP_VERSION` and an unused private /28 in
+   `EDGE_SUBNET`.
 3. `pnpm app:up`. The wrapper adds `compose.tunnel.yaml`, which removes the app's
-   port and requires the token, and the `tunnel` profile:
+   port, requires the token, pins the edge subnet and sets `TRUSTED_PROXY_CIDRS`,
+   and the `tunnel` profile:
 
    ```sh
    docker compose -p ai-aviation-live --env-file "$ENV_FILE" \
@@ -446,9 +498,11 @@ the integration suite on 16.2 (a throwaway `postgres16` service of
 `Dockerfile` builds `ai-aviation/app:${APP_VERSION:-dev}` in stages: dependencies
 with pnpm from corepack (version pinned by `packageManager`), the Vite and
 TypeScript builds, production dependencies only, and a `node:24.21.0-trixie-slim`
-runtime. The runtime keeps the checkout layout with compiled JavaScript
+runtime pinned by tag and digest, from which npm, npx, corepack and yarn are
+removed. The runtime keeps the checkout layout with compiled JavaScript
 (`/app/server`, `/app/worker`, `/app/shared`, `/app/dist/web` with the font
 licences), plus the SQL migrations, verification profiles and the report-link
 seed; no TypeScript sources or development dependencies. `.dockerignore` keeps
-`.env*` files, `data/`, `node_modules/`, build and test outputs, tests and docs out
-of the build context.
+the `.gitignore` secret patterns (`.env*` except `.env.example`, keys,
+certificates, `credentials/`, `secrets/`) at any depth, every `data/` and
+`node_modules/`, build and test outputs, tests and docs out of the build context.

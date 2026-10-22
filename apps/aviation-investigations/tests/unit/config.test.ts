@@ -117,6 +117,16 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ env: { APP_ENV: 'prod' }, files: [] })).toThrow(/APP_ENV/);
   });
 
+  it('trusted proxy networks', () => {
+    expect(loadConfig({ env: {}, files: [] }).trustedProxyCidrs).toEqual([]);
+    // Documentation ranges (RFC 5737, RFC 3849).
+    const c = loadConfig({ env: { TRUSTED_PROXY_CIDRS: ' 192.0.2.0/28 , 2001:db8::/64' }, files: [] });
+    expect(c.trustedProxyCidrs).toEqual(['192.0.2.0/28', '2001:db8::/64']);
+    for (const bad of ['192.0.2.0', '192.0.2.0/33', 'not-a-net/8', '::/129', '192.0.2.0/8/1']) {
+      expect(() => loadConfig({ env: { TRUSTED_PROXY_CIDRS: bad }, files: [] }), bad).toThrow(/TRUSTED_PROXY_CIDRS/);
+    }
+  });
+
   it('does not leak values in validation errors', () => {
     try {
       loadConfig({ env: { PORT: 'secret-not-a-port-xyz' }, files: [] });

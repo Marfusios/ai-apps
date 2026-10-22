@@ -487,6 +487,10 @@ the shared servers and writes its connection files outside the repository.
 - `tunnel` (profile `tunnel`): the pinned Cloudflare Tunnel connector, sharing only
   the `edge` network with `aviation-app`.
 
+It needs Docker Compose 2.24 or later. `live` always runs behind the Cloudflare
+Tunnel with an explicit `APP_VERSION`, and only peers in its pinned edge subnet
+are trusted as proxies (`TRUSTED_PROXY_CIDRS`).
+
 Configuration comes from env files outside the repository, named in
 `AVIATION_ENV_FILES`; Compose uses them for interpolation only and each container
 gets just the variables it needs. `compose.tunnel.yaml` removes the app port and

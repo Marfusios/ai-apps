@@ -7,7 +7,8 @@
 # of TypeScript (`server/`, `worker/`, `shared/` directly under /app), so paths a
 # module resolves relative to itself (migrations, verify profiles, the report-link
 # seed, `data/`, `dist/web`) are the same as in a checkout.
-ARG NODE_IMAGE=node:24.21.0-trixie-slim
+# Pinned by tag and by the multi-platform index digest; update both together.
+ARG NODE_IMAGE=node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66
 
 FROM ${NODE_IMAGE} AS base
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
@@ -30,6 +31,9 @@ FROM base AS prod-deps
 RUN pnpm install --frozen-lockfile --prod
 
 FROM ${NODE_IMAGE} AS runtime
+# Package managers are build tools; the runtime keeps only node.
+RUN rm -rf /usr/local/lib/node_modules /opt/yarn-v* \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 ENV NODE_ENV=production \
     NODE_OPTIONS=--enable-source-maps
 WORKDIR /app
