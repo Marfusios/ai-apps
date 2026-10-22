@@ -3,12 +3,14 @@
  * services setup (`pnpm services:setup`) and `scripts/provision-shared.ts`.
  *
  * Role model (docs/RUNBOOK.md#role-model): the NOLOGIN group roles aviation_migrator,
- * aviation_ingest and aviation_app hold every privilege the migrations grant. Each
- * environment has LOGIN roles aviation_<env>_{migrator,ingest,app} (NOINHERIT members
- * of their group) that may connect only to database aviation_<env>, which
- * aviation_migrator owns. Every connection acts as the group role through the URL
- * option `options=-c role=<group>`, so objects belong to the group roles and a login
- * without the option holds no privileges.
+ * aviation_ingest and aviation_app hold every privilege the migrations grant, and
+ * aviation_migrator owns every schema object. Each environment has LOGIN roles
+ * aviation_<env>_{migrator,ingest,app} (NOINHERIT members of their group) that may
+ * connect only to database aviation_<env>. That database and its schema `public` are
+ * owned by the environment's NOLOGIN role aviation_<env>_owner, which has no members,
+ * so no login can change who may connect. Every connection acts as the group role
+ * through the URL option `options=-c role=<group>`, so objects belong to the group
+ * roles and a login without the option holds no privileges.
  *
  * Nothing here prints passwords, API keys or admin credentials.
  */
@@ -41,6 +43,8 @@ export function assertEnvName(env: string): void {
 
 export const databaseName = (env: string): string => `aviation_${env}`;
 export const loginRole = (env: string, kind: RoleKind): string => `aviation_${env}_${kind}`;
+/** NOLOGIN owner of the environment's database and schema `public`; it has no members. */
+export const ownerRole = (env: string): string => `aviation_${env}_owner`;
 export const defaultIndexPrefix = (env: string): string => `ai-aviation-${env}`;
 
 export type Log = (message: string) => void;
@@ -138,6 +142,8 @@ export async function provisionPostgres(opts: PgProvisionOptions): Promise<Recor
   assertEnvName(opts.env);
   const log = opts.log ?? ((m: string) => console.log(m));
   const db = databaseName(opts.env);
+  const owner = ownerRole(opts.env);
+  const logins = ROLE_KINDS.map((k) => loginRole(opts.env, k));
   const created = opts.dryRun ? 'would create' : 'created';
   const admin = new pg.Client({ connectionString: opts.adminUrl, application_name: 'aviation-provision' });
   await admin.connect();
@@ -146,11 +152,12 @@ export async function provisionPostgres(opts: PgProvisionOptions): Promise<Recor
     const run = async (statement: string): Promise<void> => {
       if (!opts.dryRun) await admin.query(statement);
     };
+    const noRights = 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
     for (const kind of ROLE_KINDS) {
       const group = GROUP_ROLES[kind];
       const found = await roleExists(admin, group);
       if (!found) await run(`CREATE ROLE ${ident(group)} NOLOGIN`);
-      await run(`ALTER ROLE ${ident(group)} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL`);
+      await run(`ALTER ROLE ${ident(group)} NOLOGIN ${noRights} PASSWORD NULL`);
       log(`group role ${group}: ${found ? 'present' : created} (NOLOGIN)`);
     }
     for (const kind of ROLE_KINDS) {
@@ -158,40 +165,79 @@ export async function provisionPostgres(opts: PgProvisionOptions): Promise<Recor
       const kept = opts.rotate ? undefined : opts.passwords?.[kind];
       passwords[kind] = kept ?? newPassword();
       const found = await roleExists(admin, login);
-      const attrs = `LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${lit(scramVerifier(passwords[kind]))}`;
+      const attrs = `LOGIN NOINHERIT ${noRights} PASSWORD ${lit(scramVerifier(passwords[kind]))}`;
       await run(found ? `ALTER ROLE ${ident(login)} ${attrs}` : `CREATE ROLE ${ident(login)} ${attrs}`);
       await run(`GRANT ${ident(GROUP_ROLES[kind])} TO ${ident(login)}`);
       const pw = kept ? 'kept' : opts.rotate ? 'rotated' : 'generated';
       log(`login role ${login}: ${found ? 'present' : created}, member of ${GROUP_ROLES[kind]}, password ${pw}`);
     }
+
+    // The owner role must stay memberless: whoever could act as it could grant CONNECT.
+    const ownerFound = await roleExists(admin, owner);
+    if (!ownerFound) await run(`CREATE ROLE ${ident(owner)} NOLOGIN NOINHERIT`);
+    await run(`ALTER ROLE ${ident(owner)} NOLOGIN NOINHERIT ${noRights} PASSWORD NULL`);
+    const members = ownerFound
+      ? (
+          await admin.query<{ member: string; grantor: string }>(
+            `SELECT pg_get_userbyid(m.member) AS member, pg_get_userbyid(m.grantor) AS grantor
+             FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid WHERE r.rolname = $1`,
+            [owner],
+          )
+        ).rows
+      : [];
+    for (const m of members) await run(`REVOKE ${ident(owner)} FROM ${ident(m.member)} GRANTED BY ${ident(m.grantor)} CASCADE`);
+    log(`owner role ${owner}: ${ownerFound ? 'present' : created} (NOLOGIN, no members${members.length ? `; ${opts.dryRun ? 'would revoke' : 'revoked'} ${members.length}` : ''})`);
+
     const dbFound = await databaseExists(admin, db);
-    await run(dbFound ? `ALTER DATABASE ${ident(db)} OWNER TO aviation_migrator` : `CREATE DATABASE ${ident(db)} OWNER aviation_migrator`);
-    // Only this environment's logins may connect. The owner's own CONNECT is revoked
-    // too: it is shared by every environment and its members would inherit it.
+    await run(dbFound ? `ALTER DATABASE ${ident(db)} OWNER TO ${ident(owner)}` : `CREATE DATABASE ${ident(db)} OWNER ${ident(owner)}`);
+    // Reset the database ACL: only this environment's logins hold a privilege, and
+    // only CONNECT, without grant option. The group roles (shared by every
+    // environment) hold nothing here, so their members cannot grant themselves access.
     await run(`REVOKE ALL ON DATABASE ${ident(db)} FROM PUBLIC`);
-    await run(`REVOKE CONNECT ON DATABASE ${ident(db)} FROM aviation_migrator, aviation_ingest, aviation_app`);
-    await run(`GRANT CONNECT ON DATABASE ${ident(db)} TO ${ROLE_KINDS.map((k) => ident(loginRole(opts.env, k))).join(', ')}`);
-    log(`database ${db}: ${dbFound ? 'present' : created}, owner aviation_migrator, CONNECT only for aviation_${opts.env}_*`);
+    if (dbFound || !opts.dryRun) {
+      const grantees = await admin.query<{ grantee: string }>(
+        `SELECT DISTINCT pg_get_userbyid(a.grantee) AS grantee
+         FROM pg_database d, aclexplode(d.datacl) a WHERE d.datname = $1 AND a.grantee <> 0`,
+        [db],
+      );
+      for (const { grantee } of grantees.rows) {
+        // Logins keep CONNECT throughout (no window where they cannot connect).
+        if (logins.includes(grantee)) {
+          await run(`REVOKE GRANT OPTION FOR ALL ON DATABASE ${ident(db)} FROM ${ident(grantee)} CASCADE`);
+          await run(`REVOKE CREATE, TEMPORARY ON DATABASE ${ident(db)} FROM ${ident(grantee)} CASCADE`);
+        } else {
+          await run(`REVOKE ALL ON DATABASE ${ident(db)} FROM ${ident(grantee)} CASCADE`);
+        }
+      }
+    }
+    await run(`GRANT CONNECT ON DATABASE ${ident(db)} TO ${logins.map(ident).join(', ')}`);
+    log(`database ${db}: ${dbFound ? 'present' : created}, owner ${owner}, CONNECT only for ${logins.join(', ')}`);
   } finally {
     await admin.end();
   }
   if (opts.dryRun) {
-    log(`schema public in ${db}: would set owner, usage grants and default privileges`);
+    log(`schemas in ${db}: would set owners, migrator and usage grants, default privileges`);
     return passwords;
   }
-  // Schema ownership and default privileges, inside the environment's database.
+  // Inside the database: `public` belongs to the owner role; the migrator may use and
+  // create in it (objects stay owned by aviation_migrator, as the migrations expect)
+  // and owns the `drizzle` schema of the migration journal. Nothing else.
   const inDb = new pg.Client({ connectionString: withDatabase(opts.adminUrl, db), application_name: 'aviation-provision' });
   await inDb.connect();
   try {
     await inDb.query(`
-      ALTER SCHEMA public OWNER TO aviation_migrator;
+      ALTER SCHEMA public OWNER TO ${ident(owner)};
       REVOKE ALL ON SCHEMA public FROM PUBLIC;
+      GRANT USAGE, CREATE ON SCHEMA public TO aviation_migrator;
       GRANT USAGE ON SCHEMA public TO aviation_ingest, aviation_app;
+      CREATE SCHEMA IF NOT EXISTS drizzle AUTHORIZATION aviation_migrator;
+      ALTER SCHEMA drizzle OWNER TO aviation_migrator;
+      REVOKE ALL ON SCHEMA drizzle FROM PUBLIC;
       ALTER DEFAULT PRIVILEGES FOR ROLE aviation_migrator IN SCHEMA public
         GRANT SELECT ON TABLES TO aviation_ingest, aviation_app;
       ALTER DEFAULT PRIVILEGES FOR ROLE aviation_migrator IN SCHEMA public
         GRANT SELECT ON SEQUENCES TO aviation_ingest, aviation_app;`);
-    log(`schema public in ${db}: owner aviation_migrator, usage for ingest and app`);
+    log(`schemas in ${db}: public owned by ${owner} (USAGE, CREATE for aviation_migrator; USAGE for ingest and app), drizzle owned by aviation_migrator`);
   } finally {
     await inDb.end();
   }

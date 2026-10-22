@@ -12,6 +12,7 @@ import {
   databaseName,
   esRoles,
   loginRole,
+  ownerRole,
   passwordFor,
   pgBaseUrl,
   roleUrl,
@@ -166,6 +167,7 @@ describe('connection URLs', () => {
   it('names databases, logins and Elasticsearch roles per environment', () => {
     expect(databaseName('live')).toBe('aviation_live');
     expect(loginRole('dev', 'migrator')).toBe('aviation_dev_migrator');
+    expect(ownerRole('live')).toBe('aviation_live_owner');
     const r = esRoles('dev');
     expect(r.read).toMatchObject({ name: 'aviation_dev_reader', keyName: 'aviation-dev-read' });
     expect(r.read.body.indices).toEqual([{ names: ['ai-aviation-dev-*'], privileges: ['read', 'view_index_metadata'] }]);

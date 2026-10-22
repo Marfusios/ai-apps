@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runMigrations } from '../../server/db/migrate.js';
 import { readDotenvAllowlisted } from '../../shared/env-files.js';
 import { parseProvisionArgs, runProvision } from '../../scripts/provision-shared.js';
-import { ROLE_KINDS, loginRole } from '../../scripts/provision.js';
+import { ROLE_KINDS, loginRole, ownerRole } from '../../scripts/provision.js';
 import { testDbUrl } from './helpers.js';
 
 // Provisions a throwaway environment `ci` on the local services (or on the server in
@@ -62,6 +62,7 @@ async function cleanup(): Promise<void> {
   try {
     await c.query(`DROP DATABASE IF EXISTS aviation_${ENV} WITH (FORCE)`);
     for (const k of ROLE_KINDS) await c.query(`DROP ROLE IF EXISTS ${loginRole(ENV, k)}`);
+    await c.query(`DROP ROLE IF EXISTS ${ownerRole(ENV)}`);
   } finally {
     await c.end();
   }
@@ -133,6 +134,63 @@ describe('provision-shared on the local services', () => {
     expect(await sqlState(connectAs(asMigrator))).toBe('42501');
   });
 
+  it('stops a migrator login from reaching another environment (the shared owner attack)', async () => {
+    const host = read(files().pgHost);
+    const c = new pg.Client({ connectionString: host.DATABASE_MIGRATOR_URL });
+    await c.connect();
+    try {
+      expect((await c.query('SELECT current_user')).rows[0].current_user).toBe('aviation_migrator');
+      // aviation_migrator holds no privilege on any database, so it cannot grant one.
+      for (const statement of [
+        'GRANT CONNECT ON DATABASE aviation_test TO aviation_ci_migrator',
+        'GRANT CONNECT ON DATABASE aviation_test TO aviation_migrator',
+        'GRANT CONNECT ON DATABASE aviation_ci TO aviation_test_migrator',
+        'ALTER DATABASE aviation_test OWNER TO aviation_migrator',
+        'SET ROLE aviation_test_owner',
+        'SET ROLE aviation_ci_owner',
+      ]) {
+        await expect(c.query(statement), statement).rejects.toMatchObject({ code: '42501' });
+      }
+    } finally {
+      await c.end();
+    }
+    expect(await sqlState(connectAs(withDb(host.DATABASE_MIGRATOR_URL!, 'aviation_test')))).toBe('42501');
+    // As the administrator: each database belongs to its memberless owner role and only
+    // the environment's three logins hold CONNECT, without grant option.
+    const a = admin();
+    await a.connect();
+    try {
+      for (const env of [ENV, 'test']) {
+        const acl = await a.query(
+          `SELECT pg_get_userbyid(d.datdba) AS owner, pg_get_userbyid(x.grantee) AS grantee,
+                  x.privilege_type, x.is_grantable
+           FROM pg_database d, aclexplode(d.datacl) x WHERE d.datname = $1 ORDER BY 2`,
+          [`aviation_${env}`],
+        );
+        expect(acl.rows).toEqual(
+          ROLE_KINDS.map((k) => loginRole(env, k)).sort().map((grantee) => ({
+            owner: ownerRole(env),
+            grantee,
+            privilege_type: 'CONNECT',
+            is_grantable: false,
+          })),
+        );
+        const members = await a.query(
+          `SELECT count(*)::int AS n FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid WHERE r.rolname = $1`,
+          [ownerRole(env)],
+        );
+        expect(members.rows[0].n).toBe(0);
+      }
+      const migratorDbPrivileges = await a.query(
+        `SELECT count(*)::int AS n FROM pg_database d, aclexplode(d.datacl) x
+         WHERE d.datname LIKE 'aviation\_%' AND x.grantee IN ('aviation_migrator'::regrole, 'aviation_ingest'::regrole, 'aviation_app'::regrole)`,
+      );
+      expect(migratorDbPrivileges.rows[0].n).toBe(0);
+    } finally {
+      await a.end();
+    }
+  });
+
   it('migrates as aviation_migrator, which owns every object', async () => {
     const host = read(files().pgHost);
     await runMigrations(host.DATABASE_MIGRATOR_URL!);
@@ -140,10 +198,19 @@ describe('provision-shared on the local services', () => {
     await c.connect();
     try {
       const owners = await c.query(
-        `SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'public'
+        `SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname IN ('public', 'drizzle')
          UNION SELECT DISTINCT pg_get_userbyid(proowner) FROM pg_proc WHERE pronamespace = 'public'::regnamespace`,
       );
       expect(owners.rows.map((r) => r.tableowner)).toEqual(['aviation_migrator']);
+      const schemas = await c.query(
+        `SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname IN ('public', 'drizzle') ORDER BY 1`,
+      );
+      expect(schemas.rows).toEqual([
+        { nspname: 'drizzle', owner: 'aviation_migrator' },
+        { nspname: 'public', owner: ownerRole(ENV) },
+      ]);
+      // A second run finds nothing pending.
+      await runMigrations(host.DATABASE_MIGRATOR_URL!);
     } finally {
       await c.end();
     }

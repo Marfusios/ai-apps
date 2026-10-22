@@ -105,9 +105,11 @@ servers ([runbook](docs/RUNBOOK.md#role-model)) for two local environments:
   `TEST_ELASTICSEARCH_*_API_KEY` for `aviation-test-*`, used by the integration
   tests, which create only `aviation-test-*` indices and clean them up.
 
-The group roles own the schema and hold every grant; default privileges give both
-runtime roles SELECT on future tables and migrations grant DML explicitly. Each
-login can connect only to its own database. `pnpm test:pg16` provisions the `test`
+Each database and its schema `public` belong to a memberless owner role
+(`aviation_dev_owner`, `aviation_test_owner`); the group roles hold the grants and
+`aviation_migrator` owns the schema objects. Default privileges give both runtime
+roles SELECT on future tables and migrations grant DML explicitly. Each login can
+connect only to its own database and cannot grant itself access to another. `pnpm test:pg16` provisions the `test`
 environment on a throwaway PostgreSQL 16.2 container (the shared server's version)
 and runs the migrations and the integration suite against it.
 

@@ -47,16 +47,29 @@ PostgreSQL roles are cluster-wide, and the shared cluster also holds other
 applications' databases. The model keeps every environment inside its own
 database:
 
-- **Group roles** `aviation_migrator` (schema owner), `aviation_ingest` and
-  `aviation_app` are `NOLOGIN` and shared by all environments. The migrations grant
-  to them, and they own every object; they have no `CONNECT` on any database.
+- **Group roles** `aviation_migrator`, `aviation_ingest` and `aviation_app` are
+  `NOLOGIN` and shared by all environments. The migrations grant to them, and
+  `aviation_migrator` owns every schema object. They hold no privilege on any
+  database.
 - **Login roles** `aviation_<env>_migrator`, `aviation_<env>_ingest` and
   `aviation_<env>_app` are `NOINHERIT` members of their group role, with
   generated passwords (sent to the server as SCRAM verifiers, never in clear).
-- **Database** `aviation_<env>` is owned by `aviation_migrator`. `CONNECT` is
-  revoked from `PUBLIC` and from the group roles and granted only to that
-  environment's three logins, so a `dev` login cannot connect to `aviation_live`
-  or to another application's database.
+- **Owner role** `aviation_<env>_owner` (`NOLOGIN`, no members) owns database
+  `aviation_<env>` and its schema `public`. Only the owner (and the cluster
+  administrator) can grant on the database, and nobody can act as the owner.
+- **Database privileges.** `CONNECT` is revoked from `PUBLIC` and granted only to
+  the environment's three logins, without grant option; nobody else holds any
+  privilege on the database. A `dev` login therefore cannot connect to
+  `aviation_live` or another application's database, and a `dev` migrator login
+  acting as `aviation_migrator` cannot grant itself access (PostgreSQL answers
+  `permission denied`; the integration tests reproduce this attack).
+- **Inside the database**, `aviation_migrator` gets `USAGE` and `CREATE` on schema
+  `public` and owns schema `drizzle` (the migration journal), which provisioning
+  creates. `aviation_ingest` and `aviation_app` get `USAGE` on `public` and, by
+  default privileges, `SELECT` on the migrator's new tables and sequences; the
+  migrations grant the rest. The migration runner (`server/db/migrate.ts`) is
+  drizzle's, minus its `CREATE SCHEMA IF NOT EXISTS drizzle`, which PostgreSQL
+  would check against database-level `CREATE`.
 - **Acting as the group role.** Every connection URL ends in
   `?options=-c%20role%3D<group role>` (for example `aviation_app`). The server
   switches the session to the group role at connection start, so `current_user`
@@ -66,10 +79,6 @@ database:
   is `aviation_migrator`, so objects are always owned by the group role. Both
   node-postgres and `psql` read the option from the URL; a connection pooler in
   transaction mode would not keep it.
-
-Known limit: the migrator logins of all environments share the owner role, so a
-`dev` migrator login could grant itself `CONNECT` on `aviation_live`. The app and
-ingest logins cannot. Separating that too needs a per-environment database owner.
 
 Elasticsearch has one role pair per environment: `aviation_<env>_reader`
 (`read`, `view_index_metadata`) and `aviation_<env>_writer` (`create_index`,
@@ -101,9 +110,10 @@ pnpm provision:shared --env dev --out <private dir outside the repo> \
 ```
 
 It creates the group roles if absent, creates or updates the three logins
-(keeping their passwords unless `--rotate`), creates `aviation_<env>` owned by
-`aviation_migrator` with the `CONNECT` rules above and sets the schema's owner,
-usage grants and default privileges. In Elasticsearch it puts the two roles and
+(keeping their passwords unless `--rotate`), creates the owner role and removes
+any membership in it, creates `aviation_<env>` owned by that role (or changes the
+owner of an existing database), resets the database privileges to the `CONNECT`
+rules above, and sets the schema owners, grants and default privileges. In Elasticsearch it puts the two roles and
 mints their API keys, keeping a key that still authenticates unless `--rotate`
 (re-minting invalidates the old key). `--dry-run` connects, reports what it would
 do and changes nothing.
