@@ -8,6 +8,7 @@ import type { z } from 'zod';
 import { CaseDetailSchema } from '../../shared/contracts/cases';
 import { ErrorResponseSchema, type ErrorResponse } from '../../shared/contracts/common';
 import { ConfigResponseSchema } from '../../shared/contracts/config';
+import { DashboardResponseSchema, type DashboardRequest } from '../../shared/contracts/dashboard';
 import { SearchResponseSchema, searchRequestToParams, type SearchRequest } from '../../shared/contracts/search';
 
 export class ApiError extends Error {
@@ -74,5 +75,13 @@ export const caseQuery = (ntsbNo: string) =>
     queryKey: ['case', ntsbNo],
     queryFn: ({ signal }) => getJson(`/api/cases/${encodeURIComponent(ntsbNo)}`, CaseDetailSchema, signal),
     staleTime: 5 * 60_000,
+    retry,
+  });
+
+export const dashboardQuery = (cohort: DashboardRequest['cohort']) =>
+  queryOptions({
+    queryKey: ['dashboard', cohort],
+    queryFn: ({ signal }) => getJson(`/api/dashboard?cohort=${cohort}`, DashboardResponseSchema, signal),
+    staleTime: 10 * 60_000,
     retry,
   });
