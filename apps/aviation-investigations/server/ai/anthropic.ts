@@ -1,0 +1,365 @@
+/**
+ * Anthropic adapter for the language-model stages (DESIGN §6 and §9 "Anthropic call
+ * settings"): structured outputs through `messages.parse`, effort `low`, thinking
+ * off wherever the model allows it, a cached frozen system prompt, no retries,
+ * prefill, sampling parameters, server tools or refusal fallbacks.
+ */
+import Anthropic, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+  APIUserAbortError,
+  AuthenticationError,
+  BadRequestError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+  UnprocessableEntityError,
+  type AutoParseableOutputFormat,
+} from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { z } from 'zod';
+import { CACHED_PREFIX_MAX, llmPrice } from './pricing.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v1.js';
+import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v1.js';
+import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v1.js';
+import {
+  CheckInputSchema,
+  CheckOutputSchema,
+  ComposeInputSchema,
+  ComposeOutputSchema,
+  isValidStageCtx,
+  ScopeInputSchema,
+  ScopeOutputSchema,
+  STAGE_ROLE,
+  StageError,
+  type LlmProvider,
+  type LlmStage,
+  type StageCtx,
+  type StageErrorInfo,
+  type StageInputs,
+  type StageModels,
+  type StageResult,
+  type StageUsage,
+  type StageWarning,
+} from './provider.js';
+
+type ThinkingParam = Anthropic.Messages.ThinkingConfigParam;
+
+/**
+ * Per-model request settings; a model missing here cannot be configured.
+ * - Opus 5.5 cannot disable thinking (`disabled` is a 400), so `thinking` is omitted
+ *   and effort `low` bounds it. Its default effort is `medium`, so effort is always sent.
+ * - Sonnet 5.5 turns thinking off with `between_tools` (effort `high` or below).
+ * - Haiku 5.5 accepts `disabled` at effort `high` or below.
+ */
+export const ANTHROPIC_MODEL_SETTINGS: Readonly<Record<string, { readonly thinking?: ThinkingParam }>> = {
+  'claude-opus-5-5': {},
+  'claude-sonnet-5-5': { thinking: { type: 'between_tools' } },
+  'claude-haiku-5-5': { thinking: { type: 'disabled' } },
+};
+
+export const ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
+
+/** The part of the SDK client the adapter uses; tests inject their own. */
+export type AnthropicMessagesClient = Pick<Anthropic, 'messages'>;
+
+export interface AnthropicProviderConfig {
+  /** Required unless `client` is given. */
+  apiKey?: string;
+  models: StageModels;
+  client?: AnthropicMessagesClient;
+}
+
+interface StageSpec<I, O> {
+  stage: LlmStage;
+  promptVersion: string;
+  system: string;
+  input: z.ZodType<I>;
+  output: z.ZodType<O>;
+  render: (input: I) => string;
+}
+
+type JsonNode = Record<string, unknown>;
+const isNode = (v: unknown): v is JsonNode => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * The SDK's schema transform moves `enum` into the description, leaving only
+ * client-side validation. Structured outputs support `enum`, so put each one back
+ * (walking the transformed and source schemas in parallel) and let constrained
+ * decoding keep the model to the allowed codes.
+ */
+function restoreEnums(out: unknown, src: unknown): void {
+  if (!isNode(out) || !isNode(src)) return;
+  if (Array.isArray(src.enum) && out.type === 'string') {
+    out.enum = src.enum;
+    const note = `{enum: ${JSON.stringify(src.enum)}}`;
+    if (out.description === note) delete out.description;
+    else if (typeof out.description === 'string' && out.description.endsWith(`\n\n${note}`)) {
+      out.description = out.description.slice(0, -note.length - 2);
+    }
+  }
+  for (const key of ['properties', '$defs']) {
+    const o = out[key];
+    const s = src[key];
+    if (isNode(o) && isNode(s)) for (const name of Object.keys(o)) restoreEnums(o[name], s[name]);
+  }
+  restoreEnums(out.items, src.items);
+  for (const [o, s] of [
+    [out.anyOf, src.anyOf ?? src.oneOf],
+    [out.allOf, src.allOf],
+  ]) {
+    if (Array.isArray(o) && Array.isArray(s)) o.forEach((node, i) => restoreEnums(node, s[i]));
+  }
+}
+
+/**
+ * Structured-output format whose `parse` never throws: invalid JSON or a schema
+ * violation yields `parsed_output: null`, so the adapter still sees `stop_reason`
+ * and the billed usage. The SDK's own Zod helper throws and loses both.
+ */
+function outputFormat<O>(schema: z.ZodType<O>): AutoParseableOutputFormat<O | null> {
+  const { type, schema: jsonSchema } = zodOutputFormat(schema);
+  restoreEnums(jsonSchema, z.toJSONSchema(schema, { reused: 'ref' }));
+  return {
+    type,
+    schema: jsonSchema,
+    parse(content: string): O | null {
+      let json: unknown;
+      try {
+        json = JSON.parse(content);
+      } catch {
+        return null;
+      }
+      const result = schema.safeParse(json);
+      return result.success ? result.data : null;
+    },
+  };
+}
+
+function normalizeUsage(u: Anthropic.Messages.Usage): StageUsage {
+  return {
+    inputTokens: u.input_tokens,
+    outputTokens: u.output_tokens,
+    cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: u.cache_read_input_tokens ?? 0,
+  };
+}
+
+type Meta = Omit<StageErrorInfo, 'billing'>;
+const NOT_BILLED = { kind: 'none' } as const;
+
+function isAbort(err: unknown): boolean {
+  return (
+    err instanceof APIUserAbortError ||
+    err instanceof APIConnectionTimeoutError ||
+    (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError'))
+  );
+}
+
+/** Map an SDK failure of the generation call to a stage error. Check subclasses before `APIError`. */
+function mapError(err: unknown, meta: Meta): StageError {
+  if (err instanceof StageError) return err;
+  const fail = (category: StageError['category'], billing: StageErrorInfo['billing'], status?: number) =>
+    new StageError(category, { ...meta, billing, status, cause: err });
+  if (isAbort(err)) return fail('timeout', { kind: 'uncertain' });
+  if (err instanceof APIConnectionError) return fail('network', { kind: 'uncertain' });
+  if (err instanceof RateLimitError) return fail('rate_limited', NOT_BILLED, err.status);
+  if (err instanceof AuthenticationError || err instanceof PermissionDeniedError) {
+    return fail('auth', NOT_BILLED, err.status);
+  }
+  if (err instanceof BadRequestError || err instanceof NotFoundError || err instanceof UnprocessableEntityError) {
+    return fail('bad_request', NOT_BILLED, err.status);
+  }
+  if (err instanceof APIError) {
+    const status = err.status;
+    if (status === 529) return fail('overloaded', NOT_BILLED, status);
+    if (status !== undefined && status < 500) return fail('provider_error', NOT_BILLED, status);
+    return fail('provider_error', { kind: 'uncertain' }, status);
+  }
+  return fail('unexpected', { kind: 'uncertain' });
+}
+
+/** A failed token count generated nothing: `timeout` when the deadline ended it, else `count_failed`. */
+function mapCountError(err: unknown, meta: Meta): StageError {
+  if (err instanceof StageError) return err;
+  const status = err instanceof APIError ? err.status : undefined;
+  const category = isAbort(err) ? 'timeout' : 'count_failed';
+  return new StageError(category, { ...meta, billing: NOT_BILLED, status, cause: err });
+}
+
+/**
+ * Settle with `promise`, or reject as soon as `signal` aborts. The SDK also stops on
+ * abort; this makes the deadline hold even if a body read ignores it.
+ */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new APIUserAbortError());
+    if (signal.aborted) {
+      promise.catch(() => undefined);
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvider {
+  for (const role of ['scope', 'answer', 'check'] as const) {
+    const model = cfg.models[role];
+    if (!Object.hasOwn(ANTHROPIC_MODEL_SETTINGS, model) || llmPrice(model).provider !== 'anthropic') {
+      throw new Error(`Model '${model}' is not an allowlisted Anthropic model`);
+    }
+  }
+  if (!cfg.client && !cfg.apiKey) throw new Error('ANTHROPIC_API_KEY is required');
+
+  const client: AnthropicMessagesClient =
+    cfg.client ??
+    new Anthropic({
+      apiKey: cfg.apiKey,
+      // Explicit values so ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL and ANTHROPIC_LOG
+      // in the environment cannot add credentials, redirect requests or log bodies.
+      authToken: null,
+      baseURL: ANTHROPIC_BASE_URL,
+      maxRetries: 0,
+      logLevel: 'warn',
+      // Spans never carry prompt or output text; tracing is wired by the app.
+      openTelemetry: { propagation: false, traces: { contentMode: 'metadata_only' } },
+    });
+
+  function stage<I, O>(spec: StageSpec<I, O>) {
+    const format = outputFormat(spec.output);
+    const role = STAGE_ROLE[spec.stage];
+    const model = cfg.models[role];
+    const { thinking } = ANTHROPIC_MODEL_SETTINGS[model] ?? {};
+    const meta: Meta = { stage: spec.stage, provider: 'anthropic', model, promptVersion: spec.promptVersion };
+    const fail = (category: StageError['category'], billing: StageErrorInfo['billing'], extra?: Partial<Meta>) =>
+      new StageError(category, { ...meta, ...extra, billing });
+    const system = [{ type: 'text' as const, text: spec.system, cache_control: { type: 'ephemeral' as const } }];
+
+    /** Everything but `max_tokens`; the token count and the generation send the same request. */
+    const request = (input: I) => ({
+      model,
+      system,
+      messages: [{ role: 'user' as const, content: spec.render(input) }],
+      output_config: { format, effort: 'low' as const },
+      ...(thinking ? { thinking } : {}),
+    });
+
+    /** Validate, then bound the whole stage call by the caller's signal and `timeoutMs`. */
+    function prepare(rawInput: I, ctx: StageCtx) {
+      if (!isValidStageCtx(spec.stage, ctx)) throw fail('invalid_input', NOT_BILLED);
+      const parsed = spec.input.safeParse(rawInput);
+      if (!parsed.success) throw fail('invalid_input', NOT_BILLED);
+      if (ctx.signal.aborted) throw fail('timeout', NOT_BILLED);
+      const deadline = Date.now() + ctx.timeoutMs;
+      const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(ctx.timeoutMs)]);
+      // Retries stay off even for an injected client: each attempt would need its own reservation.
+      const options = () => ({ timeout: Math.max(1, deadline - Date.now()), signal, maxRetries: 0 });
+      return { body: request(parsed.data), signal, options };
+    }
+
+    async function count({ body, signal, options }: ReturnType<typeof prepare>): Promise<number> {
+      let tokens: number;
+      try {
+        tokens = (await untilAborted(client.messages.countTokens(body, options()), signal)).input_tokens;
+      } catch (err) {
+        throw mapCountError(err, meta);
+      }
+      if (!Number.isInteger(tokens) || tokens < 0) throw fail('count_failed', NOT_BILLED);
+      return tokens;
+    }
+
+    async function run(rawInput: I, ctx: StageCtx): Promise<StageResult<O>> {
+      const prepared = prepare(rawInput, ctx);
+      const counted = await count(prepared);
+      const after: Partial<Meta> = { countedInputTokens: counted };
+      if (counted > ctx.maxInputTokens) throw fail('cap_exceeded', NOT_BILLED, after);
+
+      let message;
+      try {
+        message = await untilAborted(
+          client.messages.parse({ ...prepared.body, max_tokens: ctx.maxOutputTokens }, prepared.options()),
+          prepared.signal,
+        );
+      } catch (err) {
+        throw mapError(err, { ...meta, ...after });
+      }
+
+      const usage = normalizeUsage(message.usage);
+      const billed = { kind: 'usage', usage } as const;
+      const stopReason = message.stop_reason;
+      if (stopReason === 'refusal') {
+        const refusalCategory = message.stop_details?.category ?? null;
+        throw fail('refusal', billed, { ...after, stopReason, refusalCategory });
+      }
+      if (stopReason === 'max_tokens' || stopReason === 'model_context_window_exceeded') {
+        throw fail('truncated', billed, { ...after, stopReason });
+      }
+      if (stopReason !== 'end_turn') throw fail('invalid_output', billed, { ...after, stopReason });
+      // Backstop: the count should already have stopped this.
+      if (usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens > ctx.maxInputTokens) {
+        throw fail('cap_exceeded', billed, { ...after, stopReason });
+      }
+      const output = message.parsed_output;
+      if (output === null || output === undefined) throw fail('invalid_output', billed, { ...after, stopReason });
+
+      const warnings: StageWarning[] =
+        usage.cacheWriteTokens > CACHED_PREFIX_MAX ? ['cache_write_over_prefix_max'] : [];
+      return { output, usage, provider: 'anthropic', model, promptVersion: spec.promptVersion, stopReason, warnings };
+    }
+
+    return { run, countInputTokens: async (rawInput: I, ctx: StageCtx) => count(prepare(rawInput, ctx)) };
+  }
+
+  const scope = stage({
+    stage: 'scope',
+    promptVersion: SCOPE_PROMPT_VERSION,
+    system: SCOPE_SYSTEM,
+    input: ScopeInputSchema,
+    output: ScopeOutputSchema,
+    render: renderScopeUser,
+  });
+  const compose = stage({
+    stage: 'compose',
+    promptVersion: COMPOSE_PROMPT_VERSION,
+    system: COMPOSE_SYSTEM,
+    input: ComposeInputSchema,
+    output: ComposeOutputSchema,
+    render: renderComposeUser,
+  });
+  const check = stage({
+    stage: 'check',
+    promptVersion: CHECK_PROMPT_VERSION,
+    system: CHECK_SYSTEM,
+    input: CheckInputSchema,
+    output: CheckOutputSchema,
+    render: renderCheckUser,
+  });
+  const counters = {
+    scope: scope.countInputTokens,
+    compose: compose.countInputTokens,
+    check: check.countInputTokens,
+  };
+
+  return {
+    name: 'anthropic',
+    models: { ...cfg.models },
+    countInputTokens<S extends LlmStage>(name: S, input: StageInputs[S], ctx: StageCtx): Promise<number> {
+      return (counters[name] as (i: StageInputs[S], c: StageCtx) => Promise<number>)(input, ctx);
+    },
+    scope: scope.run,
+    compose: compose.run,
+    check: check.run,
+  };
+}

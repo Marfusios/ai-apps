@@ -1,0 +1,29 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`FlightProfile > is deterministic 1`] = `
+{
+  "after": "M301.6 38.9L383.8 72",
+  "defining": {
+    "impact": false,
+    "label": "Loss of engine power (total)",
+    "labelBox": {
+      "x1": 210.5,
+      "x2": 392.8,
+      "y1": 17.5,
+      "y2": 28.5,
+    },
+    "labelX": 301.6,
+    "labelY": 25.9,
+    "leader": null,
+    "x": 301.6,
+    "y": 38.9,
+  },
+  "flown": "M14 72C108.5 72 108.5 38.9 203 38.9H301.6",
+  "impacts": [
+    {
+      "x": 383.8,
+      "y": 72,
+    },
+  ],
+}
+`;

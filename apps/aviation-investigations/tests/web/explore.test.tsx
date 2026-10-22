@@ -1,0 +1,116 @@
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { COMPARE_FULL_MESSAGE } from '../../web/src/features/explore/CompareTray';
+import { currentUrl, renderApp, setupMockApi } from './render-app';
+
+setupMockApi();
+
+const countLine = async (): Promise<string> => {
+  const strong = await screen.findByText(/completed investigations?|investigations?$/, { selector: 'p' });
+  return strong.textContent ?? '';
+};
+
+describe('Home', () => {
+  it('example chips only fill the box; Enter runs Search', async () => {
+    const { router } = renderApp('/');
+    const box = screen.getByRole('textbox', { name: 'Search NTSB investigations' });
+    fireEvent.click(screen.getByRole('button', { name: /Carb icing on climb-out/ }));
+    expect(box).toHaveProperty('value', 'Carb icing on climb-out');
+    expect(currentUrl(router)).toBe('/');
+    fireEvent.change(box, { target: { value: 'carburetor icing' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    expect(currentUrl(router)).toBe('/'); // Ctrl/Cmd+Enter is reserved for Ask AI.
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(currentUrl(router)).toBe('/explore?q=carburetor+icing'));
+    // The coverage line is computed from /api/config.
+    renderApp('/');
+    expect(await screen.findByText(/completed US NTSB investigations · 2008 → 2026 · snapshot 01 OCT 2026/)).toBeTruthy();
+  });
+
+  it('Ask AI is present but disabled, with the later-step tooltip', () => {
+    renderApp('/');
+    const ask = screen.getAllByRole('button', { name: 'Ask AI' })[0] as HTMLElement;
+    expect(ask.getAttribute('aria-disabled')).toBe('true');
+    const tip = document.getElementById(ask.getAttribute('aria-describedby') ?? '');
+    expect(tip?.textContent).toBe('AI search arrives in a later step');
+  });
+});
+
+describe('Explore', () => {
+  it('shows the count line, rows with highlighted probable causes, and facets with counts', async () => {
+    renderApp('/explore?q=carburetor+icing');
+    expect(await countLine()).toMatch(/^7 completed investigations$/);
+    const rows = within(screen.getByRole('list', { name: 'Results' })).getAllByRole('listitem');
+    expect(rows.length).toBeGreaterThanOrEqual(7);
+    expect(rows[0]?.querySelector('mark.hit')?.textContent?.toLowerCase()).toContain('carburetor');
+    expect(screen.getAllByRole('button', { name: 'Initial climb, 3 investigations' }).length).toBeGreaterThan(0);
+  });
+
+  it('facet click updates the URL and the counts; other facets stay disjunctive', async () => {
+    const { router } = renderApp('/explore?q=carburetor+icing');
+    await countLine();
+    const [climb] = screen.getAllByRole('button', { name: 'Initial climb, 3 investigations' });
+    fireEvent.click(climb as HTMLElement);
+    await waitFor(() => expect(currentUrl(router)).toBe('/explore?q=carburetor+icing&phase=initial_climb'));
+    await waitFor(async () => expect(await countLine()).toBe('3 completed investigations'));
+    // The phase facet keeps its alternatives; the selected value is pressed.
+    expect(screen.getAllByRole('button', { name: 'Approach, 2 investigations' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Initial climb, 3 investigations, selected' })[0]?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('no results suggests removing one filter at a time, with real counts', async () => {
+    const { router } = renderApp('/explore?q=carburetor+icing&phase=landing&injury=FATL');
+    expect(await screen.findByText('No completed investigations match all of this.')).toBeTruthy();
+    const suggestion = screen.getByRole('button', { name: /without Phase: Landing · 3 cases/ });
+    fireEvent.click(suggestion);
+    await waitFor(() => expect(currentUrl(router)).toBe('/explore?q=carburetor+icing&injury=FATL'));
+  });
+
+  it(`a fifth compare tick shows "${COMPARE_FULL_MESSAGE}"`, async () => {
+    const { router } = renderApp('/explore?q=carburetor+icing');
+    await countLine();
+    const boxes = screen.getAllByRole('checkbox', { name: /^Compare\s*[A-Z0-9]+$/ });
+    for (const box of boxes.slice(0, 4)) {
+      fireEvent.click(box);
+      await waitFor(() => expect((box as HTMLInputElement).checked).toBe(true));
+    }
+    expect(currentUrl(router)).toBe(
+      '/explore?q=carburetor+icing&cases=ERA25LA016%2CWPR24FA190%2CWPR24LA154%2CCEN19FA009',
+    );
+    fireEvent.click(boxes[4] as HTMLElement);
+    expect(await screen.findByText(COMPARE_FULL_MESSAGE)).toBeTruthy();
+    expect((boxes[4] as HTMLInputElement).checked).toBe(false);
+    const tray = screen.getByRole('complementary', { name: 'Compare tray' });
+    expect(within(tray).getByRole('link', { name: 'Compare →' }).getAttribute('href')).toBe(
+      '/compare?cases=ERA25LA016,WPR24FA190,WPR24LA154,CEN19FA009',
+    );
+  });
+
+  it('the drawer opens from a row, focuses the headline, steps with ‹ › and returns focus on Esc', async () => {
+    const { router } = renderApp('/explore?q=carburetor+icing');
+    await countLine();
+    const trigger = screen.getAllByRole('link', { name: 'ERA25LA016' })[0] as HTMLElement;
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole('dialog');
+    const headline = await within(dialog).findByRole('heading', { level: 2, name: /Piper PA-28-151, fuel-related event/ });
+    await waitFor(() => expect(document.activeElement).toBe(headline));
+    expect(currentUrl(router)).toContain('case=ERA25LA016');
+    expect(within(dialog).getByText('1 of 7')).toBeTruthy();
+    // Story order, NTSB only.
+    expect(within(dialog).getByText('The flight')).toBeTruthy();
+    expect(within(dialog).getAllByText('In probable cause').length).toBeGreaterThan(0);
+    expect(within(dialog).queryByText(/AI classified|Why it’s in your results/i)).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Next case' }));
+    await waitFor(() => expect(currentUrl(router)).toContain('case=WPR24FA190'));
+    expect(await within(dialog).findByText('2 of 7')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(currentUrl(router)).not.toContain('case=');
+    expect(document.activeElement?.getAttribute('data-case-trigger')).toBe('WPR24FA190');
+  });
+});

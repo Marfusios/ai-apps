@@ -1,0 +1,30 @@
+/**
+ * `GET /api/config`: public client configuration and the coverage facts the home
+ * page and footer print. Publicly cacheable; changes with the dataset revision.
+ */
+import { z } from 'zod';
+import { IsoDateSchema } from './common.js';
+
+export const CoverageSchema = z.strictObject({
+  /** US events that are completed with probable-cause text: the default cohort. */
+  defaultCohort: z.number().int().nonnegative(),
+  /** US events outside the default cohort ("other records", UI_DESIGN §4.2). */
+  otherRecords: z.number().int().nonnegative(),
+  /** First and last event year in the corpus. */
+  yearFrom: z.number().int().min(1900).max(2100),
+  yearTo: z.number().int().min(1900).max(2100),
+  /** True while the completed-status mapping is unverified (amendment A5). */
+  provisional: z.boolean(),
+});
+export type Coverage = z.infer<typeof CoverageSchema>;
+
+export const ConfigResponseSchema = z.strictObject({
+  /** Cloudflare Turnstile site key; null when AI requests are not offered. */
+  turnstileSiteKey: z.string().max(200).nullable(),
+  googleEnabled: z.boolean(),
+  /** Date of the NTSB snapshot the active dataset was loaded from. */
+  snapshotDate: IsoDateSchema,
+  datasetRevision: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/),
+  coverage: CoverageSchema,
+});
+export type ConfigResponse = z.infer<typeof ConfigResponseSchema>;

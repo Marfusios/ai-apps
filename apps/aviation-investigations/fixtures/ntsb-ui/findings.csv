@@ -1,0 +1,27 @@
+ev_id,aircraft_key,finding_no,finding_code,finding_description,category_no,subcategory_no,section_no,subsection_no,modifier_no,cause_factor,lchg_date,cm_inpc
+20090103X62819,1,1,0206304044,Personnel issues-Task performance-Use of equip/info-Aircraft control-Pilot - C,02,06,30,40,44,C,2020-09-25T18:00:11,T
+20090103X62819,1,2,0106201020,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Airspeed-Not attained/maintained - C,01,06,20,10,20,C,2020-09-25T18:00:11,T
+20090103X62819,1,3,0106200008,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-(general)-Capability exceeded - C,01,06,20,00,08,C,2020-09-25T18:00:11,T
+20090908X14459,1,1,0106201020,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Airspeed-Not attained/maintained - C,01,06,20,10,20,C,2020-09-25T18:00:11,T
+20090908X14459,1,2,0206304044,Personnel issues-Task performance-Use of equip/info-Aircraft control-Pilot - C,02,06,30,40,44,C,2020-09-25T18:00:11,T
+20120301X35342,1,1,0303103081,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Effect on equipment - C,03,03,10,30,81,C,2020-09-25T15:49:32,T
+20120301X35342,1,2,0105732205,Aircraft-Aircraft power plant-Engine fuel and control-Fuel control/carburetor-Damaged/degraded - F,01,05,73,22,05,F,2020-09-25T15:49:32,T
+20120301X35342,1,3,0303103086,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Ability to respond/compensate - F,03,03,10,30,86,F,2020-09-25T15:49:32,T
+20121025X00050,1,1,0303103081,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Effect on equipment - C,03,03,10,30,81,C,2020-09-25T15:50:16,T
+20141208X13517,1,1,0303103081,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Effect on equipment - C,03,03,10,30,81,C,2020-09-25T15:11:05,T
+20141208X13517,1,2,0102302010,"Aircraft-Aircraft systems-Ice/rain protection system-Intake anti-ice, deice-Not used/operated - C",01,02,30,20,10,C,2020-09-25T15:11:05,T
+20141208X13517,1,3,0204103044,Personnel issues-Action/decision-Action-Lack of action-Pilot - C,02,04,10,30,44,C,2020-09-25T15:11:05,T
+20181019X05527,1,1,0204102544,Personnel issues-Action/decision-Action-Delayed action-Pilot - C,02,04,10,25,44,C,2020-12-03T19:00:42,T
+20181019X05527,1,3,0303103082,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Effect on operation,03,03,10,30,82,,2020-12-03T19:00:42,T
+20181019X05527,1,4,0303103085,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Response/compensation,03,03,10,30,85,,2020-12-03T19:00:42,T
+20181019X05527,1,5,0106205220,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Prop/rotor parameters-Not attained/maintained,01,06,20,52,20,,2020-12-03T19:00:42,T
+20240516194273,1,2,0303103081,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Effect on equipment,03,03,10,30,81,,2026-04-29T18:00:07,T
+20240516194273,1,3,0206301544,Personnel issues-Task performance-Use of equip/info-Use of equip/system-Pilot,02,06,30,15,44,,2026-04-29T18:00:07,T
+20240516194273,1,4,0105716011,Aircraft-Aircraft power plant-Power plant-Air intake-Incorrect use/operation,01,05,71,60,11,,2026-04-29T18:00:07,T
+20240612194454,1,1,0106201220,Aircraft-Aircraft oper/perf/capability-Performance/control parameters-Altitude-Not attained/maintained,01,06,20,12,20,,2026-05-21T18:00:06,T
+20240612194454,1,2,0204152044,Personnel issues-Action/decision-Info processing/decision-Decision making/judgment-Pilot,02,04,15,20,44,,2026-05-21T18:00:06,T
+20240612194454,1,3,0206304044,Personnel issues-Task performance-Use of equip/info-Aircraft control-Pilot,02,06,30,40,44,,2026-05-21T18:00:06,T
+20240612194454,1,4,0302101087,Environmental issues-Physical environment-Terrain-Mountainous/hilly terrain-Awareness of condition,03,02,10,10,87,,2026-05-21T18:00:06,T
+20241016195324,1,3,0303103081,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Effect on equipment,03,03,10,30,81,,2025-05-06T18:00:23,T
+20241016195324,1,2,0303103091,Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing-Contributed to outcome,03,03,10,30,91,,2025-05-06T18:00:23,T
+20241016195324,1,5,0204104044,Personnel issues-Action/decision-Action-Incomplete action-Pilot,02,04,10,40,44,,2025-05-06T18:00:23,T

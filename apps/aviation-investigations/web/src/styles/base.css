@@ -1,0 +1,246 @@
+/*
+ * Base styles and the Sectional signature details (UI_DESIGN §2.5, §2.8). Every
+ * colour comes from tokens.css, so each detail switches with data-theme.
+ */
+
+@layer base {
+  html {
+    background-color: var(--paper);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--paper);
+    background-image: var(--graticule);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* UI_DESIGN §2.6 and §8: a 2px blue ring, 2px offset, on everything interactive. */
+  :focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: var(--muted);
+    opacity: 1;
+  }
+
+  ::selection {
+    background-color: var(--blue);
+    color: var(--on-blue);
+  }
+}
+
+@layer components {
+  /* Page background: the 56px graticule by day, plain charcoal at night. */
+  .paper {
+    background-color: var(--paper);
+    background-image: var(--graticule);
+    color: var(--ink);
+  }
+
+  /* Raised surfaces: hairline border, no shadow by day, a shallow bezel at night. */
+  .card {
+    background-color: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    box-shadow: var(--bezel);
+  }
+
+  /* Header rule: 2px border with a scale-bar tick strip hanging under it. */
+  .header-rule {
+    position: relative;
+    border-bottom: 2px solid var(--header-rule);
+  }
+
+  .header-rule::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -8px;
+    height: 6px;
+    pointer-events: none;
+    opacity: var(--tick-opacity);
+    background:
+      repeating-linear-gradient(90deg, var(--tick) 0 1px, transparent 1px 9px) 0 0 / 100% 3px no-repeat,
+      repeating-linear-gradient(90deg, var(--tick) 0 1px, transparent 1px 45px) 0 0 / 100% 6px no-repeat;
+  }
+
+  /* Eyebrow and section labels; engraved placards at night. */
+  .placard {
+    --placard-tone: var(--blue);
+    display: inline-block;
+    padding: var(--placard-pad);
+    border: var(--placard-border);
+    border-radius: 2px;
+    background-color: var(--placard);
+    box-shadow: var(--placard-highlight);
+    color: var(--placard-ink, var(--placard-tone));
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .16em;
+    line-height: 1.5;
+    text-transform: uppercase;
+  }
+
+  .placard[data-tone="ink"] {
+    --placard-tone: var(--ink);
+  }
+
+  /* AI labels stay magenta inside the placard. */
+  .placard[data-tone="ai"] {
+    color: var(--magenta);
+  }
+
+  .wordmark {
+    font-size: 12px;
+    letter-spacing: .14em;
+    white-space: nowrap;
+  }
+
+  /* Data cautions: diagonal hatching on raised (UI_DESIGN §2.7). Kept in print. */
+  .hatch {
+    background-color: var(--raised);
+    background-image: repeating-linear-gradient(135deg, var(--hatch) 0 2px, transparent 2px 6px);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .link {
+    color: var(--blue);
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+
+  .link:hover {
+    text-decoration-thickness: 2px;
+  }
+
+  .skip-link {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    z-index: 50;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background-color: var(--blue);
+    color: var(--on-blue);
+    font-size: 12.5px;
+    font-weight: 700;
+    transform: translateY(-200%);
+  }
+
+  .skip-link:focus {
+    transform: none;
+  }
+
+  /* Matched search terms: blue-wash with a blue underline (UI_DESIGN §4.2, §4.5). */
+  .hit {
+    background-color: var(--blue-wash);
+    color: var(--ink);
+    border-bottom: 1.5px solid var(--blue);
+    padding: 0 1px;
+  }
+
+  /* Compare checkboxes: blue outline square; checked is filled blue with an inset ring (§2.6). */
+  .check {
+    appearance: none;
+    flex: none;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    border: 1.5px solid var(--blue);
+    border-radius: 2px;
+    background-color: var(--raised);
+    cursor: pointer;
+  }
+
+  .check:checked {
+    background-color: var(--blue);
+    box-shadow: inset 0 0 0 2px var(--raised);
+  }
+
+  /* Section heads: placard label, a hairline to the right, then the source tag (§4.5). */
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 9px;
+  }
+
+  .section-head::after {
+    content: "";
+    order: 1;
+    flex: 1;
+    height: 1px;
+    background-color: var(--hairline);
+  }
+
+  .section-head > .section-tag {
+    order: 2;
+  }
+
+  /* The drawer slides in over 200ms ease-out; nothing else animates (§2.6). */
+  .drawer[data-state="open"] {
+    animation: casebook-drawer-in 200ms ease-out;
+  }
+
+  .sheet[data-state="open"] {
+    animation: casebook-sheet-in 200ms ease-out;
+  }
+
+  [data-print="only"] {
+    display: none;
+  }
+
+  /* A 44px hit area on touch screens without changing the layout (UI_DESIGN §6). */
+  @media (pointer: coarse) {
+    .touch-target {
+      position: relative;
+    }
+
+    .touch-target::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
+  }
+}
+
+@keyframes casebook-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes casebook-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+/* UI_DESIGN §2.6: with reduced motion, everything appears instantly. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
