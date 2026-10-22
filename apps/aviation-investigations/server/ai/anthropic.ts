@@ -285,6 +285,8 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
       const counted = await count(prepared);
       const after: Partial<Meta> = { countedInputTokens: counted };
       if (counted > ctx.maxInputTokens) throw fail('cap_exceeded', NOT_BILLED, after);
+      // Stopped while counting (cancel, shutdown or the deadline): the paid call is never sent.
+      if (prepared.signal.aborted) throw fail('timeout', NOT_BILLED, after);
 
       let message;
       try {

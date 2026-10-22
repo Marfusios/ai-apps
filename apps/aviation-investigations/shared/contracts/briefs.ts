@@ -459,11 +459,17 @@ export const GapSchema = z.strictObject({
 });
 export type Gap = z.infer<typeof GapSchema>;
 
-/** Why a summary was withheld. Every variant still returns the case cards. */
+/**
+ * Why a summary was withheld. Every variant withholds the whole AI summary (no summary,
+ * groups, readings or gap notes) and returns every retrieved case as a plain NTSB card.
+ */
 export const WITHHELD_REASONS = [
   /** A quote, citation or case number failed the code checks (validateComposition). */
   'citation_check',
-  /** A presented case does not meet the reader's criteria (timing window, first flight, failure type). */
+  /**
+   * A presented case does not meet the reader's criteria (timing window, first flight,
+   * failure type): the whole summary is withheld, not just that case.
+   */
   'criteria_check',
   /** The evidence checker reported a problem or was inconclusive. */
   'evidence_check',

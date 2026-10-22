@@ -13,7 +13,8 @@
  *
  * `fail()` queues transport failures for the next calls: a network error, a timeout
  * (waits for the request's abort signal), HTTP 500, `internal-error`, a malformed
- * body, or `lost` (the verification runs, then the response is lost).
+ * body, or `lost` (the verification runs, then the response is lost). `hold()` keeps
+ * calls waiting (recorded, unanswered) until it is released: a request paused in the gate.
  */
 import { randomBytes } from 'node:crypto';
 import { SITEVERIFY_URL, TOKEN_LIFETIME_MS, TURNSTILE_TEST_SECRET_KEYS } from '../../server/identity/turnstile.js';
@@ -41,6 +42,7 @@ export class FakeSiteverify {
   private readonly issued = new Map<string, Issued>();
   private readonly redeemed = new Map<string, { key: string | null; body: unknown }>();
   private readonly failures: Failure[] = [];
+  private held: Promise<void> | null = null;
 
   constructor(
     private readonly now: () => Date,
@@ -60,6 +62,16 @@ export class FakeSiteverify {
 
   fail(...failures: Failure[]): void {
     this.failures.push(...failures);
+  }
+
+  /** Keep calls waiting until the returned function is called. */
+  hold(): () => void {
+    let release!: () => void;
+    this.held = new Promise<void>((resolve) => (release = resolve));
+    return () => {
+      this.held = null;
+      release();
+    };
   }
 
   private answer(secret: string | null, response: string | null, key: string | null): unknown {
@@ -106,6 +118,7 @@ export class FakeSiteverify {
       remoteip: form.get('remoteip'),
     };
     this.calls.push(call);
+    if (this.held) await this.held;
     const failure = this.failures.shift();
     if (failure === 'network') throw new TypeError('fetch failed');
     if (failure === 'timeout') {

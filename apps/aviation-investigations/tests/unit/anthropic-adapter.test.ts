@@ -419,6 +419,23 @@ describe('Anthropic adapter failures', () => {
     expect([bodies.length, countBodies.length]).toEqual([0, 0]);
   });
 
+  it('does not send the paid call when the caller aborts as the count comes back', async () => {
+    const { p, client, bodies } = provider(hang);
+    const controller = new AbortController();
+    // The count resolves; the abort lands after the adapter has its result, before the paid call.
+    vi.spyOn(client.messages, 'countTokens').mockImplementation(() => {
+      const counted = Promise.resolve({ input_tokens: 1_000 });
+      void counted.then(() => undefined).then(() => controller.abort());
+      return counted as never;
+    });
+    const parse = vi.spyOn(client.messages, 'parse');
+    const err = await stageError(p.scope(scopeInput, ctx('scope', controller.signal)));
+    expect(err.category).toBe('timeout');
+    expect(err.billing).toEqual({ kind: 'none' });
+    expect(parse).not.toHaveBeenCalled();
+    expect(bodies).toHaveLength(0);
+  });
+
   it('maps HTTP errors to categories and billing', async () => {
     const cases = [
       [429, 'rate_limit_error', 'rate_limited', 'none'],

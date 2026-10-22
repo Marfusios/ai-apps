@@ -471,6 +471,9 @@ describe('http', () => {
       expect(csp, url).toContain(`script-src 'self' '${THEME_SCRIPT_HASH}'`);
       expect(csp, url).toContain("frame-ancestors 'none'");
       expect(csp, url).not.toContain('unsafe-inline');
+      // No anonymous AI here, so no Turnstile sources.
+      expect(csp, url).not.toContain('challenges.cloudflare.com');
+      expect(csp, url).not.toContain('frame-src');
       expect(r.headers['x-content-type-options'], url).toBe('nosniff');
       expect(r.headers['referrer-policy'], url).toBe('same-origin');
       expect(r.headers['permissions-policy'], url).toContain('camera=()');

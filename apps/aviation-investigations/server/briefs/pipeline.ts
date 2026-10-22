@@ -36,7 +36,9 @@
  * cards; there is no repair loop. Results are written stage by stage and only stage
  * status and counts are visible before the end. The whole step has a 60-second deadline
  * (each stage's timeout is cut to what is left). Cancel aborts the running call and keeps
- * the search counted (UI_DESIGN §4.4); a server shutdown aborts it too and fails the step.
+ * the search counted (UI_DESIGN §4.4); a server shutdown aborts it too and fails the step
+ * (a step started after shutdown began stops before its first provider call, gives the
+ * search back and settles at zero).
  *
  * Counting (UI_DESIGN §5): scope replies and empty results give the free search back,
  * as does a failure before anything was spent; withheld summaries, abstentions,
@@ -387,6 +389,10 @@ class Run {
   private async stages(): Promise<StageEnd> {
     const { deps, req } = this;
     const { llm } = deps;
+
+    // Stopped before any provider call (a step started after shutdown began): nothing was
+    // spent, so the search is given back and the step settles at zero.
+    if (this.stopped) return this.stoppedEnd();
 
     // 1. Scope.
     let intent: StepIntent;

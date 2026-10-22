@@ -24,6 +24,14 @@
  * only for the scope stage, so a static reply comes back directly (`scope_reply`) and an
  * in-scope question answers `started`, to be polled with `GET`.
  *
+ * Server shutdown (`BriefServices.shutdown`, aborted by server/app.ts `preClose`): a paid
+ * request is tracked work (closing waits for it, bounded) and is refused with 503
+ * `unavailable` at each point where shutdown has begun: before the gate claims the
+ * Turnstile token, before admission, and after admission before the step exists (the
+ * admission is given back and settled at zero). A step created while shutdown began
+ * runs under the shutdown signal, so it stops before its first provider call, gives the
+ * search back and settles at zero (the request answers `started` with stage `failed`).
+ *
  * Reads (`GET`, the case context and cancel) are for the brief's read owner only: the
  * trial in the request's cookie (Task 20 adds signed-in sessions). Anything else is 404.
  */
@@ -89,12 +97,21 @@ interface Ready extends Runtime {
   evidence: EvidenceDataset;
 }
 
-/** The AI runtime and brief services a paid brief request needs, or null (503). */
+/** The AI runtime and brief services a paid brief request needs, or null (503; also once shutdown began). */
 function runtime(ctx: ApiContext): Runtime | null {
   const ai = ctx.ai;
   const svc = ctx.briefs;
   if (!ai?.startup.enabled || ai.startup.reservationUsd === undefined || !ai.policy || !ai.llm || !ai.gate || !ai.trials || !svc) return null;
+  if (stopping(svc)) return null;
   return { ai: ai as Runtime['ai'], svc, reservationUsd: ai.startup.reservationUsd };
+}
+
+/** The server began closing: no paid work may start. */
+const stopping = (svc: BriefServices): boolean => svc.shutdown.aborted;
+
+/** A paid request's handler as tracked work, so closing waits for it (server/briefs/services.ts). */
+function tracked<T>(ctx: ApiContext, work: () => Promise<T>): Promise<T> {
+  return ctx.briefs ? ctx.briefs.track(work) : work();
 }
 
 /** A new brief: the runtime and the evidence index of the active manifest, or null (503). */
@@ -207,9 +224,14 @@ async function abandon(ctx: ApiContext, r: Ready, admission: Admission): Promise
   await settle(ctx.db, admission, 0, admission.fencingToken, r.ai.now()).catch(() => undefined);
 }
 
-/** Start the step in the background and wait for its scope stage. */
+/**
+ * Start the step in the background and wait for its scope stage. The step runs under
+ * the reader's cancel and the server's shutdown signal: one started after shutdown
+ * began stops before its first provider call.
+ */
 async function start(ctx: ApiContext, r: Ready, briefId: string, step: StepRow, admission: Admission, requestId: string): Promise<StartBriefResponse> {
   const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, r.svc.shutdown]);
   let onScoped!: (o: ScopedOutcome) => void;
   const scoped = new Promise<ScopedOutcome>((resolve) => (onScoped = resolve));
   const done = runBriefStep(
@@ -226,7 +248,7 @@ async function start(ctx: ApiContext, r: Ready, briefId: string, step: StepRow, 
     },
     step.id,
     admission,
-    { signal: controller.signal, onScoped, requestId },
+    { signal, onScoped, requestId },
   );
   r.svc.runs.set(step.id, { controller, done });
   void done.finally(() => {
@@ -330,7 +352,8 @@ const StepQuerySchema = z.strictObject({ step: z.coerce.number().pipe(StepNumber
 export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUrl: string }): void {
   const appOrigin = new URL(opts.appUrl).origin;
 
-  app.post('/api/briefs', async (request, reply) => {
+  /** `POST /api/briefs` (tracked work: see the module comment). */
+  async function createBrief(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
     if (crossSite(request, appOrigin)) return sendError(reply, 403, 'forbidden');
     const parsed = CreateBriefRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(parsed.error.issues) });
@@ -338,10 +361,12 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     const stepRequest = questionRequest(body.question, body.filters);
     if (queryTooLong(stepRequest)) return sendError(reply, 400, 'bad_request', { message: TOO_LONG });
     const r = await ready(ctx);
-    if (!r) return sendError(reply, 503, 'unavailable');
+    // Shutdown checks: before the gate claims the token, before admission, before the step exists.
+    if (!r || stopping(r.svc)) return sendError(reply, 503, 'unavailable');
 
     const pass = await r.ai.gate.check(request, reply, body.turnstileToken);
     if (!pass.ok) return sendGateRefusal(reply, pass, r.ai.now());
+    if (stopping(r.svc)) return sendError(reply, 503, 'unavailable');
     const owner = principalHash(r.ai.policy, pass.principal);
     const requestHash = createRequestHash(body.question, body.filters);
     const requestId = `brief:${randomUUID()}`;
@@ -349,6 +374,10 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     if (admission === 'new_check') return sendError(reply, 403, 'challenge_required');
     if (!admission.ok) return sendRejection(reply, admission, r.ai.now());
     if (admission.replay) return sendReplay(ctx, reply, RESULT_REF.exec(admission.resultRef ?? '')?.[1] ?? null, owner, r.ai.now());
+    if (stopping(r.svc)) {
+      await abandon(ctx, r, admission);
+      return sendError(reply, 503, 'unavailable');
+    }
 
     let created: { briefId: string; step: StepRow };
     try {
@@ -380,9 +409,11 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
       throw err;
     }
     return sendStart(reply, await start(ctx, r, created.briefId, created.step, admission, requestId));
-  });
+  }
+  app.post('/api/briefs', async (request, reply) => tracked(ctx, () => createBrief(request, reply)));
 
-  app.post<{ Params: { id: string } }>('/api/briefs/:id/refine', async (request, reply) => {
+  /** `POST /api/briefs/:id/refine` (tracked work: see the module comment). */
+  async function refineBrief(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): Promise<FastifyReply> {
     if (crossSite(request, appOrigin)) return sendError(reply, 403, 'forbidden');
     const id = BriefIdSchema.safeParse(request.params.id);
     if (!id.success) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
@@ -409,10 +440,12 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     }
     // The brief stays on the evidence index it started on.
     const r = await readyFor(rt, owned.brief);
-    if (!r) return sendError(reply, 503, 'unavailable');
+    // Shutdown checks: before the gate claims the token, before admission, before the step exists.
+    if (!r || stopping(r.svc)) return sendError(reply, 503, 'unavailable');
 
     const pass = await r.ai.gate.check(request, reply, body.turnstileToken);
     if (!pass.ok) return sendGateRefusal(reply, pass, r.ai.now());
+    if (stopping(r.svc)) return sendError(reply, 503, 'unavailable');
     const billing = principalHash(r.ai.policy, pass.principal);
     if (billing !== owned.brief.readOwner) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
     const requestId = `brief:${randomUUID()}`;
@@ -420,6 +453,10 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     if (admission === 'new_check') return sendError(reply, 403, 'challenge_required');
     if (!admission.ok) return sendRejection(reply, admission, r.ai.now());
     if (admission.replay) return sendReplay(ctx, reply, RESULT_REF.exec(admission.resultRef ?? '')?.[1] ?? null, billing, r.ai.now());
+    if (stopping(r.svc)) {
+      await abandon(ctx, r, admission);
+      return sendError(reply, 503, 'unavailable');
+    }
 
     let step: StepRow | null;
     try {
@@ -448,7 +485,8 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
       return sendError(reply, 409, 'conflict');
     }
     return sendStart(reply, await start(ctx, r, id.data, step, admission, requestId));
-  });
+  }
+  app.post<{ Params: { id: string } }>('/api/briefs/:id/refine', async (request, reply) => tracked(ctx, () => refineBrief(request, reply)));
 
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>('/api/briefs/:id', async (request, reply) => {
     const id = BriefIdSchema.safeParse(request.params.id);

@@ -157,6 +157,23 @@ describe('security headers', () => {
     expect(() => contentSecurityPolicy({ styleNonce: "x' 'unsafe-inline" })).toThrow(/invalid CSP nonce/);
   });
 
+  it('allows Cloudflare Turnstile’s script and frame only when it is configured', () => {
+    const without = contentSecurityPolicy();
+    expect(without).not.toContain('challenges.cloudflare.com');
+    expect(without).not.toContain('frame-src');
+    const csp = contentSecurityPolicy({ turnstile: true, styleNonce: 'AbCdEfGhIjKlMnOpQrStUvWx' });
+    expect(csp).toContain(`script-src 'self' '${THEME_SCRIPT_HASH}' https://challenges.cloudflare.com;`);
+    expect(csp).toContain('; frame-src https://challenges.cloudflare.com;');
+    expect(csp).toContain("style-src 'self' 'nonce-AbCdEfGhIjKlMnOpQrStUvWx';");
+    expect(csp).toContain("connect-src 'self';");
+    // Otherwise the policy is the one without Turnstile.
+    expect(csp.replace(' https://challenges.cloudflare.com', '').replace('; frame-src https://challenges.cloudflare.com', '')).toBe(
+      contentSecurityPolicy({ styleNonce: 'AbCdEfGhIjKlMnOpQrStUvWx' }),
+    );
+    expect(securityHeaders({ hsts: false, turnstile: true })['content-security-policy']).toBe(contentSecurityPolicy({ turnstile: true }));
+    expect(securityHeaders({ hsts: false })['content-security-policy']).toBe(without);
+  });
+
   it('sends HSTS only for an HTTPS origin', () => {
     expect(securityHeaders({ hsts: false })).not.toHaveProperty('strict-transport-security');
     expect(securityHeaders({ hsts: true })['strict-transport-security']).toBe('max-age=31536000');

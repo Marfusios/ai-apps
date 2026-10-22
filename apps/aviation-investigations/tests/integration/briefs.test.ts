@@ -10,8 +10,12 @@
  * (server/briefs/retriever.ts) over the fixture passages index with the fake embedder.
  */
 import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import net, { type AddressInfo, type Socket } from 'node:net';
 import { errors, type Client, type estypes } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -50,6 +54,7 @@ import { failOrphanedSteps, moveBriefReadOwner } from '../../server/briefs/store
 import { closeDb, type Db } from '../../server/db/client.js';
 import { publishManifest } from '../../server/db/generations.js';
 import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
+import { SPEND_LOCK_KEY } from '../../server/quota/policy.js';
 import { assertServablePassagesIndex } from '../../server/search/hybrid.js';
 import { FIXTURE_EMBEDDING, deleteIndices, fixtureEmbedder, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
 import { FakeRetriever, type FakeRetrieverOptions } from '../support/fake-retriever.js';
@@ -164,8 +169,10 @@ interface HarnessOptions {
   aiEvidence?: () => Promise<{ generationId: number; passagesIndex: string } | null>;
   /** Wrap the PostgreSQL case catalog. */
   catalog?: (real: CaseCatalog) => CaseCatalog;
-  /** The grace closing gives aborted steps (default `SHUTDOWN_GRACE_MS`). */
+  /** The closing deadline (default `SHUTDOWN_GRACE_MS`). */
   shutdownGraceMs?: number;
+  /** Serve a built web client from here. */
+  webRoot?: string;
 }
 
 /** The served index's passages contract, from hybrid retrieval's own check. */
@@ -199,6 +206,7 @@ function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
     logger: { level: 'debug', stream: { write: (line: string) => void logs.push(line) } },
     rateLimit: { limit: 100_000, windowMs: 60_000 },
     ...(opts.shutdownGraceMs !== undefined ? { shutdownGraceMs: opts.shutdownGraceMs } : {}),
+    ...(opts.webRoot ? { webRoot: opts.webRoot } : {}),
   });
   const h = { app, ai, sv, llm, retriever, svc, logs };
   harnesses.push(h);
@@ -289,10 +297,15 @@ async function inject<T>(h: Harness, method: 'GET' | 'POST', url: string, opts: 
   return { status: r.statusCode, json: (r.body ? JSON.parse(r.body) : null) as T, setCookie: typeof setCookie === 'string' ? setCookie : null };
 }
 
-async function ask(h: Harness, question: string, opts: { cookie?: string | null; filters?: object; idempotencyKey?: string; token?: string } = {}) {
+async function ask(
+  h: Harness,
+  question: string,
+  opts: { cookie?: string | null; filters?: object; idempotencyKey?: string; token?: string; from?: string } = {},
+) {
   const r = await inject<StartBriefResponse>(h, 'POST', '/api/briefs', {
     body: { question, ...(opts.filters ? { filters: opts.filters } : {}), turnstileToken: opts.token ?? h.sv.issue(), idempotencyKey: opts.idempotencyKey ?? key() },
     cookie: opts.cookie ?? null,
+    ...(opts.from ? { from: opts.from } : {}),
   });
   if (r.status < 300) StartBriefResponseSchema.parse(r.json);
   return r;
@@ -334,6 +347,104 @@ async function until(ready: () => boolean, ms = 5_000): Promise<void> {
   }
 }
 
+/** `until` for an asynchronous condition. */
+async function untilAsync(ready: () => Promise<boolean>, ms = 5_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!(await ready())) {
+    if (Date.now() > end) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+// A listening server -------------------------------------------------------------
+
+async function listen(h: Harness): Promise<number> {
+  await h.app.listen({ host: '127.0.0.1', port: 0 });
+  return (h.app.server.address() as AddressInfo).port;
+}
+
+interface Sent {
+  status: number;
+  headers: http.IncomingHttpHeaders;
+  body: string;
+  socket: Socket;
+}
+
+/** One request; `agent` keeps its connection (default: a connection of its own, closed after it). */
+function send(port: number, method: 'GET' | 'POST', path: string, opts: { body?: object; agent?: http.Agent } = {}): Promise<Sent> {
+  return new Promise((resolve, reject) => {
+    const payload = opts.body ? JSON.stringify(opts.body) : undefined;
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        method,
+        path,
+        agent: opts.agent ?? false,
+        headers: payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {},
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (d: string) => (text += d));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: text, socket: socket! }));
+      },
+    );
+    // The connection, kept here: a keep-alive agent detaches it from the response at its end.
+    let socket: Socket | undefined;
+    req.on('socket', (s) => (socket = s));
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+/** Resolves when `socket` closes. */
+function closedOf(socket: Socket): Promise<void> {
+  return socket.closed ? Promise.resolve() : new Promise((resolve) => socket.once('close', () => resolve()));
+}
+
+// Pausing a request in the database ------------------------------------------------
+
+/** Hold `table` in EXCLUSIVE mode (reads pass, inserts wait) until `release`. */
+async function holdTable(table: string): Promise<{ release: () => Promise<void> }> {
+  return holding(sql.raw(`LOCK TABLE ${table} IN EXCLUSIVE MODE`));
+}
+
+/** Hold a transaction-level advisory lock until `release`. */
+async function holdAdvisory(lockKey: number): Promise<{ release: () => Promise<void> }> {
+  return holding(sql`SELECT pg_advisory_xact_lock(${lockKey})`);
+}
+
+/** Run `statement` in a transaction kept open until `release` (idempotent). */
+async function holding(statement: ReturnType<typeof sql>): Promise<{ release: () => Promise<void> }> {
+  let release!: () => void;
+  const released = new Promise<void>((r) => (release = r));
+  let locked!: () => void;
+  const held = new Promise<void>((r) => (locked = r));
+  const done = migrator.transaction(async (tx) => {
+    await tx.execute(statement);
+    locked();
+    await released;
+  });
+  await Promise.race([held, done]);
+  return {
+    release: async () => {
+      release();
+      await done;
+    },
+  };
+}
+
+/** Lock requests waiting on `table`. */
+async function waitingOnTable(table: string): Promise<number> {
+  return (await rows<{ n: number }>(sql`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND relation = ${table}::regclass`))[0]!.n;
+}
+
+/** Advisory-lock requests waiting. */
+async function waitingOnAdvisory(): Promise<number> {
+  return (await rows<{ n: number }>(sql`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted AND locktype = 'advisory'`))[0]!.n;
+}
+
 // Database ----------------------------------------------------------------------
 
 async function rows<T>(query: ReturnType<typeof sql>): Promise<T[]> {
@@ -370,11 +481,21 @@ async function ledgerStages(): Promise<string[][]> {
   return [...by.values()];
 }
 
+/** The ledger lines of one reservation. */
+async function ledgerOf(reservationId: number): Promise<{ stage: string; usd: string }[]> {
+  return rows(sql`SELECT stage, usd::text AS usd FROM cost_ledger WHERE reservation_id = ${reservationId} ORDER BY id`);
+}
+
 async function stepRow(briefId: string, n = 1) {
   return (
-    await rows<{ status: string; stage: string; cost_usd: string | null; meta: Record<string, unknown>; intent: Record<string, unknown> | null }>(
-      sql`SELECT status, stage, cost_usd::text AS cost_usd, meta, intent FROM brief_steps WHERE brief_id = ${briefId}::uuid AND n = ${n}`,
-    )
+    await rows<{
+      status: string;
+      stage: string;
+      cost_usd: string | null;
+      meta: Record<string, unknown>;
+      intent: Record<string, unknown> | null;
+      result: Record<string, unknown> | null;
+    }>(sql`SELECT status, stage, cost_usd::text AS cost_usd, meta, intent, result FROM brief_steps WHERE brief_id = ${briefId}::uuid AND n = ${n}`)
   )[0]!;
 }
 
@@ -1495,6 +1616,10 @@ describe('gate G6: evidence semantics through the routes', () => {
       criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
     });
     expect(h.llm.calls.some((c) => c.stage === 'check')).toBe(false);
+    // The whole AI summary is withheld, not just that case: every retrieved case is a plain NTSB card.
+    if (step.result?.kind !== 'withheld') throw new Error('expected a withheld summary');
+    expect(step.result.cases.map((c) => [c.case.ntsbNo, c.reading])).toEqual(SEEDS.map((n) => [n, null]));
+    expect(step.result).not.toHaveProperty('summary');
   });
 
   it('G6 #2: an approximate value is shown unconfirmed, never as within the window', async () => {
@@ -1807,46 +1932,162 @@ describe('orphaned and interrupted steps', () => {
   it('closing a listening server under live traffic aborts the running step, settles it and drains within the grace', async () => {
     const h = harness(answering({ scope: { hang: true } }), { timeouts: { scope: 30_000 } });
     harnesses.splice(harnesses.indexOf(h), 1);
-    await h.app.listen({ host: '127.0.0.1', port: 0 });
-    const { port } = h.app.server.address() as AddressInfo;
-    const agent = new http.Agent({ keepAlive: true });
-    const send = (method: 'GET' | 'POST', path: string, body?: object) =>
-      new Promise<{ status: number; connection: string | undefined; body: string }>((resolve, reject) => {
-        const payload = body ? JSON.stringify(body) : undefined;
-        const req = http.request(
-          { host: '127.0.0.1', port, method, path, agent, headers: payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {} },
-          (res) => {
-            let text = '';
-            res.setEncoding('utf8');
-            res.on('data', (d: string) => (text += d));
-            res.on('end', () => resolve({ status: res.statusCode ?? 0, connection: res.headers.connection, body: text }));
-          },
-        );
-        req.on('error', reject);
-        req.end(payload);
-      });
+    const port = await listen(h);
+    // Two keep-alive agents: one connection left idle, another with a request in flight
+    // (one agent would reuse the idle connection for the POST).
+    const idle = new http.Agent({ keepAlive: true });
+    const busy = new http.Agent({ keepAlive: true });
     try {
-      // An idle keep-alive connection, then a request in flight on another: the POST waits for the scope stage.
-      expect((await send('GET', '/api/health')).connection).toBe('keep-alive');
-      const posted = send('POST', '/api/briefs', { question: 'Engine power loss shortly after maintenance', turnstileToken: h.sv.issue(), idempotencyKey: key() });
+      const health = await send(port, 'GET', '/api/health', { agent: idle });
+      expect(health.headers.connection).toBe('keep-alive');
+      const idleClosed = closedOf(health.socket);
+      // The POST waits for the scope stage, which hangs until the step is aborted.
+      const posted = send(port, 'POST', '/api/briefs', {
+        agent: busy,
+        body: { question: 'Engine power loss shortly after maintenance', turnstileToken: h.sv.issue(), idempotencyKey: key() },
+      });
       await until(() => h.llm.calls.some((c) => c.stage === 'scope'));
       expect(h.svc.runs.size).toBe(1);
       const t0 = Date.now();
       await h.app.close();
-      const took = Date.now() - t0;
-      expect(took).toBeLessThan(SHUTDOWN_GRACE_MS);
-      // The request in flight got its answer, and its connection was closed with it.
+      expect(Date.now() - t0).toBeLessThan(SHUTDOWN_GRACE_MS);
+      // The request in flight got its answer, and its connection was closed with it; Node's
+      // own server.close() closed the idle one.
       const res = await posted;
-      expect([res.status, res.connection]).toEqual([202, 'close']);
+      expect([res.status, res.headers.connection]).toEqual([202, 'close']);
       expect(JSON.parse(res.body)).toMatchObject({ kind: 'started', step: 1, stage: 'failed' });
+      await idleClosed;
       expect(h.svc.runs.size).toBe(0);
       const briefId = (JSON.parse(res.body) as { briefId: string }).briefId;
       expect(await stepRow(briefId)).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'shutdown' } } });
       // The aborted scope call may have been billed: settled in full, the search kept.
       expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
     } finally {
-      agent.destroy();
+      idle.destroy();
+      busy.destroy();
     }
+  });
+
+  it.each(['create', 'refine'] as const)(
+    'shutdown stops a %s request paused just before its step starts: no provider call, quota given back, settled at zero',
+    async (kind) => {
+      const h = harness(answering(), { trialRequests: 10 });
+      harnesses.splice(harnesses.indexOf(h), 1);
+      const first = kind === 'refine' ? await askAndWait(h) : null;
+      const calls = h.llm.calls.length;
+      advance(MIN);
+      // The request passes the gate and admission, then waits to insert its step.
+      const lock = await holdTable('brief_steps');
+      let t0: number;
+      let started: ReturnType<typeof ask>;
+      try {
+        started = first ? refine(h, first.briefId, first.cookie, { kind: 'text', text: 'Only airplanes' }) : ask(h, 'Engine power loss shortly after maintenance');
+        await untilAsync(async () => (await waitingOnTable('brief_steps')) === 1);
+        t0 = Date.now();
+        const closing = h.app.close();
+        await until(() => h.svc.shutdown.aborted);
+        await lock.release();
+        await closing;
+      } finally {
+        await lock.release();
+      }
+      expect(Date.now() - t0).toBeLessThan(SHUTDOWN_GRACE_MS);
+      // The step was made, then stopped before its first provider call.
+      const r = await started;
+      const n = first ? 2 : 1;
+      expect([r.status, r.json]).toMatchObject([202, { kind: 'started', step: n, stage: 'failed' }]);
+      expect(h.llm.calls).toHaveLength(calls);
+      expect(await stepRow(r.json.briefId, n)).toMatchObject({
+        status: 'failed',
+        stage: 'failed',
+        cost_usd: '0.000000',
+        result: { kind: 'failed', countedAsSearch: false },
+        meta: { failure: { stage: 'pipeline', category: 'shutdown' } },
+      });
+      // The quota is given back and the reservation settles at zero (one zero ledger line).
+      const settled = await reservations();
+      expect(settled.at(-1)).toMatchObject({ status: 'settled', charged: '0.000000', uncertain: false, quota_counted: false });
+      expect(await ledgerOf(settled.length)).toEqual([{ stage: 'request', usd: '0.000000' }]);
+      expect(await trialUsed()).toEqual([first ? 1 : 0]);
+    },
+  );
+
+  it('a request in admission when shutdown begins is refused, its admission given back and settled at zero', async () => {
+    const h = harness(answering());
+    harnesses.splice(harnesses.indexOf(h), 1);
+    // Admission waits for the spend lock (well within its 2 s lock timeout).
+    const lock = await holdAdvisory(SPEND_LOCK_KEY);
+    let t0: number;
+    let asked: ReturnType<typeof ask>;
+    try {
+      asked = ask(h, 'Engine power loss shortly after maintenance');
+      await untilAsync(async () => (await waitingOnAdvisory()) === 1);
+      t0 = Date.now();
+      const closing = h.app.close();
+      await until(() => h.svc.shutdown.aborted);
+      await lock.release();
+      await closing;
+    } finally {
+      await lock.release();
+    }
+    expect(Date.now() - t0).toBeLessThan(SHUTDOWN_GRACE_MS);
+    const r = await asked;
+    expect([r.status, (r.json as unknown as { error: string }).error]).toEqual([503, 'unavailable']);
+    expect(await reservations()).toMatchObject([{ status: 'settled', charged: '0.000000', uncertain: false, quota_counted: false }]);
+    expect(await ledgerOf(1)).toEqual([{ stage: 'request', usd: '0.000000' }]);
+    expect(await count('brief_steps')).toBe(0);
+    expect(await trialUsed()).toEqual([0]);
+    expect(h.llm.calls).toHaveLength(0);
+  });
+
+  it('while closing, a new request gets 503 unavailable, and one still in the gate is refused before admission', async () => {
+    const h = harness(answering());
+    harnesses.splice(harnesses.indexOf(h), 1);
+    const port = await listen(h);
+    const release = h.sv.hold();
+    const body = () => ({ question: 'Engine power loss shortly after maintenance', turnstileToken: h.sv.issue(), idempotencyKey: key() });
+    const paused = send(port, 'POST', '/api/briefs', { body: body() });
+    await until(() => h.sv.calls.length === 1);
+    const t0 = Date.now();
+    const closing = h.app.close();
+    await until(() => h.svc.shutdown.aborted);
+    // A request that arrives now: refused before any work, as an ErrorResponse with the security headers.
+    const late = await send(port, 'POST', '/api/briefs', { body: body() });
+    expect([late.status, ErrorResponseSchema.parse(JSON.parse(late.body)).error]).toEqual([503, 'unavailable']);
+    expect(late.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(late.headers.connection).toBe('close');
+    expect(h.sv.calls).toHaveLength(1);
+    // The request in the gate resumes and is refused before admission.
+    release();
+    const res = await paused;
+    expect([res.status, ErrorResponseSchema.parse(JSON.parse(res.body)).error]).toEqual([503, 'unavailable']);
+    await closing;
+    expect(Date.now() - t0).toBeLessThan(SHUTDOWN_GRACE_MS);
+    expect(await count('reservations')).toBe(0);
+    expect(h.llm.calls).toHaveLength(0);
+  });
+
+  it('closing closes a connection still open at the deadline (a request body that never arrives)', async () => {
+    const grace = 1_500;
+    const h = harness(answering(), { shutdownGraceMs: grace });
+    harnesses.splice(harnesses.indexOf(h), 1);
+    const port = await listen(h);
+    const socket = net.connect(port, '127.0.0.1');
+    socket.on('error', () => undefined);
+    await once(socket, 'connect');
+    // Headers complete, body short of its Content-Length: the request stays active, so
+    // Node's server.close() would wait for it indefinitely.
+    socket.write('POST /api/briefs HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{"question":');
+    await new Promise((r) => setTimeout(r, 100));
+    const closed = closedOf(socket);
+    const t0 = Date.now();
+    const outcome = await Promise.race([h.app.close().then(() => 'closed'), new Promise((r) => setTimeout(() => r('hung'), grace + 3_000))]);
+    expect(outcome).toBe('closed');
+    const took = Date.now() - t0;
+    // The drain waited until the deadline for the straggler, then closed it.
+    expect(took).toBeGreaterThanOrEqual(grace - 100);
+    expect(took).toBeLessThan(grace + 1_000);
+    await closed;
   });
 
   it('closing the server aborts running steps, which fail and settle within the grace', async () => {
@@ -1927,5 +2168,30 @@ describe('admission: the paced daily budget and other checks before spend', () =
     const r = await refine(h, first.briefId, first.cookie, { kind: 'text', text: 'Only airplanes' });
     expect([r.status, (r.json as unknown as { error: string }).error]).toEqual([503, 'unavailable']);
     expect(h.sv.calls.length).toBe(calls);
+  });
+});
+
+describe('content security policy with anonymous AI', () => {
+  it('allows Cloudflare Turnstile’s script and frame, and nothing broader, on API responses and pages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aviation-briefs-web-'));
+    try {
+      writeFileSync(join(root, 'index.html'), '<!doctype html><html><head><title>Aviation Casebook</title></head><body><div id="root"></div></body></html>');
+      const h = harness(answering(), { webRoot: root });
+      for (const url of ['/api/config', '/api/ai/status', '/']) {
+        const r = await h.app.inject({ method: 'GET', url, remoteAddress: VISITOR, headers: { accept: 'text/html' } });
+        const csp = String(r.headers['content-security-policy']);
+        expect(csp, url).toMatch(/; script-src 'self' 'sha256-[A-Za-z0-9+/=]+' https:\/\/challenges\.cloudflare\.com; /);
+        expect(csp, url).toContain('; frame-src https://challenges.cloudflare.com; ');
+        expect(csp, url).toContain("connect-src 'self';");
+        expect(csp.match(/challenges\.cloudflare\.com/g), url).toHaveLength(2);
+        expect(csp, url).not.toMatch(/unsafe-|\*|https:(?!\/\/challenges\.cloudflare\.com)/);
+      }
+      // The page keeps its per-response style nonce; scripts never take it.
+      const page = await h.app.inject({ method: 'GET', url: '/', remoteAddress: VISITOR, headers: { accept: 'text/html' } });
+      expect(String(page.headers['content-security-policy'])).toMatch(/style-src 'self' 'nonce-[A-Za-z0-9+/=]+'/);
+      expect(String(page.headers['content-security-policy'])).not.toMatch(/script-src[^;]*nonce/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

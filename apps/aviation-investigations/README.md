@@ -695,7 +695,11 @@ headers and a JSON body, and the connection is closed.
   `<style>` element with computed values, so each HTML page gets a fresh style nonce
   in its CSP and as the `nonce` attribute of `<meta property="csp-nonce">` (read
   through the element's `nonce` property, since browsers hide the attribute), which
-  `web/src/csp-nonce.ts` hands to that library; scripts never accept it. Zod runs without compiled parsers
+  `web/src/csp-nonce.ts` hands to that library; scripts never accept it. When
+  anonymous AI is configured (the page gets a Turnstile site key), `script-src` and a
+  `frame-src` directive allow `https://challenges.cloudflare.com`, exactly what
+  Cloudflare's Turnstile CSP reference lists for policies without script nonces;
+  otherwise neither appears. Zod runs without compiled parsers
   (`web/src/zod-config.ts`), which would otherwise probe `new Function`. Also
   `X-Content-Type-Options`, `Referrer-Policy: same-origin`, `Permissions-Policy`,
   `X-Frame-Options`, and HSTS when `APP_URL` is HTTPS.
@@ -922,11 +926,15 @@ are sent), empty results and failures before any spend give the free search back
 withheld summaries, abstentions, cancellations and failures after spending keep it.
 A step still running 120 s after it started has lost its process: it reads as failed,
 no longer blocks a refinement, and the maintenance pass marks it failed once its
-reservation is closed. Closing the server first aborts running steps (they fail and
-settle) and waits up to 8 s for them, before the HTTP drain; the drain is then bounded
-(idle keep-alive connections close at once, responses sent while closing close their
-connection, and anything still open after 1 s is closed). The keep-alive timeout is
-95 s, above the Cloudflare Tunnel connector's 90 s idle timeout to the origin.
+reservation is closed. Closing the server runs within one 9 s deadline (the process
+exits by force at 10 s): first, before the HTTP drain, running steps are aborted (they
+fail and settle), paid requests still in the gate, admission or step creation are
+refused with 503 `unavailable` (an admission is given back and settled at zero) or
+stop before any provider call, and closing waits for both; requests that arrive
+meanwhile get 503 `unavailable`. Then Node's `server.close()` closes idle keep-alive
+connections, responses sent while closing close their connection, and anything still
+open at the deadline is closed. The keep-alive timeout is 95 s, above the Cloudflare
+Tunnel connector's 90 s idle timeout to the origin.
 
 Paid requests check, before any token work or spend: a cross-site request (by
 `Sec-Fetch-Site`, or `Origin` when the browser sends no fetch metadata) is 403; the

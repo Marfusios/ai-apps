@@ -27,12 +27,15 @@
  *   applies the tunnel peer check first) and the HTTP parser's (`clientErrorHandler`).
  * - `Cache-Control` of per-visitor routes (AI, briefs, auth, account) is forced to
  *   `private, no-store` from the matched route (server/http/cache-headers.ts).
- * - Closing (server/main.ts allows itself 10 s) first aborts running brief steps and
- *   waits up to `SHUTDOWN_GRACE_MS` for them to fail, settle and record their state
- *   (`preClose`, before the HTTP drain, so it works under live traffic). The drain is
- *   then bounded: idle keep-alive connections close at once (`forceCloseConnections:
- *   'idle'`), every response sent while closing carries `Connection: close`, and
- *   connections still open after `DRAIN_GRACE_MS` are closed.
+ * - Closing (server/main.ts calls it at once on SIGTERM and exits by force at 10 s) runs
+ *   within one deadline, `SHUTDOWN_GRACE_MS` from its start. First (`preClose`, before
+ *   the HTTP drain, so it works under live traffic) brief services begin shutdown:
+ *   running steps are aborted, paid requests still in the gate, admission or step
+ *   creation are refused or stop before any provider call, and closing waits for steps
+ *   and paid requests to settle. Requests that arrive meanwhile get 503 `unavailable`.
+ *   Then the HTTP drain: Node's own `server.close()` closes idle keep-alive connections,
+ *   every response sent while closing carries `Connection: close`, and connections still
+ *   open at the deadline are closed.
  *
  * Fastify runs with `trustProxy: false`; `request.ip` is never used.
  */
@@ -46,7 +49,6 @@ import type { AppConfig } from '../shared/config.js';
 import type { FacetKey } from '../shared/contracts/search.js';
 import type { AiRuntime } from './ai/runtime.js';
 import type { EvidenceDataset } from './briefs/evidence.js';
-import { SHUTDOWN_REASON } from './briefs/pipeline.js';
 import { servableEvidence, type BriefServices } from './briefs/services.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
 import type { Db } from './db/client.js';
@@ -100,22 +102,25 @@ export interface AppDeps {
   pollRateLimit?: { limit: number; windowMs: number };
   /** How long the active manifest is reused (default 5 s). */
   manifestTtlMs?: number;
-  /** How long closing waits for aborted brief steps to settle (default `SHUTDOWN_GRACE_MS`). */
+  /** The closing deadline (default `SHUTDOWN_GRACE_MS`). */
   shutdownGraceMs?: number;
   /** How long a health probe result is shared (default `HEALTH_CACHE_MS`). */
   healthCacheMs?: number;
   now?: () => number;
 }
 
-/** Within the 10 s the process allows itself on shutdown (server/main.ts), for aborted brief steps to settle. */
-export const SHUTDOWN_GRACE_MS = 8_000;
-/** After the steps settled, how long responses still in flight may take before their connections are closed. */
-export const DRAIN_GRACE_MS = 1_000;
+/**
+ * The closing deadline, from the start of `close()`: within the 10 s the process allows
+ * itself on SIGTERM (server/main.ts), leaving time to close the database and tracing.
+ * Steps and paid requests settle first; responses still in flight get what is left.
+ */
+export const SHUTDOWN_GRACE_MS = 9_000;
 /**
  * Idle keep-alive timeout. Above the Cloudflare Tunnel connector's 90 s idle keep-alive
  * to the origin, so the origin never closes a connection the connector may still reuse
- * (a request sent on it would fail at the edge). Closing does not wait for it: idle
- * connections are closed at once and responses sent while closing end their connection.
+ * (a request sent on it would fail at the edge). Closing does not wait for it: Node's
+ * `server.close()` closes idle connections at once and responses sent while closing end
+ * their connection.
  */
 export const KEEP_ALIVE_TIMEOUT_MS = 95_000;
 
@@ -182,7 +187,9 @@ function clientStatus(err: unknown): number | null {
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const trusted = compileTrustedProxies(deps.config.trustedProxyCidrs);
-  const headers = securityHeaders({ hsts: isHttpsUrl(deps.config.appUrl) });
+  // The page loads Turnstile when anonymous AI is configured (`/api/config` sends the site key).
+  const turnstile = Boolean(deps.ai?.gate);
+  const headers = securityHeaders({ hsts: isHttpsUrl(deps.config.appUrl), turnstile });
   const withHeaders = (reply: FastifyReply): FastifyReply => {
     for (const [name, value] of Object.entries(headers)) {
       // A page sets its own CSP (with its style nonce).
@@ -199,8 +206,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // Request logs would hold client addresses and search text; responses are logged below without either.
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 16 * 1024,
-    return503OnClosing: true,
-    forceCloseConnections: 'idle',
+    // While closing, `onRequest` refuses new requests itself (503 `unavailable`, with the
+    // security headers), instead of Fastify's own bare 503.
+    return503OnClosing: false,
     keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
     // The HTTP parser's own refusals (before routing) carry the security headers too.
     clientErrorHandler: makeClientErrorHandler(headers, { trusted }),
@@ -247,26 +255,29 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.decorateRequest('networkIdentity', null);
 
   // Shutdown, before the HTTP drain (which would otherwise wait for requests that wait
-  // for the steps): running brief steps are aborted (they fail, settle and record their
-  // state) and awaited within the grace the process gives itself (server/main.ts). Then
-  // the drain is bounded: responses sent from now on end their connection, and whatever
-  // is still open after DRAIN_GRACE_MS is closed.
+  // for the steps), within one deadline: brief services begin shutdown (running steps are
+  // aborted; paid requests still in the gate, admission or step creation are refused or
+  // stop before any provider call) and closing waits for steps and paid requests to
+  // settle. Responses sent from now on end their connection; whatever is still open at
+  // the deadline is closed.
   let closing = false;
   let drain: NodeJS.Timeout | undefined;
   app.addHook('preClose', async () => {
     closing = true;
-    if (briefs && briefs.runs.size > 0) {
-      for (const run of briefs.runs.values()) run.controller.abort(SHUTDOWN_REASON);
+    const deadline = performance.now() + (deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
+    const left = () => Math.max(0, deadline - performance.now());
+    if (briefs) {
+      briefs.beginShutdown();
       let timer: NodeJS.Timeout | undefined;
       await Promise.race([
         briefs.settled(),
         new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
+          timer = setTimeout(resolve, left());
         }),
       ]);
       clearTimeout(timer);
     }
-    drain = setTimeout(() => app.server.closeAllConnections(), DRAIN_GRACE_MS);
+    drain = setTimeout(() => app.server.closeAllConnections(), left());
     drain.unref();
   });
   app.addHook('onClose', async () => clearTimeout(drain));
@@ -275,6 +286,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   app.addHook('onRequest', async (request, reply) => {
+    // Closing: nothing new starts (onSend closes the connection).
+    if (closing) return sendError(reply, 503, 'unavailable');
     // The route the router matched on the decoded path; the raw target is never consulted.
     const access = accessOf(request.routeOptions.url, request.method);
     const peer = request.raw.socket.remoteAddress;
@@ -372,7 +385,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const html = page.replace('</head>', `<meta property="csp-nonce" nonce="${nonce}"></head>`);
     return reply
       .code(200)
-      .header('content-security-policy', contentSecurityPolicy({ styleNonce: nonce }))
+      .header('content-security-policy', contentSecurityPolicy({ styleNonce: nonce, turnstile }))
       .header('cache-control', 'no-cache')
       .type('text/html; charset=utf-8')
       .send(html);

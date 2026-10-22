@@ -89,6 +89,7 @@ async function main(): Promise<void> {
     closing = true;
     app.log.info({ signal }, 'shutting down');
     maintenance.stop();
+    // `app.close()` finishes within SHUTDOWN_GRACE_MS (9 s, server/app.ts); then the clients close.
     const force = setTimeout(() => process.exit(1), 10_000);
     force.unref();
     void (async () => {
