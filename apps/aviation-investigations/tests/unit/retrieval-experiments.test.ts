@@ -8,9 +8,12 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import Anthropic from '@anthropic-ai/sdk';
 import type { Client, estypes } from '@elastic/elasticsearch';
 import { describe, expect, it } from 'vitest';
+import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { createFakeProvider } from '../../server/ai/fake.js';
+import { StageError } from '../../server/ai/provider.js';
 import { STAGE_CAPS, stageWorstCaseUsd } from '../../server/ai/pricing.js';
 import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
 import { compileFilters, filterClauses, type Query, type RetrievalFilters } from '../../server/search/filters.js';
@@ -27,7 +30,8 @@ import { gridConfigs, latencyOf, poolCases, poolCeiling, questionValue, runKey, 
 import { candidatesFor, caseRrfFuse, roundRobinCases, uniqueCaseOrder, weightedRrfFuse } from '../../evals/retrieval/experiments/fusion.js';
 import { GRID_VERSION, GridSchema, gridProblems, loadGrid, sha256, type Grid } from '../../evals/retrieval/experiments/grid.js';
 import { CodedDatasetSchema } from '../../evals/retrieval/coded/coded.js';
-import { SCOPE_STAGE_TIMEOUT_MS, ScopeBudgetError, runScopeSamples, scopeInventory } from '../../evals/retrieval/experiments/scope.js';
+import { SCOPE_STAGE_TIMEOUT_MS, ScopeBudgetError, attemptReserveUsd, providerScopeCaller, runScopeSamples, scopeInventory } from '../../evals/retrieval/experiments/scope.js';
+import { DEPLOYED_SCOPE_CAPS, createDeployedScopeCaller, scopeRequestBody } from '../../evals/retrieval/experiments/deployed-scope.js';
 import { applyRule, mulberry32, nearestRank, pairedGroupBootstrap, percentile, type BootstrapResult, type VariantEvaluation } from '../../evals/retrieval/experiments/stats.js';
 import { runVariant } from '../../evals/retrieval/experiments/variant.js';
 import { codedReference, scoreQuestion } from '../../evals/retrieval/metrics.js';
@@ -538,11 +542,14 @@ describe('E3 scope samples', () => {
 
   it('inventories input tokens for free: nothing is generated or reserved', async () => {
     const provider = createFakeProvider({ counts: { scope: 1_234 } });
-    const inv = await scopeInventory(provider, items, 3);
+    const caller = providerScopeCaller(provider);
+    const inv = await scopeInventory(caller, items, 3, { reference: providerScopeCaller(createFakeProvider({ counts: { scope: 1_235 } })) });
     expect(provider.calls).toHaveLength(0);
-    expect(inv).toMatchObject({ model: 'claude-haiku-5-5', samples: 3, calls: 6, inputTokens: 1_234 * 2 * 3 });
+    expect(inv).toMatchObject({ model: 'claude-haiku-5-5', samples: 3, calls: 6, inputTokens: 1_234 * 2 * 3, overCap: [], referenceMismatches: ['q-carb', 'q-midair'] });
     expect(inv.perCallReserveUsd).toBeCloseTo(stageWorstCaseUsd('claude-haiku-5-5', STAGE_CAPS.scope), 12);
     expect(inv.reserveUsd).toBeCloseTo(6 * inv.perCallReserveUsd, 12);
+    const over = await scopeInventory(providerScopeCaller(createFakeProvider({ counts: { scope: 3_000 } })), items, 1);
+    expect(over.overCap).toEqual(['q-carb', 'q-midair']);
   });
 
   it('reserves every attempt, settles what was billed, retries with a new reservation and falls back to the question', async () => {
@@ -555,7 +562,7 @@ describe('E3 scope samples', () => {
       ],
     });
     const gate = createMemorySpendGate(1);
-    const run = await runScopeSamples(provider, gate, items, { samples: 1, retries: 2, maxUsd: 0.1, purpose: 'eval-10d-test' });
+    const run = await runScopeSamples(providerScopeCaller(provider), gate, items, { samples: 1, retries: 2, maxUsd: 0.1, purpose: 'eval-10d-test' });
     const [carb, midair] = run.samples;
     expect(carb).toMatchObject({ status: 'ok', keywordText: 'carburetor ice carb heat induction icing', plannerFilters: { state: ['MI'] } });
     // Midair: a timeout (uncertain: charged in full), a rate limit (nothing billed), then an empty keyword text: the question.
@@ -577,8 +584,81 @@ describe('E3 scope samples', () => {
   it('stops before an attempt that could exceed its limit', async () => {
     const provider = createFakeProvider({ scope: { output: scopeOutput('x') } });
     const worst = stageWorstCaseUsd('claude-haiku-5-5', STAGE_CAPS.scope);
-    await expect(runScopeSamples(provider, createMemorySpendGate(1), items, { samples: 3, retries: 0, maxUsd: worst * 1.5, purpose: 'p' })).rejects.toBeInstanceOf(ScopeBudgetError);
+    await expect(runScopeSamples(providerScopeCaller(provider), createMemorySpendGate(1), items, { samples: 3, retries: 0, maxUsd: worst * 1.5, purpose: 'p' })).rejects.toBeInstanceOf(ScopeBudgetError);
     expect(provider.calls.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('the deployed scope caller (amendment 1)', () => {
+  type Body = Record<string, unknown>;
+  const COUNT_PATH = '/v1/messages/count_tokens';
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'request-id': 'req_test' } });
+  const message = (text: string, over: Body = {}) => ({
+    id: 'msg_test',
+    type: 'message',
+    role: 'assistant',
+    model: 'claude-haiku-5-5',
+    content: [{ type: 'text', text, citations: null }],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    stop_details: null,
+    usage: { input_tokens: 40, output_tokens: 60, cache_creation_input_tokens: 3_190, cache_read_input_tokens: 0 },
+    ...over,
+  });
+  /** A real SDK client whose fetch records each body: counts answer `count`, generations `reply`. */
+  function stub(reply: Response, count: number) {
+    const bodies: Body[] = [];
+    const countBodies: Body[] = [];
+    const fetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const isCount = String(url).endsWith(COUNT_PATH);
+      (isCount ? countBodies : bodies).push(JSON.parse(String(init?.body)) as Body);
+      return isCount ? json(200, { input_tokens: count }) : reply.clone();
+    };
+    return { client: new Anthropic({ apiKey: 'test-key', baseURL: 'https://api.invalid', maxRetries: 0, fetch }), bodies, countBodies };
+  }
+  const input = { question: 'Which accidents in Nevada involved a midair collision?' };
+  const out = { intent: 'case_search', mechanicalCause: false, filters: { state: ['NV'] }, keywordText: 'midair collision mid-air' };
+
+  it('sends exactly the adapter’s request, with the deployed caps', async () => {
+    const s = stub(json(200, message(JSON.stringify(out))), 3_231);
+    const r = await createDeployedScopeCaller({ model: 'claude-haiku-5-5', client: s.client }).call(input, 5_000);
+    expect(r.output.keywordText).toBe('midair collision mid-air');
+    expect(r).toMatchObject({ provider: 'anthropic', model: 'claude-haiku-5-5', promptVersion: 'scope.v2', stopReason: 'end_turn' });
+    expect(r.usage).toEqual({ inputTokens: 40, outputTokens: 60, cacheWriteTokens: 3_190, cacheReadTokens: 0 });
+    // This branch's adapter counts the very same request (it would refuse to send it: 3,231 > its 2,600 cap).
+    const ref = stub(json(200, message(JSON.stringify(out))), 3_231);
+    const adapter = providerScopeCaller(createAnthropicProvider({ models: { scope: 'claude-haiku-5-5', answer: 'claude-opus-5-5', check: 'claude-haiku-5-5' }, client: ref.client }));
+    expect(await adapter.count(input, 5_000)).toBe(3_231);
+    expect(s.countBodies[0]).toEqual(ref.countBodies[0]);
+    const { max_tokens: maxTokens, ...generation } = s.bodies[0] as Body;
+    expect(maxTokens).toBe(DEPLOYED_SCOPE_CAPS.output);
+    expect(generation).toEqual(s.countBodies[0]);
+    expect(JSON.parse(JSON.stringify(scopeRequestBody('claude-haiku-5-5', input))).system).toEqual(s.countBodies[0]?.system);
+    const adapterRefusal = await adapter.call(input, 5_000).catch((e: unknown) => e);
+    expect(adapterRefusal).toBeInstanceOf(StageError);
+    expect((adapterRefusal as StageError).category).toBe('cap_exceeded');
+    // The reservation is the worst case at the deployed caps.
+    const caller = createDeployedScopeCaller({ model: 'claude-haiku-5-5', client: s.client });
+    expect(attemptReserveUsd(caller)).toBeCloseTo((6_500 * 0.1 + 600 * 0.5 + 5_500 * 0.025) / 1e6, 12);
+  });
+
+  it('refuses above the deployed input cap without generating, and maps failures as the adapter does', async () => {
+    const over = stub(json(200, message(JSON.stringify(out))), 6_501);
+    const e1 = (await createDeployedScopeCaller({ model: 'claude-haiku-5-5', client: over.client }).call(input, 5_000).catch((e: unknown) => e)) as StageError;
+    expect([e1.category, e1.billing.kind, over.bodies.length]).toEqual(['cap_exceeded', 'none', 0]);
+    const cases: [Response, string, string][] = [
+      [json(200, message(JSON.stringify(out), { stop_reason: 'refusal' })), 'refusal', 'usage'],
+      [json(200, message(JSON.stringify(out), { stop_reason: 'max_tokens' })), 'truncated', 'usage'],
+      [json(200, message('not json')), 'invalid_output', 'usage'],
+      [json(429, { type: 'error', error: { type: 'rate_limit_error', message: 'synthetic' } }), 'rate_limited', 'none'],
+      [json(500, { type: 'error', error: { type: 'api_error', message: 'synthetic' } }), 'provider_error', 'uncertain'],
+    ];
+    for (const [reply, category, billing] of cases) {
+      const s = stub(reply, 3_000);
+      const err = (await createDeployedScopeCaller({ model: 'claude-haiku-5-5', client: s.client }).call(input, 5_000).catch((e: unknown) => e)) as StageError;
+      expect([err.category, err.billing.kind]).toEqual([category, billing]);
+    }
+    expect(() => createDeployedScopeCaller({ model: 'claude-unknown' })).toThrow(/allowlisted/);
   });
 });
 

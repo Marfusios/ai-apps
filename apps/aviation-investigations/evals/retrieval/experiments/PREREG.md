@@ -229,7 +229,8 @@ Paid calls in phase A, all reserved per attempt on the evaluation ledger:
 - query embeddings: 21 dev questions once (about $0.00001), and the holdout questions
   once for the confirmation;
 - E3: **three scope samples per dev question** (63 calls), each attempt reserved at the
-  scope stage's worst case ($0.000525) and settled at its billed cost; one retry per
+  scope stage's worst case ($0.000525; $0.0010875 at the caps of amendment 1, section
+  14) and settled at its billed cost; one retry per
   failed sample with its own reservation; the run stops before an attempt that would
   take it above $0.10. A free dry run (the provider's token counter) prints questions,
   tokens and price first. Holdout samples are taken only if the selected configuration
@@ -292,3 +293,18 @@ the target, no scope sample was taken, and the holdout was not touched.
 Any change after this commit (a harness bug fix, a stopped step) is recorded with its
 reason and time in the task report; a change to the grid, the rule, the limits or the
 questions after any variant has run invalidates the selection.
+
+**Amendment 1** (2026-10-23, before any variant ran and before any scope sample was
+taken). The free scope dry run counted each dev question's scope request at 3,212 to
+3,248 tokens with the provider's counter. This branch's adapter caps the scope input at
+2,600 tokens and would refuse every one of them unsent; the deployed branch hit the
+same limit in its first paid end-to-end test and recalibrated the caps with the
+provider's counter (scope 6,500 input and 600 output tokens, cached prefix 5,500).
+Prompt, schema, renderer, model settings and request shape are the same in both
+branches. E3 therefore sends the scope request through `deployed-scope.ts`: exactly the
+request the adapter builds, with the deployed caps. Before anything is paid, the
+dry run requires the production adapter's counter to give the same token count for
+every question, and a unit test compares the request bodies. The reservation per
+attempt becomes the worst case at those caps, $0.0010875 (63 attempts: $0.0685 before
+retries), within the registered $0.10 scope limit and $0.50 phase limit. The grid, the
+rule, the limits and the questions are unchanged.

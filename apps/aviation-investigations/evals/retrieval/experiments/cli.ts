@@ -70,7 +70,8 @@ import {
   type StoredRun,
 } from './experiment.js';
 import { loadGrid, sha256, type Grid } from './grid.js';
-import { questionSha, runScopeSamples, scopeInventory, type ScopeRun } from './scope.js';
+import { createDeployedScopeCaller } from './deployed-scope.js';
+import { providerScopeCaller, questionSha, runScopeSamples, scopeInventory, type ScopeRun } from './scope.js';
 
 const USAGE =
   'usage: pnpm eval:retrieval:experiments <preflight|scope|dev|holdout> [--split dev|holdout] [--env-files <a,b>] [--keys-file <file>] ' +
@@ -396,12 +397,19 @@ async function cmdScope(ctx: Context, outDir: string, split: 'dev' | 'holdout', 
   }
   const a = ctx.config.ai.anthropic;
   if (a.scopeModel !== ctx.grid.frozen.scope.model) throw new Error(`scope model ${a.scopeModel}, frozen ${ctx.grid.frozen.scope.model}`);
-  const provider = createAnthropicProvider({ apiKey: a.apiKey, models: { scope: a.scopeModel, answer: a.answerModel, check: a.checkModel } });
+  // The request is sent with the deployed caps (amendment 1); this branch's adapter counts the same request as the reference.
+  const adapter = createAnthropicProvider({ apiKey: a.apiKey, models: { scope: a.scopeModel, answer: a.answerModel, check: a.checkModel } });
+  const reference = providerScopeCaller(adapter);
+  const caller = createDeployedScopeCaller({ model: a.scopeModel, ...(a.apiKey ? { apiKey: a.apiKey } : {}) });
   const items = ctx.items.map((q) => ({ id: q.id, question: q.question }));
-  const inventory = await scopeInventory(provider, items, ctx.grid.scope.samples, ctx.grid.scope.timeoutMs);
-  console.log(`scope dry run (${inventory.model}, prompt ${ctx.grid.frozen.scope.promptVersion}): ${items.length} questions x ${inventory.samples} samples = ${inventory.calls} calls`);
-  for (const r of inventory.rows) console.log(`  ${r.id.padEnd(52)} ${String(r.inputTokens).padStart(5)} input tokens  <= $${r.upperUsd.toFixed(6)} per call`);
+  const inventory = await scopeInventory(caller, items, ctx.grid.scope.samples, { timeoutMs: ctx.grid.scope.timeoutMs, reference });
+  console.log(`scope dry run (${inventory.model}, prompt ${ctx.grid.frozen.scope.promptVersion}, caps ${inventory.caps.input} in / ${inventory.caps.output} out): ${items.length} questions x ${inventory.samples} samples = ${inventory.calls} calls`);
+  for (const r of inventory.rows) console.log(`  ${r.id.padEnd(52)} ${String(r.inputTokens).padStart(5)} input tokens (adapter: ${r.referenceTokens})  <= $${r.upperUsd.toFixed(6)} per call`);
   console.log(`  total ${inventory.inputTokens} input tokens; at most $${inventory.upperUsd.toFixed(6)} at the output cap; reservations $${inventory.reserveUsd.toFixed(6)} ($${inventory.perCallReserveUsd.toFixed(6)} per attempt, before retries)`);
+  const overBranchCap = inventory.rows.filter((r) => r.inputTokens > reference.caps.input).length;
+  console.log(`  ${overBranchCap} of ${items.length} requests are above this branch's adapter cap (${reference.caps.input}), which would refuse them unsent`);
+  if (inventory.referenceMismatches.length > 0) throw new Error(`the experiment's scope request differs from the adapter's for ${inventory.referenceMismatches.join(', ')}; nothing sent`);
+  if (inventory.overCap.length > 0) throw new Error(`requests above the ${inventory.caps.input}-token cap: ${inventory.overCap.join(', ')}; nothing sent`);
   const plan = writeJson(outDir, `experiments-scope-plan-${split}-${stamp(new Date())}.json`, { kind: 'eval-retrieval-experiments-scope-plan', gridSha256: ctx.gridSha256, split, inventory });
   console.log(`plan: ${plan}`);
   if (!confirm) {
@@ -416,7 +424,7 @@ async function cmdScope(ctx: Context, outDir: string, split: 'dev' | 'holdout', 
   let run: ScopeRun;
   try {
     const gate = createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' });
-    run = await runScopeSamples(provider, gate, items, { samples: ctx.grid.scope.samples, retries: ctx.grid.scope.retries, maxUsd, purpose, timeoutMs: ctx.grid.scope.timeoutMs, log: (m) => console.error(m) });
+    run = await runScopeSamples(caller, gate, items, { samples: ctx.grid.scope.samples, retries: ctx.grid.scope.retries, maxUsd, purpose, timeoutMs: ctx.grid.scope.timeoutMs, log: (m) => console.error(m) });
   } finally {
     await closeDb(ingest);
   }
