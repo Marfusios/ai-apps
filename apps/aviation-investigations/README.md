@@ -473,7 +473,7 @@ pnpm worker ai-switch --on
 PostgreSQL, Elasticsearch and Langfuse through their Docker networks. Each
 environment has its own database (`aviation_dev`, `aviation_live`) and logins,
 index prefix (`ai-aviation-dev`, `ai-aviation-live`) and Langfuse project
-(`aviation-dev`, `aviation-prod`). It runs no database or search engine itself;
+(`aviation-dev`, `aviation-live`). It runs no database or search engine itself;
 `pnpm provision:shared` creates an environment's roles, database and API keys on
 the shared servers and writes its connection files outside the repository.
 

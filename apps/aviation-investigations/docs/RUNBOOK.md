@@ -32,7 +32,7 @@ uses `!reset`; the wrappers check the version), Node 24 and pnpm for the wrapper
 | PostgreSQL logins | `aviation_dev_{app,ingest,migrator}` | `aviation_live_{app,ingest,migrator}` |
 | Elasticsearch indices (`ELASTICSEARCH_INDEX_PREFIX`) | `ai-aviation-dev-*` | `ai-aviation-live-*` |
 | Elasticsearch roles and API keys | `aviation_dev_reader`/`_writer` | `aviation_live_reader`/`_writer` |
-| Langfuse project (default) | `aviation-dev` | `aviation-prod` |
+| Langfuse project (default) | `aviation-dev` | `aviation-live` |
 | App ingress | loopback port (`127.0.0.1:${PORT:-3000}`) | Cloudflare Tunnel, no published port |
 
 Both projects can run at once: every container, the `edge` and `egress` networks
@@ -151,7 +151,7 @@ repository:
 
 Passwords and keys are reused from these files on the next run, so keep them.
 Then run `pnpm app:migrate` for the environment. Langfuse projects
-(`aviation-dev`, `aviation-prod`) and their keys are created in Langfuse itself.
+(`aviation-dev`, `aviation-live`) and their keys are created in Langfuse itself.
 
 ## Containers
 
@@ -420,7 +420,7 @@ Tracing is off unless `AVIATION_TRACING_ENABLED=true`. Then the wrappers add
 `compose.tracing.yaml`, which joins `aviation-app` and `aviation-ingest` to the external network
 `SHARED_OBSERVABILITY_NETWORK` and passes the Langfuse variables (all required).
 `LANGFUSE_BASE_URL` is the Langfuse web service's address on that network. Use the
-`aviation-dev` project's keys for `dev` and `aviation-prod`'s for `live`. The
+`aviation-dev` project's keys for `dev` and `aviation-live`'s for `live`. The
 network may not exist on other machines, which is why it is an override.
 
 ```sh
