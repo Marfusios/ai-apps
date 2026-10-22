@@ -343,12 +343,35 @@ without `TRUSTED_PROXY_CIDRS`.
    [Provisioning](#provisioning)) and its Langfuse project; write the settings file.
 2. `pnpm app:migrate`.
 3. Ingest data and publish its manifest (next section).
-4. `pnpm app:up` (tunnel mode on `live`).
+4. Run the [AI preflight](#ai-preflight) with the environment's settings file.
+5. `pnpm app:up` (tunnel mode on `live`).
 
 To update: pull the code, set a new `APP_VERSION` on `live`, run
-`pnpm app:migrate`, then `pnpm app:up`. To roll back, set the previous
-`APP_VERSION` (its image is still local) and run `pnpm app:up`; migrations are
-not reversed.
+`pnpm app:migrate` and the [AI preflight](#ai-preflight), then `pnpm app:up`. To roll
+back, set the previous `APP_VERSION` (its image is still local) and run `pnpm app:up`;
+migrations are not reversed.
+
+### AI preflight
+
+**Mandatory before every paid test and every deployment** (and after changing a
+prompt, a schema, a model or `STAGE_CAPS`). It is free: it only counts tokens with the
+provider's own counter (Anthropic `messages.countTokens`), and its client refuses to
+generate. It needs no database or Elasticsearch, so run it host-side with the
+environment's settings file, which holds `ANTHROPIC_API_KEY` and the
+`ANTHROPIC_*_MODEL` settings the app will use:
+
+```sh
+AVIATION_ENV_FILES=<the environment's settings file> pnpm worker ai-preflight
+```
+
+For each stage it counts the fixed request (system prompt and structured-output
+schema), a synthetic worst case at the server's input bounds (a full bundle of 12
+chunker-maximum passages within the evidence budget, the longest question and
+refinement, the most claims the composition allows) and the output at its schema
+bounds, and prints each against its cap (`server/ai/pricing.ts`, DESIGN §9). It exits
+1 when anything is over: do not run paid tests or deploy until the cap or the request
+is fixed. A cap below a stage's fixed request refuses every brief at that stage, free
+but useless (the first paid end-to-end test stopped this way at scope).
 
 ## Ingestion
 
@@ -447,7 +470,8 @@ and each needs an explicit flag or key:
 | --- | --- | --- |
 | `pnpm ingest index passages --generation <id> --confirm-cost` | OpenAI embeddings of every passage (`text-embedding-3-small`) | about $0.57 for the full corpus, measured; the dry run (no flag) prints the planned tokens and cost and spends nothing; `--cache-only` never pays |
 | `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
-| AI briefs (later) | the scope, answer and check models per request | about $0.006 to $0.01 a request (DESIGN §8), capped by the budgets below |
+| AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.31 until it settles (DESIGN §9); capped by the budgets below |
+| `pnpm worker ai-preflight` | nothing: token counts only | free |
 
 Embeddings and evaluations are metered on the indexing ledger and stop at
 `AI_INGESTION_MONTHLY_BUDGET_USD`; vectors already paid for are kept in

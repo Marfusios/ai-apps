@@ -214,6 +214,29 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/**
+ * The SDK client the adapter uses, without retries: each paid attempt would need its own
+ * reservation. The free token counts of `pnpm worker ai-preflight` may retry.
+ */
+export function createAnthropicClient(apiKey: string, opts: { maxRetries?: number } = {}): Anthropic {
+  return new Anthropic({
+    apiKey,
+    // Explicit values so ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL and ANTHROPIC_LOG
+    // in the environment cannot add credentials, redirect requests or log bodies.
+    authToken: null,
+    baseURL: ANTHROPIC_BASE_URL,
+    maxRetries: opts.maxRetries ?? 0,
+    logLevel: 'warn',
+    // Spans never carry prompt or output text; tracing is wired by the app.
+    openTelemetry: { propagation: false, traces: { contentMode: 'metadata_only' } },
+  });
+}
+
+/** The JSON schema the adapter sends as a stage's structured-output format. */
+export function outputJsonSchema(schema: z.ZodType): unknown {
+  return outputFormat(schema).schema;
+}
+
 export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvider {
   for (const role of ['scope', 'answer', 'check'] as const) {
     const model = cfg.models[role];
@@ -223,19 +246,7 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
   }
   if (!cfg.client && !cfg.apiKey) throw new Error('ANTHROPIC_API_KEY is required');
 
-  const client: AnthropicMessagesClient =
-    cfg.client ??
-    new Anthropic({
-      apiKey: cfg.apiKey,
-      // Explicit values so ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL and ANTHROPIC_LOG
-      // in the environment cannot add credentials, redirect requests or log bodies.
-      authToken: null,
-      baseURL: ANTHROPIC_BASE_URL,
-      maxRetries: 0,
-      logLevel: 'warn',
-      // Spans never carry prompt or output text; tracing is wired by the app.
-      openTelemetry: { propagation: false, traces: { contentMode: 'metadata_only' } },
-    });
+  const client: AnthropicMessagesClient = cfg.client ?? createAnthropicClient(cfg.apiKey!);
 
   function stage<I, O>(spec: StageSpec<I, O>) {
     const format = outputFormat(spec.output);

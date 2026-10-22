@@ -65,22 +65,43 @@ export const PRICE_TABLE: Readonly<Record<string, PriceRow>> = {
 
 export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
 
-/** Hard caps in provider tokens. Output includes thinking. */
+/**
+ * Hard caps in provider tokens. Output includes thinking. Calibrated with the
+ * provider's own counter (`messages.countTokens`, free) on 2026-10-22 against real
+ * shared-dev passages (DESIGN §9 "Hard caps"; `pnpm worker ai-preflight` re-measures):
+ *
+ * - scope input: fixed part (system prompt + structured-output schema) 3,199; worst
+ *   refinement (prior question and refinement, every filter, readings, case numbers)
+ *   5,155 → 6,500.
+ * - answer input: fixed part 4,616; worst full bundle (12 passages at 9,416 `cl100k`
+ *   evidence tokens, 400-character headers, the longest question and refinement) 22,096;
+ *   the 10,000-token evidence budget at 1.75 Claude tokens per `cl100k` token bounds it
+ *   at about 25,300 → 28,000, so a full bundle is not re-packed.
+ * - check input: fixed part 1,939; complete evidence of a full bundle with 91 claims at
+ *   their longest 28,020, bounded at about 30,400 → 36,000 (gate G6 ruling 5: the
+ *   evidence is never cut to fit).
+ * - outputs, counted as text at their schema bounds: scope 445 → 600; a composition at
+ *   every bound 6,556 plus 1,500 for thinking (Opus cannot turn it off) → 9,000; a check
+ *   listing a problem for each of 100 claims 2,414 → 3,000.
+ */
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
-  scope: { input: 2_600, output: 400 },
-  answer: { input: 16_000, output: 3_000 },
-  check: { input: 18_000, output: 600 },
+  scope: { input: 6_500, output: 600 },
+  answer: { input: 28_000, output: 9_000 },
+  check: { input: 36_000, output: 3_000 },
   embed: { input: 1_000, output: 0 },
 };
 
-/** Largest frozen system prefix any stage caches (5-minute TTL). */
-export const CACHED_PREFIX_MAX = 4_000;
+/**
+ * Largest frozen prefix any stage caches (5-minute TTL): its system prompt with the
+ * structured-output schema, measured at most about 4,520 tokens (compose).
+ */
+export const CACHED_PREFIX_MAX = 5_500;
 
-/** Per-request reservation in USD, keyed by the answer model (DESIGN §9). */
+/** Per-request reservation in USD, keyed by the answer model: the worst case rounded up (DESIGN §9). */
 export const RESERVATIONS: Readonly<Record<string, number>> = {
-  'claude-opus-5-5': 0.14,
-  'claude-sonnet-5-5': 0.07,
-  'claude-haiku-5-5': 0.01,
+  'claude-opus-5-5': 0.31,
+  'claude-sonnet-5-5': 0.16,
+  'claude-haiku-5-5': 0.02,
 };
 
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -128,8 +149,7 @@ export function stageWorstCaseUsd(
   cachedPrefixTokens = CACHED_PREFIX_MAX,
 ): number {
   const rates = ratesFor(llmPrice(model), caps.input);
-  // The cached prefix is part of the input, so it is bounded by the input cap too
-  // (scope: 2,600 tokens, not 4,000).
+  // The cached prefix is part of the input, so it is bounded by the input cap too.
   const prefix = Math.min(cachedPrefixTokens, caps.input);
   const premium = Math.max(0, rates.cacheWrite - rates.input);
   return (caps.input * rates.input + caps.output * rates.output + prefix * premium) / PER_MILLION;

@@ -577,51 +577,73 @@ model is a product decision, not an automatic downgrade.
 
 ### Example cost per request
 
-Claude tokenizers can count noticeably more tokens than OpenAI's for the same
-text. Plan with 1.3× the earlier OpenAI estimates until `count_tokens`
-measurements replace them. Example request:
+Request sizes below were measured with Anthropic's own counter (`messages.countTokens`,
+free) on 2026-10-22 against real shared-dev passages; `claude-haiku-5-5` and
+`claude-opus-5-5` count identically. Claude counts about **1.6×** the `cl100k_base`
+tokens of the same NTSB text (median 1.59, 90th percentile 1.68, maximum 1.89 over
+100 passages; 1.62 over a 12-passage bundle), and a structured-output schema costs
+about 2.5× its JSON size. Each stage's fixed request (system prompt and schema) is
+3,204 tokens for scope, 4,631 for the answer and 1,953 for the check. A typical
+request, estimated from those sizes until settled usage from paid runs replaces it:
 
 | Stage | Tokens (input / output) | Cost |
 | --- | --- | --- |
-| Scope | 1,300 / 160 | $0.0002 |
-| Answer | 10,400 / 2,360, including about 800 thinking tokens | $0.089 on Opus 5.5 |
-| Check | 13,000 / 260 | $0.0014 |
+| Scope | 3,250 / 150 | $0.0004 |
+| Answer | 13,000 / 2,600, including about 800 thinking tokens | $0.104 on Opus 5.5 |
+| Check | 14,000 / 100 | $0.0014 |
 | Embedding | — | ~$0 |
 
 Total per request:
 
 | Answer model | Typical | Hard-cap reservation |
 | --- | --- | --- |
-| Opus 5.5 | about $0.09 | $0.14 |
-| Sonnet 5.5 | about $0.046 | $0.07 |
-| Haiku 5.5 | about $0.004 | $0.01 |
+| Opus 5.5 | about $0.11 | $0.31 |
+| Sonnet 5.5 | about $0.054 | $0.16 |
+| Haiku 5.5 | about $0.004 | $0.02 |
 
 These exclude ingestion, evaluations, taxes and hosting. Meter all billable
 output, including thinking. Built-in web or file tools are unnecessary.
 
-**Hard caps,** in provider tokens:
+**Hard caps,** in provider tokens, each above the largest request the server can
+build for its stage (measured with the provider's counter; real passages and the
+synthetic worst cases of `pnpm worker ai-preflight`):
 
-| Stage | Input | Output |
-| --- | --- | --- |
-| Scope | 2,600 | 400 |
-| Answer | 16,000 | 3,000, including thinking |
-| Check | 18,000 | 600, including thinking |
-| Embedding | 1,000 | — |
+| Stage | Input | Output | Largest measured request |
+| --- | --- | --- | --- |
+| Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
+| Answer | 28,000 | 9,000, including thinking | fixed 4,631; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,096 with real passages and 22,171 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,300, so a full bundle is never re-packed; output at its schema bounds 6,556 plus 1,500 for thinking |
+| Check | 36,000 | 3,000 | fixed 1,953; a full bundle's complete evidence with 91 claims 28,020 (real) and 27,348 (synthetic), bounded near 30,400; a problem for each of 100 claims 2,414 |
+| Embedding | 1,000 | — | — |
+
+The models read passage ids as short aliases (`P1`..`P12`): a 64-character id costs
+about 42 tokens wherever a model reads or writes it, which would add some 6,000 tokens
+to a full check and some 2,500 to a full composition's output. The check is never cut
+to fit (gate G6 ruling 5): above its cap the summary is withheld.
 
 Context assembly bounds input with the provider's tokenizer: Anthropic
 `messages.countTokens`, or a measured margin. Characters alone do not bound
-tokens.
+tokens. **`pnpm worker ai-preflight`** re-measures every stage's fixed request, its
+synthetic worst case and its output at the schema bounds with the configured provider
+and models (free), and fails when any is over its cap; it is mandatory before paid
+tests and deployments (RUNBOOK). Between preflights a unit test sizes the same
+requests offline (`cl100k_base` × 2.2 for system prompt plus schema, × 1.8 for text).
 
 **Prompt caching:** only the frozen system prefix of each stage is cached, with
-the 5-minute TTL and at most 4,000 tokens. The reservation is the **sum over all
-stages** of each stage's hard-cap cost at the worst applicable price, plus the
-cache-write premium on its cached prefix:
+the 5-minute TTL and at most 5,500 tokens (the largest, the answer stage's, is about
+4,520 with its schema). The reservation is the **sum over all stages** of each stage's
+hard-cap cost at the worst applicable price, plus the cache-write premium on its
+cached prefix:
 
 | Answer model | Uncached sum | Answer-prefix premium | Haiku scope and check prefixes | Total | Reservation |
 | --- | --- | --- | --- | --- | --- |
-| Opus 5.5 | $0.1266 | 4,000 × $1/M = $0.004 | $0.0002 | about $0.131 | $0.14 |
-| Sonnet 5.5 | $0.0646 | 4,000 × $0.50/M = $0.002 | $0.0002 | about $0.067 | $0.07 |
-| Haiku 5.5 | $0.0057 | $0.0001 | $0.0002 | about $0.006 | $0.01 |
+| Opus 5.5 | $0.29807 | 5,500 × $1/M = $0.0055 | $0.000275 | about $0.304 | $0.31 |
+| Sonnet 5.5 | $0.15207 | 5,500 × $0.50/M = $0.00275 | $0.000275 | about $0.155 | $0.16 |
+| Haiku 5.5 | $0.01337 | 5,500 × $0.025/M = $0.0001375 | $0.000275 | about $0.0138 | $0.02 |
+
+With the Opus answer model, the $3 daily cap holds nine worst-case reservations; on a
+fresh 30-day month the paced allowance (the lower of $3 and $80 / 30 = $2.67) admits
+eight at once. Reservations settle at the actual cost, so about 27 typical briefs
+spend $3.
 
 Recalculate whenever a model, price, cap, TTL, cached-prefix size or retry policy
 changes.
@@ -657,7 +679,7 @@ Split $100/month into **$80 interactive + $20 indexing/evaluation**, with
 Anthropic credit lasts. Revisit it when the credit runs out; all of these are
 runtime configuration. The indexing/evaluation share covers embedding passes and
 budgeted evaluation runs: one 100-question run with the Opus answer model costs
-about $9. Pace the daily allowance using the lower of
+about $11. Pace the daily allowance using the lower of
 that bound and remaining interactive money divided by remaining calendar days.
 Cap anonymous spending at 25% of the resulting allowance.
 

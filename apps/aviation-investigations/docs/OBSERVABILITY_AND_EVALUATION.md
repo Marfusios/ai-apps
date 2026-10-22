@@ -271,6 +271,29 @@ batch processor (256 queued spans, short export timeout). `startTracing` does no
 unless `AVIATION_TRACING_ENABLED=true` and the base URL and both keys are set, and never
 falls back to a hosted service. Export errors are swallowed into a counter.
 `stageSpan(name, attrs, fn)` accepts only the closed `AllowedAttrs` set; a runtime guard
-in `server/observability/attributes.ts` drops unknown keys, strings over 64 characters
-and anything containing whitespace, and replaces unsafe span names. Brief ids appear only
-as a salted hash (`hashBrief`). `scripts/trace-smoke.ts` sends one synthetic span by hand.
+in `server/observability/attributes.ts` drops unknown keys, strings over 64 characters,
+anything containing whitespace or a path separator (`/`, `\`) and enum attributes
+outside their set, and replaces unsafe span names. Brief ids appear only as a salted
+hash (`hashBrief`). `scripts/trace-smoke.ts` sends one synthetic span by hand.
+
+**Approved metadata.** Nothing else is exported:
+
+| Where | Keys |
+| --- | --- |
+| Resource (every span) | `service.name` = `aviation-casebook`; `deployment.environment` and `deployment.environment.name` = `APP_ENV` (`dev` or `live`). Set explicitly: the SDK default (`unknown_service:<node path>`) would export a filesystem path. |
+| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage` |
+| Instrumentation scope | `aviation-casebook` |
+
+`failure` is the fixed category of a failed stage (`FAILURE_CATEGORIES`): from a provider
+stage `timeout`, `refusal`, `truncated`, `invalid_output`, `cap_exceeded`,
+`count_failed`, `invalid_input`, `rate_limited`, `overloaded`, `auth`, `bad_request`,
+`network` or `provider_error`; from retrieval `unavailable`, `timeout`, `failed` or
+`integrity`; for the step `claims_overflow`, `result_contract`, `shutdown`, `orphaned` or
+`unexpected`. A failed stage span (`brief.scope`, `brief.retrieve`, `brief.compose`,
+`brief.check`) carries `failure` and, for a provider stage, `promptVersion`; the
+request span `brief.step` carries `outcome` with `failure` and `failureStage` (`scope`,
+`retrieve`, `compose`, `validate`, `check` or `pipeline`). The same category and stage
+are in the step's `meta.failure` and in its `brief step finished` log line
+(`{status, charged, released, failure: {stage, category}}`), so a stage failing on
+every request (as the first paid end-to-end test did at scope) is visible in Langfuse
+and the logs, not only in the database.

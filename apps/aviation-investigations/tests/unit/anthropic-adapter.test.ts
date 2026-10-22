@@ -376,7 +376,8 @@ describe('Anthropic adapter results', () => {
   });
 
   it('fails a stage whose reported input exceeds the cap', async () => {
-    const usage = { ...USAGE, input_tokens: 2_000, cache_creation_input_tokens: 500, cache_read_input_tokens: 200 };
+    // Uncached, cache-write and cache-read input together: 100 over the scope cap.
+    const usage = { ...USAGE, input_tokens: STAGE_CAPS.scope.input - 600, cache_creation_input_tokens: 500, cache_read_input_tokens: 200 };
     const { p } = provider(jsonResponse(200, messageJson(JSON.stringify(scopeOutput), { usage })));
     const err = await stageError(p.scope(scopeInput, ctx('scope')));
     expect(err.category).toBe('cap_exceeded');
@@ -549,11 +550,12 @@ describe('token counting and input caps', () => {
   });
 
   it('still fails a billed call whose reported input exceeds the cap (backstop)', async () => {
-    const usage = { ...USAGE, input_tokens: 2_000, cache_creation_input_tokens: 500, cache_read_input_tokens: 200 };
+    const usage = { ...USAGE, input_tokens: STAGE_CAPS.scope.input - 600, cache_creation_input_tokens: 500, cache_read_input_tokens: 200 };
     const reply = jsonResponse(200, messageJson(JSON.stringify(scopeOutput), { usage }));
-    const { p } = provider(reply, DEFAULT_MODELS, 2_500);
+    const counted = STAGE_CAPS.scope.input - 100;
+    const { p } = provider(reply, DEFAULT_MODELS, counted);
     const err = await stageError(p.scope(scopeInput, ctx('scope')));
-    expect([err.category, err.billing.kind, err.countedInputTokens]).toEqual(['cap_exceeded', 'usage', 2_500]);
+    expect([err.category, err.billing.kind, err.countedInputTokens]).toEqual(['cap_exceeded', 'usage', counted]);
   });
 });
 
@@ -703,9 +705,9 @@ describe('fake provider', () => {
     expect(await fake.countInputTokens('check', checkInput, ctx('check'))).toBe(42);
     expect(await fake.countInputTokens('scope', scopeInput, ctx('scope'))).toBe(scopeInput.question.length);
 
-    const overCap = createFakeProvider({ compose: [{ output: composeOutput }], counts: { compose: 16_001 } });
+    const overCap = createFakeProvider({ compose: [{ output: composeOutput }], counts: { compose: STAGE_CAPS.answer.input + 1 } });
     const err = await stageError(overCap.compose(composeInput, ctx('compose')));
-    expect([err.category, err.billing.kind, err.countedInputTokens]).toEqual(['cap_exceeded', 'none', 16_001]);
+    expect([err.category, err.billing.kind, err.countedInputTokens]).toEqual(['cap_exceeded', 'none', STAGE_CAPS.answer.input + 1]);
     expect(overCap.calls).toHaveLength(0);
   });
 

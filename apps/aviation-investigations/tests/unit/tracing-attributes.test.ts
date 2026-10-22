@@ -1,8 +1,9 @@
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
-import { hashBrief, resetTracingStats, sanitizeAttrs, tracingStats } from '../../server/observability/attributes.js';
-import { stageSpan, startRequestSpan, startTracing } from '../../server/observability/tracing.js';
+import { homedir } from 'node:os';
+import { FAILURE_CATEGORIES, hashBrief, resetTracingStats, sanitizeAttrs, tracingStats } from '../../server/observability/attributes.js';
+import { SERVICE_NAME, stageSpan, startRequestSpan, startTracing } from '../../server/observability/tracing.js';
 
 const QUESTION = 'Why did the pilot lose control after the flaps were retracted near Denver?';
 const ENV = {
@@ -44,15 +45,47 @@ describe('tracing attributes', () => {
     expect(tracingStats.droppedNames).toBe(1);
   });
 
-  it('keeps allowlisted values and drops unknown keys, long strings, free text', () => {
+  it('keeps allowlisted values and drops unknown keys, long strings, free text, paths and values outside an enum', () => {
     const out = sanitizeAttrs({
       stage: 'compose', model: 'claude-opus-5-5', inputTokens: 12, usd: 0.09, extra: 'x',
-      outcome: 'two words', datasetGeneration: 'a<b>', indexVersion: 'ok/1.2+x@y:z', promptVersion: 'v'.repeat(65), caseCount: Number.NaN, briefHash: hashBrief('brief-1', 'salt'),
+      outcome: 'two words', datasetGeneration: 'a<b>', indexVersion: 'ok-1.2+x@y:z', promptVersion: 'v'.repeat(65), caseCount: Number.NaN, briefHash: hashBrief('brief-1', 'salt'),
+      failure: 'cap_exceeded', failureStage: 'scope',
     });
-    expect(Object.keys(out).sort()).toEqual(['briefHash', 'indexVersion', 'inputTokens', 'model', 'stage', 'usd']);
+    expect(Object.keys(out).sort()).toEqual(['briefHash', 'failure', 'failureStage', 'indexVersion', 'inputTokens', 'model', 'stage', 'usd']);
     expect(tracingStats.droppedAttrs).toBe(5);
+    resetTracingStats();
+    // No path separators, so no filesystem path; enum attributes take their values only.
+    expect(sanitizeAttrs({ model: '/usr/local/bin/node', indexVersion: 'C:\\node', failure: 'disk_full', failureStage: 'ingest' })).toEqual({});
+    expect(tracingStats.droppedAttrs).toBe(4);
+    expect(FAILURE_CATEGORIES).toContain('cap_exceeded');
     expect(out.briefHash).not.toContain('brief-1');
     expect(hashBrief('brief-1', 'salt')).not.toBe(hashBrief('brief-1', 'other'));
+  });
+
+  it('the resource is the service and environment only, and no resource or span attribute holds a filesystem path', async () => {
+    const exporter = new InMemorySpanExporter();
+    const h = startTracing(cfg({ ...ENV, APP_ENV: 'live' }), { exporter, scheduledDelayMillis: 10 });
+    stop = () => h.shutdown();
+    // The Node executable (the SDK's default `service.name` suffix), the home directory, and other paths.
+    const paths = [process.execPath, homedir(), '/opt/node/bin/node', 'D:\\node\\node.exe'];
+    await startRequestSpan('brief.step', { outcome: 'failed', failure: 'cap_exceeded', failureStage: 'scope' }, () =>
+      stageSpan('brief.scope', { stage: 'scope', model: paths[0]!, promptVersion: paths[2]!, indexVersion: paths[3]! }, (s) => {
+        s.setAttrs({ outcome: paths[1]!, failure: 'cap_exceeded' });
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    const spans = exporter.getFinishedSpans();
+    expect(spans).toHaveLength(2);
+    // Without an explicit resource the SDK would name the service after the Node executable's path.
+    for (const span of spans) {
+      expect(span.resource.attributes).toEqual({ 'service.name': SERVICE_NAME, 'deployment.environment': 'live', 'deployment.environment.name': 'live' });
+    }
+    const values = spans.flatMap((sp) => [...Object.values(sp.resource.attributes), ...Object.values(sp.attributes)].map(String));
+    for (const v of values) {
+      expect(v).not.toMatch(/[\\/]/);
+      for (const p of paths) expect(v).not.toContain(p);
+    }
+    expect(spans.find((sp) => sp.name === 'brief.step')!.attributes).toMatchObject({ failure: 'cap_exceeded', failureStage: 'scope' });
   });
 
   it('tracing outage does not fail request', async () => {

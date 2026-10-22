@@ -14,9 +14,11 @@
  *    cases and 12 passages, and every case holding its best retrieved passage and all its
  *    probable-cause passages. Any violation fails the step; nothing is dropped or cut.
  * 3. **Compose** (35 s): the full compose input is counted with the provider's own token
- *    counter; above the 16,000-token cap the same candidates are packed again with a
- *    smaller evidence budget (amendment A11), and the re-packed bundle is checked like the
- *    first. One model call. The answer model may abstain (`no_supported_match`).
+ *    counter; above the answer input cap (`STAGE_CAPS.answer`) the same candidates are
+ *    packed again with a smaller evidence budget (amendment A11), and the re-packed bundle
+ *    is checked like the first. One model call. The answer model may abstain
+ *    (`no_supported_match`). The compose and check stages read passages under short
+ *    aliases (`P1`..), mapped back to canonical ids before validation (aliases.ts).
  * 4. **Validate**: `validateComposition` (code); then the reader's criteria in code
  *    (server/briefs/criteria.ts: a presented case outside the timing window, first-flight
  *    requirement or failure type withholds the summary); then the model checker (12 s)
@@ -67,7 +69,7 @@ import {
   type StageResult,
   type StageUsage,
 } from '../ai/provider.js';
-import { hashBrief } from '../observability/attributes.js';
+import { hashBrief, type FailureCategory, type FailureStage } from '../observability/attributes.js';
 import { stageSpan, startRequestSpan, type StageSpanHandle } from '../observability/tracing.js';
 import type { BriefStepStatus } from '../db/schema/index.js';
 import { microsToNumeric, toMicros } from '../quota/pacing.js';
@@ -75,6 +77,7 @@ import { PIPELINE_DEADLINE_MS, type QuotaPolicy } from '../quota/policy.js';
 import { releaseQuota, type Admission } from '../quota/admit.js';
 import { settle, type SpendLine } from '../quota/settle.js';
 import { clarificationReadings, composeInterpretations, interpretationChips } from './clarify.js';
+import { checkForModel, composeForModel, compositionFromModel, passageAliases } from './aliases.js';
 import { criteriaLines, evaluateCase, type CriterionCheck } from './criteria.js';
 import { RetrievalFailure, type CaseCatalog, type EvidenceBundle, type EvidenceRetriever, type RetrievedEvidence } from './evidence.js';
 import { resolveIntent, retrievalText, scopeInput, type StepIntent, type StepRequest } from './intent.js';
@@ -165,10 +168,11 @@ interface Meta {
   timingsMs: Record<string, number>;
   repacks: number;
   /**
-   * `reason`: a fixed failure reason (retrieval's, or the bundle check's), when there is
-   * one; `inputTokens`: the counted input of a stage refused over its cap.
+   * `category` and `stage` from closed sets (FAILURE_CATEGORIES, FAILURE_STAGES; also on the
+   * step's log line and spans); `reason`: a fixed failure reason (retrieval's, or the bundle
+   * check's), when there is one; `inputTokens`: the counted input of a stage refused over its cap.
    */
-  failure?: { stage: string; category: string; reason?: string; inputTokens?: number };
+  failure?: { stage: FailureStage; category: FailureCategory; reason?: string; inputTokens?: number };
   /** The chunker of the served index's passages contract the bundle was checked under. */
   chunkerVersion?: string;
   clarificationDropped?: boolean;
@@ -323,20 +327,30 @@ class Run {
     }
   }
 
-  private failureOf(stage: string, err: unknown): Meta['failure'] {
-    const category =
-      err instanceof StageError
-        ? err.category
-        : err instanceof RetrievalFailure
-          ? err.kind
-          : err instanceof BundleIntegrityError
-            ? 'integrity'
-            : (err as Error)?.name === 'AbortError' || (err as Error)?.name === 'TimeoutError'
-              ? 'timeout'
-              : 'unexpected';
+  /** The fixed category of a stage failure (FAILURE_CATEGORIES). */
+  private categoryOf(err: unknown): FailureCategory {
+    if (err instanceof StageError) return err.category;
+    if (err instanceof RetrievalFailure) return err.kind;
+    if (err instanceof BundleIntegrityError) return 'integrity';
+    const name = (err as Error)?.name;
+    return name === 'AbortError' || name === 'TimeoutError' ? 'timeout' : 'unexpected';
+  }
+
+  private failureOf(stage: FailureStage, err: unknown): NonNullable<Meta['failure']> {
+    const category = this.categoryOf(err);
     const reason = err instanceof RetrievalFailure ? err.reason : err instanceof BundleIntegrityError ? err.reason : undefined;
     const inputTokens = err instanceof StageError && err.category === 'cap_exceeded' ? err.countedInputTokens : null;
     return { stage, category, ...(reason ? { reason } : {}), ...(inputTokens !== null ? { inputTokens } : {}) };
+  }
+
+  /** A stage span's body; a failure leaves its fixed category (and prompt version) on the span. */
+  private async recorded<T>(s: StageSpanHandle, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      s.setAttrs({ failure: this.categoryOf(err), ...(err instanceof StageError ? { promptVersion: err.promptVersion } : {}) });
+      throw err;
+    }
   }
 
   private async stage(stage: 'retrieve' | 'compose' | 'validate', checklist: Checklist, intent?: StepIntent): Promise<boolean> {
@@ -355,7 +369,7 @@ class Run {
     return { status: 'cancelled', stage: 'failed', result: { kind: 'cancelled' }, release: false };
   }
 
-  private failedEnd(stage: string, err: unknown): StageEnd {
+  private failedEnd(stage: FailureStage, err: unknown): StageEnd {
     if (this.stopped) return this.stoppedEnd();
     this.meta.failure = this.failureOf(stage, err);
     // Nothing spent: the search is given back ("This didn't use one of your searches").
@@ -401,11 +415,13 @@ class Run {
       const { signal, budget } = this.stageSignal(this.t.scope);
       let r: StageResult<ScopeOutput>;
       try {
-        r = await stageSpan('brief.scope', { stage: 'scope', provider: llm.name, model: llm.models.scope }, async (s) => {
-          const out = await llm.scope(scopeInput(req), stageCtx('scope', signal, budget));
-          s.setAttrs({ promptVersion: out.promptVersion, ...usageAttrs(out.usage), outcome: out.output.intent });
-          return out;
-        });
+        r = await stageSpan('brief.scope', { stage: 'scope', provider: llm.name, model: llm.models.scope }, (s) =>
+          this.recorded(s, async () => {
+            const out = await llm.scope(scopeInput(req), stageCtx('scope', signal, budget));
+            s.setAttrs({ promptVersion: out.promptVersion, ...usageAttrs(out.usage), outcome: out.output.intent });
+            return out;
+          }),
+        );
       } catch (err) {
         this.chargeFailure(err, 'scope', true);
         this.meta.timingsMs.scope = Math.round(performance.now() - t0);
@@ -432,26 +448,29 @@ class Run {
       const t0 = performance.now();
       const { signal } = this.stageSignal(this.t.retrieve);
       try {
-        retrieved = await stageSpan('brief.retrieve', { stage: 'retrieve' }, async (s) => {
-          const out = await deps.retriever.retrieve(
-            {
-              dataset: { generationId: this.brief.generationId, passagesIndex: this.brief.passagesIndex },
-              text: retrievalText(req),
-              keywordText: intent.keywordText,
-              filters: intent.filters,
-            },
-            signal,
-            (u) => {
-              this.lines.push({ usd: u.usd, provider: u.provider, model: u.model, stage: 'embed', tokens: { input: u.tokens } });
-              this.spent = true;
-              if (u.billing === 'uncertain') this.uncertain = true;
-            },
-          );
-          s.setAttrs({ caseCount: out.bundle.cases.length, passageCount: out.bundle.passages });
-          return out;
-        });
-        this.meta.chunkerVersion = retrieved.chunkerVersion;
-        cases = await this.verify(retrieved.bundle, retrieved.chunkerVersion);
+        const got = await stageSpan('brief.retrieve', { stage: 'retrieve' }, (s) =>
+          this.recorded(s, async () => {
+            const out = await deps.retriever.retrieve(
+              {
+                dataset: { generationId: this.brief.generationId, passagesIndex: this.brief.passagesIndex },
+                text: retrievalText(req),
+                keywordText: intent.keywordText,
+                filters: intent.filters,
+              },
+              signal,
+              (u) => {
+                this.lines.push({ usd: u.usd, provider: u.provider, model: u.model, stage: 'embed', tokens: { input: u.tokens } });
+                this.spent = true;
+                if (u.billing === 'uncertain') this.uncertain = true;
+              },
+            );
+            s.setAttrs({ caseCount: out.bundle.cases.length, passageCount: out.bundle.passages });
+            this.meta.chunkerVersion = out.chunkerVersion;
+            return { out, verified: await this.verify(out.bundle, out.chunkerVersion) };
+          }),
+        );
+        retrieved = got.out;
+        cases = got.verified;
       } catch (err) {
         if (err instanceof RetrievalFailure) {
           if (err.embedding === 'uncertain') {
@@ -492,46 +511,52 @@ class Run {
       const { signal, budget } = this.stageSignal(this.t.compose);
       const ctx = stageCtx('compose', signal, budget);
       const interpretations = composeInterpretations(intent.readings);
+      // The model reads short passage aliases (`P1`..), not 64-character ids (server/briefs/aliases.ts).
       const build = (cs: VerifiedCase[]) =>
-        composeInput(cs, {
-          question: req.question,
-          ...(req.refinement ? { refinement: req.refinement } : {}),
-          mechanicalCause: intent.mechanicalCause,
-          interpretations,
-        });
+        composeForModel(
+          composeInput(cs, {
+            question: req.question,
+            ...(req.refinement ? { refinement: req.refinement } : {}),
+            mechanicalCause: intent.mechanicalCause,
+            interpretations,
+          }),
+          passageAliases(cs),
+        );
       let called = false;
       try {
-        composition = await stageSpan('brief.compose', { stage: 'compose', provider: llm.name, model: llm.models.answer }, async (s) => {
-          let input = build(cases);
-          let bundle = retrieved.bundle;
-          for (;;) {
-            const count = await llm.countInputTokens('compose', input, ctx);
-            if (count <= STAGE_CAPS.answer.input) break;
-            if (this.meta.repacks >= MAX_REPACKS) {
-              throw new StageError('cap_exceeded', {
-                stage: 'compose',
-                provider: llm.name,
-                model: llm.models.answer,
-                promptVersion: COMPOSE_PROMPT_VERSION,
-                billing: { kind: 'none' },
-                countedInputTokens: count,
-              });
+        composition = await stageSpan('brief.compose', { stage: 'compose', provider: llm.name, model: llm.models.answer }, (s) =>
+          this.recorded(s, async () => {
+            let input = build(cases);
+            let bundle = retrieved.bundle;
+            for (;;) {
+              const count = await llm.countInputTokens('compose', input, ctx);
+              if (count <= STAGE_CAPS.answer.input) break;
+              if (this.meta.repacks >= MAX_REPACKS) {
+                throw new StageError('cap_exceeded', {
+                  stage: 'compose',
+                  provider: llm.name,
+                  model: llm.models.answer,
+                  promptVersion: COMPOSE_PROMPT_VERSION,
+                  billing: { kind: 'none' },
+                  countedInputTokens: count,
+                });
+              }
+              const target = Math.max(1, Math.floor(bundle.evidenceTokens * (STAGE_CAPS.answer.input / count) * 0.9));
+              bundle = await retrieved.repack(target, signal);
+              this.meta.repacks += 1;
+              cases = await this.verify(bundle, retrieved.chunkerVersion);
+              if (cases.length === 0) throw new BundleIntegrityError('empty_after_repack');
+              this.evidence = storedEvidence(cases, null);
+              input = build(cases);
             }
-            const target = Math.max(1, Math.floor(bundle.evidenceTokens * (STAGE_CAPS.answer.input / count) * 0.9));
-            bundle = await retrieved.repack(target, signal);
-            this.meta.repacks += 1;
-            cases = await this.verify(bundle, retrieved.chunkerVersion);
-            if (cases.length === 0) throw new BundleIntegrityError('empty_after_repack');
-            this.evidence = storedEvidence(cases, null);
-            input = build(cases);
-          }
-          s.setAttrs({ caseCount: cases.length, passageCount: input.cases.reduce((n, c) => n + c.passages.length, 0) });
-          called = true;
-          const out = await llm.compose(input, ctx);
-          s.setAttrs({ promptVersion: out.promptVersion, ...usageAttrs(out.usage), outcome: out.output.outcome });
-          this.charge('compose', out);
-          return out.output;
-        });
+            s.setAttrs({ caseCount: cases.length, passageCount: input.cases.reduce((n, c) => n + c.passages.length, 0) });
+            called = true;
+            const out = await llm.compose(input, ctx);
+            s.setAttrs({ promptVersion: out.promptVersion, ...usageAttrs(out.usage), outcome: out.output.outcome });
+            this.charge('compose', out);
+            return out.output;
+          }),
+        );
       } catch (err) {
         this.chargeFailure(err, 'compose', called);
         this.meta.timingsMs.compose = Math.round(performance.now() - t0);
@@ -545,6 +570,8 @@ class Run {
       }
       this.meta.timingsMs.compose = Math.round(performance.now() - t0);
     }
+    // Back to canonical passage ids: everything from here on (validation, storage) uses them.
+    composition = compositionFromModel(composition, passageAliases(cases));
     this.meta.outcome = composition.outcome;
     if (!(await this.stage('validate', { question: 'in_scope', searched: searched(), written: true }))) return this.stoppedEnd();
 
@@ -593,11 +620,13 @@ class Run {
       const t0 = performance.now();
       const { signal, budget } = this.stageSignal(this.t.check);
       try {
-        const out = await stageSpan('brief.check', { stage: 'check', provider: llm.name, model: llm.models.check }, async (s) => {
-          const r = await llm.check(input, stageCtx('check', signal, budget));
-          s.setAttrs({ promptVersion: r.promptVersion, ...usageAttrs(r.usage), outcome: r.output.supported && r.output.problems.length === 0 ? 'supported' : 'problems' });
-          return r;
-        });
+        const out = await stageSpan('brief.check', { stage: 'check', provider: llm.name, model: llm.models.check }, (s) =>
+          this.recorded(s, async () => {
+            const r = await llm.check(checkForModel(input, passageAliases(cases)), stageCtx('check', signal, budget));
+            s.setAttrs({ promptVersion: r.promptVersion, ...usageAttrs(r.usage), outcome: r.output.supported && r.output.problems.length === 0 ? 'supported' : 'problems' });
+            return r;
+          }),
+        );
         this.charge('check', out);
         this.meta.timingsMs.check = Math.round(performance.now() - t0);
         this.meta.check = {
@@ -755,7 +784,12 @@ class Run {
     }
     // A failure counts as a search unless its search was given back.
     if (end.result.kind === 'failed') end.result = { kind: 'failed', countedAsSearch: !released };
-    this.span.setAttrs({ outcome: end.status, ...(chargedUsd !== null ? { usd: chargedUsd } : {}) });
+    const failure = this.meta.failure;
+    this.span.setAttrs({
+      outcome: end.status,
+      ...(chargedUsd !== null ? { usd: chargedUsd } : {}),
+      ...(failure ? { failure: failure.category, failureStage: failure.stage } : {}),
+    });
     const written = await finishStep(db, this.stepId, {
       stage: end.stage,
       status: end.status,
@@ -773,7 +807,10 @@ class Run {
       return false;
     });
     if (!written) this.log.warn({}, 'brief step: final state not written (step no longer running)');
-    this.log.info({ status: end.status, charged: chargedUsd, released }, 'brief step finished');
+    this.log.info(
+      { status: end.status, charged: chargedUsd, released, ...(failure ? { failure: { stage: failure.stage, category: failure.category } } : {}) },
+      'brief step finished',
+    );
     return { status: end.status, chargedUsd, released };
   }
 }

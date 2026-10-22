@@ -31,12 +31,15 @@ import {
   type StartBriefResponse,
 } from '../../shared/contracts/briefs.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
+import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
+import { startTracing } from '../../server/observability/tracing.js';
 import type { CheckInput, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
 import { SHUTDOWN_GRACE_MS, buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
 import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
+import { RESERVATIONS, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { createCaseCatalog } from '../../server/briefs/catalog.js';
 import {
@@ -260,6 +263,9 @@ function composition(input: ComposeInput, tweak?: (c: ComposeOutput) => void): F
 }
 
 const SUPPORTED = { output: { supported: true, problems: [] } };
+
+/** A compose count over the answer input cap (a re-pack follows). */
+const OVER_ANSWER_CAP = STAGE_CAPS.answer.input + 4_000;
 
 const answering = (over: Partial<FakeScript> = {}): FakeScript => ({
   scope: { output: scopeOut() },
@@ -586,6 +592,14 @@ describe('POST /api/briefs: the pipeline', () => {
       text: 'Engine power loss shortly after maintenance',
       filters: {},
     });
+    // The models read short passage aliases; everything stored keeps the canonical ids.
+    const composeIn = h.llm.calls.find((c) => c.stage === 'compose')!.input as ComposeInput;
+    expect(composeIn.cases.flatMap((c) => c.passages.map((p) => p.passageId))).toEqual(Array.from({ length: 8 }, (_, i) => `P${i + 1}`));
+    const checkIn = h.llm.calls.find((c) => c.stage === 'check')!.input as CheckInput;
+    expect(new Set([...checkIn.passages.map((p) => p.passageId), ...checkIn.claims.flatMap((c) => c.passageIds)])).toEqual(
+      new Set(Array.from({ length: 8 }, (_, i) => `P${i + 1}`)),
+    );
+    expect(quote.passageId).toMatch(/^[0-9a-f]{64}$/);
     // The checker saw claims of every kind, never the question.
     const check = h.llm.calls.find((c) => c.stage === 'check')!.input as { claims: { kind: string }[] };
     expect(new Set(check.claims.map((c) => c.kind))).toEqual(new Set(['summary', 'why', 'classification', 'maintenance', 'symptom', 'criterion', 'attribution']));
@@ -715,13 +729,13 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(second.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
   });
 
-  it('compose input over the 16,000-token cap is re-packed with a smaller evidence budget', async () => {
+  it('compose input over the answer input cap is re-packed with a smaller evidence budget', async () => {
     let counts = 0;
-    const h = harness(answering({ counts: { compose: () => (++counts === 1 ? 20_000 : 9_000) } }));
+    const h = harness(answering({ counts: { compose: () => (++counts === 1 ? OVER_ANSWER_CAP : 9_000) } }));
     const { briefId, step } = await askAndWait(h);
     expect(step.result?.kind).toBe('answer');
     expect(h.retriever.repacks).toHaveLength(1);
-    // The budget shrinks by the measured overshoot (16,000 / 20,000, with a 10% margin).
+    // The budget shrinks by the measured overshoot (the cap over the count, with a 10% margin).
     const first = (await stepRow(briefId)).meta as { repacks: number };
     expect(first).toMatchObject({ repacks: 1 });
     expect(h.retriever.repacks[0]).toBeGreaterThan(0);
@@ -959,7 +973,9 @@ describe('refinements', () => {
   });
 
   it('one step at a time, the read owner only, and a retried refinement replays', async () => {
-    const h = harness(answering({ compose: [{ hang: true }, (input: ComposeInput) => composition(input)] }), { timeouts: { compose: 400 } });
+    // The first step waits in retrieval until its timeout (a failure that is not settled in
+    // full, so the anonymous share keeps room for the requests below).
+    const h = harness(answering(), { timeouts: { retrieve: 400 }, retriever: { hang: true } });
     const started = await ask(h, 'Engine power loss shortly after maintenance');
     const cookie = cookieOf(started.setCookie);
     const briefId = started.json.briefId;
@@ -967,6 +983,7 @@ describe('refinements', () => {
     const busy = await refine(h, briefId, cookie, { kind: 'text', text: 'Only airplanes' });
     expect([busy.status, busy.json && (busy.json as unknown as { error: string }).error]).toEqual([429, 'in_flight']);
     await h.svc.settled();
+    h.retriever.options.hang = false;
 
     // Someone else's cookie, or none: 404 for every read and write.
     const other = await ask(h, 'Another question', { cookie: null });
@@ -1316,7 +1333,7 @@ describe('hybrid retrieval behind the port', () => {
           compose: () => {
             if (forceOver) {
               forceOver = false;
-              return 20_000;
+              return OVER_ANSWER_CAP;
             }
             return 9_000;
           },
@@ -1677,11 +1694,13 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(result.cases.find((c) => c.case.ntsbNo === 'DFW08TA066')!.reading!.criteria).toEqual([{ criterion: 'failure_type', decision: 'matches' }]);
     const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'DFW08TA066')!;
     expect(claim.text).toBe('This event involved a total loss of engine power.');
+    // The claim cites every DFW passage (by the aliases the checker reads)...
+    expect(claim.passageIds).toEqual(checks[0]!.passages.filter((p) => p.ntsbNo === 'DFW08TA066').map((p) => p.passageId));
     const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DFW08TA066`, { cookie })).json);
     expect(ctx.lines.find((l) => l.label === 'SYMPTOM')).toBeUndefined();
+    // ...and the line links the same passages, by their canonical ids.
     const line = ctx.lines.find((l) => l.label === 'CRITERIA')!;
-    expect(line).toEqual({ label: 'CRITERIA', text: 'The failure you asked about', passageIds: claim.passageIds });
-    expect(line.passageIds).toEqual(ctx.passages.map((p) => p.passageId));
+    expect(line).toEqual({ label: 'CRITERIA', text: 'The failure you asked about', passageIds: ctx.passages.map((p) => p.passageId) });
   });
 
   it('the bundle is checked under the chunker of the served index’s contract', async () => {
@@ -1844,7 +1863,7 @@ describe('gate G6: evidence semantics through the routes', () => {
 
   it('a re-packed bundle must keep every case whole', async () => {
     let counts = 0;
-    const h = harness(answering({ counts: { compose: () => (++counts === 1 ? 20_000 : 9_000) } }), {
+    const h = harness(answering({ counts: { compose: () => (++counts === 1 ? OVER_ANSWER_CAP : 9_000) } }), {
       retriever: {
         tamper: (b, repack) => {
           if (!repack) return b;
@@ -1860,11 +1879,41 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(h.llm.calls.some((c) => c.stage === 'compose')).toBe(false);
   });
 
+  it('a stage over its cap: its category on the stage span, the request span and the step log line, with no paid call', async () => {
+    // The first paid end-to-end test stopped this way at scope; the reason was only in the step's meta.
+    const exporter = new InMemorySpanExporter();
+    const tracing = startTracing(
+      loadConfig({
+        env: { NODE_ENV: 'test', APP_ENV: 'dev', AVIATION_TRACING_ENABLED: 'true', LANGFUSE_BASE_URL: 'http://127.0.0.1:1', LANGFUSE_PUBLIC_KEY: 'pk-test', LANGFUSE_SECRET_KEY: 'sk-test' },
+        files: [],
+      }),
+      { exporter, scheduledDelayMillis: 10 },
+    );
+    try {
+      const h = harness(answering({ counts: { scope: STAGE_CAPS.scope.input + 1 } }));
+      const { briefId, step } = await askAndWait(h);
+      expect(step.result).toEqual({ kind: 'failed', countedAsSearch: false });
+      expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'scope', category: 'cap_exceeded', inputTokens: STAGE_CAPS.scope.input + 1 } });
+      const finished = h.logs.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.msg === 'brief step finished');
+      expect(finished).toMatchObject({ status: 'failed', charged: 0, released: true, failure: { stage: 'scope', category: 'cap_exceeded' } });
+      await new Promise((r) => setTimeout(r, 100));
+      const spans = exporter.getFinishedSpans();
+      expect(spans.find((sp) => sp.name === 'brief.scope')!.attributes).toMatchObject({ stage: 'scope', failure: 'cap_exceeded', promptVersion: 'scope.v2' });
+      const root = spans.find((sp) => sp.name === 'brief.step')!;
+      expect(root.attributes).toMatchObject({ outcome: 'failed', failure: 'cap_exceeded', failureStage: 'scope' });
+      expect(root.resource.attributes).toEqual({ 'service.name': 'aviation-casebook', 'deployment.environment': 'dev', 'deployment.environment.name': 'dev' });
+      // The count refused it before any generation call.
+      expect(h.llm.calls).toHaveLength(0);
+    } finally {
+      await tracing.shutdown();
+    }
+  });
+
   it('a check input over its cap is inconclusive: withheld with the cap failure recorded, the evidence kept whole', async () => {
-    const h = harness(answering({ counts: { check: 18_001 } }));
+    const h = harness(answering({ counts: { check: STAGE_CAPS.check.input + 1 } }));
     const { briefId, cookie, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
-    expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'check', category: 'cap_exceeded', inputTokens: 18_001 } });
+    expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'check', category: 'cap_exceeded', inputTokens: STAGE_CAPS.check.input + 1 } });
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose']]);
     // Nothing was pruned to fit: every case keeps every passage it was retrieved with.
     for (const n of SEEDS) {
@@ -2116,12 +2165,14 @@ describe('admission: the paced daily budget and other checks before spend', () =
   }
 
   it('the brief route admits through the $3/day paced allowance and counts open reservations', async () => {
-    // A fresh 30-day month: today's allowance is min($3, $80 / 30) = $2.666666; a brief reserves $0.14.
-    await openReservation(2.4);
+    // A fresh 30-day month: today's allowance is min($3, $80 / 30) = $2.666666; a brief
+    // reserves its worst case (RESERVATIONS). Leave room for one and a half briefs.
+    const reserve = RESERVATIONS['claude-opus-5-5']!;
+    await openReservation(Number((2.666666 - 1.5 * reserve).toFixed(6)));
     const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 2_000 } });
     const a = await ask(h, 'Engine power loss shortly after maintenance');
     expect(a.status).toBe(202);
-    // While A's $0.14 is reserved, B does not fit: refused before any token work.
+    // While A's reservation is open, B does not fit: refused before any token work.
     const calls = h.sv.calls.length;
     const b = await ask(h, 'Engine power loss shortly after maintenance', { cookie: null });
     const untilMidnight = Math.ceil((Date.parse('2026-11-02T00:00:00Z') - clock.getTime()) / 1000);
@@ -2139,7 +2190,7 @@ describe('admission: the paced daily budget and other checks before spend', () =
     });
     expect(direct).toMatchObject({ ok: false, reason: 'global_paused', pause: 'daily_budget' });
     await h.svc.settled();
-    expect(await rows<{ usd: string }>(sql`SELECT usd::text AS usd FROM reservations WHERE principal_kind = 'trial'`)).toEqual([{ usd: '0.140000' }]);
+    expect(await rows<{ usd: string }>(sql`SELECT usd::text AS usd FROM reservations WHERE principal_kind = 'trial'`)).toEqual([{ usd: reserve.toFixed(6) }]);
   });
 
   it('a question over the query embedding cap is refused before any spend', async () => {

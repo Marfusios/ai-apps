@@ -733,12 +733,34 @@ refusal, `max_tokens`, unparsed output, a failed count or input above the cap fa
 the stage with a `StageError` that says whether the call was billed.
 
 `pricing.ts` holds the allowlisted prices, the hard token caps per stage and the
-per-request reservations ($0.14 Opus, $0.07 Sonnet, $0.01 Haiku answer model).
-`startupAiCheck(config)` enables AI only when the provider has an adapter, its keys
-are set, every reachable model is priced and the worst-case request (all stages at
-their caps plus cache-write premiums) fits the reservation. Change a price, cap or
-model only together with the expected sums in `tests/unit/pricing.test.ts`.
-Adapter tests run the real SDK client against a stubbed `fetch`; nothing is sent.
+per-request reservations ($0.31 Opus, $0.16 Sonnet, $0.02 Haiku answer model). The
+caps were measured with the provider's own counter (free) against real passages
+(DESIGN §9 "Hard caps"): scope 6,500 in / 600 out, answer 28,000 / 9,000, check
+36,000 / 3,000, in provider tokens, so a full 12-passage bundle and the longest
+question and refinement fit without re-packing and a check of a full bundle's
+complete evidence fits whole. `startupAiCheck(config)` enables AI only when the
+provider has an adapter, its keys are set, every reachable model is priced and the
+worst-case request (all stages at their caps plus cache-write premiums) fits the
+reservation. Change a price, cap or model only together with the expected sums in
+`tests/unit/pricing.test.ts`, and run the preflight below. Adapter tests run the real
+SDK client against a stubbed `fetch`; nothing is sent.
+
+**AI preflight** (`worker/ai-preflight.ts`; mandatory before paid tests and
+deployments, docs/RUNBOOK.md):
+
+```sh
+pnpm worker ai-preflight      # needs ANTHROPIC_API_KEY; free (token counts only)
+```
+
+It counts, with the configured provider and models, each stage's fixed request (system
+prompt and structured-output schema) and a synthetic worst case at the server's input
+bounds (the longest refinement in English and in dense text at the query-embedding
+cap; a full bundle of 12 chunker-maximum passages within the 10,000-token evidence
+budget, with every claim the composition schema allows), plus each stage's output at
+its schema bounds (the answer stage with 1,500 tokens left for thinking), and exits 1
+when anything is over its cap. Its client refuses generation. Between preflights,
+`tests/unit/ai-preflight.test.ts` sizes the same requests offline with `cl100k_base`
+times measured factors (2.2 for system prompt plus schema, 1.8 for Latin-script text).
 
 ### Cost gate and quotas
 
@@ -891,8 +913,12 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    retrieved passage and all its probable-cause passages. A violation fails the step;
    nothing is dropped or cut.
 3. **Compose** (35 s): the full input is counted with the provider's own counter;
-   above 16,000 tokens the candidates are packed again under a smaller budget, and the
-   re-packed bundle is checked like the first. The answer model may abstain
+   above the answer input cap (28,000 tokens; a full bundle measures about 22,100) the
+   candidates are packed again under a smaller budget, and the re-packed bundle is
+   checked like the first. The compose and check stages read passages under short
+   aliases (`P1`..`P12`, `aliases.ts`), mapped back to canonical ids before validation:
+   a 64-character passage id costs about 42 tokens wherever a model reads or writes it.
+   The answer model may abstain
    (`no_supported_match`): the case cards and its checked gap notes are shown, with
    server copy saying that none of the retrieved cases supports the question as asked
    (not that no such investigation exists); it counts as a search.

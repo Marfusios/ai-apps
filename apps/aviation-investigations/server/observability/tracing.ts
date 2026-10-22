@@ -1,6 +1,7 @@
 import { context, SpanStatusCode, trace, type Span, type Tracer } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
   BatchSpanProcessor,
   type ReadableSpan,
@@ -40,6 +41,19 @@ function transportAllowed(cfg: AppConfig, baseUrl: string): boolean {
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const loopback = host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
   return loopback || cfg.nodeEnv === 'test';
+}
+
+/** The traces' `service.name`. */
+export const SERVICE_NAME = 'aviation-casebook';
+
+/**
+ * The resource every span carries, and nothing else: without one the SDK's default names
+ * the service after the Node executable (`unknown_service:<path>`), exporting a
+ * filesystem path. `deployment.environment` is APP_ENV (`dev` or `live`), under both its
+ * older and current semantic-convention names.
+ */
+export function tracingResourceAttributes(cfg: Pick<AppConfig, 'appEnv'>): Record<string, string> {
+  return { 'service.name': SERVICE_NAME, 'deployment.environment': cfg.appEnv, 'deployment.environment.name': cfg.appEnv };
 }
 
 const NOOP: TracingHandle = { async shutdown() {} };
@@ -118,6 +132,7 @@ export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): Tr
       timeoutMillis: timeout,
     });
   const provider = new TracerProvider({
+    resource: resourceFromAttributes(tracingResourceAttributes(cfg)),
     spanProcessors: [
       new BatchSpanProcessor({
         exporter: swallowing(inner),

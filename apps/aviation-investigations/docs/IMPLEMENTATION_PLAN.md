@@ -79,7 +79,7 @@ the sections a task cites before starting it.
   - Answer: `claude-opus-5-5` with effort `low`.
   - `maxRetries: 0`.
   - A 60 s pipeline deadline.
-  - Reservations: Opus $0.14, Sonnet $0.07, Haiku $0.01. The startup check
+  - Reservations: Opus $0.14, Sonnet $0.07, Haiku $0.01 (planned; now $0.31, $0.16 and $0.02, DESIGN §9). The startup check
     sums all stages plus cache-write premiums.
 - **Budget defaults:**
   - $100/month total: $80 interactive and $20 indexing/evaluation, $3/day
@@ -684,7 +684,8 @@ Behaviour:
     | `claude-opus-5-5` | 4 | 20 | 5 | 0.20 |
     | `text-embedding-3-small` | 0.02 | — | — | — |
 
-  - `STAGE_CAPS`:
+  - `STAGE_CAPS` (the values planned here; recalibrated with the provider's counter after
+    the first paid end-to-end test, current values and measurements in DESIGN §9):
 
     | Stage | Input | Output |
     | --- | --- | --- |

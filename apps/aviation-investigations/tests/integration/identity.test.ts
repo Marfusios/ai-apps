@@ -5,7 +5,8 @@
  *
  * The AI routes arrive with Task 16, so this file registers a test-only route that does
  * what they will do: the gate, then `admitPaidRequest`, then (here) an immediate
- * settlement so the next request is not held back by the in-flight limits.
+ * settlement so the next request is not held back by the in-flight limits. It settles at
+ * a typical brief's cost (`TYPICAL_USD`), or at `settleUsd` when a test needs more spent.
  */
 import { Client } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
@@ -36,8 +37,11 @@ import { resetControls, testDb } from './helpers.js';
 const IDENTITY_SECRET = 'test-identity-hmac-secret-0123456789';
 const NETWORK_SECRET = 'test-network-hmac-secret-0123456789';
 const HOST = 'casebook.example';
-/** A fresh 30-day month: the paced allowance is $2.666666, the anonymous share $0.666666 (4 requests of $0.14). */
+/** A fresh 30-day month: the paced allowance is $2.666666, the anonymous share $0.666666. */
 const T0 = new Date('2026-11-01T10:00:00Z');
+const ANONYMOUS_SHARE = 0.666666;
+/** What the test route settles an admitted request at: a typical brief (DESIGN §9). */
+const TYPICAL_USD = 0.11;
 const MIN = 60_000;
 const DAY = 86_400_000;
 const VISITOR = '203.0.113.7';
@@ -117,7 +121,7 @@ function harness(opts: { config?: AiRuntimeConfig; trialLimits?: TrialCreationLi
   });
   // What Task 16's AI routes will do for an anonymous visitor.
   app.post('/api/test/ask', async (request, reply) => {
-    const body = (request.body ?? {}) as { turnstileToken?: unknown; question?: string; gateOnly?: boolean };
+    const body = (request.body ?? {}) as { turnstileToken?: unknown; question?: string; gateOnly?: boolean; settleUsd?: number };
     const pass = await ai.gate!.check(request, reply, body.turnstileToken);
     if (!pass.ok) return sendGateRefusal(reply, pass, now());
     if (body.gateOnly) return reply.send({ passed: true, trialStarted: pass.trialStarted });
@@ -132,7 +136,7 @@ function harness(opts: { config?: AiRuntimeConfig; trialLimits?: TrialCreationLi
     });
     if (!admission.ok) return reply.code(rejectionStatus(admission)).send({ rejected: admission.reason });
     if (admission.replay) return reply.send({ replay: true });
-    await settle(appDb, admission, admission.reservationUsd, admission.fencingToken, now());
+    await settle(appDb, admission, Math.min(body.settleUsd ?? TYPICAL_USD, admission.reservationUsd), admission.fencingToken, now());
     return reply.send({ admitted: true, trialStarted: pass.trialStarted });
   });
   apps.push(app);
@@ -453,7 +457,7 @@ describe('anonymous gate', () => {
       networkId: VISITOR,
       idempotencyKey: 'login-required-1',
       requestHash: canonicalRequestHash({ question: 'q' }),
-      reservationUsd: 0.14,
+      reservationUsd: h.ai.startup.reservationUsd!,
       now: now(),
     });
     expect(admission).toEqual({ ok: false, reason: 'login_required' });
@@ -471,10 +475,14 @@ describe('GET /api/ai/status', () => {
     const h = harness();
     expect(await status(h)).toMatchObject({ state: 'available', remaining: { kind: 'trial', left: 3, limit: 3, started: false } });
 
-    // Four visitors use the anonymous share of today's paced allowance ($0.56 of $0.67).
+    // Visitors whose requests each cost a whole reservation use up the anonymous share of
+    // today's paced allowance: no room is left for one more reservation.
+    const reservation = h.ai.startup.reservationUsd!;
+    const visitors = Math.floor(ANONYMOUS_SHARE / reservation);
+    expect(visitors).toBeGreaterThanOrEqual(1);
     const cookies: string[] = [];
-    for (let i = 1; i <= 4; i++) {
-      const r = await ask(h, { turnstileToken: h.sv.issue() }, { from: `198.51.100.${i}` });
+    for (let i = 1; i <= visitors; i++) {
+      const r = await ask(h, { turnstileToken: h.sv.issue(), settleUsd: reservation }, { from: `198.51.100.${i}` });
       expect(r.json, `visitor ${i}`).toEqual({ admitted: true, trialStarted: true });
       cookies.push(cookieOf(r.setCookie));
     }
@@ -489,7 +497,10 @@ describe('GET /api/ai/status', () => {
     const returning = await status(h, cookies[0]);
     expect(returning).toMatchObject({ state: 'signed_in_only', reason: 'anonymous_share', remaining: { left: 2, started: true } });
     // No amounts, ever.
-    for (const body of [fresh.raw, returning.raw]) expect(body).not.toMatch(/usd|budget|spend|amount|cost|0\.14|0\.5|0\.6|2\.6/i);
+    for (const body of [fresh.raw, returning.raw]) {
+      expect(body).not.toMatch(/usd|budget|spend|amount|cost|0\.66|2\.6/i);
+      expect(body).not.toContain(String(reservation));
+    }
 
     // The gate agrees before claiming the token: the next anonymous request is refused with
     // nothing spent (no siteverify call, no reservation); admission would refuse it too.
@@ -499,7 +510,7 @@ describe('GET /api/ai/status', () => {
     const untilMidnight = Math.ceil((Date.parse('2026-11-02T00:00:00Z') - now().getTime()) / 1000);
     expect([refused.status, refused.json.error, refused.json.retryAfter]).toEqual([429, 'free_searches_paused', untilMidnight]);
     expect(h.sv.calls.length).toBe(calls);
-    expect(await count('reservations')).toBe(4);
+    expect(await count('reservations')).toBe(visitors);
     const trial = (await migrator.execute(sql`SELECT id::text AS id FROM trial_identities ORDER BY created_at LIMIT 1`)).rows[0] as { id: string };
     const admission = await admitPaidRequest(appDb, {
       policy: h.ai.policy!,
@@ -507,11 +518,11 @@ describe('GET /api/ai/status', () => {
       networkId: '198.51.100.1',
       idempotencyKey: 'share-exhausted-1',
       requestHash: canonicalRequestHash({ question: 'q' }),
-      reservationUsd: 0.14,
+      reservationUsd: reservation,
       now: now(),
     });
     expect(admission).toMatchObject({ ok: false, reason: 'anonymous_share_exhausted' });
-    expect(await count('reservations')).toBe(4);
+    expect(await count('reservations')).toBe(visitors);
 
     // A new day brings the free searches back.
     advance(DAY);

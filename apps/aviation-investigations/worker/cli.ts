@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createAnthropicClient, createAnthropicProvider, type AnthropicMessagesClient } from '../server/ai/anthropic.js';
 import { closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations, pruneGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
@@ -8,6 +9,7 @@ import { pruneControls } from '../server/quota/retention.js';
 import { expireLeases } from '../server/quota/settle.js';
 import { readAiSwitch, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
+import { formatPreflight, runAiPreflight } from './ai-preflight.js';
 import { APP_DIR, workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
 import { cacheOnlyEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
@@ -48,6 +50,7 @@ const USAGE = [
   '  worker publish --generation <id> --cases-index <name> [--passages-index <name>]',
   '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]]',
   '  worker migrate',
+  '  worker ai-preflight',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -623,6 +626,39 @@ async function main(argv: string[]): Promise<number> {
       await closeDb(db);
     }
     return 0;
+  }
+  if (command === 'ai-preflight') {
+    // Free: token counts only (Anthropic messages.countTokens); the client refuses generation.
+    parseArgs({ args: rest, options: {}, strict: true });
+    const config = workerConfig();
+    if (config.ai.llmProvider !== 'anthropic') {
+      console.error('ai-preflight counts with the Anthropic provider (AI_LLM_PROVIDER=anthropic)');
+      return 2;
+    }
+    const apiKey = config.ai.anthropic.apiKey;
+    if (!apiKey) {
+      console.error('ANTHROPIC_API_KEY is not set');
+      return 2;
+    }
+    const models = { scope: config.ai.anthropic.scopeModel, answer: config.ai.anthropic.answerModel, check: config.ai.anthropic.checkModel };
+    // Counting is free, so transient errors may be retried.
+    const client = createAnthropicClient(apiKey, { maxRetries: 3 });
+    const countOnly = {
+      messages: {
+        countTokens: (...args: Parameters<typeof client.messages.countTokens>) => client.messages.countTokens(...args),
+        parse: () => {
+          throw new Error('ai-preflight never generates');
+        },
+      },
+    } as unknown as AnthropicMessagesClient;
+    const provider = createAnthropicProvider({ models, client: countOnly });
+    const countText = async (model: string, text: string) =>
+      (await client.messages.countTokens({ model, messages: [{ role: 'user', content: text }] })).input_tokens;
+    const rows = await runAiPreflight(provider, countText, models);
+    console.log(formatPreflight(rows));
+    const over = rows.filter((r) => !r.ok);
+    console.log(over.length === 0 ? 'ai-preflight: every request fits its cap' : `ai-preflight: FAILED, ${over.length} over the cap`);
+    return over.length === 0 ? 0 : 1;
   }
   if (command === 'migrate') {
     // Schema migrations as aviation_migrator (DATABASE_MIGRATOR_URL); the URL is never printed.
