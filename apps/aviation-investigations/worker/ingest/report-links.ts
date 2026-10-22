@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { parse } from 'csv-parse/sync';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../../server/db/client.js';
 import { caseAircraft, cases, datasetGenerations, reportLinks, type ReportLinkSource } from '../../server/db/schema/index.js';
@@ -24,8 +24,13 @@ export interface ImportReport {
   matched: number;
   inserted: number;
   alreadyPresent: number;
+  sourceLabel: string;
+  /** True when every row's date was compared with the case's `ev_date`. */
+  dateChecked: boolean;
+  /** Matched rows inserted without a date comparison (no date column, or no `ev_date`). */
+  dateUnchecked: number;
   /** Rows whose case number is not in the verified generation, or whose date disagrees. */
-  unmatched: { ntsbNo: string; reportId: string; reason: 'unknown_case' | 'date_mismatch' }[];
+  unmatched: { ntsbNo: string; reportId: string; reason: 'unknown_case' | 'unknown_aircraft' | 'date_mismatch' }[];
   /** Rows without a usable report id. */
   invalid: { row: number; reason: string }[];
 }
@@ -35,34 +40,51 @@ export class ReportLinkError extends Error {}
 interface RawLink {
   caseNo: string;
   reportId: string;
+  aircraftNo?: string | undefined;
+  /** Date from the source; `undefined` when the source has no date for this row. */
   eventDate?: string | undefined;
 }
 
-/**
- * Verified export layouts, matched on normalized header names (lowercase, letters and
- * digits only). Add a layout here only after checking it against a real export; the
- * importer refuses anything it cannot identify positively. An id column holds either
- * the numeric report id or a CAROL report URL (the numeric id is extracted strictly).
- */
-interface Layout {
-  name: string;
-  caseKeys: string[];
-  idKeys: string[];
-  dateKeys: string[];
+/** The operator-supplied column mapping of an export. */
+export interface ExportMapping {
+  caseCol: string;
+  /** Exactly one of idCol (numeric report id) and urlCol (CAROL report URL) is set. */
+  idCol?: string;
+  urlCol?: string;
+  aircraftCol?: string;
+  dateCol?: string;
 }
-export const EXPORT_LAYOUTS: Layout[] = [
-  { name: 'case-number + report-id', caseKeys: ['ntsbno', 'ntsbnumber', 'casenumber'], idKeys: ['reportid', 'mkey'], dateKeys: ['eventdate', 'dateofevent'] },
-  { name: 'case-number + report-url', caseKeys: ['ntsbno', 'ntsbnumber', 'casenumber'], idKeys: ['reporturl', 'reportlink'], dateKeys: ['eventdate', 'dateofevent'] },
-];
 
-const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+/**
+ * Export layouts verified against a real Aviation Search export. Deliberately empty:
+ * field names are never assumed. An entry may be added only after checking a real
+ * export, and must record that export's sha256 and retrieval date.
+ */
+export interface VerifiedLayout {
+  name: string;
+  exportSha256: string;
+  retrievedOn: string;
+  mapping: ExportMapping;
+}
+export const VERIFIED_LAYOUTS: VerifiedLayout[] = [];
+
 const sha256 = (buf: Buffer | string): string => createHash('sha256').update(buf).digest('hex');
 
-/** Numeric id from a bare id or from a URL whose final numeric path segment (before an optional /pdf) is the id. */
+/**
+ * Numeric id from a bare id or from a CAROL report URL: https, host data.ntsb.gov,
+ * path /carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/<id>[/pdf].
+ */
 export function extractReportId(value: string): string | null {
   const v = value.trim();
   if (REPORT_ID_PATTERN.test(v)) return v;
-  const m = /^https:\/\/[^\s/]*ntsb\.gov\/[^\s?#]*?\/(\d{1,9})(?:\/pdf)?\/?(?:[?#]\S*)?$/i.exec(v);
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:' || u.hostname !== 'data.ntsb.gov' || u.port || u.username || u.password) return null;
+  const m = /^\/carol-repgen\/api\/Aviation\/ReportMain\/GenerateNewestReport\/(\d{1,9})(?:\/pdf)?\/?$/i.exec(u.pathname);
   return m?.[1] ?? null;
 }
 
@@ -85,21 +107,17 @@ function readRecords(path: string): { records: Record<string, unknown>[]; sha: s
   return { records, sha };
 }
 
-function detect(records: Record<string, unknown>[]): { layout: Layout; caseCol: string; idCol: string; dateCol?: string } {
+function checkMapping(records: Record<string, unknown>[], m: ExportMapping): void {
   const headers = [...new Set(records.flatMap((r) => Object.keys(r)))];
-  const byNorm = new Map(headers.map((h) => [norm(h), h]));
-  for (const layout of EXPORT_LAYOUTS) {
-    const caseCol = layout.caseKeys.map((k) => byNorm.get(k)).find(Boolean);
-    const idCol = layout.idKeys.map((k) => byNorm.get(k)).find(Boolean);
-    if (caseCol && idCol) {
-      const dateCol = layout.dateKeys.map((k) => byNorm.get(k)).find(Boolean);
-      return { layout, caseCol, idCol, ...(dateCol ? { dateCol } : {}) };
-    }
+  if (!m.caseCol) throw new ReportLinkError('a case column is required');
+  if (!!m.idCol === !!m.urlCol) throw new ReportLinkError('give exactly one of an id column and a url column');
+  const named = [m.caseCol, m.idCol, m.urlCol, m.aircraftCol, m.dateCol].filter((c): c is string => !!c);
+  const missing = named.filter((c) => !headers.includes(c));
+  if (missing.length) {
+    throw new ReportLinkError(
+      `column(s) not found in the export: ${missing.join(', ')}; found fields: ${headers.length ? headers.join(', ') : '(none)'}`,
+    );
   }
-  throw new ReportLinkError(
-    `unknown Aviation Search export layout; found fields: ${headers.length ? headers.join(', ') : '(none)'}. ` +
-      'Verify the field names against the export and add the layout to EXPORT_LAYOUTS.',
-  );
 }
 
 async function latestVerifiedGeneration(db: Db): Promise<number> {
@@ -115,16 +133,25 @@ async function latestVerifiedGeneration(db: Db): Promise<number> {
 
 function isoDate(v: string | undefined): string | undefined {
   if (!v) return undefined;
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v.trim()) ?? /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(v.trim());
-  if (!m) return undefined;
-  return m[1]!.length === 4 ? `${m[1]}-${m[2]}-${m[3]}` : `${m[3]}-${m[1]!.padStart(2, '0')}-${m[2]!.padStart(2, '0')}`;
+  const t = v.trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/.exec(t);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:$|\s)/.exec(t);
+  return us ? `${us[3]}-${us[1]!.padStart(2, '0')}-${us[2]!.padStart(2, '0')}` : undefined;
 }
 
-async function store(
-  db: Db,
-  links: RawLink[],
-  meta: { source: ReportLinkSource; sha: string; retrievedAt: Date; layout: string; invalid: ImportReport['invalid']; rows: number },
-): Promise<ImportReport> {
+interface StoreMeta {
+  source: ReportLinkSource;
+  sourceLabel: string;
+  mapping: ExportMapping | null;
+  sha: string;
+  retrievedAt: Date;
+  layout: string;
+  invalid: ImportReport['invalid'];
+  rows: number;
+}
+
+async function store(db: Db, links: RawLink[], meta: StoreMeta): Promise<ImportReport> {
   const generationId = await latestVerifiedGeneration(db);
   const keys = [...new Set(links.map((l) => l.caseNo))];
   const eventRows = keys.length
@@ -138,26 +165,49 @@ async function store(
         .select({ ntsbNo: caseAircraft.ntsbNo, aircraftNtsbNo: caseAircraft.aircraftNtsbNo, evDate: cases.evDate })
         .from(caseAircraft)
         .innerJoin(cases, and(eq(cases.generationId, caseAircraft.generationId), eq(cases.ntsbNo, caseAircraft.ntsbNo)))
-        .where(and(eq(caseAircraft.generationId, generationId), inArray(caseAircraft.aircraftNtsbNo, keys)))
+        .where(
+          and(
+            eq(caseAircraft.generationId, generationId),
+            or(inArray(caseAircraft.aircraftNtsbNo, keys), inArray(caseAircraft.ntsbNo, keys)),
+          ),
+        )
     : [];
   const event = new Map(eventRows.map((r) => [r.ntsbNo, r.evDate]));
-  const aircraft = new Map(aircraftRows.map((r) => [r.aircraftNtsbNo!, r]));
+  const aircraftByNo = new Map(aircraftRows.filter((r) => r.aircraftNtsbNo).map((r) => [r.aircraftNtsbNo!, r]));
+  const aircraftOfCase = new Map<string, Set<string>>();
+  for (const r of aircraftRows) {
+    if (!r.aircraftNtsbNo) continue;
+    const set = aircraftOfCase.get(r.ntsbNo) ?? new Set<string>();
+    set.add(r.aircraftNtsbNo);
+    aircraftOfCase.set(r.ntsbNo, set);
+  }
 
   const unmatched: ImportReport['unmatched'] = [];
   const toInsert: (typeof reportLinks.$inferInsert)[] = [];
   const seen = new Set<string>();
+  let dateUnchecked = 0;
   for (const l of links) {
     const ev = event.has(l.caseNo) ? { ntsbNo: l.caseNo, aircraft: null as string | null, date: event.get(l.caseNo) } : undefined;
-    const ac = aircraft.get(l.caseNo);
+    const ac = aircraftByNo.get(l.caseNo);
     const hit = ev ?? (ac ? { ntsbNo: ac.ntsbNo, aircraft: ac.aircraftNtsbNo, date: ac.evDate } : undefined);
     if (!hit) {
       unmatched.push({ ntsbNo: l.caseNo, reportId: l.reportId, reason: 'unknown_case' });
       continue;
     }
-    const exportDate = isoDate(l.eventDate);
-    if (exportDate && hit.date && exportDate !== hit.date) {
-      unmatched.push({ ntsbNo: l.caseNo, reportId: l.reportId, reason: 'date_mismatch' });
-      continue;
+    if (l.aircraftNo) {
+      if (!aircraftOfCase.get(hit.ntsbNo)?.has(l.aircraftNo)) {
+        unmatched.push({ ntsbNo: l.caseNo, reportId: l.reportId, reason: 'unknown_aircraft' });
+        continue;
+      }
+      hit.aircraft = l.aircraftNo;
+    }
+    if (l.eventDate !== undefined && hit.date) {
+      if (isoDate(l.eventDate) !== hit.date) {
+        unmatched.push({ ntsbNo: l.caseNo, reportId: l.reportId, reason: 'date_mismatch' });
+        continue;
+      }
+    } else {
+      dateUnchecked++;
     }
     const k = `${hit.ntsbNo}|${hit.aircraft ?? ''}|${l.reportId}`;
     if (seen.has(k)) continue;
@@ -167,17 +217,24 @@ async function store(
       aircraftNtsbNo: hit.aircraft,
       reportId: l.reportId,
       source: meta.source,
+      sourceLabel: meta.sourceLabel,
+      mapping: meta.mapping,
       sourceFileSha256: meta.sha,
       retrievedAt: meta.retrievedAt,
     });
   }
+  // Replace the rows of this source label atomically, so re-importing a file never leaves stale rows.
   let inserted = 0;
-  for (let i = 0; i < toInsert.length; i += 1000) {
-    const res = await db.insert(reportLinks).values(toInsert.slice(i, i + 1000)).onConflictDoNothing().returning({ id: sql`1` });
-    inserted += res.length;
-  }
+  await db.transaction(async (tx) => {
+    await tx.delete(reportLinks).where(eq(reportLinks.sourceLabel, meta.sourceLabel));
+    for (let i = 0; i < toInsert.length; i += 1000) {
+      const res = await tx.insert(reportLinks).values(toInsert.slice(i, i + 1000)).onConflictDoNothing().returning({ id: sql`1` });
+      inserted += res.length;
+    }
+  });
   return {
     source: meta.source,
+    sourceLabel: meta.sourceLabel,
     sourceFileSha256: meta.sha,
     retrievedAt: meta.retrievedAt,
     generationId,
@@ -186,6 +243,8 @@ async function store(
     matched: toInsert.length,
     inserted,
     alreadyPresent: toInsert.length - inserted,
+    dateChecked: dateUnchecked === 0,
+    dateUnchecked,
     unmatched,
     invalid: meta.invalid,
   };
@@ -194,7 +253,9 @@ async function store(
 const SeedSchema = z.object({
   source: z.string().min(1),
   retrievedAt: z.string().refine((s) => !Number.isNaN(Date.parse(s)), 'retrievedAt must be a date'),
-  links: z.array(z.object({ ntsbNo: z.string().min(1), reportId: z.string().regex(REPORT_ID_PATTERN) })),
+  links: z.array(
+    z.object({ ntsbNo: z.string().min(1), reportId: z.string().regex(REPORT_ID_PATTERN), evDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
+  ),
 });
 
 export async function importSeedLinks(db: Db, file: string): Promise<ImportReport> {
@@ -202,28 +263,58 @@ export async function importSeedLinks(db: Db, file: string): Promise<ImportRepor
   const seed = SeedSchema.parse(JSON.parse(buf.toString('utf8')));
   return store(
     db,
-    seed.links.map((l) => ({ caseNo: l.ntsbNo, reportId: l.reportId })),
-    { source: 'seed', sha: sha256(buf), retrievedAt: new Date(seed.retrievedAt), layout: seed.source, invalid: [], rows: seed.links.length },
+    seed.links.map((l) => ({ caseNo: l.ntsbNo, reportId: l.reportId, eventDate: l.evDate })),
+    {
+      source: 'seed',
+      sourceLabel: seed.source,
+      mapping: null,
+      sha: sha256(buf),
+      retrievedAt: new Date(seed.retrievedAt),
+      layout: seed.source,
+      invalid: [],
+      rows: seed.links.length,
+    },
   );
 }
 
-export async function importAviationSearchExport(db: Db, filePath: string, opts: { retrievedAt?: Date } = {}): Promise<ImportReport> {
+/**
+ * Import an Aviation Search export (CSV or JSON) with an explicit, operator-supplied
+ * column mapping (or a VERIFIED_LAYOUTS entry). `retrievedAt` is when the export was
+ * downloaded, never the import time.
+ */
+export async function importAviationSearchExport(
+  db: Db,
+  filePath: string,
+  opts: { mapping: ExportMapping; retrievedAt: Date },
+): Promise<ImportReport> {
+  if (Number.isNaN(opts.retrievedAt.getTime())) throw new ReportLinkError('retrievedAt must be a valid date');
   const { records, sha } = readRecords(filePath);
-  const { layout, caseCol, idCol, dateCol } = detect(records);
+  const m = opts.mapping;
+  checkMapping(records, m);
   const links: RawLink[] = [];
   const invalid: ImportReport['invalid'] = [];
   records.forEach((r, i) => {
-    const caseNo = String(r[caseCol] ?? '').trim();
-    const id = extractReportId(String(r[idCol] ?? ''));
+    const caseNo = String(r[m.caseCol] ?? '').trim();
+    const id = extractReportId(String(r[(m.idCol ?? m.urlCol)!] ?? ''));
+    const aircraftNo = m.aircraftCol ? String(r[m.aircraftCol] ?? '').trim() : '';
     if (!caseNo) invalid.push({ row: i + 1, reason: 'missing case number' });
     else if (!id) invalid.push({ row: i + 1, reason: 'no valid numeric report id' });
-    else links.push({ caseNo, reportId: id, eventDate: dateCol ? String(r[dateCol] ?? '') : undefined });
+    else {
+      links.push({
+        caseNo,
+        reportId: id,
+        ...(aircraftNo ? { aircraftNo } : {}),
+        ...(m.dateCol ? { eventDate: String(r[m.dateCol] ?? '') } : {}),
+      });
+    }
   });
   return store(db, links, {
     source: 'aviation_search_export',
+    sourceLabel: `aviation search export ${sha.slice(0, 12)}`,
+    mapping: m,
     sha,
-    retrievedAt: opts.retrievedAt ?? new Date(),
-    layout: layout.name,
+    retrievedAt: opts.retrievedAt,
+    layout: 'explicit column mapping',
     invalid,
     rows: records.length,
   });

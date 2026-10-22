@@ -577,6 +577,10 @@ export const reportLinks = pgTable(
     aircraftNtsbNo: text('aircraft_ntsb_no'),
     reportId: text('report_id').notNull(),
     source: text('source', { enum: REPORT_LINK_SOURCES }).notNull(),
+    /** Human-readable provenance, e.g. "manual verification 2026-10-16". Rows of one label are replaced together. */
+    sourceLabel: text('source_label').notNull(),
+    /** Column mapping used for an export (null for the seed). */
+    mapping: jsonb('mapping'),
     sourceFileSha256: text('source_file_sha256').notNull(),
     retrievedAt: timestamp('retrieved_at', { withTimezone: true, mode: 'date' }).notNull(),
     importedAt: timestamp('imported_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),

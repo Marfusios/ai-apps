@@ -14,7 +14,8 @@ const USAGE = [
   '  worker extract --archive <zip> --sha256 <hex> --out <dir>',
   '  worker load --from <extractDir>',
   '  worker verify --generation <id> [--profile <file>]',
-  '  worker report-links --seed | --export <file>',
+  '  worker report-links --seed',
+  '  worker report-links --export <file> --case-col <name> (--id-col <name> | --url-col <name>) [--aircraft-col <name>] [--date-col <name>] --retrieved-at <ISO date>',
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
 ].join('\n');
@@ -76,7 +77,9 @@ function printVerify(r: VerifyReport): void {
 function printLinks(r: ImportReport): void {
   console.log(`report links (${r.source}, ${r.layout}) against generation ${r.generationId}`);
   console.log(`  file sha256 ${r.sourceFileSha256}, retrieved ${r.retrievedAt.toISOString()}`);
+  console.log(`  label: ${r.sourceLabel}`);
   console.log(`  rows ${r.rows}, matched ${r.matched}, inserted ${r.inserted}, already present ${r.alreadyPresent}`);
+  if (!r.dateChecked) console.warn(`  WARNING: ${r.dateUnchecked} row(s) were not date-checked (no --date-col or no event date); matches rest on case number alone`);
   for (const u of r.unmatched) console.log(`  unmatched ${u.ntsbNo} -> ${u.reportId} (${u.reason})`);
   for (const i of r.invalid) console.log(`  invalid row ${i.row}: ${i.reason}`);
 }
@@ -131,14 +134,47 @@ async function main(argv: string[]): Promise<number> {
     return report.ok && !report.conflict ? 0 : 1;
   }
   if (command === 'report-links') {
-    const { values } = parseArgs({ args: rest, options: { seed: { type: 'boolean' }, export: { type: 'string' } }, strict: true });
-    if (!!values.seed === !!values.export) {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        seed: { type: 'boolean' },
+        export: { type: 'string' },
+        'case-col': { type: 'string' },
+        'id-col': { type: 'string' },
+        'url-col': { type: 'string' },
+        'aircraft-col': { type: 'string' },
+        'date-col': { type: 'string' },
+        'retrieved-at': { type: 'string' },
+      },
+      strict: true,
+    });
+    const file = values.export;
+    const retrievedAt = values['retrieved-at'] ? new Date(values['retrieved-at']) : undefined;
+    const caseCol = values['case-col'];
+    const idCol = values['id-col'];
+    const urlCol = values['url-col'];
+    const valid = file
+      ? !values.seed && caseCol && !!idCol !== !!urlCol && retrievedAt && !Number.isNaN(retrievedAt.getTime())
+      : values.seed && !caseCol && !idCol && !urlCol && !retrievedAt;
+    if (!valid) {
       console.error(USAGE);
       return 2;
     }
-    const file = values.export;
     const seedFile = fileURLToPath(new URL('../fixtures/report-links-seed.json', import.meta.url));
-    const report = await withDb((db) => (file ? importAviationSearchExport(db, file) : importSeedLinks(db, seedFile)));
+    const report = await withDb((db) =>
+      file && caseCol && retrievedAt
+        ? importAviationSearchExport(db, file, {
+            retrievedAt,
+            mapping: {
+              caseCol,
+              ...(idCol ? { idCol } : {}),
+              ...(urlCol ? { urlCol } : {}),
+              ...(values['aircraft-col'] ? { aircraftCol: values['aircraft-col'] } : {}),
+              ...(values['date-col'] ? { dateCol: values['date-col'] } : {}),
+            },
+          })
+        : importSeedLinks(db, seedFile),
+    );
     printLinks(report);
     return report.unmatched.length || report.invalid.length ? 1 : 0;
   }

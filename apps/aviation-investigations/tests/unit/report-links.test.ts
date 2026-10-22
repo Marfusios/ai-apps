@@ -21,6 +21,9 @@ describe('report links', () => {
     expect(extractReportId('67493')).toBe('67493');
     expect(extractReportId('https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/67493/pdf')).toBe('67493');
     expect(extractReportId('https://evil.example/x/67493')).toBeNull();
+    expect(extractReportId('https://data.ntsb.gov.evil.example/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/1/pdf')).toBeNull();
+    expect(extractReportId('http://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/1/pdf')).toBeNull();
+    expect(extractReportId('https://data.ntsb.gov/other/67493')).toBeNull();
     expect(extractReportId('javascript:1')).toBeNull();
   });
 });
