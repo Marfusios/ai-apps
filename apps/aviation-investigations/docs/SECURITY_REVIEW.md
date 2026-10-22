@@ -109,20 +109,23 @@ The implementation review must cover these. It must check in particular that no
 reachable model, including any refusal-fallback target, lacks an allowlisted
 price.
 
-**Withheld-summary diagnostics** (Task 16, after the first paid end-to-end run; also
-unreviewed). A withheld summary keeps its rejected composition in
-`brief_steps.diagnostics` (migration 0016): model output about public NTSB passages,
-which may restate the reader's question, with the passage alias map, the summary
-sentences as the validator split them and, for an evidence check, the claims the checker
-read. It is the same class of data as the step's `request` and `result` and shares
-their controls. It lives only in the application database: no route selects the column
-and it never reaches a trace, a log line, a response or the browser (the step's `meta`,
-spans and log carry only fixed codes and paths). `aviation_app` and the schema owner
-`aviation_migrator` can read it; `aviation_ingest` cannot. The 0014 guard makes it
-immutable once its step finishes, and `prune_controls()` deletes it with its brief 24
-hours after the brief was created. Only `pnpm worker brief-diagnose`, run by hand with
-the app role's credentials, prints it, to that operator's terminal. The implementation
-review must cover it.
+**Withheld-summary diagnostics** (Task 16, after the first paid end-to-end run). A
+withheld summary keeps its rejected composition in `brief_steps.diagnostics` (migration
+0016), with the passage alias map, the summary sentences as the validator split them and,
+for an evidence check, the claims the checker read. It is model output about public NTSB
+passages, but it may restate or quote the reader's question, so it is **treated as
+potentially containing user data**: the same class as the step's `request` and `result`,
+under the same controls. It lives only in the application database: no route selects the
+column and it never reaches a trace, a log line, a response or the browser (the step's
+`meta`, spans and log carry only fixed codes and paths). `aviation_app` and the schema
+owner `aviation_migrator` can read it; `aviation_ingest` cannot. The 0014 guard makes it
+immutable once its step finishes. Its brief expires 24 hours after it was created, and
+the next maintenance pass (`prune_controls()`, about every 10 minutes) deletes it with its
+steps; until then the expired row still exists. Only `pnpm worker brief-diagnose`, run
+by hand with the app role's credentials, prints it, to that operator's terminal, and it
+refuses an expired brief unless given `--include-expired`. Astra's G6 follow-up 2 accepted
+this storage under the existing request/result controls; the implementation review must
+still cover it.
 
 ## Required implementation review before launch
 

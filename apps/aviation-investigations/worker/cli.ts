@@ -52,7 +52,7 @@ const USAGE = [
   '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]]',
   '  worker migrate',
   '  worker ai-preflight',
-  '  worker brief-diagnose <brief-id> [--step <n>]',
+  '  worker brief-diagnose <brief-id> [--step <n>] [--include-expired]',
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
@@ -669,7 +669,12 @@ async function main(argv: string[]): Promise<number> {
     // A developer's tool, run by hand only: why a withheld step's summary was withheld, with
     // the text each reason points at (worker/brief-diagnose.ts). Read-only, as aviation_app
     // (DATABASE_URL); aviation_ingest cannot read briefs.
-    const { values, positionals } = parseArgs({ args: rest, options: { step: { type: 'string' } }, allowPositionals: true, strict: true });
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { step: { type: 'string' }, 'include-expired': { type: 'boolean' } },
+      allowPositionals: true,
+      strict: true,
+    });
     const step = values.step === undefined ? undefined : /^\d$/.test(values.step) ? Number(values.step) : Number.NaN;
     if (positionals.length !== 1 || !validDiagnoseArgs(positionals[0]!, step)) {
       console.error(USAGE);
@@ -679,12 +684,18 @@ async function main(argv: string[]): Promise<number> {
     if (!url) throw new Error('DATABASE_URL is not set (the aviation_app login); run pnpm services:setup');
     const db = createDb(url, { max: 1, applicationName: 'aviation-worker-diagnose' });
     try {
-      const lines = await diagnoseBrief(db, positionals[0]!, step);
-      if (!lines) {
-        console.error('no such brief step (an expired brief is pruned with its steps)');
+      const d = await diagnoseBrief(db, positionals[0]!, step, { includeExpired: values['include-expired'] === true });
+      if (d.kind === 'missing') {
+        console.error('no such brief step (an expired brief is pruned with its steps by the maintenance pass)');
         return 1;
       }
-      for (const line of lines) console.log(line);
+      if (d.kind === 'expired') {
+        console.error(
+          `the brief expired at ${d.expiresAt.toISOString()} and awaits pruning; pass --include-expired to read it before the maintenance pass deletes it`,
+        );
+        return 1;
+      }
+      for (const line of d.lines) console.log(line);
     } finally {
       await closeDb(db);
     }

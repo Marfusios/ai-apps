@@ -114,7 +114,8 @@ export interface StepDiagnostics {
  */
 const UNSTORABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-function storable(v: unknown): unknown {
+/** A copy of a JSON value that jsonb accepts: NUL and unpaired surrogates in strings and keys become U+FFFD. */
+export function storable(v: unknown): unknown {
   if (typeof v === 'string') return v.replace(UNSTORABLE, '\uFFFD');
   if (Array.isArray(v)) return v.map(storable);
   if (v !== null && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [storable(k) as string, storable(x)]));
@@ -185,7 +186,8 @@ export async function insertStep(db: DbOrTx, s: NewStep): Promise<StepRow | null
       updatedAt: s.now,
     })
     .onConflictDoNothing({ target: [briefSteps.briefId, briefSteps.n] })
-    .returning();
+    // Never `diagnostics`: a step read never returns it.
+    .returning(STEP_COLUMNS);
   return rows[0] ? toStep(rows[0]) : null;
 }
 
@@ -329,20 +331,24 @@ export async function finishStep(db: Db, stepId: string, f: StepFinish): Promise
 }
 
 /**
- * A step with its diagnostics, for the operator command `pnpm worker brief-diagnose`
- * only (never a route). Null when the brief has no such step (or it was pruned).
+ * A step with its diagnostics and its brief's expiry, for the operator command
+ * `pnpm worker brief-diagnose` only (never a route). Null when the brief has no such step
+ * (or the maintenance pass has pruned it). An expired brief's rows remain until that pass.
  */
 export async function readStepDiagnostics(
   db: DbOrTx,
   briefId: string,
   n?: number,
-): Promise<{ step: StepRow; diagnostics: StepDiagnostics | null } | null> {
-  const q = db.select({ row: STEP_COLUMNS, diagnostics: briefSteps.diagnostics }).from(briefSteps);
+): Promise<{ step: StepRow; diagnostics: StepDiagnostics | null; expiresAt: Date } | null> {
+  const q = db
+    .select({ row: STEP_COLUMNS, diagnostics: briefSteps.diagnostics, expiresAt: briefs.expiresAt })
+    .from(briefSteps)
+    .innerJoin(briefs, eq(briefs.id, briefSteps.briefId));
   const [r] =
     n === undefined
       ? await q.where(eq(briefSteps.briefId, briefId)).orderBy(desc(briefSteps.n)).limit(1)
       : await q.where(and(eq(briefSteps.briefId, briefId), eq(briefSteps.n, n)));
-  return r ? { step: toStep(r.row), diagnostics: (r.diagnostics as StepDiagnostics | null) ?? null } : null;
+  return r ? { step: toStep(r.row), diagnostics: (r.diagnostics as StepDiagnostics | null) ?? null, expiresAt: r.expiresAt } : null;
 }
 
 /** Mark a running step for cancellation; false when it is not running. */

@@ -670,7 +670,8 @@ export const ComposeOutputSchema = z.strictObject({
   outcome: z.enum(COMPOSE_OUTCOMES),
   /**
    * For `answer`: two to five plain sentences, each ending with the `[[case:NTSB_NO]]`
-   * markers of the cases it is about. Empty for `no_supported_match`.
+   * markers of the cases it is about, immediately before or after its final punctuation
+   * (server/briefs/sentences.ts). Empty for `no_supported_match`.
    */
   summary: z.string().max(1_500),
   /** Mechanical evidence groups, or one `examples` group; every case in exactly one group. */

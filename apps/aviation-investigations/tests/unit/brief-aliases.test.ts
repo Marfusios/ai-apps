@@ -172,6 +172,11 @@ describe('passage aliases', () => {
     const taxiway = why('The airplane entered taxiway P1 after the engine change.');
     expect(codes(taxiway)).toEqual(['alias_in_text']);
     expect(codes(taxiway, 'Runway incursions on taxiway P1 after maintenance')).toEqual([]);
+    expect(codes(taxiway, 'Runway incursions on taxiway p1, then a stop at gate J1/P1')).toEqual([]);
+    // Only as a complete token: "P1abc", "P10" or "P1.5" in the reader's text is another token.
+    for (const readerText of ['Incursions near P1abc after maintenance', 'Incursions on taxiway P10', 'A P1.5 pressure reading']) {
+      expect(codes(taxiway, readerText), readerText).toEqual(['alias_in_text']);
+    }
     const usedByRecord: Allowlist = {
       ...allow,
       passages: new Map([...allow.passages, ['P2', allowed('DFW08TA066', 'The P3 air line was cracked at the fitting.')]]),

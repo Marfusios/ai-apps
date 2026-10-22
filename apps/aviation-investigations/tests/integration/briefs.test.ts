@@ -521,6 +521,13 @@ async function diagnosticsOf(briefId: string, n = 1): Promise<StepDiagnostics | 
     .diagnostics;
 }
 
+/** The developer's report on a live brief's latest step (worker/brief-diagnose.ts), as text. */
+async function reportOf(briefId: string): Promise<string> {
+  const d = await diagnoseBrief(appDb, briefId, undefined, { now: now() });
+  if (d.kind !== 'report') throw new Error(`expected a report, got ${d.kind}`);
+  return d.lines.join('\n');
+}
+
 /** The step's `brief step finished` log line. */
 const finishedLine = (h: Harness) => h.logs.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.msg === 'brief step finished');
 
@@ -639,7 +646,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v3', check: 'check.v3' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v4', check: 'check.v3' },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
       check: { supported: true, problems: [] },
     });
@@ -1695,7 +1702,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     // Diagnosable: the failed criterion is the withheld code; the developer's command shows the case's chronology.
     expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'criteria_check', codes: ['timing_window'] } });
     expect(await diagnosticsOf(briefId)).toMatchObject({ reason: 'criteria_check' });
-    const report = (await diagnoseBrief(appDb, briefId))!.join('\n');
+    const report = await reportOf(briefId);
     expect(report).toContain('DFW08TA066 timing_window: does_not_match');
     expect(report).toMatch(/chronology: .*"calendarDays":\{[^}]*"value":40\b/);
     // The whole AI summary is withheld, not just that case: every retrieved case is a plain NTSB card.
@@ -1840,6 +1847,38 @@ describe('gate G6: evidence semantics through the routes', () => {
     const { briefId, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
     expect((await stepRow(briefId)).meta).toMatchObject({ validation: { codes: ['uncited_summary'] } });
+  });
+
+  it('summary citations: an uncited sentence never borrows one, a mid-sentence marker withholds, markers after the last period count', async () => {
+    const [a, b] = SEEDS;
+    const h = harness(
+      answering({
+        compose: [
+          (input) => composition(input, (c) => (c.summary = `The engine lost power. 3 people were injured [[case:${a}]].`)),
+          (input) => composition(input, (c) => (c.summary = `The engine lost power [[case:${a}]] during climb. 3 people were injured.`)),
+          (input) => composition(input, (c) => (c.summary = `Power was lost after maintenance [[case:${a}]]. The fuel was contaminated. [[case:${b}]]`)),
+        ],
+      }),
+      { trialRequests: 10 },
+    );
+    const first = await askAndWait(h);
+    expect(first.step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+    expect((await stepRow(first.briefId)).meta).toMatchObject({ validation: { reasons: [{ code: 'uncited_summary', path: 'summary.0' }] } });
+    advance(MIN);
+    const second = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect(second.step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
+    expect((await stepRow(second.briefId)).meta).toMatchObject({
+      validation: {
+        reasons: [
+          { code: 'misplaced_citation', path: 'summary.0' },
+          { code: 'uncited_summary', path: 'summary.1' },
+        ],
+      },
+    });
+    advance(MIN);
+    const third = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect(third.step.result?.kind).toBe('answer');
+    expect((await stepRow(third.briefId)).meta).toMatchObject({ validation: { codes: [], summarySentences: 2 } });
   });
 
   it('structured lines link to their own passages; gap notes keep theirs and their case context', async () => {
@@ -2075,10 +2114,14 @@ describe('diagnosable withholding and model-call telemetry', () => {
       });
       expect(JSON.stringify(spans.map((sp) => sp.attributes))).not.toContain('blame');
       // The developer's command prints the reason with the offending sentence.
-      const report = (await diagnoseBrief(appDb, briefId))!.join('\n');
+      const report = await reportOf(briefId);
       expect(report).toContain(`brief ${briefId}, step 1: withheld (citation_check)`);
       expect(report).toContain('uncited_summary at summary.4');
       expect(report).toContain(`sentence 4: ${JSON.stringify(UNCITED)}`);
+      // Once the brief has expired (its rows wait for the maintenance pass), only on request.
+      advance(24 * 60 * MIN + 1);
+      expect(await diagnoseBrief(appDb, briefId, undefined, { now: now() })).toMatchObject({ kind: 'expired' });
+      expect(await diagnoseBrief(appDb, briefId, undefined, { now: now(), includeExpired: true })).toMatchObject({ kind: 'report' });
     } finally {
       await tracing.shutdown();
     }
@@ -2095,7 +2138,7 @@ describe('diagnosable withholding and model-call telemetry', () => {
     expect(d.claims).toEqual((h.llm.calls.find((c) => c.stage === 'check')!.input as CheckInput).claims);
     expect(d.claims![1]).toMatchObject({ kind: 'summary', text: expect.stringContaining('Power was lost after maintenance') });
     expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted'] } });
-    const report = (await diagnoseBrief(appDb, briefId))!.join('\n');
+    const report = await reportOf(briefId);
     expect(report).toContain('contradicted at claim 1 (summary');
     expect(report).toContain(`claim: ${JSON.stringify(d.claims![1]!.text)}`);
   });

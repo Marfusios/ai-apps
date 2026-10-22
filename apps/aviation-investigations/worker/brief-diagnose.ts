@@ -1,16 +1,18 @@
 /**
- * `pnpm worker brief-diagnose <brief-id> [--step <n>]`: why a withheld step's summary
- * was withheld, for a developer. It prints the step's content-free reasons from its
- * `meta` (validation codes with their paths, failed criteria, check problems, the
- * failure category) next to the text they point at, from the step's server-side
- * `diagnostics`: the offending summary sentence as the validator split it, the `why`
- * line, quote or note, the checker's claim. A withheld composition is model output about
- * public NTSB passages (it may restate the reader's question); this command prints it to
- * the operator's terminal and nowhere else.
+ * `pnpm worker brief-diagnose <brief-id> [--step <n>] [--include-expired]`: why a
+ * withheld step's summary was withheld, for a developer. It prints the step's
+ * content-free reasons from its `meta` (validation codes with their paths, failed
+ * criteria, check problems, the failure category) next to the text they point at, from
+ * the step's server-side `diagnostics`: the offending summary sentence as the validator
+ * split it, the `why` line, quote or note, the checker's claim. A withheld composition is
+ * model output about public NTSB passages that may restate the reader's question, so it
+ * is treated as user data: this command prints it to the operator's terminal and
+ * nowhere else.
  *
  * Read-only, as aviation_app (DATABASE_URL: aviation_ingest cannot read briefs). Only an
- * operator runs it, by hand; no job or route does. A brief's diagnostics are pruned with
- * the brief (`prune_controls()`, 24 hours after it was created).
+ * operator runs it, by hand; no job or route does. A brief expires 24 hours after it was
+ * created, and the next maintenance pass (`prune_controls()`) deletes it with its steps;
+ * until then the command refuses an expired brief unless `--include-expired` is given.
  */
 import type { Db } from '../server/db/client.js';
 import { readStepDiagnostics, type StepDiagnostics, type StepRow } from '../server/briefs/store.js';
@@ -127,9 +129,23 @@ export function validDiagnoseArgs(briefId: string, n?: number): boolean {
   return UUID.test(briefId) && (n === undefined || (Number.isInteger(n) && n >= 1 && n <= 4));
 }
 
-/** The report for step `n` of a brief (its latest step without `n`), or null when there is no such step. */
-export async function diagnoseBrief(db: Db, briefId: string, n?: number): Promise<string[] | null> {
+export type Diagnosis =
+  | { kind: 'report'; lines: string[] }
+  /** No such step: never created, or already pruned. */
+  | { kind: 'missing' }
+  /** The brief has expired and awaits pruning; read only with `includeExpired`. */
+  | { kind: 'expired'; expiresAt: Date };
+
+/** The report for step `n` of a brief (its latest step without `n`). */
+export async function diagnoseBrief(
+  db: Db,
+  briefId: string,
+  n?: number,
+  opts: { includeExpired?: boolean; now?: Date } = {},
+): Promise<Diagnosis> {
   if (!validDiagnoseArgs(briefId, n)) throw new Error('brief-diagnose takes a brief id (a UUID) and a step from 1 to 4');
   const found = await readStepDiagnostics(db, briefId, n);
-  return found ? formatDiagnosis(found.step, found.diagnostics) : null;
+  if (!found) return { kind: 'missing' };
+  if (found.expiresAt <= (opts.now ?? new Date()) && !opts.includeExpired) return { kind: 'expired', expiresAt: found.expiresAt };
+  return { kind: 'report', lines: formatDiagnosis(found.step, found.diagnostics) };
 }

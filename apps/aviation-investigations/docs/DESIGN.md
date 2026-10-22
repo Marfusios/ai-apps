@@ -583,8 +583,8 @@ free) on 2026-10-22 against real shared-dev passages; `claude-haiku-5-5` and
 tokens of the same NTSB text (median 1.59, 90th percentile 1.68, maximum 1.89 over
 100 passages; 1.62 over a 12-passage bundle), and a structured-output schema costs
 about 2.5× its JSON size. Each stage's fixed request (system prompt and schema) is
-3,204 tokens for scope, 4,682 for the answer and 1,961 for the check (the `compose.v3`
-and `check.v3` prompts, measured by the preflight on 2026-10-22). A typical request,
+3,204 tokens for scope, 4,746 for the answer and 1,961 for the check (the `compose.v4`
+and `check.v3` prompts, measured by the preflight on 2026-10-23). A typical request,
 estimated from those sizes until settled usage from paid runs replaces it:
 
 | Stage | Tokens (input / output) | Cost |
@@ -612,7 +612,7 @@ synthetic worst cases of `pnpm worker ai-preflight`):
 | Stage | Input | Output | Largest measured request |
 | --- | --- | --- | --- |
 | Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
-| Answer | 28,000 | 9,000, including thinking | fixed 4,682; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,222 synthetic (22,096 with real passages under the earlier `compose.v2`); the 10,000-token evidence budget at 1.75× bounds it near 25,300, and the measured stress cases fit without re-packing; output at its schema bounds 6,556 plus 1,500 for thinking |
+| Answer | 28,000 | 9,000, including thinking | fixed 4,746; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,286 synthetic (22,096 with real passages under the earlier `compose.v2`); the 10,000-token evidence budget at 1.75× bounds it near 25,300, and the measured stress cases fit without re-packing; output at its schema bounds 6,556 plus 1,500 for thinking |
 | Check | 36,000 | 3,000 | fixed 1,961; a full bundle's complete evidence with 91 claims 27,356 synthetic (28,020 with real passages under `check.v2`), bounded near 30,400; a problem for each of 100 claims 2,414 |
 | Embedding | 1,000 | — | — |
 
@@ -630,7 +630,7 @@ tests and deployments (RUNBOOK). Between preflights a unit test sizes the same
 requests offline (`cl100k_base` × 2.2 for system prompt plus schema, × 1.8 for text).
 
 **Prompt caching:** only the frozen system prefix of each stage is cached, with
-the 5-minute TTL and at most 5,500 tokens (the largest, the answer stage's, is 4,558
+the 5-minute TTL and at most 5,500 tokens (the largest, the answer stage's, is 4,622
 with its schema). The reservation is the **sum over all stages** of each stage's
 hard-cap cost at the worst applicable price, plus the cache-write premium on its
 cached prefix:

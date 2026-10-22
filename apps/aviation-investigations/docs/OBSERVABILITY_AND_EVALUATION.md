@@ -354,16 +354,17 @@ existed (a citation, criteria or evidence check): the composition as the answer 
 returned it (passage aliases as it saw them), the alias map, the summary sentences as
 the validator split them, and for an evidence check the claims the checker read, by
 index. It is model output about public NTSB passages and may restate the reader's
-question.
+question, so it is treated as user data.
 
 - **Where it lives:** in the step's `brief_steps` row in PostgreSQL only. No route
   selects the column (step reads list their columns without it), and it never reaches a
   trace, a log line or the browser.
 - **Who can read it:** the roles that can read `brief_steps`: `aviation_app` (the API's
-  role) and `aviation_migrator`, which owns the schema; `aviation_ingest` cannot. `pnpm worker brief-diagnose
-  <brief-id> [--step <n>]` prints it to the operator who runs it by hand (RUNBOOK,
-  "Diagnosing a withheld summary"); nothing runs it automatically.
-- **When it is pruned:** with its brief. `prune_controls()` deletes expired briefs and
-  their steps (24 hours after the brief was created; the API's maintenance pass runs
-  about every 10 minutes). A finished step's diagnostics are immutable, like the rest of
-  its row.
+  role) and `aviation_migrator`, which owns the schema; `aviation_ingest` cannot.
+  `pnpm worker brief-diagnose <brief-id> [--step <n>]` prints it to the operator who runs
+  it by hand (RUNBOOK, "Diagnosing a withheld summary"); nothing runs it automatically.
+- **When it is deleted:** with its brief. A brief expires 24 hours after it was created,
+  and the first maintenance pass after that (`prune_controls()`, about every 10 minutes)
+  deletes it with its steps. Until that pass the expired row still exists;
+  `brief-diagnose` refuses an expired brief unless given `--include-expired`. A finished
+  step's diagnostics are immutable, like the rest of its row.

@@ -36,6 +36,11 @@
  * insensitive); `DCA25MA108A/B` names both aircraft numbers. Quotes are exempt: they
  * are verified passage text.
  *
+ * **Summary sentences** (server/briefs/sentences.ts, split conservatively: when in doubt,
+ * split). Each must end with the `[[case:…]]` markers of the cases it is about,
+ * immediately before or after its final punctuation: a sentence without one fails
+ * `uncited_summary`, one with a marker anywhere else `misplaced_citation`.
+ *
  * **Passage aliases in prose** (`alias_in_text`): the summary, `why` lines and gap notes
  * may not name a passage alias the model was shown (an allowlist key such as `P3`)
  * unless the reader's question or a passage of the bundle uses the same token, so an
@@ -44,7 +49,7 @@
  */
 import { createHash } from 'node:crypto';
 import { ComposeOutputSchema, type ComposeOutput, type GlyphKind } from '../../shared/contracts/briefs.js';
-import { splitSentences } from './sentences.js';
+import { citationPlacement, splitSentences } from './sentences.js';
 
 export const QUOTE_MATCH_RULE_VERSION = 'quote-ws-v2';
 /** A quote has at least this many whitespace-separated words after normalization. */
@@ -137,6 +142,7 @@ export const VALIDATION_CODES = [
   'bad_marker',
   'marker_unknown_case',
   'uncited_summary',
+  'misplaced_citation',
   'unallowlisted_case_number',
   'markup_or_link',
   'alias_in_text',
@@ -380,15 +386,15 @@ const ALIAS_TOKEN = /(?<![A-Za-z0-9/-])P\d{1,3}(?![A-Za-z0-9/]|\.\d)/g;
 
 /**
  * The aliases of the allowlist (`P1`..) that model prose may not name: those neither the
- * reader's text nor any allowlisted passage uses as a token of its own (any letter case,
- * after any separator: "J1/P1", "p3").
+ * reader's text nor any allowlisted passage uses as a complete token (any letter case,
+ * between any separators: "J1/P1", "p3"; not "P1abc", "P10" or "P1.5").
  */
 function leakableAliases(allow: Allowlist, readerText: string): Set<string> {
   const texts = [readerText, ...[...allow.passages.values()].map((p) => p.text)];
   const out = new Set<string>();
   for (const id of allow.passages.keys()) {
     if (!/^P\d{1,3}$/.test(id)) continue;
-    const used = new RegExp(`(?<![A-Za-z0-9])${id}(?!\\d)`, 'i');
+    const used = new RegExp(`(?<![A-Za-z0-9])${id}(?![A-Za-z0-9]|\\.\\d)`, 'i');
     if (!texts.some((t) => used.test(t))) out.add(id);
   }
   return out;
@@ -533,13 +539,17 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     });
   });
 
-  // Summary: markers name used cases, and every sentence cites at least one.
+  // Summary: markers name used cases, and every sentence ends with the markers of the
+  // cases it is about, immediately before or after its final punctuation; a marker
+  // anywhere else is an ambiguous boundary (server/briefs/sentences.ts).
   const markers = summaryMarkers(c.summary);
   if (markers === null) fail('bad_marker', 'summary');
   else {
     markers.forEach((n) => (used.has(n) ? undefined : fail('marker_unknown_case', 'summary')));
     sentences.forEach((sentence, si) => {
-      if (!/\[\[case:[A-Z0-9]+\]\]/.test(sentence)) fail('uncited_summary', `summary.${si}`);
+      const placement = citationPlacement(sentence);
+      if (placement === 'misplaced') fail('misplaced_citation', `summary.${si}`);
+      else if (placement === 'uncited') fail('uncited_summary', `summary.${si}`);
     });
   }
 

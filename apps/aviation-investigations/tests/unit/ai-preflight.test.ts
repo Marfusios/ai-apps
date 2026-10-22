@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { outputJsonSchema } from '../../server/ai/anthropic.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v3.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v3.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v4.js';
 import { renderScopeUser, SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
   CheckInputSchema,
@@ -86,8 +86,8 @@ describe('the stage caps against the requests they bound (offline sizing)', () =
 describe('runAiPreflight with a stub counter', () => {
   const models: StageModels = { scope: 'claude-haiku-5-5', answer: 'claude-opus-5-5', check: 'claude-haiku-5-5' };
   const key = (x: unknown) => JSON.stringify(x);
-  /** The provider's count of each stage's fixed request (the v3 preflight's measurements); 1,000 for anything else. */
-  const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 4_682, check: 1_961 };
+  /** The provider's count of each stage's fixed request (the preflight's measurements with compose.v4); 1,000 for anything else. */
+  const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 4_746, check: 1_961 };
   const fixedInputs = new Map<string, LlmStage>([
     [key(r.fixed.scope), 'scope'],
     [key(r.fixed.compose), 'compose'],
@@ -101,7 +101,7 @@ describe('runAiPreflight with a stub counter', () => {
     compose: () => Promise.reject(new Error('never generates')),
     check: () => Promise.reject(new Error('never generates')),
   } as unknown as LlmProvider;
-  /** Each fixed request's user turn counted on its own (so the prefixes come out as the v3 preflight measured them); any other text counts 10. */
+  /** Each fixed request's user turn counted on its own (so the prefixes come out as the preflight measured them); any other text counts 10. */
   const userTurns = new Map([
     [renderScopeUser(r.fixed.scope), 22],
     [renderComposeUser(r.fixed.compose), 124],
@@ -119,7 +119,7 @@ describe('runAiPreflight with a stub counter', () => {
       limit: CACHED_PREFIX_MAX,
       ok: true,
     });
-    expect(await prefixRows()).toEqual([row('scope', 3_182), row('answer', 4_558), row('check', 1_834)]);
+    expect(await prefixRows()).toEqual([row('scope', 3_182), row('answer', 4_622), row('check', 1_834)]);
   });
 
   it('a prefix over the bound fails the preflight even when its request fits the stage cap', async () => {

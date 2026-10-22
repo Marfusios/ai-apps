@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { ComposeOutput } from '../../shared/contracts/briefs.js';
-import { splitSentences } from '../../server/briefs/sentences.js';
+import { citationPlacement, splitSentences } from '../../server/briefs/sentences.js';
 import {
   QUOTE_MATCH_RULE_VERSION,
   QUOTE_MAX_SOURCE,
@@ -380,12 +380,7 @@ describe('validateComposition', () => {
 });
 
 describe('sentence splitting', () => {
-  it('does not split after common abbreviations or initials', () => {
-    expect(splitSentences('Mr. Smith, the pilot, saw it. The U.S. operator, e.g. a school, flew approx. 2 hours. Done!')).toEqual([
-      'Mr. Smith, the pilot, saw it.',
-      'The U.S. operator, e.g. a school, flew approx. 2 hours.',
-      'Done!',
-    ]);
+  it('splits at every sentence end, keeping the markers with their sentence', () => {
     expect(splitSentences('One [[case:A1B2C3]]. Two. Three [[case:D4E5F6]] [[case:G7H8I9]]! Four?')).toEqual([
       'One [[case:A1B2C3]].',
       'Two.',
@@ -393,13 +388,137 @@ describe('sentence splitting', () => {
       'Four?',
     ]);
     expect(splitSentences('Loose nut. [[case:A1B2C3]] Next one.')).toEqual(['Loose nut. [[case:A1B2C3]]', 'Next one.']);
-    expect(splitSentences('Capt. Jones flew cylinder No. 2 at approx. 500 feet, vs. 300 planned.')).toHaveLength(1);
+    // Closing quotation marks and parentheses belong to the sentence they close.
+    expect(splitSentences('The mechanic wrote "nut secured." The nut was loose.')).toEqual(['The mechanic wrote "nut secured."', 'The nut was loose.']);
+    expect(splitSentences('(The nut had been replaced.) It was loose.')).toEqual(['(The nut had been replaced.)', 'It was loose.']);
+  });
+
+  it('a recognised abbreviation does not end a sentence only before a token that cannot start one', () => {
+    for (const text of [
+      // "No."/"Nos." before a number.
+      'The No. 2 engine lost power during the climb [[case:DFW08TA066]].',
+      'Cylinders Nos. 3 and 4 had low compression [[case:DFW08TA066]].',
+      // "approx."/"ca." before a number.
+      'The engine ran approx. 5 minutes after the restart [[case:DFW08TA066]].',
+      'The airplane was built ca. 1975 and overhauled twice [[case:DFW08TA066]].',
+      // "Mr."/"Mrs."/"Ms." before a capitalised name.
+      'Mr. Smith, the mechanic, signed the logbook [[case:DFW08TA066]].',
+      'Mrs. Jones and Ms. Lee saw the airplane descend [[case:DFW08TA066]].',
+      // "U.S." before a lower-case word or "Code"; "U.S.C." before a number or a section sign.
+      'The U.S. operator held a repair station certificate [[case:DFW08TA066]].',
+      'Title 49 of the U.S. Code governs the investigation [[case:DFW08TA066]].',
+      'Under 49 U.S.C. 1154(b) the report is not admissible [[case:DFW08TA066]].',
+      'The report cites U.S.C. § 1154 on its first page [[case:DFW08TA066]].',
+      // "e.g."/"i.e." before a lower-case word.
+      'A flight school, e.g. a part 141 school, operated it [[case:DFW08TA066]].',
+      'One magneto, i.e. the left one, had failed [[case:DFW08TA066]].',
+    ]) {
+      expect(splitSentences(text), text).toEqual([text]);
+    }
+    expect(splitSentences('Mr. Smith, the pilot, saw it. The U.S. operator, e.g. a school, flew approx. 2 hours. Done!')).toEqual([
+      'Mr. Smith, the pilot, saw it.',
+      'The U.S. operator, e.g. a school, flew approx. 2 hours.',
+      'Done!',
+    ]);
+  });
+
+  it('anywhere else a period ends the sentence: splitting can only withhold, merging could borrow a citation', () => {
+    for (const [text, first] of [
+      // Units and times, followed by anything.
+      ['The engine quit 2 hrs. after the overhaul [[case:DFW08TA066]].', 'The engine quit 2 hrs.'],
+      ['The airplane climbed to 1,000 ft. above the field [[case:DFW08TA066]].', 'The airplane climbed to 1,000 ft.'],
+      ['The airplane climbed to 1,000 ft. Investigators found the nut loose [[case:DFW08TA066]].', 'The airplane climbed to 1,000 ft.'],
+      ['The engine quit at 1430 hrs. local time [[case:DFW08TA066]].', 'The engine quit at 1430 hrs.'],
+      // Place and company abbreviations, other titles, initials.
+      ['The airplane departed St. Louis [[case:DFW08TA066]].', 'The airplane departed St.'],
+      ['The airplane struck Mt. Hood [[case:DFW08TA066]].', 'The airplane struck Mt.'],
+      ['Acme Inc. overhauled the engine [[case:DFW08TA066]].', 'Acme Inc.'],
+      ['Capt. Jones flew the airplane [[case:DFW08TA066]].', 'Capt.'],
+      ['Dr. Smith examined the pilot [[case:DFW08TA066]].', 'Dr.'],
+      ['J. Smith overhauled the engine [[case:DFW08TA066]].', 'J.'],
+      // A known abbreviation outside its context.
+      ['The answer was no. 3 more cases involved fuel [[case:DFW08TA066]].', 'The answer was no.'],
+      ['The U.S. Forest Service owned the airplane [[case:DFW08TA066]].', 'The U.S.'],
+      ['Some were late, e.g. 30 days after the inspection [[case:DFW08TA066]].', 'Some were late, e.g.'],
+      // Any lower-case or digit start.
+      ['The engine lost power. then the pilot landed [[case:DFW08TA066]].', 'The engine lost power.'],
+      ['The engine lost power. 3 people were injured [[case:DFW08TA066]].', 'The engine lost power.'],
+    ] as const) {
+      expect(splitSentences(text)[0], text).toBe(first);
+    }
+  });
+
+  it('an uncited sentence never inherits the next or previous sentence’s citation', () => {
+    const verdict = (summary: string) => {
+      const out = composition({ summary });
+      out.cases = out.cases.slice(0, 1);
+      out.groups = [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }];
+      const r = validateComposition(out, allow(), { mechanicalCause: true });
+      return r.ok ? [] : r.reasons;
+    };
+    // The two counterexamples of the G6 follow-up.
+    expect(verdict('The engine lost power. 3 people were injured [[case:DFW08TA066]].')).toEqual([{ code: 'uncited_summary', path: 'summary.0' }]);
+    expect(verdict('The engine lost power [[case:DFW08TA066]] during climb. 3 people were injured.')).toEqual([
+      { code: 'misplaced_citation', path: 'summary.0' },
+      { code: 'uncited_summary', path: 'summary.1' },
+    ]);
+    for (const summary of [
+      // A lower-case start.
+      'The engine lost power. then the pilot landed in a field [[case:DFW08TA066]].',
+      // A sentence ending in a unit.
+      'The airplane climbed to 1,000 ft. Investigators found the nut loose [[case:DFW08TA066]].',
+      // A closing quotation mark or parenthesis after the period.
+      'The mechanic wrote "nut secured." The nut was loose [[case:DFW08TA066]].',
+      '(The nut had been replaced the day before.) The nut was loose [[case:DFW08TA066]].',
+    ]) {
+      expect(verdict(summary), summary).toEqual([{ code: 'uncited_summary', path: 'summary.0' }]);
+    }
+    // A marker in the middle of a sentence is an ambiguous boundary, cited at its end or not.
+    expect(verdict('The nut [[case:DFW08TA066]] was loose.')).toEqual([{ code: 'misplaced_citation', path: 'summary.0' }]);
+    expect(verdict('The nut [[case:DFW08TA066]] was loose [[case:DFW08TA066]].')).toEqual([{ code: 'misplaced_citation', path: 'summary.0' }]);
+  });
+
+  it('every sentence ends with its markers, immediately before or after its final punctuation', () => {
+    for (const s of [
+      'The nut was loose [[case:A1B2C3]].',
+      'The nut was loose. [[case:A1B2C3]]',
+      'The nut was loose [[case:A1B2C3]] [[case:D4E5F6]]!',
+      'The mechanic wrote "nut secured." [[case:A1B2C3]]',
+      'The mechanic wrote "nut secured" [[case:A1B2C3]].',
+      // The last sentence of the text may end without punctuation.
+      'The nut was loose [[case:A1B2C3]]',
+    ]) {
+      expect(citationPlacement(s), s).toBe('cited');
+    }
+    expect(citationPlacement('The nut was loose.')).toBe('uncited');
+    for (const s of ['[[case:A1B2C3]] The nut was loose.', 'The nut [[case:A1B2C3]] was loose [[case:D4E5F6]].', 'The nut [[case:A1B2C3]] was loose.']) {
+      expect(citationPlacement(s), s).toBe('misplaced');
+    }
+    const out = composition({ summary: 'A mechanic left a nut unsecured. [[case:DFW08TA066]] In another case the cause was never found. [[case:DEN08LA103]]' });
+    expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({ ok: true });
+  });
+
+  it('markers after the final punctuation stay with the last sentence', () => {
+    for (const tail of ['', ' ', '\n']) {
+      expect(splitSentences(`The nut was loose [[case:A1B2C3]]. The fuel was bad. [[case:D4E5F6]]${tail}`)).toEqual([
+        'The nut was loose [[case:A1B2C3]].',
+        'The fuel was bad. [[case:D4E5F6]]',
+      ]);
+    }
+    const out = composition({ summary: 'A mechanic left a nut unsecured [[case:DFW08TA066]]. In another case the cause was never found. [[case:DEN08LA103]]' });
+    expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({ ok: true, summarySentences: { length: 2 } });
   });
 
   it('case markers after the punctuation always end the sentence, even after an abbreviation', () => {
     const summary = 'The engine failed after an overhaul in the U.S. [[case:DFW08TA066]] Maintenance is always to blame.';
     expect(splitSentences(summary)).toEqual(['The engine failed after an overhaul in the U.S. [[case:DFW08TA066]]', 'Maintenance is always to blame.']);
     expect(splitSentences('Seen by Mr. [[case:DFW08TA066]] Nobody else.')).toEqual(['Seen by Mr. [[case:DFW08TA066]]', 'Nobody else.']);
+    for (const word of ['hrs', 'St', 'approx', 'Inc', 'Mt', 'Ft', 'No', 'U.S.C', 'U.S', 'min', 'etc', 'Capt', 'a.m', 'e.g']) {
+      const first = `The work was done at 1430 ${word}. [[case:DFW08TA066]] [[case:DEN08LA103]]`;
+      for (const second of ['The engine lost power on the next flight [[case:MIA08LA156]].', 'then it quit [[case:MIA08LA156]].', '12 hours later it quit [[case:MIA08LA156]].']) {
+        expect(splitSentences(`${first} ${second}`), `${word} / ${second}`).toEqual([first, second]);
+      }
+    }
     // So the uncited sentence is caught.
     const out = composition({ summary });
     out.cases = out.cases.slice(0, 1);
@@ -407,72 +526,15 @@ describe('sentence splitting', () => {
     expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({ ok: false, reasons: [{ code: 'uncited_summary', path: 'summary.1' }] });
   });
 
-  it('words that often end a sentence are not abbreviations before a capitalized word; "No." before a number is', () => {
-    expect(splitSentences('The engine ran for 10 min. Maintenance is always to blame [[case:DFW08TA066]].')).toEqual([
-      'The engine ran for 10 min.',
-      'Maintenance is always to blame [[case:DFW08TA066]].',
-    ]);
-    for (const word of ['no', 'min', 'max', 'est', 'sec', 'hr', 'hrs', 'etc']) {
-      expect(splitSentences(`It was ${word}. Another one.`), word).toEqual([`It was ${word}.`, 'Another one.']);
-    }
-    expect(splitSentences('The answer was no. Cylinder No. 2 failed.')).toEqual(['The answer was no.', 'Cylinder No. 2 failed.']);
-  });
-
-  it('NTSB abbreviations inside a sentence do not end it', () => {
-    for (const text of [
-      'The engine had been overhauled 2 hrs. before the accident [[case:DFW08TA066]].',
-      'The airplane departed St. Louis Downtown Airport [[case:DFW08TA066]].',
-      'The engine ran approx. 5 minutes after the restart [[case:DFW08TA066]].',
-      'Acme Inc. overhauled the engine two months earlier [[case:DFW08TA066]].',
-      'The fuel pump came from Acme Aero Inc. Engine Services [[case:DFW08TA066]].',
-      'The airplane struck terrain near Mt. Hood [[case:DFW08TA066]].',
-      'The flight was based at Ft. Worth Meacham [[case:DFW08TA066]].',
-      'The No. 2 engine lost power during the climb [[case:DFW08TA066]].',
-      'Under 49 U.S.C. 1154(b) the report is not admissible [[case:DFW08TA066]].',
-      'The airplane climbed to 1,000 ft. above ground level [[case:DFW08TA066]].',
-      'The engine quit at 1430 hrs. local time on the first flight [[case:DFW08TA066]].',
-    ]) {
-      expect(splitSentences(text), text).toEqual([text]);
-    }
-  });
-
-  it('a sentence followed by its case markers is never split from them, whatever the abbreviation', () => {
-    for (const word of ['hrs', 'St', 'approx', 'Inc', 'Mt', 'Ft', 'No', 'U.S.C', 'U.S', 'min', 'etc', 'Capt', 'a.m']) {
-      const first = `The work was done at 1430 ${word}. [[case:DFW08TA066]] [[case:DEN08LA103]]`;
-      const second = 'The engine lost power on the next flight [[case:MIA08LA156]].';
-      expect(splitSentences(`${first} ${second}`), word).toEqual([first, second]);
-      // Followed by a lower-case word or a number, too.
-      expect(splitSentences(`${first} then it quit [[case:MIA08LA156]].`), word).toEqual([first, 'then it quit [[case:MIA08LA156]].']);
-      expect(splitSentences(`${first} 12 hours later it quit [[case:MIA08LA156]].`), word).toEqual([first, '12 hours later it quit [[case:MIA08LA156]].']);
-    }
-    // The marker before the final period stays with its sentence as well.
-    expect(splitSentences('It ran 2 hrs [[case:DFW08TA066]]. Then it quit at 1430 hrs [[case:DEN08LA103]].')).toEqual([
-      'It ran 2 hrs [[case:DFW08TA066]].',
-      'Then it quit at 1430 hrs [[case:DEN08LA103]].',
-    ]);
-  });
-
   it('a period right after case markers ends the sentence, whatever starts the next', () => {
-    // Otherwise an uncited sentence starting with a number or a lower-case word would join a cited one.
     for (const next of ['3 more cases involved fuel.', 'then nothing else was found.', 'Nothing else was found.']) {
-      expect(splitSentences(`The engine quit 2 hrs. after the overhaul [[case:DFW08TA066]]. ${next}`), next).toEqual([
-        'The engine quit 2 hrs. after the overhaul [[case:DFW08TA066]].',
+      expect(splitSentences(`The engine quit after the No. 2 overhaul [[case:DFW08TA066]]. ${next}`), next).toEqual([
+        'The engine quit after the No. 2 overhaul [[case:DFW08TA066]].',
         next,
       ]);
     }
-    const out = composition({ summary: 'A mechanic left a nut unsecured [[case:DFW08TA066]]. 3 more cases involved fuel.' });
-    out.cases = out.cases.slice(0, 1);
-    out.groups = [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }];
-    expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({ ok: false, reasons: [{ code: 'uncited_summary', path: 'summary.1' }] });
-  });
-
-  it('an uncited sentence ending in an abbreviation is still a sentence of its own', () => {
-    const summary = 'The engine quit at 1430 hrs. Maintenance is always to blame [[case:DFW08TA066]].';
-    expect(splitSentences(summary)).toEqual(['The engine quit at 1430 hrs.', 'Maintenance is always to blame [[case:DFW08TA066]].']);
-    const out = composition({ summary });
-    out.cases = out.cases.slice(0, 1);
-    out.groups = [{ kind: 'causal', caseNumbers: ['DFW08TA066'] }];
-    expect(validateComposition(out, allow(), { mechanicalCause: true })).toMatchObject({ ok: false, reasons: [{ code: 'uncited_summary', path: 'summary.0' }] });
+    // Even after a word that is an abbreviation in another context ("No [[case:…]]. 2 …").
+    expect(splitSentences('The answer was No [[case:DFW08TA066]]. 2 engines failed.')).toEqual(['The answer was No [[case:DFW08TA066]].', '2 engines failed.']);
   });
 });
 

@@ -162,7 +162,7 @@ pnpm worker generations                              # generations, plus runs st
 pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running by a dead process
 pnpm worker prune-generations [--dry-run] [--grace-hours <n>]  # retention by publication, see "Retention"
 pnpm worker prune-controls                           # lease expiry and control-data retention (also run by the API)
-pnpm worker brief-diagnose <brief-id> [--step <n>]   # why a withheld summary was withheld (by hand; docs/RUNBOOK.md)
+pnpm worker brief-diagnose <brief-id> [--step <n>] [--include-expired]  # why a withheld summary was withheld (by hand; docs/RUNBOOK.md)
 ```
 
 `prune-controls` and `brief-diagnose` connect as `aviation_app` (`DATABASE_URL`)
@@ -919,15 +919,15 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    retrieved passage and all its probable-cause passages. A violation fails the step;
    nothing is dropped or cut.
 3. **Compose** (35 s): the full input is counted with the provider's own counter;
-   above the answer input cap (28,000 tokens; a full bundle measures about 22,100) the
-   candidates are packed again under a smaller budget, and the re-packed bundle is
-   checked like the first. The compose and check stages read passages under short
+   above the answer input cap (28,000 tokens; a synthetic full bundle measures 22,286,
+   DESIGN §9) the candidates are packed again under a smaller budget, and the re-packed
+   bundle is checked like the first. The compose and check stages read passages under short
    aliases (`P1`..`P12`, `aliases.ts`): a 64-character passage id costs about 42 tokens
    wherever a model reads or writes it. The composition is validated against the
    aliases (any other id fails as `unknown_passage`, or as `gap_foreign_passage` in a gap
    note; an alias of the bundle in the summary, a `why` line or a gap note fails as
    `alias_in_text` unless the reader's question or a passage of the bundle uses the same
-   token, so "P210", "P2.5", "J1/P1" or a taxiway the reader named stays) and only then
+   complete token, so "P210", "P2.5", "J1/P1" or a taxiway the reader named stays) and only then
    mapped back to canonical ids.
    The answer model may abstain
    (`no_supported_match`): the case cards and its checked gap notes are shown, with
@@ -937,12 +937,17 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    least three words is a substring of its passage after collapsing whitespace runs on
    both sides; it resolves to at most 600 code units of source text, shown whole; UTF-16
    spans through an offset map; the first of repeated matches is used and the count
-   recorded; every claim cites passages of its own case; every summary sentence cites a
-   case, and case markers on either side of the punctuation always end a sentence
-   (`sentences.ts`: a sentence ends at `.`, `!` or `?` before whitespace; otherwise a
-   period before a lower-case letter or a digit, or after "St.", "Mt.", "Ft.", "Inc.",
-   "approx.", a title, a dotted abbreviation such as "U.S.C." or an initial, does not end
-   one, so "2 hrs. after", "No. 2 engine" and "St. Louis" stay whole); each stated
+   recorded; every claim cites passages of its own case; every summary sentence ends
+   with the `[[case:…]]` markers of the cases it is about, immediately before or after
+   its final punctuation (`uncited_summary` without one, `misplaced_citation` with one
+   mid-sentence). Sentences are split conservatively (`sentences.ts`), because a
+   split can only withhold while a merge could let an uncited sentence borrow a
+   citation: a sentence ends at `.`, `!` or `?` (with any closing quote or parenthesis)
+   before whitespace or the end of the text, markers after the punctuation included,
+   and a period is not an end only in a few explicit contexts ("No. 2", "approx. 5",
+   "Mr. Smith", "U.S. operator", "49 U.S.C. 1154", "e.g. a school"), so "1,000 ft.",
+   "2 hrs." or "St. Louis" mid-sentence withholds the summary (the compose prompt asks
+   for words written out); each stated
    chronology fact (flight hours, calendar days, which flight, wording) cites its own
    passages, with one decimal place for flight hours and whole days; every
    NTSB-number-shaped token in generated text must be allowlisted). Then the reader's
@@ -961,8 +966,8 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    `cases.1.why`) and the summary's sentence count, the checker's problems with their
    claim index, and each stage's stop reason; the rejected composition itself is kept
    server-side (`brief_steps.diagnostics`, migration 0016; never in a response, trace or
-   log, pruned with the brief) for `pnpm worker brief-diagnose`
-   (docs/OBSERVABILITY_AND_EVALUATION.md).
+   log; deleted with the brief by the maintenance pass after it expires) for
+   `pnpm worker brief-diagnose` (docs/OBSERVABILITY_AND_EVALUATION.md).
 
 The step has a 60-second deadline. Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
