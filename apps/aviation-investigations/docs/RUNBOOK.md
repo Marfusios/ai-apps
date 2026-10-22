@@ -417,7 +417,7 @@ and each needs an explicit flag or key:
 | Command | What it pays for | Cost |
 | --- | --- | --- |
 | `pnpm ingest index passages --generation <id> --confirm-cost` | OpenAI embeddings of every passage (`text-embedding-3-small`) | about $0.57 for the full corpus, measured; the dry run (no flag) prints the planned tokens and cost and spends nothing |
-| the retrieval evaluation (README, "Retrieval evaluation") | embeddings of the evaluation queries | about $0.00002 |
+| `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
 | AI briefs (later) | the scope, answer and check models per request | about $0.006 to $0.01 a request (DESIGN §8), capped by the budgets below |
 
 Embeddings and evaluations are metered on the indexing ledger and stop at

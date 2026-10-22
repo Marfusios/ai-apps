@@ -467,7 +467,8 @@ async function main(argv: string[]): Promise<number> {
     const passagesIndex = values['passages-index'] ?? null;
     const es = createEsClient(workerConfig().elasticsearch, 'write');
     try {
-      const r = await withDb((db) => publishGeneration(es, db, { generationId: id, casesIndex, passagesIndex }));
+      const { embeddingModel: model, embeddingDimensions: dims } = workerConfig().ai.openai;
+      const r = await withDb((db) => publishGeneration(es, db, { generationId: id, casesIndex, passagesIndex, embedding: { model, dims } }));
       console.log(`active manifest: generation ${r.manifest.generationId}, published ${r.manifest.publishedAt.toISOString()}`);
       console.log(`cases index: ${r.manifest.casesIndex} (${r.casesDocuments} documents = US events)`);
       console.log(

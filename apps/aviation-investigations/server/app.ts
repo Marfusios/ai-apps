@@ -67,6 +67,8 @@ declare module 'fastify' {
 
 export interface AppDeps {
   config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'>;
+  /** The configured embedding model and dimensions: a published passages index must match them. */
+  embedding?: { model: string; dims: number };
   /** PostgreSQL as `aviation_app`. */
   db: Db;
   /** Elasticsearch with the read key only. */
@@ -197,6 +199,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const limiter = new RateLimiter({ ...(deps.rateLimit ?? { limit: 60, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const pollLimiter = new RateLimiter({ ...(deps.pollRateLimit ?? { limit: 150, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const datasets = new DatasetResolver(deps.db, deps.es, {
+    ...(deps.embedding ? { embedding: deps.embedding } : {}),
+    // `reason` is a fixed category (never upstream text).
+    onPassagesUnservable: (index: string, code: string, reason: string) =>
+      app.log.warn({ index, code, reason }, 'passages index not servable: AI evidence stays off'),
     ...(deps.manifestTtlMs !== undefined ? { manifestTtlMs: deps.manifestTtlMs } : {}),
     ...(deps.now ? { now: deps.now } : {}),
   });

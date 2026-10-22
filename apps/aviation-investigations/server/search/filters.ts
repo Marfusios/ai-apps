@@ -1,6 +1,13 @@
 /**
- * Elasticsearch filter clauses for `SearchRequest` over the cases index
- * (worker/index/cases-index.ts). Task 10 extends these for the passages index.
+ * Elasticsearch filter clauses: one compiler (`filterClauses`) for keyword search over
+ * the cases index (worker/index/cases-index.ts) and for both retrieval channels over
+ * the passages index (worker/index/passages-index.ts), so BM25, the kNN prefilter and
+ * the evidence fetch always apply exactly the same constraints.
+ *
+ * Compulsory clauses are added by the compiler, never by a caller or a planner:
+ * - cases: `country: USA` (amendment A2);
+ * - passages: `country: USA` and `answer_eligible: true` (A2, A5): AI evidence comes
+ *   only from the answer-eligible cohort, and there is no completion facet.
  *
  * Semantics (shared/contracts/search.ts, amendment A14):
  * - Values within a facet are OR-ed; facets, the year range and the text are AND-ed.
@@ -15,9 +22,20 @@
  *
  * Facet counts follow the same rules, so a count reproduces as a total when the
  * value is selected (dashboard bars open Explore with exactly their count).
+ *
+ * Passages differ in the aircraft clause only (amendment A3). An aircraft-scoped
+ * passage has exactly one nested aircraft, its own; an event-scoped passage (every
+ * section of a multi-aircraft event) has none and lists the event's aircraft under
+ * the plain `event_aircraft` field. With any aircraft facet active the passages
+ * clause is `aircraft_specific: true` plus the nested clause, and it never has the
+ * "event without aircraft" branch the cases index uses for `blank`: that branch would
+ * match every event-scoped passage. So an event-scoped passage never satisfies an
+ * aircraft filter, and evidence for an aircraft-specific question always comes from
+ * the aircraft that matched.
  */
 import type { estypes } from '@elastic/elasticsearch';
-import { BLANK, FACET_KEYS, type FacetKey, type SearchRequest } from '../../shared/contracts/search.js';
+import { z } from 'zod';
+import { BLANK, FACET_KEYS, FACET_VALUES, type FacetKey, type SearchRequest } from '../../shared/contracts/search.js';
 
 export type Query = estypes.QueryDslQueryContainer;
 
@@ -104,6 +122,146 @@ export function yearsClause(from: number | undefined, to: number | undefined): Q
   return { range: { ev_year: { ...(from !== undefined ? { gte: from } : {}), ...(to !== undefined ? { lte: to } : {}) } } };
 }
 
+// ---------------------------------------------------------------------------
+// One compiler for both indices
+
+/** The index a filter is compiled for. */
+export type FilterTarget = 'cases' | 'passages';
+
+/** Clauses every query on the target carries, whatever the selection. */
+export const COMPULSORY_FILTERS: Readonly<Record<FilterTarget, readonly Query[]>> = {
+  cases: [{ term: { country: 'USA' } }],
+  passages: [{ term: { country: 'USA' } }, { term: { answer_eligible: true } }],
+};
+
+/** Validated facet values and a year range (`SearchRequest` is one; `RetrievalFilters` is another). */
+export type FilterSelection = Partial<Record<Exclude<FacetKey, 'completion'>, readonly string[]>> & {
+  completion?: SearchRequest['completion'];
+  yearFrom?: number;
+  yearTo?: number;
+};
+
+/** The selection's aircraft facets, without `except` (a facet whose own counts are being computed). */
+export function aircraftSelectionOf(selection: FilterSelection, except?: FacetKey): AircraftSelection {
+  const out: AircraftSelection = {};
+  for (const facet of AIRCRAFT_FACET_KEYS) {
+    const values = selection[facet];
+    if (facet !== except && values && values.length > 0) out[facet] = values;
+  }
+  return out;
+}
+
+/** True when any aircraft facet is selected. */
+export function hasAircraftFilter(selection: FilterSelection): boolean {
+  return Object.keys(aircraftSelectionOf(selection)).length > 0;
+}
+
+/**
+ * The aircraft clauses of a selection for one target, empty when none is active.
+ * Cases: one nested clause (or it, or "no aircraft rows" when every active facet
+ * allows `blank`). Passages: `aircraft_specific: true` and the nested clause, never
+ * the "no aircraft" branch (module comment).
+ */
+export function aircraftClauses(target: FilterTarget, selection: AircraftSelection): Query[] {
+  if (target === 'cases') {
+    const a = aircraftClause(selection);
+    return a ? [a] : [];
+  }
+  const inner = aircraftInner(selection);
+  if (inner.length === 0) return [];
+  return [{ term: { aircraft_specific: true } }, { nested: { path: 'aircraft', query: { bool: { filter: inner } } } }];
+}
+
+export interface CompileOptions {
+  except?: Except;
+  /** Cases only: the probable-cause text clause ("mentioned in the probable cause"). */
+  textInCause?: Query | null;
+}
+
+/**
+ * Every filter clause of `selection` on `target`, compulsory clauses first, in a fixed
+ * order: compulsory, probable-cause text (cases), completion (cases), event facets,
+ * aircraft, years. Completion is a cases-index facet only: the passages index holds
+ * the answer-eligible cohort and refuses a completion selection.
+ */
+export function filterClauses(target: FilterTarget, selection: FilterSelection, opts: CompileOptions = {}): Query[] {
+  const except = opts.except ?? {};
+  const out: Query[] = [...COMPULSORY_FILTERS[target]];
+  if (target === 'cases') {
+    if (!except.mentionedIn && opts.textInCause) out.push(opts.textInCause);
+    if (!except.completion && except.facet !== 'completion') {
+      const c = completionClause(selection.completion ?? []);
+      if (c) out.push(c);
+    }
+  } else if ((selection.completion ?? []).length > 0) {
+    throw new Error('the passages index has no completion facet: AI evidence is always the answer-eligible cohort');
+  }
+  for (const facet of EVENT_FACETS) {
+    const values = selection[facet] ?? [];
+    if (facet === except.facet || values.length === 0) continue;
+    out.push(valuesClause(EVENT_FACET_FIELD[facet], values));
+  }
+  if (!except.aircraft) out.push(...aircraftClauses(target, aircraftSelectionOf(selection, except.facet)));
+  if (!except.years) {
+    const y = yearsClause(selection.yearFrom, selection.yearTo);
+    if (y) out.push(y);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Retrieval filters (AI evidence over the passages index)
+
+/** Facets an AI request may filter evidence by: every facet except completion. */
+export const RETRIEVAL_FACETS = ['phase', 'injury', 'conditions', 'light', 'category', 'engine', 'far_part', 'purpose', 'state'] as const;
+export type RetrievalFacet = (typeof RETRIEVAL_FACETS)[number];
+
+const facetList = <F extends RetrievalFacet>(facet: F) => {
+  const values = FACET_VALUES[facet] as unknown as readonly [string, ...string[]];
+  return z
+    .array(z.enum(values))
+    .max(values.length)
+    .refine((list) => new Set(list).size === list.length, { message: 'duplicate value' })
+    .optional();
+};
+const retrievalYear = z.number().int().min(1900).max(2100).optional();
+
+/**
+ * Validated retrieval filters: facet values from `FACET_VALUES`, a year range, no
+ * completion and nothing else (unknown keys are rejected). The compulsory country and
+ * answer-eligibility clauses are not part of it: the compiler always adds them.
+ */
+export const RetrievalFiltersSchema = z
+  .strictObject({
+    phase: facetList('phase'),
+    injury: facetList('injury'),
+    conditions: facetList('conditions'),
+    light: facetList('light'),
+    category: facetList('category'),
+    engine: facetList('engine'),
+    far_part: facetList('far_part'),
+    purpose: facetList('purpose'),
+    state: facetList('state'),
+    yearFrom: retrievalYear,
+    yearTo: retrievalYear,
+  })
+  .refine((f) => f.yearFrom === undefined || f.yearTo === undefined || f.yearFrom <= f.yearTo, {
+    message: 'yearFrom must not be after yearTo',
+    path: ['yearFrom'],
+  });
+export type RetrievalFilters = z.infer<typeof RetrievalFiltersSchema>;
+/** The brief's name for the validated retrieval filters. */
+export type ValidatedFilters = RetrievalFilters;
+
+/**
+ * The passages filter both retrieval channels use (BM25 `filter`, kNN prefilter and
+ * the evidence fetch): `answer_eligible: true`, `country: USA`, the selection, and for
+ * any aircraft facet `aircraft_specific: true` with one nested aircraft clause.
+ */
+export function compileFilters(f: ValidatedFilters): { bool: { filter: Query[] } } {
+  return { bool: { filter: filterClauses('passages', f) } };
+}
+
 /** What `filters()` leaves out: one facet's own selection, the years, completion or the probable-cause text. */
 export interface Except {
   facet?: FacetKey;
@@ -126,40 +284,18 @@ export class RequestFilters {
     readonly request: SearchRequest,
     readonly textInCause: Query | null,
   ) {
-    const selection: AircraftSelection = {};
-    for (const facet of AIRCRAFT_FACET_KEYS) if (request[facet].length > 0) selection[facet] = request[facet];
-    this.aircraftSelection = selection;
+    this.aircraftSelection = aircraftSelectionOf(request);
   }
 
   /** The aircraft selection without one facet. */
   aircraftWithout(facet: FacetKey | undefined): AircraftSelection {
     if (facet === undefined || !isAircraftFacet(facet)) return this.aircraftSelection;
-    const rest: AircraftSelection = { ...this.aircraftSelection };
-    delete rest[facet];
-    return rest;
+    return aircraftSelectionOf(this.request, facet);
   }
 
   filters(except: Except = {}): Query[] {
-    const r = this.request;
-    const out: Query[] = [{ term: { country: 'USA' } }];
-    if (!except.mentionedIn && r.mentionedIn === 'probable_cause' && this.textInCause) out.push(this.textInCause);
-    if (!except.completion && except.facet !== 'completion') {
-      const c = completionClause(r.completion);
-      if (c) out.push(c);
-    }
-    for (const facet of EVENT_FACETS) {
-      if (facet === except.facet || r[facet].length === 0) continue;
-      out.push(valuesClause(EVENT_FACET_FIELD[facet], r[facet]));
-    }
-    if (!except.aircraft) {
-      const a = aircraftClause(this.aircraftWithout(except.facet));
-      if (a) out.push(a);
-    }
-    if (!except.years) {
-      const y = yearsClause(r.yearFrom, r.yearTo);
-      if (y) out.push(y);
-    }
-    return out;
+    const textInCause = this.request.mentionedIn === 'probable_cause' ? this.textInCause : null;
+    return filterClauses('cases', this.request, { except, textInCause });
   }
 
   /** Active filters a "remove one filter" suggestion can drop, in display order. */

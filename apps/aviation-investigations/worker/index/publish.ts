@@ -10,18 +10,24 @@
  *   (`isServableCasesIndex`), so a generation indexed before a version bump can be
  *   published again;
  * - its document count equals the generation's US events in PostgreSQL;
- * - a passages index, when given, exists, names this generation and is not empty.
- *   Without one the manifest is keyword-only: AI routes stay off until a later
- *   publication names a passages index.
+ * - a passages index, when given, meets the passages contract
+ *   (`server/search/passages-contract.ts`: generation, version, approved fingerprint
+ *   for the configured embedding model and dimensions, chunker and input-template
+ *   versions) and holds exactly the generation's `passages` rows of the approved
+ *   chunker version. Without one the manifest is keyword-only: AI routes stay off
+ *   until a later publication names a passages index.
  *
  * `publish_manifest` itself checks that the generation's latest verification passed
  * under the current verifier.
  */
 import type { Client } from '@elastic/elasticsearch';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '../../server/db/client.js';
 import { publishManifest, type ActiveManifest } from '../../server/db/generations.js';
 import { countCaseRecords } from '../../server/db/queries/case-records.js';
+import { passages as passagesTable } from '../../server/db/schema/index.js';
 import { readIndexMeta } from '../../server/search/index-meta.js';
+import { PASSAGES_CONTRACT, passagesIndexProblems, type PassagesContract } from '../../server/search/passages-contract.js';
 import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from './cases-index.js';
 
 export interface PublishOptions {
@@ -29,6 +35,10 @@ export interface PublishOptions {
   casesIndex: string;
   /** Null: keyword-only manifest. */
   passagesIndex: string | null;
+  /** The configured embedding model and dimensions; required with a passages index. */
+  embedding?: { model: string; dims: number };
+  /** Test seam; default the approved contract. */
+  contract?: PassagesContract;
 }
 
 export interface PublishReport {
@@ -75,12 +85,22 @@ export async function publishGeneration(es: Client, db: Db, opts: PublishOptions
   let passagesDocuments: number | null = null;
   if (passagesIndex !== null) {
     if (passagesIndex === casesIndex) refuse('the passages index must differ from the cases index');
+    if (!opts.embedding) refuse('a passages index needs the configured embedding model and dimensions');
+    const embedding = opts.embedding as { model: string; dims: number };
+    const contract = opts.contract ?? PASSAGES_CONTRACT;
     const passages = await readIndexMeta(es, passagesIndex).catch((err: unknown) => refuse(String((err as Error).message)));
-    if (passages.generationId !== generationId) {
-      refuse(`${passagesIndex} was built for generation ${passages.generationId ?? 'unknown'}, not ${generationId}`);
-    }
+    const problems = passagesIndexProblems(passages, { generationId, ...embedding }, contract);
+    if (problems.length > 0) refuse(`${passagesIndex} breaks the passages contract: ${problems.join('; ')}`);
+    const [rows] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(passagesTable)
+      .where(and(eq(passagesTable.generationId, generationId), eq(passagesTable.chunkerVersion, contract.chunkerVersion)));
+    const stored = rows?.n ?? 0;
     passagesDocuments = await documents(es, passagesIndex);
     if (passagesDocuments === 0) refuse(`${passagesIndex} is empty`);
+    if (passagesDocuments !== stored) {
+      refuse(`${passagesIndex} holds ${passagesDocuments} documents; generation ${generationId} has ${stored} ${contract.chunkerVersion} passages`);
+    }
   }
 
   const manifest = await publishManifest(db, generationId, casesIndex, passagesIndex);

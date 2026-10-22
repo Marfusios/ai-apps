@@ -2,7 +2,8 @@
 
 How NTSB data becomes the PostgreSQL corpus and the two Elasticsearch indices, and
 why each step works the way it does. Written 2026-10-22 against implementation
-snapshot `fc450ec`. The numbers come from generation 1 in the shared `dev`
+snapshot `fc450ec`; sections 2.11, 2.12, 5 and 6 were updated when hybrid retrieval
+(Task 10) was merged. The numbers come from generation 1 in the shared `dev`
 environment, loaded from the NTSB `avall.zip` archive. Paths are relative to
 `apps/aviation-investigations/`.
 
@@ -34,7 +35,8 @@ rebuildable search projections:
 5. A PostgreSQL **manifest** row, not an Elasticsearch alias, decides what the API
    serves.
 
-Hybrid retrieval (Task 10) is still being built.
+Hybrid retrieval (section 2.12) reads the passages index to find the evidence an AI
+brief is written from.
 
 ```mermaid
 flowchart TD
@@ -55,7 +57,7 @@ flowchart TD
     M --> API["API: search, facets, dashboard, case pages"]
     F --> API
     RL --> API
-    M -.-> R["Hybrid retrieval and AI briefs<br/>Task 10 onward"]
+    M --> R["Hybrid retrieval<br/>evidence for AI briefs"]
 ```
 
 ## 2. Step by step
@@ -527,11 +529,19 @@ Code: `worker/index/publish.ts`, `server/dataset.ts`, `server/search/*`.
 
 **Publishing.** `pnpm worker publish` checks that the cases index is a concrete index
 whose `_meta` names the generation and a servable version and fingerprint, and whose
-document count equals the generation's US events. A passages index is checked only
-for the same generation and a nonzero count. Stronger checks are listed under
-remaining work in section 6. `publish_manifest` then requires a current
-successful verification, retires the old manifest and activates the new one. A
-manifest without passages is keyword-only. Republishing an earlier generation is the
+document count equals the generation's US events. A passages index must meet the
+passages contract (`server/search/passages-contract.ts`):
+
+- its `_meta` names this generation, version `passages-v1`, chunker `chunk-v2` and
+  input template `input-v1`;
+- it was built for the configured embedding model and dimensions
+  (`OPENAI_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_DIMENSIONS`), and its mapping
+  fingerprint is the one approved for that pair in code (today only
+  `text-embedding-3-small/1536`);
+- its document count equals the generation's `chunk-v2` passage rows.
+
+`publish_manifest` then requires a current successful verification, retires the old
+manifest and activates the new one. A manifest without passages is keyword-only. Republishing an earlier generation is the
 rollback. **The `dev` manifest for
 generation 1 serves `cases-v3` and `passages-v1`.**
 
@@ -544,32 +554,72 @@ generation 1 serves `cases-v3` and `passages-v1`.**
 - runs search, facets and the dashboard on the cases index, with a 5 s timeout and
   no partial results;
 - reads result rows and case pages from PostgreSQL for the same generation;
-- reads report links, which belong to no generation, from `report_links`.
+- reads report links, which belong to no generation, from `report_links`;
+- checks the passages index against the same contract, bounded to 2 s, once per
+  manifest. A failure never fails the dataset: keyword search, case pages and the
+  dashboard keep working, and only AI evidence is off. The status records a fixed
+  code (`not_configured`, `incompatible`, `unavailable`) and a fixed failure
+  category (`timeout`, `transport`, `http_<status>`, `incompatible:<fields>`, …),
+  never upstream error text. A broken contract or a missing index is kept until the
+  manifest changes; a transient failure is checked again after 30 s, in the
+  background, while requests get the last answer.
 
-No route reads the passages index yet, because the AI routes do not exist.
+No route reads the passages index yet: retrieval is not bound to the AI routes.
 
-### 2.12 Retrieval (planned; Task 10 in progress)
+### 2.12 Retrieval
 
-Task 10 is being built on a separate branch, and gate G5 locks its defaults. The plan,
-from Task 10 and amendments A11 and A13:
+Code: `server/search/hybrid.ts`, `evidence.ts`, `rrf.ts`, `filters.ts`,
+`passages-contract.ts`; `server/ai/embeddings.ts`. Gate G5 cleared its defaults
+provisionally (section 5); every value is in `RETRIEVAL_DEFAULTS`.
 
-- **One filter compiler for both channels.** It always adds `country: USA` and
-  `answer_eligible: true`. Aircraft constraints use nested `aircraft` clauses, which
-  drops event-scoped passages whenever an aircraft filter is active.
-- **Two channels.** BM25 runs over passage `text`. kNN runs with the same filter as
-  its prefilter, and the question is embedded once.
-- **Fusion.** Reciprocal rank fusion, `sum(1 / (60 + rank))`, runs in TypeScript.
-  Native RRF needs a paid license; this works on the Basic tier. Each channel
-  returns up to 100 passages for evaluation (50 live), and the fused list is then
-  deduplicated to cases.
-- **Packing.** At most 6 cases, 12 passages and 16,000 measured tokens, and by
-  default 3 passages per case. Each selected case's probable-cause evidence is always
-  attached and counted within those limits. That includes every distinct
-  event-scoped cause variant that applies.
-- **Evaluation.** A held-out silver set of at least 40 questions covers negation,
-  causal uncertainty, maintenance timing and multi-aircraft cases. Labels are marked
-  for expert adjudication. The evaluation reports case Recall@20 for keyword, vector
-  and hybrid search.
+- **Contract first.** Retrieval refuses (`RetrievalUnavailableError`) when the
+  dataset has no passages index or the index breaks the passages contract. It checks
+  before the query is embedded, within the request's deadline. There is no
+  keyword-only fallback for AI answers.
+- **One filter compiler for both channels and the fetch.** It always adds
+  `country: USA` and `answer_eligible: true`. An aircraft facet adds
+  `aircraft_specific: true` and one nested `aircraft` clause, so an event-scoped
+  passage of a multi-aircraft event never satisfies an aircraft filter.
+- **Complete answers only.** Every search sets `allow_partial_search_results: false`.
+  A response that timed out, has a failed shard, or has fewer `successful` shards than
+  `total` fails retrieval.
+- **Stage 1, case candidates.** The question is embedded once (template `query-v1`:
+  whitespace collapsed, no header, at most 1,000 tokens). BM25 over passage `text`
+  and kNN (`num_candidates` = 4 × k) each return 50 passages live; the evaluation
+  also runs 100. Reciprocal rank fusion, `sum(1 / (60 + rank))`, runs in TypeScript
+  (native RRF needs a paid license), and the fused list is deduplicated to cases at
+  their best passage.
+- **Stage 2, packing.** At most 6 cases, 12 passages, 3 passages per case and 10,000
+  `cl100k_base` passage-text tokens. Each selected case first reserves its
+  justification: its best retrieved passage and every probable-cause variant it has
+  under the filters, including each distinct event-scoped variant. A case whose
+  reservation does not fit is skipped, so the bundle holds fewer cases rather than
+  cases without the passage that ranked them. Extras up to 2 retrieved passages per
+  case are added, trimmed to the budgets lowest-ranked first, and free room is filled
+  in fused order.
+- **Cost.** The query embedding's usage (tokens, USD, `reported` or `uncertain`) is
+  handed to the caller as soon as the embedding returns, before any search, so a
+  later failure cannot lose a paid stage. Retrieval reserves no money: the AI
+  request's admission reservation covers one query embedding.
+
+**Evaluation** (`evals/retrieval/`). The silver set has 72 questions derived from
+generation 1 by committed rules (structured fields plus explicit PostgreSQL regular
+expressions, each recorded for an expert to re-check; every label is
+`pending-expert`):
+
+- 69 retrieval questions, 38 `dev` and 31 `holdout`, including 16 independently
+  worded paraphrases. Questions that share a case, and paraphrases with their
+  originals, form groups assigned whole to one split.
+- 3 questions answered by inspection dates and hours, kept as `structured` and not
+  run by the retrieval evaluation.
+
+It reports candidate case Recall@20 and, on the packed bundle, case coverage,
+question-specific evidence coverage, bundle precision and nDCG@6, for BM25, kNN and
+the hybrid at 50 and 100 passages per channel. It fails closed: dataset problems, a
+generation other than the silver set's, or an index that breaks the contract stop
+the run before anything is embedded. On `dev` generation 1 at 50 passages per
+channel, hybrid candidate Recall@20 was 33.7% (BM25 28.4%, kNN 30.5%), and the
+maintenance-timing questions were near 0.
 
 ## 3. How Elasticsearch is composed
 
@@ -636,8 +686,11 @@ until no blocking issue remained.
 | G2b | Full load | Sealed rows deletable, unproven source-to-text link, failed generations publishable, lifecycle races | Seal triggers, source reconstruction, verification status, lifecycle lock, locked pins |
 | G3 | Full cases index | Cross-section phrases, alias-switch and cleanup races, pruning during builds | Text arrays, alias locks, build pins, append-only attempts, explicit deletion; KStem |
 | G4 | Paid embedding | Error text leaks, insert/prune race, shortened provider waits | Metadata-only errors, generation lock, full waits; defaults and estimate confirmed |
+| G5 | AI retrieval | Partial search results accepted, packing could drop the passage that ranked a case, an inspection-hours label bug, shared positives scored as wrong, incomplete passages checks, query-embedding cost lost on a later failure, an evaluation that warned and went on; then skipped shards counted twice, a transient passages failure kept until the next publication, upstream error text in the status | Complete responses only, packing reservations, full positive sets with grouped splits, paraphrases and structured questions, the passages contract at publish and load, the usage callback, a fail-closed evaluation, `successful === total`, a 30 s re-check, fixed failure categories |
 
-G5 (retrieval defaults) and G6 (model input and quote validation) are still ahead.
+G5 cleared provisionally: the defaults may serve AI in `dev`, not public answers,
+until a relevance audit and candidate-discovery work (planned) improve recall. G6
+(model input and quote validation) is still ahead.
 
 ## 6. Known limits and open owner items
 
@@ -657,11 +710,6 @@ G5 (retrieval defaults) and G6 (model input and quote validation) are still ahea
 
 **Remaining work:**
 
-- **Passages validation.** Fix this before any AI route reads the passages index.
-  Publication must check the passages index version, fingerprint, model and
-  dimensions, chunker and template versions, and its count against PostgreSQL for
-  that generation and chunker version. The API must check the same metadata before
-  using the index.
 - **Retention.** Wire `pruneGenerations` to an operator command or a scheduled job.
 
 **Known limits:**

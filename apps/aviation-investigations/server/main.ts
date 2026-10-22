@@ -52,6 +52,7 @@ async function main(): Promise<void> {
     db,
     es,
     ai: createAiRuntime(config, { db }),
+    embedding: { model: config.ai.openai.embeddingModel, dims: config.ai.openai.embeddingDimensions },
     webRoot: resolve(APP_DIR, 'dist/web'),
     logger: { level: config.nodeEnv === 'production' ? 'info' : 'debug' },
   });
