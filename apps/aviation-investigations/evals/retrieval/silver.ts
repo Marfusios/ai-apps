@@ -5,7 +5,13 @@
  *
  * A question carries:
  * - the text a user would type, and the filters the scope stage would emit for it
- *   (only what the question states: years, state, aircraft category, injury);
+ *   (only what the question states: years, state, aircraft category, injury). An
+ *   aircraft category filter goes with a rule retrieval can satisfy: a
+ *   single-aircraft rule (`maxAircraft: 1`, `categoryAny` = the filter), or an
+ *   every-aircraft rule (`categoryEvery` = the one filtered category). The second
+ *   derives multi-aircraft events, which a passages index reaches under the filter
+ *   only through the event-level aircraft qualification (`passages-v2`; tag
+ *   `multi_aircraft_filtered`, `needsEventAircraftQualification`);
  * - `criteria`: the derivation rule. `compileCriteria` turns it into one SQL query over
  *   the canonical corpus of a generation; `describeCriteria` into a sentence an
  *   expert can re-check. Text patterns are PostgreSQL case-insensitive regular
@@ -48,6 +54,8 @@ export const TAGS = [
   'operational',
   'structured_timing',
   'paraphrase',
+  /** Multi-aircraft events asked for under an aircraft filter: reachable only with the event-level qualification. */
+  'multi_aircraft_filtered',
 ] as const;
 export type Tag = (typeof TAGS)[number];
 /** Every one of these tags must be covered by several RAG questions, in both splits (A13, G5). */
@@ -79,16 +87,21 @@ export const CriteriaSchema = z.strictObject({
   /** At least this many aircraft in the event. */
   minAircraft: z.number().int().min(1).optional(),
   /**
-   * At most this many aircraft. Questions with an aircraft filter use 1: under an
-   * aircraft filter the passages of a multi-aircraft event are event-scoped and never
-   * retrievable (amendment A3), so such an event cannot be an expected case.
+   * At most this many aircraft. A question with an aircraft filter and a
+   * `categoryAny` rule uses 1: an event-scoped passage of a multi-aircraft event
+   * satisfies an aircraft filter only when every aircraft of the event does (the
+   * event-level qualification of `passages-v2`; `passages-v1` never), so such a
+   * rule's multi-aircraft events are not expected cases.
    */
   maxAircraft: z.number().int().min(1).optional(),
   /** Some aircraft has one of these categories. */
   categoryAny: z.array(z.string().regex(/^[A-Z]{3,4}$/)).min(1).optional(),
   /** For each listed category, some aircraft has it (e.g. a helicopter and an airplane). */
   categoriesAll: z.array(z.string().regex(/^[A-Z]{3,4}$/)).min(1).optional(),
-  /** Every aircraft has this category. */
+  /**
+   * Every aircraft has this category. With the category filter of the same value, the
+   * rule's multi-aircraft events are what the event-level qualification reaches.
+   */
   categoryEvery: z.string().regex(/^[A-Z]{3,4}$/).optional(),
   /** Some aircraft flew for one of these purposes. */
   purposeAny: z.array(z.string().regex(/^[A-Z0-9]{3,4}$/)).min(1).optional(),
@@ -295,12 +308,15 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
  * Split questions into `dev` and `holdout` by connected group. Questions that share an
  * expected case, and a paraphrase and its original (`links`), are joined with a
  * union-find into one group, so every case lies in one split. Groups are placed in
- * sha256 order of their question ids, each into the split with fewer questions of its
- * primary tag (the first tag of its first question), then fewer questions overall;
- * ties go to `dev`.
+ * sha256 order of their question ids, each into the split that
+ * 1. still lacks more of the required tags the group's RAG questions carry (so a
+ *    required tag spread over several groups reaches both splits);
+ * 2. then has fewer questions of the group's primary tag (the first tag of its first
+ *    question);
+ * 3. then has fewer questions overall; ties go to `dev`.
  */
 export function assignSplits(
-  items: readonly { id: string; tags: readonly Tag[]; expected: readonly string[] }[],
+  items: readonly { id: string; tags: readonly Tag[]; expected: readonly string[]; section?: Section }[],
   links: readonly [string, string][] = [],
 ): GroupedSplits {
   const parent = new Map<string, string>(items.map((q) => [q.id, q.id]));
@@ -335,12 +351,20 @@ export function assignSplits(
   const out: GroupedSplits = { split: new Map(), group: new Map(), groups: [] };
   const total = { dev: 0, holdout: 0 };
   const perTag = new Map<string, { dev: number; holdout: number }>();
+  /** RAG questions per required tag and split. */
+  const required = new Map<Tag, { dev: number; holdout: number }>(REQUIRED_TAGS.map((t) => [t, { dev: 0, holdout: 0 }]));
   ordered.forEach((g, i) => {
+    const rag = g.ids.map((id) => byId.get(id)).filter((q) => q !== undefined && (q.section ?? 'rag') === 'rag');
+    const tags = REQUIRED_TAGS.filter((tag) => rag.some((q) => q?.tags.includes(tag)));
+    const lacking = (s: 'dev' | 'holdout') => tags.filter((tag) => (required.get(tag) as { dev: number; holdout: number })[s] === 0).length;
     const t = perTag.get(g.tag) ?? { dev: 0, holdout: 0 };
-    const split = t.dev < t.holdout ? 'dev' : t.holdout < t.dev ? 'holdout' : total.dev <= total.holdout ? 'dev' : 'holdout';
+    const gap = lacking('holdout') - lacking('dev');
+    const split =
+      gap < 0 ? 'dev' : gap > 0 ? 'holdout' : t.dev < t.holdout ? 'dev' : t.holdout < t.dev ? 'holdout' : total.dev <= total.holdout ? 'dev' : 'holdout';
     t[split] += g.ids.length;
     total[split] += g.ids.length;
     perTag.set(g.tag, t);
+    for (const tag of tags) (required.get(tag) as { dev: number; holdout: number })[split] += rag.filter((q) => q?.tags.includes(tag)).length;
     const label = `g${i + 1}`;
     out.groups.push({ id: label, questions: g.ids, split });
     for (const id of g.ids) {
@@ -355,9 +379,22 @@ const sameSet = (a: readonly (string | number)[] | undefined, b: readonly (strin
   JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
 
 /**
+ * True when a question's expected cases can include multi-aircraft events that only
+ * the event-level aircraft qualification (`passages-v2`) reaches: it filters by an
+ * aircraft facet and its rule is not single-aircraft. A passages index without the
+ * qualification can never retrieve those events under the filter.
+ */
+export function needsEventAircraftQualification(q: { filters: DatasetItem['filters']; criteria: Criteria }): boolean {
+  const f = q.filters;
+  const aircraftFilter = (['phase', 'category', 'engine', 'far_part', 'purpose'] as const).some((k) => (f[k] ?? []).length > 0);
+  return aircraftFilter && q.criteria.maxAircraft !== 1;
+}
+
+/**
  * A question's filters must say what its rule says: the same years, states and
- * injury, and an aircraft category filter only with a single-aircraft rule of the
- * same categories (amendment A3).
+ * injury, and an aircraft category filter only with a rule retrieval can satisfy
+ * under it: a single-aircraft rule of the same categories (amendment A3), or an
+ * every-aircraft rule of the one filtered category (the event-level qualification).
  */
 export function filterProblems(q: Pick<DatasetItem, 'id' | 'filters'> & { criteria: Criteria }): string[] {
   const f = q.filters;
@@ -371,8 +408,16 @@ export function filterProblems(q: Pick<DatasetItem, 'id' | 'filters'> & { criter
     if ((f[facet] ?? []).length > 0) out.push(`${q.id}: the silver set does not use the ${facet} filter`);
   }
   if ((f.category ?? []).length > 0) {
-    if (!sameSet(f.category, c.categoryAny)) out.push(`${q.id}: filter category differs from the rule's categoryAny`);
-    if (c.maxAircraft !== 1) out.push(`${q.id}: an aircraft filter needs a single-aircraft rule (maxAircraft 1)`);
+    if (c.categoryEvery !== undefined) {
+      // Every aircraft of a derived event has the one filtered category: each derived event satisfies the filter.
+      if (!sameSet(f.category, [c.categoryEvery])) out.push(`${q.id}: filter category differs from the rule's categoryEvery`);
+      // An event without aircraft rows passes "every aircraft" vacuously but never an aircraft filter.
+      if ((c.minAircraft ?? 0) < 1) out.push(`${q.id}: an every-aircraft rule under an aircraft filter needs minAircraft`);
+      if (c.categoryAny || c.categoriesAll) out.push(`${q.id}: an every-aircraft rule states its category once (categoryEvery)`);
+    } else {
+      if (!sameSet(f.category, c.categoryAny)) out.push(`${q.id}: filter category differs from the rule's categoryAny`);
+      if (c.maxAircraft !== 1) out.push(`${q.id}: an aircraft filter needs a single-aircraft rule (maxAircraft 1) or an every-aircraft rule (categoryEvery)`);
+    }
   }
   return out;
 }
@@ -386,6 +431,10 @@ export function datasetProblems(d: Dataset): string[] {
     byId.set(q.id, q);
     if (new Set(q.expected).size !== q.expected.length) problems.push(`${q.id}: duplicate expected case`);
     problems.push(...filterProblems({ id: q.id, filters: q.filters, criteria: q.derivation.criteria }));
+    const needs = needsEventAircraftQualification({ filters: q.filters, criteria: q.derivation.criteria });
+    if (needs !== q.tags.includes('multi_aircraft_filtered')) {
+      problems.push(`${q.id}: the multi_aircraft_filtered tag marks exactly the questions that need the event-level aircraft qualification`);
+    }
     if ((q.section === 'structured') !== q.tags.includes('structured_timing')) {
       problems.push(`${q.id}: only structured questions carry the structured_timing tag`);
     }

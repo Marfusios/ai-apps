@@ -6,7 +6,7 @@
     "generationId": 1,
     "answerEligibleCases": 24291,
     "builder": "evals/retrieval/build-silver.ts",
-    "rulesSha256": "3ef65ffa4c67f9377de2862790ff218297aafb17ca06b891dfd069e0d4e4746f"
+    "rulesSha256": "9cea446563d29dc2a798ad29950d35e15ec199f43903a0e49f4af584db3e183a"
   },
   "limits": {
     "minExpected": 1,
@@ -64,7 +64,7 @@
         "note": "The motivating question (DESIGN §2) in 2008: a power loss plus an analysis sentence that dates maintenance, an overhaul, an installation or an inspection before the accident. Includes DFW08TA066 and NYC08LA106. Check that the dated work concerns the failed system."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -118,7 +118,7 @@
         "note": "Undetermined power loss, maintenance or test flights mentioned, and a negative finding in the analysis. Includes DEN08LA103 and MIA08LA156. Check that the maintenance preceded the accident flight."
       },
       "adjudication": "pending-expert",
-      "group": "g29",
+      "group": "g30",
       "split": "dev"
     },
     {
@@ -178,7 +178,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g20",
-      "split": "holdout"
+      "split": "dev"
     },
     {
       "id": "neg-stall-warning-silent",
@@ -228,7 +228,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g37",
-      "split": "dev"
+      "split": "holdout"
     },
     {
       "id": "neg-gear-warning-silent",
@@ -278,7 +278,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g17",
-      "split": "dev"
+      "split": "holdout"
     },
     {
       "id": "neg-no-shoulder-harness",
@@ -314,7 +314,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g26",
-      "split": "holdout"
+      "split": "dev"
     },
     {
       "id": "neg-helicopter-elt-silent",
@@ -398,8 +398,8 @@
         "note": "Negated or inoperative runway lights in the narrative. Check that the lighting mattered to the accident."
       },
       "adjudication": "pending-expert",
-      "group": "g23",
-      "split": "dev"
+      "group": "g24",
+      "split": "holdout"
     },
     {
       "id": "neg-no-weather-briefing",
@@ -522,7 +522,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g12",
-      "split": "dev"
+      "split": "holdout"
     },
     {
       "id": "neg-helicopter-uncertificated-pilot",
@@ -628,7 +628,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g8",
-      "split": "holdout"
+      "split": "dev"
     },
     {
       "id": "unc-inflight-fire",
@@ -994,7 +994,7 @@
         "note": "The probable cause names a loss of control for undetermined or unknown reasons."
       },
       "adjudication": "pending-expert",
-      "group": "g30",
+      "group": "g31",
       "split": "holdout"
     },
     {
@@ -1154,7 +1154,7 @@
         "note": "Structured: hours since the last inspection (afm_hrs_last_insp, already a since-inspection figure) at most 5; the probable cause blames maintenance."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -1212,7 +1212,7 @@
         "note": "An overhaul sentence with fewer than 20 hours before or since, and a power loss or failure in the probable cause. Check that the overhauled part is the failed one."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -1323,7 +1323,7 @@
         "note": "A \"first flight after/since maintenance\" sentence and maintenance in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -1434,7 +1434,7 @@
         "note": "A narrative sentence dating maintenance 1 to 30 days before the accident and maintenance blamed in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -1492,7 +1492,7 @@
         "note": "Structured: last inspection at most 30 days before; power loss and a maintenance fault in the probable cause. The inspection is the recorded one, not necessarily the faulty work (DESIGN §3)."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -1541,8 +1541,8 @@
         "note": "Structured: a helicopter and an airplane in one event; collision, see-and-avoid or separation in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "ma-glider-and-another-aircraft",
@@ -1578,8 +1578,8 @@
         "note": "Structured only: an event with a glider and at least one other aircraft."
       },
       "adjudication": "pending-expert",
-      "group": "g32",
-      "split": "holdout"
+      "group": "g28",
+      "split": "dev"
     },
     {
       "id": "ma-formation-flight",
@@ -1625,8 +1625,8 @@
         "note": "Several aircraft and formation flight in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "ma-taxi-collision-atc",
@@ -1676,17 +1676,22 @@
         "note": "Several aircraft; taxiing and a controller or tower in the probable cause; formation taxiing excluded (it belongs to ma-formation-flight and keeps the multi-aircraft questions in two split groups)."
       },
       "adjudication": "pending-expert",
-      "group": "g24",
-      "split": "holdout"
+      "group": "g1",
+      "split": "dev"
     },
     {
       "id": "ma-two-helicopters",
       "question": "Accidents and collisions involving two helicopters.",
       "tags": [
-        "multi_aircraft"
+        "multi_aircraft",
+        "multi_aircraft_filtered"
       ],
       "section": "rag",
-      "filters": {},
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
       "expected": [
         "CEN20FA012",
         "CEN23FA333",
@@ -1707,10 +1712,223 @@
           "minAircraft": 2,
           "categoryEvery": "HELI"
         },
-        "note": "Structured only: an event whose aircraft are all helicopters, at least two."
+        "note": "Structured only: an event whose aircraft are all helicopters, at least two. The question names helicopters, so it carries the helicopter filter; every aircraft of each event is one, which the event-level qualification (passages-v2) requires."
+      },
+      "adjudication": "pending-expert",
+      "group": "g23",
+      "split": "holdout"
+    },
+    {
+      "id": "ma-helicopter-midair",
+      "question": "Collisions between helicopters in flight or while landing, other than drone strikes.",
+      "tags": [
+        "multi_aircraft",
+        "multi_aircraft_filtered"
+      ],
+      "section": "rag",
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "expected": [
+        "CEN20FA012",
+        "CEN23FA333",
+        "DEN08MA116",
+        "ERA13LA022",
+        "WPR13GA044",
+        "WPR23FA302",
+        "WPR23LA045",
+        "WPR26LA083"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft where every aircraft is HELI, where the probable cause matches /see and avoid|clearance|separation|collision|collided/ and no probable cause matches /\\yU?AS\\y|sUAS|drone/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "categoryEvery": "HELI",
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "see and avoid|clearance|separation|collision|collided"
+            }
+          ],
+          "textNot": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "\\yU?AS\\y|sUAS|drone"
+            }
+          ]
+        },
+        "note": "Every aircraft recorded as a helicopter, at least two; see-and-avoid, clearance, separation or a collision in the probable cause; drone (UAS) collisions excluded. Reachable under the helicopter filter only through the event-level qualification. The category field also covers gyroplanes and drones recorded as helicopters: check the other aircraft."
+      },
+      "adjudication": "pending-expert",
+      "group": "g23",
+      "split": "holdout"
+    },
+    {
+      "id": "ma-airplane-taxi-collision-atc",
+      "question": "Ground collisions between airplanes while taxiing where air traffic control instructions played a part.",
+      "tags": [
+        "multi_aircraft",
+        "multi_aircraft_filtered"
+      ],
+      "section": "rag",
+      "filters": {
+        "category": [
+          "AIR"
+        ]
+      },
+      "expected": [
+        "ANC09LA004",
+        "DCA23LA125",
+        "GAA19CA079",
+        "OPS08IA010",
+        "OPS09IA007",
+        "OPS15IA011",
+        "WPR14LA025",
+        "WPR15LA154"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft where every aircraft is AIR, where the probable cause matches /taxi/ and the probable cause matches /controller|tower/ and no probable cause matches /formation/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "categoryEvery": "AIR",
+          "text": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "taxi"
+            },
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "controller|tower"
+            }
+          ],
+          "textNot": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "formation"
+            }
+          ]
+        },
+        "note": "ma-taxi-collision-atc asked with the airplane filter: every aircraft an airplane, at least two; taxiing and a controller or tower in the probable cause; formation taxiing excluded as there."
       },
       "adjudication": "pending-expert",
       "group": "g1",
+      "split": "dev"
+    },
+    {
+      "id": "ma-alaska-airplanes",
+      "question": "Accidents in Alaska from 2008 to 2016 that involved more than one airplane, other than taxiing or ramp collisions.",
+      "tags": [
+        "multi_aircraft",
+        "multi_aircraft_filtered"
+      ],
+      "section": "rag",
+      "filters": {
+        "state": [
+          "AK"
+        ],
+        "yearFrom": 2008,
+        "yearTo": 2016,
+        "category": [
+          "AIR"
+        ]
+      },
+      "expected": [
+        "ANC09LA011",
+        "ANC10LA094",
+        "ANC11FA062",
+        "ANC11FA071",
+        "ANC11FA091",
+        "ANC15FA009",
+        "ANC15LA033",
+        "ANC16FA052",
+        "ANC16FA061",
+        "OPS10IA196",
+        "OPS11IA653"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases from 2008 to 2016 in AK with at least 2 aircraft where every aircraft is AIR, where no probable cause matches /taxi|parked|ramp/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "states": [
+            "AK"
+          ],
+          "years": [
+            2008,
+            2016
+          ],
+          "minAircraft": 2,
+          "categoryEvery": "AIR",
+          "textNot": [
+            {
+              "in": [
+                "probable_cause"
+              ],
+              "pattern": "taxi|parked|ramp"
+            }
+          ]
+        },
+        "note": "ma-alaska asked with the airplane filter: Alaska, 2008 to 2016, every aircraft an airplane, at least two; ground collisions excluded as there."
+      },
+      "adjudication": "pending-expert",
+      "group": "g23",
+      "split": "holdout"
+    },
+    {
+      "id": "ma-airplane-skydiving",
+      "question": "Accidents between airplanes during skydiving or parachute operations, other than formation or traffic pattern collisions.",
+      "tags": [
+        "multi_aircraft",
+        "multi_aircraft_filtered"
+      ],
+      "section": "rag",
+      "filters": {
+        "category": [
+          "AIR"
+        ]
+      },
+      "expected": [
+        "ERA11FA468",
+        "WPR09CA017"
+      ],
+      "derivation": {
+        "rule": "Answer-eligible US cases with at least 2 aircraft where every aircraft is AIR, where the probable cause or analysis matches /parachut|skydiv/ and no probable cause or analysis matches /formation|traffic pattern/ (case-insensitive PostgreSQL regular expressions, one section at a time).",
+        "criteria": {
+          "minAircraft": 2,
+          "categoryEvery": "AIR",
+          "text": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "parachut|skydiv"
+            }
+          ],
+          "textNot": [
+            {
+              "in": [
+                "probable_cause",
+                "analysis"
+              ],
+              "pattern": "formation|traffic pattern"
+            }
+          ]
+        },
+        "note": "ma-skydiving asked with the airplane filter: every aircraft an airplane, at least two; parachute or skydiving in the cause or analysis; formation and traffic pattern collisions excluded as there."
+      },
+      "adjudication": "pending-expert",
+      "group": "g28",
       "split": "dev"
     },
     {
@@ -1766,8 +1984,8 @@
         "note": "Several aircraft; runway and a clearance or incursion in the probable cause. Includes incidents (no collision)."
       },
       "adjudication": "pending-expert",
-      "group": "g24",
-      "split": "holdout"
+      "group": "g1",
+      "split": "dev"
     },
     {
       "id": "ma-agricultural-firefighting",
@@ -1816,8 +2034,8 @@
         "note": "Several aircraft; firefighting or agricultural work in any section."
       },
       "adjudication": "pending-expert",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "ma-alaska",
@@ -1869,8 +2087,8 @@
         "note": "Structured: Alaska, 2008 to 2016, at least two aircraft; ground collisions (taxi, parked, ramp in the probable cause) excluded."
       },
       "adjudication": "pending-expert",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "ma-traffic-pattern-midair",
@@ -1932,8 +2150,8 @@
         "note": "Several aircraft; midair or see-and-avoid in the probable cause and the traffic pattern in the cause or analysis."
       },
       "adjudication": "pending-expert",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "ma-skydiving",
@@ -1978,8 +2196,8 @@
         "note": "Several aircraft; parachute or skydiving in the cause or analysis; formation and traffic pattern collisions excluded (they belong to other questions)."
       },
       "adjudication": "pending-expert",
-      "group": "g32",
-      "split": "holdout"
+      "group": "g28",
+      "split": "dev"
     },
     {
       "id": "ma-balloon-and-another-aircraft",
@@ -2006,8 +2224,8 @@
         "note": "Structured only: a balloon and at least one other aircraft in one event."
       },
       "adjudication": "pending-expert",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "mech-crankshaft-fatigue",
@@ -2207,7 +2425,7 @@
         "note": "Single weight-shift aircraft; wing and a failure, fracture or separation in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -2299,7 +2517,7 @@
         "note": "Oil cap or dipstick in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -2351,7 +2569,7 @@
         "note": "Reversed or rigging and a flight control surface in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -2405,7 +2623,7 @@
         "note": "A fitting or line, a loose or untorqued condition, and maintenance in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -2514,7 +2732,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g34",
-      "split": "dev"
+      "split": "holdout"
     },
     {
       "id": "op-helicopter-bird-strike",
@@ -2609,7 +2827,7 @@
       },
       "adjudication": "pending-expert",
       "group": "g36",
-      "split": "dev"
+      "split": "holdout"
     },
     {
       "id": "op-agricultural-wire-strike-texas",
@@ -2761,8 +2979,8 @@
         "note": "Single helicopter; mast bumping in the probable cause."
       },
       "adjudication": "pending-expert",
-      "group": "g28",
-      "split": "holdout"
+      "group": "g29",
+      "split": "dev"
     },
     {
       "id": "op-amphibian-gear-down-water",
@@ -2933,7 +3151,7 @@
       "adjudication": "pending-expert",
       "paraphrase_of": "neg-carb-heat-alaska",
       "group": "g20",
-      "split": "holdout"
+      "split": "dev"
     },
     {
       "id": "para-stall-warning-silent",
@@ -2985,7 +3203,7 @@
       "adjudication": "pending-expert",
       "paraphrase_of": "neg-stall-warning-silent",
       "group": "g37",
-      "split": "dev"
+      "split": "holdout"
     },
     {
       "id": "para-gear-warning-silent",
@@ -3037,7 +3255,7 @@
       "adjudication": "pending-expert",
       "paraphrase_of": "neg-gear-warning-silent",
       "group": "g17",
-      "split": "dev"
+      "split": "holdout"
     },
     {
       "id": "para-no-weather-briefing",
@@ -3162,7 +3380,7 @@
       "adjudication": "pending-expert",
       "paraphrase_of": "neg-helicopter-no-anomalies",
       "group": "g8",
-      "split": "holdout"
+      "split": "dev"
     },
     {
       "id": "para-inflight-fire",
@@ -3442,7 +3660,7 @@
       },
       "adjudication": "pending-expert",
       "paraphrase_of": "mt-overhaul-recent-2008-2014",
-      "group": "g31",
+      "group": "g32",
       "split": "dev"
     },
     {
@@ -3552,8 +3770,8 @@
       },
       "adjudication": "pending-expert",
       "paraphrase_of": "ma-helicopter-and-airplane",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "para-formation-flight",
@@ -3601,8 +3819,8 @@
       },
       "adjudication": "pending-expert",
       "paraphrase_of": "ma-formation-flight",
-      "group": "g1",
-      "split": "dev"
+      "group": "g23",
+      "split": "holdout"
     },
     {
       "id": "para-runway-incursion",
@@ -3659,8 +3877,8 @@
       },
       "adjudication": "pending-expert",
       "paraphrase_of": "ma-runway-incursion",
-      "group": "g24",
-      "split": "holdout"
+      "group": "g1",
+      "split": "dev"
     },
     {
       "id": "para-crankshaft-fatigue",
@@ -3772,8 +3990,8 @@
       },
       "adjudication": "pending-expert",
       "paraphrase_of": "op-helicopter-mast-bumping",
-      "group": "g28",
-      "split": "holdout"
+      "group": "g29",
+      "split": "dev"
     }
   ]
 }
