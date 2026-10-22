@@ -29,7 +29,13 @@ import {
 } from '../../shared/contracts/search.js';
 import { HOME_EXAMPLES } from '../../shared/examples.js';
 import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
-import { CASES_MAPPING, CASES_SETTINGS, CASES_INDEX_VERSION, casesIndexFingerprint } from '../../worker/index/cases-index.js';
+import {
+  CASES_INDEX_VERSION,
+  CASES_MAPPING,
+  CASES_SETTINGS,
+  EARLIER_SERVABLE_CASES_VERSIONS,
+  casesIndexFingerprint,
+} from '../../worker/index/cases-index.js';
 import { PublishRefusedError, publishGeneration } from '../../worker/index/publish.js';
 import { normalizeCorpus } from '../../worker/ingest/normalize.js';
 import { SAMPLE_SEARCHES, buildMockCorpus, readFixtureTables } from '../../scripts/mock-api/build.js';
@@ -148,6 +154,15 @@ describe('manifest', () => {
     await expect(publish(`${PREFIX}-missing`)).rejects.toThrow(/does not exist/);
     await es.indices.putMapping({ index: other, _meta: meta(dataset.generationId) });
     await expect(publish(other)).rejects.toThrow(/holds 0 documents/);
+    // An earlier version with the same fields passes the version checks with its own
+    // fingerprint only; unknown versions are refused.
+    const v2 = { ...meta(dataset.generationId), index_version: 'cases-v2', fingerprint: EARLIER_SERVABLE_CASES_VERSIONS['cases-v2'] };
+    await es.indices.putMapping({ index: other, _meta: v2 });
+    await expect(publish(other)).rejects.toThrow(/holds 0 documents/);
+    await es.indices.putMapping({ index: other, _meta: { ...v2, fingerprint: casesIndexFingerprint() } });
+    await expect(publish(other)).rejects.toThrow(/different mapping fingerprint than cases-v2/);
+    await es.indices.putMapping({ index: other, _meta: { ...v2, index_version: 'cases-v1' } });
+    await expect(publish(other)).rejects.toThrow(/is cases-v1; this code serves cases-v3 or cases-v2/);
     await expect(publish(dataset.casesIndex, other)).rejects.toThrow(PublishRefusedError);
     // Nothing changed: the fixture manifest is still active.
     expect((await getActiveManifest(appDb))?.casesIndex).toBe(dataset.casesIndex);
@@ -555,6 +570,29 @@ describe('http', () => {
       SearchResponseSchema.parse(r.json);
       expect(r.headers['cache-control']).toBe('public, max-age=60');
     }
+  });
+});
+
+describe('an earlier cases index version', () => {
+  it('serves a cases-v2 index (same fields, older analysis) and refuses a fingerprint mismatch', async () => {
+    const mapping = await es.indices.getMapping({ index: dataset.casesIndex });
+    const current = mapping[dataset.casesIndex]?.mappings._meta ?? {};
+    const v2 = { ...current, index_version: 'cases-v2', fingerprint: EARLIER_SERVABLE_CASES_VERSIONS['cases-v2'] };
+    try {
+      // Each new app resolves the manifest and reads the index _meta afresh.
+      await es.indices.putMapping({ index: dataset.casesIndex, _meta: v2 });
+      const served = await get('/api/config', { app: makeApp() });
+      expect(served.status, served.body).toBe(200);
+      expect(ConfigResponseSchema.parse(served.json).datasetRevision).toMatch(new RegExp(`^g${dataset.generationId}-cases-v2-[0-9a-f]{8}$`));
+      const found = await get('/api/search?q=carburetor%20icing', { app: makeApp() });
+      expect(found.status, found.body).toBe(200);
+      expect(SearchResponseSchema.parse(found.json).total).toBe(7);
+      await es.indices.putMapping({ index: dataset.casesIndex, _meta: { ...v2, fingerprint: casesIndexFingerprint() } });
+      expect((await get('/api/config', { app: makeApp() })).status).toBe(503);
+    } finally {
+      await es.indices.putMapping({ index: dataset.casesIndex, _meta: current });
+    }
+    expect((await get('/api/config', { app: makeApp() })).status).toBe(200);
   });
 });
 

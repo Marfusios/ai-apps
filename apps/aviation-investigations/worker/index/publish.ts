@@ -5,7 +5,10 @@
  *
  * Checks, before anything is written:
  * - the cases index exists as a concrete index (not an alias) and its `_meta` names
- *   this generation, the current `CASES_INDEX_VERSION` and mapping fingerprint;
+ *   this generation and a version and mapping fingerprint the API serves: the current
+ *   `CASES_INDEX_VERSION`, or an earlier version with the same fields
+ *   (`isServableCasesIndex`), so a generation indexed before a version bump can be
+ *   published again;
  * - its document count equals the generation's US events in PostgreSQL;
  * - a passages index, when given, exists, names this generation and is not empty.
  *   Without one the manifest is keyword-only: AI routes stay off until a later
@@ -19,7 +22,7 @@ import type { Db } from '../../server/db/client.js';
 import { publishManifest, type ActiveManifest } from '../../server/db/generations.js';
 import { countCaseRecords } from '../../server/db/queries/case-records.js';
 import { readIndexMeta } from '../../server/search/index-meta.js';
-import { CASES_INDEX_VERSION, casesIndexFingerprint } from './cases-index.js';
+import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from './cases-index.js';
 
 export interface PublishOptions {
   generationId: number;
@@ -56,11 +59,11 @@ export async function publishGeneration(es: Client, db: Db, opts: PublishOptions
   if (cases.generationId !== generationId) {
     refuse(`${casesIndex} was built for generation ${cases.generationId ?? 'unknown'}, not ${generationId}`);
   }
-  if (cases.indexVersion !== CASES_INDEX_VERSION) {
-    refuse(`${casesIndex} is ${cases.indexVersion ?? 'unversioned'}; this code serves ${CASES_INDEX_VERSION}`);
+  if (cases.indexVersion === null || !SERVABLE_CASES_VERSIONS.includes(cases.indexVersion)) {
+    refuse(`${casesIndex} is ${cases.indexVersion ?? 'unversioned'}; this code serves ${SERVABLE_CASES_VERSIONS.join(' or ')}`);
   }
-  if (cases.fingerprint !== casesIndexFingerprint()) {
-    refuse(`${casesIndex} has a different mapping fingerprint than ${CASES_INDEX_VERSION} defines`);
+  if (!isServableCasesIndex(cases.indexVersion, cases.fingerprint)) {
+    refuse(`${casesIndex} has a different mapping fingerprint than ${cases.indexVersion} defines`);
   }
   const expected = (await countCaseRecords(db, generationId)).cases;
   const casesDocuments = await documents(es, casesIndex);

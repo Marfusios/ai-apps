@@ -10,9 +10,10 @@
  * - `snapshotDate`: the newest source record change (`lchg_date`) in the generation,
  *   i.e. the date the snapshot's data is current to (the archive's own date is not
  *   recorded);
- * - the cases index `_meta`, checked against the manifest: same generation, the
- *   index version and mapping fingerprint this code serves. A mismatch makes the API
- *   unavailable (503) instead of serving another generation's data;
+ * - the cases index `_meta`, checked against the manifest: same generation, and an
+ *   index version and mapping fingerprint this code serves (the current version, or
+ *   an earlier one with the same fields: `isServableCasesIndex`). A mismatch makes the
+ *   API unavailable (503) instead of serving another generation's data;
  * - the coverage numbers of `GET /api/config` and the corpus year range.
  */
 import { createHash } from 'node:crypto';
@@ -20,7 +21,7 @@ import type { Client } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
 import type { Coverage } from '../shared/contracts/config.js';
 import type { Dataset } from '../shared/contracts/common.js';
-import { CASES_INDEX_VERSION, casesIndexFingerprint } from '../worker/index/cases-index.js';
+import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from '../worker/index/cases-index.js';
 import type { Db } from './db/client.js';
 import { getActiveManifest, type ActiveManifest } from './db/generations.js';
 import { IndexMetaError, readIndexMeta } from './search/index-meta.js';
@@ -109,8 +110,10 @@ export class DatasetResolver {
     if (meta.generationId !== manifest.generationId) {
       throw new DatasetUnavailableError(`the active cases index was built for generation ${meta.generationId ?? 'unknown'}`);
     }
-    if (meta.indexVersion !== CASES_INDEX_VERSION || meta.fingerprint !== casesIndexFingerprint()) {
-      throw new DatasetUnavailableError(`the active cases index is ${meta.indexVersion ?? 'unversioned'}; this server reads ${CASES_INDEX_VERSION}`);
+    if (meta.indexVersion === null || !isServableCasesIndex(meta.indexVersion, meta.fingerprint)) {
+      throw new DatasetUnavailableError(
+        `the active cases index is ${meta.indexVersion ?? 'unversioned'} with fingerprint ${meta.fingerprint ?? 'none'}; this server reads ${SERVABLE_CASES_VERSIONS.join(' or ')}`,
+      );
     }
     const g = manifest.generationId;
     const rows = (

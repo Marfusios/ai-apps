@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { estypes } from '@elastic/elasticsearch';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -8,10 +9,13 @@ import {
   CASES_INDEX_VERSION,
   CASES_MAPPING,
   CASES_SETTINGS,
+  EARLIER_SERVABLE_CASES_VERSIONS,
+  SERVABLE_CASES_VERSIONS,
   buildCaseDocument,
   casesAlias,
   casesIndexFingerprint,
   casesIndexName,
+  isServableCasesIndex,
   newBuildId,
   type CaseDoc,
 } from '../../worker/index/cases-index.js';
@@ -244,6 +248,29 @@ describe('cases index definition', () => {
   it('is pinned to its version', () => {
     expect(CASES_INDEX_VERSION).toBe(PINNED.version);
     expect(casesIndexFingerprint(), 'index definition changed: bump CASES_INDEX_VERSION and the pin').toBe(PINNED.fingerprint);
+  });
+
+  it('still serves cases-v2, which differs from cases-v3 only by the glued-heading char filter', () => {
+    // Rebuild the v2 definition from the current one: same mapping, analysis without
+    // the char filter. Its fingerprint must be the one v2 indices were built with.
+    const settings = structuredClone(CASES_SETTINGS);
+    const analysis = settings.analysis as { char_filter: Record<string, unknown>; analyzer: Record<string, { char_filter?: string[] }> };
+    delete analysis.char_filter.aviation_glued_heading;
+    for (const analyzer of Object.values(analysis.analyzer)) {
+      expect(analyzer.char_filter).toEqual(['aviation_glued_heading']);
+      delete analyzer.char_filter;
+    }
+    const v2 = createHash('sha256').update(JSON.stringify({ version: 'cases-v2', settings, mapping: CASES_MAPPING })).digest('hex');
+    expect(EARLIER_SERVABLE_CASES_VERSIONS).toEqual({ 'cases-v2': v2 });
+    expect(SERVABLE_CASES_VERSIONS).toEqual(['cases-v3', 'cases-v2']);
+
+    expect(isServableCasesIndex('cases-v3', casesIndexFingerprint())).toBe(true);
+    expect(isServableCasesIndex('cases-v2', v2)).toBe(true);
+    expect(isServableCasesIndex('cases-v3', v2)).toBe(false);
+    expect(isServableCasesIndex('cases-v2', casesIndexFingerprint())).toBe(false);
+    expect(isServableCasesIndex('cases-v1', v2)).toBe(false);
+    expect(isServableCasesIndex('toString', v2)).toBe(false);
+    expect(isServableCasesIndex(null, null)).toBe(false);
   });
 
   it('names indices per generation and version', () => {

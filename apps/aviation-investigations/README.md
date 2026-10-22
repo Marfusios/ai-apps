@@ -484,16 +484,20 @@ duration), without client addresses or query strings.
 - **Dataset pinning (A6).** Each request resolves the active `dataset_manifests` row
   (reused for 5 seconds) and reads only that generation and its cases index, never
   the alias. Before serving a manifest the server checks the index `_meta` (same
-  generation, `CASES_INDEX_VERSION` and mapping fingerprint) and otherwise answers
-  503. The dataset revision is `g<generation>-<index version>-<8 hex of the index
-  names>`. The snapshot date is the newest source change (`lchg_date`) in the
-  generation, i.e. the date the data is current to; the archive's own date is not
-  recorded.
+  generation, and a version and mapping fingerprint it serves) and otherwise answers
+  503. It serves the current `CASES_INDEX_VERSION` and the earlier versions listed in
+  `EARLIER_SERVABLE_CASES_VERSIONS` with their exact fingerprints: only versions with
+  the same fields qualify. `cases-v2` (without the glued-heading char filter) stays
+  servable until every environment has published a `cases-v3` index. The dataset
+  revision is `g<generation>-<index version>-<8 hex of the index names>`. The
+  snapshot date is the newest source change (`lchg_date`) in the generation, i.e.
+  the date the data is current to; the archive's own date is not recorded.
 - **Publishing.** `pnpm worker publish` checks that the cases index is a concrete
-  index (not an alias) built for that generation with the current version and
-  fingerprint, and that it holds exactly the generation's US events; a passages index,
-  when given, must name the same generation and not be empty. It then calls
-  `publishManifest`, which also requires the generation's current verification.
+  index (not an alias) built for that generation with a version and fingerprint the
+  server serves (see above), and that it holds exactly the generation's US events; a
+  passages index, when given, must name the same generation and not be empty. It
+  then calls `publishManifest`, which also requires the generation's current
+  verification.
 - **Keyword search** (`server/search/keyword.ts`, `filters.ts`, `facets.ts`). The
   words of `q` must all occur in the report: one `multi_match` (`cross_fields`,
   operator `and`) over `probable_cause`, `analysis`, `factual` and `findings_text`

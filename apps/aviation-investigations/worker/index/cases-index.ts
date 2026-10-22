@@ -261,6 +261,32 @@ export function casesIndexFingerprint(): string {
     .digest('hex');
 }
 
+/**
+ * Earlier cases index versions that the API still serves and `publish` still accepts,
+ * with the fingerprint each one was built with. A version belongs here only when its
+ * fields and types equal the current mapping, so every query, filter, facet and
+ * highlight works on it unchanged. cases-v2 differs from cases-v3 only in analysis
+ * (v3 added the glued-heading char filter), so an environment keeps serving its v2
+ * index until a v3 index is built and published. Remove an entry once no manifest
+ * names an index of that version.
+ */
+export const EARLIER_SERVABLE_CASES_VERSIONS: Readonly<Record<string, string>> = {
+  'cases-v2': '9e78b0c12fb6444ed2386ae1f9fddb15b114a71cbcdddbef13ed8ffe24ca75b9',
+};
+
+/** The versions an index `_meta` may name for the API to serve it: current first. */
+export const SERVABLE_CASES_VERSIONS: readonly string[] = [CASES_INDEX_VERSION, ...Object.keys(EARLIER_SERVABLE_CASES_VERSIONS)];
+
+/**
+ * True when an index with this `_meta` version and fingerprint can be served: the
+ * current definition, or an earlier version listed with exactly that fingerprint.
+ */
+export function isServableCasesIndex(version: string | null, fingerprint: string | null): boolean {
+  if (version === null || fingerprint === null) return false;
+  if (version === CASES_INDEX_VERSION) return fingerprint === casesIndexFingerprint();
+  return Object.hasOwn(EARLIER_SERVABLE_CASES_VERSIONS, version) && EARLIER_SERVABLE_CASES_VERSIONS[version] === fingerprint;
+}
+
 // ---------------------------------------------------------------------------
 // Names
 

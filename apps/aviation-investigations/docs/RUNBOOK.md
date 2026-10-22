@@ -389,8 +389,9 @@ are cached in `embedding_cache`, so the rerun pays only for the rest.
 `publish` makes the generation the one the API serves (the active
 `dataset_manifests` row). Pass the concrete index name the build printed, never the
 alias: the command refuses an alias, an index built for another generation or with
-another mapping version, and a document count that differs from the generation's US
-events, and changes nothing then. Without `--passages-index` the manifest is
+a mapping version the API does not serve (it serves `cases-v3` and, until every
+environment has a v3 index, `cases-v2`), and a document count that differs from the
+generation's US events, and changes nothing then. Without `--passages-index` the manifest is
 keyword-only: search, case pages and the dashboard work and AI stays off. Publishing
 an earlier generation again is the rollback. The running API picks up a new manifest
 within seconds; public responses may stay cached for up to five minutes.
