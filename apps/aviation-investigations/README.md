@@ -1022,7 +1022,11 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
 
 The step has a 60-second deadline. Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
-only stage status and counts are visible until the end. Each stage's usage is settled
+until the end a read shows only stage status and counts, plus, once the scope stage has
+sent the step on to search, the readings and filters it settled on
+(`checklist.interpretation`: chips rendered from the stored intent with the server's
+templates, and the validated filters, the same as the finished result's; a cancelled or
+failed step keeps them, a static reply has none). Each stage's usage is settled
 as itemized ledger lines with one request id; a call without reliable usage (timeout,
 abort) settles the full reservation as uncertain. Scope replies (settled before they
 are sent), empty results and failures before any spend give the free search back;

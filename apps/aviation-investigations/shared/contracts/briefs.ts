@@ -324,7 +324,8 @@ export type InterpretationChip = z.infer<typeof InterpretationChipSchema>;
 
 /**
  * Checklist results (UI_DESIGN §4.4), filled in as stages complete. The server sends
- * stage status and counts only, never partial answer text.
+ * stage status and counts, plus the scope stage's readings and filters as server
+ * templates once it has sent the step on to search; never partial answer text.
  */
 export const ChecklistSchema = z.strictObject({
   /** Question → IN SCOPE. */
@@ -333,6 +334,8 @@ export const ChecklistSchema = z.strictObject({
    * The readings and filters the scope stage settled on, sent once that stage has
    * completed, so the chips can stay on top while the rest of the step runs (UI_DESIGN
    * §4.4). The same server templates and validated filters as the finished result's.
+   * Every later checklist of the step keeps it, a cancelled or failed one's included; a
+   * static reply has none (server/routes/briefs.ts `checklistOf`).
    */
   interpretation: z
     .strictObject({

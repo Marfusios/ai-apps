@@ -43,6 +43,7 @@ import {
   BriefIdSchema,
   BriefStepResponseSchema,
   CaseContextResponseSchema,
+  ChecklistSchema,
   CreateBriefRequestSchema,
   MAX_BRIEF_STEPS,
   RefinementRequestSchema,
@@ -50,6 +51,7 @@ import {
   StepNumberSchema,
   refinementChange,
   type BriefStepResponse,
+  type Checklist,
   type StartBriefResponse,
 } from '../../shared/contracts/briefs.js';
 import { NtsbNoSchema } from '../../shared/contracts/common.js';
@@ -73,7 +75,7 @@ import {
 import type { EvidenceDataset } from '../briefs/evidence.js';
 import { MAX_QUERY_INPUT_TOKENS, QueryTooLongError, queryEmbeddingInput } from '../ai/embeddings.js';
 import { countTokens } from '../ai/tokens.js';
-import { FAILURE_TYPE_LABEL, FIRST_FLIGHT_LABEL, timingWindowLabel } from '../briefs/clarify.js';
+import { FAILURE_TYPE_LABEL, FIRST_FLIGHT_LABEL, interpretationChips, timingWindowLabel } from '../briefs/clarify.js';
 import type { LlmProvider } from '../ai/provider.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { retryAfterSeconds, sendGateRefusal } from '../identity/gate.js';
@@ -328,6 +330,27 @@ function originOf(step: StepRow): BriefStepResponse['origin'] {
   }
 }
 
+/**
+ * The step's checklist as a read returns it (UI_DESIGN §4.4: the question and chips stay
+ * on top while the step runs). Once the scope stage has sent the step on to search
+ * (`question: 'in_scope'`, stored together with the step's intent), it carries the
+ * readings and filters that stage settled on: interpretation chips rendered from the
+ * stored intent with the server's templates, and its validated filters, which the
+ * finished result repeats. It stays in every later checklist, a cancelled or failed
+ * step's included; a step before or without a search (a static reply) has none. The
+ * planner's own words (`keywordText`) are never sent, and readings that would not render
+ * to the contract are left out rather than failing the read.
+ */
+function checklistOf(step: StepRow): Checklist {
+  const { checklist, intent } = step;
+  if (checklist.question !== 'in_scope' || !intent) return checklist;
+  const withReadings = ChecklistSchema.safeParse({
+    ...checklist,
+    interpretation: { interpretations: interpretationChips(intent.readings), filters: intent.filters },
+  });
+  return withReadings.success ? withReadings.data : checklist;
+}
+
 function stepResponse(briefId: string, step: StepRow, steps: number, expiresAt: Date, now: Date): BriefStepResponse {
   const stale = step.status === 'running' && !isLiveStep(step, now);
   const finished = step.status !== 'running' || stale;
@@ -339,7 +362,7 @@ function stepResponse(briefId: string, step: StepRow, steps: number, expiresAt: 
     question: step.request.question,
     origin: originOf(step),
     stage: stale ? 'failed' : step.stage,
-    checklist: step.checklist,
+    checklist: checklistOf(step),
     startedAt: step.createdAt.toISOString(),
     finishedAt: finished ? (step.finishedAt ?? now).toISOString() : null,
     expiresAt: expiresAt.toISOString(),
