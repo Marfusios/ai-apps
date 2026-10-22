@@ -2,7 +2,7 @@
  * The cases index: one document per US event of one verified dataset generation,
  * for keyword search, filters and facets (amendments A2, A6, A12, A14).
  *
- * - Index `<prefix>-cases-v2-g<generation>-<timestamp>`, alias `<prefix>-cases`. The
+ * - Index `<prefix>-cases-v3-g<generation>-<timestamp>`, alias `<prefix>-cases`. The
  *   alias means "the cases index built last": it moves atomically once a new index is
  *   loaded and verified, and the previous index is kept. The API never reads the
  *   alias; it reads index names only from the active `dataset_manifests` row, which is
@@ -45,7 +45,7 @@ import { AVIATION_ANALYSIS, NAME_NORMALIZER, aviationTextField } from './analysi
 import { buildPinReason, checkBuildId, deleteUnsubmittedIndex, recordBuild, withBuildLock } from './publications.js';
 
 /** Bump on any change to the mapping, analysis, synonyms or stem overrides. */
-export const CASES_INDEX_VERSION = 'cases-v2';
+export const CASES_INDEX_VERSION = 'cases-v3';
 
 /**
  * Generation statuses that may be indexed: verified, or already published (a rebuild);
@@ -275,7 +275,7 @@ export function casesAlias(prefix: string): string {
   return `${prefix}-cases`;
 }
 
-/** `<prefix>-cases-v2-g<generation>-<yyyymmddhhmmssmmm UTC>-<build id>`. */
+/** `<prefix>-cases-v3-g<generation>-<yyyymmddhhmmssmmm UTC>-<build id>`. */
 export function casesIndexName(prefix: string, generationId: number, at: Date, buildId: string): string {
   checkPrefix(prefix);
   checkBuildId(buildId);
@@ -358,7 +358,7 @@ export interface IndexReport {
  * either ran first (the generation is gone and this refuses) or runs later and skips
  * the pinned generation.
  */
-async function pinIndexableGeneration(db: Db, generationId: number, reason: string): Promise<void> {
+export async function pinIndexableGeneration(db: Db, generationId: number, reason: string): Promise<void> {
   await withLifecycleLock(db, async (q) => {
     const [g] = await q
       .select({
@@ -387,12 +387,12 @@ async function pinIndexableGeneration(db: Db, generationId: number, reason: stri
 }
 
 /** Fail closed: the build's own pin must still exist when it publishes. */
-async function assertPinned(client: pg.PoolClient, generationId: number, reason: string): Promise<void> {
+export async function assertPinned(client: pg.PoolClient, generationId: number, reason: string): Promise<void> {
   const r = await client.query('select 1 from generation_pins where generation_id = $1 and reason = $2', [generationId, reason]);
   if (r.rowCount !== 1) throw new Error(`build pin ${reason} of generation ${generationId} is gone; refusing to publish`);
 }
 
-async function unpin(db: Db, generationId: number, reason: string, log: (m: string) => void): Promise<void> {
+export async function unpin(db: Db, generationId: number, reason: string, log: (m: string) => void): Promise<void> {
   try {
     await db.execute(sql`select unpin_generation(${generationId}, ${reason})`);
   } catch (err) {

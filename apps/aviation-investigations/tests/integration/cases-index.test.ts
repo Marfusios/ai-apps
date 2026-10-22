@@ -200,8 +200,8 @@ describe('rebuildCasesIndex', () => {
       previousIndices: [],
       aliasVerified: true,
     });
-    expect(CASES_INDEX_VERSION).toBe('cases-v2');
-    expect(built.index).toMatch(new RegExp(`^${PREFIX}-cases-v2-g${generationId}-\\d{17}-${built.buildId}$`));
+    expect(CASES_INDEX_VERSION).toBe('cases-v3');
+    expect(built.index).toMatch(new RegExp(`^${PREFIX}-cases-v3-g${generationId}-\\d{17}-${built.buildId}$`));
     expect(await outcomes(built.index)).toEqual(['committed']);
     expect(await recordedDeleted(built.index)).toBe(false);
     expect(await aliasTargets(es, ALIAS)).toEqual([built.index]);
@@ -609,6 +609,25 @@ describe('text analysis', () => {
       }),
     );
   }
+
+  it('splits headings glued to their text, and leaves case numbers, acronyms and plurals alone', async () => {
+    for (const analyzer of [INDEX_ANALYZER, SEARCH_ANALYZER]) {
+      const t = await tokens(analyzer, 'AIRCRAFT INFORMATIONThe airplane');
+      expect(t).toContain('information');
+      expect(t).toContain('airplane');
+      expect(t).not.toContain('informationthe');
+      expect(await tokens(analyzer, 'HISTORY OF FLIGHTOn December 14')).toEqual(['history', 'flight', 'december', '14']);
+      expect(await tokens(analyzer, 'SEA08LA057')).toEqual(['sea08la057']);
+      expect(await tokens(analyzer, 'NOTAMs and METARs')).toEqual(['notam', 'metar']);
+    }
+    expect(await tokens(INDEX_ANALYZER, 'IMC VMC')).toEqual(['imc', 'vmc']);
+    // Offsets still point into the stored text.
+    const r = await es.indices.analyze({ index: ANALYSIS_INDEX, analyzer: INDEX_ANALYZER, text: 'WRECKAGE INFORMATIONThe airplane' });
+    const word = r.tokens?.find((x) => x.token === 'airplane');
+    expect([word?.start_offset, word?.end_offset]).toEqual([24, 32]);
+    const info = r.tokens?.find((x) => x.token === 'information');
+    expect([info?.start_offset, info?.end_offset]).toEqual([9, 20]);
+  });
 
   it('keeps negation tokens', async () => {
     expect(await tokens(INDEX_ANALYZER, 'no anomalies')).toEqual(['no', 'anomaly']);

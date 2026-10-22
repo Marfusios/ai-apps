@@ -2,8 +2,20 @@
  * Text analysis shared by the search indices (amendment A12, gate G3 rulings).
  *
  * Index analyzer `aviation_english`:
- *   standard tokenizer -> lowercase -> English possessive stemmer -> stop words
- *   (English list minus negations) -> stem overrides -> light English stemmer (KStem).
+ *   glued-heading char filter -> standard tokenizer -> lowercase -> English possessive
+ *   stemmer -> stop words (English list minus negations) -> stem overrides -> light
+ *   English stemmer (KStem).
+ *
+ * Glued headings: HTML-converted narratives often run a section heading into the
+ * first word of its text ("AIRCRAFT INFORMATIONThe airplane"), which the tokenizer
+ * would read as one word ("informationthe"). The `aviation_glued_heading` char filter
+ * inserts a space where a run of at least three capitals meets a capitalized word
+ * (`GLUED_HEADING_PATTERN`), except before a plural "s" ("METARs", "NOTAMs"). Case
+ * numbers ("SEA08LA057") and acronyms ("IMC", "VMC") are untouched. The stored text
+ * is never changed, and offsets stay exact: the filter rewrites the two capitals at
+ * the boundary ("NT" -> "N T") rather than inserting a bare space, because Lucene
+ * maps a pure insertion back onto the preceding character and the heading's last
+ * letter would then fall outside its highlight.
  *
  * KStem is conservative: unlike Porter it keeps generator/general/generation,
  * engineer/engine and experience/experiment apart. Its dictionary also keeps a few
@@ -38,9 +50,20 @@ export const NAME_NORMALIZER = 'aviation_name';
 /** Positions between two values of one text field; phrase slop must stay below it. */
 export const SECTION_POSITION_GAP = 100;
 
+/**
+ * Where a glued heading meets its text: after three capitals, before a capital and a
+ * lower-case letter, but not before a plural "s". Valid as Java (Elasticsearch) and
+ * JavaScript regex; the chunker uses the same pattern.
+ */
+export const GLUED_HEADING_PATTERN = '(?<=[A-Z]{3})(?=[A-Z][a-z])(?![A-Z]s\\b)';
+
+/** The same boundary as a replacement over its two capitals ("NT" -> "N T"), which keeps offsets exact. */
+export const GLUED_HEADING_REPLACE = { pattern: '(?<=[A-Z]{2})([A-Z])([A-Z])(?=[a-z])(?!s\\b)', replacement: '$1 $2' } as const;
+
 export const AVIATION_ANALYSIS: estypes.IndicesIndexSettingsAnalysis = {
   char_filter: {
     aviation_collapse_whitespace: { type: 'pattern_replace', pattern: '\\s+', replacement: ' ' },
+    aviation_glued_heading: { type: 'pattern_replace', ...GLUED_HEADING_REPLACE },
   },
   filter: {
     aviation_possessive: { type: 'stemmer', language: 'possessive_english' },
@@ -52,11 +75,13 @@ export const AVIATION_ANALYSIS: estypes.IndicesIndexSettingsAnalysis = {
   analyzer: {
     [INDEX_ANALYZER]: {
       type: 'custom',
+      char_filter: ['aviation_glued_heading'],
       tokenizer: 'standard',
       filter: ['lowercase', 'aviation_possessive', 'aviation_stop', 'aviation_stem_overrides', 'aviation_stemmer'],
     },
     [SEARCH_ANALYZER]: {
       type: 'custom',
+      char_filter: ['aviation_glued_heading'],
       tokenizer: 'standard',
       filter: [
         'lowercase',

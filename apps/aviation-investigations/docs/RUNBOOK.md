@@ -373,10 +373,18 @@ Loading, verification and the other worker commands then run in the
 pnpm ingest load --from data/work/<dir>
 pnpm ingest verify --generation <id>     # report written to data/reports/<env>/
 pnpm ingest generations
-pnpm ingest index cases --generation <id>  # cases index <prefix>-cases-v2-g<id>-...; alias <prefix>-cases
+pnpm ingest index cases --generation <id>  # cases index <prefix>-cases-v3-g<id>-...; alias <prefix>-cases
+pnpm ingest index passages --generation <id>                 # dry run: passages, tokens, cost; writes nothing
+pnpm ingest index passages --generation <id> --confirm-cost  # paid embeddings; passages index <prefix>-passages-v1-g<id>-...
 pnpm ingest index reconcile --alias <alias>
 pnpm ingest publish --generation <id> --cases-index <index name> [--passages-index <index name>]
 ```
+
+`index passages --confirm-cost` meters every embedding request on the indexing
+ledger (shared with evaluations, `AI_INGESTION_MONTHLY_BUDGET_USD`) and refuses
+when the planned reservations exceed what is left. If OpenAI asks for a wait longer
+than 10 minutes, the run stops and prints when to rerun it; vectors paid for so far
+are cached in `embedding_cache`, so the rerun pays only for the rest.
 
 `publish` makes the generation the one the API serves (the active
 `dataset_manifests` row). Pass the concrete index name the build printed, never the
@@ -505,8 +513,10 @@ The loader refreshes statistics through `analyze_corpus()`, a `SECURITY DEFINER`
 function owned by `aviation_migrator` with a fixed `search_path` (migration 0003),
 so it needs no `MAINTAIN`. Already-migrated databases are unaffected by the
 guards; no new migration was needed. Later migrations follow the same pattern
-(0010, the index build and alias switch tables, revokes `MAINTAIN` only on 17+). `pnpm test:pg16` checks every migration and
-the integration suite on 16.2 (a throwaway `postgres16` service of
+(0010, the index build and alias switch tables, revokes `MAINTAIN` only on 17+;
+0012, `passages` and `embedding_cache`, uses `REVOKE ALL`, which covers `MAINTAIN`
+on 17 and is valid on 16; 0011 changes no privileges). `pnpm test:pg16` checks
+every migration and the integration suite on 16.2 (a throwaway `postgres16` service of
 `ai-aviation-local`, profile `pg16`, data in tmpfs).
 
 ## Application image

@@ -29,7 +29,7 @@ import { FIXTURES_DIR, readCsv } from '../support/extract-dir.js';
  * The index definition this version was built with. Changing the mapping, the
  * analysis or the synonym list changes it: bump CASES_INDEX_VERSION and update both.
  */
-const PINNED = { version: 'cases-v2', fingerprint: '9e78b0c12fb6444ed2386ae1f9fddb15b114a71cbcdddbef13ed8ffe24ca75b9' };
+const PINNED = { version: 'cases-v3', fingerprint: '2a6f1f58b54e6da00bb252ec921b44e22cd2c3f7f9a5d95e6d526913328545e9' };
 
 let records: Map<string, CaseRecord>;
 
@@ -248,7 +248,7 @@ describe('cases index definition', () => {
 
   it('names indices per generation and version', () => {
     const at = new Date('2026-10-22T08:09:10.123Z');
-    expect(casesIndexName('aviation', 42, at, '0a1b2c3d')).toBe('aviation-cases-v2-g42-20261022080910123-0a1b2c3d');
+    expect(casesIndexName('aviation', 42, at, '0a1b2c3d')).toBe('aviation-cases-v3-g42-20261022080910123-0a1b2c3d');
     expect(casesAlias('aviation')).toBe('aviation-cases');
     expect(() => casesIndexName('Aviation', 1, at, '0a1b2c3d')).toThrow(/prefix/);
     expect(() => casesIndexName('aviation-*', 1, at, '0a1b2c3d')).toThrow(/prefix/);

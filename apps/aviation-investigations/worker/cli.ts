@@ -8,11 +8,22 @@ import { readAiSwitch, setAiSwitch } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
 import { APP_DIR, workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
+import { createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
+import { MAX_INPUT_TOKENS } from './index/passages.js';
+import {
+  PASSAGES_BUILD_MIN_POOL,
+  planPassages,
+  rebuildPassagesIndex,
+  type PassagePlan,
+  type PassagesIndexReport,
+} from './index/passages-index.js';
+import { createLedgerSpendGate } from './index/spend-gate.js';
 import { cleanupStalePins, declareAbandoned, deleteUnusedIndices, reconcileAlias } from './index/publications.js';
 import { PublishRefusedError, publishGeneration } from './index/publish.js';
 import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
 import { extractArchive, isTerminating, setExtractEnvironment } from './ingest/extract.js';
-import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
+import { describeWorkerError } from './errors.js';
+import { loadFromExtract, type LoadReport } from './ingest/load.js';
 import { STALE_RUN_MINUTES, failStaleRuns, listRunningRuns } from './ingest/runs.js';
 import { readProfile, verifyCorpus, type VerifyReport } from './ingest/verify.js';
 
@@ -26,6 +37,7 @@ const USAGE = [
   '  worker generations',
   '  worker fail-stale-runs --older-than-minutes <n>',
   '  worker index cases --generation <id>',
+  '  worker index passages --generation <id> [--dry-run | --confirm-cost]',
   '  worker index reconcile --alias <alias> [--declare-abandoned <attempt-id> --reason <text>]',
   '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
   '  worker index cleanup-builds --older-than <hours>',
@@ -35,14 +47,14 @@ const USAGE = [
 ].join('\n');
 
 /** Ingestion commands connect as aviation_ingest (DATABASE_INGEST_URL). */
-function ingestDb(): Db {
+function ingestDb(max = 2): Db {
   const url = workerConfig().databaseIngestUrl;
   if (!url) throw new Error('DATABASE_INGEST_URL is not set; run pnpm services:setup');
-  return createDb(url, { max: 2, applicationName: 'aviation-worker' });
+  return createDb(url, { max, applicationName: 'aviation-worker' });
 }
 
-async function withDb<T>(fn: (db: Db) => Promise<T>): Promise<T> {
-  const db = ingestDb();
+async function withDb<T>(fn: (db: Db) => Promise<T>, max = 2): Promise<T> {
+  const db = ingestDb(max);
   try {
     return await fn(db);
   } finally {
@@ -116,6 +128,103 @@ function printIndex(r: IndexReport): void {
     ['duration', `${(r.durationMs / 1000).toFixed(1)} s`],
   ];
   for (const [k, v] of lines) console.log(`${k}: ${v}`);
+}
+
+const usd = (n: number) => `$${n.toFixed(4)}`;
+const int = (n: number) => n.toLocaleString('en-US');
+
+function printPlan(p: PassagePlan): void {
+  const pct = p.inputTokenPercentiles;
+  const lines: [string, string | number][] = [
+    ['generation', p.generationId],
+    ['chunker', `${p.chunkerVersion} (target ${p.chunkOptions.targetTokens}, max ${p.chunkOptions.maxTokens}, min ${p.chunkOptions.minTokens}, overlap ${p.chunkOptions.overlapTokens} tokens)`],
+    ['embedding', `${p.embedding.model}, ${p.embedding.dims} dims, $${p.embedding.usdPerMillionTokens}/M tokens; input template ${p.templateVersion}; tokenizer ${p.tokenizer}`],
+    ['US cases', `${int(p.usCases)} (answer-eligible ${int(p.answerEligibleCases)}, with passages ${int(p.casesWithPassages)})`],
+    ['sections', int(p.sections)],
+    ['passages', `${int(p.passages)} (aircraft-specific ${int(p.aircraftSpecific)}, event-scoped ${int(p.eventScoped)})`],
+  ];
+  for (const k of p.byKindScope) {
+    lines.push([
+      `  ${k.kind}/${k.scope}`,
+      `${int(k.passages)} passages from ${int(k.sections)} sections (${int(k.wholeSections)} whole), ${int(k.inputTokens)} input tokens`,
+    ]);
+  }
+  lines.push(
+    ['input tokens (header + text, overlap included)', int(p.tokens.input)],
+    ['  passage text', int(p.tokens.text)],
+    ['  headers and separators', int(p.tokens.header)],
+    ['  overlap (repeated text)', int(p.tokens.overlap)],
+    ['input tokens per passage', `min ${pct.min}, p50 ${pct.p50}, p90 ${pct.p90}, p95 ${pct.p95}, p99 ${pct.p99}, max ${pct.max}, mean ${pct.mean.toFixed(1)}`],
+    ['largest passage text', `${p.maxPassageTextTokens} tokens (input limit ${MAX_INPUT_TOKENS})`],
+    ['largest whole probable cause', `${p.maxProbableCauseTokens} tokens (split above ${p.chunkOptions.maxTokens})`],
+    ['continuation passages (A16)', int(p.continuations)],
+    ['oversized units split (A16)', `probable causes ${p.oversized.probableCauses}, sentences ${p.oversized.longSentences}, character cuts ${p.oversized.forcedCharSplits}`],
+    ['cases affected by A16 splits', p.oversized.cases.length === 0 ? 'none' : `${p.oversized.cases.length}: ${p.oversized.cases.join(', ')}`],
+    ['distinct inputs', `${int(p.uniqueInputs)} (${int(p.duplicateInputs)} duplicates embedded once)`],
+    ['cache hits expected', p.cache.available ? `${int(p.cache.hits)} inputs, ${int(p.cache.hitTokens)} tokens` : '0 (embedding_cache table not present in this database yet)'],
+    ['to embed', `${int(p.toEmbed.inputs)} inputs, ${int(p.toEmbed.tokens)} tokens, ${int(p.toEmbed.requests)} requests`],
+    ['estimated cost', usd(p.estimatedUsd)],
+    ['reservations (sum of single attempts, A7)', `$${p.reservationUsd.toFixed(6)}`],
+    ['duration', `${(p.durationMs / 1000).toFixed(1)} s`],
+  );
+  for (const [k, v] of lines) console.log(`${k}: ${v}`);
+}
+
+function printPassagesIndex(r: PassagesIndexReport): void {
+  const lines: [string, string | number][] = [
+    ['index', r.index],
+    ['alias (last built; the API reads the manifest)', `${r.alias} -> ${r.index}${r.aliasVerified ? '' : ' (committed, not read back)'}`],
+    ['build', `${r.buildId} (switch attempt ${r.attemptId ?? 'none'})`],
+    ['previous indices (kept)', r.previousIndices.join(', ') || 'none'],
+    ['generation', r.generationId],
+    ['version', `${r.version} (${r.fingerprint.slice(0, 12)}), ${r.model} ${r.dims} dims`],
+    ['passages', `${int(r.passages)} (${int(r.passagesAlreadyStored)} already stored)`],
+    ['cache hits (distinct inputs cached before this build)', int(r.cacheHits)],
+    ['deduplicated (passages sharing an input)', int(r.deduplicated)],
+    ['embedded', `${int(r.embedded.inputs)} inputs, ${int(r.embedded.tokens)} tokens, ${int(r.embedded.requests)} requests, ${usd(r.embedded.usd)}`],
+    ['duration', `${(r.durationMs / 1000).toFixed(1)} s`],
+  ];
+  for (const [k, v] of lines) console.log(`${k}: ${v}`);
+}
+
+async function indexPassages(id: number, confirmCost: boolean): Promise<number> {
+  const config = workerConfig();
+  const { embeddingModel: model, embeddingDimensions: dims } = config.ai.openai;
+  const price = embeddingUsdPerMillion(model);
+  if (!confirmCost) {
+    const plan = await withDb((db) =>
+      planPassages(db, { generationId: id, embedding: { model, dims, usdPerMillionTokens: price }, log: (m) => console.error(m) }),
+    );
+    printPlan(plan);
+    console.log('dry run: nothing written, no paid request made; run with --confirm-cost to build the index');
+    return 0;
+  }
+  return withDb(async (db) => {
+    const gate = createLedgerSpendGate(db, { budgets: config.ai.budgets, provider: 'openai', model, stage: 'embed' });
+    const embedder = createOpenAIEmbedder({
+      apiKey: config.ai.openai.apiKey ?? '',
+      model,
+      dims,
+      gate,
+      purpose: `passages-g${id}`,
+      log: (m) => console.error(m),
+    });
+    const es = createEsClient(config.elasticsearch, 'write', { requestTimeoutMs: 120_000 });
+    try {
+      const report = await rebuildPassagesIndex(es, db, embedder, {
+        generationId: id,
+        prefix: config.elasticsearch.indexPrefix,
+        gate,
+        confirmCost: true,
+        log: (m) => console.error(m),
+      });
+      printPlan(report.plan);
+      printPassagesIndex(report);
+    } finally {
+      await es.close();
+    }
+    return 0;
+  }, PASSAGES_BUILD_MIN_POOL);
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -238,6 +347,23 @@ async function main(argv: string[]): Promise<number> {
         await es.close();
       }
       return 0;
+    }
+    if (target === 'passages') {
+      const { values } = parseArgs({
+        args,
+        options: { generation: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'confirm-cost': { type: 'boolean' } },
+        strict: true,
+      });
+      const id = Number(values.generation);
+      if (!values.generation || !Number.isSafeInteger(id) || id < 1) {
+        console.error(USAGE);
+        return 2;
+      }
+      if (values['dry-run'] && values['confirm-cost']) {
+        console.error('--dry-run and --confirm-cost exclude each other');
+        return 2;
+      }
+      return indexPassages(id, values['confirm-cost'] === true);
     }
     if (target === 'reconcile') {
       const { values } = parseArgs({
@@ -426,7 +552,7 @@ main(process.argv.slice(2)).then(
   (err: unknown) => {
     // A signal handler owns the exit (it waits for container removal and sets the code).
     if (isTerminating()) return;
-    console.error(describeLoadError(err));
+    console.error(describeWorkerError(err));
     process.exit(1);
   },
 );
