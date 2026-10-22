@@ -169,6 +169,15 @@ The pipeline:
    reprocessed. Version citation text independently of normalized search text;
    specify the offset unit and retain a deterministic mapping between the two.
 
+**As built (first release).** Step 1 is not automated: an operator supplies the
+archive and its SHA-256, and the worker checks the hash before extraction, so the
+host allowlist and download limits wait for an automated download. In step 3 the
+dictionary supplies display labels; units and country codes are kept as published
+(for example `USA`). Step 7 publishes by writing the active `dataset_manifests`
+row, which names concrete index names. Aliases only point at the last build, and
+the API never reads them. [DATA_PIPELINE.md](DATA_PIPELINE.md) describes the
+pipeline as built.
+
 Use the event-level `ntsb_no` as the public case key and URL (`/cases/SEA08LA057`);
 keep `ev_id` internal. All 31,303 event-level numbers in the inspected snapshot are
 populated and unique; enforce that invariant during import. Multiaircraft events

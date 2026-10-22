@@ -498,7 +498,7 @@ Scripts:
   - `worker/index/chunk.ts`
   - `worker/index/embed.ts`
   - `worker/index/passages-index.ts`
-  - `server/db/schema/corpus.ts` additions `passages(id, ntsb_no, aircraft_key, scope, section_id, section_sha, start, end, token_count)` and `embedding_cache(text_sha256, model, dims, vector real[])`
+  - `server/db/schema/corpus.ts` additions `passages(id, ntsb_no, aircraft_key, scope, section_id, section_sha, start, end, token_count)` and `embedding_cache(text_sha256, model, dims, vector real[])` (as built: `server/db/schema/passages.ts`; the cache key is a SHA-256 of the input template version, model, dimensions and exact input, and the vector is stored as float32 `bytea`)
   - `server/ai/ledger-ingest.ts` (indexing spend metering)
   - `tests/unit/chunk.test.ts`
   - `tests/integration/passages-index.test.ts`
@@ -514,7 +514,7 @@ Scripts:
     - `createOpenAIEmbedder(cfg)` uses `maxRetries: 0` and its own bounded retry with backoff on 429/5xx only. Batches hold at most 96 inputs and at most 250k tokens.
     - `createFakeEmbedder(dims)` is deterministic (a hash-seeded vector).
   - `meterIndexingSpend(db, usd)` refuses when the $20 indexing/evaluation month would be exceeded.
-  - `PASSAGES_INDEX_VERSION = 'passages-v1-te3s-1536-c650'`. Mapping, `dynamic: 'strict'`:
+  - `PASSAGES_INDEX_VERSION = 'passages-v1-te3s-1536-c650'` (as built: `'passages-v1'`; the model, dimensions, chunker and input-template versions go into the index `_meta` fingerprint instead of the name). Mapping, `dynamic: 'strict'`:
     - `passage_id`, `ntsb_no`, `aircraft_key`, `scope: 'aircraft'|'event'`, `section_kind`, `section_sha`, `start`, `end`, `text` (english + aviation synonyms)
     - `embedding` (`dense_vector`, 1536, cosine, `int8_hnsw`)
     - copied filters: `ev_year`, `state`, `answer_eligible`, `phase_groups`, `highest_injury`, `wx_cond`, `light`, and `aircraft` (nested: category, make, far_part, purpose, eng_type)
@@ -946,6 +946,16 @@ amendments are binding and override the task text above where they differ.
    - Each aircraft's own probable cause is attached.
    - Fixtures `SEA08LA057` (different defining phases per aircraft) and
      `DCA25MA108` (duplicated narratives covering both aircraft) are required.
+   - **As built (ruling at gate G2a, tighter than the text above):** every
+     narrative section of a multi-aircraft event, probable cause included, is
+     **event-scoped**. The row it came from is kept as provenance, identical
+     texts are stored once, and differing texts are kept as separate variants.
+     Aircraft scope applies only to single-aircraft events. Structured
+     per-aircraft rows keep their `aircraft_key`. An event-scoped passage lists
+     the event's aircraft under the plain object `event_aircraft`, never the
+     nested `aircraft`, so aircraft filters exclude it by construction. When
+     such a case is selected, its distinct event-scoped probable-cause variants
+     are attached instead of a per-aircraft cause.
 4. **Quote provenance (T16).**
    - Validation follows the chain case → aircraft/scope → section id +
      revision hash → passage → quote.
