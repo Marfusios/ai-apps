@@ -102,6 +102,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const limiter = new RateLimiter({ ...(deps.rateLimit ?? { limit: 60, windowMs: 60_000 }), ...(deps.now ? { now: deps.now } : {}) });
   const datasets = new DatasetResolver(deps.db, deps.es, {
     ...(deps.embedding ? { embedding: deps.embedding } : {}),
+    onPassagesUnservable: (index: string, reason: string) =>
+      app.log.warn({ index, reason: reason.slice(0, 300) }, 'passages index not servable: AI evidence stays off'),
     ...(deps.manifestTtlMs !== undefined ? { manifestTtlMs: deps.manifestTtlMs } : {}),
     ...(deps.now ? { now: deps.now } : {}),
   });

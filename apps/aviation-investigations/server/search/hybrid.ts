@@ -27,9 +27,10 @@
  * is embedded, under the request's deadline.
  *
  * Every search sets `allow_partial_search_results: false` and every response is
- * checked for completeness (not timed out, no failed shard, every shard answered or
- * skipped); an incomplete channel or evidence fetch fails retrieval with
- * `IncompleteSearchError` instead of yielding a bundle from part of the index.
+ * checked for completeness (not timed out, no failed shard, `successful` equal to
+ * `total`; Elasticsearch counts pre-filter-skipped shards inside `successful`); an
+ * incomplete channel or evidence fetch fails retrieval with `IncompleteSearchError`
+ * instead of yielding a bundle from part of the index.
  *
  * Query embedding cost: retrieval embeds through the `Embedder` it is given and hands
  * the usage (model, tokens, USD, and whether the provider reported it) to
@@ -150,9 +151,10 @@ export class IncompleteSearchError extends Error {
 }
 
 /**
- * Throw unless `res` covers the whole index: not timed out, no failed shard, and every
- * shard either answered or was skipped (a shard skipped by the pre-filter holds no
- * match, which is complete).
+ * Throw unless `res` covers the whole index: not timed out, no failed shard, and
+ * `successful === total`. Elasticsearch counts shards skipped by the pre-filter (they
+ * hold no match) inside `successful`, so `skipped` is a subset of `successful` and is
+ * never added to it; a report with more skipped than successful shards is refused.
  */
 export function assertCompleteResponse(res: Pick<estypes.SearchResponse<unknown>, 'timed_out' | '_shards'>, request: IncompleteSearchError['request']): void {
   if (res.timed_out !== false) throw new IncompleteSearchError(request, res.timed_out ? 'timed out' : 'no timed_out flag');
@@ -160,8 +162,9 @@ export function assertCompleteResponse(res: Pick<estypes.SearchResponse<unknown>
   if (!s || typeof s.total !== 'number') throw new IncompleteSearchError(request, 'no shard report');
   const failed = Math.max(s.failed ?? 0, s.failures?.length ?? 0);
   if (failed > 0) throw new IncompleteSearchError(request, `${failed} shard(s) failed`);
-  if (s.successful + (s.skipped ?? 0) !== s.total) {
-    throw new IncompleteSearchError(request, `${s.successful} of ${s.total} shard(s) answered (${s.skipped ?? 0} skipped)`);
+  const skipped = s.skipped ?? 0;
+  if (s.successful !== s.total || skipped > s.successful) {
+    throw new IncompleteSearchError(request, `${s.successful} of ${s.total} shard(s) successful (${skipped} of them skipped)`);
   }
 }
 
@@ -397,8 +400,9 @@ export interface RetrievalQuery {
   params?: Partial<RetrievalParams>;
   signal?: AbortSignal;
   /**
-   * Called once, as soon as the query embedding succeeds and before any search: the
-   * caller records the paid stage here, so a later failure cannot lose it.
+   * Called once, as soon as the embedder returns and before the vector is checked or
+   * any search runs: the caller records the paid stage here, so a later failure cannot
+   * lose it.
    */
   onQueryEmbedding?: (usage: QueryEmbeddingUsage) => void;
   /** The passages contract (tests and future versions); default `PASSAGES_CONTRACT`. */
@@ -438,23 +442,32 @@ export interface CandidateResult {
 
 const transport = (p: RetrievalParams, signal?: AbortSignal) => ({ requestTimeout: p.timeoutMs, ...(signal ? { signal } : {}) });
 
-async function embedQuery(embedder: Embedder | QueryEmbedder, text: string, signal?: AbortSignal): Promise<{ vector: number[]; usage: QueryEmbeddingUsage }> {
+/**
+ * Embed the query and report its usage through `onUsage` as soon as the embedder
+ * returns, before the vector is checked: a paid embedding is reported even when its
+ * vector turns out unusable.
+ */
+async function embedQuery(
+  embedder: Embedder | QueryEmbedder,
+  text: string,
+  signal: AbortSignal | undefined,
+  onUsage: ((usage: QueryEmbeddingUsage) => void) | undefined,
+): Promise<{ vector: number[]; usage: QueryEmbeddingUsage }> {
   const input = queryEmbeddingInput(text);
   const res: EmbedResult =
     'embedWithSignal' in embedder ? await embedder.embedWithSignal([input], signal) : await embedder.embed([input]);
-  const v = res.vectors[0];
-  if (!v || v.length !== embedder.dims) throw new Error('the query embedding has the wrong number of dimensions');
-  return {
-    vector: Array.from(v),
-    usage: {
-      model: embedder.model,
-      dims: embedder.dims,
-      inputTemplate: QUERY_INPUT_TEMPLATE_VERSION,
-      tokens: res.tokens,
-      usd: embeddingUsd(res.tokens, embedder.usdPerMillionTokens),
-      billing: res.usageUncertain ? 'uncertain' : 'reported',
-    },
+  const usage: QueryEmbeddingUsage = {
+    model: embedder.model,
+    dims: embedder.dims,
+    inputTemplate: QUERY_INPUT_TEMPLATE_VERSION,
+    tokens: res.tokens,
+    usd: embeddingUsd(res.tokens, embedder.usdPerMillionTokens),
+    billing: res.usageUncertain ? 'uncertain' : 'reported',
   };
+  onUsage?.(usage);
+  const v = res.vectors[0];
+  if (res.vectors.length !== 1 || !v || v.length !== embedder.dims) throw new Error('the query embedding has the wrong shape');
+  return { vector: Array.from(v), usage };
 }
 
 /** Stage 1: both channels with one filter, fused, deduplicated to cases. */
@@ -471,8 +484,7 @@ export async function retrieveCandidates(es: Client, embedder: Embedder | QueryE
   const filter = compileFilters(filters).bool.filter;
 
   const t0 = Date.now();
-  const { vector, usage } = await embedQuery(embedder, q.text, q.signal);
-  q.onQueryEmbedding?.(usage);
+  const { vector, usage } = await embedQuery(embedder, q.text, q.signal, q.onQueryEmbedding);
   const t1 = Date.now();
   const keywordBody = keywordChannelBody(index, keywordText, filter, params.perChannel);
   const vectorBody = vectorChannelBody(index, vector, filter, params.perChannel, numCandidates(params));

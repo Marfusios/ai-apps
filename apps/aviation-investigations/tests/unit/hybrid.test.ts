@@ -332,7 +332,10 @@ describe('complete answers only', () => {
   it.each([
     ['keyword', { timed_out: true }, /keyword search was incomplete: timed out/],
     ['vector', { _shards: { total: 2, successful: 1, skipped: 0, failed: 1, failures: [{ shard: 1 }] } }, /vector search was incomplete: 1 shard\(s\) failed/],
-    ['vector', { _shards: { total: 3, successful: 2, skipped: 0, failed: 0 } }, /vector search was incomplete: 2 of 3 shard\(s\) answered/],
+    ['vector', { _shards: { total: 3, successful: 2, skipped: 0, failed: 0 } }, /vector search was incomplete: 2 of 3 shard\(s\) successful/],
+    // Skipped shards are counted inside `successful`, never added to it.
+    ['keyword', { _shards: { total: 2, successful: 1, skipped: 1, failed: 0 } }, /keyword search was incomplete: 1 of 2 shard\(s\) successful \(1 of them skipped\)/],
+    ['fetch', { _shards: { total: 2, successful: 2, skipped: 3, failed: 0 } }, /fetch search was incomplete: 2 of 2 shard\(s\) successful \(3 of them skipped\)/],
     ['fetch', { timed_out: true }, /fetch search was incomplete: timed out/],
     ['fetch', { _shards: { total: 1, successful: 0, skipped: 0, failed: 1 } }, /fetch search was incomplete: 1 shard\(s\) failed/],
   ] as const)('fails retrieval on an incomplete %s response (%o)', async (request, incomplete, message) => {
@@ -343,9 +346,12 @@ describe('complete answers only', () => {
     expect(String((err as Error).message)).toMatch(message);
   });
 
-  it('accepts shards skipped by the pre-filter', async () => {
+  it.each([
+    { total: 2, successful: 2, skipped: 1, failed: 0 },
+    { total: 3, successful: 3, skipped: 2, failed: 0 },
+  ])('accepts shards skipped by the pre-filter, which Elasticsearch counts as successful (%o)', async (shards) => {
     const all = corpus(3);
-    const f = fakeEs(all, all, all, { incomplete: { keyword: { _shards: { total: 3, successful: 1, skipped: 2, failed: 0 } } } });
+    const f = fakeEs(all, all, all, { incomplete: { keyword: { _shards: shards }, vector: { _shards: shards }, fetch: { _shards: shards } } });
     const r = await retrieveEvidence(f.es, createFakeEmbedder(DIMS), { dataset: DATASET, text: 'carb ice', contract: CONTRACT });
     expect(r.cases.length).toBeGreaterThan(0);
   });
@@ -366,6 +372,13 @@ describe('complete answers only', () => {
       expect(usage[0]).toMatchObject({ model: 'fake-embedding-v1', billing: 'reported' });
       expect(usage[0]?.tokens).toBeGreaterThan(0);
     }
+    // A paid embedding with an unusable vector is reported before the error.
+    const wrongShape = { ...createFakeEmbedder(DIMS), embed: async (texts: string[]) => ({ vectors: [new Float32Array(3)], tokens: texts.length * 7 }) };
+    const paid: QueryEmbeddingUsage[] = [];
+    await expect(
+      retrieveEvidence(fakeEs([], [], []).es, wrongShape, { dataset: DATASET, text: 'carb ice', contract: CONTRACT, onQueryEmbedding: (u) => paid.push(u) }),
+    ).rejects.toThrow(/wrong shape/);
+    expect(paid).toEqual([expect.objectContaining({ tokens: 7, billing: 'reported' })]);
     // A refusal before embedding reports nothing: nothing was paid.
     const usage: QueryEmbeddingUsage[] = [];
     await retrieveEvidence(fakeEs([], [], []).es, createFakeEmbedder(DIMS), {

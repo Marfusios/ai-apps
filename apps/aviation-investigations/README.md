@@ -400,8 +400,9 @@ the request's deadline. There is no keyword-only fallback for AI answers.
   aircraft filter. The BM25 query, the kNN prefilter and the evidence fetch use the
   same clauses.
 - **Complete answers only.** Every search sets `allow_partial_search_results: false`;
-  a response that timed out, has a failed shard or misses a shard fails retrieval
-  (`IncompleteSearchError`).
+  a response that timed out, has a failed shard or reports fewer `successful` shards
+  than `total` fails retrieval (`IncompleteSearchError`). Shards skipped by the
+  pre-filter are already counted in `successful`.
 - **Stage 1, case candidates.** The question is embedded once
   (`queryEmbeddingInput`, template `query-v1`: whitespace collapsed, no header, at
   most 1,000 tokens). BM25 (`multi_match` over `text`) and kNN (`num_candidates` =

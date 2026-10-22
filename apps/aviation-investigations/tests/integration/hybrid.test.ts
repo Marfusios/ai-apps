@@ -13,7 +13,9 @@ import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { queryEmbeddingInput } from '../../server/ai/embeddings.js';
+import { SearchRequestSchema } from '../../shared/contracts/search.js';
 import { DatasetResolver } from '../../server/dataset.js';
+import { keywordSearch } from '../../server/search/keyword.js';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
 import { getActiveManifest } from '../../server/db/generations.js';
 import { RetrievalUnavailableError, fetchAndPack, rankingOf, retrieveCandidates, retrieveEvidence, type PassageHit } from '../../server/search/hybrid.js';
@@ -287,6 +289,54 @@ describe('the passages contract at publication and in the API', () => {
       expect(unconfigured.passages).toEqual({ index, servable: false, reason: 'no embedding model is configured' });
       // Keyword search keeps working either way: the dataset itself resolves.
       expect(other.dataset.revision).toBe(servable.dataset.revision);
+    } finally {
+      await closeDb(app);
+    }
+  });
+
+  it('degrades to unservable passages when their check fails or hangs, and keyword search still answers', async () => {
+    const app = createDb(testDbUrl('app'), { max: 2, applicationName: 'aviation-test-hybrid-app' });
+    try {
+      for (const mode of ['throws', 'hangs'] as const) {
+        // The real client, except that reading the passages index mapping fails or never answers.
+        const flaky = new Proxy(es, {
+          get(target, prop) {
+            if (prop === 'indices') {
+              const indices = target.indices;
+              return new Proxy(indices, {
+                get(t, p) {
+                  if (p === 'getMapping') {
+                    return (params: { index: string }, opts?: unknown) => {
+                      if (params.index !== index) return t.getMapping(params, opts as never);
+                      if (mode === 'throws') return Promise.reject(new Error('connection reset'));
+                      return new Promise(() => undefined);
+                    };
+                  }
+                  const v = Reflect.get(t, p) as unknown;
+                  return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+                },
+              });
+            }
+            const v = Reflect.get(target, prop) as unknown;
+            return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+          },
+        });
+        const logged: [string, string][] = [];
+        const resolver = new DatasetResolver(app, flaky, {
+          embedding,
+          passagesCheckTimeoutMs: 300,
+          onPassagesUnservable: (i, reason) => logged.push([i, reason]),
+        });
+        const started = Date.now();
+        const pinned = await resolver.current();
+        expect(Date.now() - started).toBeLessThan(5_000);
+        expect(pinned.passages).toMatchObject({ index, servable: false });
+        const reason = pinned.passages?.servable === false ? pinned.passages.reason : '';
+        expect(reason).toMatch(mode === 'throws' ? /could not be checked \(Error: connection reset\)/ : /timed out after 300 ms/);
+        expect(logged).toEqual([[index, reason]]);
+        const r = await keywordSearch({ es: flaky, db: app }, pinned, SearchRequestSchema.parse({ q: 'engine' }));
+        expect(r.total).toBeGreaterThan(0);
+      }
     } finally {
       await closeDb(app);
     }

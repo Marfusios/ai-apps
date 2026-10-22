@@ -17,9 +17,10 @@
  * - the coverage numbers of `GET /api/config` and the corpus year range;
  * - whether the manifest's passages index can serve AI evidence: the passages
  *   contract (`server/search/passages-contract.ts`) for the configured embedding model
- *   and dimensions. An unservable passages index leaves keyword search, case pages
- *   and the dashboard working; `passages.servable` is false and AI routes must stay
- *   off (retrieval checks the same contract again before every use).
+ *   and dimensions. The check is bounded (`passagesCheckTimeoutMs`) and any failure,
+ *   an Elasticsearch error or a timeout included, only marks the passages unservable
+ *   with a log line: keyword search, case pages and the dashboard keep working, and
+ *   AI routes must stay off (retrieval checks the same contract again before every use).
  */
 import { createHash } from 'node:crypto';
 import type { Client } from '@elastic/elasticsearch';
@@ -59,6 +60,10 @@ export interface DatasetResolverOptions {
   now?: () => number;
   /** The configured embedding model and dimensions; without them no passages index is servable. */
   embedding?: { model: string; dims: number };
+  /** Bound of the passages contract read (default 5 s). */
+  passagesCheckTimeoutMs?: number;
+  /** Told why a published passages index is not servable (no values beyond index name and reason). */
+  onPassagesUnservable?: (index: string, reason: string) => void;
 }
 
 function revisionOf(m: ActiveManifest, indexVersion: string): string {
@@ -73,6 +78,8 @@ export class DatasetResolver {
   private readonly ttl: number;
   private readonly now: () => number;
   private readonly embedding: { model: string; dims: number } | undefined;
+  private readonly passagesCheckTimeoutMs: number;
+  private readonly onPassagesUnservable: (index: string, reason: string) => void;
   private manifest: { value: ActiveManifest; at: number } | null = null;
   private manifestLoad: Promise<ActiveManifest | null> | null = null;
   private readonly facts = new Map<string, Promise<PinnedDataset>>();
@@ -85,6 +92,8 @@ export class DatasetResolver {
     this.ttl = opts.manifestTtlMs ?? 5_000;
     this.now = opts.now ?? Date.now;
     this.embedding = opts.embedding;
+    this.passagesCheckTimeoutMs = opts.passagesCheckTimeoutMs ?? 5_000;
+    this.onPassagesUnservable = opts.onPassagesUnservable ?? (() => undefined);
   }
 
   /** The dataset of the active manifest. Throws `DatasetUnavailableError` when none can be served. */
@@ -185,17 +194,43 @@ export class DatasetResolver {
     };
   }
 
+  /**
+   * Whether the manifest's passages index meets the contract. Never throws: an
+   * incompatible index, a missing one, an Elasticsearch error or a timeout all give
+   * `servable: false` with a reason, reported to `onPassagesUnservable`.
+   */
   private async passagesStatus(manifest: ActiveManifest): Promise<PassagesStatus | null> {
     const index = manifest.passagesIndex;
     if (index === null) return null;
-    if (!this.embedding) return { index, servable: false, reason: 'no embedding model is configured' };
+    const unservable = (reason: string): PassagesStatus => {
+      this.onPassagesUnservable(index, reason);
+      return { index, servable: false, reason };
+    };
+    if (!this.embedding) return unservable('no embedding model is configured');
+    const ms = this.passagesCheckTimeoutMs;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // The timer bounds the check even if the client ignores the abort signal.
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`the passages index check timed out after ${ms} ms`));
+      }, ms);
+    });
     try {
-      await checkPassagesIndex(this.es, index, { generationId: manifest.generationId, ...this.embedding });
+      await Promise.race([
+        checkPassagesIndex(this.es, index, { generationId: manifest.generationId, ...this.embedding }, { timeoutMs: ms, signal: controller.signal }),
+        deadline,
+      ]);
       return { index, servable: true };
     } catch (err) {
-      if (err instanceof PassagesIndexIncompatibleError) return { index, servable: false, reason: err.problems.join('; ') };
-      if (err instanceof IndexMetaError) return { index, servable: false, reason: err.message };
-      throw err;
+      if (err instanceof PassagesIndexIncompatibleError) return unservable(err.problems.join('; '));
+      if (err instanceof IndexMetaError) return unservable(err.message);
+      const name = err instanceof Error ? err.name : 'Error';
+      const message = err instanceof Error ? err.message : String(err);
+      return unservable(`the passages index could not be checked (${name}: ${message.slice(0, 200)})`);
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
