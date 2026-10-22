@@ -62,9 +62,10 @@ x-embeddings-env: &embeddings-env
   OPENAI_EMBEDDING_DIMENSIONS: ${OPENAI_EMBEDDING_DIMENSIONS:-}
 
 services:
-  # Fastify API and the built web client on one origin. The healthcheck needs the
-  # GET /api/health route of the API server. Service names carry the app's name:
-  # Docker registers them as DNS names on the shared networks too.
+  # Fastify API and the built web client on one origin (server/main.ts). The
+  # healthcheck calls GET /api/health over loopback, which tunnel mode still accepts.
+  # Service names carry the app's name: Docker registers them as DNS names on the
+  # shared networks too.
   aviation-app:
     <<: [*service, *hardened, *app-image]
     profiles: [app]
@@ -77,6 +78,7 @@ services:
       NODE_ENV: production
       APP_ENV: ${APP_ENV}
       APP_URL: ${APP_URL:-}
+      HOST: 0.0.0.0
       PORT: "3000"
       DATABASE_URL: ${DATABASE_URL:-}
       ELASTICSEARCH_READ_API_KEY: ${ELASTICSEARCH_READ_API_KEY:-}

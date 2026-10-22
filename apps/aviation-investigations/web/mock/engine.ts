@@ -14,7 +14,6 @@ import {
   COMPLETION_FACET_VALUES,
   FACET_KEYS,
   FACET_VALUES,
-  SECTION_LABEL,
   facetValueLabel,
   isUnknownFacetValue,
   type CaseRow,
@@ -26,6 +25,7 @@ import {
   type SectionKind,
   type Snippet,
 } from '../../shared/contracts/search.js';
+import { excerptSnippet, mergeSpans, previewSnippet } from '../../shared/snippet.js';
 
 /** One searchable event: its result row (without snippet), facet values and extra text. */
 export interface MockDoc {
@@ -137,14 +137,7 @@ function highlightSpans(tokens: readonly Token[], clauses: readonly Clause[], te
       }
     }
   }
-  spans.sort((a, b) => a.start - b.start || b.end - a.end);
-  const merged: { start: number; end: number }[] = [];
-  for (const span of spans) {
-    const last = merged[merged.length - 1];
-    if (last && (span.start <= last.end || /^[ \t]+$/.test(text.slice(last.end, span.start)))) last.end = Math.max(last.end, span.end);
-    else merged.push({ ...span });
-  }
-  return merged;
+  return mergeSpans(spans, text);
 }
 
 // ---------------------------------------------------------------------------
@@ -238,77 +231,18 @@ function buckets(facet: FacetKey, matched: readonly Matched[], selected: readonl
 }
 
 // ---------------------------------------------------------------------------
-// Snippets
-
-const SNIPPET_FULL = 600;
-const SNIPPET_WINDOW = 360;
-const SNIPPET_LEAD = 110;
-const PLAIN_PREVIEW = 320;
-
-/** Newlines and tabs become spaces one for one, so offsets stay valid. */
-function flatten(text: string): string {
-  return text.replace(/[\r\n\t]/g, ' ');
-}
-
-function wordStart(text: string, i: number): number {
-  if (i <= 0) return 0;
-  const space = text.lastIndexOf(' ', i);
-  return space === -1 ? 0 : space + 1;
-}
-
-function wordEnd(text: string, i: number): number {
-  if (i >= text.length) return text.length;
-  const space = text.indexOf(' ', i);
-  return space === -1 ? text.length : space;
-}
-
-function excerpt(section: AnalyzedSection, spans: { start: number; end: number }[], full: boolean): Snippet {
-  const text = flatten(section.text);
-  let start = 0;
-  let end = text.length;
-  if (!full || text.length > SNIPPET_FULL) {
-    const anchor = spans[0]?.start ?? 0;
-    start = wordStart(text, Math.max(0, anchor - SNIPPET_LEAD));
-    end = wordEnd(text, Math.min(text.length, start + SNIPPET_WINDOW));
-  }
-  // Trim surrounding spaces inside the window without moving the offsets' base.
-  while (start < end && text[start] === ' ') start++;
-  while (end > start && text[end - 1] === ' ') end--;
-  const first = text.length - text.trimStart().length;
-  const last = text.trimEnd().length;
-  const highlights = spans
-    .filter((s) => s.start >= start && s.end <= end)
-    .map((s) => ({ start: s.start - start, end: s.end - start }));
-  return {
-    section: section.kind,
-    label: SECTION_LABEL[section.kind],
-    text: text.slice(start, end),
-    highlights,
-    truncatedStart: start > first,
-    truncatedEnd: end < last,
-  };
-}
+// Snippets (shared/snippet.ts)
 
 function snippetFor(corpus: MockCorpus, doc: MockDoc, clauses: readonly Clause[]): Snippet | null {
   const a = analyze(corpus, doc);
   const causes = a.sections.filter((s) => s.kind === 'probable_cause');
   if (clauses.length === 0) {
     const cause = causes[0];
-    if (!cause) return null;
-    const text = flatten(cause.text).trim();
-    const cut = text.length > PLAIN_PREVIEW ? wordEnd(text, PLAIN_PREVIEW) : text.length;
-    return {
-      section: 'probable_cause',
-      label: SECTION_LABEL.probable_cause,
-      text: text.slice(0, cut),
-      highlights: [],
-      truncatedStart: false,
-      truncatedEnd: cut < text.length,
-    };
+    return cause ? previewSnippet(cause.text) : null;
   }
   for (const cause of causes) {
     const spans = highlightSpans(cause.tokens, clauses, cause.text);
-    if (spans.length > 0) return excerpt(cause, spans, true);
+    if (spans.length > 0) return excerptSnippet(cause.kind, cause.text, spans, true);
   }
   const rank: Record<SectionKind, number> = { probable_cause: 0, analysis: 1, factual: 2 };
   let best: { section: AnalyzedSection; spans: { start: number; end: number }[] } | null = null;
@@ -316,7 +250,7 @@ function snippetFor(corpus: MockCorpus, doc: MockDoc, clauses: readonly Clause[]
     const spans = highlightSpans(section.tokens, clauses, section.text);
     if (spans.length > 0 && (!best || spans.length > best.spans.length)) best = { section, spans };
   }
-  return best ? excerpt(best.section, best.spans, false) : null;
+  return best ? excerptSnippet(best.section.kind, best.section.text, best.spans, false) : null;
 }
 
 // ---------------------------------------------------------------------------

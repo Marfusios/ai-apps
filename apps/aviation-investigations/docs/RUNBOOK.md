@@ -331,17 +331,18 @@ its loopback port. Run `aviation-ingest` with
 `AVIATION_UID=$(id -u) AVIATION_GID=$(id -g)` and create `data/reports/<env>`
 first when not using the wrapper.
 
-The HTTP entry `server/main.ts` and its `GET /api/health` route arrive with the
-API server. Until then `pnpm app:up` stops with a message, and the image's
-default command exits with `Cannot find module '/app/server/main.js'`. The image
-and the tools (`aviation-ingest`, `aviation-migrate`) work already.
+The image's default command is the API server (`server/main.js`, listening on
+`0.0.0.0:3000` inside the container). Its health check calls `GET /api/health` over
+loopback, which tunnel mode still accepts; the check reports 503 until a dataset
+manifest is published (next section). With `APP_ENV=live` the server refuses to start
+without `TRUSTED_PROXY_CIDRS`.
 
 ### Deploying an environment
 
 1. Provision the environment (`pnpm provision:shared`, see
    [Provisioning](#provisioning)) and its Langfuse project; write the settings file.
 2. `pnpm app:migrate`.
-3. Ingest data (next section).
+3. Ingest data and publish its manifest (next section).
 4. `pnpm app:up` (tunnel mode on `live`).
 
 To update: pull the code, set a new `APP_VERSION` on `live`, run
@@ -374,7 +375,17 @@ pnpm ingest verify --generation <id>     # report written to data/reports/<env>/
 pnpm ingest generations
 pnpm ingest index cases --generation <id>  # cases index <prefix>-cases-v2-g<id>-...; alias <prefix>-cases
 pnpm ingest index reconcile --alias <alias>
+pnpm ingest publish --generation <id> --cases-index <index name> [--passages-index <index name>]
 ```
+
+`publish` makes the generation the one the API serves (the active
+`dataset_manifests` row). Pass the concrete index name the build printed, never the
+alias: the command refuses an alias, an index built for another generation or with
+another mapping version, and a document count that differs from the generation's US
+events, and changes nothing then. Without `--passages-index` the manifest is
+keyword-only: search, case pages and the dashboard work and AI stays off. Publishing
+an earlier generation again is the rollback. The running API picks up a new manifest
+within seconds; public responses may stay cached for up to five minutes.
 
 The `index` commands (README, "Cases index") use the environment's write API key,
 so they create and switch only `ai-aviation-<env>-*` indices. A build deletes only
@@ -409,6 +420,11 @@ Manifests of earlier extractions keep the old name; loading does not depend on i
 
 4. Check that nothing is published: `APP_ENV=live pnpm app:ps` shows no ports
    for `aviation-app`.
+
+In tunnel mode the app serves only peers inside `TRUSTED_PROXY_CIDRS` (anything else
+gets 403, except its own loopback health check) and takes the client address from
+`CF-Connecting-IP`, which the API requires (400 when it is missing or invalid). Rate
+limits count per client address (IPv6 per /64).
 
 The connector (`cloudflare/cloudflared:2026.10.0`, pinned) shares only the `edge`
 network with `aviation-app`. Test origin restrictions from outside and from another

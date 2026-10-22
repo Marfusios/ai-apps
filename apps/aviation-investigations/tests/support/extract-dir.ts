@@ -4,7 +4,7 @@
  * `worker extract` would write it. Callers may edit tables first.
  */
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parse } from 'csv-parse/sync';
@@ -15,6 +15,8 @@ import { TABLE_NAMES, TABLE_SPECS, type TableName } from '../../worker/ingest/ta
 
 export const APP_DIR = resolve(import.meta.dirname, '../..');
 export const FIXTURES_DIR = join(APP_DIR, 'fixtures/ntsb');
+/** Public events the interface examples and end-to-end tests search for (carburetor icing, pattern stalls). */
+export const UI_FIXTURES_DIR = join(APP_DIR, 'fixtures/ntsb-ui');
 
 export type CsvRow = Record<string, string>;
 
@@ -85,4 +87,20 @@ export async function makeExtractDir(opts: ExtractDirOptions = {}): Promise<stri
 
 export function removeDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
+}
+
+/**
+ * A fresh extraction directory with both fixture sets (`fixtures/ntsb` and
+ * `fixtures/ntsb-ui`, whose events do not overlap): the corpus of the mock API, used
+ * by the API integration tests and the end-to-end tests against the real server.
+ */
+export async function makeCombinedExtractDir(): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'aviation-extract-combined-'));
+  for (const table of TABLE_NAMES) {
+    const sources = [FIXTURES_DIR, UI_FIXTURES_DIR].map((d) => join(d, `${table}.csv`)).filter((f) => existsSync(f));
+    if (sources.length === 0) continue;
+    writeCsv(join(dir, `${table}.csv`), table, sources.flatMap((f) => readCsv(f)));
+  }
+  await writeManifest(dir);
+  return dir;
 }

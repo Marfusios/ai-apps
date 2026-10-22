@@ -57,6 +57,9 @@ export const FAR_PART: Vocabulary = {
   '135': 'Part 135 air taxi and commuter',
   '137': 'Part 137 agricultural',
   '141': 'Part 141 pilot school',
+  // Seen in the 2026-10-16 snapshot (newer than the dictionary's list).
+  '107': 'Part 107 small unmanned aircraft',
+  '437': 'Part 437',
   ARMF: 'Armed forces',
   NUSC: 'Non-US commercial',
   NUSN: 'Non-US non-commercial',
@@ -124,6 +127,10 @@ export const ENGINE_TYPE: Vocabulary = {
   TF: 'Turbofan',
   TJ: 'Turbojet',
   TS: 'Turboshaft',
+  // Seen in the 2026-10-16 snapshot (newer than the dictionary's list).
+  GTFN: 'Geared turbofan',
+  ELEC: 'Electric',
+  NONE: 'None',
   UNK: 'Unknown engine',
 };
 

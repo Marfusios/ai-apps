@@ -9,6 +9,7 @@ import { createEsClient } from '../server/search/es.js';
 import { APP_DIR, workerConfig } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
 import { cleanupStalePins, declareAbandoned, deleteUnusedIndices, reconcileAlias } from './index/publications.js';
+import { PublishRefusedError, publishGeneration } from './index/publish.js';
 import { importAviationSearchExport, importSeedLinks, type ImportReport } from './ingest/report-links.js';
 import { extractArchive, isTerminating, setExtractEnvironment } from './ingest/extract.js';
 import { describeLoadError, loadFromExtract, type LoadReport } from './ingest/load.js';
@@ -28,6 +29,7 @@ const USAGE = [
   '  worker index reconcile --alias <alias> [--declare-abandoned <attempt-id> --reason <text>]',
   '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
   '  worker index cleanup-builds --older-than <hours>',
+  '  worker publish --generation <id> --cases-index <name> [--passages-index <name>]',
   '  worker ai-switch [--on | --off --note <text>]',
   '  worker migrate',
 ].join('\n');
@@ -315,6 +317,42 @@ async function main(argv: string[]): Promise<number> {
     }
     console.error(USAGE);
     return 2;
+  }
+  if (command === 'publish') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        generation: { type: 'string' },
+        'cases-index': { type: 'string' },
+        'passages-index': { type: 'string' },
+      },
+      strict: true,
+    });
+    const id = Number(values.generation);
+    const casesIndex = values['cases-index'];
+    if (!values.generation || !Number.isSafeInteger(id) || id < 1 || !casesIndex) {
+      console.error(USAGE);
+      return 2;
+    }
+    const passagesIndex = values['passages-index'] ?? null;
+    const es = createEsClient(workerConfig().elasticsearch, 'write');
+    try {
+      const r = await withDb((db) => publishGeneration(es, db, { generationId: id, casesIndex, passagesIndex }));
+      console.log(`active manifest: generation ${r.manifest.generationId}, published ${r.manifest.publishedAt.toISOString()}`);
+      console.log(`cases index: ${r.manifest.casesIndex} (${r.casesDocuments} documents = US events)`);
+      console.log(
+        r.manifest.passagesIndex === null
+          ? 'passages index: none (keyword-only; AI routes stay off until a passages index is published)'
+          : `passages index: ${r.manifest.passagesIndex} (${r.passagesDocuments} documents)`,
+      );
+    } catch (err) {
+      if (!(err instanceof PublishRefusedError)) throw err;
+      console.error(err.message);
+      return 1;
+    } finally {
+      await es.close();
+    }
+    return 0;
   }
   if (command === 'generations') {
     parseArgs({ args: rest, options: {}, strict: true });

@@ -1,0 +1,151 @@
+import { describe, expect, it } from 'vitest';
+import { SearchRequestSchema } from '../../shared/contracts/search.js';
+import { contentSecurityPolicy, securityHeaders } from '../../server/http/security-headers.js';
+import { buildSearchBody, parseQuery, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
+import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
+
+const request = (q: Record<string, string>) => SearchRequestSchema.parse(q);
+
+describe('query text', () => {
+  it('splits quoted phrases from words and drops stray quotes', () => {
+    expect(parseQuery('carb "loss of engine power" icing')).toEqual({ words: 'carb icing', phrases: ['loss of engine power'] });
+    expect(parseQuery('"unbalanced quote')).toEqual({ words: 'unbalanced quote', phrases: [] });
+    expect(parseQuery('"" "  " word')).toEqual({ words: 'word', phrases: [] });
+  });
+
+  it('keeps at most eight phrases; the rest are words', () => {
+    const q = Array.from({ length: 10 }, (_, i) => `"p${i} x"`).join(' ');
+    const parsed = parseQuery(q);
+    expect(parsed.phrases).toHaveLength(8);
+    expect(parsed.words).toBe('p8 x p9 x');
+  });
+
+  it('builds match clauses only: Lucene syntax stays text', () => {
+    const query = textQuery('carb* AND (icing "stall spin" title:x /re.+/ ~2 \\', ['probable_cause', 'analysis']);
+    const json = JSON.stringify(query);
+    for (const forbidden of ['query_string', 'simple_query_string', 'wildcard', 'regexp', 'script', 'fuzzy', 'prefix']) {
+      expect(json).not.toContain(forbidden);
+    }
+    expect(query).toEqual({
+      bool: {
+        must: [
+          {
+            multi_match: {
+              query: 'carb* AND (icing title:x /re.+/ ~2 \\',
+              fields: ['probable_cause', 'analysis'],
+              type: 'cross_fields',
+              operator: 'and',
+              zero_terms_query: 'all',
+            },
+          },
+          {
+            bool: {
+              should: [
+                { match_phrase: { probable_cause: { query: 'stall spin', zero_terms_query: 'all' } } },
+                { match_phrase: { analysis: { query: 'stall spin', zero_terms_query: 'all' } } },
+              ],
+              minimum_should_match: 1,
+            },
+          },
+        ],
+      },
+    });
+    expect(textQuery('   ', ['factual'])).toBeNull();
+  });
+
+  it('puts every filter in post_filter and facet aggregations, never in the scored query', () => {
+    const { body } = buildSearchBody('ix', request({ q: 'carburetor icing', phase: 'landing', category: 'HELI', injury: 'FATL' }));
+    expect(JSON.stringify(body.query)).not.toContain('landing');
+    expect(JSON.stringify(body.post_filter)).toContain('landing');
+    // Aircraft facets are one nested clause: one aircraft must be a helicopter in landing.
+    expect(JSON.stringify(body.post_filter)).toContain(
+      JSON.stringify({
+        nested: {
+          path: 'aircraft',
+          query: { bool: { filter: [{ terms: { 'aircraft.defining_phase_group': ['landing'] } }, { terms: { 'aircraft.category': ['HELI'] } }] } },
+        },
+      }),
+    );
+    // The phase facet's own aggregation ignores the phase selection but keeps the category inside the nested filter.
+    const phaseAgg = JSON.stringify(body.aggs?.facet_phase);
+    expect(phaseAgg).not.toContain('"landing"');
+    expect(phaseAgg).toContain('"HELI"');
+    expect(body.highlight?.fields).toHaveProperty('probable_cause');
+    expect(body._source).toBe(false);
+  });
+
+  it('asks for probable-cause previews and no highlights without a query', () => {
+    const { body } = buildSearchBody('ix', request({}));
+    expect(body.highlight).toBeUndefined();
+    expect(body._source).toEqual(['probable_cause']);
+    expect(body.sort).toEqual([{ ev_date: { order: 'desc', missing: '_last' } }, { ntsb_no: { order: 'asc' } }]);
+  });
+});
+
+describe('snippets from highlights', () => {
+  const S = '';
+  const E = '';
+
+  it('turns markers into offsets', () => {
+    expect(unmark(`a ${S}carb${E} b`)).toEqual({ text: 'a carb b', spans: [{ start: 2, end: 6 }] });
+    expect(unmark(`${S}open`)).toBeNull();
+    expect(unmark(`close${E}`)).toBeNull();
+  });
+
+  it('prefers the probable cause, merges adjacent marks and keeps the whole short cause', () => {
+    const snippet = snippetFromHighlights({
+      analysis: [`${S}carburetor${E} ${S}icing${E} and ${S}carburetor${E} again`],
+      probable_cause: [`A loss of power due to ${S}carburetor${E} ${S}icing${E}.`],
+    });
+    expect(snippet).toEqual({
+      section: 'probable_cause',
+      label: 'Probable cause',
+      text: 'A loss of power due to carburetor icing.',
+      highlights: [{ start: 23, end: 39 }],
+      truncatedStart: false,
+      truncatedEnd: false,
+    });
+  });
+
+  it('otherwise takes the section value with the most marks, windowed', () => {
+    const long = `${'word '.repeat(100)}${S}carb${E} heat ${S}carb${E}${' tail'.repeat(100)}`;
+    const snippet = snippetFromHighlights({ factual: [`${S}carb${E} once`, long], analysis: [`one ${S}carb${E}`] });
+    expect(snippet?.section).toBe('factual');
+    expect(snippet?.highlights).toHaveLength(2);
+    expect(snippet?.truncatedStart).toBe(true);
+    expect(snippet?.truncatedEnd).toBe(true);
+    const text = snippet?.text ?? '';
+    expect(snippet?.highlights.map((h) => text.slice(h.start, h.end))).toEqual(['carb', 'carb']);
+  });
+
+  it('is null when no narrative section matched', () => {
+    expect(snippetFromHighlights(undefined)).toBeNull();
+    expect(snippetFromHighlights({ findings_text: [`${S}carb${E}`] })).toBeNull();
+  });
+});
+
+describe('security headers', () => {
+  it('has a strict CSP with the theme script hash and no unsafe sources', () => {
+    const csp = contentSecurityPolicy();
+    expect(csp).toContain(`script-src 'self' '${THEME_SCRIPT_HASH}'`);
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("style-src 'self'");
+    expect(csp).toContain("img-src 'self' data:");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).not.toMatch(/unsafe-(inline|eval|hashes)/);
+  });
+
+  it('allows page styles only by nonce, never for scripts', () => {
+    const csp = contentSecurityPolicy({ styleNonce: 'AbCdEfGhIjKlMnOpQrStUvWx' });
+    expect(csp).toContain("style-src 'self' 'nonce-AbCdEfGhIjKlMnOpQrStUvWx'");
+    expect(csp).toContain(`script-src 'self' '${THEME_SCRIPT_HASH}';`);
+    expect(() => contentSecurityPolicy({ styleNonce: "x' 'unsafe-inline" })).toThrow(/invalid CSP nonce/);
+  });
+
+  it('sends HSTS only for an HTTPS origin', () => {
+    expect(securityHeaders({ hsts: false })).not.toHaveProperty('strict-transport-security');
+    expect(securityHeaders({ hsts: true })['strict-transport-security']).toBe('max-age=31536000');
+    expect(securityHeaders({ hsts: false })).toMatchObject({ 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin' });
+  });
+});

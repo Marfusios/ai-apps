@@ -4,7 +4,9 @@ Find and compare NTSB aviation investigations using their evidence, findings, an
 probable causes. For flight instructors preparing case-based lessons and safety
 analysts exploring similar events.
 
-**Status: Design.** No application server or public deployment exists yet.
+**Status: Experimental.** Keyword search, case pages and the dashboard run on the
+API server with the web client; AI briefs are not built yet and there is no public
+deployment.
 
 - [Implementation design](docs/DESIGN.md): TypeScript stack, retrieval, UI,
   authentication, cost controls, deployment, and delivery milestones.
@@ -29,8 +31,7 @@ and self-hosted Langfuse for tracing and evaluations. Custom TypeScript
 evaluators complement Vitest and other software tests. Langfuse supplies the
 developer UI; Jaeger/custom dashboard work and Promptfoo are not initial dependencies.
 
-`.env.example` is a proposed configuration contract, not a working
-runtime configuration. Setup/run commands will arrive with implementation.
+`.env.example` lists every configuration variable with empty or default values.
 Machine-specific connections belong in ignored local files.
 
 Documentation checks run from the repository root:
@@ -205,9 +206,12 @@ pnpm worker fail-stale-runs --older-than-minutes <n> # close runs left running b
   If the generation changed meanwhile, nothing is recorded and the command reports
   a conflict. Snapshot-specific expectations live in `worker/ingest/verify-profiles/`
   and apply automatically to the archive whose hash they name.
-- **Manifests.** `publishManifest` (called once both search indices of a generation
-  exist) activates that generation in one transaction; at most one manifest is
-  active, and the API reads it through `getActiveManifest`. Publishing, including a
+- **Manifests.** `publishManifest` (`pnpm worker publish`, see
+  [API server](#api-server)) activates a generation and its indices in one
+  transaction; at most one manifest is active, and the API reads it through
+  `getActiveManifest`. The passages index may be null: a keyword-only manifest
+  serves search, case pages and the dashboard, and AI routes stay off until a
+  manifest names a passages index (migration 0011). Publishing, including a
   rollback to a retired generation, requires the generation's latest verification
   to be successful and made by the current verifier version (`VERIFIER_VERSION`).
 - **Retention.** `pruneGenerations` keeps the last two published generations by
@@ -246,7 +250,7 @@ pnpm worker index cleanup-builds --older-than <hours>
   request, it deletes that index: the only index the system deletes on its own.
 - **Alias.** `<prefix>-cases` means "the cases index built last", for operators.
   The API never reads it: it uses the index names of the active `dataset_manifests`
-  row, published separately once the passages index of the same generation exists.
+  row, published separately with `pnpm worker publish`.
   Switches are serialized per alias with a PostgreSQL advisory lock. Under it, a
   build refuses to publish if its pin has gone, appends a `pending` row to
   `index_switch_attempts`, and sends one `_aliases` request (no client retries) that
@@ -327,6 +331,7 @@ WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/moc
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
+pnpm test:e2e:real    # Playwright against the real API server and the fixture index
 ```
 
 ### API contracts and the mock API
@@ -365,6 +370,105 @@ from the `@fontsource` packages; the build writes their SIL OFL notices to
 user picks Day or Night, and the choice is kept in `localStorage`. A small inline
 script in `web/index.html` applies it before first paint; its CSP hash is in
 `web/src/csp-hashes.ts`, and the build fails if the two disagree.
+
+### API server
+
+```sh
+pnpm dev:server       # the API on HOST:PORT (default 127.0.0.1:3000), restarted on change
+pnpm dev:web          # the web client; /api is proxied to the API server
+pnpm worker publish --generation <id> --cases-index <name> [--passages-index <name>]
+```
+
+`server/main.ts` starts `buildApp(deps)` (`server/app.ts`): Fastify 5 with
+`trustProxy: false`, serving the API and the built web client (`dist/web`, with an
+SPA fallback) on one origin. It reads configuration like the worker (`AVIATION_ENV_FILES`,
+otherwise `.env.local`), connects as `aviation_app` (`DATABASE_URL`) and reads
+Elasticsearch with `ELASTICSEARCH_READ_API_KEY` only. With `APP_ENV=live` it refuses to
+start unless `TRUSTED_PROXY_CIDRS` is set (tunnel mode). The API answers 503 until
+a dataset is published: load, verify and index a generation, then `pnpm worker
+publish` it (for the local `aviation_dev`, the fixture corpus is enough).
+
+| Endpoint | Response | Caching |
+| --- | --- | --- |
+| `GET /api/health` | `{status, database, search}` states only; 200, or 503 when either check fails | `no-store`; not rate limited |
+| `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage | `public, max-age=300`, ETag |
+| `GET /api/search` | `SearchResponse` | `public, max-age=60`, keyed by the full URL |
+| `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
+| `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
+
+Every response is validated against its contract before it is sent. ETags are the
+dataset revision plus a hash of the body, and a matching `If-None-Match` gets 304.
+Search uses a short public cache rather than `no-store`: results change only when a
+new manifest is published, and the canonical query string makes equal searches share
+an entry. Errors are `ErrorResponse` bodies with fixed messages and `no-store`; a
+missing index or an unreachable database or search engine is a 503, never a 404 or
+an internal message. The log has one line per API request (method, route, status,
+duration), without client addresses or query strings.
+
+- **Dataset pinning (A6).** Each request resolves the active `dataset_manifests` row
+  (reused for 5 seconds) and reads only that generation and its cases index, never
+  the alias. Before serving a manifest the server checks the index `_meta` (same
+  generation, `CASES_INDEX_VERSION` and mapping fingerprint) and otherwise answers
+  503. The dataset revision is `g<generation>-<index version>-<8 hex of the index
+  names>`. The snapshot date is the newest source change (`lchg_date`) in the
+  generation, i.e. the date the data is current to; the archive's own date is not
+  recorded.
+- **Publishing.** `pnpm worker publish` checks that the cases index is a concrete
+  index (not an alias) built for that generation with the current version and
+  fingerprint, and that it holds exactly the generation's US events; a passages index,
+  when given, must name the same generation and not be empty. It then calls
+  `publishManifest`, which also requires the generation's current verification.
+- **Keyword search** (`server/search/keyword.ts`, `filters.ts`, `facets.ts`). The
+  words of `q` must all occur in the report: one `multi_match` (`cross_fields`,
+  operator `and`) over `probable_cause`, `analysis`, `factual` and `findings_text`
+  with the index's search analyzer (synonyms, negations kept). Each "quoted phrase"
+  (up to 8) is a `match_phrase` within one section. No `query_string`, wildcard,
+  regular expression or script is ever built, so Lucene syntax is plain text.
+  "Mentioned in the probable cause" applies the same clauses to `probable_cause`.
+  The query carries only the text; filters are a `post_filter`, and facet counts,
+  the `mentionedIn` totals, the year chart, the multi-aircraft count and the "remove
+  one filter" totals are filter aggregations of one request. Facets count distinct
+  events and are disjunctive. Aircraft facets (phase, category, engine, operation,
+  purpose) form one `nested` clause, so one aircraft must match all of them, and
+  count with `reverse_nested`; phase is that aircraft's defining-event phase group.
+  An aircraft with no engine type recorded is the engine facet's blank. Codes the
+  snapshot uses but the data dictionary does not define (state `OF`, category
+  `RCKT`, engine `HR` and `LR`) are selectable and labelled with the raw code; a
+  value outside the vocabulary is left out of the buckets and logged once. Rows come
+  from PostgreSQL for the page's case numbers. Snippets come from the section
+  highlights (private-use markers turned into offsets): the probable cause when the
+  words match there, otherwise the section value with the most marks
+  (`shared/snippet.ts`, shared with the mock API).
+- **Dashboard** (`server/search/dashboard.ts`). Bars are the facet counts of the
+  cohort's empty search, from the same code, so a bar opened in Explore shows its
+  count. METAR coverage and coordinates come from PostgreSQL for the same generation;
+  points are projected to the 1000×637 lower-48 frame on the server, and Alaska,
+  Hawaii, territories and waters count as outside the frame.
+- **Network identity** (`server/http/network-identity.ts`). Without trusted proxies
+  the bucket key is the socket address. With `TRUSTED_PROXY_CIDRS` (tunnel mode) only
+  peers inside those networks are served (403 otherwise, static files included), and
+  the API requires one valid `CF-Connecting-IP` from them (400 when missing or
+  invalid); nothing falls back to a shared bucket. IPv4-mapped addresses are
+  unwrapped and IPv6 is reduced to its /64. The container's own health check over
+  loopback is the one exception.
+- **Rate limit.** 60 API requests a minute per network identity (an in-memory token
+  bucket); the 61st gets 429 with `Retry-After` and `retryAfter` in the body.
+- **Security headers** (`server/http/security-headers.ts`). `default-src 'self'`;
+  `script-src 'self'` plus the hash of the inline theme script; `style-src 'self'`;
+  `img-src 'self' data:`; `connect-src 'self'`; `frame-ancestors 'none'`; no
+  `unsafe-inline` or `unsafe-eval`. The dialogs' scroll lock (Radix) inserts a
+  `<style>` element with computed values, so each HTML page gets a fresh style nonce
+  in its CSP and in `<meta name="csp-nonce">`, which `web/src/csp-nonce.ts` hands to
+  that library; scripts never accept it. Zod runs without compiled parsers
+  (`web/src/zod-config.ts`), which would otherwise probe `new Function`. Also
+  `X-Content-Type-Options`, `Referrer-Policy: same-origin`, `Permissions-Policy`,
+  `X-Frame-Options`, and HSTS when `APP_URL` is HTTPS.
+
+`tests/integration/api-search.test.ts` runs the API against the fixture corpus
+(`fixtures/ntsb` and `fixtures/ntsb-ui`) published as the active dataset of
+`aviation_test`. `pnpm test:e2e:real` builds the web client and starts the real server
+on that dataset (`tests/e2e-real/server.ts`, port `E2E_REAL_PORT`, default 5181). Both
+reset `aviation_test`'s corpus, so do not run them at the same time.
 
 ### Language-model provider
 
@@ -505,8 +609,6 @@ pnpm app:ps               # this environment's containers
 pnpm app:down
 ```
 
-The API server entry (`server/main.ts`) is not built yet, so `app:up` stops with a
-message until it exists; the image and the tools already work. The
-[runbook](docs/RUNBOOK.md) covers provisioning, the role model, each container's
+The [runbook](docs/RUNBOOK.md) covers provisioning, the role model, each container's
 credentials, the networks, tunnel and tracing modes, ingestion and the
 local-services mode.

@@ -72,7 +72,22 @@ export const DEFAULT_COMPLETION: readonly CompletionFacetValue[] = ['completed_w
 /** `completion=any` turns the completion filter off (every US record). */
 export const ANY_COMPLETION = 'any';
 
-const codes = (vocabulary: Vocabulary): string[] => [...Object.keys(vocabulary), BLANK];
+const codes = (vocabulary: Vocabulary, undefinedCodes: readonly string[] = []): string[] => [
+  ...Object.keys(vocabulary),
+  ...undefinedCodes,
+  BLANK,
+];
+
+/**
+ * Codes the 2026-10-16 snapshot uses that the data dictionary does not define. They
+ * are selectable so every bucket the API shows can be filtered; their label is the
+ * raw code. The API leaves out (and logs) values outside `FACET_VALUES`.
+ */
+export const UNDEFINED_OBSERVED_CODES = {
+  state: ['OF'],
+  category: ['RCKT'],
+  engine: ['HR', 'LR'],
+} as const;
 
 /** Allowed values per facet. A value outside these is a 400. */
 export const FACET_VALUES = {
@@ -81,11 +96,11 @@ export const FACET_VALUES = {
   injury: ['FATL', 'SERS', 'MINR', 'NONE', 'UNK', BLANK],
   conditions: ['VMC', 'IMC', 'UNK', BLANK],
   light: ['DAYL', 'DAWN', 'DUSK', 'NITE', 'NDRK', 'NBRT', 'NR', BLANK],
-  category: codes(AIRCRAFT_CATEGORY),
-  engine: codes(ENGINE_TYPE),
+  category: codes(AIRCRAFT_CATEGORY, UNDEFINED_OBSERVED_CODES.category),
+  engine: codes(ENGINE_TYPE, UNDEFINED_OBSERVED_CODES.engine),
   far_part: codes(FAR_PART),
   purpose: codes(FLIGHT_PURPOSE),
-  state: codes(US_STATE),
+  state: codes(US_STATE, UNDEFINED_OBSERVED_CODES.state),
 } as const satisfies Record<FacetKey, readonly string[]>;
 
 export const FACET_TITLE: Readonly<Record<FacetKey, string>> = {

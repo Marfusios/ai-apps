@@ -29,6 +29,7 @@ const envSchema = z.object({
     .default('')
     .refine((v) => listOf(v).every(isCidr), 'expected comma-separated CIDRs')
     .transform(listOf),
+  HOST: str('127.0.0.1').refine((v) => isIP(v) !== 0 || v === 'localhost', 'expected an IP address or localhost'),
   PORT: int(3000).pipe(z.number().min(0).max(65535)),
   DATABASE_URL: str(),
   DATABASE_MIGRATOR_URL: str(),
@@ -97,6 +98,8 @@ export interface AppConfig {
    * the list is set (tunnel mode), requests from any other peer are rejected.
    */
   trustedProxyCidrs: string[];
+  /** Listen address of the HTTP server: loopback by default, 0.0.0.0 in the container. */
+  host: string;
   port: number;
   databaseUrl?: string;
   databaseMigratorUrl?: string;
@@ -199,6 +202,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     appEnv: e.APP_ENV,
     appUrl: e.APP_URL,
     trustedProxyCidrs: e.TRUSTED_PROXY_CIDRS,
+    host: e.HOST,
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
     databaseMigratorUrl: e.DATABASE_MIGRATOR_URL,

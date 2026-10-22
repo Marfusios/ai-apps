@@ -217,9 +217,6 @@ function main(): number {
   const plan = planCompose(command, args, processEnv, fileEnvs);
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env, APP_ENV: plan.appEnv };
-  if (command === 'app-up' && !existsSync(resolve(APP_DIR, 'server/main.ts'))) {
-    throw new UsageError('server/main.ts (the HTTP entry) does not exist yet, so the app container cannot start; pnpm ingest works.');
-  }
   if (command === 'ingest') {
     // Reads data/ read-only as the host user that owns it; writes reports to data/reports/<env>.
     const dataDir = resolve(APP_DIR, processEnv.AVIATION_DATA_DIR ?? fileEnvs.find((f) => f.AVIATION_DATA_DIR)?.AVIATION_DATA_DIR ?? 'data');

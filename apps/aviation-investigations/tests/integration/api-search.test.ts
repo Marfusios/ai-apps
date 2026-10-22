@@ -1,0 +1,575 @@
+/**
+ * The HTTP API against the fixture corpus in the local `test` environment: both
+ * fixture sets loaded into aviation_test, verified, indexed under this run's own
+ * prefix and published as a keyword-only manifest (tests/support/api-dataset.ts).
+ */
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Client } from '@elastic/elasticsearch';
+import { sql } from 'drizzle-orm';
+import type { FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildApp, type AppDeps } from '../../server/app.js';
+import { closeDb, type Db } from '../../server/db/client.js';
+import { getActiveManifest } from '../../server/db/generations.js';
+import { CaseDetailSchema, type CaseDetail } from '../../shared/contracts/cases.js';
+import { ErrorResponseSchema } from '../../shared/contracts/common.js';
+import { ConfigResponseSchema } from '../../shared/contracts/config.js';
+import { DashboardResponseSchema, type DashboardResponse } from '../../shared/contracts/dashboard.js';
+import {
+  FACET_KEYS,
+  MAX_QUERY_LENGTH,
+  SearchRequestSchema,
+  SearchResponseSchema,
+  searchRequestToParams,
+  type FacetKey,
+  type SearchResponse,
+} from '../../shared/contracts/search.js';
+import { HOME_EXAMPLES } from '../../shared/examples.js';
+import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
+import { CASES_MAPPING, CASES_SETTINGS, CASES_INDEX_VERSION, casesIndexFingerprint } from '../../worker/index/cases-index.js';
+import { PublishRefusedError, publishGeneration } from '../../worker/index/publish.js';
+import { normalizeCorpus } from '../../worker/ingest/normalize.js';
+import { SAMPLE_SEARCHES, buildMockCorpus, readFixtureTables } from '../../scripts/mock-api/build.js';
+import { searchCorpus } from '../../web/mock/engine.js';
+import { deleteIndices, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
+import { APP_DIR, FIXTURES_DIR, UI_FIXTURES_DIR, readCsv } from '../support/extract-dir.js';
+import { testDb, testEs, testEsReader } from './helpers.js';
+
+const RUN = randomBytes(4).toString('hex');
+const PREFIX = `aviation-test-api${RUN}`;
+const LOCAL = '127.0.0.1';
+
+let ingest: Db;
+let appDb: Db;
+let es: Client;
+let reader: Client;
+let dataset: FixtureDataset;
+let app: FastifyInstance;
+let webRoot: string;
+const apps: FastifyInstance[] = [];
+
+const fixtureEvIds = [FIXTURES_DIR, UI_FIXTURES_DIR].flatMap((d) => readCsv(join(d, 'events.csv')).map((r) => r.ev_id as string));
+
+function makeApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
+  const built = buildApp({
+    config: { appUrl: 'http://localhost:3000', trustedProxyCidrs: [] },
+    db: appDb,
+    es: reader,
+    webRoot,
+    rateLimit: { limit: 100_000, windowMs: 60_000 },
+    ...overrides,
+  });
+  apps.push(built);
+  return built;
+}
+
+interface Got {
+  status: number;
+  headers: Record<string, string | string[] | number | undefined>;
+  body: string;
+  json: unknown;
+}
+
+async function get(url: string, opts: { app?: FastifyInstance; from?: string; headers?: Record<string, string> } = {}): Promise<Got> {
+  const r = await (opts.app ?? app).inject({ method: 'GET', url, remoteAddress: opts.from ?? LOCAL, headers: opts.headers ?? {} });
+  let json: unknown = null;
+  try {
+    json = JSON.parse(r.body);
+  } catch {
+    json = null;
+  }
+  return { status: r.statusCode, headers: r.headers, body: r.body, json };
+}
+
+async function search(params: Record<string, string>): Promise<SearchResponse> {
+  const r = await get(`/api/search?${new URLSearchParams(params).toString()}`);
+  expect(r.status, r.body).toBe(200);
+  return SearchResponseSchema.parse(r.json);
+}
+
+async function dashboard(cohort: 'default' | 'all'): Promise<DashboardResponse> {
+  const r = await get(`/api/dashboard?cohort=${cohort}`);
+  expect(r.status, r.body).toBe(200);
+  return DashboardResponseSchema.parse(r.json);
+}
+
+const counts = (buckets: readonly { value: string; count: number }[]): Record<string, number> =>
+  Object.fromEntries(buckets.filter((b) => b.count > 0).map((b) => [b.value, b.count]));
+
+async function sqlCounts(query: ReturnType<typeof sql>): Promise<Record<string, number>> {
+  const rows = (await appDb.execute(query)).rows as { v: string; n: number }[];
+  return Object.fromEntries(rows.map((r) => [r.v, Number(r.n)]));
+}
+
+beforeAll(async () => {
+  ingest = testDb('ingest');
+  appDb = testDb('app');
+  es = testEs();
+  reader = testEsReader();
+  dataset = await publishFixtureDataset(ingest, es, PREFIX);
+  webRoot = mkdtempSync(join(tmpdir(), 'aviation-api-web-'));
+  mkdirSync(join(webRoot, 'assets'));
+  writeFileSync(join(webRoot, 'index.html'), '<!doctype html><html><head><title>Aviation Casebook</title></head><body><div id="root"></div></body></html>');
+  writeFileSync(join(webRoot, 'assets', 'app-0123abcd.js'), 'console.log(1);\n');
+  app = makeApp();
+}, 180_000);
+
+afterAll(async () => {
+  for (const a of apps) await a.close();
+  if (es) await deleteIndices(es, PREFIX);
+  if (ingest) await closeDb(ingest);
+  if (appDb) await closeDb(appDb);
+  if (webRoot) rmSync(webRoot, { recursive: true, force: true });
+});
+
+describe('manifest', () => {
+  it('is keyword-only (no passages index) and names this run’s cases index', async () => {
+    const active = await getActiveManifest(appDb);
+    expect(active).toMatchObject({ generationId: dataset.generationId, casesIndex: dataset.casesIndex, passagesIndex: null });
+  });
+
+  it('serves from the manifest’s index, never the alias', async () => {
+    await es.indices.deleteAlias({ index: dataset.casesIndex, name: `${PREFIX}-cases` });
+    expect((await search({ q: 'carburetor icing' })).total).toBe(7);
+  });
+
+  it('publish refuses an alias, another generation’s index and a count mismatch', async () => {
+    const other = `${PREFIX}-cases-other`;
+    const meta = (generation: number) => ({ index_version: CASES_INDEX_VERSION, fingerprint: casesIndexFingerprint(), generation_id: generation });
+    await es.indices.create({ index: other, settings: CASES_SETTINGS, mappings: { ...CASES_MAPPING, _meta: meta(dataset.generationId + 100) } });
+    await es.indices.putAlias({ index: dataset.casesIndex, name: `${PREFIX}-pointer` });
+    const publish = (casesIndex: string, passagesIndex: string | null = null) =>
+      publishGeneration(es, ingest, { generationId: dataset.generationId, casesIndex, passagesIndex });
+    await expect(publish(`${PREFIX}-pointer`)).rejects.toThrow(/not a concrete index/);
+    await expect(publish(other)).rejects.toThrow(/built for generation/);
+    await expect(publish(`${PREFIX}-missing`)).rejects.toThrow(/does not exist/);
+    await es.indices.putMapping({ index: other, _meta: meta(dataset.generationId) });
+    await expect(publish(other)).rejects.toThrow(/holds 0 documents/);
+    await expect(publish(dataset.casesIndex, other)).rejects.toThrow(PublishRefusedError);
+    // Nothing changed: the fixture manifest is still active.
+    expect((await getActiveManifest(appDb))?.casesIndex).toBe(dataset.casesIndex);
+  });
+});
+
+describe('search', () => {
+  it('q "carburetor icing" mentionedIn probable_cause on fixture returns expected ids', async () => {
+    const r = await search({ q: 'carburetor icing', mentionedIn: 'probable_cause' });
+    expect(r.rows.map((row) => row.ntsbNo)).toEqual(['ERA25LA016', 'WPR24FA190', 'WPR24LA154', 'CEN19FA009', 'ANC15LA005', 'CEN13FA030', 'CEN12LA175']);
+    for (const row of r.rows) {
+      expect(row.snippet?.section).toBe('probable_cause');
+      const marks = row.snippet?.highlights.map((h) => row.snippet?.text.slice(h.start, h.end).toLowerCase()) ?? [];
+      expect(marks.some((m) => m?.includes('carburetor'))).toBe(true);
+    }
+    // Over every record, two more mention it outside the probable cause only.
+    const all = await search({ q: 'carburetor icing', completion: 'any' });
+    expect(all.mentionedIn).toEqual({ anywhere: 9, probable_cause: 7 });
+  });
+
+  it('Lucene syntax is literal', async () => {
+    const plain = await search({ q: 'carb icing' });
+    expect((await search({ q: 'carb* AND (icing' })).total).toBe(plain.total);
+    for (const q of ['title:x OR y~2', '/re.*gex/ \\', '"unbalanced', '[1 TO 5] {x} ^2 !-+&&||', '*', '?']) {
+      const r = await get(`/api/search?q=${encodeURIComponent(q)}`);
+      expect(r.status, q).toBe(200);
+      SearchResponseSchema.parse(r.json);
+    }
+  });
+
+  it('1,501-char q is 400; 1,500 is answered', async () => {
+    const tooLong = await get(`/api/search?q=${'a'.repeat(MAX_QUERY_LENGTH + 1)}`);
+    expect(tooLong.status).toBe(400);
+    const body = ErrorResponseSchema.parse(tooLong.json);
+    expect(body).toMatchObject({ error: 'bad_request' });
+    expect(body.issues?.[0]?.path).toBe('q');
+    expect(tooLong.headers['cache-control']).toBe('no-store');
+    const words = Array.from({ length: 400 }, (_, i) => `w${i}`).join(' ').slice(0, MAX_QUERY_LENGTH);
+    expect((await get(`/api/search?q=${encodeURIComponent(words)}`)).status).toBe(200);
+    const phrases = Array.from({ length: 200 }, (_, i) => `"p${i} q"`).join(' ').slice(0, MAX_QUERY_LENGTH);
+    expect((await get(`/api/search?q=${encodeURIComponent(phrases)}`)).status).toBe(200);
+  });
+
+  it('unknown facet value is 400', async () => {
+    for (const query of ['phase=cruising', 'injury=XYZ', 'state=ZZ', 'completion=done', 'sort=best', 'page=51', 'pageSize=0', 'yearFrom=2020&yearTo=2010']) {
+      const r = await get(`/api/search?${query}`);
+      expect(r.status, query).toBe(400);
+      ErrorResponseSchema.parse(r.json);
+    }
+    // Unknown parameters are ignored (the web URL also carries case, cases, brief, step).
+    expect((await get('/api/search?case=DFW08TA066&brief=x')).status).toBe(200);
+  });
+
+  it('disjunctive phase counts ignore phase selection', async () => {
+    const base = await search({ q: 'carburetor icing' });
+    const selected = await search({ q: 'carburetor icing', phase: 'initial_climb' });
+    expect(selected.total).toBe(3);
+    expect(counts(selected.facets.phase)).toEqual(counts(base.facets.phase));
+    expect(counts(base.facets.phase)).toMatchObject({ initial_climb: 3, approach: 2 });
+    // Other facets narrow to the selection; each phase count is that phase's total.
+    expect(selected.facets.injury.reduce((n, b) => n + b.count, 0)).toBe(3);
+    for (const bucket of base.facets.phase) {
+      expect((await search({ q: 'carburetor icing', phase: bucket.value })).total, bucket.value).toBe(bucket.count);
+    }
+  });
+
+  it('home examples return results on the index', async () => {
+    for (const example of HOME_EXAMPLES) {
+      const r = await search({ q: example });
+      expect(r.total, example).toBeGreaterThan(0);
+      expect(r.rows[0]?.snippet?.highlights.length, example).toBeGreaterThan(0);
+    }
+  });
+
+  it('answers the mock API’s sample searches with the same cases', async () => {
+    const corpus = buildMockCorpus(normalizeCorpus(await readFixtureTables(APP_DIR)));
+    expect(corpus.docs.length).toBe((await search({ completion: 'any' })).total);
+    for (const [name, query] of Object.entries(SAMPLE_SEARCHES)) {
+      const real = await search(query);
+      const mock = searchCorpus(corpus, SearchRequestSchema.parse(query));
+      expect(real.rows.map((r) => r.ntsbNo), name).toEqual(mock.rows.map((r) => r.ntsbNo));
+      expect(real.total, name).toBe(mock.total);
+      expect(real.relaxations, name).toEqual(mock.relaxations);
+      // Rows are the same projection (snippets aside: the analyzer is real here).
+      expect(real.rows.map(({ snippet: _s, ...row }) => row), name).toEqual(mock.rows.map(({ snippet: _s, ...row }) => row));
+    }
+  });
+
+  it('no results lists "remove one filter" totals', async () => {
+    const r = await search({ q: 'carburetor icing', phase: 'landing', injury: 'FATL' });
+    expect(r.total).toBe(0);
+    expect(r.relaxations).toEqual([
+      { drop: 'completion', count: 0 },
+      { drop: 'phase', count: 3 },
+      { drop: 'injury', count: 0 },
+    ]);
+    // Selected values stay listed with a zero count.
+    expect(r.facets.phase.find((b) => b.value === 'landing')).toMatchObject({ count: 0 });
+  });
+
+  it('pages, sorts and returns the year chart and multi-aircraft count', async () => {
+    const first = await search({ completion: 'any', pageSize: '5' });
+    const second = await search({ completion: 'any', pageSize: '5', page: '2' });
+    expect(second.rows.map((r) => r.ntsbNo)).not.toContain(first.rows[0]?.ntsbNo);
+    const dates = (await search({ completion: 'any', sort: 'oldest', pageSize: '50' })).rows.map((r) => r.date ?? '');
+    expect(dates).toEqual([...dates].sort());
+    const all = await search({ completion: 'any', pageSize: '50' });
+    expect(all.years[0]?.year).toBe(2008);
+    expect(all.years.reduce((n, y) => n + y.completed + y.other, 0)).toBe(all.total);
+    expect(all.multiAircraft).toBe(3);
+    expect(all.rows.every((r) => r.snippet === null || (r.snippet.section === 'probable_cause' && r.snippet.highlights.length === 0))).toBe(true);
+  });
+
+  it('facet counts equal count(distinct) in SQL for the fixture generation', async () => {
+    const g = dataset.generationId;
+    const r = await search({ completion: 'any' });
+    const us = sql`c.generation_id = ${g} and c.is_us`;
+    const event = (column: string) =>
+      sqlCounts(sql`select coalesce(${sql.raw(`c.${column}`)}, 'blank') as v, count(*)::int as n from cases c where ${us} group by 1`);
+    const aircraft = (column: string, where = sql`true`) =>
+      sqlCounts(sql`select coalesce(${sql.raw(`a.${column}`)}, 'blank') as v, count(distinct a.ntsb_no)::int as n
+        from case_aircraft a join cases c on c.generation_id = a.generation_id and c.ntsb_no = a.ntsb_no
+        where ${us} and ${where} group by 1`);
+    const expected: Record<FacetKey, Record<string, number>> = {
+      completion: await sqlCounts(sql`select case when c.completion_class = 'completed'
+          then case when c.has_probable_cause then 'completed_with_cause' else 'completed_without_cause' end
+          else c.completion_class end as v, count(*)::int as n from cases c where ${us} group by 1`),
+      injury: await event('highest_injury'),
+      conditions: await event('wx_cond_basic'),
+      light: await event('light_cond'),
+      state: await event('state'),
+      phase: await aircraft('defining_phase_group'),
+      category: await aircraft('category'),
+      far_part: await aircraft('far_part'),
+      purpose: await aircraft('purpose'),
+      engine: await sqlCounts(sql`select coalesce(e.eng_type, 'blank') as v, count(distinct a.ntsb_no)::int as n
+        from case_aircraft a join cases c on c.generation_id = a.generation_id and c.ntsb_no = a.ntsb_no
+        left join case_engines e on e.generation_id = a.generation_id and e.ntsb_no = a.ntsb_no
+          and e.aircraft_key = a.aircraft_key and e.eng_type is not null
+        where ${us} group by 1`),
+    };
+    for (const facet of FACET_KEYS) expect(counts(r.facets[facet]), facet).toEqual(expected[facet]);
+    // Aircraft facets combine per aircraft: phase counts among airplanes only.
+    const airplanes = await search({ completion: 'any', category: 'AIR' });
+    expect(counts(airplanes.facets.phase)).toEqual(await aircraft('defining_phase_group', sql`a.category = 'AIR'`));
+    // Overlap: aircraft buckets can sum to more than the total in multi-aircraft events.
+    expect(r.facets.category.reduce((n, b) => n + b.count, 0)).toBeGreaterThan(r.total);
+  });
+});
+
+describe('dashboard', () => {
+  it('a bar count equals the Explore total for the same filter, in both cohorts', async () => {
+    for (const cohort of ['default', 'all'] as const) {
+      const d = await dashboard(cohort);
+      const scope: Record<string, string> = cohort === 'all' ? { completion: 'any' } : {};
+      expect((await search(scope)).total).toBe(d.total);
+      for (const bar of [...d.phase, ...d.injury, ...d.weather, ...d.category]) {
+        const r = await search({ ...scope, [bar.facet]: bar.value });
+        expect(r.total, `${cohort} ${bar.facet}=${bar.value}`).toBe(bar.count);
+      }
+      for (const y of d.years.filter((x) => x.completed + x.other > 0)) {
+        const r = await search({ ...scope, yearFrom: String(y.year), yearTo: String(y.year) });
+        expect(r.total, `${cohort} ${y.year}`).toBe(cohort === 'all' ? y.completed + y.other : y.completed);
+      }
+    }
+  });
+
+  it('covers the cohort and projects points into the lower-48 frame', async () => {
+    const d = await dashboard('all');
+    const g = dataset.generationId;
+    const [row] = (
+      await appDb.execute(sql`select count(*)::int as total, count(metar)::int as metar, count(latitude)::int as located,
+        count(*) filter (where has_probable_cause)::int as cause from cases where generation_id = ${g} and is_us`)
+    ).rows as { total: number; metar: number; located: number; cause: number }[];
+    expect(d.total).toBe(row?.total);
+    expect(d.coverage).toEqual({
+      probableCause: { count: row?.cause, of: row?.total },
+      metar: { count: row?.metar, of: row?.total },
+      coordinates: { count: row?.located, of: row?.total },
+      multiAircraft: 3,
+    });
+    expect(d.map.points.length + d.map.outsideFrame + d.map.withoutCoordinates).toBe(d.total);
+    expect(d.map.outsideFrame).toBeGreaterThanOrEqual(1); // the Alaska fixture
+    const again = await get('/api/dashboard?cohort=all');
+    expect(again.headers['cache-control']).toBe('public, max-age=300');
+    expect(String(again.headers.etag)).toContain(d.dataset.revision);
+  });
+});
+
+describe('cases', () => {
+  it('equal the reference projection of the fixtures, with resolved report links', async () => {
+    const corpus = buildMockCorpus(normalizeCorpus(await readFixtureTables(APP_DIR)));
+    const config = ConfigResponseSchema.parse((await get('/api/config')).json);
+    for (const [ntsbNo, reference] of Object.entries(corpus.cases)) {
+      const r = await get(`/api/cases/${ntsbNo}`);
+      expect(r.status, ntsbNo).toBe(200);
+      const detail = CaseDetailSchema.parse(r.json);
+      const expected: CaseDetail = {
+        ...reference,
+        provenance: { ...reference.provenance, snapshotDate: config.snapshotDate, datasetRevision: config.datasetRevision },
+        report: detail.report,
+      };
+      expect(detail, ntsbNo).toEqual(expected);
+    }
+    const seeded = CaseDetailSchema.parse((await get('/api/cases/DFW08TA066')).json);
+    expect(seeded.report).toEqual({
+      kind: 'report',
+      url: 'https://data.ntsb.gov/carol-repgen/api/Aviation/ReportMain/GenerateNewestReport/67493/pdf',
+      label: 'NTSB report',
+      capturedOn: '2026-10-16',
+    });
+    expect(CaseDetailSchema.parse((await get('/api/cases/SEA08LA057')).json).report.kind).toBe('search');
+  });
+
+  it('case endpoint never contains AI fields or ev_id', async () => {
+    // `ai` followed by a capital or underscore (aiSummary, ai_note), never "aircraft".
+    const forbidden = /^(ev_?id|evId|EV_ID|ai[A-Z_]\w*|AI\w*|verdict|why|brief\w*|summary|citations?|passages?|interpretations?)$/;
+    const keys = (value: unknown, out: string[] = []): string[] => {
+      if (Array.isArray(value)) for (const v of value) keys(v, out);
+      else if (value && typeof value === 'object') {
+        for (const [k, v] of Object.entries(value)) {
+          out.push(k);
+          keys(v, out);
+        }
+      }
+      return out;
+    };
+    for (const ntsbNo of ['DFW08TA066', 'SEA08LA057', 'DCA25MA108', 'ENG08WA029', 'CEN12LA175']) {
+      const r = await get(`/api/cases/${ntsbNo}`);
+      expect(r.status, ntsbNo).toBe(200);
+      expect(keys(r.json).filter((k) => forbidden.test(k)), ntsbNo).toEqual([]);
+      for (const evId of fixtureEvIds) expect(r.body.includes(evId), `${ntsbNo} contains an ev_id`).toBe(false);
+    }
+    const s = await get('/api/search?completion=any&pageSize=50');
+    for (const evId of fixtureEvIds) expect(s.body.includes(evId)).toBe(false);
+  });
+
+  it('is publicly cacheable with a revision ETag, 304 on match, 404 for unknown numbers', async () => {
+    const r = await get('/api/cases/DFW08TA066');
+    const config = ConfigResponseSchema.parse((await get('/api/config')).json);
+    expect(r.headers['cache-control']).toBe('public, max-age=300');
+    const etag = String(r.headers.etag);
+    expect(etag).toMatch(new RegExp(`^"${config.datasetRevision}-[0-9a-f]{16}"$`));
+    expect(config.datasetRevision).toMatch(new RegExp(`^g${dataset.generationId}-${CASES_INDEX_VERSION}-[0-9a-f]{8}$`));
+    expect((await get('/api/cases/DFW08TA066', { headers: { 'if-none-match': etag } })).status).toBe(304);
+    expect((await get('/api/cases/dfw08ta066')).status).toBe(200);
+    for (const unknown of ['ZZZ99ZZ999', 'not-a-number', '%3Cscript%3E']) {
+      const nf = await get(`/api/cases/${unknown}`);
+      expect(nf.status, unknown).toBe(404);
+      expect(ErrorResponseSchema.parse(nf.json).error).toBe('not_found');
+    }
+  });
+});
+
+describe('config and health', () => {
+  it('config reports the dataset and its coverage', async () => {
+    const r = await get('/api/config');
+    expect(r.status).toBe(200);
+    const config = ConfigResponseSchema.parse(r.json);
+    const g = dataset.generationId;
+    const [row] = (
+      await appDb.execute(sql`select count(*) filter (where answer_eligible)::int as cohort, count(*)::int as total,
+        min(ev_year) as first, max(ev_year) as last from cases where generation_id = ${g} and is_us`)
+    ).rows as { cohort: number; total: number; first: number; last: number }[];
+    expect(config).toMatchObject({
+      turnstileSiteKey: null,
+      googleEnabled: false,
+      coverage: { defaultCohort: row?.cohort, otherRecords: (row?.total ?? 0) - (row?.cohort ?? 0), yearFrom: row?.first, yearTo: row?.last, provisional: true },
+    });
+    expect(config.snapshotDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect((await search({})).dataset).toEqual({ revision: config.datasetRevision, snapshotDate: config.snapshotDate });
+  });
+
+  it('health reports reachability only', async () => {
+    const r = await get('/api/health');
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ status: 'ok', database: 'ok', search: 'ok' });
+    expect(r.headers['cache-control']).toBe('no-store');
+  });
+
+  it('errors are redacted when a dependency is down', async () => {
+    const { Client: EsClient } = await import('@elastic/elasticsearch');
+    const down = new EsClient({ node: 'http://127.0.0.1:9', maxRetries: 0, requestTimeout: 2_000 });
+    const broken = makeApp({ es: down });
+    for (const url of ['/api/search?q=carburetor', '/api/config', '/api/dashboard']) {
+      const r = await get(url, { app: broken });
+      expect(r.status, url).toBe(503);
+      expect(ErrorResponseSchema.parse(r.json)).toEqual({ error: 'unavailable', message: 'The service is temporarily unavailable. Try again shortly.' });
+      expect(r.body).not.toMatch(/127\.0\.0\.1|ECONNREFUSED|9200|stack/i);
+      expect(r.headers['cache-control']).toBe('no-store');
+    }
+    const health = await get('/api/health', { app: broken });
+    expect(health.status).toBe(503);
+    expect(health.json).toEqual({ status: 'unavailable', database: 'ok', search: 'error' });
+    await down.close();
+  });
+});
+
+describe('http', () => {
+  it('security headers present (CSP without unsafe-inline scripts)', async () => {
+    for (const url of ['/api/config', '/api/search?phase=bogus', '/api/nope', '/explore', '/assets/app-0123abcd.js', '/missing.js']) {
+      const r = await get(url, { headers: { accept: 'text/html' } });
+      const csp = String(r.headers['content-security-policy']);
+      expect(csp, url).toContain(`script-src 'self' '${THEME_SCRIPT_HASH}'`);
+      expect(csp, url).toContain("frame-ancestors 'none'");
+      expect(csp, url).not.toContain('unsafe-inline');
+      expect(r.headers['x-content-type-options'], url).toBe('nosniff');
+      expect(r.headers['referrer-policy'], url).toBe('same-origin');
+      expect(r.headers['permissions-policy'], url).toContain('camera=()');
+      expect(r.headers['strict-transport-security'], url).toBeUndefined();
+    }
+    const https = makeApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: [] } });
+    expect((await get('/api/config', { app: https })).headers['strict-transport-security']).toBe('max-age=31536000');
+  });
+
+  it('serves the web client with an SPA fallback on the same origin', async () => {
+    const asset = await get('/assets/app-0123abcd.js');
+    const home = await get('/', { headers: { accept: 'text/html' } });
+    expect(home.status).toBe(200);
+    expect(home.body).toContain('<div id="root">');
+    expect(home.headers['cache-control']).toBe('no-cache');
+    const page = await get('/explore?q=carb', { headers: { accept: 'text/html' } });
+    expect(page.status).toBe(200);
+    expect(page.body).toContain('<div id="root">');
+    expect(page.headers['cache-control']).toBe('no-cache');
+    // Each page has its own style nonce (the dialogs' scroll-lock style), in the CSP and in a meta tag.
+    const nonceOf = (r: Got) => {
+      const header = /style-src 'self' 'nonce-([A-Za-z0-9+/=]+)'/.exec(String(r.headers['content-security-policy']))?.[1];
+      const meta = /<meta name="csp-nonce" content="([^"]+)">/.exec(r.body)?.[1];
+      expect(header).toBeDefined();
+      expect(meta).toBe(header);
+      return header;
+    };
+    expect(nonceOf(page)).not.toBe(nonceOf(home));
+    expect(String(page.headers['content-security-policy'])).toMatch(/script-src 'self' 'sha256-[^']+'; style-src/);
+    expect(String(asset.headers?.['content-security-policy'] ?? '')).not.toContain('nonce');
+    expect(asset.status).toBe(200);
+    expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    expect((await get('/missing.js', { headers: { accept: 'text/html' } })).status).toBe(404);
+    const api404 = await get('/api/nope', { headers: { accept: 'text/html' } });
+    expect(api404.status).toBe(404);
+    expect(ErrorResponseSchema.parse(api404.json).error).toBe('not_found');
+  });
+
+  it('forged CF-Connecting-IP from non-connector peer rejected', async () => {
+    const tunnel = makeApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: ['203.0.113.0/28'] } });
+    for (const url of ['/api/config', '/', '/assets/app-0123abcd.js', '/api/health']) {
+      const r = await get(url, { app: tunnel, from: '192.0.2.5', headers: { 'cf-connecting-ip': '198.51.100.1', accept: 'text/html' } });
+      expect(r.status, url).toBe(403);
+      expect(r.headers['content-security-policy'], url).toBeDefined();
+    }
+    // Loopback is not the connector either, except for the container's health check.
+    expect((await get('/api/config', { app: tunnel, from: LOCAL, headers: { 'cf-connecting-ip': '198.51.100.1' } })).status).toBe(403);
+    expect((await get('/api/health', { app: tunnel, from: LOCAL })).status).toBe(200);
+  });
+
+  it('tunnel mode: a missing or invalid client address is 400 on the API, never a shared bucket', async () => {
+    const tunnel = makeApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: ['203.0.113.0/28'] }, rateLimit: { limit: 2, windowMs: 60_000 } });
+    const connector = '203.0.113.2';
+    const missing = await get('/api/config', { app: tunnel, from: connector });
+    expect(missing.status).toBe(400);
+    expect(ErrorResponseSchema.parse(missing.json).error).toBe('bad_request');
+    expect((await get('/api/config', { app: tunnel, from: connector, headers: { 'cf-connecting-ip': 'unknown' } })).status).toBe(400);
+    expect((await get('/api/config', { app: tunnel, from: connector, headers: { 'cf-connecting-ip': '198.51.100.1, 198.51.100.2' } })).status).toBe(400);
+    // Static files need no client address.
+    expect((await get('/assets/app-0123abcd.js', { app: tunnel, from: connector })).status).toBe(200);
+    // Each client has its own bucket behind the one connector.
+    const as = (ip: string) => get('/api/config', { app: tunnel, from: connector, headers: { 'cf-connecting-ip': ip } });
+    expect((await as('198.51.100.1')).status).toBe(200);
+    expect((await as('198.51.100.1')).status).toBe(200);
+    expect((await as('198.51.100.1')).status).toBe(429);
+    expect((await as('198.51.100.2')).status).toBe(200);
+    expect((await as('2001:db8:5:6::1')).status).toBe(200);
+    expect((await as('2001:db8:5:6::2')).status).toBe(200);
+    expect((await as('2001:db8:5:6:ffff::3')).status).toBe(429);
+  });
+
+  it('61st request in a minute is 429 with retryAfter', async () => {
+    const limited = makeApp({ rateLimit: { limit: 60, windowMs: 60_000 } });
+    for (let i = 0; i < 60; i++) expect((await get('/api/config', { app: limited })).status).toBe(200);
+    const r = await get('/api/config', { app: limited });
+    expect(r.status).toBe(429);
+    const body = ErrorResponseSchema.parse(r.json);
+    expect(body.error).toBe('rate_limited');
+    expect(body.retryAfter).toBeGreaterThanOrEqual(1);
+    expect(r.headers['retry-after']).toBe(String(body.retryAfter));
+    // Health checks and other clients are not limited.
+    expect((await get('/api/health', { app: limited })).status).toBe(200);
+    expect((await get('/api/config', { app: limited, from: '127.0.0.2' })).status).toBe(200);
+  });
+
+  it('every search response validates against its contract', async () => {
+    const requests: Record<string, string>[] = [
+      {},
+      { q: 'midair', completion: 'any' },
+      { q: '"loss of engine power"', mentionedIn: 'probable_cause' },
+      { category: 'HELI', phase: 'maneuvering' },
+      { state: 'blank', completion: 'any' },
+      { purpose: 'blank', engine: 'REC', light: 'NITE', conditions: 'IMC', yearFrom: '2010', yearTo: '2020', sort: 'relevance' },
+    ];
+    for (const params of requests) {
+      const canonical = searchRequestToParams(SearchRequestSchema.parse(params)).toString();
+      const r = await get(`/api/search?${canonical}`);
+      expect(r.status, canonical).toBe(200);
+      SearchResponseSchema.parse(r.json);
+      expect(r.headers['cache-control']).toBe('public, max-age=60');
+    }
+  });
+});
+
+// Last: it deletes the active cases index.
+describe('a lost index', () => {
+  it('makes the API unavailable (503), never a 404 or an internal message', async () => {
+    const fresh = makeApp();
+    expect((await get('/api/config', { app: fresh })).status).toBe(200);
+    await es.indices.delete({ index: dataset.casesIndex });
+    for (const a of [app, fresh, makeApp()]) {
+      const r = await get('/api/search?q=carburetor', { app: a });
+      expect(r.status).toBe(503);
+      expect(ErrorResponseSchema.parse(r.json).error).toBe('unavailable');
+      expect(r.body).not.toContain(dataset.casesIndex);
+    }
+    expect((await get('/api/health')).json).toMatchObject({ status: 'unavailable', search: 'error' });
+  });
+});

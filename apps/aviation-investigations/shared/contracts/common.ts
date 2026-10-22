@@ -68,5 +68,7 @@ export const ErrorResponseSchema = z.strictObject({
   message: z.string().max(500),
   /** For `bad_request`: which parameters failed. */
   issues: z.array(z.strictObject({ path: z.string().max(80), message: z.string().max(200) })).max(20).optional(),
+  /** For `rate_limited`: seconds until a request is accepted again (also the `Retry-After` header). */
+  retryAfter: z.number().int().positive().max(86_400).optional(),
 });
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

@@ -48,6 +48,5 @@ COPY --from=build /src/fixtures/report-links-seed.json ./fixtures/
 # Everything above is root-owned and read-only for the runtime user.
 USER node
 EXPOSE 3000
-# The HTTP entry (server/main.ts) arrives with the API server; until then this
-# command exits with "Cannot find module '/app/server/main.js'".
+# The HTTP entry (server/main.ts): API and web client on port 3000.
 CMD ["node", "server/main.js"]

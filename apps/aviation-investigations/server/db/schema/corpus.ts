@@ -141,7 +141,9 @@ export const datasetGenerations = pgTable(
 
 /**
  * Search indices built for a generation. At most one row is active; the API pins
- * every request to it. Flipped only by `publishManifest`, after both indices exist.
+ * every request to it. Flipped only by `publishManifest`, after the generation's
+ * indices exist. `passages_index` is null for a keyword-only manifest: search, case
+ * pages and the dashboard work, and AI routes stay off until a manifest names one.
  */
 export const datasetManifests = pgTable(
   'dataset_manifests',
@@ -150,7 +152,7 @@ export const datasetManifests = pgTable(
       .primaryKey()
       .references(() => datasetGenerations.id),
     casesIndex: text('cases_index').notNull(),
-    passagesIndex: text('passages_index').notNull(),
+    passagesIndex: text('passages_index'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     publishedAt: timestamp('published_at', { withTimezone: true, mode: 'date' }),
     active: boolean('active').notNull().default(false),

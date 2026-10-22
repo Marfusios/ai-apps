@@ -1,3 +1,6 @@
+// Must stay the first import: configures Zod before any schema is used.
+import './zod-config';
+import './csp-nonce';
 import './styles/fonts.css';
 import './styles/index.css';
 

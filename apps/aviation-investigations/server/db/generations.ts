@@ -76,7 +76,8 @@ export async function withLifecycleLock<T>(
 export interface ActiveManifest {
   generationId: number;
   casesIndex: string;
-  passagesIndex: string;
+  /** Null for a keyword-only manifest: AI routes stay off until a passages index is published. */
+  passagesIndex: string | null;
   publishedAt: Date;
   archiveSha256: string;
   mappingVersion: string;
@@ -116,15 +117,15 @@ const INDEX_NAME = /^[a-z0-9][a-z0-9._-]{0,254}$/;
  * (`publish_manifest`): the previous active generation becomes `retired`, this one
  * `published`. Requires the generation's latest verification to be ok and made by
  * the current `VERIFIER_VERSION`, also when re-publishing a retired generation
- * (rollback).
+ * (rollback). `passagesIndex` null publishes a keyword-only manifest.
  */
 export async function publishManifest(
   db: Db,
   generationId: number,
   casesIndex: string,
-  passagesIndex: string,
+  passagesIndex: string | null,
 ): Promise<ActiveManifest> {
-  for (const name of [casesIndex, passagesIndex]) {
+  for (const name of passagesIndex === null ? [casesIndex] : [casesIndex, passagesIndex]) {
     if (!INDEX_NAME.test(name)) throw new Error(`invalid index name: ${JSON.stringify(name)}`);
   }
   await call(db, sql`select publish_manifest(${generationId}, ${casesIndex}, ${passagesIndex}, ${VERIFIER_VERSION})`);
