@@ -301,7 +301,11 @@ are in the step's `meta.failure` and in its `brief step finished` log line
 every request (as the first paid end-to-end test did at scope) is visible in Langfuse
 and the logs, not only in the database. A reader's cancel is not a failure: the stage
 span and `brief.step` carry `outcome: cancelled`, with no `failure` attribute, category
-or log field.
+or log field. A server shutdown also stops a running stage: its span carries
+`outcome: shutdown` and `failure: shutdown`, and the step fails as `failure: shutdown`
+with `failureStage: pipeline` (on `brief.step`, in `meta.failure` and on the log line).
+Neither stop is an error of the stage, so its span ends with status unset; a failed
+stage's span ends with status error.
 
 `thinkingTokens` is the provider's reported reasoning share of a stage's output
 (`usage.output_tokens_details.thinking_tokens`), when it reports one; it is also kept

@@ -35,6 +35,12 @@
  * the case entries, the `why` lines and the gap notes must be in the allowlist (case
  * insensitive); `DCA25MA108A/B` names both aircraft numbers. Quotes are exempt: they
  * are verified passage text.
+ *
+ * **Passage aliases in prose** (`alias_in_text`): the summary, `why` lines and gap notes
+ * may not name a passage alias the model was shown (an allowlist key such as `P3`)
+ * unless the reader's question or a passage of the bundle uses the same token, so an
+ * aircraft model ("P210"), a station pressure ("P3", "P2.5"), a connector ("J1/P1") or a
+ * taxiway named by the reader or the record stays. Quotes are exempt.
  */
 import { createHash } from 'node:crypto';
 import { ComposeOutputSchema, type ComposeOutput, type GlyphKind } from '../../shared/contracts/briefs.js';
@@ -77,6 +83,11 @@ export interface Allowlist {
 export interface ValidateOptions {
   /** From the scope stage: evidence groups (true) or one `examples` group (false). */
   mechanicalCause: boolean;
+  /**
+   * The reader's text the answer model read (the question and any text refinement): an
+   * alias-shaped token in it is the reader's word, not a leaked passage alias.
+   */
+  readerText?: string;
 }
 
 export interface Span {
@@ -360,10 +371,28 @@ export function summaryMarkers(summary: string): string[] | null {
 
 /**
  * A passage alias (`P1`..`P12`, server/briefs/aliases.ts) as a token of its own: alone,
- * in parentheses or in a list ("P3", "(P3)", "P3, P4"). Not inside a longer word or
- * number ("WPR19LA123", "P-51").
+ * in parentheses, in a list or a range ("P3", "(P3)", "P3, P4", "P3-P5"), upper-case as
+ * the model was shown it. Not inside a longer word or number ("WPR19LA123", "P-51",
+ * "P210"), not a part of a designator ("J1/P1", "P1/J1", "IO-360-P1") and not a decimal
+ * value ("P2.5").
  */
-const ALIAS_TOKEN = /(?<![A-Za-z0-9])[Pp]\d{1,3}(?![A-Za-z0-9])/;
+const ALIAS_TOKEN = /(?<![A-Za-z0-9/-])P\d{1,3}(?![A-Za-z0-9/]|\.\d)/g;
+
+/**
+ * The aliases of the allowlist (`P1`..) that model prose may not name: those neither the
+ * reader's text nor any allowlisted passage uses as a token of its own (any letter case,
+ * after any separator: "J1/P1", "p3").
+ */
+function leakableAliases(allow: Allowlist, readerText: string): Set<string> {
+  const texts = [readerText, ...[...allow.passages.values()].map((p) => p.text)];
+  const out = new Set<string>();
+  for (const id of allow.passages.keys()) {
+    if (!/^P\d{1,3}$/.test(id)) continue;
+    const used = new RegExp(`(?<![A-Za-z0-9])${id}(?!\\d)`, 'i');
+    if (!texts.some((t) => used.test(t))) out.add(id);
+  }
+  return out;
+}
 
 /** Allowed precision of timing values: one decimal place for flight hours, whole calendar days. */
 export function timingValueAllowed(basis: string, value: number): boolean {
@@ -514,7 +543,8 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     });
   }
 
-  // Free text: every NTSB-number-shaped token is allowlisted; no links or markup.
+  // Free text: every NTSB-number-shaped token is allowlisted; no links, markup or passage aliases.
+  const leakable = leakableAliases(allow, opts.readerText ?? '');
   const texts: [string, string][] = [
     ['summary', c.summary],
     ...c.groups.map((g, gi): [string, string] => [`groups.${gi}.caseNumbers`, g.caseNumbers.join(' ')]),
@@ -532,7 +562,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     ...c.gaps.map((g, i) => [`gaps.${i}.note`, g.note]),
   ] as [string, string][]) {
     if (LINK_OR_MARKUP.test(text)) fail('markup_or_link', path);
-    if (ALIAS_TOKEN.test(text.replace(MARKER, ' '))) fail('alias_in_text', path);
+    if ([...text.replace(MARKER, ' ').matchAll(ALIAS_TOKEN)].some((m) => leakable.has(m[0]))) fail('alias_in_text', path);
   }
 
   return reasons.length > 0

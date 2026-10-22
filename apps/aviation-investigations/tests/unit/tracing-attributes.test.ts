@@ -1,3 +1,4 @@
+import { SpanStatusCode } from '@opentelemetry/api';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
@@ -197,6 +198,25 @@ describe('tracing attributes', () => {
     await new Promise((r) => setTimeout(r, 300));
     await h.shutdown();
     expect(tracingStats.exportFailures).toBeGreaterThan(0);
+  });
+
+  it('a failure ends its span with an error status; a stop (cancel or shutdown) does not', async () => {
+    const exporter = new InMemorySpanExporter();
+    const h = startTracing(cfg(), { exporter, scheduledDelayMillis: 10 });
+    stop = () => h.shutdown();
+    await expect(stageSpan('failed', { stage: 'compose' }, () => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
+    await expect(
+      stageSpan('stopped', { stage: 'compose' }, (s) => {
+        s.setAttrs({ outcome: 'cancelled' });
+        s.markStopped();
+        return Promise.reject(new Error('aborted'));
+      }),
+    ).rejects.toThrow('aborted');
+    await new Promise((r) => setTimeout(r, 100));
+    const by = Object.fromEntries(exporter.getFinishedSpans().map((sp) => [sp.name, sp]));
+    expect(by.failed!.status.code).toBe(SpanStatusCode.ERROR);
+    expect(by.stopped!.status.code).toBe(SpanStatusCode.UNSET);
+    expect(by.stopped!.attributes).toMatchObject({ outcome: 'cancelled' });
   });
 
   it('stage spans inside a request span share its trace and parent', async () => {

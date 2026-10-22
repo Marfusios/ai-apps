@@ -583,8 +583,9 @@ free) on 2026-10-22 against real shared-dev passages; `claude-haiku-5-5` and
 tokens of the same NTSB text (median 1.59, 90th percentile 1.68, maximum 1.89 over
 100 passages; 1.62 over a 12-passage bundle), and a structured-output schema costs
 about 2.5× its JSON size. Each stage's fixed request (system prompt and schema) is
-3,204 tokens for scope, 4,631 for the answer and 1,953 for the check. A typical
-request, estimated from those sizes until settled usage from paid runs replaces it:
+3,204 tokens for scope, 4,682 for the answer and 1,961 for the check (the `compose.v3`
+and `check.v3` prompts, measured by the preflight on 2026-10-22). A typical request,
+estimated from those sizes until settled usage from paid runs replaces it:
 
 | Stage | Tokens (input / output) | Cost |
 | --- | --- | --- |
@@ -611,8 +612,8 @@ synthetic worst cases of `pnpm worker ai-preflight`):
 | Stage | Input | Output | Largest measured request |
 | --- | --- | --- | --- |
 | Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
-| Answer | 28,000 | 9,000, including thinking | fixed 4,631; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,096 with real passages and 22,171 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,300, and the measured stress cases fit without re-packing; output at its schema bounds 6,556 plus 1,500 for thinking |
-| Check | 36,000 | 3,000 | fixed 1,953; a full bundle's complete evidence with 91 claims 28,020 (real) and 27,348 (synthetic), bounded near 30,400; a problem for each of 100 claims 2,414 |
+| Answer | 28,000 | 9,000, including thinking | fixed 4,682; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,222 synthetic (22,096 with real passages under the earlier `compose.v2`); the 10,000-token evidence budget at 1.75× bounds it near 25,300, and the measured stress cases fit without re-packing; output at its schema bounds 6,556 plus 1,500 for thinking |
+| Check | 36,000 | 3,000 | fixed 1,961; a full bundle's complete evidence with 91 claims 27,356 synthetic (28,020 with real passages under `check.v2`), bounded near 30,400; a problem for each of 100 claims 2,414 |
 | Embedding | 1,000 | — | — |
 
 The models read passage ids as short aliases (`P1`..`P12`): a 64-character id costs
@@ -629,8 +630,8 @@ tests and deployments (RUNBOOK). Between preflights a unit test sizes the same
 requests offline (`cl100k_base` × 2.2 for system prompt plus schema, × 1.8 for text).
 
 **Prompt caching:** only the frozen system prefix of each stage is cached, with
-the 5-minute TTL and at most 5,500 tokens (the largest, the answer stage's, is about
-4,520 with its schema). The reservation is the **sum over all stages** of each stage's
+the 5-minute TTL and at most 5,500 tokens (the largest, the answer stage's, is 4,558
+with its schema). The reservation is the **sum over all stages** of each stage's
 hard-cap cost at the worst applicable price, plus the cache-write premium on its
 cached prefix:
 
@@ -690,12 +691,14 @@ What $80 covers depends on the answer model. Each admission needs today's spend 
 its whole reservation to fit the day's allowance (`server/quota/pacing.ts`), and then
 settles at its actual cost. Simulating a fresh 30-day month in which every brief
 settles at the estimated typical cost above before the next is admitted (unspent
-allowance rolls into later days, so the daily figure rises slowly):
+allowance rolls into later days, so the daily figure rises slowly;
+`tests/unit/capacity.test.ts` reproduces the Opus and Sonnet rows with the real admission
+rule, the shipped budgets and the shipped reservations):
 
 | Answer model | Typical cost / reservation | Admitted per day | Per month | Anonymous searches per day |
 | --- | --- | --- | --- | --- |
-| Opus 5.5 | about $0.11 / $0.31 | about 22, rising to 25 | about 710 | 4 to 5 (about one complete trial) |
-| Sonnet 5.5 | about $0.054 / $0.16 | about 47, rising to 53 | about 1,470 | 10 to 11 |
+| Opus 5.5 | about $0.11 / $0.31 | about 22, rising to 25 | about 708 | 4 to 5 (about one complete trial) |
+| Sonnet 5.5 | about $0.054 / $0.16 | about 47, rising to 53 | about 1,474 | 10 to 11 |
 | Haiku 5.5 | about $0.004 / $0.02 | hundreds; per-user and network limits bind first | — | per-user and network limits bind first |
 
 The anonymous column applies the same rule to the 25% anonymous share of the allowance.

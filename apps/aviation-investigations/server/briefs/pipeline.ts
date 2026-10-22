@@ -392,8 +392,10 @@ class Run {
 
   /**
    * A stage span's body; a failure leaves its fixed category (and prompt version) on the
-   * span. A stage stopped by the reader's cancel is `cancelled`, not a failure; one stopped
-   * by a shutdown fails as `shutdown`.
+   * span, which ends with an error status. A stage stopped by the reader's cancel is
+   * `outcome: cancelled`, not a failure; one stopped by a shutdown is `outcome: shutdown`
+   * and fails the step as `failure: shutdown`. Neither stop ends its span with an error
+   * status.
    */
   private async recorded<T>(s: StageSpanHandle, fn: () => Promise<T>): Promise<T> {
     try {
@@ -408,8 +410,10 @@ class Run {
             }
           : {};
       const stopped = this.stopped;
+      if (stopped) s.markStopped();
       if (stopped === 'cancelled') s.setAttrs({ outcome: 'cancelled', ...call });
-      else s.setAttrs({ failure: stopped === 'shutdown' ? 'shutdown' : this.categoryOf(err), ...call });
+      else if (stopped === 'shutdown') s.setAttrs({ outcome: 'shutdown', failure: 'shutdown', ...call });
+      else s.setAttrs({ failure: this.categoryOf(err), ...call });
       throw err;
     }
   }
@@ -655,7 +659,11 @@ class Run {
       cases: new Set(cases.flatMap((c) => [c.ntsbNo, ...c.summary.aircraftNumbers])),
     };
     const written = composition;
-    const checked = validateComposition(written, allow, { mechanicalCause: intent.mechanicalCause });
+    const checked = validateComposition(written, allow, {
+      mechanicalCause: intent.mechanicalCause,
+      // What the reader wrote may name an alias-shaped token ("P3 air line") the model can repeat.
+      readerText: [req.question, ...(req.refinement ? [req.refinement] : [])].join('\n'),
+    });
     const reasons = checked.ok ? [] : checked.reasons;
     this.meta.validation = {
       ruleVersion: checked.ruleVersion,

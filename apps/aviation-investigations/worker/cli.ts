@@ -644,7 +644,9 @@ async function main(argv: string[]): Promise<number> {
     }
     const models = { scope: config.ai.anthropic.scopeModel, answer: config.ai.anthropic.answerModel, check: config.ai.anthropic.checkModel };
     // This client only ever counts tokens (the provider below gets a facade whose `parse`
-    // throws), so its retries repeat free count calls, never a billed generation.
+    // throws). Its `maxRetries: 3` applies to the plain text counts below (`countText`)
+    // only: the adapter passes `maxRetries: 0` with every stage request, so the stage counts
+    // are never retried, and a failed one fails the preflight.
     const client = createAnthropicClient(apiKey, { maxRetries: 3 });
     const countOnly = {
       messages: {

@@ -1475,9 +1475,12 @@ describe('cancel and expiry', () => {
       const compose = spans.find((sp) => sp.name === 'brief.compose')!;
       expect(compose.attributes).toMatchObject({ outcome: 'cancelled' });
       expect(compose.attributes).not.toHaveProperty('failure');
+      // Not an error either: the stopped span ends with its status unset.
+      expect(compose.status.code).toBe(SpanStatusCode.UNSET);
       const root = spans.find((sp) => sp.name === 'brief.step')!;
       expect(root.attributes).toMatchObject({ outcome: 'cancelled' });
       expect(root.attributes).not.toHaveProperty('failure');
+      expect(root.status.code).toBe(SpanStatusCode.UNSET);
     } finally {
       await tracing.shutdown();
     }
@@ -1814,6 +1817,8 @@ describe('gate G6: evidence semantics through the routes', () => {
           (input) => composition(input, (c) => (c.cases[0]!.why = `The engine lost power (${input.cases[0]!.passages[0]!.passageId}).`)),
           // An id field holding something the model was never shown (a canonical-looking id).
           (input) => composition(input, (c) => (c.cases[0]!.evidencePassageIds = ['f'.repeat(64)])),
+          // The reader's own alias-shaped token, repeated in prose: not an alias.
+          (input) => composition(input, (c) => (c.cases[0]!.why = 'The engine lost power on taxiway P2 after maintenance.')),
         ],
       }),
       { trialRequests: 10 },
@@ -1825,6 +1830,9 @@ describe('gate G6: evidence semantics through the routes', () => {
     const second = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
     expect(second.step.result).toMatchObject({ kind: 'withheld', reason: 'citation_check' });
     expect((await stepRow(second.briefId)).meta).toMatchObject({ validation: { codes: ['unknown_passage'] } });
+    advance(MIN);
+    const third = await askAndWait(h, 'Engine power loss on taxiway P2 shortly after maintenance', { cookie: null });
+    expect(third.step.result?.kind).toBe('answer');
   });
 
   it('an uncited summary sentence → withheld', async () => {
@@ -2382,19 +2390,32 @@ describe('orphaned and interrupted steps', () => {
   });
 
   it('closing the server aborts running steps, which fail and settle within the grace', async () => {
-    const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 30_000 } });
-    const started = await ask(h, 'Engine power loss shortly after maintenance');
-    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
-    const t0 = Date.now();
-    harnesses.splice(harnesses.indexOf(h), 1);
-    await h.app.close();
-    expect(Date.now() - t0).toBeLessThan(8_000);
-    expect(h.svc.runs.size).toBe(0);
-    const row = await stepRow(started.json.briefId);
-    expect(row).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'shutdown' } } });
-    // The aborted compose call may have been billed: settled in full, the search kept.
-    expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
-    expect(await trialUsed()).toEqual([1]);
+    const exporter = new InMemorySpanExporter();
+    const tracing = startTracing(tracingConfig(), { exporter, scheduledDelayMillis: 10 });
+    try {
+      const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 30_000 } });
+      const started = await ask(h, 'Engine power loss shortly after maintenance');
+      await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
+      const t0 = Date.now();
+      harnesses.splice(harnesses.indexOf(h), 1);
+      await h.app.close();
+      expect(Date.now() - t0).toBeLessThan(8_000);
+      expect(h.svc.runs.size).toBe(0);
+      const row = await stepRow(started.json.briefId);
+      expect(row).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'shutdown' } } });
+      // The aborted compose call may have been billed: settled in full, the search kept.
+      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+      expect(await trialUsed()).toEqual([1]);
+      // The stopped stage span: `failure: shutdown` with `outcome: shutdown`, and no error status.
+      await new Promise((r) => setTimeout(r, 100));
+      const spans = exporter.getFinishedSpans();
+      const compose = spans.find((sp) => sp.name === 'brief.compose')!;
+      expect(compose.attributes).toMatchObject({ outcome: 'shutdown', failure: 'shutdown' });
+      expect(compose.status.code).toBe(SpanStatusCode.UNSET);
+      expect(spans.find((sp) => sp.name === 'brief.step')!.attributes).toMatchObject({ outcome: 'failed', failure: 'shutdown', failureStage: 'pipeline' });
+    } finally {
+      await tracing.shutdown();
+    }
   });
 });
 

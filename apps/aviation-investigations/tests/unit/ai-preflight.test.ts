@@ -8,14 +8,23 @@
  */
 import { describe, expect, it } from 'vitest';
 import { outputJsonSchema } from '../../server/ai/anthropic.js';
-import { STAGE_CAPS } from '../../server/ai/pricing.js';
+import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v3.js';
 import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v3.js';
 import { renderScopeUser, SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
-import { CheckInputSchema, CheckOutputSchema, ComposeInputSchema, ScopeInputSchema, ScopeOutputSchema } from '../../server/ai/provider.js';
+import {
+  CheckInputSchema,
+  CheckOutputSchema,
+  ComposeInputSchema,
+  ScopeInputSchema,
+  ScopeOutputSchema,
+  type LlmProvider,
+  type LlmStage,
+  type StageModels,
+} from '../../server/ai/provider.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { ComposeOutputSchema } from '../../shared/contracts/briefs.js';
-import { OFFLINE_FIXED_FACTOR, OFFLINE_TEXT_FACTOR, THINKING_ALLOWANCE, preflightRequests } from '../../worker/ai-preflight.js';
+import { OFFLINE_FIXED_FACTOR, OFFLINE_TEXT_FACTOR, THINKING_ALLOWANCE, preflightRequests, runAiPreflight } from '../../worker/ai-preflight.js';
 
 const r = preflightRequests();
 const fixed = (system: string, schema: Parameters<typeof outputJsonSchema>[0]) =>
@@ -70,6 +79,59 @@ describe('the stage caps against the requests they bound (offline sizing)', () =
       [CHECK_SYSTEM, CheckOutputSchema],
     ] as const) {
       expect(fixed(system, schema)).toBeLessThanOrEqual(CACHED_PREFIX_MAX);
+    }
+  });
+});
+
+describe('runAiPreflight with a stub counter', () => {
+  const models: StageModels = { scope: 'claude-haiku-5-5', answer: 'claude-opus-5-5', check: 'claude-haiku-5-5' };
+  const key = (x: unknown) => JSON.stringify(x);
+  /** The provider's count of each stage's fixed request (the v3 preflight's measurements); 1,000 for anything else. */
+  const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 4_682, check: 1_961 };
+  const fixedInputs = new Map<string, LlmStage>([
+    [key(r.fixed.scope), 'scope'],
+    [key(r.fixed.compose), 'compose'],
+    [key(r.fixed.check), 'check'],
+  ]);
+  const provider = {
+    name: 'anthropic',
+    models,
+    countInputTokens: async (stage: LlmStage, input: unknown) => (fixedInputs.get(key(input)) === stage ? fixedCounts[stage] : 1_000),
+    scope: () => Promise.reject(new Error('never generates')),
+    compose: () => Promise.reject(new Error('never generates')),
+    check: () => Promise.reject(new Error('never generates')),
+  } as unknown as LlmProvider;
+  /** Each fixed request's user turn counted on its own (so the prefixes come out as the v3 preflight measured them); any other text counts 10. */
+  const userTurns = new Map([
+    [renderScopeUser(r.fixed.scope), 22],
+    [renderComposeUser(r.fixed.compose), 124],
+    [renderCheckUser(r.fixed.check), 127],
+  ]);
+  const countText = async (_model: string, text: string) => userTurns.get(text) ?? 10;
+  const prefixRows = async () => (await runAiPreflight(provider, countText, models)).filter((row) => row.request.startsWith('cached prefix'));
+
+  it('reports each stage’s cached prefix as its fixed request less its user turn, against CACHED_PREFIX_MAX', async () => {
+    const row = (stage: 'scope' | 'answer' | 'check', tokens: number) => ({
+      stage,
+      model: models[stage],
+      request: 'cached prefix (system prompt + schema)',
+      tokens,
+      limit: CACHED_PREFIX_MAX,
+      ok: true,
+    });
+    expect(await prefixRows()).toEqual([row('scope', 3_182), row('answer', 4_558), row('check', 1_834)]);
+  });
+
+  it('a prefix over the bound fails the preflight even when its request fits the stage cap', async () => {
+    const saved = fixedCounts.compose;
+    fixedCounts.compose = CACHED_PREFIX_MAX + 124 + 1;
+    try {
+      const rows = await runAiPreflight(provider, countText, models);
+      expect(rows.find((x) => x.stage === 'answer' && x.request.startsWith('fixed'))).toMatchObject({ ok: true });
+      expect(rows.find((x) => x.stage === 'answer' && x.request.startsWith('cached prefix'))).toMatchObject({ tokens: CACHED_PREFIX_MAX + 1, ok: false });
+      expect(rows.filter((x) => !x.ok)).toHaveLength(1);
+    } finally {
+      fixedCounts.compose = saved;
     }
   });
 });

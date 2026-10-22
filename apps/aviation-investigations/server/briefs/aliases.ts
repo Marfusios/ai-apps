@@ -8,8 +8,10 @@
  * - `composeForModel` / `checkForModel` replace every passage id the input carries;
  * - the composition is validated as the model wrote it, against an allowlist keyed by
  *   these aliases, so an id field holding anything else (an unknown alias, a canonical id,
- *   any other string) fails as `unknown_passage`; an alias-shaped token in model prose
- *   fails as `alias_in_text` (server/briefs/validate.ts);
+ *   any other string) fails: as `unknown_passage`, or as `gap_foreign_passage` in a gap
+ *   note's `passageIds`. An alias of the bundle written in model prose fails as
+ *   `alias_in_text`, unless the reader's question or one of the bundle's passages uses the
+ *   same token (server/briefs/validate.ts);
  * - `compositionFromModel` and `citationsFromModel` then map every passage id back to its
  *   canonical id, strictly: an id that is not an alias of the bundle throws.
  *

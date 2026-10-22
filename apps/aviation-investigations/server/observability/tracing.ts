@@ -160,9 +160,14 @@ export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): Tr
 export interface StageSpanHandle {
   /** Adds allowlisted attributes (e.g. usage known only after the call). */
   setAttrs(attrs: AllowedAttrs): void;
+  /**
+   * The work was stopped (the reader's cancel or a server shutdown), not failed: the span
+   * ends without an error status even though `fn` throws. Its `outcome` says why.
+   */
+  markStopped(): void;
 }
 
-const NOOP_HANDLE: StageSpanHandle = { setAttrs() {} };
+const NOOP_HANDLE: StageSpanHandle = { setAttrs() {}, markStopped() {} };
 
 function safely(fn: () => void): void {
   try {
@@ -202,16 +207,21 @@ async function runInSpan<T>(
   }
   const s = span;
   const started = performance.now();
+  let stopped = false;
   const handle: StageSpanHandle = {
     setAttrs(more) {
       if (s) safely(() => apply(s, more));
+    },
+    markStopped() {
+      stopped = true;
     },
   };
   const active = s ? trace.setSpan(context.active(), s) : context.active();
   const finish = (ok: boolean) =>
     safely(() => {
       if (!s) return;
-      if (!ok) s.setStatus({ code: SpanStatusCode.ERROR });
+      // A stop is not an error: the status stays unset.
+      if (!ok && !stopped) s.setStatus({ code: SpanStatusCode.ERROR });
       s.setAttributes(sanitizeAttrs({ durationMs: Math.round(performance.now() - started) }));
       s.end();
     });

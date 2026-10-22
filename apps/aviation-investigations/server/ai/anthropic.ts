@@ -221,8 +221,10 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
  * The SDK client the adapter uses. `maxRetries` is 0 by default and for every client
  * that may generate: the SDK would retry a generation on its own, and each attempt could
  * be billed under the one reservation the request holds. Only a client that never
- * generates may pass retries: the count-only client of `pnpm worker ai-preflight`, whose
- * retries repeat free token counts.
+ * generates may pass retries: the count-only client of `pnpm worker ai-preflight`. The
+ * adapter's own requests override the client either way (`maxRetries: 0` per request), so
+ * a stage's count and generation are never retried; the client's setting reaches only
+ * calls made outside the adapter, such as the preflight's plain text counts.
  */
 export function createAnthropicClient(apiKey: string, opts: { maxRetries?: number } = {}): Anthropic {
   return new Anthropic({
@@ -281,7 +283,9 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
       if (ctx.signal.aborted) throw fail('timeout', NOT_BILLED);
       const deadline = Date.now() + ctx.timeoutMs;
       const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(ctx.timeoutMs)]);
-      // Retries stay off even for an injected client: each attempt would need its own reservation.
+      // Every stage request, the free count included, passes `maxRetries: 0`, which overrides
+      // the client's setting: a stage never retries (a generation attempt would need its own
+      // reservation), whatever client was injected.
       const options = () => ({ timeout: Math.max(1, deadline - Date.now()), signal, maxRetries: 0 });
       return { body: request(parsed.data), signal, options };
     }

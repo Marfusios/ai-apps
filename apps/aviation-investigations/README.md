@@ -924,9 +924,11 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    checked like the first. The compose and check stages read passages under short
    aliases (`P1`..`P12`, `aliases.ts`): a 64-character passage id costs about 42 tokens
    wherever a model reads or writes it. The composition is validated against the
-   aliases (any other id fails as `unknown_passage`; an alias-shaped token in the
-   summary, a `why` line or a gap note fails as `alias_in_text`) and only then mapped
-   back to canonical ids.
+   aliases (any other id fails as `unknown_passage`, or as `gap_foreign_passage` in a gap
+   note; an alias of the bundle in the summary, a `why` line or a gap note fails as
+   `alias_in_text` unless the reader's question or a passage of the bundle uses the same
+   token, so "P210", "P2.5", "J1/P1" or a taxiway the reader named stays) and only then
+   mapped back to canonical ids.
    The answer model may abstain
    (`no_supported_match`): the case cards and its checked gap notes are shown, with
    server copy saying that none of the retrieved cases supports the question as asked

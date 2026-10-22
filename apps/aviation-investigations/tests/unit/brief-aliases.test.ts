@@ -136,31 +136,54 @@ describe('passage aliases', () => {
       ],
       gaps: [],
     };
-    const codes = (c: ComposeOutput) => {
-      const r = validateComposition(c, allow, { mechanicalCause: true });
+    const codes = (c: ComposeOutput, readerText?: string, a: Allowlist = allow) => {
+      const r = validateComposition(c, a, { mechanicalCause: true, ...(readerText !== undefined ? { readerText } : {}) });
       return r.ok ? [] : r.reasons.map((x) => x.code);
     };
+    const why = (text: string): ComposeOutput => ({ ...ok, cases: [{ ...ok.cases[0]!, why: text }] });
     expect(codes(ok)).toEqual([]);
     // A canonical id (never shown to the model) or an unknown alias in an id field.
     expect(codes({ ...ok, cases: [{ ...ok.cases[0]!, evidencePassageIds: [hex(1)] }] })).toEqual(['unknown_passage']);
     expect(codes({ ...ok, cases: [{ ...ok.cases[0]!, evidencePassageIds: ['P7'] }] })).toEqual(['unknown_passage']);
-    // Aliases in prose, alone, in parentheses or in a list; not inside a longer token.
+    // Aliases of this bundle in prose, alone, in parentheses or in a list.
     for (const [field, text] of [
       ['why', 'The engine lost power (P1) after maintenance.'],
       ['why', 'See P2 for the loose nut.'],
+      ['why', 'Passages P1-P2 show the loose nut.'],
       ['summary', 'The engine quit, per P1, P2 [[case:DFW08TA066]].'],
-      ['note', 'The supplied passages [p3] give no date.'],
+      ['note', 'The supplied passages [P3] give no date.'],
     ] as const) {
       const c: ComposeOutput =
-        field === 'why'
-          ? { ...ok, cases: [{ ...ok.cases[0]!, why: text }] }
-          : field === 'summary'
-            ? { ...ok, summary: text }
-            : { ...ok, gaps: [{ ntsbNo: 'DEN08LA103', note: text, passageIds: ['P3'] }] };
+        field === 'why' ? why(text) : field === 'summary' ? { ...ok, summary: text } : { ...ok, gaps: [{ ntsbNo: 'DEN08LA103', note: text, passageIds: ['P3'] }] };
       expect(codes(c), text).toEqual(['alias_in_text']);
     }
-    expect(codes({ ...ok, cases: [{ ...ok.cases[0]!, why: 'A P-51 and an XP180 are not passage aliases.' }] })).toEqual([]);
-    // Quotes are passage text: a literal "P1" there is the record's own words.
+    // Not an alias: inside a longer token, an alias the bundle does not have, a designator,
+    // a value or lower case.
+    for (const text of [
+      'A P-51 and an XP180 are not passage aliases.',
+      'A P51, a P210, a P180, a P35, a P92 and a P68 are aircraft models.',
+      'The P2.5 station pressure fell before the engine quit.',
+      'The J1/P1 connector and the IO-360-P1 engine were inspected.',
+      'The p3 line was loose.',
+    ]) {
+      expect(codes(why(text)), text).toEqual([]);
+    }
+    // An alias-shaped token the reader wrote, or one a passage of the bundle uses, is theirs.
+    const taxiway = why('The airplane entered taxiway P1 after the engine change.');
+    expect(codes(taxiway)).toEqual(['alias_in_text']);
+    expect(codes(taxiway, 'Runway incursions on taxiway P1 after maintenance')).toEqual([]);
+    const usedByRecord: Allowlist = {
+      ...allow,
+      passages: new Map([...allow.passages, ['P2', allowed('DFW08TA066', 'The P3 air line was cracked at the fitting.')]]),
+    };
+    expect(codes(why('The P3 air line cracked after maintenance.'), undefined, usedByRecord)).toEqual([]);
+    expect(codes(why('The P3 air line cracked after maintenance.'))).toEqual(['alias_in_text']);
+    // Quotes are passage text: an alias-shaped token in a quote is the record's own words.
+    const quoted: ComposeOutput = {
+      ...ok,
+      cases: [{ ...ok.cases[0]!, quotes: [{ passageId: 'P2', quote: 'The P3 air line was cracked', speaker: 'investigators' }], evidencePassageIds: ['P2'] }],
+    };
+    expect(codes(quoted, undefined, usedByRecord)).toEqual([]);
     expect(a.toModel.get(hex(1))).toBe('P1');
   });
 });
