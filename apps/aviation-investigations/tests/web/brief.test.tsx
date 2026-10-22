@@ -8,11 +8,23 @@ import type { AiStatusResponse } from '../../shared/contracts/ai';
 import { BriefStepResponseSchema } from '../../shared/contracts/briefs';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
-import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
+import { MOCK_MIDAIR_QUESTION, MOCK_SEED_QUESTION, RESULT_SAMPLES } from '../../web/mock/briefs';
 import { AiCounter } from '../../web/src/features/ai/AiCounter';
 import { AiNoticeBox } from '../../web/src/features/ai/AiNoticeBox';
 import { AskAiButton } from '../../web/src/features/ai/AskAiButton';
-import { FIRST_CHECK_TEXT, FIRST_CHECK_TITLE, LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
+import {
+  FIRST_CHECK_TEXT,
+  FIRST_CHECK_TITLE,
+  LATER_CHECK_TITLE,
+  TurnstileGate,
+  useAiCheck,
+  type AiCheck,
+  type TurnstileApi,
+} from '../../web/src/features/ai/TurnstileGate';
+import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, type PollState } from '../../web/src/features/brief/api';
+import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
+import { ApiError } from '../../web/src/api';
+import { chipsContext } from '../../web/src/pages/Brief';
 import { Checklist, CHECKLIST_NOTE } from '../../web/src/features/brief/Checklist';
 import { WithheldNotice, withheldText } from '../../web/src/features/brief/WithheldNotice';
 import { PassageText, cleanSpans, paragraphRanges } from '../../web/src/features/case/BriefContext';
@@ -150,10 +162,31 @@ describe('AI notices (UI_DESIGN §5 copy)', () => {
       'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.',
     );
     expect(notice({ kind: 'rate', seconds: 12 })).toBe('Slow down a moment. Try again in 12 seconds.');
-    expect(notice({ kind: 'failure', spent: false })).toBe(
+    expect(notice({ kind: 'failure', spent: 'no' })).toBe(
       "The AI search didn't finish.Something went wrong before an answer was ready.Try again · uses 1Search by keyword insteadThis didn't use one of your searches.",
     );
-    expect(notice({ kind: 'failure', spent: true })).toContain('This counted as a search, because the AI work was already under way.');
+    // No answer came back: whether it counted is unknown, so the free claim is not made.
+    const unknown = notice({ kind: 'failure', spent: 'unknown' });
+    expect(unknown).not.toContain("This didn't use one of your searches.");
+    expect(unknown).toContain('If it went through, Try again opens it without using another search.');
+  });
+
+  it('a notice appears inside a live region that was there before it', () => {
+    const client = new QueryClient();
+    client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.fresh);
+    const ui = (n: Parameters<typeof AiNoticeBox>[0]['notice']) => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AiNoticeBox notice={n} keywordHref="/explore" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { container, rerender } = render(ui(null));
+    const region = container.querySelector('[aria-live="polite"]');
+    expect(region?.textContent).toBe('');
+    rerender(ui({ kind: 'rate', seconds: 9 }));
+    expect(container.querySelector('[aria-live="polite"]')).toBe(region);
+    expect(region?.textContent).toBe('Slow down a moment. Try again in 9 seconds.');
   });
 });
 
@@ -202,9 +235,13 @@ describe('Cited passages', () => {
   it('highlights come from UTF-16 offsets: invalid spans are dropped and overlaps merged', () => {
     const text = 'Engine ✈︎ 🛩 lost power.\n\nSecond paragraph <b>not markup</b>.';
     const start = text.indexOf('lost');
-    expect(cleanSpans([{ start, end: start + 10 }, { start: start + 5, end: start + 15 }, { start: 40, end: 999 }, { start: 5, end: 5 }], text.length)).toEqual([
+    expect(cleanSpans([{ start, end: start + 10 }, { start: start + 5, end: start + 15 }, { start: 40, end: 999 }, { start: 5, end: 5 }], text)).toEqual([
       { start, end: start + 15 },
     ]);
+    // An edge inside a surrogate pair widens to the whole astral character.
+    const plane = text.indexOf('🛩');
+    expect(cleanSpans([{ start: plane + 1, end: start }], text)).toEqual([{ start: plane, end: start }]);
+    expect(cleanSpans([{ start: 0, end: plane + 1 }], text)).toEqual([{ start: 0, end: plane + 2 }]);
     expect(paragraphRanges(text).map((r) => text.slice(r.start, r.end))).toEqual(['Engine ✈︎ 🛩 lost power.', 'Second paragraph <b>not markup</b>.']);
     const { container } = render(<PassageText text={text} highlights={[{ start: text.indexOf('🛩'), end: text.indexOf('🛩') + 2 }]} />);
     expect(container.querySelector('mark')?.textContent).toBe('🛩');
@@ -398,10 +435,36 @@ describe('Brief outcomes read from the server', { timeout: 15_000 }, () => {
   it('a failure says whether it counted', async () => {
     server.use(http.get('*/api/briefs/:id', ({ params }) => HttpResponse.json(step(String(params.id), { kind: 'failed', countedAsSearch: true }))));
     renderApp('/briefs/00000000-0000-4000-8000-00000000abcd');
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toBe(
+    const title = await screen.findByText("The AI search didn't finish.");
+    expect(title.parentElement?.textContent).toBe(
       "The AI search didn't finish.Something went wrong before an answer was ready.Try again · uses 1Search by keyword insteadThis counted as a search, because the AI work was already under way.",
     );
+    // Shown as page content: the page announces a failure it saw happen, once.
+    expect(title.closest('[role="alert"]')).toBeNull();
+  });
+
+  it('Try again on a failed first step asks again with the brief\'s filters', async () => {
+    const posted: unknown[] = [];
+    freshApi();
+    installTurnstile();
+    server.use(
+      http.get('*/api/briefs/:id', ({ params }) =>
+        String(params.id).endsWith('abcd')
+          ? HttpResponse.json({
+              ...step(String(params.id), { kind: 'failed', countedAsSearch: true }),
+              checklist: { question: 'in_scope', interpretation: { interpretations: [], filters: { category: ['HELI'] } } },
+            })
+          : undefined,
+      ),
+      http.post('*/api/briefs', async ({ request }) => {
+        posted.push(await request.clone().json());
+        return undefined;
+      }),
+    );
+    renderApp('/briefs/00000000-0000-4000-8000-00000000abcd');
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(posted).toHaveLength(1), SLOW);
+    expect(posted[0]).toMatchObject({ question: 'Engine failure after an oil change', filters: { category: ['HELI'] } });
   });
 
   it('a case or compare link to a brief that is gone shows NTSB data with a muted note', async () => {
@@ -410,5 +473,292 @@ describe('Brief outcomes read from the server', { timeout: 15_000 }, () => {
     renderApp('/compare?cases=DFW08TA066,MIA08LA156&brief=00000000-0000-4000-8000-00000000dead&step=1');
     expect(await screen.findByText("The AI notes for these cases have expired or aren't yours.")).toBeTruthy();
     expect(screen.queryByText(/Since maint/i)).toBeNull();
+  });
+});
+
+describe('Polling (stops, honours Retry-After, backs off)', () => {
+  const running = BriefStepResponseSchema.parse({
+    briefId: '00000000-0000-4000-8000-000000000001',
+    step: 1,
+    steps: 1,
+    refinementsLeft: 3,
+    question: 'Q',
+    origin: { kind: 'question' },
+    stage: 'compose',
+    checklist: { question: 'in_scope' },
+    startedAt: '2026-10-22T10:00:00.000Z',
+    finishedAt: null,
+    expiresAt: '2026-10-23T10:00:00.000Z',
+  });
+  const query = (state: Partial<PollState['state']>): PollState => ({
+    state: { data: undefined, status: 'success', error: null, dataUpdatedAt: 0, errorUpdateCount: 0, ...state },
+  });
+
+  it('polls a running step every second and stops once it is finished', () => {
+    expect(briefPollDelay(query({ data: running, dataUpdatedAt: 1 }))).toBe(BRIEF_POLL_MS);
+    expect(briefPollDelay(query({ data: { ...running, stage: 'done' }, dataUpdatedAt: 1 }))).toBe(false);
+  });
+
+  it('stops on a 404 or another refusal; a 429 waits for Retry-After', () => {
+    expect(briefPollDelay(query({ status: 'error', error: new ApiError(404, null), errorUpdateCount: 1 }))).toBe(false);
+    expect(briefPollDelay(query({ status: 'error', error: new ApiError(403, null), errorUpdateCount: 1 }))).toBe(false);
+    expect(briefPollDelay(query({ status: 'error', error: new ApiError(429, null, 7), errorUpdateCount: 1 }))).toBe(7_000);
+  });
+
+  it('backs off exponentially after failures, up to 30 s, and resets after a good read', () => {
+    const q = query({ data: running, dataUpdatedAt: 100 });
+    expect(briefPollDelay(q)).toBe(BRIEF_POLL_MS);
+    const delays: (number | false)[] = [];
+    for (let n = 1; n <= 7; n++) {
+      q.state = { ...q.state, status: 'error', error: new ApiError(503, null), errorUpdateCount: n };
+      // The schedule is read many times per update; it must not count by itself.
+      briefPollDelay(q);
+      delays.push(briefPollDelay(q));
+    }
+    expect(delays).toEqual([2_000, 4_000, 8_000, 16_000, MAX_POLL_BACKOFF_MS, MAX_POLL_BACKOFF_MS, MAX_POLL_BACKOFF_MS]);
+    q.state = { ...q.state, status: 'success', error: null, dataUpdatedAt: 200 };
+    expect(briefPollDelay(q)).toBe(BRIEF_POLL_MS);
+    q.state = { ...q.state, status: 'error', error: new TypeError('network'), errorUpdateCount: 8 };
+    expect(briefPollDelay(q)).toBe(2_000);
+  });
+
+  it('an expired brief is read once, then left alone', { timeout: 10_000 }, async () => {
+    let reads = 0;
+    server.use(
+      http.get('*/api/briefs/:id', () => {
+        reads += 1;
+        return HttpResponse.json({ error: 'not_found', message: 'Gone.' }, { status: 404 });
+      }),
+    );
+    renderApp('/briefs/00000000-0000-4000-8000-000000000404');
+    expect(await screen.findByRole('heading', { name: 'This AI search has expired.' })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(reads).toBe(1);
+  });
+});
+
+describe('Chips while a step runs (UI_DESIGN §4.4)', () => {
+  const base = BriefStepResponseSchema.parse({
+    briefId: '00000000-0000-4000-8000-000000000001',
+    step: 2,
+    steps: 2,
+    refinementsLeft: 2,
+    question: 'Q',
+    origin: { kind: 'text', text: 'only helicopters' },
+    stage: 'retrieve',
+    checklist: {},
+    startedAt: '2026-10-22T10:00:00.000Z',
+    finishedAt: null,
+    expiresAt: '2026-10-23T10:00:00.000Z',
+  });
+  const previous = { ...base, step: 1, stage: 'done' as const, result: RESULT_SAMPLES.answer };
+  const scoped = { interpretations: [], filters: { category: ['HELI'] } };
+
+  it('a refinement shows the previous step\'s chips until its scope row sends its own', () => {
+    expect(chipsContext(base, previous)).toBe(previous.result);
+    expect(chipsContext({ ...base, checklist: { question: 'in_scope', interpretation: scoped } }, previous)).toBe(scoped);
+    expect(chipsContext({ ...base, step: 1 }, undefined)).toBeNull();
+    expect(chipsContext({ ...base, stage: 'done', result: RESULT_SAMPLES.midair }, previous)).toBe(RESULT_SAMPLES.midair);
+  });
+
+  it('a first step shows its chips as soon as the scope row is done', { timeout: 15_000 }, async () => {
+    freshApi({ briefPolls: 3 });
+    installTurnstile();
+    await askFromHome(MOCK_SEED_QUESTION);
+    const checklist = await screen.findByRole('region', { name: /answer checklist/i });
+    expect(checklist).toBeTruthy();
+    expect(await screen.findByText('Within 30 days or 10 flight hours')).toBeTruthy();
+    // Read-only while the step runs: no ✎ edit control yet.
+    expect(screen.queryByRole('button', { name: /Within 30 days.*edit/ })).toBeNull();
+    expect(screen.getByRole('region', { name: /answer checklist/i })).toBeTruthy();
+  });
+});
+
+describe('Two-aircraft events and adjacent citations', { timeout: 20_000 }, () => {
+  it('two citations in a row are separated', () => {
+    const segs = RESULT_SAMPLES.midair.summary;
+    expect(segs.slice(0, 3).map((x) => x.kind)).toEqual(['text', 'case', 'case']);
+    expect(citationJoiner(segs, 2)).toBe(',\u2009');
+    expect(citationJoiner([{ kind: 'text', text: 'the power loss' }, { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false }], 1)).toBe(' ');
+    expect(citationJoiner([{ kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false }, { kind: 'text', text: 'Then' }], 1)).toBe(' ');
+    expect(citationJoiner([{ kind: 'text', text: 'loss (' }, { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false }, { kind: 'text', text: ').' }], 2)).toBe('');
+  });
+
+  it('cards and the sheet say the evidence is the event narrative, never one aircraft', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <BriefingSheet result={RESULT_SAMPLES.midair} caseTo={(n) => `/briefs/x?case=${n}`} inCompare={() => false} onToggleCompare={() => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const summary = screen.getByRole('heading', { name: /AI summary/i }).parentElement as HTMLElement;
+    expect(summary.textContent).toContain('the airplanes collided SEA08LA057,\u2009WPR15FA010. In one,');
+    const card = document.querySelector('article[data-card="SEA08LA057"]') as HTMLElement;
+    expect(card.textContent).toContain('2 aircraft');
+    expect(card.textContent).toContain('A Piper PA 28-180 · B Barnard/Stancil Glastar');
+    expect(card.textContent).toContain('Applies to the event; aircraft not stated');
+    expect(card.textContent).toContain('Event narrative, both aircraft — not attributed to one aircraft');
+    expect(within(card).getAllByText(/NTSB · ANALYSIS · EVENT NARRATIVE, BOTH AIRCRAFT/)).toHaveLength(2);
+    expect(card.textContent).not.toMatch(/Aircraft A\b|AIRCRAFT A\b/);
+    // Examples found: one list, and no glyph for an event-scoped reading.
+    expect(screen.getByRole('region', { name: 'Examples found, 2 cases' })).toBeTruthy();
+    expect(card.querySelector('[data-glyph]')).toBeNull();
+  });
+
+  it('Compare\'s AI columns name the event narrative for a two-aircraft event', async () => {
+    freshApi();
+    installTurnstile();
+    const { router } = await askFromHome(MOCK_MIDAIR_QUESTION);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const id = currentUrl(router).split('/')[2] as string;
+    await act(() => router.navigate(`/compare?cases=SEA08LA057,WPR15FA010&brief=${id}&step=1`));
+    const strip = await screen.findByRole('article', { name: 'SEA08LA057, strip 1' }, SLOW);
+    expect(await within(strip).findByText('Event narrative, both aircraft — not attributed to one aircraft', {}, SLOW)).toBeTruthy();
+    expect(within(strip).getByText('Not classified')).toBeTruthy();
+  });
+});
+
+describe('Failures are not expiry', { timeout: 20_000 }, () => {
+  it('a rate-limited AI context read offers a retry instead of "expired"', async () => {
+    freshApi();
+    installTurnstile();
+    let contextReads = 0;
+    server.use(
+      http.get('*/api/briefs/:id/steps/:n/cases/:ntsbNo', () => {
+        contextReads += 1;
+        return contextReads === 1 ? HttpResponse.json({ error: 'rate_limited', message: 'Slow down.', retryAfter: 2 }, { status: 429 }) : undefined;
+      }),
+    );
+    await askFromHome(MOCK_SEED_QUESTION);
+    const label = await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    fireEvent.click(within(label.parentElement as HTMLElement).getByRole('link', { name: 'DFW08TA066' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/The AI notes for this case didn't load\./, {}, SLOW)).toBeTruthy();
+    expect(within(dialog).queryByText(/expired or aren't yours/)).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }));
+    expect(await within(dialog).findByText(/Why it.s in your results/i, {}, SLOW)).toBeTruthy();
+  });
+
+  it('a failed public case read says so on the card; a failed AI read says so in Compare', async () => {
+    freshApi();
+    installTurnstile();
+    server.use(
+      http.get('*/api/cases/DFW08TA066', () => HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 })),
+      http.get('*/api/briefs/:id/steps/:n/cases/MIA08LA156', () => HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 })),
+    );
+    const { router } = await askFromHome(MOCK_SEED_QUESTION);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const card = document.querySelector('article[data-card="DFW08TA066"]') as HTMLElement;
+    expect(await within(card).findByText(/Couldn't load the flight profile and data cautions\./, {}, SLOW)).toBeTruthy();
+    const id = currentUrl(router).split('/')[2] as string;
+    await act(() => router.navigate(`/compare?cases=MIA08LA156,DEN08LA103&brief=${id}&step=1`));
+    const strip = await screen.findByRole('article', { name: 'MIA08LA156, strip 1' }, SLOW);
+    expect((await within(strip).findAllByText(/The AI reading didn't load\./, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(within(strip).getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  it('no answer back: the notice does not claim it was free, and Try again replays the same request', async () => {
+    freshApi();
+    installTurnstile();
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return keys.length === 1 ? HttpResponse.error() : undefined;
+      }),
+    );
+    const { router } = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText('If it went through, Try again opens it without using another search.', {}, SLOW)).toBeTruthy();
+    expect(screen.queryByText("This didn't use one of your searches.")).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Try again\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('a 503 "unavailable" shows the paused copy', async () => {
+    freshApi();
+    installTurnstile();
+    server.use(http.post('*/api/briefs', () => HttpResponse.json({ error: 'unavailable', message: 'Not now.' }, { status: 503 })));
+    renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText('AI search is temporarily unavailable.', {}, SLOW)).toBeTruthy();
+  });
+
+  it('?step past the last answer shows the latest, with a note', async () => {
+    freshApi();
+    installTurnstile();
+    const { router } = await askFromHome(MOCK_SEED_QUESTION);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    await act(() => router.navigate(`${currentUrl(router)}?step=3`));
+    expect(await screen.findByText('There is no answer 3 in this brief; this is the latest.', {}, SLOW)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /AI summary/i })).toBeTruthy();
+    expect(screen.queryByText('This AI search has expired.')).toBeNull();
+  });
+
+  it('a paused Ask AI button is described by its note', () => {
+    withStatus(AI_STATUS_SAMPLES.pausedDaily, <AskAiButton onAsk={() => {}} />);
+    const button = screen.getByRole('button', { name: /^Ask AI/ });
+    expect(document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent).toBe('AI back tomorrow');
+  });
+});
+
+describe('Two AI controls at once (TurnstileGate sessions)', () => {
+  it('a second check waits its turn; ending one session never cancels another', async () => {
+    const solves = new Map<string, (t: string) => void>();
+    const removed: string[] = [];
+    let n = 0;
+    window.turnstile = {
+      render(_host, params) {
+        n += 1;
+        solves.set(`w${n}`, params.callback);
+        return `w${n}`;
+      },
+      remove(id) {
+        removed.push(id);
+      },
+    };
+    let gate: AiCheck | null = null;
+    function Probe() {
+      gate = useAiCheck();
+      return null;
+    }
+    const client = new QueryClient();
+    client.setQueryData(['config'], { turnstileSiteKey: TURNSTILE_TEST_SITE_KEY });
+    render(
+      <QueryClientProvider client={client}>
+        <TurnstileGate>
+          <Probe />
+        </TurnstileGate>
+      </QueryClientProvider>,
+    );
+    const check = gate as unknown as AiCheck;
+    const a = check.session();
+    const b = check.session();
+    const c = check.session();
+    const ta = a.token({ first: false });
+    const tb = b.token({ first: false });
+    const tc = c.token({ first: false }).catch((e: Error) => e.message);
+    await waitFor(() => expect(solves.size).toBe(1));
+    act(() => solves.get('w1')?.('token-a'));
+    expect(await ta).toBe('token-a');
+    // B waits until A's request is over, even though A's token is taken.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(solves.size).toBe(1);
+    // C gives up while waiting: that must not let anyone jump the queue or cancel B.
+    c.release();
+    expect(await tc).toBe('AI check cancelled');
+    a.release();
+    await waitFor(() => expect(solves.size).toBe(2));
+    act(() => solves.get('w2')?.('token-b'));
+    expect(await tb).toBe('token-b');
+    b.release();
+    expect(solves.size).toBe(2);
+    expect(removed).toEqual(['w1', 'w2']);
   });
 });

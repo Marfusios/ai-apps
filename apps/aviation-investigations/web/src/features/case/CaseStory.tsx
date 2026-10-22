@@ -431,7 +431,7 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
       </Heading>
       <MetaLine detail={detail} />
       {actions}
-      {ai && <BriefVerdict ai={ai} />}
+      {ai && <BriefVerdict ai={ai} ntsbNo={detail.ntsbNo} aircraft={detail.aircraft} />}
       {detail.cautions.map((c) => (
         <DataCaution key={c.kind} className="mt-3.5">
           {c.text}
@@ -451,7 +451,7 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
           {matched && matched.section !== 'probable_cause' && <Matched detail={detail} matched={matched} />}
         </>
       )}
-      {ai && <BriefSections ai={ai} ntsbNo={detail.ntsbNo} mode={mode} />}
+      {ai && <BriefSections ai={ai} ntsbNo={detail.ntsbNo} aircraft={detail.aircraft} mode={mode} />}
       <Provenance detail={detail} />
     </article>
   );

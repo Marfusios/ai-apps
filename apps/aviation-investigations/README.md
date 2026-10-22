@@ -521,17 +521,28 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   3 free", "AI searches left: 2 of 3", "AI back tomorrow"). Ask AI needs a click or
   Ctrl/Cmd+Enter; Enter runs the free Search.
 - **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from
-  a new widget, which is removed after the request, refusals included. The first
-  request of a trial identity (`started: false`) shows "Quick check before your first
-  AI search"; later ones run invisibly while the button reads "Checking…". The site
+  a new widget, which is removed as soon as its token is taken. Each request holds a
+  check session: a second control waits its turn ("Checking…"), and ending one session
+  never cancels another. The first request of a trial identity (`started: false`) shows
+  "Quick check before your first AI search"; later ones run invisibly while the button
+  reads "Checking…". When no answer comes back (a network or server error), the notice
+  does not claim the search was free, and Try again replays the same request under the
+  same idempotency key. The site
   key comes from `/api/config`, and Cloudflare's script loads only when an AI request
   needs it, so the Content-Security-Policy must allow `https://challenges.cloudflare.com`
   as a script and frame source wherever anonymous AI is offered.
 - **The brief page** polls the running step once a second and shows the answer
-  checklist (completions announced politely, once each), then the briefing sheet:
+  checklist (completions announced politely, once each). Polling stops on a 404 (the
+  expired view never polls) or another refusal, waits for `Retry-After` on a 429, and
+  backs off exponentially (up to 30 s) after other failures. The chips stay on top
+  while a step runs: the scope stage's `checklist.interpretation` once it is sent,
+  else, for a refinement, the previous step's. Then the briefing sheet:
   the AI summary with case citations, evidence groups, case cards with WHY IT
   MATCHED, timing chips and UNCONFIRMED labels, gap notes, the step switcher and
-  REFINE. Withheld summaries, the explicit abstention, scope replies, failures and
+  REFINE. Two citations in a row are separated ("DFW08TA066, MIA08LA156"). In a
+  multi-aircraft event, cards, the drawer and compare say whose evidence it is: an
+  aircraft, or the event narrative, which is never attributed to one aircraft.
+  Withheld summaries, the explicit abstention, scope replies, failures and
   cancels use the server's or UI_DESIGN's copy. Every control that runs the AI on a
   brief says "· uses 1" before the click.
 - **AI context** for a case (the drawer, the case page, compare's AI columns) comes
@@ -576,9 +587,10 @@ Cloudflare's documented always-passing test site key. The brief routes are answe
 `web/mock/briefs.ts`: an in-memory brief server with hand-written readings of the four
 seed cases whose quotes are located in the fixture texts, the server's own static
 replies and reading templates, a checklist that moves one row per poll
-(`createHandlers({ briefPolls })`), and question keywords that select the other outcomes
-(withheld, no match, out of scope, operational, counting, comparison, clarification,
-no results).
+(`createHandlers({ briefPolls })`) and carries the step's readings and filters after the
+scope row, replays of a request key, and question keywords that select the other
+outcomes (withheld, no match, a two-aircraft "midair" answer with adjacent citations, out
+of scope, operational, counting, comparison, clarification, no results).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).

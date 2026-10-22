@@ -338,9 +338,7 @@ export function Explore() {
             onAsk={(value) => askAi(value, 'box')}
             askPhase={askedFrom === 'box' ? ai.phase : 'idle'}
           />
-          {ai.notice && askedFrom === 'box' && (
-            <AiNoticeBox notice={ai.notice} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'box')} className="mt-3" />
-          )}
+          <AiNoticeBox notice={askedFrom === 'box' ? ai.notice : null} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'box')} className="mt-3" />
 
           <div className="-mx-4 mt-0.5 flex items-center gap-1.5 overflow-x-auto px-4 py-3 lg:hidden">
             <FiltersSheet
@@ -416,9 +414,7 @@ export function Explore() {
                 <span>Want these grouped and explained? Ask the AI with these filters.</span>
                 <AskAiButton size="sm" className="ml-auto" onAsk={() => askAi(draft, 'nudge')} phase={askedFrom === 'nudge' ? ai.phase : 'idle'} />
               </div>
-              {ai.notice && askedFrom === 'nudge' && (
-                <AiNoticeBox notice={ai.notice} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'nudge')} className="mt-3" />
-              )}
+              <AiNoticeBox notice={askedFrom === 'nudge' ? ai.notice : null} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'nudge')} className="mt-3" />
             </>
           )}
         </div>

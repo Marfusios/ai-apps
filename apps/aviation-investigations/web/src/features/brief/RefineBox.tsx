@@ -80,9 +80,7 @@ export function RefineBox({ briefId, refinementsLeft, question }: RefineBoxProps
         {counter && `${counter} · `}
         {refinementsLeft} of 3 refinements left in this brief
       </p>
-      {refine.notice && (
-        <AiNoticeBox notice={refine.notice} keywordHref={exploreHref({}, question)} onRetry={() => void submit()} className="mt-2.5" />
-      )}
+      <AiNoticeBox notice={refine.notice} keywordHref={exploreHref({}, question)} onRetry={() => void submit()} className="mt-2.5" />
     </form>
   );
 }

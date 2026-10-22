@@ -5,6 +5,7 @@ import { Link } from 'react-router';
 import {
   BRIEF_FILTER_FACETS,
   FAILURE_TYPES,
+  FAILURE_TYPE_LABELS,
   type BriefFilterFacet,
   type BriefFilters,
   type FailureType,
@@ -20,13 +21,6 @@ import { AiNoticeBox } from '../ai/AiNoticeBox';
 import { AskAiButton } from '../ai/AskAiButton';
 import { exploreHref, filterChips, withFilter } from './filters';
 import { useRefine } from './useRefine';
-
-export const FAILURE_TYPE_WORDS: Readonly<Record<FailureType, string>> = {
-  total_power_loss: 'Total loss of engine power',
-  partial_power_loss: 'Partial loss of engine power',
-  rough_running: 'Engine running rough',
-  failure_to_climb: 'Unable to climb',
-};
 
 type Editing =
   | { kind: 'interpretation'; chip: InterpretationChip }
@@ -108,7 +102,7 @@ function InterpretationEditor({ chip, onRun, phase, onClose }: { chip: Interpret
           <select id={`${ids}-f`} value={failure} onChange={(e) => setFailure(e.target.value as FailureType)} className={field}>
             {FAILURE_TYPES.map((f) => (
               <option key={f} value={f}>
-                {FAILURE_TYPE_WORDS[f]}
+                {FAILURE_TYPE_LABELS[f]}
               </option>
             ))}
           </select>
@@ -278,7 +272,7 @@ export function BriefChips({ briefId, interpretations, filters, editable }: Brie
         <FilterOffer title={`Without ${editing.label}`} filters={editing.without} onRun={runFilters} phase={refine.phase} onClose={close} />
       )}
       {editing?.kind === 'add' && <AddFilter filters={filters} onRun={runFilters} phase={refine.phase} onClose={close} />}
-      {refine.notice && <AiNoticeBox notice={refine.notice} keywordHref={exploreHref(filters)} className="mt-2.5" />}
+      <AiNoticeBox notice={refine.notice} keywordHref={exploreHref(filters)} className="mt-2.5" />
     </div>
   );
 }

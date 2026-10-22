@@ -33,13 +33,31 @@ function Citation({ ntsbNo, unconfirmed, to }: { ntsbNo: string; unconfirmed: bo
   );
 }
 
+/**
+ * What goes before segment `i`: a comma and a thin space between two citations in a row
+ * ("DFW08TA066, MIA08LA156": the server drops the blank text between their markers), and
+ * a space where a citation would otherwise touch a word.
+ */
+export function citationJoiner(segments: readonly SummarySegment[], i: number): string {
+  const s = segments[i];
+  const prev = segments[i - 1];
+  if (!s || !prev) return '';
+  if (s.kind === 'case' && prev.kind === 'case') return ',\u2009';
+  if (s.kind === 'case' && prev.kind === 'text' && !/[\s(\[“"'‘]$/.test(prev.text)) return ' ';
+  if (s.kind === 'text' && prev.kind === 'case' && /^[\p{L}\p{N}]/u.test(s.text)) return ' ';
+  return '';
+}
+
 /** Summary text, rendered as text; citations are links built from server-owned case numbers. */
 function Summary({ segments, caseTo }: { segments: readonly SummarySegment[]; caseTo: (n: string) => To }) {
   return (
     <AiBlock label={SUMMARY_LABEL} className="mb-[18px]">
       <p>
         {segments.map((s, i) => (
-          <Fragment key={i}>{s.kind === 'text' ? s.text : <Citation ntsbNo={s.ntsbNo} unconfirmed={s.unconfirmed} to={caseTo(s.ntsbNo)} />}</Fragment>
+          <Fragment key={i}>
+            {citationJoiner(segments, i)}
+            {s.kind === 'text' ? s.text : <Citation ntsbNo={s.ntsbNo} unconfirmed={s.unconfirmed} to={caseTo(s.ntsbNo)} />}
+          </Fragment>
         ))}
       </p>
     </AiBlock>
@@ -99,7 +117,7 @@ export function BriefingSheet({ result, caseTo, inCompare, onToggleCompare }: Br
   if (result.kind === 'no_match') {
     return (
       <>
-        <div role="status" className="card mt-4 px-4 py-3.5">
+        <div className="card mt-4 px-4 py-3.5">
           <p className="font-serif text-[18px] leading-tight font-semibold">{result.lines[0]}</p>
           {result.lines.slice(1).map((line) => (
             <p key={line} className="mt-1 text-ui">

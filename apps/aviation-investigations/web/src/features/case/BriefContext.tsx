@@ -1,11 +1,11 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import type { CaseContextResponse } from '../../../../shared/contracts/briefs';
-import { SECTION_LABEL, type SectionKind } from '../../../../shared/contracts/search';
+import { SECTION_LABEL, type AircraftBrief, type SectionKind } from '../../../../shared/contracts/search';
 import { DataCaution } from '../../components/DataCaution';
 import { EvidenceGlyph } from '../../components/EvidenceGlyph';
 import { SectionHead } from '../../components/SectionHead';
-import { EVENT_SCOPE_CAUTION, ntsbSectionTag } from '../brief/display';
+import { EVENT_SCOPE_CAUTION, evidenceAttribution, ntsbSectionTag, quoteAttribution } from '../brief/display';
 
 /**
  * The AI context of a case (UI_DESIGN §4.5 items 4, 8 and 9), read from the brief's
@@ -16,19 +16,37 @@ import { EVENT_SCOPE_CAUTION, ntsbSectionTag } from '../brief/display';
  */
 export type AiCaseContext =
   | { state: 'loading'; briefId: string; step: number }
-  | { state: 'unavailable'; briefId: string; step: number }
+  /** The brief is expired, not the viewer's, or never had this case (404, or a malformed link). */
+  | { state: 'gone'; briefId: string; step: number }
+  /** The read failed for another reason (rate limit, server or network): worth retrying. */
+  | { state: 'error'; briefId: string; step: number; retry: () => void }
   | { state: 'ready'; briefId: string; step: number; context: CaseContextResponse };
 
 export const AI_NOTES_GONE = "The AI notes for this case have expired or aren't yours.";
+export const AI_NOTES_FAILED = "The AI notes for this case didn't load.";
 
 interface Span {
   start: number;
   end: number;
 }
 
-/** Valid, sorted, merged spans inside `length` (offsets are UTF-16 code units, as JS strings index). */
-export function cleanSpans(spans: readonly Span[], length: number): Span[] {
-  const valid = spans.filter((s) => Number.isInteger(s.start) && Number.isInteger(s.end) && s.start >= 0 && s.end <= length && s.start < s.end);
+const isHigh = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
+const isLow = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
+
+/** True when `at` falls between the two halves of a surrogate pair. */
+function splitsPair(text: string, at: number): boolean {
+  return at > 0 && at < text.length && isHigh(text.charCodeAt(at - 1)) && isLow(text.charCodeAt(at));
+}
+
+/**
+ * Valid, sorted, merged spans of `text` (offsets are UTF-16 code units, as JS strings
+ * index). An edge inside a surrogate pair is widened to the whole character, so a mark
+ * never cuts an astral character in half.
+ */
+export function cleanSpans(spans: readonly Span[], text: string): Span[] {
+  const valid = spans
+    .filter((s) => Number.isInteger(s.start) && Number.isInteger(s.end) && s.start >= 0 && s.end <= text.length && s.start < s.end)
+    .map((s) => ({ start: splitsPair(text, s.start) ? s.start - 1 : s.start, end: splitsPair(text, s.end) ? s.end + 1 : s.end }));
   valid.sort((a, b) => a.start - b.start || a.end - b.end);
   const out: Span[] = [];
   for (const s of valid) {
@@ -77,7 +95,7 @@ function Paragraph({ text, range, marks }: { text: string; range: Span; marks: r
  */
 export function PassageText({ text, highlights }: { text: string; highlights: readonly Span[] }) {
   const [whole, setWhole] = useState(false);
-  const marks = cleanSpans(highlights, text.length);
+  const marks = cleanSpans(highlights, text);
   const ranges = paragraphRanges(text);
   const cited = ranges.map((r) => marks.some((m) => m.start < r.end && m.end > r.start));
   const trimmed = !whole && marks.length > 0 && cited.some((c) => !c);
@@ -155,18 +173,38 @@ function Line({ label, children, ids, passages }: { label: string; children: Rea
   );
 }
 
-/** Verdict pill and the multi-aircraft caution, under the meta line. */
-export function BriefVerdict({ ai }: { ai: AiCaseContext }) {
-  if (ai.state === 'unavailable') return <p className="mt-3 text-meta text-muted">{AI_NOTES_GONE}</p>;
+export interface BriefVerdictProps {
+  ai: AiCaseContext;
+  ntsbNo: string;
+  aircraft: readonly Pick<AircraftBrief, 'aircraftKey' | 'aircraftNtsbNo' | 'make' | 'model'>[];
+}
+
+/** Verdict pill, the evidence's aircraft in a multi-aircraft event, or why the AI notes are missing. */
+export function BriefVerdict({ ai, ntsbNo, aircraft }: BriefVerdictProps) {
+  if (ai.state === 'gone') return <p className="mt-3 text-meta text-muted">{AI_NOTES_GONE}</p>;
+  if (ai.state === 'error') {
+    return (
+      <p role="status" className="mt-3 text-meta text-muted">
+        {AI_NOTES_FAILED}{' '}
+        <button type="button" onClick={ai.retry} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+          Try again
+        </button>
+      </p>
+    );
+  }
   if (ai.state !== 'ready') return null;
   const reading = ai.context.reading;
   if (!reading) return null;
   const eventScoped = reading.evidence.scope === 'event' && reading.evidence.multiAircraft;
+  const attribution = evidenceAttribution(ntsbNo, aircraft, reading.evidence);
   return (
     <>
       {reading.glyph && <EvidenceGlyph kind={reading.glyph} variant="pill" className="mt-3" />}
-      {eventScoped && (
-        <DataCaution className="mt-3">{EVENT_SCOPE_CAUTION}.</DataCaution>
+      {eventScoped && <DataCaution className="mt-3">{EVENT_SCOPE_CAUTION}.</DataCaution>}
+      {attribution && (
+        <p className="mt-2 text-meta text-muted">
+          <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">Evidence</span> {attribution}
+        </p>
       )}
     </>
   );
@@ -175,11 +213,12 @@ export function BriefVerdict({ ai }: { ai: AiCaseContext }) {
 export interface BriefSectionsProps {
   ai: AiCaseContext;
   ntsbNo: string;
+  aircraft: BriefVerdictProps['aircraft'];
   mode: 'drawer' | 'page';
 }
 
 /** WHY IT'S IN YOUR RESULTS and the CITED PASSAGE(S), after what investigators established. */
-export function BriefSections({ ai, ntsbNo, mode }: BriefSectionsProps) {
+export function BriefSections({ ai, ntsbNo, aircraft, mode }: BriefSectionsProps) {
   const location = useLocation();
   if (ai.state === 'loading') {
     return (
@@ -239,7 +278,12 @@ export function BriefSections({ ai, ntsbNo, mode }: BriefSectionsProps) {
                 data-cited={p.highlights.length > 0 ? '' : undefined}
                 className="scroll-mt-10 outline-none focus-visible:outline-2"
               >
-                {!single && <p className="mb-1 text-[9px] tracking-[.12em] text-muted uppercase">{ntsbSectionTag(p.section)}</p>}
+                {(!single || aircraft.length > 1) && (
+                  <p className="mb-1 text-[9px] tracking-[.12em] text-muted uppercase">
+                    {ntsbSectionTag(p.section)}
+                    {aircraft.length > 1 && ` · ${quoteAttribution(ntsbNo, aircraft, p)}`}
+                  </p>
+                )}
                 <PassageText text={p.text} highlights={p.highlights} />
                 <Link to={sectionHref(p.section)} className="link mt-1.5 inline-block text-ui">
                   Read the full {SECTION_LABEL[p.section].toLowerCase()}

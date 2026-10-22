@@ -61,11 +61,13 @@ export function CasePage() {
   const ai: AiCaseContext | undefined =
     ref === null
       ? undefined
-      : ref === 'invalid' || context.isError
-        ? { state: 'unavailable', briefId: '', step: 1 }
-        : context.data && brief
-          ? { state: 'ready', briefId: brief.id, step: brief.step, context: context.data }
-          : { state: 'loading', briefId: brief?.id ?? '', step: brief?.step ?? 1 };
+      : ref === 'invalid' || !brief || isNotFound(context.error)
+        ? { state: 'gone', briefId: '', step: 1 }
+        : context.isError
+          ? { state: 'error', briefId: brief.id, step: brief.step, retry: () => void context.refetch() }
+          : context.data
+            ? { state: 'ready', briefId: brief.id, step: brief.step, context: context.data }
+            : { state: 'loading', briefId: brief.id, step: brief.step };
   const compare = useCompareSelection();
   const [notice, setNotice] = useState<string | null>(null);
   const inCompare = compare.selected.includes(ntsbNo);

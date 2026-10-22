@@ -14,6 +14,15 @@ const TEST_SITE_KEY = '1x00000000000000000000AA';
 
 const FAKE_TURNSTILE = `
 window.__turnstile = { renders: [], removed: 0 };
+window.__reads = [];
+const realFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  try {
+    const url = new URL(input instanceof Request ? input.url : String(input), location.origin);
+    window.__reads.push({ method: (init && init.method) || (input instanceof Request ? input.method : 'GET'), path: url.pathname });
+  } catch {}
+  return realFetch(input, init);
+};
 window.turnstile = {
   _n: 0,
   _widgets: {},
@@ -30,7 +39,7 @@ window.turnstile = {
       if (!this._widgets[id]) return;
       box.textContent = 'Success!';
       params.callback('XXXX.DUMMY.TOKEN.XXXX');
-    }, 700);
+    }, window.__checkDelay ?? 700);
     return id;
   },
   remove(id) {
@@ -138,6 +147,15 @@ test('case number citation opens drawer at passage', async ({ page }) => {
   await expect(dialog.locator('[data-cited]').first()).toBeFocused();
   await expect(dialog.locator('[data-cited]').first()).toContainText('The engine had  been replaced 5.1 hours prior to the accident');
 
+  // ‹ › keep opening each case at its cited passage, also when its context is already loaded.
+  await dialog.getByRole('button', { name: 'Next case' }).click();
+  await expect(page).toHaveURL(/case=MIA08LA156/);
+  await expect(page.getByRole('dialog').locator('[data-cited] mark.hit').first()).toBeInViewport();
+  await page.getByRole('dialog').getByRole('button', { name: 'Previous case' }).click();
+  await expect(page).toHaveURL(/case=DFW08TA066/);
+  await expect(page.getByRole('dialog').locator('[data-cited] mark.hit').first()).toBeInViewport();
+  await expect(page.getByRole('dialog').locator('[data-cited] mark.hit').first()).toContainText('castellated nut');
+
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(page).not.toHaveURL(/case=/);
@@ -181,6 +199,13 @@ test('refine uses 1 and adds step switcher', async ({ page }) => {
 test('expired brief shows empty search', async ({ page }) => {
   await page.goto('/briefs/00000000-0000-4000-8000-999999999999');
   await expect(page.getByRole('heading', { level: 1, name: 'This AI search has expired.' })).toBeVisible();
+  // A 404 ends the reads: the expired page does not poll. (The dev server runs React's
+  // StrictMode, whose remount aborts and repeats the very first read.)
+  const briefReads = () => page.evaluate<number>("window.__reads.filter((r) => r.path.startsWith('/api/briefs/')).length");
+  const atRender = await briefReads();
+  expect(atRender).toBeLessThanOrEqual(2);
+  await page.waitForTimeout(3_000);
+  expect(await briefReads()).toBe(atRender);
   await expect(page.getByText('We delete questions and answers after 24 hours.')).toBeVisible();
   const box = page.getByRole('textbox', { name: 'Search NTSB investigations' });
   await expect(box).toHaveValue('');
@@ -191,4 +216,44 @@ test('expired brief shows empty search', async ({ page }) => {
   await box.fill('carburetor icing');
   await box.press('Enter');
   await expect(page).toHaveURL(/\/explore\?q=carburetor\+icing$/);
+});
+
+test('trial used up: the button and counter change, and a click explains', async ({ page }) => {
+  await page.goto('/');
+  for (const left of [3, 2, 1]) {
+    await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
+    await page.getByRole('button', { name: `Ask AI · ${left} free` }).click();
+    await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
+    // Back home inside the app: the mock keeps the trial in this page's memory.
+    await page.getByRole('link', { name: 'Aviation Casebook' }).click();
+    await expect(page).toHaveURL(/\/$/);
+  }
+  await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in to keep asking' })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
+  await page.getByRole('button', { name: 'Ask AI · sign in' }).click();
+  await expect(page.getByText('That was your third free AI search.')).toBeVisible();
+  await expect(
+    page.getByText('Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.'),
+  ).toBeVisible();
+  await expect(page.getByText('Search, case pages, compare and the dashboard stay open without an account.')).toBeVisible();
+  // Refused before any work: no fourth brief was requested.
+  const posts = await page.evaluate<number>("window.__reads.filter((r) => r.method === 'POST' && r.path === '/api/briefs').length");
+  expect(posts).toBe(3);
+});
+
+test('cancelling the first check gives the button back', async ({ page }) => {
+  await page.addInitScript('window.__checkDelay = 1e9;');
+  await page.goto('/');
+  await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
+  const ask = page.getByRole('button', { name: 'Ask AI · 3 free' });
+  await ask.click();
+  const check = page.getByRole('dialog', { name: 'Quick check before your first AI search' });
+  await expect(check).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Checking…' })).toBeVisible();
+  await check.getByRole('button', { name: 'Cancel' }).click();
+  await expect(check).toBeHidden();
+  await expect(ask).toBeVisible();
+  await expect(ask).toHaveAttribute('aria-busy', 'false');
+  await expect(ask).toBeFocused();
+  await expect(page).toHaveURL(/\/$/);
 });

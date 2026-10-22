@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useId } from 'react';
 import { aiStatusQuery } from '../../api';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
@@ -28,7 +29,9 @@ export interface AskAiButtonProps {
  */
 export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, size = 'md', look = 'pill', className }: AskAiButtonProps) {
   const status = useQuery(aiStatusQuery());
+  const noteId = useId();
   const availability = askAvailability(status.data, status.isError);
+  const describedBy = availability.kind === 'paused' ? noteId : undefined;
   const busy = phase !== 'idle';
   const disabled = availability.kind === 'loading' || availability.kind === 'paused' || busy;
   const counter = busy ? undefined : availability.kind === 'available' && usesOne ? 'uses 1' : askCounter(availability);
@@ -38,12 +41,17 @@ export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne =
   };
   return (
     <span className={cx('inline-flex items-center gap-2', className)}>
-      {availability.kind === 'paused' && <span className="text-meta whitespace-nowrap text-muted">{availability.note}</span>}
+      {availability.kind === 'paused' && (
+        <span id={noteId} className="text-meta whitespace-nowrap text-muted">
+          {availability.note}
+        </span>
+      )}
       {look === 'chip' ? (
         <button
           type="button"
           aria-disabled={disabled}
           aria-busy={busy}
+          aria-describedby={describedBy}
           onClick={click}
           className="inline-flex cursor-pointer items-center rounded-chip border border-magenta bg-raised px-2 py-0.5 text-left text-meta text-magenta hover:bg-magenta-wash aria-disabled:cursor-not-allowed aria-disabled:border-hairline aria-disabled:text-muted pointer-coarse:min-h-11"
         >
@@ -57,6 +65,7 @@ export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne =
           counter={counter}
           aria-disabled={disabled}
           aria-busy={busy}
+          aria-describedby={describedBy}
           onClick={click}
           className="aria-disabled:cursor-not-allowed aria-disabled:border-tint aria-disabled:bg-tint aria-disabled:text-muted aria-disabled:shadow-none"
         >

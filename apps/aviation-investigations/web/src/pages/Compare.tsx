@@ -27,6 +27,7 @@ import {
 } from '../features/case/display';
 import { briefStepQuery, caseContextQuery } from '../features/brief/api';
 import { UnconfirmedTag } from '../features/brief/CaseCard';
+import { evidenceAttribution } from '../features/brief/display';
 import { COMPARE_LIMIT, CASES_PARAM, readCompare, withCompare } from '../features/explore/url-state';
 import { PrintHeader, readBriefRef } from './CasePage';
 
@@ -39,6 +40,8 @@ const GRID_AI = 'sm:grid-cols-[30px_1.05fr_1fr_1.1fr_0.85fr_0.9fr_0.95fr_1.2fr]'
 const PC_PREVIEW = 300;
 
 export const AI_NOTES_GONE_PLURAL = "The AI notes for these cases have expired or aren't yours.";
+export const AI_NOTES_FAILED_PLURAL = "The AI notes for these cases didn't load.";
+export const AI_READING_FAILED = "The AI reading didn't load.";
 
 function Cell({ label, children, className, ai = false }: { label: string; children: ReactNode; className?: string; ai?: boolean }) {
   return (
@@ -60,14 +63,28 @@ function flightHours(context: CaseContextResponse | undefined): number | null {
  * timing line) and ESTABLISHED (the classification plus the maintenance line), from the
  * brief's private context. Magenta and labelled, because the AI extracted them.
  */
-function AiCells({ context, inBrief }: { context: CaseContextResponse | undefined; inBrief: boolean }) {
+function AiCells({ ai, detail }: { ai: StripAi; detail: CaseDetail }) {
+  const { context, inBrief, failed, retry } = ai;
   const reading = context?.reading ?? null;
   if (!reading) {
-    const note = inBrief ? (context ? 'No AI reading for this case' : 'Loading the AI reading…') : 'Not in this brief';
+    const note = !inBrief ? 'Not in this brief' : failed ? AI_READING_FAILED : context ? 'No AI reading for this case' : 'Loading the AI reading…';
+    const cell = (
+      <span className="text-meta text-muted">
+        {note}
+        {inBrief && failed && (
+          <>
+            {' '}
+            <button type="button" onClick={retry} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+              Try again
+            </button>
+          </>
+        )}
+      </span>
+    );
     return (
       <>
         <Cell label={AI_COLUMNS[0]} ai>
-          <span className="text-meta text-muted">{note}</span>
+          {cell}
         </Cell>
         <Cell label={AI_COLUMNS[1]} ai>
           <span className="text-meta text-muted">{note}</span>
@@ -75,6 +92,8 @@ function AiCells({ context, inBrief }: { context: CaseContextResponse | undefine
       </>
     );
   }
+  // In a multi-aircraft event, say whose evidence it is: never one aircraft by implication.
+  const attribution = evidenceAttribution(detail.ntsbNo, detail.aircraft, reading.evidence);
   const [first, ...rest] = reading.timing;
   const timingLine = context?.lines.find((l) => l.label === 'TIMING')?.text;
   const maintenance = context?.lines.find((l) => l.label === 'MAINTENANCE')?.text;
@@ -96,6 +115,7 @@ function AiCells({ context, inBrief }: { context: CaseContextResponse | undefine
       <Cell label={AI_COLUMNS[1]} ai>
         <span className="block font-bold text-magenta">{reading.glyph ? EVIDENCE_WORDS[reading.glyph] : 'Not classified'}</span>
         {maintenance && <span className="block text-magenta">{maintenance}</span>}
+        {attribution && <span className="mt-1 block text-meta text-muted">{attribution}</span>}
       </Cell>
     </>
   );
@@ -123,6 +143,9 @@ function sourceLink(detail: CaseDetail) {
 interface StripAi {
   context: CaseContextResponse | undefined;
   inBrief: boolean;
+  /** The private read failed (not a 404): show it, and offer a retry. */
+  failed: boolean;
+  retry: () => void;
 }
 
 function Strip({ detail, order, onRemove, ai }: { detail: CaseDetail; order: number; onRemove: () => void; ai: StripAi | null }) {
@@ -211,7 +234,7 @@ function Strip({ detail, order, onRemove, ai }: { detail: CaseDetail; order: num
           </span>
         )}
       </Cell>
-      {ai && <AiCells context={ai.context} inBrief={ai.inBrief} />}
+      {ai && <AiCells ai={ai} detail={detail} />}
       <div className="flex flex-col gap-1 border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1] sm:flex-row sm:items-baseline sm:gap-2.5">
         <span className="flex-none text-[9px] tracking-caps text-muted uppercase">Probable cause</span>
         <p className={cx('min-w-0 flex-1 font-serif text-[13px] leading-[1.45]', !cause && 'text-muted')}>
@@ -289,17 +312,25 @@ export function Compare() {
   const config = useQuery(configQuery());
   const ref = readBriefRef(params);
   const brief = ref !== null && ref !== 'invalid' ? ref : null;
-  const briefStep = useQuery({ ...briefStepQuery(brief?.id ?? '', brief?.step ?? 1), enabled: brief !== null });
+  // Read once: Compare never polls a brief (a gone one is a 404 and stays gone).
+  const briefStep = useQuery({ ...briefStepQuery(brief?.id ?? '', brief?.step ?? 1), enabled: brief !== null, refetchInterval: false });
   const answer = briefStep.data?.result?.kind === 'answer' ? briefStep.data.result : null;
   const briefCases = new Set(answer?.cases.filter((c) => c.reading !== null).map((c) => c.case.ntsbNo) ?? []);
   const contexts = useQueries({
     queries: list.map((n) => ({ ...caseContextQuery(brief?.id ?? '', brief?.step ?? 1, n), enabled: brief !== null && briefCases.has(n) })),
   });
   const aiOn = list.some((n) => briefCases.has(n));
-  const aiGone = ref === 'invalid' || (brief !== null && briefStep.isError);
+  const aiGone = ref === 'invalid' || (brief !== null && isNotFound(briefStep.error));
+  const aiFailed = brief !== null && briefStep.isError && !isNotFound(briefStep.error);
   const aiFor = (ntsbNo: string): StripAi | null => {
     if (!aiOn) return null;
-    return { context: contexts[list.indexOf(ntsbNo)]?.data, inBrief: briefCases.has(ntsbNo) };
+    const read = contexts[list.indexOf(ntsbNo)];
+    return {
+      context: read?.data,
+      inBrief: briefCases.has(ntsbNo),
+      failed: read?.isError === true,
+      retry: () => void read?.refetch(),
+    };
   };
   const [sort, setSort] = useState<SortKey>('added');
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -391,6 +422,14 @@ export function Compare() {
         </p>
       )}
       {aiGone && <p className="-mt-2 mb-4 text-meta text-muted">{AI_NOTES_GONE_PLURAL}</p>}
+      {aiFailed && (
+        <p role="status" className="-mt-2 mb-4 text-meta text-muted">
+          {AI_NOTES_FAILED_PLURAL}{' '}
+          <button type="button" onClick={() => void briefStep.refetch()} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+            Try again
+          </button>
+        </p>
+      )}
       {requested > COMPARE_LIMIT && (
         <p className="mb-3 text-meta text-muted">Compare holds four cases; the first four in the link are shown.</p>
       )}

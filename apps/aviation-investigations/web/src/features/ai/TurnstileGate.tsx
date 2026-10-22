@@ -9,15 +9,17 @@ import { useTheme } from '../../theme';
 /**
  * Cloudflare Turnstile for anonymous AI requests (UI_DESIGN §5, DESIGN §8). Every
  * anonymous AI request, refinements and retries included, needs a fresh single-use
- * token, so each request renders a new widget and removes it afterwards:
+ * token, so each check renders a new widget and removes it as soon as its token is taken:
  *
  * - The first request of a trial identity (AI status `started: false`) opens the panel
  *   "Quick check before your first AI search" with the explanation and a visible widget.
  * - Later requests run the widget invisibly (`interaction-only`) at click time while the
  *   button reads "Checking…"; only if Cloudflare asks for interaction does the panel
  *   appear, titled "Quick check before this AI search".
- * - After every request, and always after a refusal of any kind, `reset()` removes the
- *   widget, so no token is ever offered twice.
+ * - Each request holds a session (`useAiCheck().session()`). Sessions take turns: a second
+ *   control waits ("Checking…") until the first request is over, and ending a session
+ *   only ever removes its own widget. After any refusal the session is released and the
+ *   next request starts from a new widget.
  *
  * The site key comes from `/api/config` (`turnstileSiteKey`); the mock API answers with
  * Cloudflare's documented test key. The script is loaded only when an AI request needs it.
@@ -96,11 +98,19 @@ export interface TokenOptions {
   visible?: boolean;
 }
 
-export interface AiCheck {
-  /** A fresh single-use token for one anonymous AI request. Rejects with `AiCheckError`. */
+/** One AI request's use of the gate. */
+export interface AiCheckSession {
+  /**
+   * A fresh single-use token. Waits first while another request holds the gate. Rejects
+   * with `AiCheckError` (`cancelled` when the reader cancels or the session ended).
+   */
   token(options: TokenOptions): Promise<string>;
-  /** Removes the widget and any pending check. Call after every request. */
-  reset(): void;
+  /** Ends this session: removes its widget, cancels its pending check, lets the next one in. */
+  release(): void;
+}
+
+export interface AiCheck {
+  session(): AiCheckSession;
 }
 
 const AiCheckContext = createContext<AiCheck | null>(null);
@@ -114,6 +124,7 @@ export function useAiCheck(): AiCheck {
 type Mode = null | 'first' | 'later';
 
 interface Pending {
+  owner: object;
   resolve: (token: string) => void;
   reject: (err: AiCheckError) => void;
 }
@@ -126,17 +137,22 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const widget = useRef<{ id: string; host: HTMLElement } | null>(null);
+  const widget = useRef<{ id: string; host: HTMLElement; owner: object } | null>(null);
   const pending = useRef<Pending | null>(null);
   const slowTimer = useRef<number | undefined>(undefined);
   const opener = useRef<HTMLElement | null>(null);
+  // Sessions take turns: each waits for the one before it to be released.
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const latest = useRef({ config: config.data, theme });
+  latest.current = { config: config.data, theme };
   const titleId = useId();
 
-  const removeWidget = useCallback(() => {
-    window.clearTimeout(slowTimer.current);
+  /** Removes `owner`'s widget (any widget when `owner` is null). */
+  const removeWidget = useCallback((owner: object | null) => {
     const w = widget.current;
+    if (!w || (owner !== null && w.owner !== owner)) return;
+    window.clearTimeout(slowTimer.current);
     widget.current = null;
-    if (!w) return;
     try {
       window.turnstile?.remove(w.id);
     } catch {
@@ -145,50 +161,58 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
     w.host.remove();
   }, []);
 
-  const settle = useCallback(
-    (outcome: { token: string } | { error: AiCheckError }) => {
-      const p = pending.current;
-      pending.current = null;
-      setMode(null);
-      window.clearTimeout(slowTimer.current);
-      if (!p) return;
-      if ('token' in outcome) p.resolve(outcome.token);
-      else p.reject(outcome.error);
-    },
-    [],
-  );
-
-  const reset = useCallback(() => {
-    if (pending.current) settle({ error: new AiCheckError('cancelled') });
-    removeWidget();
+  /** Settles `owner`'s pending check (any pending check when `owner` is null). */
+  const settle = useCallback((owner: object | null, outcome: { token: string } | { error: AiCheckError }) => {
+    const p = pending.current;
+    if (!p || (owner !== null && p.owner !== owner)) return;
+    pending.current = null;
     setMode(null);
+    window.clearTimeout(slowTimer.current);
+    if ('token' in outcome) p.resolve(outcome.token);
+    else p.reject(outcome.error);
+  }, []);
+
+  /** The reader cancelled the check in the panel (Cancel or Esc). */
+  const cancelCurrent = useCallback(() => {
+    const owner = pending.current?.owner ?? widget.current?.owner ?? null;
+    if (owner === null) {
+      setMode(null);
+      return;
+    }
+    settle(owner, { error: new AiCheckError('cancelled') });
+    removeWidget(owner);
   }, [removeWidget, settle]);
 
-  const token = useCallback(
-    async ({ first, visible = false }: TokenOptions): Promise<string> => {
-      reset();
-      const siteKey = (config.data ?? (await queryClient.fetchQuery(configQuery()))).turnstileSiteKey;
+  const render = useCallback(
+    async (owner: object, { first, visible = false }: TokenOptions): Promise<string> => {
+      const siteKey = (latest.current.config ?? (await queryClient.fetchQuery(configQuery()))).turnstileSiteKey;
       if (!siteKey) throw new AiCheckError('unavailable');
       const api = await loadTurnstile();
+      removeWidget(owner);
       const host = document.createElement('div');
       container.current?.appendChild(host);
-      opener.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+      const active = document.activeElement;
+      opener.current = active instanceof HTMLElement && active !== document.body && !panel.current?.contains(active) ? active : null;
       const shown = first || visible;
       if (shown) setMode(first ? 'first' : 'later');
       return new Promise<string>((resolve, reject) => {
-        pending.current = { resolve, reject };
+        pending.current = { owner, resolve, reject };
         const fail = (reason: AiCheckFailure) => () => {
-          settle({ error: new AiCheckError(reason) });
-          removeWidget();
+          settle(owner, { error: new AiCheckError(reason) });
+          removeWidget(owner);
         };
         try {
           const id = api.render(host, {
             sitekey: siteKey,
             action: TURNSTILE_ACTION,
-            theme: theme === 'night' ? 'dark' : 'light',
+            theme: latest.current.theme === 'night' ? 'dark' : 'light',
             appearance: shown ? 'always' : 'interaction-only',
             size: window.innerWidth < 380 ? 'compact' : 'normal',
-            callback: (t) => settle({ token: t }),
+            callback: (t) => {
+              settle(owner, { token: t });
+              // The token is taken: this widget has done its one job.
+              removeWidget(owner);
+            },
             'error-callback': () => {
               fail('failed')();
               return true;
@@ -199,17 +223,59 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
             'before-interactive-callback': () => setMode((m) => m ?? 'later'),
           });
           if (!id) throw new Error('no widget');
-          widget.current = { id, host };
+          widget.current = { id, host, owner };
         } catch {
           host.remove();
-          settle({ error: new AiCheckError('unavailable') });
+          settle(owner, { error: new AiCheckError('unavailable') });
           return;
         }
         if (!shown) slowTimer.current = window.setTimeout(() => setMode((m) => m ?? 'later'), SHOW_SLOW_CHECK_MS);
       });
     },
-    [config.data, queryClient, removeWidget, reset, settle, theme],
+    [queryClient, removeWidget, settle],
   );
+
+  const session = useCallback((): AiCheckSession => {
+    const owner = {};
+    let unlock: (() => void) | null = null;
+    let turn: Promise<void> | null = null;
+    let ended = false;
+    // Released while still waiting: stop waiting at once.
+    let markEnded: () => void = () => {};
+    const endedSignal = new Promise<void>((resolve) => {
+      markEnded = resolve;
+    });
+    /** Joins the queue once: our turn comes when the session before us is released. */
+    const take = (): Promise<void> => {
+      if (!turn) {
+        let done: () => void = () => {};
+        const mine = new Promise<void>((resolve) => {
+          done = resolve;
+        });
+        const before = queue.current;
+        // Whoever comes next waits for the session before us and for us.
+        queue.current = before.then(() => mine);
+        unlock = done;
+        turn = before;
+      }
+      return turn;
+    };
+    return {
+      async token(options) {
+        await Promise.race([take(), endedSignal]);
+        if (ended) throw new AiCheckError('cancelled');
+        return render(owner, options);
+      },
+      release() {
+        if (ended) return;
+        ended = true;
+        markEnded();
+        settle(owner, { error: new AiCheckError('cancelled') });
+        removeWidget(owner);
+        unlock?.();
+      },
+    };
+  }, [removeWidget, render, settle]);
 
   // Focus moves to the panel when it opens and returns to the control that asked.
   useEffect(() => {
@@ -226,9 +292,9 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
     else if (inPanel) active.blur();
   }, [mode]);
 
-  useEffect(() => () => removeWidget(), [removeWidget]);
+  useEffect(() => () => removeWidget(null), [removeWidget]);
 
-  const value = useMemo<AiCheck>(() => ({ token, reset }), [token, reset]);
+  const value = useMemo<AiCheck>(() => ({ session }), [session]);
   const open = mode !== null;
 
   return (
@@ -243,7 +309,7 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
         aria-hidden={!open}
         inert={!open}
         onKeyDown={(event) => {
-          if (event.key === 'Escape' && open) reset();
+          if (event.key === 'Escape' && open) cancelCurrent();
         }}
         className={cx(
           open
@@ -257,7 +323,7 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
         <p className="mt-1 text-ui">{mode === 'first' ? FIRST_CHECK_TEXT : LATER_CHECK_TEXT}</p>
         <div ref={container} className="mt-2.5 min-h-[65px]" />
         <div className="mt-1 flex justify-end">
-          <Button variant="ghost" size="sm" onClick={reset}>
+          <Button variant="ghost" size="sm" onClick={cancelCurrent}>
             Cancel
           </Button>
         </div>

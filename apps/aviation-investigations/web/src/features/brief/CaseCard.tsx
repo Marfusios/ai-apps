@@ -8,8 +8,10 @@ import { FlightProfile } from '../../components/FlightProfile';
 import { TimingChip } from '../../components/TimingChip';
 import { cx } from '../../lib/cx';
 import { formatDate } from '../../lib/format';
-import { CAUTION_SHORT, aircraftSummary, phaseEventShort, placeShort, profileSteps } from '../case/display';
-import { EVENT_SCOPE_CAUTION, ntsbSectionTag, speakerTag, unconfirmedLines } from './display';
+import { CAUTION_SHORT, aircraftName, aircraftSummary, letterOf, phaseEventShort, placeShort, profileSteps } from '../case/display';
+import { EVENT_SCOPE_CAUTION, evidenceAttribution, ntsbSectionTag, quoteAttribution, speakerTag, unconfirmedLines } from './display';
+
+export const CASE_DETAIL_FAILED = "Couldn't load the flight profile and data cautions.";
 
 export interface CaseCardProps {
   card: CaseCardData;
@@ -64,8 +66,11 @@ function SourceLink({ card }: { card: CaseCardData }) {
 export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph = false }: CaseCardProps) {
   const { case: row, reading } = card;
   // Public, cacheable NTSB data: the flight profile and data cautions (and the drawer's first paint).
-  const detail = useQuery(caseQuery(row.ntsbNo)).data;
+  const caseRead = useQuery(caseQuery(row.ntsbNo));
+  const detail = caseRead.data;
   const multi = row.aircraft.length > 1;
+  const attribution = reading ? evidenceAttribution(row.ntsbNo, row.aircraft, reading.evidence) : null;
+  const eventScoped = reading?.evidence.scope === 'event' && reading.evidence.multiAircraft;
   const unconfirmed = unconfirmedLines(reading);
   const headingId = `card-${row.ntsbNo}`;
   const single = row.aircraft.length === 1 ? row.aircraft[0] : undefined;
@@ -96,7 +101,7 @@ export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph =
       </div>
       {multi && (
         <p className="mt-0.5 text-meta text-muted">
-          {row.aircraft.map((a) => [a.make, a.model].filter(Boolean).join(' ') || 'Aircraft not identified').join(' and ')}
+          {row.aircraft.map((a, i) => `${letterOf(row.ntsbNo, a, i)} ${aircraftName(a)}`).join(' · ')}
         </p>
       )}
 
@@ -118,19 +123,28 @@ export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph =
               {unconfirmed.join(' ')}
             </p>
           )}
-          {reading.evidence.scope === 'event' && reading.evidence.multiAircraft && (
-            <DataCaution variant="chip" label="Data caution" className="mb-1.5">
-              {EVENT_SCOPE_CAUTION}
-            </DataCaution>
+          {(attribution || eventScoped) && (
+            <p className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
+              {eventScoped && <DataCaution variant="chip">{EVENT_SCOPE_CAUTION}</DataCaution>}
+              {attribution && (
+                <span className="text-muted">
+                  <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">Evidence</span> {attribution}
+                </span>
+              )}
+            </p>
           )}
           <div className="space-y-2">
             {reading.quotes.map((q) => {
               const who = speakerTag(q.speaker);
+              const part = quoteAttribution(row.ntsbNo, row.aircraft, q);
               return (
                 <blockquote key={`${q.passageId}-${q.span.start}`} className="border-l-2 border-rule py-px pl-[11px]">
                   <p className="font-serif text-body leading-[1.45]">“{q.text}”</p>
                   <footer className="mt-[3px] flex flex-wrap gap-x-2 text-[10px] tracking-[.12em] text-muted">
-                    <cite className="not-italic">{ntsbSectionTag(q.section)}</cite>
+                    <cite className="not-italic">
+                      {ntsbSectionTag(q.section)}
+                      {part && ` · ${part}`}
+                    </cite>
                     {who && <span className="font-bold text-magenta">{who}</span>}
                   </footer>
                 </blockquote>
@@ -159,6 +173,14 @@ export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph =
             {CAUTION_SHORT[c.kind]}
           </DataCaution>
         ))}
+        {caseRead.isError && (
+          <span className="text-muted">
+            {CASE_DETAIL_FAILED}{' '}
+            <button type="button" onClick={() => void caseRead.refetch()} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+              Try again
+            </button>
+          </span>
+        )}
         <span className="ml-auto">
           <SourceLink card={card} />
         </span>

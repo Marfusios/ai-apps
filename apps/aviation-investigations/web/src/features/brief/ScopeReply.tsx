@@ -32,7 +32,7 @@ function Readings({ briefId, label, line, readings, refinementsLeft }: { briefId
           <p className="mt-2 text-ui text-muted">This brief has used its three refinements. Start a new search to keep going.</p>
         )}
       </div>
-      {refine.notice && <AiNoticeBox notice={refine.notice} keywordHref="/explore" className="mt-2.5" />}
+      <AiNoticeBox notice={refine.notice} keywordHref="/explore" className="mt-2.5" />
     </section>
   );
 }
@@ -53,7 +53,7 @@ export function ScopeReply({ briefId, question, reply, refinementsLeft }: ScopeR
   switch (reply.kind) {
     case 'out_of_scope':
       return (
-        <div role="status" className="card mt-4 px-4 py-3.5">
+        <div className="card mt-4 px-4 py-3.5">
           <p className="font-serif text-[18px] leading-tight font-semibold">{reply.lines[0]}</p>
           {reply.lines.slice(1).map((line) => (
             <p key={line} className="mt-1 text-ui">
@@ -69,7 +69,7 @@ export function ScopeReply({ briefId, question, reply, refinementsLeft }: ScopeR
       );
     case 'operational_advice':
       return (
-        <div role="status" className="card mt-4 border-l-4 border-l-blue px-4 py-3.5">
+        <div className="card mt-4 border-l-4 border-l-blue px-4 py-3.5">
           <p className="font-serif text-[18px] leading-tight font-semibold">{reply.title}</p>
           {reply.lines.map((line) => (
             <p key={line} className="mt-1 text-ui">
@@ -88,7 +88,7 @@ export function ScopeReply({ briefId, question, reply, refinementsLeft }: ScopeR
       );
     case 'corpus_statistics':
       return (
-        <div role="status" className="card mt-4 px-4 py-3.5">
+        <div className="card mt-4 px-4 py-3.5">
           {reply.lines.map((line) => (
             <p key={line} className="font-serif text-[18px] leading-tight font-semibold">
               {line}
@@ -106,7 +106,7 @@ export function ScopeReply({ briefId, question, reply, refinementsLeft }: ScopeR
       );
     case 'case_comparison':
       return (
-        <div role="status" className="card mt-4 px-4 py-3.5">
+        <div className="card mt-4 px-4 py-3.5">
           <p className="font-serif text-[18px] leading-tight font-semibold">
             {reply.found.length > 0 ? 'Comparing cases is free; it doesn’t need the AI.' : 'None of those case numbers is in this snapshot.'}
           </p>

@@ -49,14 +49,12 @@ export function Home() {
           inputRef={input}
           className="mt-4 w-full max-w-[660px]"
         />
-        {ai.notice && (
-          <AiNoticeBox
-            notice={ai.notice}
-            keywordHref={value.trim() ? `/explore?${new URLSearchParams({ q: value.trim() }).toString()}` : '/explore'}
-            onRetry={() => void ai.ask(value)}
-            className="mt-3 w-full"
-          />
-        )}
+        <AiNoticeBox
+          notice={ai.notice}
+          keywordHref={value.trim() ? `/explore?${new URLSearchParams({ q: value.trim() }).toString()}` : '/explore'}
+          onRetry={() => void ai.ask(value)}
+          className="mt-3 w-full"
+        />
         <div className="mt-3 flex max-w-[660px] flex-wrap justify-center gap-[7px]" aria-label="Example questions">
           {HOME_EXAMPLES.map((example) => (
             <Chip key={example} variant="example" onClick={() => fill(example)}>

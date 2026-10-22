@@ -31,13 +31,14 @@ export const COPY = {
   failure: ["The AI search didn't finish.", 'Something went wrong before an answer was ready.'],
   notSpent: "This didn't use one of your searches.",
   spent: 'This counted as a search, because the AI work was already under way.',
+  /** No answer came back, so whether it counted is unknown (Builder copy). */
+  unknownSpent: 'If it went through, Try again opens it without using another search.',
   continueWithGoogle: 'Continue with Google',
 } as const;
 
-function Box({ edge, title, children, role = 'status' }: { edge?: 'ink' | 'blue'; title: string; children?: ReactNode; role?: 'status' | 'alert' }) {
+function Box({ edge, title, children }: { edge?: 'ink' | 'blue'; title: string; children?: ReactNode }) {
   return (
     <div
-      role={role}
       className={cx(
         'card px-4 py-3.5 text-left',
         edge === 'ink' && 'border-caution-edge border-l-4 border-l-ink',
@@ -112,7 +113,8 @@ function Paused({ status, keywordHref }: { status: Extract<AiStatusResponse, { s
 }
 
 export interface AiNoticeBoxProps {
-  notice: AiNotice;
+  /** Null renders the empty live region, so a notice that appears later is announced. */
+  notice: AiNotice | null;
   /** Where "Search by keyword instead" goes (Explore with the question). */
   keywordHref: string;
   /** "Try again" after a failure; it runs the AI again, so it shows "· uses 1". */
@@ -120,10 +122,15 @@ export interface AiNoticeBoxProps {
   className?: string;
 }
 
-/** The message under an AI control after a request did not start (UI_DESIGN §5). */
+/**
+ * The message under an AI control after a request did not start (UI_DESIGN §5). It sits
+ * in a polite live region that is rendered before any message, so screen readers announce
+ * a notice when it appears.
+ */
 export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNoticeBoxProps) {
   const live = useQuery(aiStatusQuery());
   const body = (() => {
+    if (!notice) return null;
     switch (notice.kind) {
       case 'paused':
         return <Paused status={notice.status ?? (live.data?.state === 'paused' ? live.data : null)} keywordHref={keywordHref} />;
@@ -147,7 +154,7 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
         return <Box title={`Slow down a moment. Try again in ${notice.seconds} seconds.`} />;
       case 'failure':
         return (
-          <Box title={COPY.failure[0]} role="alert">
+          <Box title={COPY.failure[0]}>
             <p>{COPY.failure[1]}</p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {onRetry && (
@@ -159,7 +166,7 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
                 {COPY.keyword}
               </Link>
             </div>
-            <p className="pt-1 text-meta text-muted">{notice.spent ? COPY.spent : COPY.notSpent}</p>
+            <p className="pt-1 text-meta text-muted">{notice.spent === 'no' ? COPY.notSpent : COPY.unknownSpent}</p>
           </Box>
         );
       case 'check':
@@ -175,5 +182,9 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
         return <Box title={notice.text} />;
     }
   })();
-  return <div className={cx('max-w-[640px]', className)}>{body}</div>;
+  return (
+    <div aria-live="polite" className={cx('max-w-[640px]', body && className)}>
+      {body}
+    </div>
+  );
 }

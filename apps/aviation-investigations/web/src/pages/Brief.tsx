@@ -13,7 +13,7 @@ import { BriefChips } from '../features/brief/BriefChips';
 import { BriefingSheet } from '../features/brief/BriefingSheet';
 import { Checklist } from '../features/brief/Checklist';
 import { exploreHref, filtersInWords } from '../features/brief/filters';
-import { rememberedQuestion } from '../features/brief/memory';
+import { rememberedFilters, rememberedQuestion } from '../features/brief/memory';
 import { RefineBox } from '../features/brief/RefineBox';
 import { ScopeReply } from '../features/brief/ScopeReply';
 import { StepSwitcher } from '../features/brief/StepSwitcher';
@@ -77,12 +77,17 @@ function Expired({ id }: { id: string }) {
         askPhase={ai.phase}
         className="mt-4"
       />
-      {ai.notice && <AiNoticeBox notice={ai.notice} keywordHref={exploreHref({}, value)} onRetry={() => void ai.ask(value)} className="mt-3" />}
+      <AiNoticeBox notice={ai.notice} keywordHref={exploreHref({}, value)} onRetry={() => void ai.ask(value)} className="mt-3" />
     </div>
   );
 }
 
-/** "The AI search didn't finish." with what it cost, and Try again (a new paid step). */
+/**
+ * "The AI search didn't finish." with what it cost, and Try again (a new paid step). A
+ * failed first step is asked again with the brief's filters: the ones this page asked
+ * with, else the ones the scope stage settled on. The page's live region announces the
+ * failure once, so this box is not a live region itself.
+ */
 function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsSearch: boolean }) {
   const ask = useAskAi();
   const refine = useRefine(step.briefId);
@@ -90,12 +95,12 @@ function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsS
   const retry = (): void => {
     if (step.refinementsLeft > 0 && origin.kind === 'text') void refine.refine({ kind: 'text', text: origin.text });
     else if (step.refinementsLeft > 0 && origin.kind === 'filters') void refine.refine({ kind: 'filters', filters: origin.filters });
-    else void ask.ask(step.question);
+    else void ask.ask(step.question, rememberedFilters(step.briefId) ?? step.checklist.interpretation?.filters);
   };
   const notice = refine.notice ?? ask.notice;
   return (
     <>
-      <div role="alert" className="card mt-4 px-4 py-3.5">
+      <div className="card mt-4 px-4 py-3.5">
         <p className="font-serif text-[18px] leading-tight font-semibold">{COPY.failure[0]}</p>
         <p className="mt-1 text-ui">{COPY.failure[1]}</p>
         <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
@@ -108,9 +113,26 @@ function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsS
         </div>
         <p className="mt-1.5 text-meta text-muted">{countedAsSearch ? COPY.spent : COPY.notSpent}</p>
       </div>
-      {notice && <AiNoticeBox notice={notice} keywordHref={exploreHref({}, step.question)} className="mt-2.5" />}
+      <AiNoticeBox notice={notice} keywordHref={exploreHref({}, step.question)} className="mt-2.5" />
     </>
   );
+}
+
+/**
+ * The chips' readings and filters (UI_DESIGN §4.4: the question and chips stay on top):
+ * the finished step's own; while it runs, what the scope stage sent, else the previous
+ * step's (a refinement before its scope row is done).
+ */
+export function chipsContext(
+  step: BriefStepResponse,
+  previous: BriefStepResponse | undefined,
+): Pick<NonNullable<BriefStepResponse['checklist']['interpretation']>, 'interpretations' | 'filters'> | null {
+  const result = step.result;
+  if (result && 'interpretations' in result) return result;
+  if (isFinished(step)) return null;
+  if (step.checklist.interpretation) return step.checklist.interpretation;
+  const before = previous?.result;
+  return before && 'interpretations' in before ? before : null;
 }
 
 function resultAnnouncement(result: BriefResult | undefined): string {
@@ -150,6 +172,9 @@ export function Brief() {
   const valid = BriefIdSchema.safeParse(id).success;
   const stepParam = readStep(params);
   const query = useQuery({ ...briefStepQuery(id, stepParam), enabled: valid });
+  // `?step=n` past the last step: show the latest one with a note, not the expired page.
+  const stepMissing = stepParam !== null && isNotFound(query.error);
+  const fallback = useQuery({ ...briefStepQuery(id, null), enabled: valid && stepMissing });
   const config = useQuery(configQuery()).data;
   const openCase = readOpenCase(params);
   const compare = useCompareSelection();
@@ -158,8 +183,22 @@ export function Brief() {
   const [cancelling, setCancelling] = useState(false);
   const [announcement, setAnnouncement] = useState('');
   const resultHeading = useRef<HTMLHeadingElement>(null);
-  const step = query.data;
+  const step = query.data ?? (stepMissing ? fallback.data : undefined);
   const finished = step ? isFinished(step) : false;
+  const gone = !valid || (stepMissing ? isNotFound(fallback.error) : isNotFound(query.error));
+  // While a refinement runs, its chips are the previous step's (already read, so cached)
+  // until the scope stage sends the step's own.
+  const previous = useQuery({
+    ...briefStepQuery(id, (step?.step ?? 1) - 1),
+    enabled: Boolean(step && !finished && step.step > 1 && !step.checklist.interpretation),
+  });
+
+  // A finished step never changes: keep it under its number too, so the step switcher and
+  // the next refinement's chips read it from memory.
+  const readAsLatest = stepParam === null || stepMissing;
+  useEffect(() => {
+    if (step && finished && readAsLatest) queryClient.setQueryData(briefStepQuery(id, step.step).queryKey, step);
+  }, [queryClient, id, step, finished, readAsLatest]);
   // The step seen running on this page, so only its own finish is announced.
   const running = useRef<string | null>(null);
 
@@ -178,7 +217,7 @@ export function Brief() {
     if (document.activeElement === document.body || document.activeElement === null) resultHeading.current?.focus({ preventScroll: true });
   }, [step, finished]);
 
-  if (!valid || isNotFound(query.error)) return <Expired id={id} />;
+  if (gone) return <Expired id={id} />;
   if (!step) {
     return (
       <div className="mx-auto w-full max-w-reading px-4 pt-6 pb-12">
@@ -207,7 +246,7 @@ export function Brief() {
   const result = step.result;
   const latest = step.step === step.steps;
   const sheet = result && (result.kind === 'answer' || result.kind === 'withheld' || result.kind === 'no_match') ? result : null;
-  const context = result && 'interpretations' in result ? result : null;
+  const context = chipsContext(step, previous.data);
   const cases = sheet?.cases.map((c) => c.case.ntsbNo) ?? [];
 
   // The drawer keeps the step in view (`step` stays as it is: absent means the latest).
@@ -274,6 +313,11 @@ export function Brief() {
       <Placard as="p">Your question</Placard>
       <h1 className="mt-1 font-serif text-[17px] leading-[1.3] sm:text-[19px]">{step.question}</h1>
       <StepSwitcher briefId={id} step={step.step} steps={step.steps} origin={step.origin} />
+      {stepMissing && (
+        <p role="status" className="mb-2.5 text-meta text-muted">
+          There is no answer {stepParam} in this brief; this is the latest.
+        </p>
+      )}
       {context && <BriefChips briefId={id} interpretations={context.interpretations} filters={context.filters} editable={canRefine && step.refinementsLeft > 0} />}
 
       {!finished ? (
@@ -293,7 +337,7 @@ export function Brief() {
           {sheet && <BriefingSheet result={sheet} caseTo={caseTo} inCompare={(n) => compare.selected.includes(n)} onToggleCompare={toggle} />}
           {result?.kind === 'scope_reply' && <ScopeReply briefId={id} question={step.question} reply={result.reply} refinementsLeft={latest ? step.refinementsLeft : 0} />}
           {result?.kind === 'no_results' && (
-            <div role="status" className="card mt-4 px-4 py-3.5">
+            <div className="card mt-4 px-4 py-3.5">
               <p className="font-serif text-[18px] leading-tight font-semibold">{NO_RESULTS_TITLE}</p>
               <p className="mt-1 text-ui text-muted">{[`“${step.question}”`, ...filtersInWords(result.filters)].join(' · ')}</p>
               <Link to={exploreHref(result.filters)} className="mt-2 inline-block text-ui text-blue hover:underline">
@@ -303,7 +347,7 @@ export function Brief() {
           )}
           {result?.kind === 'failed' && <Failed step={step} countedAsSearch={result.countedAsSearch} />}
           {result?.kind === 'cancelled' && (
-            <div role="status" className="card mt-4 px-4 py-3.5">
+            <div className="card mt-4 px-4 py-3.5">
               <p className="font-serif text-[18px] leading-tight font-semibold">{CANCELLED_TITLE}</p>
               <p className="mt-1 text-meta text-muted">{COPY.spent}</p>
             </div>

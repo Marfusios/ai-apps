@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Link, type To } from 'react-router';
 import type { Snippet } from '../../../../shared/contracts/search';
 import { caseQuery, isNotFound } from '../../api';
@@ -82,7 +82,9 @@ export function CaseDrawer({
     ? context.data
       ? { state: 'ready', briefId: brief.id, step: brief.step, context: context.data }
       : context.isError
-        ? { state: 'unavailable', briefId: brief.id, step: brief.step }
+        ? isNotFound(context.error)
+          ? { state: 'gone', briefId: brief.id, step: brief.step }
+          : { state: 'error', briefId: brief.id, step: brief.step, retry: () => void context.refetch() }
         : { state: 'loading', briefId: brief.id, step: brief.step }
     : undefined;
   // Over a brief the story scrolls itself to the cited passage, so focusing the headline must not scroll.
@@ -94,8 +96,9 @@ export function CaseDrawer({
     focusHeading();
     if (query.data) focusPending.current = false;
   }, [query.data, ntsbNo]);
-  // Each case starts at the top of the drawer (or at its cited passage).
-  useEffect(() => {
+  // Each case starts at the top of the drawer. A layout effect, so it runs before the
+  // story's own effect scrolls to the cited passage (‹ › onto a case whose context is cached).
+  useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = 0;
   }, [ntsbNo]);
 
