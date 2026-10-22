@@ -89,6 +89,25 @@ describe('mock search counting', () => {
     expect(r.multiAircraft).toBe(1);
   });
 
+  it('aircraft facets match on one aircraft, as on the server', () => {
+    // DCA25MA108: an airplane on approach and a helicopter en route.
+    const ids = (r: SearchResponse) => r.rows.map((row) => row.ntsbNo);
+    expect(ids(search({ q: 'DCA25MA108', category: 'HELI', phase: 'approach' }))).toEqual([]);
+    expect(ids(search({ q: 'DCA25MA108', category: 'HELI', phase: 'en_route' }))).toEqual(['DCA25MA108']);
+    expect(ids(search({ q: 'DCA25MA108', category: 'AIR', far_part: 'ARMF' }))).toEqual([]);
+    // With a category selected, the phase facet counts only that category's aircraft.
+    const helicopters = search({ q: 'DCA25MA108', category: 'HELI' });
+    expect(count(helicopters, 'phase', 'en_route')).toBe(1);
+    expect(count(helicopters, 'phase', 'approach')).toBeUndefined();
+    // The no-results state drops one facet at a time with the same rule.
+    const none = search({ q: 'DCA25MA108', category: 'HELI', phase: 'approach' });
+    expect(none.relaxations).toEqual([
+      { drop: 'completion', count: 0 },
+      { drop: 'phase', count: 1 },
+      { drop: 'category', count: 1 },
+    ]);
+  });
+
   it('mentionedIn counts every report hit and the probable-cause subset', () => {
     const r = search({ q: 'midair', completion: 'any' });
     expect(r.mentionedIn).toEqual({ anywhere: 2, probable_cause: 1 });

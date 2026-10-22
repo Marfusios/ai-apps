@@ -18,12 +18,27 @@ import {
 } from '../../shared/contracts/search.js';
 import { aircraftBrief } from '../../server/projection/cases.js';
 import { projectLower48 } from '../../server/projection/map.js';
-import { completionFacetValue, type MockDoc } from '../../web/mock/engine.js';
+import { completionFacetValue, type MockAircraftValues, type MockDoc } from '../../web/mock/engine.js';
 import type { CanonicalAircraft, CanonicalCase, NormalizeResult } from '../../worker/ingest/normalize.js';
 
 export { toCaseDetail, type ProjectionContext } from '../../server/projection/cases.js';
 
 const distinct = (values: readonly string[]): string[] => [...new Set(values)];
+
+/**
+ * One aircraft's facet values, as the server's cases index holds them: engine is the
+ * aircraft's distinct recorded engine types, or `blank` when it has none.
+ */
+export function aircraftValues(a: CanonicalAircraft): MockAircraftValues {
+  const engines = distinct(a.engines.map((e) => e.engType).filter((t): t is string => t !== null));
+  return {
+    phase: [a.definingPhaseGroup ?? BLANK],
+    category: [a.category ?? BLANK],
+    engine: engines.length > 0 ? engines : [BLANK],
+    far_part: [a.farPart ?? BLANK],
+    purpose: [a.purpose ?? BLANK],
+  };
+}
 
 /** Facet values of an event: aircraft facets hold the union over its aircraft (amendment A14). */
 export function facetValues(c: CanonicalCase): Record<FacetKey, string[]> {
@@ -37,10 +52,7 @@ export function facetValues(c: CanonicalCase): Record<FacetKey, string[]> {
     conditions: [f.wxCondBasic ?? BLANK],
     light: [f.lightCond ?? BLANK],
     category: perAircraft((a) => a.category),
-    engine:
-      c.aircraft.length === 0
-        ? [BLANK]
-        : distinct(c.aircraft.flatMap((a) => (a.engines.length === 0 ? [BLANK] : a.engines.map((e) => e.engType ?? BLANK)))),
+    engine: c.aircraft.length === 0 ? [BLANK] : distinct(c.aircraft.flatMap((a) => aircraftValues(a).engine)),
     far_part: perAircraft((a) => a.farPart),
     purpose: perAircraft((a) => a.purpose),
     state: [(f.state ?? '').trim().toUpperCase() || BLANK],
@@ -66,6 +78,7 @@ export function toMockDoc(c: CanonicalCase, detail: CaseDetail): MockDoc {
     },
     year: f.evYear ?? (f.evDate ? Number(f.evDate.slice(0, 4)) : null),
     facets: facetValues(c),
+    aircraft: c.aircraft.map(aircraftValues),
     defaultCohort: c.answerEligible,
     fields: [
       c.ntsbNo,

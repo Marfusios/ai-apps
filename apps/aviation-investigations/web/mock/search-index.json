@@ -110,6 +110,25 @@
      "AK"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "approach"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "135"
+     ],
+     "purpose": [
+      "blank"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "ANC15LA005 PIPER PA 18-150 N9720P Nikiski Alaska"
   },
@@ -219,6 +238,25 @@
      "WI"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "approach"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN09CA566 PIPER J3C-65 N3549W Mondovi Wisconsin"
   },
@@ -328,6 +366,25 @@
      "TX"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "approach"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN09FA115 NANCHANG CHINA CJ-6 N99YK Justin Texas"
   },
@@ -437,6 +494,25 @@
      "SD"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "INST"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN12LA175 PIPER PA-28-161 N20GG Rapid City South Dakota"
   },
@@ -546,6 +622,25 @@
      "MO"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "approach"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN13FA030 PIPER PA-28-140 N55620 Maryland Heights Missouri"
   },
@@ -655,6 +750,25 @@
      "MO"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "maneuvering"
+     ],
+     "category": [
+      "HELI"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "INST"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN19FA009 Robinson R22 BETA N923SH Fulton Missouri"
   },
@@ -764,6 +878,25 @@
      "TX"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "HELI"
+     ],
+     "engine": [
+      "TS"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN19FA024 Bell 206 B N417WT Uvalde Texas"
   },
@@ -873,6 +1006,25 @@
      "LA"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "AOBV"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN20LA361 Cessna R182 No Series N639RR Crowley Louisiana"
   },
@@ -982,6 +1134,25 @@
      "MI"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "unknown"
+     ],
+     "category": [
+      "blank"
+     ],
+     "engine": [
+      "blank"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "INST"
+     ]
+    }
+   ],
    "defaultCohort": false,
    "fields": "CEN22LA442 PIPER PA-18 N7207 Battle Creek Michigan"
   },
@@ -1091,6 +1262,25 @@
      "NE"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "landing"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "blank"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": false,
    "fields": "CEN23LA137 PIPER AIRCRAFT INC PA-46-600TP N131HL Thedford Nebraska"
   },
@@ -1200,6 +1390,25 @@
      "TX"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "approach"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "TP"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "CEN24FA064 PILATUS PC-12/45 N188PC Christoval Texas"
   },
@@ -1309,6 +1518,25 @@
      "TX"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "initial_climb"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "blank"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "INST"
+     ]
+    }
+   ],
    "defaultCohort": false,
    "fields": "CEN25LA300 CESSNA 172P N62296 Gainesville Texas"
   },
@@ -1418,6 +1646,25 @@
      "WI"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "blank"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": false,
    "fields": "CEN26LA258 Vans Aircraft Inc RV-8A N22SZ Mineral Point Wisconsin"
   },
@@ -1566,6 +1813,42 @@
      "DC"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "approach"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "TF"
+     ],
+     "far_part": [
+      "121"
+     ],
+     "purpose": [
+      "blank"
+     ]
+    },
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "HELI"
+     ],
+     "engine": [
+      "TS"
+     ],
+     "far_part": [
+      "ARMF"
+     ],
+     "purpose": [
+      "blank"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "DCA25MA108 BOMBARDIER INC CL-600-2C10 N709PS SIKORSKY UH60 L UNREG Washington District of Columbia"
   },
@@ -1675,6 +1958,25 @@
      "KS"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "maneuvering"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "137"
+     ],
+     "purpose": [
+      "AAPL"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "DEN08LA103 CESSNA A188B N9639G Lyons Kansas"
   },
@@ -1784,6 +2086,25 @@
      "TX"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "maneuvering"
+     ],
+     "category": [
+      "HELI"
+     ],
+     "engine": [
+      "TS"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PUBF"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "DFW08TA066 Hughes OH-6 N66372 Valentine Texas"
   },
@@ -1881,6 +2202,25 @@
      "MA"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "blank"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "blank"
+     ],
+     "far_part": [
+      "NUSC"
+     ],
+     "purpose": [
+      "blank"
+     ]
+    }
+   ],
    "defaultCohort": false,
    "fields": "ENG10WA034 AIRBUS A330 202 EI-DIP Boston Massachusetts"
   },
@@ -1990,6 +2330,25 @@
      "GA"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "ERA24LA303 JONES LONG-EZ N4JZ Thomasville Georgia"
   },
@@ -2099,6 +2458,25 @@
      "GA"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "initial_climb"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "ERA25LA016 PIPER PA-28-151 N41370 Newnan Georgia"
   },
@@ -2208,6 +2586,25 @@
      "GA"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "approach"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "FLTS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "MIA08LA156 DIAMOND DA-20-C1 N227RD Peachtree City Georgia"
   },
@@ -2317,6 +2714,25 @@
      "FL"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "NYC08LA106 Raytheon A36 N36GJ Pahokee Florida"
   },
@@ -2462,6 +2878,42 @@
      "CA"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "landing"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    },
+    {
+     "phase": [
+      "initial_climb"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "SEA08LA057 PIPER PA 28-180 N8037W Barnard/Stancil Glastar N15EX Sonoma California"
   },
@@ -2607,6 +3059,42 @@
      "NV"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "en_route"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    },
+    {
+     "phase": [
+      "initial_climb"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "WPR15FA010 CESSNA 170B UNDESIGNAT N3558C PETTIT SAVANNAH NO SERIES N991TP Yerington Nevada"
   },
@@ -2716,6 +3204,25 @@
      "ID"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "initial_climb"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "WPR24FA190 CESSNA 177B N34903 Elk River Idaho"
   },
@@ -2825,6 +3332,25 @@
      "CA"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "initial_climb"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "WPR24LA154 CESSNA 172G N4448L Lakeport California"
   },
@@ -2934,6 +3460,25 @@
      "AZ"
     ]
    },
+   "aircraft": [
+    {
+     "phase": [
+      "landing"
+     ],
+     "category": [
+      "AIR"
+     ],
+     "engine": [
+      "REC"
+     ],
+     "far_part": [
+      "091"
+     ],
+     "purpose": [
+      "PERS"
+     ]
+    }
+   ],
    "defaultCohort": true,
    "fields": "WPR26LA114 AMERICAN CHAMPION AIRCRAFT 8GCBC N636DB Carefree Arizona"
   }
