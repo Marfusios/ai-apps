@@ -157,7 +157,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     bodyLimit: 16 * 1024,
     return503OnClosing: true,
     // The HTTP parser's own refusals (before routing) carry the security headers too.
-    clientErrorHandler: makeClientErrorHandler(headers),
+    clientErrorHandler: makeClientErrorHandler(headers, { trusted }),
     routerOptions: { ignoreTrailingSlash: true, maxParamLength: 64 },
     // The router's own refusals (a malformed URL) get the security headers and an ErrorResponse.
     // `onRequest` never runs for them, so the tunnel's peer check applies here too: a peer

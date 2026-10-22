@@ -612,6 +612,18 @@ describe('http', () => {
 
   it('tunnel mode: a non-connector peer sending a malformed URL gets 403, not 400', async () => {
     const tunnel = makeApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: ['203.0.113.0/28'] } });
+    // A parser-level refusal gets the same peer check.
+    await tunnel.listen({ host: LOCAL, port: 0 });
+    const { port } = tunnel.server.address() as { port: number };
+    const parserAnswer = await new Promise<string>((resolve) => {
+      const s = connect(port, LOCAL, () => s.write('BAD\r\n\r\n'));
+      let d = '';
+      s.setEncoding('utf8');
+      s.on('data', (c: string) => (d += c));
+      s.on('close', () => resolve(d));
+      s.on('error', () => resolve(d));
+    });
+    expect(parserAnswer).toMatch(/^HTTP\/1\.1 403 /);
     for (const url of ['/%E0%A4%A', '/api/%ZZ']) {
       const stranger = await get(url, { app: tunnel, from: '192.0.2.5' });
       expect(stranger.status, url).toBe(403);
@@ -776,6 +788,21 @@ describe('request targets the router decodes', () => {
     const precondition = await get('/assets/app-0123abcd.js', { headers: { 'if-match': '"never"' } });
     expect(precondition.status).toBe(412);
     expect(ErrorResponseSchema.parse(precondition.json).error).toBe('bad_request');
+  });
+
+  it('a silent half-open client does not outlive its parse error, and close() is not held up', async () => {
+    const a = makeApp();
+    await a.listen({ host: LOCAL, port: 0 });
+    const { port } = a.server.address() as { port: number };
+    const client = connect({ port, host: LOCAL, allowHalfOpen: true }, () => client.write('BAD\r\n\r\n'));
+    client.on('error', () => undefined);
+    client.resume();
+    // The server closes the connection although the client never does.
+    const closed = new Promise<void>((resolve) => client.on('end', () => resolve()));
+    expect(await Promise.race([closed.then(() => 'closed'), new Promise((r) => setTimeout(() => r('open'), 3_000))])).toBe('closed');
+    const started = Date.now();
+    await a.close();
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it('a request the HTTP parser refuses gets a JSON 400 with the security headers and Connection: close', async () => {

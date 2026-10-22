@@ -30,22 +30,25 @@ export async function runControlMaintenance(db: Db, log: MaintenanceLog, now: Da
     return await db.transaction(async (tx): Promise<MaintenanceResult> => {
       const res = await tx.execute(sql`SELECT pg_try_advisory_xact_lock(${MAINTENANCE_LOCK_KEY}) AS ok`);
       if ((res.rows[0] as { ok?: boolean } | undefined)?.ok !== true) return { ran: false, reason: 'lock_held' };
+      await tx.execute(sql`SET LOCAL statement_timeout = '30s'`);
+      await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
       const failed: string[] = [];
       let expired: { expired: number; chargedUsd: number } | null = null;
       let pruned: PruneReport | null = null;
       // Leases first, so what they close is retained like any other settled reservation.
       try {
-        expired = await expireLeases(db, now);
+        expired = await tx.transaction((sp) => expireLeases(sp as unknown as Db, now));
       } catch (err) {
         failed.push('expireLeases');
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: lease expiry failed');
       }
       try {
-        pruned = await pruneControls(tx);
+        pruned = await tx.transaction((sp) => pruneControls(sp));
       } catch (err) {
         failed.push('pruneControls');
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: retention failed');
       }
+      log.info({ leasesExpired: expired?.expired ?? null, pruned, failed }, 'control maintenance pass');
       return { ran: true, expired, pruned, failed };
     });
   } catch (err) {
@@ -62,6 +65,8 @@ export interface MaintenanceJobOptions {
   /** Test seams. */
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (handle: unknown) => void;
+  /** The schedule moves on after this long even if a pass has not settled (default 2 minutes). */
+  passTimeoutMs?: number;
   run?: (db: Db, log: MaintenanceLog) => Promise<MaintenanceResult>;
 }
 
@@ -83,13 +88,23 @@ export function startControlMaintenance(db: Db, log: MaintenanceLog, opts: Maint
   });
   const cancel = opts.clearTimeout ?? ((h) => clearTimeout(h as NodeJS.Timeout));
   const run = opts.run ?? runControlMaintenance;
+  const passTimeoutMs = opts.passTimeoutMs ?? 2 * 60_000;
   let stopped = false;
   let handle: unknown;
   const wait = (): number => Math.max(1, Math.round(interval * (1 + jitter * (2 * random() - 1))));
   const tick = (): void => {
-    void run(db, log)
+    let deadline: NodeJS.Timeout | undefined;
+    const expired = new Promise<void>((resolve) => {
+      deadline = setTimeout(() => {
+        log.warn({}, 'control maintenance pass timed out');
+        resolve();
+      }, passTimeoutMs);
+      deadline.unref();
+    });
+    void Promise.race([run(db, log).then(() => undefined), expired])
       .catch((err: unknown) => log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance failed'))
       .finally(() => {
+        clearTimeout(deadline);
         if (!stopped) handle = schedule(tick, wait());
       });
   };

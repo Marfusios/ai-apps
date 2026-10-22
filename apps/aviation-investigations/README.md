@@ -493,8 +493,9 @@ the route `unmatched` and nothing of the request target. Per-visitor routes
 (`/api/ai`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
 prefix, so later routes are covered) answer `Cache-Control: private, no-store`; public
 data routes are cacheable and keyed by the dataset revision; errors are `no-store`.
-Requests the HTTP parser itself refuses get the same security headers and a JSON 400
-with `Connection: close`.
+Requests the HTTP parser itself refuses (400, or 408 for a request timeout and 431 for
+oversized headers; 403 for a non-connector peer in tunnel mode) get the same security
+headers and a JSON body, and the connection is closed.
 
 - **Dataset pinning (A6).** Each request resolves the active `dataset_manifests` row
   (reused for 5 seconds) and reads only that generation and its cases index, never

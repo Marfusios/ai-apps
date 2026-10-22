@@ -8,6 +8,7 @@
  */
 import type { Socket } from 'node:net';
 import type { ErrorResponse } from '../../shared/contracts/common.js';
+import type { TrustedProxies } from './network-identity.js';
 import { ERROR_MESSAGES } from './reply.js';
 
 const STATUS_TEXT: Record<number, string> = { 400: 'Bad Request', 408: 'Request Timeout', 431: 'Request Header Fields Too Large' };
@@ -19,9 +20,12 @@ function statusOf(err: unknown): number {
   return 400;
 }
 
-export function clientErrorResponse(err: unknown, headers: Readonly<Record<string, string>>): string {
-  const status = statusOf(err);
-  const body: ErrorResponse = { error: 'bad_request', message: ERROR_MESSAGES.bad_request };
+/** The raw response; `forbidden` answers 403 (a peer that is not the tunnel connector) instead of the parser's status. */
+export function clientErrorResponse(err: unknown, headers: Readonly<Record<string, string>>, forbidden = false): string {
+  const status = forbidden ? 403 : statusOf(err);
+  const body: ErrorResponse = forbidden
+    ? { error: 'forbidden', message: ERROR_MESSAGES.forbidden }
+    : { error: 'bad_request', message: ERROR_MESSAGES.bad_request };
   const json = JSON.stringify(body);
   const lines = [
     `HTTP/1.1 ${status} ${STATUS_TEXT[status] ?? 'Bad Request'}`,
@@ -34,21 +38,43 @@ export function clientErrorResponse(err: unknown, headers: Readonly<Record<strin
   return `${lines.join('\r\n')}\r\n\r\n${json}`;
 }
 
-/** A `clientErrorHandler` for Fastify/Node, with the app's security headers. */
-export function makeClientErrorHandler(headers: Readonly<Record<string, string>>): (err: Error, socket: Socket) => void {
+export interface ClientErrorOptions {
+  /** Tunnel mode: only these peers get an answer from us; any other peer gets 403. */
+  trusted?: TrustedProxies | null;
+}
+
+/**
+ * A `clientErrorHandler` for Fastify/Node, with the app's security headers. The socket is
+ * destroyed after the answer is flushed: Node's HTTP server allows half-open sockets, so
+ * `end()` alone would leave a silent client connected (and `close()` waiting) indefinitely.
+ */
+export function makeClientErrorHandler(
+  headers: Readonly<Record<string, string>>,
+  opts: ClientErrorOptions = {},
+): (err: Error, socket: Socket) => void {
   return (err, socket) => {
-    try {
-      if (socket.destroyed || !socket.writable) {
-        socket.destroy();
-        return;
-      }
-      socket.end(clientErrorResponse(err, headers));
-    } catch {
+    const destroy = () => {
       try {
         socket.destroy();
       } catch {
         // Nothing left to do for this connection.
       }
+    };
+    try {
+      if (socket.destroyed || !socket.writable) return destroy();
+      // A response on this socket (a pipelined request) has already started: a second one would corrupt it.
+      if ((socket as { _httpMessage?: { _headerSent?: boolean } })._httpMessage?._headerSent) return destroy();
+      let forbidden = false;
+      if (opts.trusted) {
+        const peer = socket.remoteAddress;
+        if (!peer) return destroy();
+        forbidden = !opts.trusted.contains(peer);
+      }
+      socket.end(clientErrorResponse(err, headers, forbidden), destroy);
+      // If the peer never reads the answer, do not wait for it forever.
+      setTimeout(destroy, 1_000).unref();
+    } catch {
+      destroy();
     }
   };
 }

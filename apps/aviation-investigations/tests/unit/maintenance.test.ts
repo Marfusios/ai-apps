@@ -62,6 +62,24 @@ describe('control maintenance', () => {
       expect(timers[2]!.cancelled).toBe(true);
     });
 
+    it('moves on after a pass that never settles', async () => {
+      const timers: { fn: () => void }[] = [];
+      const log = quietLog();
+      startControlMaintenance({} as Db, log, {
+        passTimeoutMs: 20,
+        run: () => new Promise<MaintenanceResult>(() => undefined),
+        setTimeout: (fn) => {
+          timers.push({ fn });
+          return {};
+        },
+        clearTimeout: () => undefined,
+      });
+      timers[0]!.fn();
+      await new Promise((r) => setTimeout(r, 80));
+      expect(timers).toHaveLength(2);
+      expect(log.warn).toHaveBeenCalledTimes(1);
+    });
+
     it('does not reschedule once stopped', async () => {
       const { timers, job } = harness(async () => ({ ran: false, reason: 'lock_held' }));
       timers[0]!.fn();

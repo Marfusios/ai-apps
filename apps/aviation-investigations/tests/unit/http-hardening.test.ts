@@ -3,18 +3,19 @@ import type { Socket } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { PRIVATE_NO_STORE, isNoStoreRoute } from '../../server/http/cache-headers.js';
 import { clientErrorResponse, makeClientErrorHandler } from '../../server/http/client-error.js';
+import { compileTrustedProxies } from '../../server/http/network-identity.js';
 import { isHttpsUrl, securityHeaders } from '../../server/http/security-headers.js';
 
 describe('cache headers by matched route', () => {
   it('covers AI, auth, account and brief routes, now and later', () => {
-    for (const route of ['/api/ai/status', '/api/ai/ask', '/api/briefs', '/api/briefs/:id', '/api/auth/*', '/api/account', '/api/account/usage', '/api/accounts']) {
+    for (const route of ['/api/ai/status', '/api/ai/ask', '/api/briefs', '/api/briefs/:id', '/api/auth/*', '/api/account', '/api/account/usage', '/api/AI/status']) {
       expect(isNoStoreRoute(route), route).toBe(true);
     }
     expect(PRIVATE_NO_STORE).toBe('private, no-store');
   });
 
   it('leaves public data routes and unmatched requests alone', () => {
-    for (const route of ['/api/config', '/api/search', '/api/cases/:ntsbNo', '/api/dashboard', '/api/health', '/', '/*', undefined]) {
+    for (const route of ['/api/config', '/api/search', '/api/cases/:ntsbNo', '/api/dashboard', '/api/health', '/', '/*', '/api/aircraft', '/api/airports', '/api/authors', '/api/accounts', '/api/briefsX', undefined]) {
       expect(isNoStoreRoute(route), String(route)).toBe(false);
     }
   });
@@ -35,9 +36,12 @@ class FakeSocket extends EventEmitter {
   writable = true;
   written = '';
   ended = false;
-  end(data: string) {
+  remoteAddress: string | undefined = '203.0.113.2';
+  _httpMessage: { _headerSent: boolean } | undefined;
+  end(data: string, cb?: () => void) {
     this.written += data;
     this.ended = true;
+    cb?.();
   }
   destroy() {
     this.destroyed = true;
@@ -61,11 +65,39 @@ describe('client error handler', () => {
     expect(clientErrorResponse(Object.assign(new Error('x'), { code: 'HPE_HEADER_OVERFLOW' }), headers)).toMatch(/^HTTP\/1\.1 431 /);
   });
 
+  it('does not write over a response already started on the socket (pipelining)', () => {
+    const s = new FakeSocket();
+    s._httpMessage = { _headerSent: true };
+    makeClientErrorHandler(headers)(new Error('x'), s as unknown as Socket);
+    expect(s.written).toBe('');
+    expect(s.destroyed).toBe(true);
+  });
+
+  it('tunnel mode: a non-connector peer gets 403, an unknown peer nothing', () => {
+    const trusted = compileTrustedProxies(['203.0.113.0/28']);
+    const handle = makeClientErrorHandler(headers, { trusted });
+    const stranger = new FakeSocket();
+    stranger.remoteAddress = '192.0.2.5';
+    handle(new Error('x'), stranger as unknown as Socket);
+    expect(stranger.written).toMatch(/^HTTP\/1\.1 403 /);
+    expect(stranger.written).toContain('"error":"forbidden"');
+    const connector = new FakeSocket();
+    handle(new Error('x'), connector as unknown as Socket);
+    expect(connector.written).toMatch(/^HTTP\/1\.1 400 /);
+    const unknown = new FakeSocket();
+    unknown.remoteAddress = undefined;
+    handle(new Error('x'), unknown as unknown as Socket);
+    expect(unknown.written).toBe('');
+    expect(unknown.destroyed).toBe(true);
+  });
+
   it('never throws, whatever state the socket is in', () => {
     const handle = makeClientErrorHandler(headers);
     const ok = new FakeSocket();
     handle(new Error('x'), ok as unknown as Socket);
     expect(ok.ended).toBe(true);
+    // The socket is destroyed once the answer is flushed (no lingering half-open client).
+    expect(ok.destroyed).toBe(true);
     const gone = new FakeSocket();
     gone.destroyed = true;
     handle(new Error('x'), gone as unknown as Socket);
