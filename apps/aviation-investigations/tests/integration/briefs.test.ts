@@ -41,7 +41,7 @@ import type { CheckInput, CheckOutput, CheckVerdict, ComposeInput, ScopeInput, S
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
 import { SHUTDOWN_GRACE_MS, buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
-import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
+import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder, type QueryEmbedder } from '../../server/ai/embeddings.js';
 import { CACHED_PREFIX_MAX, RESERVATIONS, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { createCaseCatalog } from '../../server/briefs/catalog.js';
@@ -54,13 +54,14 @@ import {
   type EvidenceRetriever,
 } from '../../server/briefs/evidence.js';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
+import { RETRIEVAL_V1, RETRIEVAL_V2 } from '../../server/search/retrieval-config.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
 import { NO_MATCH_LINES, OUT_OF_SCOPE_LINES, OPERATIONAL_LINES, OPERATIONAL_TITLE } from '../../server/briefs/static-replies.js';
 import { failOrphanedSteps, moveBriefReadOwner, type StepDiagnostics } from '../../server/briefs/store.js';
 import { SPAN_ATTR_KEYS } from '../../server/observability/attributes.js';
 import { diagnoseBrief } from '../../worker/brief-diagnose.js';
 import { closeDb, type Db } from '../../server/db/client.js';
-import { publishManifest } from '../../server/db/generations.js';
+import { manifestCasesIndex, publishManifest } from '../../server/db/generations.js';
 import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
 import { SPEND_LOCK_KEY } from '../../server/quota/policy.js';
 import { assertServablePassagesIndex } from '../../server/search/hybrid.js';
@@ -1168,7 +1169,11 @@ describe('admission order', () => {
   });
 });
 
-describe('hybrid retrieval behind the port', () => {
+describe.each([RETRIEVAL_V1, RETRIEVAL_V2])('hybrid retrieval behind the port ($version)', (config) => {
+  /** The binding under this version; the cases index comes from the manifest, as in the server. */
+  const hybrid = (o: { es: Client; embedder: Embedder | QueryEmbedder }) =>
+    createHybridRetriever({ ...o, retrieval: config, casesIndexOf: (d, signal) => manifestCasesIndex(appDb, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }) });
+  const caseLevel = config.fusion.level === 'case';
   /** The motivating question (DESIGN §3) as the scope stage reads it: 2008, keyword text for BM25. */
   const SEED_QUESTION = 'Find 2008 investigations involving engine power loss shortly after maintenance';
   const SEED_KEYWORDS = 'engine power loss maintenance overhaul replaced mechanic';
@@ -1182,11 +1187,21 @@ describe('hybrid retrieval behind the port', () => {
   });
   const live = () => new AbortController().signal;
 
+  type SearchKind = 'keyword' | 'vector' | 'cases' | 'mapping' | 'fetch';
+  /** Which retrieval request a body is. */
+  const kindOf = (b: estypes.SearchRequest): SearchKind => {
+    if (b.index === dataset.casesIndex) return 'cases';
+    const knn = b.knn as estypes.KnnSearch | undefined;
+    if (knn) return JSON.stringify(knn.filter).includes('"ntsb_no"') ? 'mapping' : 'vector';
+    if (b.size === 0) return 'mapping';
+    return b.query?.bool?.must ? 'keyword' : 'fetch';
+  };
+
   /**
    * The API's client with `search` observed: every request body is recorded, and
-   * `tamper` may fail the n-th search (1-based) or change its response.
+   * `tamper` may fail a search (by its kind and its 1-based position) or change its response.
    */
-  function searchSpy(tamper: (n: number, res: estypes.SearchResponse) => Error | void = () => undefined) {
+  function searchSpy(tamper: (kind: SearchKind, n: number, res: estypes.SearchResponse) => Error | void = () => undefined) {
     const bodies: estypes.SearchRequest[] = [];
     const client = new Proxy(es, {
       get(target, prop) {
@@ -1195,7 +1210,7 @@ describe('hybrid retrieval behind the port', () => {
             bodies.push(body);
             const n = bodies.length;
             const res = (await target.search(body, opts as never)) as estypes.SearchResponse;
-            const err = tamper(n, res);
+            const err = tamper(kindOf(body), n, res);
             if (err) throw err;
             return res;
           };
@@ -1240,7 +1255,7 @@ describe('hybrid retrieval behind the port', () => {
   it('seed question returns groups and four seed cases in fixture corpus', async () => {
     const embedder = fixtureEmbedder();
     const spy = searchSpy();
-    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: createHybridRetriever({ es: spy.client, embedder }) });
+    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: hybrid({ es: spy.client, embedder }) });
     expect((await inject<{ state: string }>(h, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'available' });
     const { briefId, cookie, step } = await askAndWait(h, SEED_QUESTION);
     const result = step.result!;
@@ -1264,9 +1279,15 @@ describe('hybrid retrieval behind the port', () => {
     }
     expect(step.checklist).toMatchObject({ verified: 'passed', searched: { cases: 5 } });
 
-    // The dense channel embedded the question once; BM25 searched the scope stage's keyword text.
+    // The dense channel embedded the question once; BM25 (and the cases channel) searched the scope stage's keyword text.
     expect(embedder.calls).toEqual([[queryEmbeddingInput(SEED_QUESTION)]]);
-    expect(spy.keywordQueries()).toEqual([SEED_KEYWORDS]);
+    expect(spy.keywordQueries()).toEqual(caseLevel ? [SEED_KEYWORDS, SEED_KEYWORDS] : [SEED_KEYWORDS]);
+    expect(spy.bodies.filter((b) => kindOf(b) === 'cases')).toHaveLength(caseLevel ? 1 : 0);
+    // The step records the version it retrieved under (and, case-level, its mapping counts).
+    const meta = (await stepRow(briefId)).meta;
+    expect(meta.retrievalVersion).toBe(config.version);
+    if (caseLevel) expect(meta.retrieval).toEqual({ casesIndex: dataset.casesIndex, casesIndexVersion: 'cases-v3', mapped: expect.any(Number), unmapped: 0 });
+    else expect(meta.retrieval).toBeUndefined();
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
     const embed = await rows<{ model: string; tokens: unknown }>(sql`SELECT model, tokens FROM cost_ledger WHERE stage = 'embed'`);
     expect(embed).toEqual([{ model: FIXTURE_EMBEDDING.model, tokens: { input: countTokens(queryEmbeddingInput(SEED_QUESTION)) } }]);
@@ -1283,7 +1304,7 @@ describe('hybrid retrieval behind the port', () => {
   it('settles the query embedding once, from the callback, whatever fails after it', async () => {
     const usages: EmbeddingUsage[] = [];
     const embedder = fixtureEmbedder();
-    const retrieved = await createHybridRetriever({ es, embedder }).retrieve(evidenceQuery(), live(), (u) => usages.push(u));
+    const retrieved = await hybrid({ es, embedder }).retrieve(evidenceQuery(), live(), (u) => usages.push(u));
     expect(usages).toEqual([{ provider: 'openai', model: FIXTURE_EMBEDDING.model, tokens: countTokens(queryEmbeddingInput(SEED_QUESTION)), usd: 0, billing: 'reported' }]);
     expect(retrieved.bundle.cases.map((c) => c.ntsbNo)).toEqual(expect.arrayContaining(SEEDS));
     expect(retrieved.bundle.cases.every((c) => c.passages.some((p) => p.role === 'probable_cause'))).toBe(true);
@@ -1294,31 +1315,40 @@ describe('hybrid retrieval behind the port', () => {
     expect(embedder.calls).toHaveLength(1);
     expect(usages).toHaveLength(1);
 
-    // A channel, the evidence fetch or a completeness check failing after the embedding.
-    const cases: [number, (res: estypes.SearchResponse) => Error | void, string][] = [
-      [1, () => new errors.ConnectionError('SENTINEL_UPSTREAM'), 'search'],
-      [3, () => new Error('SENTINEL_UPSTREAM'), 'other'],
-      [3, (res) => void (res.timed_out = true), 'incomplete_search'],
+    // A channel, the evidence fetch or a completeness check failing (case-level: the lexical
+    // channels run while the embedding is in flight; the embedding is still settled once).
+    const cases: [SearchKind, (res: estypes.SearchResponse) => Error | void, string][] = [
+      ['keyword', () => new errors.ConnectionError('SENTINEL_UPSTREAM'), 'search'],
+      ['vector', () => new Error('SENTINEL_UPSTREAM'), 'other'],
+      ['fetch', () => new Error('SENTINEL_UPSTREAM'), 'other'],
+      ['fetch', (res) => void (res.timed_out = true), 'incomplete_search'],
+      ...(caseLevel
+        ? ([
+            ['cases', () => new errors.ConnectionError('SENTINEL_UPSTREAM'), 'search'],
+            ['cases', (res) => void (res.timed_out = true), 'incomplete_search'],
+            ['cases', (res) => void (res._shards.failed = 1), 'incomplete_search'],
+          ] as [SearchKind, (res: estypes.SearchResponse) => Error | void, string][])
+        : []),
     ];
-    for (const [at, fail, reason] of cases) {
+    for (const [kind, fail, reason] of cases) {
       const seen: EmbeddingUsage[] = [];
-      const spy = searchSpy((n, res) => (n === at ? fail(res) : undefined));
-      const f = await failureOf(createHybridRetriever({ es: spy.client, embedder: fixtureEmbedder() }).retrieve(evidenceQuery(), live(), (u) => seen.push(u)));
-      expect(f).toMatchObject({ kind: 'failed', embedding: 'none', reason });
-      expect(seen).toHaveLength(1);
+      const spy = searchSpy((k, _n, res) => (k === kind ? fail(res) : undefined));
+      const f = await failureOf(hybrid({ es: spy.client, embedder: fixtureEmbedder() }).retrieve(evidenceQuery(), live(), (u) => seen.push(u)));
+      expect(f, `${kind} ${reason}`).toMatchObject({ kind: 'failed', embedding: 'none', reason });
+      expect(seen, `${kind} ${reason}`).toHaveLength(1);
     }
 
     // A usage report the provider did not give: handed on once, as uncertain.
     const seen: EmbeddingUsage[] = [];
     const unsure = embedderWith((r) => ({ ...r, usageUncertain: true }));
-    await createHybridRetriever({ es, embedder: unsure }).retrieve(evidenceQuery(), live(), (u) => seen.push(u));
+    await hybrid({ es, embedder: unsure }).retrieve(evidenceQuery(), live(), (u) => seen.push(u));
     expect(seen).toEqual([expect.objectContaining({ billing: 'uncertain' })]);
   });
 
   it('a failed embedding is settled by its own billing; refusals before it charge nothing', async () => {
     const run = async (embedder: Embedder, q: EvidenceQuery = evidenceQuery(), signal = live()) => {
       const seen: EmbeddingUsage[] = [];
-      const f = await failureOf(createHybridRetriever({ es, embedder }).retrieve(q, signal, (u) => seen.push(u)));
+      const f = await failureOf(hybrid({ es, embedder }).retrieve(q, signal, (u) => seen.push(u)));
       return { f, seen };
     };
     const provider = (billing: 'none' | 'usage' | 'uncertain', billed: number | null = null) =>
@@ -1334,10 +1364,11 @@ describe('hybrid retrieval behind the port', () => {
     expect(await run(failingEmbedder(() => new Error('SENTINEL_UPSTREAM')))).toMatchObject({ f: { embedding: 'uncertain' }, seen: [] });
 
     // Refused before the embedder is called: nothing sent, nothing charged, no index name passed on.
+    // Case-level: a passages index no manifest of the generation names has no paired cases index.
     for (const [passagesIndex, reason] of [
       [null, 'no_passages_index'],
-      [dataset.casesIndex, 'index_mismatch'],
-      [`${PREFIX}-missing-passages`, 'index_mismatch'],
+      [dataset.casesIndex, caseLevel ? 'no_cases_index' : 'index_mismatch'],
+      [`${PREFIX}-missing-passages`, caseLevel ? 'no_cases_index' : 'index_mismatch'],
     ] as const) {
       const embedder = failingEmbedder(() => new Error('never called'));
       const r = await run(embedder, evidenceQuery({ dataset: { generationId, passagesIndex: passagesIndex as string } }));
@@ -1350,8 +1381,8 @@ describe('hybrid retrieval behind the port', () => {
   });
 
   it('a retrieval failure after the embedding keeps one embed line; an uncertain embedding settles in full', async () => {
-    const spy = searchSpy((n) => (n === 3 ? new Error('SENTINEL_UPSTREAM') : undefined));
-    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: createHybridRetriever({ es: spy.client, embedder: fixtureEmbedder() }) });
+    const spy = searchSpy((kind) => (kind === 'fetch' ? new Error('SENTINEL_UPSTREAM') : undefined));
+    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: hybrid({ es: spy.client, embedder: fixtureEmbedder() }) });
     const { briefId, step } = await askAndWait(h, SEED_QUESTION);
     expect(step.result).toEqual({ kind: 'failed', countedAsSearch: true });
     expect(await ledgerStages()).toEqual([['scope', 'embed']]);
@@ -1359,7 +1390,7 @@ describe('hybrid retrieval behind the port', () => {
     expect(h.logs.join('\n')).not.toContain('SENTINEL');
 
     const unsure = harness(answering({ scope: { output: SEED_SCOPE } }), {
-      evidence: createHybridRetriever({ es, embedder: embedderWith((r) => ({ ...r, usageUncertain: true })) }),
+      evidence: hybrid({ es, embedder: embedderWith((r) => ({ ...r, usageUncertain: true })) }),
     });
     advance(MIN);
     const second = await askAndWait(unsure, SEED_QUESTION, { cookie: null });
@@ -1385,7 +1416,7 @@ describe('hybrid retrieval behind the port', () => {
     const embedder = createOpenAIQueryEmbedder({ apiKey: 'sk-test-not-a-real-key', model: FIXTURE_EMBEDDING.model, dims: FIXTURE_EMBEDDING.dims, fetch: hanging });
     const usages: EmbeddingUsage[] = [];
     const controller = new AbortController();
-    const pending = createHybridRetriever({ es, embedder }).retrieve(evidenceQuery(), controller.signal, (u) => usages.push(u));
+    const pending = hybrid({ es, embedder }).retrieve(evidenceQuery(), controller.signal, (u) => usages.push(u));
     await until(() => called === 1);
     controller.abort();
     const failure = await failureOf(pending);
@@ -1425,7 +1456,7 @@ describe('hybrid retrieval behind the port', () => {
           return judge(input);
         },
       },
-      { evidence: createHybridRetriever({ es, embedder }), trialRequests: 10 },
+      { evidence: hybrid({ es, embedder }), trialRequests: 10 },
     );
 
     const one = await askAndWait(h, SEED_QUESTION);
@@ -2104,6 +2135,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     // A port reporting another chunker: no canonical row under it holds these passages.
     const fake = new FakeRetriever(appDb, { cases: SEEDS, served: servedContract });
     const other: EvidenceRetriever = {
+      version: fake.version,
       available: (d) => fake.available(d),
       retrieve: async (q, signal, onUsage) => ({ ...(await fake.retrieve(q, signal, onUsage)), chunkerVersion: 'chunk-other' }),
     };

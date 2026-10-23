@@ -1,9 +1,27 @@
 /**
  * The brief pipeline's `EvidenceRetriever` port (server/briefs/evidence.ts) bound to
- * hybrid retrieval (Task 10, server/search/hybrid.ts). `retrieve` runs the two stages
- * of `retrieveEvidence` itself, `retrieveCandidates` then `fetchAndPack`, so that
- * `repack` can pack the same candidates again under a smaller evidence-token budget
- * without a second embedding.
+ * hybrid retrieval (Task 10, server/search/hybrid.ts) under one frozen retrieval
+ * configuration (task 10e, server/search/retrieval-config.ts; `AVIATION_RETRIEVAL_VERSION`,
+ * reported as the port's `version`). `retrieve` runs the two stages itself, stage 1 for
+ * the version (`retrieveCandidatesWith`) then `fetchAndPack`, so that `repack` can pack
+ * the same candidates again under a smaller evidence-token budget without a second
+ * embedding or a second mapping.
+ *
+ * - **The cases index** (versions with the cases channel) is the one the manifest of the
+ *   brief's generation pairs with the brief's pinned passages index (`casesIndexOf`,
+ *   PostgreSQL), resolved before anything is embedded: none is `unavailable`
+ *   (`no_cases_index`), and retrieval then checks it against the generation and a
+ *   validated cases version before embedding too. The lookup is bounded: by
+ *   `lookupTimeoutMs` and the request's signal in `retrieve` (a stalled pool or database
+ *   fails the step as `timeout`, reason `cases_index_lookup`, or `aborted` on a cancel or
+ *   deadline, with nothing embedded), and by `checkTimeoutMs` in `available`. The
+ *   resolver gets the signal (`manifestCasesIndex` bounds acquisition and the statement
+ *   and destroys an abandoned connection); the binding also stops waiting on its own, so
+ *   a resolver that ignores the signal cannot hold a request.
+ * - **The cases index used** (name and version) is reported with the bundle
+ *   (`RetrievedEvidence.casesIndex`) for the step's private metadata: re-publishing a
+ *   generation with another cases index changes what later steps of an existing brief
+ *   retrieve, and each step records the index it read.
  *
  * - **Texts.** The dense channel embeds the question (with the text refinement in
  *   effect) as the pipeline gives it, cut to the query embedder's token cap when it is
@@ -28,9 +46,10 @@
  *   (`CandidateResult.chunkerVersion`, from `assertServablePassagesIndex`), never a
  *   constant: passages-v1 and passages-v2 indexes can both be served.
  * - **`available(dataset)`** checks the passages contract for this embedder's model
- *   and dimensions (bounded; a passed check is remembered by retrieval). The routes ask
- *   it only after the dataset resolver reported the manifest's passages index
- *   servable (server/briefs/services.ts `servableEvidence`).
+ *   and dimensions and, with the cases channel, the paired cases index (bounded; a
+ *   passed check is remembered by retrieval). The routes ask it only after the dataset
+ *   resolver reported the manifest's passages index servable
+ *   (server/briefs/services.ts `servableEvidence`).
  */
 import { errors, type Client } from '@elastic/elasticsearch';
 import {
@@ -43,6 +62,9 @@ import {
   type QueryEmbedder,
 } from '../ai/embeddings.js';
 import { countTokens } from '../ai/tokens.js';
+import { BoundedReadTimeoutError, untilAborted } from '../db/bounded-read.js';
+import { retrieveCandidatesWith, type StageOne } from '../search/case-retrieval.js';
+import { assertServableCasesIndex } from '../search/cases-channel.js';
 import {
   IncompleteSearchError,
   MalformedPassageError,
@@ -50,15 +72,15 @@ import {
   assertServablePassagesIndex,
   fetchAndPack,
   retrievalParams,
-  retrieveCandidates,
   type PackedEvidence,
   type QueryEmbeddingUsage,
-  type RetrievalParams,
 } from '../search/hybrid.js';
+import type { RetrievalConfig } from '../search/retrieval-config.js';
 import {
   RetrievalFailure,
   type EmbeddingUsage,
   type EvidenceBundle,
+  type EvidenceDataset,
   type EvidenceRetriever,
   type RetrievalFailureKind,
   type RetrievalFailureReason,
@@ -69,10 +91,26 @@ export interface HybridRetrieverOptions {
   es: Client;
   /** The query embedder (`createOpenAIQueryEmbedder`; tests: the fake embedder). */
   embedder: Embedder | QueryEmbedder;
-  /** Overrides of `RETRIEVAL_DEFAULTS` (validated here). */
-  params?: Partial<RetrievalParams>;
-  /** Bound of `available`'s contract check (default 2 s). */
+  /** The frozen retrieval configuration (`retrievalConfig(config.retrieval.version)`). */
+  retrieval: RetrievalConfig;
+  /**
+   * The cases index the manifest of `dataset.generationId` pairs with
+   * `dataset.passagesIndex`, or null (`manifestCasesIndex`), ending its work when `signal`
+   * aborts. Required by a version with the cases channel.
+   */
+  casesIndexOf?: (dataset: EvidenceDataset, signal: AbortSignal) => Promise<string | null>;
+  /** Bound of `available`'s checks, the manifest lookup included (default 2 s). */
   checkTimeoutMs?: number;
+  /** Bound of the manifest lookup in `retrieve` (default 2 s); the request's signal bounds it too. */
+  lookupTimeoutMs?: number;
+}
+
+/** The manifest lookup outran its own bound (the request was still live). */
+export class CasesIndexLookupTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`the cases index lookup did not finish within ${ms} ms`);
+    this.name = 'CasesIndexLookupTimeoutError';
+  }
 }
 
 /**
@@ -185,16 +223,39 @@ function watched(embedder: Embedder | QueryEmbedder, onCall: () => void, signal:
 }
 
 export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRetriever {
-  const { es, embedder } = opts;
-  // Fail at startup, not on the first question, when an override is out of range.
-  const params = retrievalParams(opts.params);
+  const { es, embedder, retrieval: config } = opts;
+  // Fail at startup, not on the first question, when the configuration is out of range or incomplete.
+  retrievalParams(config.params);
+  const casesIndexOf = opts.casesIndexOf;
+  if (config.channels.cases && !casesIndexOf) throw new Error(`${config.version} searches the cases index: casesIndexOf is required`);
   const checkTimeoutMs = opts.checkTimeoutMs ?? 2_000;
+  const lookupTimeoutMs = opts.lookupTimeoutMs ?? 2_000;
+
+  /**
+   * The manifest's cases index within `ms` and `outer` (module comment): the resolver is
+   * told through the signal, and the wait ends with the bound whatever the resolver does.
+   */
+  const lookup = (resolve: NonNullable<HybridRetrieverOptions['casesIndexOf']>, dataset: EvidenceDataset, outer: AbortSignal, ms: number): Promise<string | null> => {
+    const timer = AbortSignal.timeout(ms);
+    const bound = AbortSignal.any([outer, timer]);
+    const work = Promise.resolve().then(() => resolve(dataset, bound));
+    return untilAborted(work, bound, (reason) => (outer.aborted ? reason : new CasesIndexLookupTimeoutError(ms)));
+  };
 
   return {
+    version: config.version,
+
     async available(dataset) {
       if (!dataset.passagesIndex) return false;
       try {
-        await assertServablePassagesIndex(es, dataset, embedder, { timeoutMs: checkTimeoutMs, signal: AbortSignal.timeout(checkTimeoutMs) });
+        const signal = AbortSignal.timeout(checkTimeoutMs);
+        const pinned = { generationId: dataset.generationId, passagesIndex: dataset.passagesIndex };
+        await assertServablePassagesIndex(es, pinned, embedder, { timeoutMs: checkTimeoutMs, signal });
+        if (config.channels.cases && casesIndexOf) {
+          const casesIndex = await lookup(casesIndexOf, pinned, signal, checkTimeoutMs);
+          if (!casesIndex) return false;
+          await assertServableCasesIndex(es, casesIndex, dataset.generationId, { versions: config.channels.cases.indexVersions, timeoutMs: checkTimeoutMs, signal });
+        }
         return true;
       } catch {
         // Why is never passed on: the dataset resolver logs fixed categories already.
@@ -213,17 +274,33 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
         onEmbeddingUsage(usage);
       };
       try {
-        let candidates: Awaited<ReturnType<typeof retrieveCandidates>>;
+        // The pinned manifest's cases index, before anything is embedded.
+        let casesIndex: string | null = null;
+        if (config.channels.cases && casesIndexOf) {
+          if (!query.dataset.passagesIndex) throw new RetrievalFailure('unavailable', 'none', 'retrieval failed: unavailable (no_passages_index)', 'no_passages_index');
+          try {
+            signal.throwIfAborted();
+            casesIndex = await lookup(casesIndexOf, query.dataset, signal, lookupTimeoutMs);
+          } catch (err) {
+            // A cancel or the stage deadline: `timeout` (`aborted`). Nothing was embedded.
+            if (signal.aborted) throw retrievalFailureOf(err, signal, 'none');
+            const timedOut = err instanceof CasesIndexLookupTimeoutError || err instanceof BoundedReadTimeoutError;
+            const kind = timedOut ? 'timeout' : 'failed';
+            throw new RetrievalFailure(kind, 'none', `retrieval failed: ${kind} (cases_index_lookup)`, 'cases_index_lookup');
+          }
+          if (!casesIndex) throw new RetrievalFailure('unavailable', 'none', 'retrieval failed: unavailable (no_cases_index)', 'no_cases_index');
+        }
+        let candidates: StageOne;
         try {
-          candidates = await retrieveCandidates(es, watched(embedder, () => (embedderCalled = true), signal), {
+          candidates = await retrieveCandidatesWith(es, watched(embedder, () => (embedderCalled = true), signal), config, {
             dataset: query.dataset,
             text: fitQueryText(query.text),
             keywordText: query.keywordText,
             filters: query.filters,
-            params,
             signal,
             // The one source of the embedding's usage (module comment).
             onQueryEmbedding: (u) => settleOnce(toUsage(u)),
+            ...(casesIndex ? { casesIndex } : {}),
           });
         } catch (err) {
           throw retrievalFailureOf(err, signal, settled ? 'none' : embeddingBilling(err, embedderCalled, settleOnce));
@@ -239,6 +316,9 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
           bundle,
           // The served index's own contract (v1 and v2 can both be servable).
           chunkerVersion: candidates.chunkerVersion,
+          mapping: candidates.mapping,
+          casesIndex: candidates.casesIndex,
+          // The same candidates (mapped passages included): no embedding and no mapping again.
           async repack(maxEvidenceTokens: number, repackSignal: AbortSignal) {
             try {
               const smaller = retrievalParams({ ...candidates.params, maxEvidenceTokens });

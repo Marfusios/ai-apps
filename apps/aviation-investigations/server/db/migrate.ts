@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import pg from 'pg';
+import { DB_CONNECT_TIMEOUT_MS } from './client.js';
 
 export const MIGRATIONS_DIR = resolve(fileURLToPath(import.meta.url), '../migrations');
 
@@ -29,7 +30,7 @@ const JOURNAL = 'drizzle.__drizzle_migrations';
  * advisory lock.
  */
 export async function runMigrations(url: string): Promise<void> {
-  const client = new pg.Client({ connectionString: url, application_name: 'aviation-migrate' });
+  const client = new pg.Client({ connectionString: url, application_name: 'aviation-migrate', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await client.connect();
   try {
     const { rows } = await client.query<{ current_user: string; journal: boolean }>(

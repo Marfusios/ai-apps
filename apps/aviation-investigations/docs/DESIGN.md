@@ -296,10 +296,42 @@ model, dimensions, normalization, and chunking together. The
 documents shortened dimensions.
 
 Run BM25 keyword search and filtered kNN, then combine rankings in TypeScript via
-reciprocal rank fusion: `sum(1 / (60 + rank))`. Start with 50 candidates from each
-channel; deduplicate, diversify by case, and tune on evaluation data. Apply the
-same completion/country/aircraft constraints in both channels, including the kNN
+reciprocal rank fusion: `sum(1 / (60 + rank))`. Apply the same
+completion/country/aircraft constraints in every channel, including the kNN
 prefilter. Preserve exact case numbers and negation such as “no” in evidence text.
+
+Retrieval behaviour is versioned (task 10e; `server/search/retrieval-config.ts`): one
+frozen configuration per version holds every channel, field, depth, query form and
+text, the fusion level, constant, weights and tie order, the mapping and the packing,
+and an operator setting (`AVIATION_RETRIEVAL_VERSION`) chooses one. The version is
+recorded with every brief step, on its retrieval span and in evaluation reports.
+
+- **`retrieval.v1`** (the rollback): passage BM25 on the scope stage's keyword text
+  and passage kNN on the question, 50 candidates each, passage-level fusion, cases at
+  their best passage.
+- **`retrieval.v2`** (the default; task 10d phase A's `c200+n-kt`): the same two
+  passage channels at 200 candidates (kNN `num_candidates` 800), plus BM25 over each
+  case's narratives in the cases index (200 cases). Each channel is collapsed to its
+  unique cases and the case lists are fused (k = 60, equal weights) with exact
+  fractions and a total tie order. The cases index takes part only as a channel that
+  nominates cases: its filter reaches exactly the cohort the passages filter reaches,
+  under the passages contract's aircraft semantics, and a nominated case reaches the
+  answer only through its own passages under the passages filter (mapped by the same
+  query vector when no passage channel returned it), with every probable-cause
+  variant. A case-level match is never evidence by itself. The cases channel reads
+  only the cases index version the validation covered (`cases-v3`); the cases index a
+  step read (name and version) is recorded in its private metadata.
+- **Cutoffs.** Candidate discovery and fusion are kept apart. Both BM25 channels ask
+  Elasticsearch to sort by score, then passage id or case number, while it collects
+  their top 200, so equal scores at the cut are decided by the id. The kNN channel is
+  approximate discovery: which neighbours it finds, and their quantized scores, belong
+  to one index state, so a rebuilt copy of the same documents can return a different
+  set. A mapped case's passages are all scored exactly and cut by score, then id.
+  Fusion is exact and totally ordered over whatever the channels returned; it is
+  reproducible for one index state, not across rebuilds.
+- **`retrieval.v2-nf`** (experimental, never on `live`): also searches the coded
+  `findings_text`; its coded-reference gain rests on the field the coded labels come
+  from, so its value waits for narrative-relevance evaluation (Track N).
 
 Use `match`/`multi_match` on allowlisted text fields, never user/model text in
 `query_string`, regex, scripts, or wildcard queries. Validate filter enums/ranges;
@@ -323,8 +355,9 @@ The online pipeline is fixed:
    terms, and ambiguity. It cannot emit SQL, Elasticsearch DSL, URLs, index names,
    model choices, or privileged messages.
 3. **Retrieve:** compile fixed query templates, embed the query once, and retrieve
-   at most six cases/twelve passages. Include relevant cause, analysis, and adjacent
-   context rather than classify an isolated fragment.
+   at most six cases/twelve passages under the configured retrieval version. Include
+   relevant cause, analysis, and adjacent context rather than classify an isolated
+   fragment.
 4. **Compose:** one model call emits structured comparisons and references from
    an allowlisted set of retrieved passages.
 5. **Validate:** code checks IDs, revisions, offsets, exact quotation matches, and

@@ -7,6 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { RetrievalVersionSchema } from '../../shared/contracts/retrieval.js';
 import type { CaseSummary } from '../../server/briefs/evidence.js';
 import type { VerifiedCase } from '../../server/briefs/render.js';
 
@@ -52,6 +53,8 @@ export const EvidenceFileSchema = z.strictObject({
     generationId: z.number().int().positive(),
     passagesIndex: z.string().min(1),
     chunkerVersion: z.string().min(1),
+    /** The retrieval version the bundles were retrieved under; absent in files retrieved before versions existed (`retrieval.v1`). */
+    retrievalVersion: RetrievalVersionSchema.optional(),
     retrievedAt: z.iso.datetime(),
     note: z.string(),
   }),

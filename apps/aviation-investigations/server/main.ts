@@ -12,8 +12,10 @@
  *
  * AI briefs read their evidence through hybrid retrieval (server/briefs/retriever.ts)
  * with the OpenAI query embedder (OPENAI_API_KEY, OPENAI_EMBEDDING_MODEL and
- * OPENAI_EMBEDDING_DIMENSIONS). The dataset resolver checks the active passages index
- * against the same model and dimensions; without the key AI briefs stay off.
+ * OPENAI_EMBEDDING_DIMENSIONS), under the frozen retrieval configuration that
+ * AVIATION_RETRIEVAL_VERSION names (server/search/retrieval-config.ts; logged at start).
+ * The dataset resolver checks the active passages index against the same model and
+ * dimensions; without the key AI briefs stay off.
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -25,10 +27,12 @@ import { createAiRuntime } from './ai/runtime.js';
 import { buildApp } from './app.js';
 import { createHybridRetriever } from './briefs/retriever.js';
 import { createBriefServices, type BriefServices } from './briefs/services.js';
-import { closeDb, createDb, type Db } from './db/client.js';
+import { DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from './db/client.js';
+import { manifestCasesIndex } from './db/generations.js';
 import { startControlMaintenance } from './quota/maintenance.js';
 import { startTracing } from './observability/tracing.js';
 import { createEsClient } from './search/es.js';
+import { retrievalConfig } from './search/retrieval-config.js';
 
 const APP_DIR = resolve(fileURLToPath(import.meta.url), '../..');
 
@@ -44,7 +48,15 @@ function briefServices(config: AppConfig, db: Db, es: Client): { services: Brief
   if (!apiKey) return { services: null, problem: 'OPENAI_API_KEY is not set: AI briefs have no query embeddings' };
   try {
     const embedder = createOpenAIQueryEmbedder({ apiKey, model, dims });
-    return { services: createBriefServices(db, { retriever: createHybridRetriever({ es, embedder }) }), problem: null };
+    const retriever = createHybridRetriever({
+      es,
+      embedder,
+      retrieval: retrievalConfig(config.retrieval.version),
+      // The cases index of the manifest a brief's pinned passages index was published with.
+      // Bounded: a stalled pool or database ends the lookup (and the step) instead of holding it.
+      casesIndexOf: (d, signal) => manifestCasesIndex(db, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }),
+    });
+    return { services: createBriefServices(db, { retriever }), problem: null };
   } catch {
     return { services: null, problem: 'OPENAI_EMBEDDING_MODEL has no known price: AI briefs have no query embeddings' };
   }
@@ -64,7 +76,8 @@ async function main(): Promise<void> {
   }
 
   const tracing = startTracing(config);
-  const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api' });
+  // Opening a connection or waiting for one ends after 5 s (server/db/client.ts).
+  const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api', connectTimeoutMs: DB_CONNECT_TIMEOUT_MS });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 10_000, maxRetries: 1 });
   const evidence = briefServices(config, db, es);
   const app = buildApp({
@@ -79,6 +92,7 @@ async function main(): Promise<void> {
   });
 
   if (evidence.problem) app.log.warn({ problem: evidence.problem }, 'AI feature off');
+  else app.log.info({ retrievalVersion: config.retrieval.version }, 'AI retrieval configuration');
 
   // Retention and lease expiry of the control tables (server/quota/maintenance.ts): advisory-locked, never fatal.
   const maintenance = startControlMaintenance(db, app.log);

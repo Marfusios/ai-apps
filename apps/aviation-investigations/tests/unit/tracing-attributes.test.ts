@@ -107,6 +107,15 @@ describe('tracing attributes', () => {
     expect(WITHHELD_CODES).toEqual(expect.arrayContaining(['uncited_summary', 'timing_window', 'contradicted']));
   });
 
+  it('the retrieval version takes only the versions the server can run', () => {
+    resetTracingStats();
+    for (const v of ['retrieval.v1', 'retrieval.v2', 'retrieval.v2-nf']) expect(sanitizeAttrs({ retrievalVersion: v })).toEqual({ retrievalVersion: v });
+    expect(sanitizeAttrs({ retrievalVersion: 'retrieval.v9' })).toEqual({});
+    expect(sanitizeAttrs({ retrievalVersion: 'c200+n-kt' })).toEqual({});
+    expect(tracingStats.droppedAttrs).toBe(2);
+    expect(SPAN_ATTR_KEYS).toContain('retrievalVersion');
+  });
+
   it('a model call’s span carries the GenAI model, usage and cost keys, derived from its own attributes, and no content key', async () => {
     const exporter = new InMemorySpanExporter();
     const h = startTracing(cfg(), { exporter, scheduledDelayMillis: 10 });
