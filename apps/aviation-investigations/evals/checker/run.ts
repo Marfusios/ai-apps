@@ -55,7 +55,7 @@ export interface SelectionV2 {
   candidate: string;
   model: string;
   thinking: string;
-  effort: 'low';
+  effort: 'low' | 'medium';
   prompt: { version: string; systemSha256: string };
   outputSchema: { version: string; sha256: string };
   caps: { input: number; output: number };

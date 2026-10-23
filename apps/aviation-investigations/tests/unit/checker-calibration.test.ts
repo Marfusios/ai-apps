@@ -26,6 +26,25 @@ import { identityDifferences, inputsSha256, manifestId, newManifest, readManifes
 import { clusteredRate, displayReport, gateOf, rate, rawReport, type Trial } from '../../evals/checker/metrics.js';
 import { CANDIDATES_V2, HELDOUT_V2, PROTOCOL_V2, candidateMismatch, selectV2, type DevRunV2 } from '../../evals/checker/protocol.v2.js';
 import { plannedSlots, runFigures, SELECTION_V2_PATH, type SelectionV2 } from '../../evals/checker/run.js';
+import {
+  BUDGET_V3,
+  CANDIDATES_V3,
+  FROZEN_RULES,
+  HELDOUT_V3,
+  PROTOCOL_V3,
+  ROUNDS_V3,
+  SAMPLES_V3,
+  TARGETS_V3,
+  candidateMismatchV3,
+  codeRules,
+  derivedTimeoutMs,
+  productionMismatchV3,
+  protocolV3Sha256,
+  selectV3,
+  type DevRunV3,
+} from '../../evals/checker/protocol.v3.js';
+import { SELECTION_V3_PATH, identityForV3, plannedSlotsV3, reservationRefusal, runFiguresV3, type SelectionV3 } from '../../evals/checker/run.v3.js';
+import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
 import { selectConfiguration } from '../../evals/checker/v1.js';
 import { STAGE_THINKING } from '../../server/ai/anthropic.js';
 import { loadConfig } from '../../shared/config.js';
@@ -429,5 +448,125 @@ describe('protocol v2: frozen candidates, selection and production', () => {
       config: 'haiku-think',
       checkPrompt: 'check.v5',
     });
+  });
+});
+
+describe('protocol v3 (Task 16e): frozen candidates, rules, money, selection and production', () => {
+  const v3Text = readFileSync(resolve(DIR, 'dataset.v3.json'), 'utf8');
+  const trialsV3 = (split: 'dev' | 'holdout', answer: (b: CalibrationBatch) => CheckOutput | null, latencyMs = 1_000): Trial[] =>
+    plannedSlotsV3(v3, split).map((s) => {
+      const b = v3.batches.find((x) => x.id === s.batch)!;
+      const output = answer(b);
+      return { batch: s.batch, sample: s.sample, output, ...(output ? {} : { failure: 'timeout' }), latencyMs, costUsd: 0.001 };
+    });
+  const run = (candidate: string, over: { m1?: number; m2?: number; family?: number; m4?: number; criticalOk?: boolean }): DevRunV3 => {
+    const f = runFiguresV3(v3.batches.filter((b) => b.split === 'dev'), trialsV3('dev', (b) => oracle(b)), 45_000);
+    const d = f.display;
+    return {
+      protocol: PROTOCOL_V3,
+      candidate,
+      split: 'dev',
+      complete: true,
+      manifest: 'm',
+      raw: f.raw,
+      display: {
+        ...d,
+        m1: { ...d.m1, rate: over.m1 ?? 0.95 },
+        m2: { ...d.m2, rate: over.m2 ?? 0.95 },
+        m3: { ...d.m3, timing: { ...d.m3.timing, rate: over.family ?? 0 } },
+        m4: { ...d.m4, rate: over.m4 ?? 0 },
+        critical: { ...d.critical, neverDisplayed: over.criticalOk === false ? d.critical.items - 1 : d.critical.items },
+      },
+    };
+  };
+
+  it('two complete candidates, the same prompt at effort low and medium; the code is each as frozen', () => {
+    expect(ROUNDS_V3).toEqual(['haiku-think-v9-low', 'haiku-think-v9-medium']);
+    for (const name of ROUNDS_V3) {
+      const c = CANDIDATES_V3[name]!;
+      expect(c).toMatchObject({ model: 'claude-haiku-5-5', thinking: 'adaptive', caps: { input: 40_000, output: 24_500 }, timeoutMs: 45_000, maxClaims: 60, prompt: { version: 'check.v9' } });
+      expect(c.measureTimeoutMs).toBeGreaterThan(c.timeoutMs);
+      expect(candidateMismatchV3(name)).toEqual([]);
+    }
+    expect(CANDIDATES_V3['haiku-think-v9-low']!.effort).toBe('low');
+    expect(CANDIDATES_V3['haiku-think-v9-medium']!.effort).toBe('medium');
+    expect(codeRules()).toEqual(FROZEN_RULES);
+    expect(protocolV3Sha256()).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('production runs the frozen selection once there is one, and the low-effort candidate before', () => {
+    const sel = existsSync(SELECTION_V3_PATH) ? (JSON.parse(readFileSync(SELECTION_V3_PATH, 'utf8')) as SelectionV3) : null;
+    if (sel) {
+      expect(sel.protocol).toBe(PROTOCOL_V3);
+      expect(productionMismatchV3(sel.candidate, sel.timeoutMs)).toEqual([]);
+    } else {
+      expect(productionMismatchV3('haiku-think-v9-low', STAGE_TIMEOUTS.check)).toEqual([]);
+    }
+  });
+
+  it('samples and orders the slots as pre-registered; both candidates on the same development slots', () => {
+    const dev = plannedSlotsV3(v3, 'dev');
+    const batches = v3.batches.filter((b) => b.split === 'dev');
+    const wo = batches.filter((b) => !b.maxSize && b.kind === 'brief' && (b.brief === 'supported' || b.brief === 'unresolved')).length;
+    const max = batches.filter((b) => b.maxSize).length;
+    expect(dev.length).toBe(wo * SAMPLES_V3.dev.briefWithoutError + max * SAMPLES_V3.dev.maxSize + (batches.length - wo - max) * SAMPLES_V3.dev.other);
+    const low = identityForV3('haiku-think-v9-low', 'dev', v3, v3Text);
+    const medium = identityForV3('haiku-think-v9-medium', 'dev', v3, v3Text);
+    expect(low.slots).toEqual(medium.slots);
+    expect(low.inputsSha256).toBe(medium.inputsSha256);
+    expect(identityDifferences(low, medium).sort()).toEqual(['candidate', 'effort']);
+    expect(low).toMatchObject({ protocol: PROTOCOL_V3, allocation: BUDGET_V3.allocation, measureTimeoutMs: 90_000, timeoutMs: 45_000, rules: FROZEN_RULES, protocolSha256: protocolV3Sha256() });
+  });
+
+  it('counts a call over the production timeout as a timeout in every figure, and keeps its latency', () => {
+    const batches = v3.batches.filter((b) => b.split === 'dev');
+    const slow = trialsV3('dev', (b) => oracle(b), 50_000);
+    const f = runFiguresV3(batches, slow, 45_000);
+    expect(f.raw.failedCalls.timeout).toBe(slow.filter((t) => !batches.find((b) => b.id === t.batch)!.maxSize).length);
+    expect(f.display.m2.k).toBe(0);
+    expect(f.latency).toMatchObject({ max: 50_000, overTimeout: slow.length });
+    const fast = runFiguresV3(batches, trialsV3('dev', (b) => oracle(b)), 45_000);
+    expect(fast.raw.failedCalls.timeout ?? 0).toBe(0);
+  });
+
+  it('selects by the frozen rule, M4 included in the eligibility', () => {
+    expect(TARGETS_V3.m4).toEqual({ threshold: 0.05, direction: 'at_most' });
+    // Eligible: the highest M2, then M1; a tie goes to effort low.
+    expect(selectV3([run('haiku-think-v9-low', { m2: 0.92 }), run('haiku-think-v9-medium', { m2: 0.95 })]).candidate).toBe('haiku-think-v9-medium');
+    expect(selectV3([run('haiku-think-v9-low', {}), run('haiku-think-v9-medium', {})]).candidate).toBe('haiku-think-v9-low');
+    // An error brief shown with its error (M4 over 5%) is not eligible.
+    const m4 = selectV3([run('haiku-think-v9-low', { m4: 0.06 }), run('haiku-think-v9-medium', { m2: 0.91 })]);
+    expect(m4).toMatchObject({ candidate: 'haiku-think-v9-medium', eligible: ['haiku-think-v9-medium'] });
+    // None eligible: critical first, then M4.
+    const none = selectV3([run('haiku-think-v9-low', { m1: 0.5, m4: 0.1 }), run('haiku-think-v9-medium', { m1: 0.5, m4: 0.02 })]);
+    expect(none).toMatchObject({ candidate: 'haiku-think-v9-medium', eligible: [] });
+    expect(none.reason).toContain('M1 ≥ 90%');
+    expect(selectV3([run('haiku-think-v9-low', { m1: 0.5, criticalOk: false }), run('haiku-think-v9-medium', { m1: 0.5, m4: 0.5 })]).candidate).toBe('haiku-think-v9-medium');
+    expect(() => selectV3([{ ...run('haiku-think-v9-low', {}), complete: false }])).toThrow(/no complete/);
+    expect(() => selectV3([{ ...run('haiku-think-v9-low', {}), protocol: PROTOCOL_V2 }])).toThrow(/no complete/);
+  });
+
+  it('derives the production timeout from the measured latency, within the step deadline', () => {
+    expect(derivedTimeoutMs([10_000, 20_000])).toBe(30_000);
+    expect(derivedTimeoutMs([10_000, 30_000])).toBe(40_000);
+    expect(derivedTimeoutMs([39_400])).toBe(45_000);
+    expect(derivedTimeoutMs([80_000])).toBe(45_000);
+    expect(derivedTimeoutMs([])).toBe(45_000);
+  });
+
+  it('refuses a reservation over the allocation or into the amount protected for Track N', () => {
+    expect(BUDGET_V3).toMatchObject({ allocation: 'checker-16e-2026-10', limitUsd: 2.5, protectedUsd: 12, protectedFor: 'track-n-2026-10' });
+    expect(reservationRefusal({ spentUsd: 1, inFlightUsd: 0.02, reserveUsd: 0.015, ledgerRemainingUsd: 16 })).toBeNull();
+    expect(reservationRefusal({ spentUsd: 2.49, inFlightUsd: 0, reserveUsd: 0.015, ledgerRemainingUsd: 16 })).toMatch(/over its \$2.5 limit/);
+    expect(reservationRefusal({ spentUsd: 2.47, inFlightUsd: 0.02, reserveUsd: 0.015, ledgerRemainingUsd: 16 })).toMatch(/limit/);
+    expect(reservationRefusal({ spentUsd: 0, inFlightUsd: 0, reserveUsd: 0.015, ledgerRemainingUsd: 12.01 })).toMatch(/protected for track-n-2026-10/);
+  });
+
+  it('pre-registers the held-out rules: new retrieval.v2 bundles, run once, an inconclusive pilot', () => {
+    expect(HELDOUT_V3).toMatchObject({ bundles: 9, retrievalVersion: 'retrieval.v2', runs: 1, cluster: 'bundle', independentTrialsFor5pct: 73, minimumBundlesPerTimingMutation: 2 });
+    expect(HELDOUT_V3.criticalTimingMutations).toEqual(HELDOUT_V2.criticalTimingMutations);
+    const held = plannedSlotsV3(v3, 'holdout').map((s) => v3.batches.find((b) => b.id === s.batch)!);
+    const rank = (b: CalibrationBatch) => (b.kind === 'claims' ? 2 : b.brief === 'supported' || b.brief === 'unresolved' ? 0 : 1);
+    for (let i = 1; i < held.length; i += 1) expect(rank(held[i - 1]!)).toBeLessThanOrEqual(rank(held[i]!));
   });
 });
