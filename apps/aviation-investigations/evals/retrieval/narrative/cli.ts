@@ -11,9 +11,11 @@ import { parseArgs } from 'node:util';
 import { APP_DIR } from '../../../worker/config.js';
 import { describeWorkerError } from '../../../worker/errors.js';
 import { evalConfig } from '../config.js';
-import { buildCommand } from './build.js';
+import { buildCommand, calibrationCommand } from './build.js';
 
-const USAGE = 'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]';
+const USAGE =
+  'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]\n' +
+  '       pnpm eval:retrieval:narrative calibration [--env-files <a,b>] --generation <id> [--out <file>] [--check]';
 
 export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -29,7 +31,7 @@ export async function main(argv: string[]): Promise<number> {
     strict: true,
   });
   const command = positionals[0];
-  if (command !== 'build' || positionals.length > 1) {
+  if ((command !== 'build' && command !== 'calibration') || positionals.length > 1) {
     console.error(USAGE);
     return 2;
   }
@@ -39,6 +41,10 @@ export async function main(argv: string[]): Promise<number> {
   if (values.generation !== undefined) {
     generation = Number(values.generation);
     if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('--generation must be a positive integer');
+  }
+  if (command === 'calibration') {
+    if (generation === undefined) throw new Error('--generation is required (the Track C dataset\'s generation)');
+    return calibrationCommand({ databaseUrl: config.databaseUrl, generation, ...(values.out ? { out: values.out } : {}), check: values.check === true });
   }
   return buildCommand({
     databaseUrl: config.databaseUrl,

@@ -17,10 +17,12 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pg from 'pg';
 import { APP_DIR } from '../../../worker/config.js';
-import { CORPUS_QUERIES } from '../coded/build-coded.js';
-import { CodedFiltersSchema, deriveQuestion, indexCorpus, type CodedCorpus } from '../coded/coded.js';
+import { CORPUS_QUERIES, DEFAULT_CODED_DATASET } from '../coded/build-coded.js';
+import { CodedDatasetSchema, CodedFiltersSchema, deriveQuestion, indexCorpus, type CodedCorpus } from '../coded/coded.js';
 import { readGenerationSource, type GenerationSource } from '../generation.js';
+import { CODE_READING_SPECS, assembleCalibration, codedQuestions, drawCodeReading } from './calibration.js';
 import { assembleNarrative, deriveCohort, type CohortAircraft, type CohortCase, type NarrativeBuild, type NarrativeDataset } from './dataset.js';
+import { loadCaseEvidence } from './evidence.js';
 import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
 import type { NarrativeParaphraseSpec, NarrativeQuestionSpec } from './spec.js';
 
@@ -195,6 +197,66 @@ export async function buildCommand(opts: { databaseUrl: string; generation?: num
       return 1;
     }
     if (opts.dryRun) return 0;
+    writeFileSync(out, text);
+    log(`wrote ${out}`);
+    return 0;
+  } finally {
+    await client.end();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The calibration sets
+
+export const DEFAULT_CALIBRATION = resolve(APP_DIR, 'evals/retrieval/narrative/calibration.json');
+
+/**
+ * `calibration` (cli.ts): draw the code-reading items from the generation (the Track C
+ * dataset's questions, labels re-derived from the coded rows, every drawn case's
+ * complete evidence fingerprinted) and add the narrative controls; write the file, or
+ * compare (`check`). The labels are frozen by their hash.
+ */
+export async function calibrationCommand(opts: { databaseUrl: string; generation: number; out?: string; check: boolean; log?: (m: string) => void }): Promise<number> {
+  const log = opts.log ?? console.log;
+  const out = opts.out ? resolve(opts.out) : DEFAULT_CALIBRATION;
+  const coded = CodedDatasetSchema.parse(JSON.parse(readFileSync(DEFAULT_CODED_DATASET, 'utf8')));
+  if (coded.source.generationId !== opts.generation) throw new Error(`the Track C dataset was built from generation ${coded.source.generationId}, not ${opts.generation}`);
+  const client = new pg.Client({ connectionString: opts.databaseUrl, application_name: 'aviation-eval-narrative-calibration' });
+  await client.connect();
+  try {
+    const corpus = await loadNarrativeCorpus(client, opts.generation, true);
+    const byId = codedQuestions(coded);
+    const draws = CODE_READING_SPECS.map((spec) => {
+      const q = byId.get(spec.question);
+      if (!q) throw new Error(`Track C question ${spec.question} is not in the coded dataset`);
+      return drawCodeReading(spec, q, corpus.cohort, corpus.coded as CodedCorpus);
+    });
+    const loaded = await loadCaseEvidence(client, opts.generation, draws.flatMap((d) => d.picks.map((p) => p.ntsbNo)));
+    const problems = [...loaded.missing.map((n) => `case ${n} is missing`), ...loaded.integrity.map((x) => `${x.sectionId}: text does not match its hash`)];
+    const built = assembleCalibration(corpus.source, draws, loaded.evidence, new Map(NARRATIVE_QUESTIONS.map((q) => [q.id, q])));
+    problems.push(...built.problems);
+    const d = built.dataset;
+    for (const set of ['code-reading', 'narrative-control'] as const) {
+      for (const split of ['dev', 'holdout'] as const) {
+        const items = d.items.filter((i) => i.set === set && i.split === split);
+        log(`  ${set.padEnd(18)} ${split.padEnd(8)} ${String(items.length).padStart(3)} items (grade 2: ${items.filter((i) => i.label === 2).length}, 1: ${items.filter((i) => i.label === 1).length}, 0: ${items.filter((i) => i.label === 0).length})`);
+      }
+    }
+    log(`calibration ${d.version}: ${d.items.length} items, labels sha256 ${d.labels.sha256.slice(0, 16)}`);
+    if (problems.length > 0) {
+      for (const p of problems) console.error(`problem: ${p}`);
+      return 1;
+    }
+    const text = `${JSON.stringify(d, null, 2)}\n`;
+    if (opts.check) {
+      const current = existsSync(out) ? readFileSync(out, 'utf8') : '';
+      if (current === text) {
+        log(`${out} is up to date`);
+        return 0;
+      }
+      console.error(`${out} differs from the rebuild`);
+      return 1;
+    }
     writeFileSync(out, text);
     log(`wrote ${out}`);
     return 0;

@@ -1,0 +1,4860 @@
+{
+  "version": "track-n-calibration-v1",
+  "note": "Track N judge calibration (task 10c protocol v4, section 3): code-reading items (Track C questions, answer-bearing codes visible, labels derived from the coded rows) and narrative controls (synthetic minimal-variant records for negation, chronology, pilot versus investigator and cross-aircraft attribution). Every label is constructed; none is an expert's. Diagnostics, not validation. Rebuild with pnpm eval:retrieval:narrative calibration.",
+  "source": {
+    "generationId": 1,
+    "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+    "mappingVersion": "v1-empirical",
+    "fieldNormalizationVersion": "v1",
+    "citationTextVersion": "v1"
+  },
+  "labels": {
+    "sha256": "98e78bdfc4be14459100ca30baf42a436d05d1d73ddb37d3eeca55c5725b8bca",
+    "items": 109,
+    "byGrade": {
+      "0": 45,
+      "1": 20,
+      "2": 44
+    }
+  },
+  "questions": {
+    "code-reading:env-carb-icing-cause-michigan": {
+      "question": "In Michigan, which accidents have a probable cause that cites conditions conducive to carburetor icing?",
+      "rubric": {
+        "relevant": "Judge only from the coded findings and occurrences shown (codes are listed with each row); the narrative does not change the grade. Grade 2: an aircraft carries a finding coded 03031030 followed by modifier 00, 81, 82, 84, 85, 86, 87, 91, 99 (Environmental issues-Conditions/weather/phenomena-Temp/humidity/pressure-Conducive to carburetor icing), cited in the probable cause.",
+        "partial": "A listed code appears but a requirement is not met: a listed finding is not cited in the probable cause although that is required.",
+        "notRelevant": "None of the listed codes appears in the coded findings or occurrences. Other modifiers of the same finding (the last two digits differ) and descriptions that merely resemble a listed one do not count.",
+        "edgeCases": [
+          {
+            "situation": "A coded row with one of the listed codes meeting every requirement.",
+            "grade": 2,
+            "why": "The coded data hold the listed code as required."
+          },
+          {
+            "situation": "A finding with the same first eight digits as a listed code but another modifier (the last two digits).",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "A listed finding code on a row whose \"cited in the probable cause\" is no.",
+            "grade": 1,
+            "why": "The code appears but is not cited as required."
+          },
+          {
+            "situation": "The narrative describes the condition, but no listed code appears in the coded rows.",
+            "grade": 0,
+            "why": "This rubric asks about the codes only."
+          }
+        ]
+      },
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625"
+    },
+    "code-reading:env-tailwind-cause-landing-utah": {
+      "question": "In Utah, which landing accidents have a probable cause that cites a tailwind?",
+      "rubric": {
+        "relevant": "Judge only from the coded findings and occurrences shown (codes are listed with each row); the narrative does not change the grade. Grade 2: an aircraft with its defining event in phase landing carries a finding coded 03034015 followed by modifier 81, 82, 84, 85, 86, 87, 89, 91, 92, 99 (Environmental issues-Conditions/weather/phenomena-Wind-Tailwind), cited in the probable cause.",
+        "partial": "A listed code appears but a requirement is not met: a listed finding is not cited in the probable cause although that is required.",
+        "notRelevant": "None of the listed codes appears in the coded findings or occurrences. Other modifiers of the same finding (the last two digits differ) and descriptions that merely resemble a listed one do not count.",
+        "edgeCases": [
+          {
+            "situation": "A coded row with one of the listed codes meeting every requirement.",
+            "grade": 2,
+            "why": "The coded data hold the listed code as required."
+          },
+          {
+            "situation": "A finding with the same first eight digits as a listed code but another modifier (the last two digits).",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "A listed finding code on a row whose \"cited in the probable cause\" is no.",
+            "grade": 1,
+            "why": "The code appears but is not cited as required."
+          },
+          {
+            "situation": "The narrative describes the condition, but no listed code appears in the coded rows.",
+            "grade": 0,
+            "why": "This rubric asks about the codes only."
+          }
+        ]
+      },
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b"
+    },
+    "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma": {
+      "question": "In Oklahoma, which accidents involved fuel exhaustion, with a probable cause that cites the pilot's fuel planning?",
+      "rubric": {
+        "relevant": "Judge only from the coded findings and occurrences shown (codes are listed with each row); the narrative does not change the grade. Grade 2: one aircraft carries all of: an occurrence coded 192 (Fuel exhaustion), in any phase; and a finding coded 0206103044 (Personnel issues-Task performance-Planning/preparation-Fuel planning-Pilot), cited in the probable cause.",
+        "partial": "A listed code appears but a requirement is not met: a listed finding is not cited in the probable cause although that is required, or one aircraft carries only some of the requirements.",
+        "notRelevant": "None of the listed codes appears in the coded findings or occurrences. Other modifiers of the same finding (the last two digits differ) and descriptions that merely resemble a listed one do not count.",
+        "edgeCases": [
+          {
+            "situation": "A coded row with one of the listed codes meeting every requirement.",
+            "grade": 2,
+            "why": "The coded data hold the listed code as required."
+          },
+          {
+            "situation": "A finding with the same first eight digits as a listed code but another modifier (the last two digits).",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "An occurrence with another code whose description resembles the listed one.",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "A listed finding code on a row whose \"cited in the probable cause\" is no.",
+            "grade": 1,
+            "why": "The code appears but is not cited as required."
+          },
+          {
+            "situation": "The narrative describes the condition, but no listed code appears in the coded rows.",
+            "grade": 0,
+            "why": "This rubric asks about the codes only."
+          }
+        ]
+      },
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d"
+    },
+    "code-reading:occ-fuel-starvation-minnesota": {
+      "question": "Which accidents in Minnesota involved fuel starvation?",
+      "rubric": {
+        "relevant": "Judge only from the coded findings and occurrences shown (codes are listed with each row); the narrative does not change the grade. Grade 2: an aircraft carries an occurrence coded 191 (Fuel starvation), in any phase.",
+        "partial": "Does not occur for this question: any listed code meets the requirement, so a case is either 2 or 0.",
+        "notRelevant": "None of the listed codes appears in the coded findings or occurrences. Other modifiers of the same finding (the last two digits differ) and descriptions that merely resemble a listed one do not count.",
+        "edgeCases": [
+          {
+            "situation": "A coded row with one of the listed codes meeting every requirement.",
+            "grade": 2,
+            "why": "The coded data hold the listed code as required."
+          },
+          {
+            "situation": "An occurrence with another code whose description resembles the listed one.",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "The narrative describes the condition, but no listed code appears in the coded rows.",
+            "grade": 0,
+            "why": "This rubric asks about the codes only."
+          }
+        ]
+      },
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023"
+    },
+    "code-reading:occ-midair-nevada": {
+      "question": "Which accidents in Nevada involved a midair collision?",
+      "rubric": {
+        "relevant": "Judge only from the coded findings and occurrences shown (codes are listed with each row); the narrative does not change the grade. Grade 2: an aircraft carries an occurrence coded 250 (Midair collision), in any phase.",
+        "partial": "Does not occur for this question: any listed code meets the requirement, so a case is either 2 or 0.",
+        "notRelevant": "None of the listed codes appears in the coded findings or occurrences. Other modifiers of the same finding (the last two digits differ) and descriptions that merely resemble a listed one do not count.",
+        "edgeCases": [
+          {
+            "situation": "A coded row with one of the listed codes meeting every requirement.",
+            "grade": 2,
+            "why": "The coded data hold the listed code as required."
+          },
+          {
+            "situation": "An occurrence with another code whose description resembles the listed one.",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "The narrative describes the condition, but no listed code appears in the coded rows.",
+            "grade": 0,
+            "why": "This rubric asks about the codes only."
+          }
+        ]
+      },
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a"
+    },
+    "code-reading:sys-fuel-selector-misuse-2023-2026": {
+      "question": "From 2023 to 2026, which accidents have a finding of incorrect use or operation of the fuel selector/shutoff valve?",
+      "rubric": {
+        "relevant": "Judge only from the coded findings and occurrences shown (codes are listed with each row); the narrative does not change the grade. Grade 2: an aircraft carries a finding coded 0102282311 (Aircraft-Aircraft systems-Fuel system-Fuel selector/shutoff valve-Incorrect use/operation), whether or not it is cited in the probable cause.",
+        "partial": "Does not occur for this question: any listed code meets the requirement, so a case is either 2 or 0.",
+        "notRelevant": "None of the listed codes appears in the coded findings or occurrences. Other modifiers of the same finding (the last two digits differ) and descriptions that merely resemble a listed one do not count.",
+        "edgeCases": [
+          {
+            "situation": "A coded row with one of the listed codes meeting every requirement.",
+            "grade": 2,
+            "why": "The coded data hold the listed code as required."
+          },
+          {
+            "situation": "A finding with the same first eight digits as a listed code but another modifier (the last two digits).",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "The narrative describes the condition, but no listed code appears in the coded rows.",
+            "grade": 0,
+            "why": "This rubric asks about the codes only."
+          }
+        ]
+      },
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9"
+    },
+    "code-reading:sys-magneto-failure-2014-2016": {
+      "question": "From 2014 to 2016, which accidents have a finding of a failure or malfunction of a magneto/distributor?",
+      "rubric": {
+        "relevant": "Judge only from the coded findings and occurrences shown (codes are listed with each row); the narrative does not change the grade. Grade 2: an aircraft carries a finding coded 01057414 followed by modifier 01, 02 (Aircraft-Aircraft power plant-Ignition system-Magneto/distributor), whether or not it is cited in the probable cause.",
+        "partial": "Does not occur for this question: any listed code meets the requirement, so a case is either 2 or 0.",
+        "notRelevant": "None of the listed codes appears in the coded findings or occurrences. Other modifiers of the same finding (the last two digits differ) and descriptions that merely resemble a listed one do not count.",
+        "edgeCases": [
+          {
+            "situation": "A coded row with one of the listed codes meeting every requirement.",
+            "grade": 2,
+            "why": "The coded data hold the listed code as required."
+          },
+          {
+            "situation": "A finding with the same first eight digits as a listed code but another modifier (the last two digits).",
+            "grade": 0,
+            "why": "Another code, not a listed one."
+          },
+          {
+            "situation": "The narrative describes the condition, but no listed code appears in the coded rows.",
+            "grade": 0,
+            "why": "This rubric asks about the codes only."
+          }
+        ]
+      },
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30"
+    },
+    "ma-airplane-collision-student-pilot": {
+      "question": "In which collisions between two airplanes was one of them flown by a student pilot?",
+      "rubric": {
+        "relevant": "Two or more airplanes collided (in flight or on the ground), AND the record states that one of the colliding airplanes was flown by a student pilot (solo, or a student at the controls on an instructional flight).",
+        "partial": "Two airplanes collided and a student pilot or an instructional flight is mentioned, but the record does not make clear that the student was flying one of the colliding airplanes.",
+        "notRelevant": "Only one aircraft was involved; or the collision was with a vehicle, an object or an animal; or neither colliding airplane was flown by a student pilot (for example, a flight review or a flight instructor flying alone).",
+        "edgeCases": [
+          {
+            "situation": "A solo student pilot's airplane collided with another airplane on final approach.",
+            "grade": 2,
+            "why": "A student flew one of the colliding airplanes."
+          },
+          {
+            "situation": "A student pilot on a solo flight struck a deer on landing.",
+            "grade": 0,
+            "why": "Not a collision between airplanes."
+          },
+          {
+            "situation": "Two airplanes collided on the runway; one pilot was receiving a flight review.",
+            "grade": 0,
+            "why": "A flight review is not student instruction."
+          },
+          {
+            "situation": "Two airplanes collided; one was on an instructional flight, but the record does not say whether the person at the controls was a student pilot.",
+            "grade": 1,
+            "why": "Student involvement not established."
+          }
+        ]
+      },
+      "questionVersion": "q-b1d3943f80f67761",
+      "rubricVersion": "r-0ec0cbf44a632f77"
+    },
+    "ma-midair-pattern-nontowered": {
+      "question": "Which midair collisions between airplanes happened in the traffic pattern at an airport without an operating control tower?",
+      "rubric": {
+        "relevant": "Two airplanes collided in flight, AND the record places the collision in or next to an airport traffic pattern (upwind, crosswind, downwind, base, final, or entering the pattern), AND that airport had no operating control tower at the time (non-towered, uncontrolled, or the tower was closed).",
+        "partial": "A midair collision in or near an airport traffic pattern where the record does not say whether a control tower was operating; or a midair near a non-towered airport but outside its pattern.",
+        "notRelevant": "Not a midair collision; or a midair away from any airport traffic pattern (en route, a practice area); or the airport's control tower was operating.",
+        "edgeCases": [
+          {
+            "situation": "Two airplanes collided on final approach to a non-towered airport while both pilots were making position reports on the common traffic frequency.",
+            "grade": 2,
+            "why": "Pattern, non-towered."
+          },
+          {
+            "situation": "Two airplanes collided on the downwind leg; the record does not mention a tower.",
+            "grade": 1,
+            "why": "Tower status unknown."
+          },
+          {
+            "situation": "Two airplanes collided on final at a towered airport while the tower was open.",
+            "grade": 0,
+            "why": "An operating tower."
+          },
+          {
+            "situation": "Two airplanes came close in the pattern but did not touch.",
+            "grade": 0,
+            "why": "No collision."
+          }
+        ]
+      },
+      "questionVersion": "q-53e2c759eb934a15",
+      "rubricVersion": "r-ce38b9baf8bc0e43"
+    },
+    "ma-taxiing-strikes-stationary": {
+      "question": "Which ground collisions happened when a taxiing aircraft struck a parked or stopped aircraft?",
+      "rubric": {
+        "relevant": "An aircraft taxiing under its own power struck another aircraft that was parked, stopped or holding still at the time (its propeller or rotor striking the other aircraft included).",
+        "partial": "Two aircraft collided on the ground but the record does not make clear which one was moving or whether the other was stopped; or both were taxiing; or the moving aircraft was on its landing or takeoff roll, or being towed, rather than taxiing.",
+        "notRelevant": "No collision between two aircraft on the ground (a midair collision, or a collision with a vehicle, building, fence or other object).",
+        "edgeCases": [
+          {
+            "situation": "While taxiing to the ramp, the airplane's propeller struck a parked helicopter.",
+            "grade": 2,
+            "why": "Taxiing aircraft struck a parked aircraft."
+          },
+          {
+            "situation": "During the landing roll the airplane struck an airplane holding short of the runway.",
+            "grade": 1,
+            "why": "A landing roll, not taxiing."
+          },
+          {
+            "situation": "The taxiing airplane's wing struck a hangar.",
+            "grade": 0,
+            "why": "Not another aircraft."
+          },
+          {
+            "situation": "Two airplanes taxiing in opposite directions touched wingtips.",
+            "grade": 1,
+            "why": "Neither aircraft was stopped."
+          }
+        ]
+      },
+      "questionVersion": "q-d1b35c38cfb4ae59",
+      "rubricVersion": "r-395c36bada020851"
+    },
+    "mc-ag-arkansas-engine-after-maintenance": {
+      "question": "Which agricultural flights in Arkansas lost engine power within 25 flight hours of maintenance on the engine?",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial), AND it states maintenance on that engine (an overhaul, a repair, a part or accessory replaced or installed, or an inspection that included the engine) AND a time between that maintenance and the accident of 25 flight hours or less (in flight, tachometer or Hobbs hours, or as the first flight after it). The investigators need not link the maintenance to the power loss. A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "Both the power loss and engine maintenance are stated, but the time between them is given only in calendar time that does not establish 25 flight hours or less (\"two weeks before\"), is approximate close to the limit (\"about 25 hours\", \"about 30 hours\"), or cannot be worked out from the record.",
+        "notRelevant": "No loss of engine power; or no maintenance on the engine is stated; or the stated time since that maintenance is clearly more than 25 flight hours; or the maintenance concerned only the airframe, the propeller or other systems that are not part of the engine.",
+        "edgeCases": [
+          {
+            "situation": "The engine had accumulated 12.4 hours since a major overhaul when it lost power.",
+            "grade": 2,
+            "why": "Engine maintenance 12.4 flight hours before the power loss."
+          },
+          {
+            "situation": "A cylinder was replaced about 40 flight hours before the power loss.",
+            "grade": 0,
+            "why": "Clearly outside the 25-hour window."
+          },
+          {
+            "situation": "The last annual inspection was three weeks before the accident; the hours flown since are not stated.",
+            "grade": 1,
+            "why": "Calendar time only."
+          },
+          {
+            "situation": "The power loss happened on the first flight after the fuel control unit was replaced.",
+            "grade": 2,
+            "why": "First flight after maintenance on an engine accessory."
+          },
+          {
+            "situation": "The engine had 15 hours since overhaul, but the airplane struck a power line and no loss of engine power is reported.",
+            "grade": 0,
+            "why": "No loss of engine power."
+          }
+        ]
+      },
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "rubricVersion": "r-81ba1c89878fa5e1"
+    },
+    "mc-first-flight-after-annual": {
+      "question": "Which accidents happened on the first flight after an annual inspection?",
+      "rubric": {
+        "relevant": "The record states that the accident flight was the first flight after an annual inspection (or a condition inspection, its equivalent for an amateur-built or light-sport aircraft): explicitly (\"the first flight since the annual\"), as the test flight right after the annual, or by stating that the aircraft had not flown since the annual was completed.",
+        "partial": "The accident happened shortly after an annual inspection but not on the first flight, or the record does not say it was the first (for example, 0.5 hours or one flight since the annual); or it was the first flight after a 100-hour or progressive inspection rather than an annual.",
+        "notRelevant": "No recent annual inspection is described as preceding the flight, or the time since the annual is longer (several flights or days of flying); or it was the first flight after other maintenance that the record does not call an annual or condition inspection.",
+        "edgeCases": [
+          {
+            "situation": "The annual inspection was signed off on the morning of the accident, and the accident flight was the post-inspection test flight.",
+            "grade": 2,
+            "why": "First flight after the annual."
+          },
+          {
+            "situation": "The airplane had flown 0.3 hours since the annual, on a test flight the day before.",
+            "grade": 1,
+            "why": "Shortly after the annual, but not the first flight."
+          },
+          {
+            "situation": "The last annual inspection was 11 months before the accident.",
+            "grade": 0,
+            "why": "Not recent."
+          },
+          {
+            "situation": "The accident was the first flight after the engine was replaced; no inspection is mentioned.",
+            "grade": 0,
+            "why": "Other maintenance, not an annual inspection."
+          }
+        ]
+      },
+      "questionVersion": "q-f7f6994acc706a5c",
+      "rubricVersion": "r-ce9e03e0ae6b1c5c"
+    },
+    "mc-helicopter-control-rotor-maintenance-10h": {
+      "question": "Which helicopter accidents happened within 10 flight hours after maintenance on the flight controls or rotor system?",
+      "rubric": {
+        "relevant": "The record states maintenance (a repair, a replacement, an adjustment or rigging, an installation, or an inspection that included the work) on a flight control component (cyclic, collective, pedals, servos, control linkages, swashplate) or a rotor system component (main or tail rotor blades, hubs, pitch links, gearboxes, drive shafts), AND that the accident happened 10 flight hours or less after it (stated in hours, or as the first flight after it). A link to the accident is not required.",
+        "partial": "Such maintenance is stated, but the interval is given only in calendar time (\"three days before\"), is approximate near the limit (\"about 10 hours\"), or cannot be worked out; or a general inspection (annual, 100-hour) within 10 flight hours, without stated work on the controls or rotor system.",
+        "notRelevant": "No maintenance on the flight controls or rotor system is stated; or the interval is clearly more than 10 flight hours; or the maintenance concerned only the engine, the airframe or the avionics.",
+        "edgeCases": [
+          {
+            "situation": "The tail rotor pitch link bearing was replaced 2.1 flight hours before the accident.",
+            "grade": 2,
+            "why": "Rotor system work inside the window."
+          },
+          {
+            "situation": "The main rotor blades were replaced about 300 flight hours before the accident.",
+            "grade": 0,
+            "why": "Clearly outside the window."
+          },
+          {
+            "situation": "A 100-hour inspection was done 4 flight hours before the accident; no control or rotor work is described.",
+            "grade": 1,
+            "why": "A general inspection without stated control or rotor work."
+          },
+          {
+            "situation": "The cyclic friction was adjusted the day before; the hours flown since are not stated.",
+            "grade": 1,
+            "why": "Calendar time only."
+          }
+        ]
+      },
+      "questionVersion": "q-10ce141adf4ba24e",
+      "rubricVersion": "r-f88412700b5d25c0"
+    },
+    "ng-carb-icing-not-conducive": {
+      "question": "Which airplane engine power losses happened in weather that was not conducive to carburetor icing?",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial), AND states that the weather conditions at the time (temperature and dew point, or the carburetor icing probability chart) were not conducive or not favorable to carburetor icing at the power setting in use. A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "A loss of engine power, and the record's statement about carburetor icing is mixed or qualified without saying which power setting applied (for example, conducive at glide power but not at cruise power); or the record rules out carburetor icing for a reason other than the weather (the engine was fuel injected, carburetor heat was applied).",
+        "notRelevant": "No loss of engine power; or the record states the conditions were conducive to carburetor icing at the power setting in use; or carburetor icing is not discussed.",
+        "edgeCases": [
+          {
+            "situation": "Power loss in cruise; the temperature and dew point were \"not conducive to carburetor icing at any power setting\".",
+            "grade": 2,
+            "why": "Explicitly not conducive."
+          },
+          {
+            "situation": "Power loss during the descent; \"conditions were conducive to serious carburetor icing at glide power\".",
+            "grade": 0,
+            "why": "Conducive at the power setting in use."
+          },
+          {
+            "situation": "Power loss in cruise; the chart showed icing only at glide power, not at cruise power.",
+            "grade": 2,
+            "why": "Not conducive at the cruise power in use."
+          },
+          {
+            "situation": "Power loss; the engine was fuel injected, so carburetor icing could not occur.",
+            "grade": 1,
+            "why": "Icing ruled out, but not by the weather."
+          }
+        ]
+      },
+      "questionVersion": "q-c3627d12e5b1d13d",
+      "rubricVersion": "r-c19292c5e147cf5f"
+    },
+    "ng-gear-collapse-no-defect": {
+      "question": "Which airplane landing gear collapses happened even though no pre-existing defect was found in the gear?",
+      "rubric": {
+        "relevant": "A landing gear leg (main, nose or tail) collapsed, folded or retracted during the landing, takeoff or ground operation, AND the investigators state that their examination of that gear found no pre-existing defect, malfunction or anomaly (for example, \"no evidence of a preimpact mechanical malfunction of the landing gear\").",
+        "partial": "A gear collapse, and the examination result is general or limited (\"no anomalies with the airplane\" without naming the gear, or the gear was not examined); or the record attributes the collapse to the landing (a hard landing, a side load, a loss of directional control) without stating an examination result.",
+        "notRelevant": "No gear collapse; or the examination found a defect or failure that existed before the accident (a fatigue crack, corrosion, a failed actuator, improper rigging or maintenance); or a gear-up landing in which the gear was never extended (not a collapse).",
+        "edgeCases": [
+          {
+            "situation": "The nose gear collapsed after a hard landing; examination revealed no preimpact anomalies with the nose gear.",
+            "grade": 2,
+            "why": "A collapse with an examination of that gear that found nothing."
+          },
+          {
+            "situation": "The right main gear collapsed; the trunnion had a pre-existing fatigue crack.",
+            "grade": 0,
+            "why": "A pre-existing defect was found."
+          },
+          {
+            "situation": "The pilot forgot to extend the gear and landed gear up.",
+            "grade": 0,
+            "why": "Not a collapse."
+          },
+          {
+            "situation": "The left main gear collapsed during a ground loop; the gear was not examined.",
+            "grade": 1,
+            "why": "Collapse without an examination result."
+          }
+        ]
+      },
+      "questionVersion": "q-674a7ca7b4b5ea4e",
+      "rubricVersion": "r-48a4aec7726cfb1d"
+    },
+    "ng-skydiving-power-loss-no-anomaly": {
+      "question": "Which skydiving flights lost engine power even though the engine examination afterwards found nothing mechanically wrong?",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial) during the flight, AND the investigators state that their examination of the engine found no mechanical malfunction, failure or anomaly (for example, \"no preimpact mechanical malfunctions or anomalies that would have precluded normal operation\"). Why power was lost may be undetermined or something other than an engine defect (fuel, ice, the way the engine was operated). A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "The record reports a loss of engine power, but leaves the examination result open: the engine was not examined, could be examined only in part (fire or impact damage), or the \"no anomalies\" statement covers only the airframe or only part of the engine. Also partial: the examination found nothing wrong, but the investigators doubt that power was lost.",
+        "notRelevant": "No loss of engine power is reported; or the examination found an engine malfunction, failure, damage or wear that existed before the accident (for example, a fractured connecting rod, a failed magneto, a stuck valve).",
+        "edgeCases": [
+          {
+            "situation": "Fuel exhaustion caused the power loss, and the examination found no mechanical anomaly with the engine.",
+            "grade": 2,
+            "why": "The question is about the engine's mechanical condition, not about why power was lost."
+          },
+          {
+            "situation": "The engine lost power on climb-out and was destroyed by the post-crash fire, so it could not be examined.",
+            "grade": 1,
+            "why": "The examination result is unknown."
+          },
+          {
+            "situation": "The engine lost power; the examination found a fatigue fracture of the crankshaft.",
+            "grade": 0,
+            "why": "A pre-existing mechanical failure was found."
+          },
+          {
+            "situation": "The pilot reported a partial loss of power; the engine later ran at full power on a test stand with no anomalies.",
+            "grade": 2,
+            "why": "A reported power loss and an examination, including the test run, that found nothing wrong."
+          },
+          {
+            "situation": "The airplane stalled during the jump run; the engine was producing power at impact and nothing was wrong with it.",
+            "grade": 0,
+            "why": "No loss of engine power."
+          }
+        ]
+      },
+      "questionVersion": "q-57573e70a954cea3",
+      "rubricVersion": "r-254fe384da841d53"
+    },
+    "pv-helicopter-tail-rotor-claim": {
+      "question": "Which helicopter accidents involved a pilot reporting a tail rotor failure that investigators did not find?",
+      "rubric": {
+        "relevant": "The pilot (or crew) reported a tail rotor malfunction or failure, or a loss of tail rotor control, AND the investigators found no failure or malfunction of the tail rotor system (including when they attribute the yaw to loss of tail rotor effectiveness, the flight conditions or the pilot's technique).",
+        "partial": "The pilot reported a tail rotor problem and the record does not settle it (the system could not be examined, or impact damage prevented a determination).",
+        "notRelevant": "The investigation found a failure or malfunction of the tail rotor system; or the pilot did not report a tail rotor problem.",
+        "edgeCases": [
+          {
+            "situation": "The pilot reported a tail rotor failure; examination established tail rotor drive continuity and the investigators attributed the spin to loss of tail rotor effectiveness.",
+            "grade": 2,
+            "why": "Reported failure not found."
+          },
+          {
+            "situation": "The pilot reported a loss of tail rotor control; the tail rotor drive shaft had fractured from fatigue.",
+            "grade": 0,
+            "why": "A failure was found."
+          },
+          {
+            "situation": "The pilot reported the pedals became ineffective; the tail boom was destroyed and continuity could not be established.",
+            "grade": 1,
+            "why": "Not settled."
+          }
+        ]
+      },
+      "questionVersion": "q-99e6513b31afcf87",
+      "rubricVersion": "r-f72abfd0ffa4d497"
+    },
+    "pv-pilot-reported-failure-not-confirmed": {
+      "question": "In which accidents did the pilot report a mechanical failure that the investigation did not confirm?",
+      "rubric": {
+        "relevant": "The record gives the pilot's (or another crew member's) report that a specific mechanical problem occurred (for example, a loss of engine power, a brake failure, jammed controls, a landing gear or instrument malfunction), AND the investigators state that examination or testing found no evidence of that problem, or found the system working.",
+        "partial": "The pilot reported a mechanical problem, and the investigators could not examine it or leave it unresolved without saying whether evidence was found; or the investigators found a different problem without addressing the one the pilot reported.",
+        "notRelevant": "The investigation confirmed the problem the pilot reported; or no crew member reported a mechanical problem (reports only by witnesses, mechanics or operators do not count).",
+        "edgeCases": [
+          {
+            "situation": "The pilot reported that the brakes failed; examination found that the brake system operated normally.",
+            "grade": 2,
+            "why": "Reported failure, examination found it working."
+          },
+          {
+            "situation": "The pilot reported a total loss of engine power; the engine test-ran without anomalies.",
+            "grade": 2,
+            "why": "Reported failure not confirmed."
+          },
+          {
+            "situation": "The pilot reported a loss of engine power; examination found a failed magneto.",
+            "grade": 0,
+            "why": "The investigation confirmed a failure."
+          },
+          {
+            "situation": "A witness reported the engine sputtering; the pilot reported no problem.",
+            "grade": 0,
+            "why": "No crew report of a mechanical problem."
+          },
+          {
+            "situation": "The pilot reported that the landing gear would not extend; the gear system was not examined.",
+            "grade": 1,
+            "why": "Reported problem left unresolved."
+          }
+        ]
+      },
+      "questionVersion": "q-8c90edd86261f799",
+      "rubricVersion": "r-d7d99b98766035d8"
+    },
+    "pv-recorded-data-contradicts-pilot": {
+      "question": "Which accidents had a pilot's account of the flight that recorded data, such as GPS or engine monitor data, contradicted?",
+      "rubric": {
+        "relevant": "The record states what the pilot (or crew) reported about the flight (altitude, airspeed, fuel state, engine behavior, flight path or the sequence of events) AND that data recorded by a device (GPS, ADS-B or radar data, an engine monitor, a flight data recorder, video) showed something different.",
+        "partial": "The pilot's account and the recorded data differ, but the record does not point out the difference; or the pilot's account is contradicted by a witness or by physical evidence rather than by recorded data.",
+        "notRelevant": "No recorded data is described; or the recorded data agree with the pilot's account; or the record gives no account by the pilot.",
+        "edgeCases": [
+          {
+            "situation": "The pilot said he climbed to 3,000 ft; ADS-B data showed the airplane never exceeded 900 ft.",
+            "grade": 2,
+            "why": "Recorded data contradict the account."
+          },
+          {
+            "situation": "The pilot reported a loss of engine power; engine monitor data showed normal engine parameters until impact.",
+            "grade": 2,
+            "why": "Recorded data contradict the account."
+          },
+          {
+            "situation": "A witness saw the airplane flying lower than the pilot reported.",
+            "grade": 1,
+            "why": "Contradicted by a witness, not by recorded data."
+          },
+          {
+            "situation": "GPS data matched the pilot's description of the approach.",
+            "grade": 0,
+            "why": "No contradiction."
+          }
+        ]
+      },
+      "questionVersion": "q-fd2d3bef7c143f16",
+      "rubricVersion": "r-c656465c3ec886bb"
+    }
+  },
+  "items": [
+    {
+      "id": "cr-env-carb-icing-cause-michigan-chi08ca275",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "CHI08CA275",
+        "source": "canonical",
+        "fingerprint": "dcfaf1ee4539f9ee7a29c1b7543a820a4eb6bdc2600f9a4bb82f38b467e019f4"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-carb-icing-cause-michigan-cen23la266",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "CEN23LA266",
+        "source": "canonical",
+        "fingerprint": "a9ebf4f281b6e85115918826a76604f6f9a38b5f50819a8f252ae46fac211ca5"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-carb-icing-cause-michigan-cen23la036",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "CEN23LA036",
+        "source": "canonical",
+        "fingerprint": "bc65deb5571a07059a9de446568966ad113f21ad92e2ca451da92fc3f8c5d7ed"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-carb-icing-cause-michigan-cen23la161",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "CEN23LA161",
+        "source": "canonical",
+        "fingerprint": "feccc01f191492b8b712af79a4fe005136a40327bda3d83eaee2bb85863337fb"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-carb-icing-cause-michigan-cen11ca496",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "CEN11CA496",
+        "source": "canonical",
+        "fingerprint": "2fe5da95ff5010acde31bfcee3cd634d552f036b533539fc0091ce0b0b8356d3"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-env-carb-icing-cause-michigan-cen21la191",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "CEN21LA191",
+        "source": "canonical",
+        "fingerprint": "5914aa60df4a4ac276779502ac54ea0646f46d768ca492a17224692f3cd59e05"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-env-carb-icing-cause-michigan-cen11fa253",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "CEN11FA253",
+        "source": "canonical",
+        "fingerprint": "b35c0754a30b5c983479a0b9c5ee1d3196a9787672066e65dbffd8b008919237"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-env-carb-icing-cause-michigan-anc18la057",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-carb-icing-cause-michigan",
+      "questionVersion": "q-2c53b2cd9684ff37",
+      "rubricVersion": "r-9392ee1dd4280625",
+      "case": {
+        "ntsbNo": "ANC18LA057",
+        "source": "canonical",
+        "fingerprint": "7a182b132e54ac284f55f65b8a3b6a412e6aa598f98c4abf8649664176db7f90"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-cen23fa284",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "CEN23FA284",
+        "source": "canonical",
+        "fingerprint": "0476974597474df81fd1cbd235eec468379e6841fd9a78346bcb64880a4e4a22"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-cen24fa215",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "CEN24FA215",
+        "source": "canonical",
+        "fingerprint": "2ad1d00e3dafac041c628bbbf84bf1df77ea6a37993c6bce1fd183667f32af01"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-era26la181",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "ERA26LA181",
+        "source": "canonical",
+        "fingerprint": "fd262265350259a5c7c153b646b8a722cc2d71186ea0d7b8a2b3fa67ed5d3116"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-cen24la189",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "CEN24LA189",
+        "source": "canonical",
+        "fingerprint": "65e59557a5c45d4e76c27fec827a2d1936dcf5a8dbf650cbcc1a1ae480f056d7"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-wpr23la336",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "WPR23LA336",
+        "source": "canonical",
+        "fingerprint": "4d037b34d8219162c8ef1bd483dd2e0b78372421f52c6c4f17db9cc673cfe9ed"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code; another modifier of a listed finding appears (a hard negative)."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-era24la248",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "ERA24LA248",
+        "source": "canonical",
+        "fingerprint": "889d759eadebe0659d272ec216c8ba95c4c5788b290701bd13d6fec945806981"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code; another modifier of a listed finding appears (a hard negative)."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-era25la141",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "ERA25LA141",
+        "source": "canonical",
+        "fingerprint": "c100397dfa7a6a86b16773cbef88701a8189de229419497126158279ca53599d"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-sys-fuel-selector-misuse-2023-2026-wpr24la175",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-fuel-selector-misuse-2023-2026",
+      "questionVersion": "q-5bb7a274a6e6fba3",
+      "rubricVersion": "r-a6bf03f74d948ec9",
+      "case": {
+        "ntsbNo": "WPR24LA175",
+        "source": "canonical",
+        "fingerprint": "cd2ddea10b683062f4993fd222f80a66d38c32725d95f5cb251587cee9918ba7"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-midair-nevada-lax08la254",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "LAX08LA254",
+        "source": "canonical",
+        "fingerprint": "8112e25332c4dfc9a1636e67f5ba4dbdbb47612c80a210937a8fcbebd0d3fa82"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-midair-nevada-wpr23fa345",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "WPR23FA345",
+        "source": "canonical",
+        "fingerprint": "2e104b196ae08ae7a7023ff6f00403deb55b691def5d364bcec74b1f42890b3c"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-midair-nevada-wpr16la016",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "WPR16LA016",
+        "source": "canonical",
+        "fingerprint": "e9e81306475f7b37e94445fe092cd5a65948fde52f48ae0b698e3e2f5a7e3eff"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-midair-nevada-wpr13la270",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "WPR13LA270",
+        "source": "canonical",
+        "fingerprint": "1d7e9581d1a22d37d4da481cc2ce03baba2b478899cec98948366ae95929666c"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-midair-nevada-ops24la011",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "OPS24LA011",
+        "source": "canonical",
+        "fingerprint": "77f0084655d835cc8e988b389751dcbf9eb1e5a365bf02e88feee52aacb3638a"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-midair-nevada-wpr11la265",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "WPR11LA265",
+        "source": "canonical",
+        "fingerprint": "18b5ee969bbae034582daf7f8f8ce79ca05e3249fdc68c11c17ab7c75c19f9a1"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-midair-nevada-wpr23la005",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "WPR23LA005",
+        "source": "canonical",
+        "fingerprint": "a839a8c5b27259b923d6b2a754e1d63a31433e10eaf543abcbed40f608367e71"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-midair-nevada-wpr16la056",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-midair-nevada",
+      "questionVersion": "q-3714820f2b95dacd",
+      "rubricVersion": "r-a9610533b967fa3a",
+      "case": {
+        "ntsbNo": "WPR16LA056",
+        "source": "canonical",
+        "fingerprint": "83c776e85ccc706bd8be53f27656567c607b4a003125a54b031a3ec593d1e77c"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen13la565",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN13LA565",
+        "source": "canonical",
+        "fingerprint": "cc3cf7f46b39008c5cdfc6623cb22f5aa415617e1bd4b0c4d536556f35cfa488"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen26la073",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN26LA073",
+        "source": "canonical",
+        "fingerprint": "d8f000849b83dba6aa9fa5f627af99e5397064614742ed73cec81861ec5043b8"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen17la121",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN17LA121",
+        "source": "canonical",
+        "fingerprint": "ca3b0bb41af4833463970b3e052f2136bcb3b5e5ef7f4f894afb5b4f4d3e8341"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen09la501",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN09LA501",
+        "source": "canonical",
+        "fingerprint": "36e22a623f016b5f3d1c9ee20afe726588c56d505a85a52e7b9f0d1ca72e9af5"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen12ca016",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN12CA016",
+        "source": "canonical",
+        "fingerprint": "9f74140b0ed796cbc7177488164d9751263ca2fb4c8b85d2d6adfa5190d0b466"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "A listed code appears but its clause is not met."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen14ca275",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN14CA275",
+        "source": "canonical",
+        "fingerprint": "ad6d3bf085e27fdafbf33d06284280f7ede5b9edb17a701ac93d9a773faf76e2"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "A listed code appears but its clause is not met."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen14fa434",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN14FA434",
+        "source": "canonical",
+        "fingerprint": "f0c80dd7a742c920ab66dfac8e5d9e4b41aa623f82fc66af048462f4ad3c81a6"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-gaa18ca325",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "GAA18CA325",
+        "source": "canonical",
+        "fingerprint": "eccf2c7b10ac26b4294631db31917ce0966e442c6a141b558b011a7ddb904d9e"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen24la222",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN24LA222",
+        "source": "canonical",
+        "fingerprint": "4a453214f94e653e293df176015fde3773f9a93bcd42f16cc65c1b13dec818af"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-exhaustion-fuel-planning-cause-oklahoma-cen15fa127",
+      "set": "code-reading",
+      "split": "dev",
+      "tags": [
+        "code-reading",
+        "occurrence-code",
+        "finding-code",
+        "probable-cause",
+        "multi-clause"
+      ],
+      "question": "code-reading:occ-fuel-exhaustion-fuel-planning-cause-oklahoma",
+      "questionVersion": "q-39478de1bff4c4c7",
+      "rubricVersion": "r-908b9a20d923698d",
+      "case": {
+        "ntsbNo": "CEN15FA127",
+        "source": "canonical",
+        "fingerprint": "5390c5b70321d28d53e41296a5e9e02a5fa664007003b7f50cbe6764d12ea7a9"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-cen14la195",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "CEN14LA195",
+        "source": "canonical",
+        "fingerprint": "b0a3caecd95c48568757e2b6ce423ef652534b78f1d5b8d9b3ba4735dcb3b0e8"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-wpr14fa091",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "WPR14FA091",
+        "source": "canonical",
+        "fingerprint": "171088ef65c340ff93d73f1f5bef8d4a91b4ab8ee98c01ac4f18010acf2ad416"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-cen17la015",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "CEN17LA015",
+        "source": "canonical",
+        "fingerprint": "d6f08ea3a5da5b0603e669f8639359ea616a374e5c1a2532449ed7b60f3da624"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-cen17la099",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "CEN17LA099",
+        "source": "canonical",
+        "fingerprint": "0221af1d44265094debb17f02ed84c9400fe2a377a868335869c2937a3f6cbf9"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-cen15la404",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "CEN15LA404",
+        "source": "canonical",
+        "fingerprint": "0ce67e57febfb6cc937610023f4e7a5c2bbf6eb744a46442b8917440e5b49abc"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code; another modifier of a listed finding appears (a hard negative)."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-era15fa049",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "ERA15FA049",
+        "source": "canonical",
+        "fingerprint": "94eba207f74bfe44bac9e7fbe3ba584eb44dd9568c14b32125307a53b24f582c"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code; another modifier of a listed finding appears (a hard negative)."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-wpr15fa016",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "WPR15FA016",
+        "source": "canonical",
+        "fingerprint": "d16e40db163480d3c974bf9fcde53271cd68afc6a3befcc2fd36e53a6db27344"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-sys-magneto-failure-2014-2016-wpr15la146",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code"
+      ],
+      "question": "code-reading:sys-magneto-failure-2014-2016",
+      "questionVersion": "q-6042b22199dc2b79",
+      "rubricVersion": "r-2a9f0351a593bc30",
+      "case": {
+        "ntsbNo": "WPR15LA146",
+        "source": "canonical",
+        "fingerprint": "a2f89cd88d310db18509e0c52fa7f6a2217a458dd540c38bd7f4fe179a536b39"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen23la101",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN23LA101",
+        "source": "canonical",
+        "fingerprint": "2ed1e80bdcb4b1c3e045a9dc78ce460b062ba7ccc233aed39825c55615d370d7"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen25la393",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN25LA393",
+        "source": "canonical",
+        "fingerprint": "f1d7ee8d22180dcfe38a7375638f05c5a1e475e97da2d9abf553f38059a57e5b"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen24la050",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN24LA050",
+        "source": "canonical",
+        "fingerprint": "d6e127bf93bc53f45caac060e6d3607f54b197ba143b172f6cfa7947525bb972"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen20la042",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN20LA042",
+        "source": "canonical",
+        "fingerprint": "fead1ef14d49d226f11d41cbca6f07641ac776bb3cda6c5a8e2d161a914c40ab"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen20ca298",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN20CA298",
+        "source": "canonical",
+        "fingerprint": "d41fb2378e2273d34c6c4fdb7a51ceae51779036c885ad645cd0f5ed6f6af145"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen10ca576",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN10CA576",
+        "source": "canonical",
+        "fingerprint": "3a521f7570ce02ff3629a78543e6d6770a7e03255d518eea322d884c89d66f66"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen14ca501",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN14CA501",
+        "source": "canonical",
+        "fingerprint": "6a92f5f2c49a1e2ee2b82fd1a55340bb44a8cf0c22a9409b4b1af9849545e348"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-occ-fuel-starvation-minnesota-cen15ca074",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "occurrence-code"
+      ],
+      "question": "code-reading:occ-fuel-starvation-minnesota",
+      "questionVersion": "q-4b5e26d34a5af11a",
+      "rubricVersion": "r-a85edc9032232023",
+      "case": {
+        "ntsbNo": "CEN15CA074",
+        "source": "canonical",
+        "fingerprint": "26d8076e4009a2ffaaf541f6ed52a45b71be19ec95ddd50f8b123be838d523ee"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-lax08ca167",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "LAX08CA167",
+        "source": "canonical",
+        "fingerprint": "6a83baba5f8949891afb8a3eba578cac38dcc55cccdf94015c692f676086ad2f"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-wpr24la220",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "WPR24LA220",
+        "source": "canonical",
+        "fingerprint": "9305b4339f25011cdc3bf3222ea6524954dd2ac364151f67bc6b75435378ddd9"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-wpr24la016",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "WPR24LA016",
+        "source": "canonical",
+        "fingerprint": "2890bd9c176c6c713c278ce75952a0a48c71e1a033a433bd67006c1ca0756aec"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-wpr15la013",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "WPR15LA013",
+        "source": "canonical",
+        "fingerprint": "0b0559d6dc14812bddc05065aca7c755362982539edd617ea96741b9531406c1"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "Track C coded positive: the coded rows meet every clause."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-wpr13la307",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "WPR13LA307",
+        "source": "canonical",
+        "fingerprint": "d53e47016af86ede24c47e26c666fdc2e7ac44191f689ff874b7af4bc796b55b"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "A listed code appears but its clause is not met."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-gaa17ca269",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "GAA17CA269",
+        "source": "canonical",
+        "fingerprint": "86c026008599da13a210c4e02a395b8e56279dcd2f0183128b8f5725c3224ebb"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "A listed code appears but its clause is not met."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-sea08la110",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "SEA08LA110",
+        "source": "canonical",
+        "fingerprint": "b92835aaa69f7b1ca0d8922d8f2bc101b5423e1bf178de006a40a41ec4a28217"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-gaa19ca076",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "GAA19CA076",
+        "source": "canonical",
+        "fingerprint": "d925ca1f74d4b46d12ec70d2440458d5b97c684f34126b7c315344bb44af8732"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-wpr23la147",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "WPR23LA147",
+        "source": "canonical",
+        "fingerprint": "e1152898789dc2d7d73ef1983ef717babfd77d4e9ab3575d526a3cd36929ccae"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "cr-env-tailwind-cause-landing-utah-wpr23la260",
+      "set": "code-reading",
+      "split": "holdout",
+      "tags": [
+        "code-reading",
+        "finding-code",
+        "probable-cause"
+      ],
+      "question": "code-reading:env-tailwind-cause-landing-utah",
+      "questionVersion": "q-20c98b6bc8282353",
+      "rubricVersion": "r-9c169d1362ca6b9b",
+      "case": {
+        "ntsbNo": "WPR23LA260",
+        "source": "canonical",
+        "fingerprint": "a1d4da213192e76ad3590ca54d869f305592805377c7bc248e0ea0f6395e746d"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": null,
+      "anchors": [],
+      "why": "No listed code appears in the coded rows."
+    },
+    {
+      "id": "nc-neg-skyd-no-anomaly",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-skydiving-power-loss-no-anomaly",
+      "questionVersion": "q-57573e70a954cea3",
+      "rubricVersion": "r-254fe384da841d53",
+      "case": {
+        "ntsbNo": "SYN21LA101",
+        "source": "synthetic",
+        "fingerprint": "5f37397ace8f73e12c77c31fb6ca89246821a2415024b807968a3dea5ab4819c"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "Postaccident examination of the engine revealed no mechanical malfunctions or anomalies that would have precluded normal operation."
+      ],
+      "why": "Power loss, and the investigators' examination of the engine found nothing: every grade-2 condition."
+    },
+    {
+      "id": "nc-neg-skyd-anomaly-found",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-skydiving-power-loss-no-anomaly",
+      "questionVersion": "q-57573e70a954cea3",
+      "rubricVersion": "r-254fe384da841d53",
+      "case": {
+        "ntsbNo": "SYN21LA102",
+        "source": "synthetic",
+        "fingerprint": "b8f0a818d5a88d5256c4d54d4a10d29faa58153460077d7aac150dffc1ff50bf"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "contradiction",
+      "anchors": [
+        "Postaccident examination of the engine revealed that the No. 3 cylinder exhaust valve had fractured"
+      ],
+      "why": "The examination found a pre-existing failure: grade 0 under the rubric."
+    },
+    {
+      "id": "nc-neg-skyd-not-examined",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-skydiving-power-loss-no-anomaly",
+      "questionVersion": "q-57573e70a954cea3",
+      "rubricVersion": "r-254fe384da841d53",
+      "case": {
+        "ntsbNo": "SYN21LA103",
+        "source": "synthetic",
+        "fingerprint": "4656e44fcdc43ec83e8b6da9100be398c57c6ca12fd11ecfae0a53c9b7e1b769"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "not_examined",
+      "anchors": [
+        "the engine could not be examined in detail"
+      ],
+      "why": "Power loss with the examination result unknown: partial."
+    },
+    {
+      "id": "nc-neg-skyd-airframe-only",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-skydiving-power-loss-no-anomaly",
+      "questionVersion": "q-57573e70a954cea3",
+      "rubricVersion": "r-254fe384da841d53",
+      "case": {
+        "ntsbNo": "SYN21LA104",
+        "source": "synthetic",
+        "fingerprint": "6673f6acb501effb80f33cd449e7e96fbcf9b06c08b9df87c081c7e5eab77c1b"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "scope_of_negation",
+      "anchors": [
+        "Examination of the airframe and flight control systems revealed no anomalies.",
+        "the investigation did not examine it"
+      ],
+      "why": "The \"no anomalies\" statement covers the airframe only: partial, a negation-scope trap."
+    },
+    {
+      "id": "nc-neg-skyd-no-anomalies-other-than",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-skydiving-power-loss-no-anomaly",
+      "questionVersion": "q-57573e70a954cea3",
+      "rubricVersion": "r-254fe384da841d53",
+      "case": {
+        "ntsbNo": "SYN21LA105",
+        "source": "synthetic",
+        "fingerprint": "be63dc0e866c228ddea54432f80cfac4ccdec4ee4ee2ea9102cc9fc9059be83d"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "embedded_exception",
+      "anchors": [
+        "revealed no anomalies other than a crack in the No. 2 cylinder head"
+      ],
+      "why": "\"No anomalies other than\" a pre-existing crack: an anomaly was found, grade 0; a negation that does not negate."
+    },
+    {
+      "id": "nc-neg-skyd-fuel-exhaustion-engine-ok",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-skydiving-power-loss-no-anomaly",
+      "questionVersion": "q-57573e70a954cea3",
+      "rubricVersion": "r-254fe384da841d53",
+      "case": {
+        "ntsbNo": "SYN21LA106",
+        "source": "synthetic",
+        "fingerprint": "9c66b93829ab72aed79499dce323da1213fa5d93af764c94146aef8a4d414a13"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "other_reason",
+      "anchors": [
+        "Postaccident examination of the engine revealed no evidence of preimpact mechanical malfunction."
+      ],
+      "why": "The rubric allows a reason other than an engine defect: the engine was found sound, grade 2 (an edge case of the rubric)."
+    },
+    {
+      "id": "nc-neg-carb-not-conducive",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-carb-icing-not-conducive",
+      "questionVersion": "q-c3627d12e5b1d13d",
+      "rubricVersion": "r-c19292c5e147cf5f",
+      "case": {
+        "ntsbNo": "SYN19LA111",
+        "source": "synthetic",
+        "fingerprint": "eda55acf710a2848a03a04a8406d34ac29ef877d73dac829f647c1e4235d93f5"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "were not conducive to carburetor icing at any power setting"
+      ],
+      "why": "Power loss, weather stated not conducive: grade 2."
+    },
+    {
+      "id": "nc-neg-carb-conducive-glide-descent",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-carb-icing-not-conducive",
+      "questionVersion": "q-c3627d12e5b1d13d",
+      "rubricVersion": "r-c19292c5e147cf5f",
+      "case": {
+        "ntsbNo": "SYN19LA112",
+        "source": "synthetic",
+        "fingerprint": "d8f20ef1fd3c23d362958924c12bee533fd33238099f6891ef6f9c01c7d84c54"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "contradiction",
+      "anchors": [
+        "were conducive to serious carburetor icing at glide and descent power"
+      ],
+      "why": "Conducive at the power setting in use: grade 0."
+    },
+    {
+      "id": "nc-neg-carb-glide-only-cruise-loss",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-carb-icing-not-conducive",
+      "questionVersion": "q-c3627d12e5b1d13d",
+      "rubricVersion": "r-c19292c5e147cf5f",
+      "case": {
+        "ntsbNo": "SYN19LA113",
+        "source": "synthetic",
+        "fingerprint": "aca4c796da0fd199f0c5c69743c54ba1e792b164f898043b1aa4a639a682bb16"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "conditional_scope",
+      "anchors": [
+        "were conducive to serious carburetor icing at glide power but not at cruise power"
+      ],
+      "why": "Conducive only at glide power, loss in cruise: not conducive at the setting in use, grade 2 (an edge case of the rubric)."
+    },
+    {
+      "id": "nc-neg-carb-fuel-injected",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-carb-icing-not-conducive",
+      "questionVersion": "q-c3627d12e5b1d13d",
+      "rubricVersion": "r-c19292c5e147cf5f",
+      "case": {
+        "ntsbNo": "SYN19LA114",
+        "source": "synthetic",
+        "fingerprint": "58b3690ff876d9877853fe255ba346706caa6c8056b25a0375f829b5fc9b61b1"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "other_reason",
+      "anchors": [
+        "carburetor icing therefore could not have occurred"
+      ],
+      "why": "Icing ruled out by the fuel system, not by the weather: partial."
+    },
+    {
+      "id": "nc-neg-gear-no-preimpact",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-gear-collapse-no-defect",
+      "questionVersion": "q-674a7ca7b4b5ea4e",
+      "rubricVersion": "r-48a4aec7726cfb1d",
+      "case": {
+        "ntsbNo": "SYN16LA121",
+        "source": "synthetic",
+        "fingerprint": "9372a06a8e0c18f15e65081008bf8cf8718eecf3d21612472773dbf94abbd15e"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "Examination of the nose landing gear revealed no evidence of a preimpact mechanical malfunction or failure"
+      ],
+      "why": "Collapse, and the gear examination found no pre-existing defect: grade 2."
+    },
+    {
+      "id": "nc-neg-gear-fatigue-found",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-gear-collapse-no-defect",
+      "questionVersion": "q-674a7ca7b4b5ea4e",
+      "rubricVersion": "r-48a4aec7726cfb1d",
+      "case": {
+        "ntsbNo": "SYN16LA122",
+        "source": "synthetic",
+        "fingerprint": "3b8cb108c7bc4d1610ad219e748e4ab5f661aa034c4d5d325355227e66db7b93"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "contradiction",
+      "anchors": [
+        "revealed a pre-existing fatigue crack that had propagated through about 70 percent of the drag link"
+      ],
+      "why": "A pre-existing defect was found: grade 0."
+    },
+    {
+      "id": "nc-neg-gear-not-examined",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "negation"
+      ],
+      "question": "ng-gear-collapse-no-defect",
+      "questionVersion": "q-674a7ca7b4b5ea4e",
+      "rubricVersion": "r-48a4aec7726cfb1d",
+      "case": {
+        "ntsbNo": "SYN16LA123",
+        "source": "synthetic",
+        "fingerprint": "255d903e01ee3e0dc75193aa048429f84a76d0030a1edae85a09604f5b412e49"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "not_examined",
+      "anchors": [
+        "were not available for examination"
+      ],
+      "why": "Collapse without an examination result: partial."
+    },
+    {
+      "id": "nc-chr-ag-inside-window",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-ag-arkansas-engine-after-maintenance",
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "rubricVersion": "r-81ba1c89878fa5e1",
+      "case": {
+        "ntsbNo": "SYN20LA131",
+        "source": "synthetic",
+        "fingerprint": "7e5dcc799323ac9cbc5c271685ff6ad9141ba22d4966c1d08bb3ab968f63e53d"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "it had accumulated 12.4 hours since the overhaul at the time of the accident"
+      ],
+      "why": "Power loss 12.4 flight hours after an engine overhaul: inside the 25-hour window."
+    },
+    {
+      "id": "nc-chr-ag-outside-window",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-ag-arkansas-engine-after-maintenance",
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "rubricVersion": "r-81ba1c89878fa5e1",
+      "case": {
+        "ntsbNo": "SYN20LA132",
+        "source": "synthetic",
+        "fingerprint": "0bb1387dee22ff47f363aaba08bb01e0f4125007e3255700e134905339efd920"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "outside_window",
+      "anchors": [
+        "the engine fuel control unit had been replaced about 40 flight hours before the accident"
+      ],
+      "why": "About 40 flight hours: clearly outside the 25-hour window."
+    },
+    {
+      "id": "nc-chr-ag-calendar-only",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-ag-arkansas-engine-after-maintenance",
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "rubricVersion": "r-81ba1c89878fa5e1",
+      "case": {
+        "ntsbNo": "SYN20LA133",
+        "source": "synthetic",
+        "fingerprint": "462057e305d0db9a522e30a428a70f1d076a2540e1811f4ec6ad29918d519d19"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "calendar_only",
+      "anchors": [
+        "was completed 3 weeks before the accident",
+        "The hours flown since the inspection could not be determined"
+      ],
+      "why": "Calendar time only, hours unknown: partial."
+    },
+    {
+      "id": "nc-chr-ag-approximate-limit",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-ag-arkansas-engine-after-maintenance",
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "rubricVersion": "r-81ba1c89878fa5e1",
+      "case": {
+        "ntsbNo": "SYN20LA134",
+        "source": "synthetic",
+        "fingerprint": "baa5575db76237daea5e1799f27056428df8e333a995e7dc94fa88f44784ab30"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "approximate_value",
+      "anchors": [
+        "had about 25 hours since the overhaul"
+      ],
+      "why": "An approximate value at the limit: partial (an edge case of the rubric)."
+    },
+    {
+      "id": "nc-chr-ag-days-not-hours",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-ag-arkansas-engine-after-maintenance",
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "rubricVersion": "r-81ba1c89878fa5e1",
+      "case": {
+        "ntsbNo": "SYN20LA135",
+        "source": "synthetic",
+        "fingerprint": "0ae4f21a5bd906fdf6cf3a0e3528acdd442b22c5570e04248ab0e9ed6cd62598"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "unit_swap",
+      "anchors": [
+        "The engine had been overhauled and reinstalled 20 days before the accident."
+      ],
+      "why": "20 days is calendar time, not 20 flight hours: partial, a unit trap."
+    },
+    {
+      "id": "nc-chr-ag-wrong-anchor",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-ag-arkansas-engine-after-maintenance",
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "rubricVersion": "r-81ba1c89878fa5e1",
+      "case": {
+        "ntsbNo": "SYN20LA136",
+        "source": "synthetic",
+        "fingerprint": "1dfeeac22f7931f05cafd90ae3a50edbf4053d9974449f0f13337ce0fe57d4ab"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "wrong_anchor",
+      "anchors": [
+        "the engine had last been overhauled 1,310 hours before the accident",
+        "no engine maintenance had been performed since its last 100-hour inspection 90 hours before the accident"
+      ],
+      "why": "The 8 hours are measured from the pilot's flight review, not from engine maintenance (90 hours before): grade 0, an anchor trap."
+    },
+    {
+      "id": "nc-chr-annual-first-flight",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-first-flight-after-annual",
+      "questionVersion": "q-f7f6994acc706a5c",
+      "rubricVersion": "r-ce9e03e0ae6b1c5c",
+      "case": {
+        "ntsbNo": "SYN18LA141",
+        "source": "synthetic",
+        "fingerprint": "844b352ce085a8f05945a0138e36326e02e93004135f5b9d4e7bf5bf539cc3ba"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "the accident flight was the first flight after the inspection"
+      ],
+      "why": "First flight after the annual: grade 2."
+    },
+    {
+      "id": "nc-chr-annual-second-flight",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-first-flight-after-annual",
+      "questionVersion": "q-f7f6994acc706a5c",
+      "rubricVersion": "r-ce9e03e0ae6b1c5c",
+      "case": {
+        "ntsbNo": "SYN18LA142",
+        "source": "synthetic",
+        "fingerprint": "572125c74be172f6863a2897109b69fe9b31de3cd65a81ba4def16caf9d27341"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "not_first_flight",
+      "anchors": [
+        "The airplane had been flown 0.3 hours since the inspection, on a test flight by the mechanic the day before the accident."
+      ],
+      "why": "Shortly after the annual but not the first flight: partial."
+    },
+    {
+      "id": "nc-chr-annual-long-ago",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-first-flight-after-annual",
+      "questionVersion": "q-f7f6994acc706a5c",
+      "rubricVersion": "r-ce9e03e0ae6b1c5c",
+      "case": {
+        "ntsbNo": "SYN18LA143",
+        "source": "synthetic",
+        "fingerprint": "757cb190af303bd2b887ae9dbfcb11b9a53d9bbb95903f0016266908001c8467"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "outside_window",
+      "anchors": [
+        "the airplane had been flown about 15 hours since then"
+      ],
+      "why": "Many flights since the annual: grade 0."
+    },
+    {
+      "id": "nc-chr-annual-other-maintenance",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-first-flight-after-annual",
+      "questionVersion": "q-f7f6994acc706a5c",
+      "rubricVersion": "r-ce9e03e0ae6b1c5c",
+      "case": {
+        "ntsbNo": "SYN18LA144",
+        "source": "synthetic",
+        "fingerprint": "8485fe7ca96ee0a1e84d6712621cf18ab33d852dd9b334f038e7bf3e14edf8b5"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "wrong_event",
+      "anchors": [
+        "The accident flight was the first flight after an avionics shop replaced the airspeed indicator"
+      ],
+      "why": "First flight after other maintenance, the annual long before: grade 0."
+    },
+    {
+      "id": "nc-chr-heli-inside",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-helicopter-control-rotor-maintenance-10h",
+      "questionVersion": "q-10ce141adf4ba24e",
+      "rubricVersion": "r-f88412700b5d25c0",
+      "case": {
+        "ntsbNo": "SYN17LA151",
+        "source": "synthetic",
+        "fingerprint": "c8841950438b9aeda7ed051f7b1696d393d6647f438055cef684db72294769b1"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "The tail rotor pitch link bearings had been replaced 2.1 flight hours before the accident."
+      ],
+      "why": "Rotor system work 2.1 flight hours before: grade 2 (no causal link required)."
+    },
+    {
+      "id": "nc-chr-heli-outside",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-helicopter-control-rotor-maintenance-10h",
+      "questionVersion": "q-10ce141adf4ba24e",
+      "rubricVersion": "r-f88412700b5d25c0",
+      "case": {
+        "ntsbNo": "SYN17LA152",
+        "source": "synthetic",
+        "fingerprint": "d290cd8c8bea4f8cfb45f4c93af0ed5f21988f5d5b1215d6d7d30287bad202a3"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "outside_window",
+      "anchors": [
+        "The main rotor blades had been replaced about 300 flight hours before the accident"
+      ],
+      "why": "Clearly outside the 10-hour window: grade 0."
+    },
+    {
+      "id": "nc-chr-heli-general-inspection",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "chronology"
+      ],
+      "question": "mc-helicopter-control-rotor-maintenance-10h",
+      "questionVersion": "q-10ce141adf4ba24e",
+      "rubricVersion": "r-f88412700b5d25c0",
+      "case": {
+        "ntsbNo": "SYN17LA153",
+        "source": "synthetic",
+        "fingerprint": "59064159367618d5bb5c5fb8cd5aa0b258abb3401d578b08a2dc0030b2391629"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "general_inspection",
+      "anchors": [
+        "A 100-hour inspection had been completed 4 flight hours before the accident"
+      ],
+      "why": "A general inspection inside the window without control or rotor work: partial."
+    },
+    {
+      "id": "nc-att-brake-claim-not-confirmed",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-pilot-reported-failure-not-confirmed",
+      "questionVersion": "q-8c90edd86261f799",
+      "rubricVersion": "r-d7d99b98766035d8",
+      "case": {
+        "ntsbNo": "SYN15LA161",
+        "source": "synthetic",
+        "fingerprint": "478484740971b2d28a2743cb045e614b2993289de4db7fa2aa5e44417004820a"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "the left brake failed",
+        "found that both brakes operated normally"
+      ],
+      "why": "The pilot's reported failure, and the investigators found the system working: grade 2."
+    },
+    {
+      "id": "nc-att-brake-claim-confirmed",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-pilot-reported-failure-not-confirmed",
+      "questionVersion": "q-8c90edd86261f799",
+      "rubricVersion": "r-d7d99b98766035d8",
+      "case": {
+        "ntsbNo": "SYN15LA162",
+        "source": "synthetic",
+        "fingerprint": "ef01c535e3e686155443aac5c26dd0dc963d00d23902ce469466fb67cc5c2e87"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "contradiction",
+      "anchors": [
+        "the left brake hydraulic line had chafed through against the landing gear leg"
+      ],
+      "why": "The investigators confirmed the reported failure: grade 0."
+    },
+    {
+      "id": "nc-att-witness-not-pilot",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-pilot-reported-failure-not-confirmed",
+      "questionVersion": "q-8c90edd86261f799",
+      "rubricVersion": "r-d7d99b98766035d8",
+      "case": {
+        "ntsbNo": "SYN15LA163",
+        "source": "synthetic",
+        "fingerprint": "852f821aa86d05488df7dcf248efd1d7709e422dc52712a581261d2dbeef464d"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "wrong_speaker",
+      "anchors": [
+        "The pilot reported no mechanical problems with the airplane before the accident."
+      ],
+      "why": "Only a witness suggested a problem; the pilot reported none: grade 0, a speaker trap."
+    },
+    {
+      "id": "nc-att-claim-not-examined",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-pilot-reported-failure-not-confirmed",
+      "questionVersion": "q-8c90edd86261f799",
+      "rubricVersion": "r-d7d99b98766035d8",
+      "case": {
+        "ntsbNo": "SYN15LA164",
+        "source": "synthetic",
+        "fingerprint": "4fe59003ae6308bb1f2171b000c1b6351b02b826272f2224f42ab028d1a77932"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "unresolved",
+      "anchors": [
+        "the brake system was not examined by the investigation"
+      ],
+      "why": "Reported problem left unresolved: partial."
+    },
+    {
+      "id": "nc-att-claim-not-corroborated",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-pilot-reported-failure-not-confirmed",
+      "questionVersion": "q-8c90edd86261f799",
+      "rubricVersion": "r-d7d99b98766035d8",
+      "case": {
+        "ntsbNo": "SYN15LA165",
+        "source": "synthetic",
+        "fingerprint": "9ac1357e2b96fcfd59e3badff8f7fef4922f3960965216c017b9ccc28621812c"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "paraphrased_finding",
+      "anchors": [
+        "the pilot's statement that the throttle was stuck could not be corroborated"
+      ],
+      "why": "Reported failure the investigators could not corroborate, with the system found working: grade 2."
+    },
+    {
+      "id": "nc-att-tail-rotor-lte",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-helicopter-tail-rotor-claim",
+      "questionVersion": "q-99e6513b31afcf87",
+      "rubricVersion": "r-f72abfd0ffa4d497",
+      "case": {
+        "ntsbNo": "SYN14LA171",
+        "source": "synthetic",
+        "fingerprint": "2bc9481cf0e5575c687586e6bb2aee2a507239dd1a1fcefb2cdd1b57e3701fcf"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "Examination of the tail rotor drive system established continuity",
+        "The investigation attributed the spin to a loss of tail rotor effectiveness in the tailwind."
+      ],
+      "why": "The pilot reported a tail rotor failure the investigators did not find: grade 2."
+    },
+    {
+      "id": "nc-att-tail-rotor-failure-found",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-helicopter-tail-rotor-claim",
+      "questionVersion": "q-99e6513b31afcf87",
+      "rubricVersion": "r-f72abfd0ffa4d497",
+      "case": {
+        "ntsbNo": "SYN14LA172",
+        "source": "synthetic",
+        "fingerprint": "6e64cce601bf08c4275d1650e2f9a0f03351a9c75d901a6f4e499c7148bb91b5"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "contradiction",
+      "anchors": [
+        "the tail rotor drive shaft had fractured at the forward hanger bearing"
+      ],
+      "why": "A tail rotor failure was found: grade 0."
+    },
+    {
+      "id": "nc-att-tail-rotor-unsettled",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-helicopter-tail-rotor-claim",
+      "questionVersion": "q-99e6513b31afcf87",
+      "rubricVersion": "r-f72abfd0ffa4d497",
+      "case": {
+        "ntsbNo": "SYN14LA173",
+        "source": "synthetic",
+        "fingerprint": "9aa58c0822e45e12695fe2e9c8215f75c321de938afeafbd65709da3f5e3111d"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "unresolved",
+      "anchors": [
+        "continuity of the tail rotor drive system could not be established"
+      ],
+      "why": "The claim could not be settled: partial."
+    },
+    {
+      "id": "nc-att-data-contradicts",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-recorded-data-contradicts-pilot",
+      "questionVersion": "q-fd2d3bef7c143f16",
+      "rubricVersion": "r-c656465c3ec886bb",
+      "case": {
+        "ntsbNo": "SYN22LA181",
+        "source": "synthetic",
+        "fingerprint": "5123715b1a05a10f18066fa87cac94ceae5d8bfc0070af12091a399514495d16"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "ADS-B data showed that after departure the airplane climbed to a maximum of about 900 ft above ground level"
+      ],
+      "why": "Recorded data contradict the pilot's account: grade 2."
+    },
+    {
+      "id": "nc-att-data-witness-only",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-recorded-data-contradicts-pilot",
+      "questionVersion": "q-fd2d3bef7c143f16",
+      "rubricVersion": "r-c656465c3ec886bb",
+      "case": {
+        "ntsbNo": "SYN22LA182",
+        "source": "synthetic",
+        "fingerprint": "88863aef530a68b1115f55937c34da04a3bfc5164abe10355be798818c2ec165"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "wrong_source",
+      "anchors": [
+        "No recorded flight data were available."
+      ],
+      "why": "Contradicted by a witness, not by recorded data: partial."
+    },
+    {
+      "id": "nc-att-data-consistent",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "question": "pv-recorded-data-contradicts-pilot",
+      "questionVersion": "q-fd2d3bef7c143f16",
+      "rubricVersion": "r-c656465c3ec886bb",
+      "case": {
+        "ntsbNo": "SYN22LA183",
+        "source": "synthetic",
+        "fingerprint": "8af63d803b4219f0a5b8568754a674852c8ebcc41f7f543a21bd74ced867a5ea"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "contradiction",
+      "anchors": [
+        "consistent with the pilot's account"
+      ],
+      "why": "Recorded data agree with the account: grade 0."
+    },
+    {
+      "id": "nc-mx-student-in-colliding-airplane",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-airplane-collision-student-pilot",
+      "questionVersion": "q-b1d3943f80f67761",
+      "rubricVersion": "r-0ec0cbf44a632f77",
+      "case": {
+        "ntsbNo": "SYN23MA191",
+        "source": "synthetic",
+        "fingerprint": "e01e6e97bd3c5a3af7482e855eedab50cfb4c1b23493002865c26c995d30b409"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "The Cessna, flown by a student pilot on a solo flight, and the Piper, flown by a private pilot, collided on final approach"
+      ],
+      "why": "A student flew one of the two colliding airplanes: grade 2."
+    },
+    {
+      "id": "nc-mx-student-elsewhere",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-airplane-collision-student-pilot",
+      "questionVersion": "q-b1d3943f80f67761",
+      "rubricVersion": "r-0ec0cbf44a632f77",
+      "case": {
+        "ntsbNo": "SYN23MA192",
+        "source": "synthetic",
+        "fingerprint": "7e9de798ace7d4a47e349a725d3d09af50917d756cff7d99f01537d43c031e68"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "wrong_aircraft",
+      "anchors": [
+        "each flown by a private pilot",
+        "A student pilot in a third airplane, holding short of the runway for departure"
+      ],
+      "why": "The student was in a third airplane that did not collide: grade 0, a cross-aircraft trap."
+    },
+    {
+      "id": "nc-mx-flight-review",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-airplane-collision-student-pilot",
+      "questionVersion": "q-b1d3943f80f67761",
+      "rubricVersion": "r-0ec0cbf44a632f77",
+      "case": {
+        "ntsbNo": "SYN23MA193",
+        "source": "synthetic",
+        "fingerprint": "fa0a59a5e5c8c91efb875855e3d5c782ea96a62f8f967fd20cab189b7b23d10e"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "wrong_role",
+      "anchors": [
+        "flown by a private pilot receiving a flight review from a flight instructor"
+      ],
+      "why": "A flight review, not student instruction: grade 0."
+    },
+    {
+      "id": "nc-mx-instruction-unclear",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-airplane-collision-student-pilot",
+      "questionVersion": "q-b1d3943f80f67761",
+      "rubricVersion": "r-0ec0cbf44a632f77",
+      "case": {
+        "ntsbNo": "SYN23MA194",
+        "source": "synthetic",
+        "fingerprint": "3e32f4c3e368c6e711d0d5868e8b74a7f0083df1e1fb51723b712b9040a8a6cd"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "unresolved",
+      "anchors": [
+        "The records did not establish which of the two people in the Cessna was manipulating the controls or whether either was a student pilot."
+      ],
+      "why": "Instruction mentioned, student not established: partial."
+    },
+    {
+      "id": "nc-mx-taxi-strikes-parked",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-taxiing-strikes-stationary",
+      "questionVersion": "q-d1b35c38cfb4ae59",
+      "rubricVersion": "r-395c36bada020851",
+      "case": {
+        "ntsbNo": "SYN23LA195",
+        "source": "synthetic",
+        "fingerprint": "94a7a5f31c4e27ffff0a37d3d6dc0b8511951b7cac522260752aaf27abf143ab"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "the airplane's propeller struck the helicopter's tail boom"
+      ],
+      "why": "A taxiing airplane struck a parked helicopter: grade 2."
+    },
+    {
+      "id": "nc-mx-landing-roll",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-taxiing-strikes-stationary",
+      "questionVersion": "q-d1b35c38cfb4ae59",
+      "rubricVersion": "r-395c36bada020851",
+      "case": {
+        "ntsbNo": "SYN23LA196",
+        "source": "synthetic",
+        "fingerprint": "38d3451ce5752470730499261594c70d4ba89caf4134f941f725a0736388718a"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "wrong_phase",
+      "anchors": [
+        "During the landing roll, the Piper drifted left of the centerline and its left wing struck the Cessna"
+      ],
+      "why": "The moving airplane was on its landing roll, not taxiing: partial."
+    },
+    {
+      "id": "nc-mx-both-taxiing",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-taxiing-strikes-stationary",
+      "questionVersion": "q-d1b35c38cfb4ae59",
+      "rubricVersion": "r-395c36bada020851",
+      "case": {
+        "ntsbNo": "SYN23LA197",
+        "source": "synthetic",
+        "fingerprint": "31ca08d7e0210d370c91dd858fd307333553adf3fbc2e4ab36535702de5552d6"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "neither_stationary",
+      "anchors": [
+        "were both taxiing on the parallel taxiway in opposite directions"
+      ],
+      "why": "Neither aircraft was stopped: partial."
+    },
+    {
+      "id": "nc-mx-taxi-strikes-hangar",
+      "set": "narrative-control",
+      "split": "dev",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-taxiing-strikes-stationary",
+      "questionVersion": "q-d1b35c38cfb4ae59",
+      "rubricVersion": "r-395c36bada020851",
+      "case": {
+        "ntsbNo": "SYN23LA198",
+        "source": "synthetic",
+        "fingerprint": "bf0d476de02cf6754f6e9df0af006039ef6bf31965b370b3d10712798c3b2319"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "not_aircraft",
+      "anchors": [
+        "the airplane's right wing struck the hangar door frame"
+      ],
+      "why": "A collision with a building, not another aircraft: grade 0."
+    },
+    {
+      "id": "nc-mx-pattern-nontowered",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-midair-pattern-nontowered",
+      "questionVersion": "q-53e2c759eb934a15",
+      "rubricVersion": "r-ce38b9baf8bc0e43",
+      "case": {
+        "ntsbNo": "SYN23MA199",
+        "source": "synthetic",
+        "fingerprint": "bec0d648648b3a9bcb45e62bac9900f73f6763657a1d735d0809d3c4f80ef2af"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "base",
+      "anchors": [
+        "The two airplanes collided on final approach to runway 14 at the non-towered airport."
+      ],
+      "why": "A midair in the pattern of a non-towered airport: grade 2."
+    },
+    {
+      "id": "nc-mx-pattern-tower-unknown",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-midair-pattern-nontowered",
+      "questionVersion": "q-53e2c759eb934a15",
+      "rubricVersion": "r-ce38b9baf8bc0e43",
+      "case": {
+        "ntsbNo": "SYN23MA200",
+        "source": "synthetic",
+        "fingerprint": "72171d8b04283147074427901040f79a624058729ee00e3b18bf4d0a4af66288"
+      },
+      "label": 1,
+      "provenance": "constructed",
+      "mutation": "unresolved",
+      "anchors": [
+        "collided while on the downwind leg of the traffic pattern for runway 14"
+      ],
+      "why": "In the pattern, tower status not stated: partial."
+    },
+    {
+      "id": "nc-mx-pattern-towered",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-midair-pattern-nontowered",
+      "questionVersion": "q-53e2c759eb934a15",
+      "rubricVersion": "r-ce38b9baf8bc0e43",
+      "case": {
+        "ntsbNo": "SYN23MA201",
+        "source": "synthetic",
+        "fingerprint": "76a0c9d09accc9b14e7ae536513e78f345663bedb53142520a654a264c90d5f1"
+      },
+      "label": 0,
+      "provenance": "constructed",
+      "mutation": "contradiction",
+      "anchors": [
+        "The airport control tower was open at the time"
+      ],
+      "why": "An operating tower: grade 0."
+    },
+    {
+      "id": "nc-mx-pattern-tower-closed",
+      "set": "narrative-control",
+      "split": "holdout",
+      "tags": [
+        "cross_aircraft"
+      ],
+      "question": "ma-midair-pattern-nontowered",
+      "questionVersion": "q-53e2c759eb934a15",
+      "rubricVersion": "r-ce38b9baf8bc0e43",
+      "case": {
+        "ntsbNo": "SYN23MA202",
+        "source": "synthetic",
+        "fingerprint": "dac77b1f94966d820badba8328631cd153969eb06e44fd66592d7180de781ab8"
+      },
+      "label": 2,
+      "provenance": "constructed",
+      "mutation": "closed_tower",
+      "anchors": [
+        "The airport control tower had closed for the night at 2100"
+      ],
+      "why": "A closed tower is no operating tower: grade 2."
+    }
+  ],
+  "records": {
+    "SYN21LA101": {
+      "ntsbNo": "SYN21LA101",
+      "date": "2021-07-17",
+      "city": "Hollister",
+      "state": "CA",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "182P",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "SKYD",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 1,500 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.\n\nPostaccident examination of the engine revealed no mechanical malfunctions or anomalies that would have precluded normal operation. The fuel tanks contained about 20 gallons of fuel.",
+      "analysis": "The pilot reported a total loss of engine power during the climb. The postaccident examination of the engine did not reveal any mechanical malfunctions or anomalies that would have precluded normal operation, and the reason for the loss of power could not be determined.",
+      "probableCause": "A total loss of engine power during the initial climb for reasons that could not be determined because postaccident examination did not reveal any anomalies.",
+      "findings": [
+        {
+          "aircraft": 1,
+          "code": "0105850000",
+          "description": "Aircraft-Aircraft power plant-Engine (reciprocating)-(general)-Unknown/Not determined",
+          "inProbableCause": true
+        }
+      ],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "initial_climb",
+          "description": "Initial climb Loss of engine power (total)",
+          "defining": true
+        },
+        {
+          "aircraft": 1,
+          "code": "440",
+          "phase": "emergency_descent",
+          "description": "Emergency descent Off-field or emergency landing",
+          "defining": false
+        }
+      ]
+    },
+    "SYN21LA102": {
+      "ntsbNo": "SYN21LA102",
+      "date": "2021-07-17",
+      "city": "Hollister",
+      "state": "CA",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "182P",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "SKYD",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 1,500 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.\n\nPostaccident examination of the engine revealed that the No. 3 cylinder exhaust valve had fractured, and pieces of the valve head were found in the cylinder. The fracture surface showed features consistent with fatigue.",
+      "analysis": "The pilot reported a total loss of engine power during the climb. The examination found a fatigue fracture of the No. 3 cylinder exhaust valve, which resulted in the loss of power.",
+      "probableCause": "A total loss of engine power during the initial climb due to a fatigue fracture of an exhaust valve.",
+      "findings": [
+        {
+          "aircraft": 1,
+          "code": "0105853006",
+          "description": "Aircraft-Aircraft power plant-Engine (reciprocating)-Recip eng cylinder section-Fatigue/wear/corrosion",
+          "inProbableCause": true
+        }
+      ],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "initial_climb",
+          "description": "Initial climb Loss of engine power (total)",
+          "defining": true
+        },
+        {
+          "aircraft": 1,
+          "code": "440",
+          "phase": "emergency_descent",
+          "description": "Emergency descent Off-field or emergency landing",
+          "defining": false
+        }
+      ]
+    },
+    "SYN21LA103": {
+      "ntsbNo": "SYN21LA103",
+      "date": "2021-07-17",
+      "city": "Hollister",
+      "state": "CA",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "182P",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "SKYD",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 1,500 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.\n\nA postimpact fire consumed most of the engine compartment, and the engine could not be examined in detail. No fuel was recovered from the wreckage.",
+      "analysis": "The pilot reported a total loss of engine power during the climb. Because of the fire damage, the engine could not be examined, and the reason for the loss of power could not be determined.",
+      "probableCause": "A total loss of engine power during the initial climb for reasons that could not be determined because the engine was destroyed by the postimpact fire.",
+      "findings": [
+        {
+          "aircraft": 1,
+          "code": "0105850000",
+          "description": "Aircraft-Aircraft power plant-Engine (reciprocating)-(general)-Unknown/Not determined",
+          "inProbableCause": true
+        }
+      ],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "initial_climb",
+          "description": "Initial climb Loss of engine power (total)",
+          "defining": true
+        },
+        {
+          "aircraft": 1,
+          "code": "440",
+          "phase": "emergency_descent",
+          "description": "Emergency descent Off-field or emergency landing",
+          "defining": false
+        }
+      ]
+    },
+    "SYN21LA104": {
+      "ntsbNo": "SYN21LA104",
+      "date": "2021-07-17",
+      "city": "Hollister",
+      "state": "CA",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "182P",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "SKYD",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 1,500 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.\n\nExamination of the airframe and flight control systems revealed no anomalies. The engine was retained by the operator, and the investigation did not examine it.",
+      "analysis": "The pilot reported a total loss of engine power during the climb. The airframe showed no anomalies; the engine was not examined.",
+      "probableCause": "A total loss of engine power during the initial climb for reasons that could not be determined because the engine was not examined.",
+      "findings": [
+        {
+          "aircraft": 1,
+          "code": "0105850000",
+          "description": "Aircraft-Aircraft power plant-Engine (reciprocating)-(general)-Unknown/Not determined",
+          "inProbableCause": true
+        }
+      ],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "initial_climb",
+          "description": "Initial climb Loss of engine power (total)",
+          "defining": true
+        },
+        {
+          "aircraft": 1,
+          "code": "440",
+          "phase": "emergency_descent",
+          "description": "Emergency descent Off-field or emergency landing",
+          "defining": false
+        }
+      ]
+    },
+    "SYN21LA105": {
+      "ntsbNo": "SYN21LA105",
+      "date": "2021-07-17",
+      "city": "Hollister",
+      "state": "CA",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "182P",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "SKYD",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 1,500 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.\n\nPostaccident examination of the engine revealed no anomalies other than a crack in the No. 2 cylinder head, which showed evidence of pre-existing fatigue and through which compression had been lost.",
+      "analysis": "The pilot reported a total loss of engine power during the climb. The fatigue crack in the No. 2 cylinder head resulted in a loss of compression and the loss of engine power.",
+      "probableCause": "A total loss of engine power during the initial climb due to a fatigue crack in a cylinder head.",
+      "findings": [
+        {
+          "aircraft": 1,
+          "code": "0105853006",
+          "description": "Aircraft-Aircraft power plant-Engine (reciprocating)-Recip eng cylinder section-Fatigue/wear/corrosion",
+          "inProbableCause": true
+        }
+      ],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "initial_climb",
+          "description": "Initial climb Loss of engine power (total)",
+          "defining": true
+        },
+        {
+          "aircraft": 1,
+          "code": "440",
+          "phase": "emergency_descent",
+          "description": "Emergency descent Off-field or emergency landing",
+          "defining": false
+        }
+      ]
+    },
+    "SYN21LA106": {
+      "ntsbNo": "SYN21LA106",
+      "date": "2021-07-17",
+      "city": "Hollister",
+      "state": "CA",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "182P",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "SKYD",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 1,500 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.\n\nPostaccident examination of the engine revealed no evidence of preimpact mechanical malfunction. Both fuel tanks were intact and empty, and no fuel was found in the fuel lines or the carburetor bowl.",
+      "analysis": "The pilot did not refuel before the third flight of the day and the engine lost power due to fuel exhaustion. The engine showed no evidence of a mechanical malfunction.",
+      "probableCause": "The pilot's inadequate fuel planning, which resulted in a total loss of engine power due to fuel exhaustion.",
+      "findings": [
+        {
+          "aircraft": 1,
+          "code": "0206103044",
+          "description": "Personnel issues-Task performance-Planning/preparation-Fuel planning-Pilot",
+          "inProbableCause": true
+        }
+      ],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "initial_climb",
+          "description": "Initial climb Loss of engine power (total)",
+          "defining": true
+        },
+        {
+          "aircraft": 1,
+          "code": "440",
+          "phase": "emergency_descent",
+          "description": "Emergency descent Off-field or emergency landing",
+          "defining": false
+        }
+      ]
+    },
+    "SYN19LA111": {
+      "ntsbNo": "SYN19LA111",
+      "date": "2019-03-09",
+      "city": "Ottumwa",
+      "state": "IA",
+      "aircraft": [
+        {
+          "make": "Piper",
+          "model": "PA-28-161",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "en_route",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot was on a cross-country personal flight. While in cruise flight at 4,500 ft, the engine began to run rough and lost partial power. He was unable to restore power and made a forced landing in a pasture, during which the left wing struck a fence post.\n\nThe engine was examined after the accident and no mechanical anomalies were found.",
+      "analysis": "The temperature and dew point recorded near the time of the accident were not conducive to carburetor icing at any power setting. The reason for the partial loss of engine power could not be determined.",
+      "probableCause": "A partial loss of engine power during cruise flight for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "342",
+          "phase": "en_route",
+          "description": "Enroute-cruise Loss of engine power (partial)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN19LA112": {
+      "ntsbNo": "SYN19LA112",
+      "date": "2019-03-09",
+      "city": "Ottumwa",
+      "state": "IA",
+      "aircraft": [
+        {
+          "make": "Piper",
+          "model": "PA-28-161",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "en_route",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot was on a cross-country personal flight. During the descent to the destination airport with the engine at reduced power, the engine began to run rough and lost partial power. He was unable to restore power and made a forced landing in a pasture, during which the left wing struck a fence post.\n\nThe engine was examined after the accident and no mechanical anomalies were found.",
+      "analysis": "The temperature and dew point recorded near the time of the accident were conducive to serious carburetor icing at glide and descent power. It is likely that carburetor ice formed during the descent.",
+      "probableCause": "A partial loss of engine power during the descent due to carburetor icing.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "342",
+          "phase": "en_route",
+          "description": "Enroute-cruise Loss of engine power (partial)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN19LA113": {
+      "ntsbNo": "SYN19LA113",
+      "date": "2019-03-09",
+      "city": "Ottumwa",
+      "state": "IA",
+      "aircraft": [
+        {
+          "make": "Piper",
+          "model": "PA-28-161",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "en_route",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot was on a cross-country personal flight. While in cruise flight at 4,500 ft with the engine at cruise power, the engine began to run rough and lost partial power. He was unable to restore power and made a forced landing in a pasture, during which the left wing struck a fence post.\n\nThe engine was examined after the accident and no mechanical anomalies were found.",
+      "analysis": "The temperature and dew point recorded near the time of the accident were conducive to serious carburetor icing at glide power but not at cruise power. The partial loss of power occurred in cruise flight, and its reason could not be determined.",
+      "probableCause": "A partial loss of engine power during cruise flight for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "342",
+          "phase": "en_route",
+          "description": "Enroute-cruise Loss of engine power (partial)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN19LA114": {
+      "ntsbNo": "SYN19LA114",
+      "date": "2019-03-09",
+      "city": "Ottumwa",
+      "state": "IA",
+      "aircraft": [
+        {
+          "make": "Piper",
+          "model": "PA-28-161",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "en_route",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot was on a cross-country personal flight. While in cruise flight at 4,500 ft, the engine began to run rough and lost partial power. He was unable to restore power and made a forced landing in a pasture, during which the left wing struck a fence post.\n\nThe engine was examined after the accident and no mechanical anomalies were found.",
+      "analysis": "The airplane's engine was equipped with a fuel injection system and did not have a carburetor; carburetor icing therefore could not have occurred. The weather conditions at the time are not otherwise discussed, and the reason for the partial loss of power could not be determined.",
+      "probableCause": "A partial loss of engine power during cruise flight for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "342",
+          "phase": "en_route",
+          "description": "Enroute-cruise Loss of engine power (partial)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN16LA121": {
+      "ntsbNo": "SYN16LA121",
+      "date": "2016-08-21",
+      "city": "Kerrville",
+      "state": "TX",
+      "aircraft": [
+        {
+          "make": "Beech",
+          "model": "A36",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that the airplane touched down firmly on the nose wheel and bounced. On the second touchdown the nose landing gear collapsed and the airplane slid to a stop on the runway, which resulted in substantial damage to the forward fuselage.\n\nExamination of the nose landing gear revealed no evidence of a preimpact mechanical malfunction or failure; the overload fractures were consistent with the hard landing.",
+      "analysis": "The pilot did not maintain the proper landing attitude during the touchdown, which resulted in a hard landing.",
+      "probableCause": "The pilot's improper landing flare, which resulted in a hard landing and the collapse of the nose landing gear.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "090",
+          "phase": "landing",
+          "description": "Landing Abnormal runway contact",
+          "defining": true
+        }
+      ]
+    },
+    "SYN16LA122": {
+      "ntsbNo": "SYN16LA122",
+      "date": "2016-08-21",
+      "city": "Kerrville",
+      "state": "TX",
+      "aircraft": [
+        {
+          "make": "Beech",
+          "model": "A36",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that the airplane touched down firmly on the nose wheel and bounced. On the second touchdown the nose landing gear collapsed and the airplane slid to a stop on the runway, which resulted in substantial damage to the forward fuselage.\n\nExamination of the nose landing gear revealed a pre-existing fatigue crack that had propagated through about 70 percent of the drag link before the overload fracture.",
+      "analysis": "The pilot did not maintain the proper landing attitude during the touchdown, which resulted in a hard landing.",
+      "probableCause": "The failure of the nose landing gear drag link due to a pre-existing fatigue crack.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "090",
+          "phase": "landing",
+          "description": "Landing Abnormal runway contact",
+          "defining": true
+        }
+      ]
+    },
+    "SYN16LA123": {
+      "ntsbNo": "SYN16LA123",
+      "date": "2016-08-21",
+      "city": "Kerrville",
+      "state": "TX",
+      "aircraft": [
+        {
+          "make": "Beech",
+          "model": "A36",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that the airplane touched down firmly on the nose wheel and bounced. On the second touchdown the nose landing gear collapsed and the airplane slid to a stop on the runway, which resulted in substantial damage to the forward fuselage.\n\nThe nose landing gear components were discarded during the recovery of the airplane and were not available for examination.",
+      "analysis": "The pilot did not maintain the proper landing attitude during the touchdown, which resulted in a hard landing.",
+      "probableCause": "The pilot's improper landing flare, which resulted in a hard landing and the collapse of the nose landing gear.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "090",
+          "phase": "landing",
+          "description": "Landing Abnormal runway contact",
+          "defining": true
+        }
+      ]
+    },
+    "SYN20LA131": {
+      "ntsbNo": "SYN20LA131",
+      "date": "2020-06-12",
+      "city": "Stuttgart",
+      "state": "AR",
+      "aircraft": [
+        {
+          "make": "Air Tractor",
+          "model": "AT-402B",
+          "category": "AIR",
+          "farPart": "137",
+          "purpose": "AAPL",
+          "phase": "maneuvering",
+          "engine": "TP"
+        }
+      ],
+      "factual": "The commercial pilot was applying fungicide to a rice field. He reported that, during a turn at the end of a swath run, the engine lost power. He made a forced landing in an adjacent field, and the airplane came to rest inverted.\n\nAccording to the maintenance records, the engine had been overhauled and reinstalled in the airplane, and it had accumulated 12.4 hours since the overhaul at the time of the accident.\n\nExamination of the engine did not reveal any anomalies that would have precluded normal operation.",
+      "analysis": "The pilot reported a loss of engine power during the application flight. The reason for the loss of engine power could not be determined.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN20LA132": {
+      "ntsbNo": "SYN20LA132",
+      "date": "2020-06-12",
+      "city": "Stuttgart",
+      "state": "AR",
+      "aircraft": [
+        {
+          "make": "Air Tractor",
+          "model": "AT-402B",
+          "category": "AIR",
+          "farPart": "137",
+          "purpose": "AAPL",
+          "phase": "maneuvering",
+          "engine": "TP"
+        }
+      ],
+      "factual": "The commercial pilot was applying fungicide to a rice field. He reported that, during a turn at the end of a swath run, the engine lost power. He made a forced landing in an adjacent field, and the airplane came to rest inverted.\n\nAccording to the maintenance records, the engine fuel control unit had been replaced about 40 flight hours before the accident; no other engine maintenance had been performed since the last overhaul 1,250 hours before.\n\nExamination of the engine did not reveal any anomalies that would have precluded normal operation.",
+      "analysis": "The pilot reported a loss of engine power during the application flight. The reason for the loss of engine power could not be determined.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN20LA133": {
+      "ntsbNo": "SYN20LA133",
+      "date": "2020-06-12",
+      "city": "Stuttgart",
+      "state": "AR",
+      "aircraft": [
+        {
+          "make": "Air Tractor",
+          "model": "AT-402B",
+          "category": "AIR",
+          "farPart": "137",
+          "purpose": "AAPL",
+          "phase": "maneuvering",
+          "engine": "TP"
+        }
+      ],
+      "factual": "The commercial pilot was applying fungicide to a rice field. He reported that, during a turn at the end of a swath run, the engine lost power. He made a forced landing in an adjacent field, and the airplane came to rest inverted.\n\nThe airplane's most recent annual inspection, which included the engine, was completed 3 weeks before the accident. The hours flown since the inspection could not be determined because the operator did not record flight times.\n\nExamination of the engine did not reveal any anomalies that would have precluded normal operation.",
+      "analysis": "The pilot reported a loss of engine power during the application flight. The reason for the loss of engine power could not be determined.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN20LA134": {
+      "ntsbNo": "SYN20LA134",
+      "date": "2020-06-12",
+      "city": "Stuttgart",
+      "state": "AR",
+      "aircraft": [
+        {
+          "make": "Air Tractor",
+          "model": "AT-402B",
+          "category": "AIR",
+          "farPart": "137",
+          "purpose": "AAPL",
+          "phase": "maneuvering",
+          "engine": "TP"
+        }
+      ],
+      "factual": "The commercial pilot was applying fungicide to a rice field. He reported that, during a turn at the end of a swath run, the engine lost power. He made a forced landing in an adjacent field, and the airplane came to rest inverted.\n\nAccording to the operator, the engine had been overhauled the previous month and had about 25 hours since the overhaul.\n\nExamination of the engine did not reveal any anomalies that would have precluded normal operation.",
+      "analysis": "The pilot reported a loss of engine power during the application flight. The reason for the loss of engine power could not be determined.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN20LA135": {
+      "ntsbNo": "SYN20LA135",
+      "date": "2020-06-12",
+      "city": "Stuttgart",
+      "state": "AR",
+      "aircraft": [
+        {
+          "make": "Air Tractor",
+          "model": "AT-402B",
+          "category": "AIR",
+          "farPart": "137",
+          "purpose": "AAPL",
+          "phase": "maneuvering",
+          "engine": "TP"
+        }
+      ],
+      "factual": "The commercial pilot was applying fungicide to a rice field. He reported that, during a turn at the end of a swath run, the engine lost power. He made a forced landing in an adjacent field, and the airplane came to rest inverted.\n\nThe engine had been overhauled and reinstalled 20 days before the accident. The airplane's flight hours since the reinstallation were not recorded.\n\nExamination of the engine did not reveal any anomalies that would have precluded normal operation.",
+      "analysis": "The pilot reported a loss of engine power during the application flight. The reason for the loss of engine power could not be determined.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN20LA136": {
+      "ntsbNo": "SYN20LA136",
+      "date": "2020-06-12",
+      "city": "Stuttgart",
+      "state": "AR",
+      "aircraft": [
+        {
+          "make": "Air Tractor",
+          "model": "AT-402B",
+          "category": "AIR",
+          "farPart": "137",
+          "purpose": "AAPL",
+          "phase": "maneuvering",
+          "engine": "TP"
+        }
+      ],
+      "factual": "The commercial pilot was applying fungicide to a rice field. He reported that, during a turn at the end of a swath run, the engine lost power. He made a forced landing in an adjacent field, and the airplane came to rest inverted.\n\nThe pilot had flown 8 hours since his most recent flight review. According to the maintenance records, the engine had last been overhauled 1,310 hours before the accident, and no engine maintenance had been performed since its last 100-hour inspection 90 hours before the accident.\n\nExamination of the engine did not reveal any anomalies that would have precluded normal operation.",
+      "analysis": "The pilot reported a loss of engine power during the application flight. The airplane had been flown 8 hours since the pilot's flight review. The reason for the loss of engine power could not be determined.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN18LA141": {
+      "ntsbNo": "SYN18LA141",
+      "date": "2018-10-02",
+      "city": "Bend",
+      "state": "OR",
+      "aircraft": [
+        {
+          "make": "Mooney",
+          "model": "M20J",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot departed for a local flight. Shortly after takeoff the airplane's airspeed indicator showed no indication, and the pilot returned to land with a tailwind; the airplane overran the end of the runway and struck a fence.\n\nThe airplane's annual inspection was signed off by the mechanic on the morning of the accident, and the accident flight was the first flight after the inspection. During the inspection the mechanic had disconnected the pitot line to replace the airspeed indicator.\n\nExamination of the pitot system revealed that the pitot line was disconnected at a fitting behind the instrument panel.",
+      "analysis": "The pitot line had not been reconnected after it was disconnected, which resulted in the loss of airspeed indication.",
+      "probableCause": "The disconnected pitot line, which resulted in a loss of airspeed indication, and the pilot's decision to land with a tailwind, which resulted in a runway overrun.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "490",
+          "phase": "landing",
+          "description": "Landing Collision during takeoff/land",
+          "defining": true
+        }
+      ]
+    },
+    "SYN18LA142": {
+      "ntsbNo": "SYN18LA142",
+      "date": "2018-10-02",
+      "city": "Bend",
+      "state": "OR",
+      "aircraft": [
+        {
+          "make": "Mooney",
+          "model": "M20J",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot departed for a local flight. Shortly after takeoff the airplane's airspeed indicator showed no indication, and the pilot returned to land with a tailwind; the airplane overran the end of the runway and struck a fence.\n\nThe airplane's annual inspection was completed 2 days before the accident. The airplane had been flown 0.3 hours since the inspection, on a test flight by the mechanic the day before the accident.\n\nExamination of the pitot system revealed that the pitot line was disconnected at a fitting behind the instrument panel.",
+      "analysis": "The pitot line had not been reconnected after it was disconnected, which resulted in the loss of airspeed indication.",
+      "probableCause": "The disconnected pitot line, which resulted in a loss of airspeed indication, and the pilot's decision to land with a tailwind, which resulted in a runway overrun.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "490",
+          "phase": "landing",
+          "description": "Landing Collision during takeoff/land",
+          "defining": true
+        }
+      ]
+    },
+    "SYN18LA143": {
+      "ntsbNo": "SYN18LA143",
+      "date": "2018-10-02",
+      "city": "Bend",
+      "state": "OR",
+      "aircraft": [
+        {
+          "make": "Mooney",
+          "model": "M20J",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot departed for a local flight. Shortly after takeoff the airplane's airspeed indicator showed no indication, and the pilot returned to land with a tailwind; the airplane overran the end of the runway and struck a fence.\n\nThe airplane's last annual inspection was completed 2 months before the accident, and the airplane had been flown about 15 hours since then.\n\nExamination of the pitot system revealed that the pitot line was disconnected at a fitting behind the instrument panel.",
+      "analysis": "The pitot line had not been reconnected after it was disconnected, which resulted in the loss of airspeed indication.",
+      "probableCause": "The disconnected pitot line, which resulted in a loss of airspeed indication, and the pilot's decision to land with a tailwind, which resulted in a runway overrun.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "490",
+          "phase": "landing",
+          "description": "Landing Collision during takeoff/land",
+          "defining": true
+        }
+      ]
+    },
+    "SYN18LA144": {
+      "ntsbNo": "SYN18LA144",
+      "date": "2018-10-02",
+      "city": "Bend",
+      "state": "OR",
+      "aircraft": [
+        {
+          "make": "Mooney",
+          "model": "M20J",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "initial_climb",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The private pilot departed for a local flight. Shortly after takeoff the airplane's airspeed indicator showed no indication, and the pilot returned to land with a tailwind; the airplane overran the end of the runway and struck a fence.\n\nThe accident flight was the first flight after an avionics shop replaced the airspeed indicator; the airplane's last annual inspection had been completed 8 months before the accident.\n\nExamination of the pitot system revealed that the pitot line was disconnected at a fitting behind the instrument panel.",
+      "analysis": "The pitot line had not been reconnected after it was disconnected, which resulted in the loss of airspeed indication.",
+      "probableCause": "The disconnected pitot line, which resulted in a loss of airspeed indication, and the pilot's decision to land with a tailwind, which resulted in a runway overrun.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "490",
+          "phase": "landing",
+          "description": "Landing Collision during takeoff/land",
+          "defining": true
+        }
+      ]
+    },
+    "SYN17LA151": {
+      "ntsbNo": "SYN17LA151",
+      "date": "2017-04-26",
+      "city": "Kahului",
+      "state": "HI",
+      "aircraft": [
+        {
+          "make": "Robinson",
+          "model": "R44 II",
+          "category": "HELI",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "maneuvering",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that, while maneuvering at low altitude, the helicopter began a slow yaw to the right that he could not stop with the pedals. He entered an autorotation and landed hard in a field.\n\nThe tail rotor pitch link bearings had been replaced 2.1 flight hours before the accident.\n\nExamination of the tail rotor system found the tail rotor drive and flight controls continuous; no anomalies were found.",
+      "analysis": "The pilot likely did not apply sufficient pedal input in the left crosswind, which resulted in a loss of tail rotor effectiveness.",
+      "probableCause": "The pilot's inadequate pedal input in a crosswind, which resulted in a loss of tail rotor effectiveness.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "240",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of control in flight",
+          "defining": true
+        }
+      ]
+    },
+    "SYN17LA152": {
+      "ntsbNo": "SYN17LA152",
+      "date": "2017-04-26",
+      "city": "Kahului",
+      "state": "HI",
+      "aircraft": [
+        {
+          "make": "Robinson",
+          "model": "R44 II",
+          "category": "HELI",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "maneuvering",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that, while maneuvering at low altitude, the helicopter began a slow yaw to the right that he could not stop with the pedals. He entered an autorotation and landed hard in a field.\n\nThe main rotor blades had been replaced about 300 flight hours before the accident, and no other maintenance on the rotor system or flight controls was recorded since then.\n\nExamination of the tail rotor system found the tail rotor drive and flight controls continuous; no anomalies were found.",
+      "analysis": "The pilot likely did not apply sufficient pedal input in the left crosswind, which resulted in a loss of tail rotor effectiveness.",
+      "probableCause": "The pilot's inadequate pedal input in a crosswind, which resulted in a loss of tail rotor effectiveness.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "240",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of control in flight",
+          "defining": true
+        }
+      ]
+    },
+    "SYN17LA153": {
+      "ntsbNo": "SYN17LA153",
+      "date": "2017-04-26",
+      "city": "Kahului",
+      "state": "HI",
+      "aircraft": [
+        {
+          "make": "Robinson",
+          "model": "R44 II",
+          "category": "HELI",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "maneuvering",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that, while maneuvering at low altitude, the helicopter began a slow yaw to the right that he could not stop with the pedals. He entered an autorotation and landed hard in a field.\n\nA 100-hour inspection had been completed 4 flight hours before the accident; the records do not describe any work on the flight controls or the rotor system.\n\nExamination of the tail rotor system found the tail rotor drive and flight controls continuous; no anomalies were found.",
+      "analysis": "The pilot likely did not apply sufficient pedal input in the left crosswind, which resulted in a loss of tail rotor effectiveness.",
+      "probableCause": "The pilot's inadequate pedal input in a crosswind, which resulted in a loss of tail rotor effectiveness.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "240",
+          "phase": "maneuvering",
+          "description": "Maneuvering-low-alt flying Loss of control in flight",
+          "defining": true
+        }
+      ]
+    },
+    "SYN15LA161": {
+      "ntsbNo": "SYN15LA161",
+      "date": "2015-05-30",
+      "city": "Lakeland",
+      "state": "FL",
+      "aircraft": [
+        {
+          "make": "Cirrus",
+          "model": "SR22",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that, during the landing roll, the left brake failed and the airplane veered to the left. The airplane departed the left side of the runway and struck a taxiway sign.\n\nExamination of the brake system after the accident found that both brakes operated normally, with no leaks in the hydraulic lines and pads within limits.",
+      "analysis": "The pilot did not maintain directional control during the landing roll.",
+      "probableCause": "The pilot's failure to maintain directional control during the landing roll.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "220",
+          "phase": "landing",
+          "description": "Landing-landing roll Loss of control on ground",
+          "defining": true
+        }
+      ]
+    },
+    "SYN15LA162": {
+      "ntsbNo": "SYN15LA162",
+      "date": "2015-05-30",
+      "city": "Lakeland",
+      "state": "FL",
+      "aircraft": [
+        {
+          "make": "Cirrus",
+          "model": "SR22",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that, during the landing roll, the left brake failed and the airplane veered to the left. The airplane departed the left side of the runway and struck a taxiway sign.\n\nExamination of the brake system found that the left brake hydraulic line had chafed through against the landing gear leg, and all brake fluid had been lost from the left brake.",
+      "analysis": "The pilot did not maintain directional control during the landing roll.",
+      "probableCause": "The loss of left brake effectiveness due to a chafed brake hydraulic line, which resulted in a loss of directional control.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "220",
+          "phase": "landing",
+          "description": "Landing-landing roll Loss of control on ground",
+          "defining": true
+        }
+      ]
+    },
+    "SYN15LA163": {
+      "ntsbNo": "SYN15LA163",
+      "date": "2015-05-30",
+      "city": "Lakeland",
+      "state": "FL",
+      "aircraft": [
+        {
+          "make": "Cirrus",
+          "model": "SR22",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported no mechanical problems with the airplane before the accident. A witness on the ramp stated that he heard a \"grinding noise\" from the left wheel during the landing roll. The airplane departed the left side of the runway and struck a taxiway sign.\n\nExamination of the brake system found that both brakes operated normally.",
+      "analysis": "The pilot did not maintain directional control during the landing roll.",
+      "probableCause": "The pilot's failure to maintain directional control during the landing roll.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "220",
+          "phase": "landing",
+          "description": "Landing-landing roll Loss of control on ground",
+          "defining": true
+        }
+      ]
+    },
+    "SYN15LA164": {
+      "ntsbNo": "SYN15LA164",
+      "date": "2015-05-30",
+      "city": "Lakeland",
+      "state": "FL",
+      "aircraft": [
+        {
+          "make": "Cirrus",
+          "model": "SR22",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that, during the landing roll, the left brake failed and the airplane veered to the left. The airplane departed the left side of the runway and struck a taxiway sign.\n\nThe airplane was repaired by the owner before it could be examined, and the brake system was not examined by the investigation.",
+      "analysis": "The pilot did not maintain directional control during the landing roll.",
+      "probableCause": "The pilot's failure to maintain directional control during the landing roll for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "220",
+          "phase": "landing",
+          "description": "Landing-landing roll Loss of control on ground",
+          "defining": true
+        }
+      ]
+    },
+    "SYN15LA165": {
+      "ntsbNo": "SYN15LA165",
+      "date": "2015-05-30",
+      "city": "Lakeland",
+      "state": "FL",
+      "aircraft": [
+        {
+          "make": "Cirrus",
+          "model": "SR22",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that the throttle became stuck at full power during the landing flare. The airplane departed the left side of the runway and struck a taxiway sign.\n\nExamination of the throttle linkage found it intact and free to move through its full range; the pilot's statement that the throttle was stuck could not be corroborated.",
+      "analysis": "The pilot did not maintain directional control during the landing roll.",
+      "probableCause": "The pilot's failure to maintain directional control during the landing roll.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "220",
+          "phase": "landing",
+          "description": "Landing-landing roll Loss of control on ground",
+          "defining": true
+        }
+      ]
+    },
+    "SYN14LA171": {
+      "ntsbNo": "SYN14LA171",
+      "date": "2014-11-08",
+      "city": "Scottsdale",
+      "state": "AZ",
+      "aircraft": [
+        {
+          "make": "Bell",
+          "model": "206B",
+          "category": "HELI",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "TS"
+        }
+      ],
+      "factual": "The pilot reported that, during the approach to a helipad, \"the tail rotor failed\" and the helicopter began to spin to the right. The helicopter descended in the spin and impacted terrain.\n\nExamination of the tail rotor drive system established continuity from the main transmission to the tail rotor gearbox, and the tail rotor blades showed no evidence of rotation at impact consistent with a drive failure. The investigation attributed the spin to a loss of tail rotor effectiveness in the tailwind.",
+      "analysis": "The approach was made with a left quartering tailwind of about 12 knots.",
+      "probableCause": "The pilot's failure to maintain yaw control in a left quartering tailwind, which resulted in a loss of tail rotor effectiveness.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "240",
+          "phase": "approach",
+          "description": "Approach Loss of control in flight",
+          "defining": true
+        }
+      ]
+    },
+    "SYN14LA172": {
+      "ntsbNo": "SYN14LA172",
+      "date": "2014-11-08",
+      "city": "Scottsdale",
+      "state": "AZ",
+      "aircraft": [
+        {
+          "make": "Bell",
+          "model": "206B",
+          "category": "HELI",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "TS"
+        }
+      ],
+      "factual": "The pilot reported that, during the approach to a helipad, \"the tail rotor failed\" and the helicopter began to spin to the right. The helicopter descended in the spin and impacted terrain.\n\nExamination of the tail rotor drive system found that the tail rotor drive shaft had fractured at the forward hanger bearing; the fracture surface showed fatigue cracking.",
+      "analysis": "The approach was made with a left quartering tailwind of about 12 knots.",
+      "probableCause": "The fatigue failure of the tail rotor drive shaft, which resulted in a loss of tail rotor thrust.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "240",
+          "phase": "approach",
+          "description": "Approach Loss of control in flight",
+          "defining": true
+        }
+      ]
+    },
+    "SYN14LA173": {
+      "ntsbNo": "SYN14LA173",
+      "date": "2014-11-08",
+      "city": "Scottsdale",
+      "state": "AZ",
+      "aircraft": [
+        {
+          "make": "Bell",
+          "model": "206B",
+          "category": "HELI",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "TS"
+        }
+      ],
+      "factual": "The pilot reported that, during the approach to a helipad, \"the tail rotor failed\" and the helicopter began to spin to the right. The helicopter descended in the spin and impacted terrain.\n\nThe tail boom separated and was destroyed in the impact and the postimpact fire, and continuity of the tail rotor drive system could not be established.",
+      "analysis": "The approach was made with a left quartering tailwind of about 12 knots.",
+      "probableCause": "A loss of yaw control during the approach for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "240",
+          "phase": "approach",
+          "description": "Approach Loss of control in flight",
+          "defining": true
+        }
+      ]
+    },
+    "SYN22LA181": {
+      "ntsbNo": "SYN22LA181",
+      "date": "2022-01-15",
+      "city": "Prescott",
+      "state": "AZ",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "en_route",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that he climbed to 3,000 ft above ground level after departure and that the engine then lost power, after which he glided to a field and landed hard.\n\nADS-B data showed that after departure the airplane climbed to a maximum of about 900 ft above ground level before it began to descend toward the field.",
+      "analysis": "The examination of the engine found no anomalies.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "en_route",
+          "description": "Enroute Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN22LA182": {
+      "ntsbNo": "SYN22LA182",
+      "date": "2022-01-15",
+      "city": "Prescott",
+      "state": "AZ",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "en_route",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that he climbed to 3,000 ft above ground level after departure and that the engine then lost power, after which he glided to a field and landed hard.\n\nA witness near the departure end of the runway stated that the airplane \"never got higher than the treetops\" before it turned toward the field. No recorded flight data were available.",
+      "analysis": "The examination of the engine found no anomalies.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "en_route",
+          "description": "Enroute Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN22LA183": {
+      "ntsbNo": "SYN22LA183",
+      "date": "2022-01-15",
+      "city": "Prescott",
+      "state": "AZ",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "en_route",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The pilot reported that he climbed to 3,000 ft above ground level after departure and that the engine then lost power, after which he glided to a field and landed hard.\n\nGPS data recovered from a portable unit showed the airplane climbing to about 3,000 ft above ground level, consistent with the pilot's account, before it began a steady descent toward the field.",
+      "analysis": "The examination of the engine found no anomalies.",
+      "probableCause": "A loss of engine power for reasons that could not be determined.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "341",
+          "phase": "en_route",
+          "description": "Enroute Loss of engine power (total)",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA191": {
+      "ntsbNo": "SYN23MA191",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "INST",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The Cessna, flown by a student pilot on a solo flight, and the Piper, flown by a private pilot, collided on final approach to runway 23. Both airplanes descended to the ground short of the runway.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both pilots to see and avoid the other airplane on final approach.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA192": {
+      "ntsbNo": "SYN23MA192",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The Cessna and the Piper, each flown by a private pilot, collided on final approach to runway 23. A student pilot in a third airplane, holding short of the runway for departure, saw the collision and reported it to the airport manager.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both pilots to see and avoid the other airplane on final approach.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA193": {
+      "ntsbNo": "SYN23MA193",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "INST",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The Cessna, flown by a private pilot receiving a flight review from a flight instructor, and the Piper, flown by a commercial pilot, collided on final approach to runway 23.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both pilots to see and avoid the other airplane on final approach.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA194": {
+      "ntsbNo": "SYN23MA194",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "INST",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The Cessna, operated on an instructional flight with two pilots on board, and the Piper, flown by a private pilot, collided on final approach to runway 23. The records did not establish which of the two people in the Cessna was manipulating the controls or whether either was a student pilot.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both flight crews to see and avoid the other airplane on final approach.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23LA195": {
+      "ntsbNo": "SYN23LA195",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "taxi",
+          "engine": "REC"
+        },
+        {
+          "make": "Robinson",
+          "model": "R22",
+          "category": "HELI",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "standing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "While taxiing the airplane to the fuel pumps, the pilot did not see the parked and unoccupied helicopter, and the airplane's propeller struck the helicopter's tail boom.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The airplane pilot's failure to maintain clearance from a parked helicopter while taxiing.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "200",
+          "phase": "taxi",
+          "description": "Taxi Ground collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "200",
+          "phase": "standing",
+          "description": "Standing Ground collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23LA196": {
+      "ntsbNo": "SYN23LA196",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "landing",
+          "engine": "REC"
+        },
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "INST",
+          "phase": "standing",
+          "engine": "REC"
+        }
+      ],
+      "factual": "During the landing roll, the Piper drifted left of the centerline and its left wing struck the Cessna, which was holding short of the runway on the taxiway with its engine running.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The Piper pilot's failure to maintain directional control during the landing roll.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "200",
+          "phase": "landing",
+          "description": "Landing-landing roll Ground collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "200",
+          "phase": "standing",
+          "description": "Standing-engine(s) operating Ground collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23LA197": {
+      "ntsbNo": "SYN23LA197",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "taxi",
+          "engine": "REC"
+        },
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "taxi",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The Piper and the Cessna were both taxiing on the parallel taxiway in opposite directions when their wingtips touched.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both pilots to maintain clearance from the other airplane while taxiing.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "200",
+          "phase": "taxi",
+          "description": "Taxi Ground collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "200",
+          "phase": "taxi",
+          "description": "Taxi Ground collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23LA198": {
+      "ntsbNo": "SYN23LA198",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "taxi",
+          "engine": "REC"
+        }
+      ],
+      "factual": "While taxiing to the hangar, the pilot misjudged the clearance and the airplane's right wing struck the hangar door frame.",
+      "analysis": "The pilot did not maintain clearance from the hangar while taxiing.",
+      "probableCause": "The pilot's failure to maintain clearance from a hangar while taxiing.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "200",
+          "phase": "taxi",
+          "description": "Taxi Ground collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA199": {
+      "ntsbNo": "SYN23MA199",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The two airplanes collided on final approach to runway 14 at the non-towered airport. Both pilots had been making position reports on the common traffic advisory frequency.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both pilots to see and avoid the other airplane in the traffic pattern.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA200": {
+      "ntsbNo": "SYN23MA200",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The two airplanes collided while on the downwind leg of the traffic pattern for runway 14.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both pilots to see and avoid the other airplane in the traffic pattern.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA201": {
+      "ntsbNo": "SYN23MA201",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "INST",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The two airplanes collided on final approach to runway 14. The airport control tower was open at the time, and the local controller had cleared both airplanes to land on runway 14.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The local controller's clearance of both airplanes to land on the same runway and the failure of both pilots to see and avoid the other airplane.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    },
+    "SYN23MA202": {
+      "ntsbNo": "SYN23MA202",
+      "date": "2023-09-03",
+      "city": "Frederick",
+      "state": "MD",
+      "aircraft": [
+        {
+          "make": "Cessna",
+          "model": "172S",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        },
+        {
+          "make": "Piper",
+          "model": "PA-28-181",
+          "category": "AIR",
+          "farPart": "091",
+          "purpose": "PERS",
+          "phase": "approach",
+          "engine": "REC"
+        }
+      ],
+      "factual": "The two airplanes collided on the base leg for runway 14 at about 2215. The airport control tower had closed for the night at 2100, and the airport was operating as a non-towered airport.",
+      "analysis": "Both pilots were responsible for seeing and avoiding the other airplane.",
+      "probableCause": "The failure of both pilots to see and avoid the other airplane in the traffic pattern.",
+      "findings": [],
+      "occurrences": [
+        {
+          "aircraft": 1,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        },
+        {
+          "aircraft": 2,
+          "code": "250",
+          "phase": "approach",
+          "description": "Approach-VFR pattern final Midair collision",
+          "defining": true
+        }
+      ]
+    }
+  }
+}
