@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { outputJsonSchema } from '../../server/ai/anthropic.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v7.js';
+import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v8.js';
 import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v7.js';
 import { renderScopeUser, SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
@@ -96,7 +96,7 @@ describe('the stage caps against the requests they bound (offline sizing)', () =
 describe('runAiPreflight with a stub counter', () => {
   const models: StageModels = { scope: 'claude-haiku-5-5', answer: 'claude-opus-5-5', check: 'claude-haiku-5-5' };
   const key = (x: unknown) => JSON.stringify(x);
-  /** The provider's count of each stage's fixed request (the preflight's measurements with compose.v7 and check.v7); 1,000 for anything else. */
+  /** The provider's count of each stage's fixed request (the preflight's measurements with compose.v7 and check.v8); 1,000 for anything else. */
   const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 5_007, check: 3_421 };
   const fixedInputs = new Map<string, LlmStage>([
     [key(r.fixed.scope), 'scope'],

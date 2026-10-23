@@ -36,9 +36,8 @@
  */
 import { createHash } from 'node:crypto';
 import type { ThinkingMode } from '../../server/ai/anthropic.js';
-import { outputJsonSchema } from '../../server/ai/anthropic.js';
+import { outputJsonSchema, PRODUCTION_CHECK_PROMPT } from '../../server/ai/anthropic.js';
 import { STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM } from '../../server/ai/prompts/check.v7.js';
 import { CHECK_OUTPUT_SCHEMA_VERSION, CheckOutputSchema, MAX_CHECK_CLAIMS } from '../../server/ai/provider.js';
 import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
 import { canonical } from './manifest.js';
@@ -81,7 +80,8 @@ export const CANDIDATES_V2: Readonly<Record<string, CandidateV2>> = {
   },
   'haiku-think-v8': {
     ...FIXED,
-    prompt: { version: 'check.v8', systemSha256: null },
+    // Recorded when check.v8 was written, after round 1 (the protocol allows exactly this one revision).
+    prompt: { version: 'check.v8', systemSha256: '873ba4a8814f3bf2f864815481684eb0210095ff8a6505171c96126634902f74' },
     round: 2,
     note: 'The one development revision of check.v7 (written after round 1 from development errors only; its hash is recorded when written). Everything else as haiku-think-v7.',
   },
@@ -90,7 +90,7 @@ export const CANDIDATES_V2: Readonly<Record<string, CandidateV2>> = {
 /** The production check configuration as the code has it now (for manifests and the production-equality test). */
 export function productionCheck(): { prompt: { version: string; systemSha256: string }; outputSchema: { version: string; sha256: string }; caps: { input: number; output: number }; timeoutMs: number; maxClaims: number } {
   return {
-    prompt: { version: CHECK_PROMPT_VERSION, systemSha256: sha(CHECK_SYSTEM) },
+    prompt: { version: PRODUCTION_CHECK_PROMPT.version, systemSha256: sha(PRODUCTION_CHECK_PROMPT.system) },
     outputSchema: { version: CHECK_OUTPUT_SCHEMA_VERSION, sha256: sha(canonical(outputJsonSchema(CheckOutputSchema))) },
     caps: { ...STAGE_CAPS.check },
     timeoutMs: STAGE_TIMEOUTS.check,

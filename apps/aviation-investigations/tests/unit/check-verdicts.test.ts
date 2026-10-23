@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CHECK_QUOTE_MAX, CheckOutputSchema, MAX_CHECK_QUOTES, MAX_VERDICT_PASSAGES, type CheckInput, type CheckOutput } from '../../server/ai/provider.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v7.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v8.js';
 import { CHRONOLOGY_RULES_VERSION } from '../../server/briefs/criteria.js';
 import { matchQuote, QUOTE_MAX_SOURCE } from '../../server/briefs/validate.js';
 import { CHECK_QUOTE_MAX_SOURCE, CHECKER_QUOTE_RULE_VERSION, judgeCheck, matchCheckerQuote, STRUCTURAL_CHECK_CODES, type CheckJudgement } from '../../server/briefs/verdicts.js';
@@ -49,7 +49,7 @@ const withVerdict = (claim: string, v: Partial<CheckOutput['verdicts'][number]>)
   return out;
 };
 
-describe('judged check verdicts (check.v7, G6 #3)', () => {
+describe('judged check verdicts (check.v8, G6 #3)', () => {
   it('passes only when every claim has exactly one valid supported verdict', () => {
     const j = judge(allSupported());
     expect(j).toEqual({
@@ -151,7 +151,7 @@ describe('judged check verdicts (check.v7, G6 #3)', () => {
     for (const code of ['contradicted', 'not_established', 'chronology_missed', 'check_missing_verdict', 'check_invalid_quote']) {
       expect(WITHHELD_CODES).toContain(code);
     }
-    expect(CHECK_PROMPT_VERSION).toBe('check.v7');
+    expect(CHECK_PROMPT_VERSION).toBe('check.v8');
     expect(CHECK_SYSTEM).toContain(`Timing rules (${CHRONOLOGY_RULES_VERSION})`);
     expect(CHRONOLOGY_RULES_VERSION).toBe('chronology-rules-v2');
     expect(CHECK_SYSTEM).not.toMatch(/when unsure/i);
@@ -161,7 +161,7 @@ describe('judged check verdicts (check.v7, G6 #3)', () => {
     expect(user).toContain('<case id="CEN15FA269">Grumman AA-5, partial loss of engine power during initial climb near Riverside, Missouri · 2015-07-26</case>');
   });
 
-  it('check.v7: no criteria in the input, no blanket complete-sentence exception, context for complete sentences, meaning not wording', () => {
+  it('check.v7 and v8: no criteria in the input, no blanket complete-sentence exception, context for complete sentences, meaning not wording', () => {
     expect(renderCheckUser(input)).not.toContain('<criteria>');
     expect(CHECK_SYSTEM).not.toContain('<criteria>');
     // The v5 exception the gate struck (16d reply §6): a complete sentence still needs its antecedent.
@@ -170,6 +170,15 @@ describe('judged check verdicts (check.v7, G6 #3)', () => {
     expect(CHECK_SYSTEM).toContain('This holds for complete sentences too');
     expect(CHECK_SYSTEM).toContain('Judge meaning, not wording');
     expect(CHECK_SYSTEM).toContain('6 weeks is 42 days');
+    // check.v8 (development round 2): think through every claim, pointing words, cut excerpts, missed defects, the header's date, narrated flights.
+    expect(CHECK_SYSTEM).toContain('Think before you answer. Work through the claims one at a time');
+    expect(CHECK_SYSTEM).toContain('Once you have worked through every claim, return exactly one verdict for every claim');
+    expect(CHECK_SYSTEM).toContain('"neither pilot" in an event with two');
+    expect(CHECK_SYSTEM).toContain('When the excerpt is part of a sentence, read the whole sentence it comes from');
+    expect(CHECK_SYSTEM).toContain('"an inadequate inspection led to fuel contamination" is not established');
+    expect(CHECK_SYSTEM).toContain("The header's date is not a passage date");
+    expect(CHECK_SYSTEM).toContain('the dates of the maintenance and of the event when the passages state both');
+    expect(CHECK_SYSTEM).toContain('A passage that narrates the flights after the maintenance in order states which flight the accident flight was');
     // The bounds the parser enforces are the ones the prompt states.
     expect(CHECK_SYSTEM).toContain(`at most ${MAX_VERDICT_PASSAGES}`);
     expect(CHECK_SYSTEM).toContain(`at most ${CHECK_QUOTE_MAX.toLocaleString('en-US')} characters`);

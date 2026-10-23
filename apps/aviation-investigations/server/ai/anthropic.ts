@@ -20,7 +20,7 @@ import Anthropic, {
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { llmPrice } from './pricing.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v7.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v8.js';
 import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v7.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
 import {
@@ -94,6 +94,9 @@ export function thinkingParam(model: string, mode: ThinkingMode): ThinkingParam 
 }
 
 export const ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
+
+/** The check prompt production sends (version and system text): what the checker calibration ties to its frozen selection. */
+export const PRODUCTION_CHECK_PROMPT = { version: CHECK_PROMPT_VERSION, system: CHECK_SYSTEM } as const;
 
 /** The part of the SDK client the adapter uses; tests inject their own. */
 export type AnthropicMessagesClient = Pick<Anthropic, 'messages'>;
