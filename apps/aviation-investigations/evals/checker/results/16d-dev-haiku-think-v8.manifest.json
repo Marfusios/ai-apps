@@ -1,0 +1,371 @@
+{
+  "version": "checker-run-manifest-v1",
+  "protocol": "checker-cal-protocol-v2",
+  "candidate": "haiku-think-v8",
+  "split": "dev",
+  "model": "claude-haiku-5-5",
+  "thinking": "adaptive",
+  "effort": "low",
+  "prompt": {
+    "version": "check.v8",
+    "systemSha256": "873ba4a8814f3bf2f864815481684eb0210095ff8a6505171c96126634902f74"
+  },
+  "outputSchema": {
+    "version": "check-output-v2",
+    "sha256": "390156050c874dd4b41951e426b3459fe7304f161495355f43591b48ff574fe4"
+  },
+  "caps": {
+    "input": 40000,
+    "output": 24500
+  },
+  "timeoutMs": 45000,
+  "maxClaims": 60,
+  "dataset": {
+    "version": "checker-cal-v2",
+    "fileSha256": "25e879adb80f0bc3703b41d32843f8fd441ea1162939e4f52e00fcf6c4dd61f7",
+    "evidenceSha256": "8ff424e0d4996cc96f1f34d74831d2fefb90cda887cc5860ddec5c5b30788639",
+    "evidenceV2Sha256": "024ad0e8376321f2be17d76607a37c1fb496ef2d5d5223b91b2e355b58564597",
+    "labelsSha256": "2f3923866166b904326c852d8ef84a5684f0129cbe6ba4d5289214cb35eef1f6"
+  },
+  "inputsSha256": "4984622833e3381e3f5792b577e46192e5d160000e643610eb8c5762ea17cea8",
+  "slots": [
+    {
+      "batch": "dev.paid",
+      "sample": 1
+    },
+    {
+      "batch": "dev.ff",
+      "sample": 1
+    },
+    {
+      "batch": "dev.day",
+      "sample": 1
+    },
+    {
+      "batch": "dev.midair",
+      "sample": 1
+    },
+    {
+      "batch": "dev.midair2",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.oil",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.engine",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.fuel",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.midair",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.context-power",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.context-fuel",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.context-first",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b1",
+      "sample": 3
+    },
+    {
+      "batch": "dev.b1.anchor",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1.led-to",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1.symptom",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1-hours",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1-hours",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b1-hours",
+      "sample": 3
+    },
+    {
+      "batch": "dev.b2",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b2",
+      "sample": 3
+    },
+    {
+      "batch": "dev.b2.anchor",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2.negation",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2.excerpt",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2.unit",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b3",
+      "sample": 3
+    },
+    {
+      "batch": "dev.b3.24h",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3.part",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3.actor",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3.missed",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3-week",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3-week",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b3-week",
+      "sample": 3
+    },
+    {
+      "batch": "dev.b4",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b4",
+      "sample": 3
+    },
+    {
+      "batch": "dev.b4.swap",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4.negation",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4-abstain",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4-abstain",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b4-abstain",
+      "sample": 3
+    },
+    {
+      "batch": "dev.b4-abstain.gap",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b5",
+      "sample": 3
+    },
+    {
+      "batch": "holdout.b5.unit",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5.certainty",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5.negation",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5-week",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5-week",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b5-week",
+      "sample": 3
+    },
+    {
+      "batch": "holdout.b6",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.anchor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.negation",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.actor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.torque",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6-first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b7",
+      "sample": 3
+    },
+    {
+      "batch": "holdout.b7.words",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7.value",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7.excerpt",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7-first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7-first",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b7-first",
+      "sample": 3
+    },
+    {
+      "batch": "holdout.b8",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b8",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b8",
+      "sample": 3
+    },
+    {
+      "batch": "holdout.b8.one",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b8.gap",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-power",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-power",
+      "sample": 2
+    },
+    {
+      "batch": "dev16d.max-first",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-first",
+      "sample": 2
+    },
+    {
+      "batch": "dev16d.max-oil",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-oil",
+      "sample": 2
+    }
+  ],
+  "id": "ff45d30523229ac50243687fe9de12137e00b0dbb7b30d038b98a40e79801515",
+  "createdAt": "2026-10-23T05:31:22.255Z"
+}
