@@ -232,10 +232,16 @@ export class RunBooks {
   }
 }
 
-/** A run kept its allocation's lock because its books do not balance (`holdingAllocation`); `recover` reconciles them. */
+/**
+ * A run kept its allocation's lock because its books do not balance (`holdingAllocation`);
+ * `recover` reconciles them. The message carries the run's own error and the recovery
+ * command whole: no `cause` is attached, because the CLI's error description prints a
+ * wrapped error's cause instead of its message (a database driver's convention), which
+ * would hide the recovery command.
+ */
 export class UnrecordedSpendError extends Error {
-  constructor(message: string, cause?: unknown) {
-    super(message, cause === undefined ? undefined : { cause });
+  constructor(message: string) {
+    super(message);
     this.name = 'UnrecordedSpendError';
   }
 }
@@ -271,7 +277,7 @@ export async function holdingAllocation<T>(a: Allocation, run: string, body: (bo
   const how =
     `allocation ${a.name} keeps its lock: ${books.describe()}. What the run paid is on the evaluation ledger; ` +
     `reconcile it with \`pnpm eval:retrieval:narrative recover --allocation ${a.name} --run ${run} --confirm\`, which then removes the lock`;
-  throw new UnrecordedSpendError(outcome.ok ? how : `${messageOf(outcome.error)}; ${how}`, outcome.ok ? undefined : outcome.error);
+  throw new UnrecordedSpendError(outcome.ok ? how : `${messageOf(outcome.error)}; ${how}`);
 }
 
 /**

@@ -55,6 +55,7 @@ import {
   type PairRecord,
 } from '../../evals/retrieval/narrative/judging.js';
 import { payForPoolInputs, runJudging, scheduleInfo } from '../../evals/retrieval/narrative/commands.js';
+import { describeWorkerError } from '../../worker/errors.js';
 import { SCHEDULE, casePriority, tierOf } from '../../evals/retrieval/narrative/pool.js';
 import { relevanceRequest, type JudgeRequest } from '../../evals/retrieval/narrative/prompts.js';
 import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
@@ -816,6 +817,15 @@ describe('the run books (round 5)', () => {
     expect(open).toBeInstanceOf(UnrecordedSpendError);
     expect((open as Error).message).toMatch(/allocation books keeps its lock: 1 paid operation\(s\) without a charge in the allocation's log.*recover --allocation books --run run-open --confirm/);
     expect(heldBy(dir, 'books')).toBe('run-open');
+    writeFileSync(lockOf(dir, 'books'), JSON.stringify({ run: 'gone', pid: 999_999_999, host: hostname(), at: 'x' }));
+    await recoverAllocation(a, 'gone', { runReservations: async () => [] }, { confirm: true });
+    // The CLI prints the whole message, the recovery command included (a wrapped error's cause would replace it).
+    expect(describeWorkerError(open)).toMatch(/keeps its lock.*recover --allocation books --run run-open --confirm/);
+    const timeout = await failure(holdingAllocation(a, 'run-timeout', async (books) => {
+      books.begin();
+      throw new Error('timeout exceeded when trying to connect');
+    }));
+    expect(describeWorkerError(timeout)).toMatch(/^timeout exceeded when trying to connect; allocation books keeps its lock: 1 paid operation\(s\) without a charge.*recover --allocation books --run run-timeout --confirm/);
     writeFileSync(lockOf(dir, 'books'), JSON.stringify({ run: 'gone', pid: 999_999_999, host: hostname(), at: 'x' }));
     await recoverAllocation(a, 'gone', { runReservations: async () => [] }, { confirm: true });
     // A cleanup that fails (the ledger connection) keeps the lock even when the body succeeded.
