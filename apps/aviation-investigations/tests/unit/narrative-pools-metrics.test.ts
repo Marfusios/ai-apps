@@ -483,6 +483,17 @@ describe('method comparisons', () => {
     const worse = sure.map((d) => ({ ...d, lower: -0.3, upper: -0.1 }));
     expect(compareMethods(worse, (m) => m, boot).conclusion).toBe('a-better');
   });
+
+  it('counts a bound that is zero but for floating-point residue as zero, so it never clears zero', () => {
+    const boot = { resamples: 200, seed: 1 };
+    // One group of improvements that sum to exactly zero; in floating point 0.1 + 0.2 - 0.3 is 5.6e-17.
+    const tie = [0.1, 0.2, -0.3].map((x, i) => ({ member: `m${i}`, family: 'f', lower: x, upper: x, method: 'exact' as const }));
+    const c = compareMethods(tie, () => 'g', boot);
+    expect(c.lower?.lower95).toBeGreaterThan(0);
+    expect(c.conclusion).toBe('inconclusive');
+    const mirrored = tie.map((d) => ({ ...d, lower: -d.lower, upper: -d.upper }));
+    expect(compareMethods(mirrored, () => 'g', boot).conclusion).toBe('inconclusive');
+  });
 });
 
 describe('pool diagnostics', () => {
@@ -605,6 +616,9 @@ describe('the diagnostics', () => {
     expect(regressionConclusion({ lower: 0, upper: 0.2 })).toBe('no-regression');
     expect(regressionConclusion({ lower: -0.1, upper: 0.1 })).toBe('inconclusive');
     expect(regressionConclusion(null)).toBe('inconclusive');
+    // Floating-point residue around an exact zero is zero.
+    expect(regressionConclusion({ lower: -1e-17, upper: 0.2 })).toBe('no-regression');
+    expect(regressionConclusion({ lower: -0.2, upper: -1e-17 })).toBe('inconclusive');
   });
 
   it('applies the frozen comparison to the regression question, with the displaced and admitted cases and the coded reproduction', () => {

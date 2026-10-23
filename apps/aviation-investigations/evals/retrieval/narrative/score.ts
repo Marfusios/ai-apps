@@ -273,12 +273,20 @@ export function methodDifferences(pool: FamilyPool, ref: Reference, answerabilit
   return out;
 }
 
+/**
+ * Bounds within this distance of zero are zero. Every metric is a ratio of small integers, so a
+ * difference that is not zero is many orders of magnitude larger, while sums of such ratios in
+ * floating point leave residue around an exact zero (0.1 + 0.2 - 0.3 is 5.6e-17), which must never
+ * clear zero.
+ */
+export const ZERO_TOLERANCE = 1e-9;
+
 export interface Comparison {
   questions: number;
   /** Group bootstrap of the questions' lower improvement bounds, and of their upper bounds. */
   lower: BootstrapResult | null;
   upper: BootstrapResult | null;
-  /** `b-better` only when the lower bounds' one-sided 95% lower bound is above zero; `a-better` only when the upper bounds' one-sided 95% upper bound is below zero. */
+  /** `b-better` only when the lower bounds' one-sided 95% lower bound is above zero; `a-better` only when the upper bounds' one-sided 95% upper bound is below zero (`ZERO_TOLERANCE`). */
   conclusion: 'b-better' | 'a-better' | 'inconclusive';
 }
 
@@ -290,7 +298,7 @@ export function compareMethods(diffs: readonly DifferenceBounds[], groupOf: (mem
   const upper = run('upper');
   // One-sided 95% upper bound of the upper bounds: the 95th percentile, mirrored from lower95 by symmetry of the procedure.
   const upper95 = -pairedGroupBootstrap(diffs.map((d) => ({ id: d.member, group: groupOf(d.member), base: 0, variant: -d.upper })), boot.resamples, boot.seed).lower95;
-  const conclusion = lower.lower95 > 0 ? 'b-better' : upper95 < 0 ? 'a-better' : 'inconclusive';
+  const conclusion = lower.lower95 > ZERO_TOLERANCE ? 'b-better' : upper95 < -ZERO_TOLERANCE ? 'a-better' : 'inconclusive';
   return { questions: diffs.length, lower, upper, conclusion };
 }
 
@@ -811,9 +819,9 @@ export function auditSamples(records: readonly PairRecord[], tagsOf: (family: st
 
 export type RegressionConclusion = 'regression' | 'no-regression' | 'inconclusive';
 
-/** The frozen rule's conclusion from the primary metric's mean difference (variant minus base): regression only when its upper bound is below zero. */
+/** The frozen rule's conclusion from the primary metric's mean difference (variant minus base): regression only when its upper bound is below zero (`ZERO_TOLERANCE`). */
 export const regressionConclusion = (d: { lower: number; upper: number } | null): RegressionConclusion =>
-  d === null ? 'inconclusive' : d.upper < 0 ? 'regression' : d.lower >= 0 ? 'no-regression' : 'inconclusive';
+  d === null ? 'inconclusive' : d.upper < -ZERO_TOLERANCE ? 'regression' : d.lower >= -ZERO_TOLERANCE ? 'no-regression' : 'inconclusive';
 
 export interface RegressionMethodValue {
   ndcg6: Bounds | null;
