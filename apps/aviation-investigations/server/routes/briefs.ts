@@ -339,17 +339,23 @@ function originOf(step: StepRow): BriefStepResponse['origin'] {
  * stored intent with the server's templates, and its validated filters, which the
  * finished result repeats. It stays in every later checklist, a cancelled or failed
  * step's included; a step before or without a search (a static reply) has none. The
- * planner's own words (`keywordText`) are never sent, and readings that would not render
- * to the contract are left out rather than failing the read.
+ * planner's own words (`keywordText`) are never sent. A stored intent that would not
+ * render to the contract (a value out of range, or a shape the pipeline never writes) is
+ * left out rather than failing the read: the step answers without the field.
  */
-function checklistOf(step: StepRow): Checklist {
+export function checklistOf(step: Pick<StepRow, 'checklist' | 'intent'>): Checklist {
   const { checklist, intent } = step;
   if (checklist.question !== 'in_scope' || !intent) return checklist;
-  const withReadings = ChecklistSchema.safeParse({
-    ...checklist,
-    interpretation: { interpretations: interpretationChips(intent.readings), filters: intent.filters },
-  });
-  return withReadings.success ? withReadings.data : checklist;
+  try {
+    const withReadings = ChecklistSchema.safeParse({
+      ...checklist,
+      interpretation: { interpretations: interpretationChips(intent.readings), filters: intent.filters },
+    });
+    return withReadings.success ? withReadings.data : checklist;
+  } catch {
+    // The chips could not be built from the stored readings (a row written outside the pipeline).
+    return checklist;
+  }
 }
 
 function stepResponse(briefId: string, step: StepRow, steps: number, expiresAt: Date, now: Date): BriefStepResponse {
