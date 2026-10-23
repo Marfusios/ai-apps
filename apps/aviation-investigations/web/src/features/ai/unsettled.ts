@@ -1,18 +1,24 @@
 /**
- * Idempotency keys of AI requests whose outcome is unknown (the answer never arrived), kept
- * for this tab so that the same request, sent again from any Ask AI or Refine control and
- * from any page, replays the key instead of paying a second time (DESIGN §8).
+ * Idempotency keys of AI requests whose outcome is not known yet (on their way) or never
+ * became known (the answer never arrived), kept for this tab so that the same request, sent
+ * again from any Ask AI or Refine control, from any page and after a reload, replays the
+ * key instead of paying a second time (DESIGN §8).
  *
+ * - **Write-ahead** (Task 22 review W-2): a key is remembered right before its request
+ *   leaves, not after it failed. The server answers a paid request only once its scope
+ *   stage is done (seconds), and a reload, Back or a closed tab in that window must not
+ *   lose a key the server may already have admitted.
  * - **The same request** is the normalised request the server hashes for idempotency
  *   (server/briefs/intent.ts `createRequestHash` and `refineRequestHash`): a create's
  *   question and canonical filters, or a refinement's brief and change.
  * - **Storage** is `sessionStorage` (this tab only, gone when it closes), under a hash of
  *   that normalised request, so no question text is stored. Every access is wrapped:
  *   when storage is unavailable or refuses a write, the entry lives in memory instead.
- * - **Lifetime:** an entry is cleared by a 2xx or by the 409 swap (the earlier attempt never
- *   completed), and it expires with the server's idempotency record, 24 hours after it was
- *   first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or
- *   deleting the account clears them all (`forgetAllUnsettled`).
+ * - **Lifetime:** an entry is cleared by a 2xx, by the 409 swap (the earlier attempt never
+ *   completed) and by a known refusal of its first send (nothing was admitted); it expires
+ *   with the server's idempotency record, 24 hours after it was first remembered
+ *   (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or deleting the account
+ *   clears them all (`forgetAllUnsettled`).
  */
 import type { BriefFilterFacet, BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
 import { FACET_VALUES } from '../../../../shared/contracts/search';
@@ -177,21 +183,34 @@ export function unsettledKey(id: string, now: number = Date.now()): string | nul
   return e.key;
 }
 
-/** Remembers a key whose outcome is unknown. A key remembered again keeps its first time. */
+/**
+ * Remembers a key whose outcome is not known: right before its request is sent, and again
+ * when no answer came back. A key remembered again keeps its first time.
+ */
 export function rememberUnsettled(id: string, key: string, now: number = Date.now()): void {
   const earlier = read(id);
   write(id, { key, at: earlier && earlier.key === key ? earlier.at : now });
   prune(now);
 }
 
-/** Settled: a 2xx, or the 409 swap (the earlier attempt never completed). */
-export function forgetUnsettled(id: string): void {
+/**
+ * Settled: a 2xx, the 409 swap (the earlier attempt never completed), or a known refusal of
+ * a first send. With `key`, only that key's entry goes: another control may have sent the
+ * same request under its own key meanwhile, and its entry stays.
+ */
+export function forgetUnsettled(id: string, key?: string): void {
+  if (key !== undefined && read(id)?.key !== key) return;
   remove(id);
 }
 
 /** Test hook: forget every entry, in memory and in this tab's storage. */
 export function resetUnsettledForTests(): void {
   forgetAllUnsettled();
+}
+
+/** Test hook: what a reload does here: the in-memory fallback goes, this tab's storage stays. */
+export function forgetUnsettledMemoryForTests(): void {
+  memory.clear();
 }
 
 /** Forget every entry, in memory and in this tab's storage (the visitor changed: web/src/features/auth/visitor.ts). */

@@ -31,6 +31,7 @@ import {
   UNSETTLED_TTL_MS,
   canonicalFilters,
   forgetUnsettled,
+  forgetUnsettledMemoryForTests,
   rememberUnsettled,
   resetUnsettledForTests,
   unsettledId,
@@ -1319,6 +1320,135 @@ describe('Unknown-outcome keys for the tab (web/src/features/ai/unsettled.ts)', 
     rememberUnsettled(id, 'key-00000005');
     expect(unsettledKey(id)).toBe('key-00000005');
     setItem.mockRestore();
+  });
+});
+
+describe('Write-ahead keys: a reload while the request is in flight pays once (review W-2)', { timeout: 20_000 }, () => {
+  const ENTRY = 'casebook-ai-unsettled:';
+  const stored = (): Record<string, { key: string; at: number }> =>
+    Object.fromEntries(
+      Object.keys(window.sessionStorage)
+        .filter((name) => name.startsWith(ENTRY))
+        .map((name) => [name.slice(ENTRY.length), JSON.parse(window.sessionStorage.getItem(name) ?? 'null') as { key: string; at: number }]),
+    );
+
+  /** Holds every POST to `path` (recording its key) until `release`, then lets the mock answer it. */
+  function holdPosts(path: string): { keys: string[]; release(): void } {
+    const keys: string[] = [];
+    const held: (() => void)[] = [];
+    server.use(
+      http.post(path, async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        await new Promise<void>((resolve) => held.push(resolve));
+        return undefined;
+      }),
+    );
+    return { keys, release: () => held.splice(0).forEach((go) => go()) };
+  }
+
+  it('Ask AI keeps its key for the tab before the request leaves; the same question after a reload replays it', async () => {
+    freshApi();
+    installTurnstile();
+    const posts = holdPosts('*/api/briefs');
+    const first = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(1), SLOW);
+    // In flight (the server waits for its scope stage): the button says so ...
+    expect(screen.getByRole('button', { name: 'Starting…' }).getAttribute('aria-busy')).toBe('true');
+    // ... and the key is already kept for this tab, under the request's hash.
+    const id = await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION });
+    expect(stored()).toEqual({ [id]: { key: posts.keys[0], at: expect.any(Number) } });
+
+    // The reader reloads: the page and its memory go, this tab's session storage stays.
+    first.unmount();
+    forgetUnsettledMemoryForTests();
+    const second = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(2), SLOW);
+    // The same question goes out under the same key: the server replays the request it admitted.
+    expect(posts.keys[1]).toBe(posts.keys[0]);
+    posts.release();
+    await waitFor(() => expect(currentUrl(second.router)).toMatch(/^\/briefs\//), SLOW);
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
+    // Settled by the 2xx: nothing is left for the tab.
+    expect(stored()).toEqual({});
+  });
+
+  it('Refine keeps its key for the tab before the request leaves; the same change after a reload replays it', async () => {
+    freshApi();
+    installTurnstile();
+    const { router, unmount } = await askFromHome(MOCK_SEED_QUESTION);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const briefPath = currentUrl(router);
+    const briefId = briefPath.split('/')[2] as string;
+    const posts = holdPosts('*/api/briefs/:id/refine');
+    fireEvent.change(screen.getByRole('textbox', { name: /^refine$/i }), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(1), SLOW);
+    expect(screen.getByRole('button', { name: 'Starting…' }).getAttribute('aria-busy')).toBe('true');
+    const id = await unsettledId({ kind: 'refine', briefId, change: { kind: 'text', text: 'only helicopters' } });
+    expect(stored()).toEqual({ [id]: { key: posts.keys[0], at: expect.any(Number) } });
+
+    unmount();
+    forgetUnsettledMemoryForTests();
+    const again = renderApp(briefPath);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    fireEvent.change(screen.getByRole('textbox', { name: /^refine$/i }), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(2), SLOW);
+    expect(posts.keys[1]).toBe(posts.keys[0]);
+    posts.release();
+    const switcher = await screen.findByRole('navigation', { name: 'Answers in this brief' }, SLOW);
+    expect(within(switcher).getAllByRole('link')).toHaveLength(2);
+    expect(currentUrl(again.router)).toBe(briefPath);
+    await waitFor(() => expect(stored()).toEqual({}), SLOW);
+  });
+
+  it('a known refusal of a first send (nothing admitted) takes its key back: the next ask uses a new one', async () => {
+    freshApi();
+    installTurnstile();
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return keys.length === 1 ? HttpResponse.json({ error: 'rate_limited', message: 'Slow down.', retryAfter: 2 }, { status: 429 }) : undefined;
+      }),
+    );
+    const { router } = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText('Slow down a moment. Try again in 2 seconds.', {}, SLOW)).toBeTruthy();
+    expect(stored()).toEqual({});
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }, SLOW));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('a check refused before anything is sent writes nothing for the tab', async () => {
+    freshApi();
+    window.turnstile = {
+      render(_host, params) {
+        setTimeout(() => params['error-callback'](), 10);
+        return 'w1';
+      },
+      remove() {},
+    };
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return undefined;
+      }),
+    );
+    renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText("The quick check didn't finish.", {}, SLOW)).toBeTruthy();
+    expect(keys).toHaveLength(0);
+    expect(stored()).toEqual({});
   });
 });
 

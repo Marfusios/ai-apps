@@ -7,6 +7,7 @@ import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { SearchBox } from '../components/SearchBox';
 import { AiNoticeBox, COPY } from '../features/ai/AiNoticeBox';
+import { busyLabel } from '../features/ai/AskAiButton';
 import { briefStepQuery, cancelBrief, isFinished } from '../features/brief/api';
 import { useAskAi } from '../features/ai/useAskAi';
 import { BriefChips } from '../features/brief/BriefChips';
@@ -113,7 +114,7 @@ function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsS
         <p className="mt-1 text-ui">{COPY.failure[1]}</p>
         <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
           <Button variant="ai" counter={refine.phase === 'idle' && ask.phase === 'idle' ? 'uses 1' : undefined} onClick={retry}>
-            {refine.phase === 'checking' || ask.phase === 'checking' ? 'Checking…' : 'Try again'}
+            {busyLabel(refine.phase) ?? busyLabel(ask.phase) ?? 'Try again'}
           </Button>
           <Link to={exploreHref({}, step.question)} className="text-ui text-blue hover:underline">
             {COPY.keyword}
