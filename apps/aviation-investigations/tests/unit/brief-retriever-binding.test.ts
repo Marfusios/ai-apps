@@ -16,6 +16,7 @@ vi.mock('../../server/search/hybrid.js', async (importOriginal) => ({ ...(await 
 
 const { createHybridRetriever } = await import('../../server/briefs/retriever.js');
 const { retrievalParams } = await import('../../server/search/hybrid.js');
+const { RETRIEVAL_V1 } = await import('../../server/search/retrieval-config.js');
 
 type Callback = NonNullable<Hybrid.RetrievalQuery['onQueryEmbedding']>;
 
@@ -68,7 +69,7 @@ describe('the hybrid binding’s settlement guards', () => {
     });
     stages.fetchAndPack.mockResolvedValue(PACKED);
     const seen: EmbeddingUsage[] = [];
-    const out = await createHybridRetriever({ es: {} as Client, embedder: embedder() }).retrieve(QUERY, live(), (u) => seen.push(u));
+    const out = await createHybridRetriever({ es: {} as Client, embedder: embedder(), retrieval: RETRIEVAL_V1 }).retrieve(QUERY, live(), (u) => seen.push(u));
     late!(USAGE);
     expect(seen).toEqual([{ provider: 'openai', model: USAGE.model, tokens: 12, usd: USAGE.usd, billing: 'reported' }]);
     // The chunker of the served index's contract, as retrieval reports it.
@@ -82,7 +83,7 @@ describe('the hybrid binding’s settlement guards', () => {
       throw new Error('search failed');
     });
     const seen: EmbeddingUsage[] = [];
-    await expect(createHybridRetriever({ es: {} as Client, embedder: embedder() }).retrieve(QUERY, live(), (u) => seen.push(u))).rejects.toBeInstanceOf(
+    await expect(createHybridRetriever({ es: {} as Client, embedder: embedder(), retrieval: RETRIEVAL_V1 }).retrieve(QUERY, live(), (u) => seen.push(u))).rejects.toBeInstanceOf(
       RetrievalFailure,
     );
     late!(USAGE);
@@ -97,7 +98,7 @@ describe('the hybrid binding’s settlement guards', () => {
     const e = embedder();
     const c = new AbortController();
     c.abort();
-    const err = await createHybridRetriever({ es: {} as Client, embedder: e })
+    const err = await createHybridRetriever({ es: {} as Client, embedder: e, retrieval: RETRIEVAL_V1 })
       .retrieve(QUERY, c.signal, () => undefined)
       .catch((x: unknown) => x);
     expect(err).toBeInstanceOf(RetrievalFailure);
@@ -111,7 +112,7 @@ describe('the hybrid binding’s settlement guards', () => {
       throw new Error('lost the response');
     });
     const e = embedder();
-    const err = await createHybridRetriever({ es: {} as Client, embedder: e })
+    const err = await createHybridRetriever({ es: {} as Client, embedder: e, retrieval: RETRIEVAL_V1 })
       .retrieve(QUERY, live(), () => undefined)
       .catch((x: unknown) => x);
     expect(err).toMatchObject({ kind: 'failed', embedding: 'uncertain' });
@@ -121,7 +122,7 @@ describe('the hybrid binding’s settlement guards', () => {
   it('a v1 index is checked under its own contract’s chunker, and a re-pack keeps it', async () => {
     stages.retrieveCandidates.mockResolvedValue(candidates('chunk-v1-test'));
     stages.fetchAndPack.mockResolvedValue(PACKED);
-    const out = await createHybridRetriever({ es: {} as Client, embedder: embedder() }).retrieve(QUERY, live(), () => undefined);
+    const out = await createHybridRetriever({ es: {} as Client, embedder: embedder(), retrieval: RETRIEVAL_V1 }).retrieve(QUERY, live(), () => undefined);
     expect(out.chunkerVersion).toBe('chunk-v1-test');
     await out.repack(500, live());
     expect(stages.fetchAndPack).toHaveBeenCalledTimes(2);

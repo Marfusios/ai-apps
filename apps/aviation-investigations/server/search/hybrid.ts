@@ -141,10 +141,11 @@ export const numCandidates = (p: Pick<RetrievalParams, 'perChannel' | 'numCandid
 // Errors
 
 /**
- * `no_passages_index`: the dataset publishes none; `index_mismatch`: an index breaks its
- * contract (passages, or cases: generation, servable version).
+ * `no_passages_index`: the dataset publishes none; `no_cases_index`: a version with the
+ * cases channel finds no cases index paired with the dataset's passages index;
+ * `index_mismatch`: an index breaks its contract (passages, or cases: generation, servable version).
  */
-export type RetrievalUnavailableReason = 'no_passages_index' | 'index_mismatch';
+export type RetrievalUnavailableReason = 'no_passages_index' | 'no_cases_index' | 'index_mismatch';
 
 /** Retrieval cannot serve evidence for this dataset; AI answers must stay off (no keyword fallback). */
 export class RetrievalUnavailableError extends Error {

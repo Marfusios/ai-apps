@@ -192,6 +192,10 @@ interface Meta {
   failure?: { stage: FailureStage; category: FailureCategory; reason?: string; inputTokens?: number };
   /** The chunker of the served index's passages contract the bundle was checked under. */
   chunkerVersion?: string;
+  /** The frozen retrieval configuration the step retrieved under (`AVIATION_RETRIEVAL_VERSION`). */
+  retrievalVersion?: string;
+  /** A case-level retrieval version's mapping of cases no passage channel returned: counts only. */
+  retrieval?: { mapped: number; unmapped: number };
   /**
    * Per stage, the reasoning tokens the provider reported within its billed output
    * (`output_tokens_details.thinking_tokens`), when it reports them.
@@ -548,8 +552,9 @@ class Run {
     {
       const t0 = performance.now();
       const { signal } = this.stageSignal(this.t.retrieve);
+      this.meta.retrievalVersion = deps.retriever.version;
       try {
-        const got = await stageSpan('brief.retrieve', { stage: 'retrieve' }, (s) =>
+        const got = await stageSpan('brief.retrieve', { stage: 'retrieve', retrievalVersion: deps.retriever.version }, (s) =>
           this.recorded(s, async () => {
             const out = await deps.retriever.retrieve(
               {
@@ -567,6 +572,7 @@ class Run {
             );
             s.setAttrs({ caseCount: out.bundle.cases.length, passageCount: out.bundle.passages });
             this.meta.chunkerVersion = out.chunkerVersion;
+            if (out.mapping) this.meta.retrieval = { ...out.mapping };
             return { out, verified: await this.verify(out.bundle, out.chunkerVersion) };
           }),
         );

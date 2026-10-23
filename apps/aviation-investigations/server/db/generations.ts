@@ -109,6 +109,21 @@ export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | nu
   return { ...row, publishedAt: row.publishedAt as Date };
 }
 
+/**
+ * The cases index of the manifest that pairs `generationId` with `passagesIndex` (one
+ * manifest row per generation, active or retired), or null when there is none: the
+ * generation is gone, or it was published again with another passages index. AI
+ * retrieval with the cases channel reads the cases index a brief's pinned passages index
+ * was published with, never the active manifest's (task 10e).
+ */
+export async function manifestCasesIndex(db: DbOrTx, generationId: number, passagesIndex: string): Promise<string | null> {
+  const [row] = await db
+    .select({ casesIndex: datasetManifests.casesIndex })
+    .from(datasetManifests)
+    .where(and(eq(datasetManifests.generationId, generationId), eq(datasetManifests.passagesIndex, passagesIndex)));
+  return row?.casesIndex ?? null;
+}
+
 /** Elasticsearch index names: lower-case, no path or wildcard characters (checked again in SQL). */
 const INDEX_NAME = /^[a-z0-9][a-z0-9._-]{0,254}$/;
 
