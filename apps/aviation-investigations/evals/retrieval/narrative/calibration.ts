@@ -53,9 +53,32 @@ export const CONTROL_HOLDOUT_GROUPS: readonly string[] = ['neg-gear', 'chr-heli'
 /** A control's base record group: its id up to the second hyphen (`neg-skyd-...` → `neg-skyd`). */
 export const controlGroup = (id: string): string => id.split('-').slice(0, 2).join('-');
 
+/** A delivered bundle of a control (answerability): passages cut from the record's sections, in delivered order. */
+export const ControlBundleSchema = z.strictObject({
+  /** `bundleKeyOf` of the passages: how a judgment record finds its item. */
+  key: z.string().min(1),
+  passages: z
+    .array(
+      z.strictObject({
+        passageId: z.string().min(1),
+        /** S1, S2 or S3 of the record (factual, analysis, probable cause). */
+        section: z.enum(['S1', 'S2', 'S3']),
+        start: z.number().int().nonnegative(),
+        end: z.number().int().positive(),
+        textSha256: z.string().regex(/^[0-9a-f]{64}$/),
+      }),
+    )
+    .min(1),
+});
+export type ControlBundle = z.infer<typeof ControlBundleSchema>;
+
 export const CalibrationItemSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{2,80}$/),
   set: z.enum(['code-reading', 'narrative-control']),
+  /** What is judged: case relevance on the complete record, or answerability of a delivered bundle. */
+  kind: z.enum(['relevance', 'answerability']).default('relevance'),
+  /** Answerability: the delivered passages; null for relevance. */
+  bundle: ControlBundleSchema.nullable().default(null),
   split: z.enum(['dev', 'holdout']),
   /** Reporting tags: the control family, or `code-reading` with the code kinds. */
   tags: z.array(z.string().min(1)).min(1),
@@ -350,6 +373,8 @@ export function assembleCalibration(
       items.push({
         id: `cr-${d.question.id}-${p.ntsbNo.toLowerCase()}`.slice(0, 81),
         set: 'code-reading',
+        kind: 'relevance',
+        bundle: null,
         split: d.split,
         tags: tagsOfCodeSet(d.question),
         question: `code-reading:${d.question.id}`,
@@ -380,6 +405,8 @@ export function assembleCalibration(
     items.push({
       id: `nc-${c.id}`,
       set: 'narrative-control',
+      kind: 'relevance',
+      bundle: null,
       split: CONTROL_HOLDOUT_GROUPS.includes(controlGroup(c.id)) ? 'holdout' : 'dev',
       tags: [c.family],
       question: spec.id,
@@ -427,13 +454,29 @@ export function assembleCalibration(
   return { dataset, problems: [...new Set(problems)] };
 }
 
-/** The frozen label hash: every item's identity, label and provenance. */
+/** The frozen label hash: every item's identity (with its bundle when it is an answerability item), label and provenance. */
 export const labelsSha256 = (items: readonly CalibrationItem[]): string =>
   sha256(
     canonicalJson(
-      items.map((i) => ({ id: i.id, set: i.set, split: i.split, question: i.questionVersion, rubric: i.rubricVersion, case: i.case, label: i.label, provenance: i.provenance })),
+      items.map((i) => ({
+        id: i.id,
+        set: i.set,
+        split: i.split,
+        question: i.questionVersion,
+        rubric: i.rubricVersion,
+        case: i.case,
+        ...(i.kind === 'answerability' ? { kind: i.kind, bundle: i.bundle?.key ?? null } : {}),
+        label: i.label,
+        provenance: i.provenance,
+      })),
     ),
   );
+
+/** The reporting family of an item: its control family, or `code-reading`. */
+export const itemFamily = (i: Pick<CalibrationItem, 'set' | 'tags'>): string => (i.set === 'code-reading' ? 'code-reading' : (i.tags[0] as string));
+
+/** The key that joins an item with its judgment record: kind, question, case and bundle. */
+export const itemKey = (i: Pick<CalibrationItem, 'kind' | 'question' | 'case' | 'bundle'>): string => `${i.kind}|${i.question}|${i.case.ntsbNo}|${i.bundle?.key ?? ''}`;
 
 /** Problems with a committed calibration file: its label hash and counts. */
 export function calibrationProblems(d: CalibrationDataset): string[] {

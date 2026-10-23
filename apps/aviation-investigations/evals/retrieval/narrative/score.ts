@@ -37,7 +37,8 @@
  */
 import { makeReference, scoreQuestion, uniqueTop, type Bounds, type Label, type ProtocolScore, type Reference } from '../metrics.js';
 import { mulberry32, pairedGroupBootstrap, percentile, type BootstrapResult } from '../experiments/stats.js';
-import { seededSample, type CalibrationItem } from './calibration.js';
+import { itemFamily, itemKey, seededSample, type CalibrationItem } from './calibration.js';
+import { CALIBRATION_CRITERIA } from './criteria.js';
 import type { NarrativeDataset } from './dataset.js';
 import type { PairRecord } from './judging.js';
 import { bundleKeyOf } from './judging.js';
@@ -171,27 +172,117 @@ export function questionValues(pool: FamilyPool, runs: readonly RunScore[]): Que
   return out;
 }
 
-/** Paired group bootstrap of method `b` minus method `a`, on the lower and the upper bounds. */
-export function compareMethods(
-  values: readonly QuestionValue[],
-  groupOf: (member: string) => string,
-  a: string,
-  b: string,
-  metric: 'p6' | 'ndcg6' | 'supported' | 'recallGate',
-  boot: { resamples: number; seed: number },
-): { lower: BootstrapResult | null; upper: BootstrapResult | null } {
-  const pairs: { id: string; group: string; base: Bounds; variant: Bounds }[] = [];
-  for (const va of values.filter((v) => v.method === a)) {
-    const vb = values.find((v) => v.method === b && v.member === va.member);
-    if (!vb) continue;
-    const pick = (v: QuestionValue): Bounds | null => (metric === 'recallGate' ? (v.recallGate === null ? null : { lower: v.recallGate, upper: v.recallGate }) : v[metric]);
-    const x = pick(va);
-    const y = pick(vb);
-    if (x && y) pairs.push({ id: va.member, group: groupOf(va.member), base: x, variant: y });
+// ---------------------------------------------------------------------------
+// Comparisons: bounds on the improvement, then a group bootstrap
+
+export type CompareMetric = 'p6' | 'supported' | 'ndcg6' | 'recallGate';
+
+/** Bounds on one question's improvement of method `b` over method `a` (mean over scope samples). */
+export interface DifferenceBounds {
+  member: string;
+  family: string;
+  lower: number;
+  upper: number;
+  /** `joint`: optimised over the unknown labels the two methods share; `cross-endpoint`: b's lower minus a's upper, and b's upper minus a's lower; `exact`: no unknown. */
+  method: 'joint' | 'cross-endpoint' | 'exact';
+}
+
+const topSix = (run: PoolRun) => uniqueTop(run.bundle.map((x) => x.ntsbNo), 6);
+const bundleKeyIn = (run: PoolRun, n: string) => {
+  const b = run.bundle.find((x) => x.ntsbNo === n);
+  return b ? bundleKeyOf(b.passages) : '';
+};
+
+/** Strict (or supported) P@6 improvement bounds, jointly over the unknowns: each case and each delivered bundle is one independent unknown. */
+function jointP6(member: string, runsA: readonly PoolRun[], runsB: readonly PoolRun[], label: (n: string) => Label, answerable: ((n: string, key: string) => Label) | null): { lower: number; upper: number; unknowns: number } {
+  // Coefficient of each case (and bundle key) in b's mean P@6 minus a's.
+  const coef = new Map<string, Map<string, number>>();
+  const addRuns = (runs: readonly PoolRun[], sign: 1 | -1) => {
+    for (const run of runs) {
+      for (const n of topSix(run)) {
+        const key = answerable ? bundleKeyIn(run, n) : '';
+        const m = coef.get(n) ?? new Map<string, number>();
+        m.set(key, (m.get(key) ?? 0) + sign / (6 * runs.length));
+        coef.set(n, m);
+      }
+    }
+  };
+  addRuns(runsB, 1);
+  addRuns(runsA, -1);
+  let lower = 0;
+  let upper = 0;
+  let unknowns = 0;
+  for (const [n, keys] of coef) {
+    const rel = label(n);
+    const r: readonly number[] = rel === 'unknown' ? [0, 1] : [rel === 2 ? 1 : 0];
+    if (rel === 'unknown') unknowns += 1;
+    let minA = 0;
+    let maxA = 0;
+    for (const [key, c] of keys) {
+      const ans = answerable ? answerable(n, key) : 2;
+      if (ans === 'unknown') {
+        unknowns += 1;
+        minA += Math.min(0, c);
+        maxA += Math.max(0, c);
+      } else {
+        const a = ans === 2 ? 1 : 0;
+        minA += c * a;
+        maxA += c * a;
+      }
+    }
+    lower += Math.min(...r.map((x) => x * minA));
+    upper += Math.max(...r.map((x) => x * maxA));
   }
-  if (pairs.length === 0) return { lower: null, upper: null };
-  const run = (side: 'lower' | 'upper') => pairedGroupBootstrap(pairs.map((p) => ({ id: p.id, group: p.group, base: p.base[side], variant: p.variant[side] })), boot.resamples, boot.seed);
-  return { lower: run('lower'), upper: run('upper') };
+  return { lower, upper, unknowns };
+}
+
+/** Per-question improvement bounds of `b` over `a` for one metric (module comment of `DifferenceBounds`). */
+export function methodDifferences(pool: FamilyPool, ref: Reference, answerability: ReadonlyMap<string, Label>, values: readonly QuestionValue[], a: string, b: string, metric: CompareMetric): DifferenceBounds[] {
+  const out: DifferenceBounds[] = [];
+  const label = (n: string): Label => ref.labels.get(n) ?? ref.unlisted;
+  for (const member of pool.members) {
+    const runsA = pool.runs.filter((r) => r.member === member && r.method === a);
+    const runsB = pool.runs.filter((r) => r.member === member && r.method === b);
+    if (runsA.length === 0 || runsB.length === 0) continue;
+    if (metric === 'p6' || metric === 'supported') {
+      const j = jointP6(member, runsA, runsB, label, metric === 'supported' ? (n, key) => answerability.get(`${n}|${key}`) ?? 'unknown' : null);
+      out.push({ member, family: pool.family, lower: j.lower, upper: j.upper, method: j.unknowns > 0 ? 'joint' : 'exact' });
+      continue;
+    }
+    const va = values.find((v) => v.member === member && v.method === a);
+    const vb = values.find((v) => v.member === member && v.method === b);
+    if (!va || !vb) continue;
+    if (metric === 'recallGate') {
+      if (va.recallGate === null || vb.recallGate === null) continue;
+      out.push({ member, family: pool.family, lower: vb.recallGate - va.recallGate, upper: vb.recallGate - va.recallGate, method: 'exact' });
+      continue;
+    }
+    if (va.ndcg6 === null || vb.ndcg6 === null) continue;
+    const exact = va.ndcg6.lower === va.ndcg6.upper && vb.ndcg6.lower === vb.ndcg6.upper;
+    out.push({ member, family: pool.family, lower: vb.ndcg6.lower - va.ndcg6.upper, upper: vb.ndcg6.upper - va.ndcg6.lower, method: exact ? 'exact' : 'cross-endpoint' });
+  }
+  return out;
+}
+
+export interface Comparison {
+  questions: number;
+  /** Group bootstrap of the questions' lower improvement bounds, and of their upper bounds. */
+  lower: BootstrapResult | null;
+  upper: BootstrapResult | null;
+  /** `b-better` only when the lower bounds' one-sided 95% lower bound is above zero; `a-better` only when the upper bounds' one-sided 95% upper bound is below zero. */
+  conclusion: 'b-better' | 'a-better' | 'inconclusive';
+}
+
+/** Group bootstrap of improvement bounds (never of endpoint scores alone): a winner only when the whole interval clears zero. */
+export function compareMethods(diffs: readonly DifferenceBounds[], groupOf: (member: string) => string, boot: { resamples: number; seed: number }): Comparison {
+  if (diffs.length === 0) return { questions: 0, lower: null, upper: null, conclusion: 'inconclusive' };
+  const run = (side: 'lower' | 'upper') => pairedGroupBootstrap(diffs.map((d) => ({ id: d.member, group: groupOf(d.member), base: 0, variant: d[side] })), boot.resamples, boot.seed);
+  const lower = run('lower');
+  const upper = run('upper');
+  // One-sided 95% upper bound of the upper bounds: the 95th percentile, mirrored from lower95 by symmetry of the procedure.
+  const upper95 = -pairedGroupBootstrap(diffs.map((d) => ({ id: d.member, group: groupOf(d.member), base: 0, variant: -d.upper })), boot.resamples, boot.seed).lower95;
+  const conclusion = lower.lower95 > 0 ? 'b-better' : upper95 < 0 ? 'a-better' : 'inconclusive';
+  return { questions: diffs.length, lower, upper, conclusion };
 }
 
 /** Connected groups of questions: a family with its paraphrases, joined with any family sharing a fully relevant case. */
@@ -425,68 +516,212 @@ export function agreementReport(records: readonly PairRecord[], tagsOf: (family:
 // ---------------------------------------------------------------------------
 // Calibration and discrepancies
 
-export interface CalibrationCell {
-  /** Items whose final label is known. */
-  n: number;
-  /** Final labels equal to the constructed labels. */
+// Calibration: the calculations and the frozen pass criteria are in criteria.ts.
+
+export interface JudgeCalibration {
+  /** Valid grades, of them equal to the constructed label; unusable outcomes (unjudgeable, failed, uncovered); items without a record. */
+  valid: number;
+  correct: number;
+  failed: number;
+  missing: number;
+  /** Correct over expected: unusable outcomes and missing records count as wrong. */
   accuracy: Rate;
-  /** Each judge's valid grades against the labels. */
-  judgeA: Rate;
-  judgeB: Rate;
-  /** Rows: constructed label; columns: final label (unknown in column 3). */
+  /** Unusable outcomes and missing records over expected. */
+  failureRate: Rate;
+  /** Diagnostic only, never a criterion: correct over valid grades. */
+  conditionalAccuracy: Rate;
+}
+
+export interface CalibrationCell {
+  expected: number;
+  /** Items with a record; with a finished one (not incomplete, not stopped before its escalation). */
+  recorded: number;
+  finished: number;
+  /** Final labels known (a grade), and of them equal to the constructed label. */
+  known: number;
+  correct: number;
+  /** Correct over expected: unknown labels and missing records count as wrong. */
+  accuracy: Rate;
+  /** Known final labels over expected. */
+  coverage: Rate;
+  /** Diagnostic only, never a criterion: correct over known final labels. */
+  conditionalAccuracy: Rate;
+  judgeA: JudgeCalibration;
+  judgeB: JudgeCalibration;
+  /** Rows: the constructed label 0, 1, 2; columns: the final label 0, 1, 2, unknown, no record. */
   confusion: number[][];
-  unknown: number;
 }
 
-function calibrationCell(rows: readonly { item: CalibrationItem; r: PairRecord }[]): CalibrationCell {
-  const confusion = GRADES.map(() => [0, 0, 0, 0]);
-  for (const { item, r } of rows) (confusion[item.label] as number[])[r.label === 'unknown' ? 3 : r.label] = ((confusion[item.label] as number[])[r.label === 'unknown' ? 3 : r.label] as number) + 1;
-  const known = rows.filter(({ r }) => r.label !== 'unknown');
-  const judge = (i: 0 | 1) => {
-    const usable = rows.filter(({ r }) => r.judges[i]?.grade !== null && r.judges[i]?.grade !== undefined);
-    return wilson(usable.filter(({ item, r }) => r.judges[i]?.grade === item.label).length, usable.length);
-  };
-  return { n: known.length, accuracy: wilson(known.filter(({ item, r }) => r.label === item.label).length, known.length), judgeA: judge(0), judgeB: judge(1), confusion, unknown: rows.length - known.length };
+export interface CalibrationCheck {
+  name: string;
+  value: number | null;
+  threshold: number;
+  ok: boolean;
 }
 
-/** Calibration figures per set, tag and constructed grade (diagnostics; labels are constructed, never expert). */
-export function calibrationReport(items: readonly CalibrationItem[], records: readonly PairRecord[]): { bySet: Record<string, CalibrationCell>; byTag: Record<string, CalibrationCell>; byGrade: Record<string, CalibrationCell>; missing: string[] } {
-  const byCase = new Map(records.map((r) => [`${r.family}|${r.ntsbNo}`, r]));
-  const rows: { item: CalibrationItem; r: PairRecord }[] = [];
-  const missing: string[] = [];
-  for (const item of items) {
-    const r = byCase.get(`${item.question}|${item.case.ntsbNo}`);
-    if (r) rows.push({ item, r });
-    else missing.push(item.id);
+export interface CalibrationVerdict {
+  criteria: string;
+  /** `incomplete` cannot pass: some holdout item has no finished record. `not-run`: no holdout item was judged. */
+  status: 'pass' | 'fail' | 'incomplete' | 'not-run';
+  checks: CalibrationCheck[];
+  reasons: string[];
+}
+
+export interface CalibrationReport {
+  /** Cells by `split|set|family`, with totals `split|set|*` and `split|*|*`. */
+  cells: Record<string, CalibrationCell>;
+  /** Totals by `split|kind` (relevance and answerability items). */
+  byKind: Record<string, CalibrationCell>;
+  verdict: CalibrationVerdict;
+  /** Records of the calibration set that match no frozen item. */
+  unmatched: number;
+}
+
+const FINISHED_STATUSES: ReadonlySet<PairRecord['status']> = new Set(['agreed', 'adjudicated', 'abstained', 'adjudication-unjudgeable', 'unjudgeable', 'uncovered']);
+
+function judgeCalibration(rows: readonly { item: CalibrationItem; r: PairRecord | undefined }[], i: 0 | 1): JudgeCalibration {
+  let valid = 0;
+  let correct = 0;
+  let failed = 0;
+  let missing = 0;
+  for (const { item, r } of rows) {
+    const j = r?.judges[i];
+    if (!r || !j) {
+      missing += 1;
+      continue;
+    }
+    if (j.grade === null) {
+      failed += 1;
+      continue;
+    }
+    valid += 1;
+    if (j.grade === item.label) correct += 1;
   }
-  const group = (key: (i: CalibrationItem) => string[]) => {
-    const out: Record<string, CalibrationCell> = {};
-    for (const k of [...new Set(rows.flatMap(({ item }) => key(item)))].sort()) out[k] = calibrationCell(rows.filter(({ item }) => key(item).includes(k)));
-    return out;
+  return { valid, correct, failed, missing, accuracy: wilson(correct, rows.length), failureRate: wilson(failed + missing, rows.length), conditionalAccuracy: wilson(correct, valid) };
+}
+
+function calibrationCell(rows: readonly { item: CalibrationItem; r: PairRecord | undefined }[]): CalibrationCell {
+  const confusion = GRADES.map(() => [0, 0, 0, 0, 0]);
+  let recorded = 0;
+  let finished = 0;
+  let known = 0;
+  let correct = 0;
+  for (const { item, r } of rows) {
+    const row = confusion[item.label] as number[];
+    if (!r) {
+      row[4] = (row[4] as number) + 1;
+      continue;
+    }
+    recorded += 1;
+    if (FINISHED_STATUSES.has(r.status)) finished += 1;
+    if (r.label === 'unknown') {
+      row[3] = (row[3] as number) + 1;
+      continue;
+    }
+    row[r.label] = (row[r.label] as number) + 1;
+    known += 1;
+    if (r.label === item.label) correct += 1;
+  }
+  return {
+    expected: rows.length,
+    recorded,
+    finished,
+    known,
+    correct,
+    accuracy: wilson(correct, rows.length),
+    coverage: wilson(known, rows.length),
+    conditionalAccuracy: wilson(correct, known),
+    judgeA: judgeCalibration(rows, 0),
+    judgeB: judgeCalibration(rows, 1),
+    confusion,
   };
-  return { bySet: group((i) => [`${i.set}/${i.split}`]), byTag: group((i) => i.tags), byGrade: group((i) => [String(i.label)]), missing };
+}
+
+/** Calibration figures per split, set and family, and the frozen verdict on the holdout (criteria.ts). Labels are constructed, never expert. */
+export function calibrationReport(items: readonly CalibrationItem[], records: readonly PairRecord[], criteria = CALIBRATION_CRITERIA): CalibrationReport {
+  const byKey = new Map(records.map((r) => [`${r.kind}|${r.family}|${r.ntsbNo}|${r.bundleKey ?? ''}`, r]));
+  const rows = items.map((item) => ({ item, r: byKey.get(itemKey(item)) }));
+  const matched = new Set(items.map(itemKey));
+  const unmatched = records.filter((r) => !matched.has(`${r.kind}|${r.family}|${r.ntsbNo}|${r.bundleKey ?? ''}`)).length;
+  const groups = new Map<string, typeof rows>();
+  const add = (key: string, row: (typeof rows)[number]) => groups.set(key, [...(groups.get(key) ?? []), row]);
+  const kinds = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const { split, set } = row.item;
+    add(`${split}|${set}|${itemFamily(row.item)}`, row);
+    add(`${split}|${set}|*`, row);
+    add(`${split}|*|*`, row);
+    kinds.set(`${split}|${row.item.kind}`, [...(kinds.get(`${split}|${row.item.kind}`) ?? []), row]);
+  }
+  const cells: Record<string, CalibrationCell> = {};
+  for (const key of [...groups.keys()].sort()) cells[key] = calibrationCell(groups.get(key) as typeof rows);
+  const byKind: Record<string, CalibrationCell> = {};
+  for (const key of [...kinds.keys()].sort()) byKind[key] = calibrationCell(kinds.get(key) as typeof rows);
+  return { cells, byKind, verdict: calibrationVerdict(cells, criteria), unmatched };
+}
+
+/** The verdict of the frozen criteria on the holdout split (criteria.ts). */
+export function calibrationVerdict(cells: Readonly<Record<string, CalibrationCell>>, criteria = CALIBRATION_CRITERIA): CalibrationVerdict {
+  const total = cells[`${criteria.split}|*|*`];
+  const base = { criteria: criteria.version };
+  if (!total || total.recorded === 0) return { ...base, status: 'not-run', checks: [], reasons: ['no holdout item has a record'] };
+  if (total.finished < total.expected) {
+    return { ...base, status: 'incomplete', checks: [], reasons: [`${total.expected - total.finished} of ${total.expected} holdout items have no finished record (missing, incomplete, or stopped before their escalation): an incomplete holdout cannot pass`] };
+  }
+  const checks: CalibrationCheck[] = [];
+  const at = (name: string, value: number | null, threshold: number, atMost = false) => checks.push({ name, value, threshold, ok: value !== null && (atMost ? value <= threshold + 1e-12 : value >= threshold - 1e-12) });
+  at('final labels: accuracy, Wilson 95% lower bound', total.accuracy.lower, criteria.overall.finalAccuracyLower);
+  for (const [name, j] of [['judge A', total.judgeA], ['judge B', total.judgeB]] as const) {
+    at(`${name}: accuracy, Wilson 95% lower bound`, j.accuracy.lower, criteria.overall.judgeAccuracyLower);
+    at(`${name}: failure rate`, j.failureRate.rate, criteria.overall.judgeFailureRate, true);
+  }
+  for (const [key, c] of Object.entries(cells)) {
+    const [split, set, family] = key.split('|');
+    if (split !== criteria.split || set === '*' || family === '*') continue;
+    at(`${set}/${family}: holdout items`, c.expected, criteria.perFamily.minItems);
+    at(`${set}/${family}: final labels accuracy`, c.accuracy.rate, criteria.perFamily.finalAccuracy);
+    at(`${set}/${family}: judge A accuracy`, c.judgeA.accuracy.rate, criteria.perFamily.judgeAccuracy);
+    at(`${set}/${family}: judge B accuracy`, c.judgeB.accuracy.rate, criteria.perFamily.judgeAccuracy);
+  }
+  const failed = checks.filter((c) => !c.ok);
+  return { ...base, status: failed.length === 0 ? 'pass' : 'fail', checks, reasons: failed.map((c) => `${c.name}: ${c.value === null ? 'undefined' : c.value.toFixed(3)} against ${c.threshold}`) };
 }
 
 export interface Discrepancy {
   family: string;
   ntsbNo: string;
-  /** `coded-not-relevant`: a related-code positive judged 0; `relevant-not-coded`: judged 2 without the related code. */
+  /** `coded-not-relevant`: a related-code positive graded 0; `relevant-not-coded`: graded 2 without the related code. */
   kind: 'coded-not-relevant' | 'relevant-not-coded';
-  label: Grade;
+  /** Whose grade disagrees with the code: the final label, or one judge's own grade. */
+  by: 'final' | 'judge-a' | 'judge-b';
+  grade: Grade;
 }
 
-/** Candidate code-narrative discrepancies of the families with related codes: logged, never applied. */
+/**
+ * Candidate code-narrative discrepancies of the families with related codes (protocol
+ * section 3): the final labels and each judge's grade against the related codes. Logged,
+ * never applied to any label and never waived from any accuracy figure.
+ */
 export function discrepancies(d: NarrativeDataset, records: readonly PairRecord[]): Discrepancy[] {
   const out: Discrepancy[] = [];
   const positives = new Map(d.questions.filter((q) => q.relatedCodes !== undefined && q.paraphrase_of === undefined).map((q) => [q.family, new Set(q.relatedPositives)]));
   for (const r of records) {
-    if (r.kind !== 'relevance' || r.label === 'unknown') continue;
+    if (r.kind !== 'relevance') continue;
     const coded = positives.get(r.family);
     if (!coded) continue;
-    if (coded.has(r.ntsbNo) && r.label === 0) out.push({ family: r.family, ntsbNo: r.ntsbNo, kind: 'coded-not-relevant', label: r.label });
-    if (!coded.has(r.ntsbNo) && r.label === 2) out.push({ family: r.family, ntsbNo: r.ntsbNo, kind: 'relevant-not-coded', label: r.label });
+    const grades: [Discrepancy['by'], Grade | 'unknown' | null][] = [
+      ['final', r.label],
+      ['judge-a', r.judges[0]?.grade ?? null],
+      ['judge-b', r.judges[1]?.grade ?? null],
+    ];
+    for (const [by, g] of grades) {
+      if (g === null || g === 'unknown') continue;
+      if (coded.has(r.ntsbNo) && g === 0) out.push({ family: r.family, ntsbNo: r.ntsbNo, kind: 'coded-not-relevant', by, grade: g });
+      if (!coded.has(r.ntsbNo) && g === 2) out.push({ family: r.family, ntsbNo: r.ntsbNo, kind: 'relevant-not-coded', by, grade: g });
+    }
   }
-  return out.sort((a, b) => (a.family < b.family ? -1 : a.family > b.family ? 1 : a.ntsbNo < b.ntsbNo ? -1 : 1));
+  const order = { final: 0, 'judge-a': 1, 'judge-b': 2 };
+  return out.sort((a, b) => (a.family < b.family ? -1 : a.family > b.family ? 1 : a.ntsbNo < b.ntsbNo ? -1 : a.ntsbNo > b.ntsbNo ? 1 : order[a.by] - order[b.by]));
 }
 
 // ---------------------------------------------------------------------------

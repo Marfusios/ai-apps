@@ -15,12 +15,16 @@ import { llmPrice } from '../../server/ai/pricing.js';
 import { NarrativeDatasetSchema, type NarrativeItem } from '../../evals/retrieval/narrative/dataset.js';
 import type { PairRecord } from '../../evals/retrieval/narrative/judging.js';
 import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, caseCost, poolEstimates, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
-import { POOL_RULE, assemblePool, bundlePairs, casePriority, poolFileVersion, type PoolRun } from '../../evals/retrieval/narrative/pool.js';
+import { POOL_RULE, assemblePool, bundlePairs, casePriority, poolFileVersion, verifyPoolFile, withFingerprints, type PoolFile, type PoolRun } from '../../evals/retrieval/narrative/pool.js';
+import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import {
   agreementClass,
   agreementReport,
   auditSamples,
   calibrationReport,
+  compareMethods,
+  methodDifferences,
+  type QuestionValue,
   cohenKappa,
   discoveryByDepth,
   discrepancies,
@@ -101,6 +105,21 @@ describe('the pool rule', () => {
     expect(a.version).not.toBe(b.version);
     const body = { kind: 'track-n-pools' as const, rule: POOL_RULE, datasetSpecSha256: 'x', generationId: 1, target: {}, methods: [], families: [a] };
     expect(poolFileVersion(body)).not.toBe(poolFileVersion({ ...body, families: [b] }));
+  });
+
+  it('recomputes every family version on load: a changed ranking, case or fingerprint is caught although the stored hashes are kept', () => {
+    const rule = RULE as never;
+    const a = withFingerprints(rule, assemblePool({ family: item(), members: [item()], runs, cohort: COHORT, lure: [], rule }), new Map([['C000XX', 'f0'], ['C001XX', 'f1']]));
+    expect(a.fingerprints).toEqual({ C000XX: 'f0', C001XX: 'f1' });
+    const body = { kind: 'track-n-pools' as const, rule, datasetSpecSha256: 'x', generationId: 1, target: {}, methods: [], families: [a] };
+    const file = { ...body, version: poolFileVersion(body) } as PoolFile;
+    expect(verifyPoolFile(file)).toEqual([]);
+    const tamperedRun = { ...file, families: [{ ...a, runs: a.runs.map((r, i) => (i === 0 ? { ...r, ranking: [...r.ranking].reverse() } : r)) }] };
+    expect(verifyPoolFile(tamperedRun)).toEqual([`family ${a.family}: its version does not match its content`]);
+    const tamperedFingerprint = { ...file, families: [{ ...a, fingerprints: { ...a.fingerprints, C000XX: 'other' } }] };
+    expect(verifyPoolFile(tamperedFingerprint)).toHaveLength(1);
+    const tamperedVersion = { ...file, version: 'f'.repeat(64) };
+    expect(verifyPoolFile(tamperedVersion)).toEqual(['the pool file version does not match its families']);
   });
 
   it('orders escalations: delivered, then the first 20, then bounded cohorts, then the rest; bundle pairs are distinct', () => {
@@ -230,12 +249,43 @@ describe('agreement and calibration figures', () => {
     expect(r.judgeAdjudicator.byTag.chronology?.adjudicated).toBe(2);
   });
 
-  it('scores calibration items against their constructed labels, unknowns counted separately', () => {
-    const items = (['A', 'C', 'D'] as const).map((n, i) => ({ id: `i${i}`, set: 'narrative-control', split: 'dev', tags: ['negation'], question: n === 'A' ? 'f1' : 'f2', questionVersion: 'q', rubricVersion: 'r', case: { ntsbNo: n, source: 'synthetic', fingerprint: 'f' }, label: 2, provenance: 'constructed', mutation: null, anchors: [], why: 'w' }) as CalibrationItem);
+  const calItem = (n: string, question: string, split: 'dev' | 'holdout', label: 0 | 1 | 2, family = 'negation'): CalibrationItem =>
+    ({ id: `i-${n.toLowerCase()}-${question}`, set: 'narrative-control', kind: 'relevance', bundle: null, split, tags: [family], question, questionVersion: 'q', rubricVersion: 'r', case: { ntsbNo: n, source: 'synthetic', fingerprint: 'f' }, label, provenance: 'constructed', mutation: null, anchors: [], why: 'w' }) as CalibrationItem;
+
+  it('scores calibration as correct over expected: unknown and missing are wrong, conditional accuracy apart', () => {
+    // One correct item and one with two unjudgeable judges (unknown): 1 of 2, not 100%.
+    const items = [calItem('A', 'f1', 'dev', 2), calItem('E', 'f3', 'dev', 2), calItem('Z', 'f9', 'dev', 0)];
     const r = calibrationReport(items, records);
-    expect(r.bySet['narrative-control/dev']).toMatchObject({ n: 2, unknown: 1 });
-    expect(r.bySet['narrative-control/dev']?.accuracy.k).toBe(2);
-    expect(r.missing).toEqual([]);
+    const cell = r.cells['dev|narrative-control|negation'];
+    expect(cell).toMatchObject({ expected: 3, recorded: 2, known: 1, correct: 1 });
+    expect(cell?.accuracy.rate).toBeCloseTo(1 / 3, 12);
+    expect(cell?.conditionalAccuracy.rate).toBe(1);
+    expect(cell?.coverage.rate).toBeCloseTo(1 / 3, 12);
+    // Judge A: valid on A (correct), unusable on E, no record for Z.
+    expect(cell?.judgeA).toMatchObject({ valid: 1, correct: 1, failed: 1, missing: 1 });
+    expect(cell?.judgeA.failureRate.rate).toBeCloseTo(2 / 3, 12);
+    expect(cell?.confusion[0]).toEqual([0, 0, 0, 0, 1]);
+    expect(r.verdict.status).toBe('not-run');
+  });
+
+  it('passes the frozen criteria only on a complete holdout that meets every threshold', () => {
+    const fam = (family: string, n: number) => Array.from({ length: n }, (_, i) => calItem(`${family.slice(0, 3).toUpperCase()}${i}`, `q-${family}`, 'holdout', 2, family));
+    const items = [...fam('negation', 8), ...fam('chronology', 8)];
+    const agreed = (i: CalibrationItem, grade: 0 | 1 | 2) => ({ ...record(i.question, i.case.ntsbNo, grade, grade, grade, 'agreed') });
+    // Every item judged correctly: pass.
+    expect(calibrationReport(items, items.map((i) => agreed(i, 2))).verdict.status).toBe('pass');
+    // One item without a record: incomplete, never pass.
+    expect(calibrationReport(items, items.slice(1).map((i) => agreed(i, 2))).verdict.status).toBe('incomplete');
+    // One stopped before its escalation: incomplete.
+    const stopped = items.map((i, k) => (k === 0 ? { ...record(i.question, i.case.ntsbNo, 2, 1, 'unknown', 'escalation-budget-exhausted') } : agreed(i, 2)));
+    expect(calibrationReport(items, stopped).verdict.status).toBe('incomplete');
+    // Four wrong in one family: that family fails its floor (and the overall bound).
+    const wrong = items.map((i, k) => agreed(i, k < 4 ? 0 : 2));
+    const v = calibrationReport(items, wrong).verdict;
+    expect(v.status).toBe('fail');
+    expect(v.reasons.join(' ')).toMatch(/narrative-control\/negation: final labels accuracy/);
+    // A family below the minimum size fails the criteria.
+    expect(calibrationReport(fam('negation', 7), fam('negation', 7).map((i) => agreed(i, 2))).verdict.reasons.join(' ')).toMatch(/holdout items/);
   });
 
   it('draws disjoint AI and owner audit samples by tag, label and agreement class, agreements included', () => {
@@ -265,11 +315,69 @@ describe('agreement and calibration figures', () => {
     const d = dataset();
     const fam = d.questions.find((q) => q.relatedCodes !== undefined && q.paraphrase_of === undefined) as NarrativeItem;
     const coded = fam.relatedPositives[0] as string;
-    const out = discrepancies(d, [record(fam.id, coded, 0, 0, 0, 'agreed'), record(fam.id, 'ZZZ00XX000', 2, 2, 2, 'agreed')]);
+    const out = discrepancies(d, [record(fam.id, coded, 0, 2, 0, 'adjudicated', adj(0, 0)), record(fam.id, 'ZZZ00XX000', 2, 1, 2, 'adjudicated', adj(2, 2))]);
     expect(out).toEqual([
-      { family: fam.id, ntsbNo: coded, kind: 'coded-not-relevant', label: 0 },
-      { family: fam.id, ntsbNo: 'ZZZ00XX000', kind: 'relevant-not-coded', label: 2 },
+      { family: fam.id, ntsbNo: coded, kind: 'coded-not-relevant', by: 'final', grade: 0 },
+      { family: fam.id, ntsbNo: coded, kind: 'coded-not-relevant', by: 'judge-a', grade: 0 },
+      { family: fam.id, ntsbNo: 'ZZZ00XX000', kind: 'relevant-not-coded', by: 'final', grade: 2 },
+      { family: fam.id, ntsbNo: 'ZZZ00XX000', kind: 'relevant-not-coded', by: 'judge-a', grade: 2 },
     ]);
+  });
+});
+
+describe('method comparisons', () => {
+  const runAt = (method: string, sample: number, top: string[]): PoolRun => ({ ...run(method, sample, top, top), member: 'fam' });
+  const poolOf = (runs: PoolRun[], cases: string[]) => assemblePool({ family: item(), members: [item()], runs, cohort: cases, lure: [], rule: { ...RULE, depth: 10, tail: { nearFrom: 11, nearTo: 12, near: 0, far: 0 } } as never });
+
+  it('bounds the P@6 improvement jointly over shared unknowns, tighter than the endpoints', () => {
+    // A and B deliver the same unknown case U plus one known case each; U cancels in the difference.
+    const cases = ['K1', 'K2', 'U'];
+    const pool = poolOf([runAt('a', 1, ['U', 'K1']), runAt('b', 1, ['U', 'K2'])], cases);
+    const ref = familyReference({ ...pool, cohort: null }, new Map<string, Label>([['K1', 0], ['K2', 2]]));
+    const values = questionValues(pool, scoreRuns(pool, ref, new Map()));
+    const [d] = methodDifferences(pool, ref, new Map(), values, 'a', 'b', 'p6');
+    expect(d).toMatchObject({ lower: 1 / 6, upper: 1 / 6, method: 'joint' });
+    // The endpoints alone would give [b.lower - a.upper, b.upper - a.lower] = [0, 2/6].
+    const va = values.find((v) => v.method === 'a')?.p6 as { lower: number; upper: number };
+    const vb = values.find((v) => v.method === 'b')?.p6 as { lower: number; upper: number };
+    expect([vb.lower - va.upper, vb.upper - va.lower]).toEqual([0, 2 / 6]);
+  });
+
+  it("uses cross-endpoint differences for nDCG@6: the gate's example A = [0.5, 1], B = [2/3, 1] gives [-1/3, 1/2]", () => {
+    const pool = poolOf([runAt('a', 1, ['K1']), runAt('b', 1, ['K1'])], ['K1']);
+    const ref = familyReference({ ...pool, cohort: null }, new Map<string, Label>([['K1', 2]]));
+    const values: QuestionValue[] = [
+      { member: 'fam', family: 'fam', method: 'a', recallGate: null, recallDiagnostic: null, p6: { lower: 0, upper: 0 }, ndcg6: { lower: 0.5, upper: 1 }, noPositivePossible: false, abstention: false, supported: { lower: 0, upper: 0 } },
+      { member: 'fam', family: 'fam', method: 'b', recallGate: null, recallDiagnostic: null, p6: { lower: 0, upper: 0 }, ndcg6: { lower: 2 / 3, upper: 1 }, noPositivePossible: false, abstention: false, supported: { lower: 0, upper: 0 } },
+    ];
+    const [d] = methodDifferences(pool, ref, new Map(), values, 'a', 'b', 'ndcg6');
+    expect(d?.lower).toBeCloseTo(-1 / 3, 12);
+    expect(d?.upper).toBeCloseTo(1 / 2, 12);
+    expect(d?.method).toBe('cross-endpoint');
+  });
+
+  it('bounds supported P@6 jointly over relevance and each bundle\'s answerability', () => {
+    // Same relevant case K delivered by both methods with different passages: only the bundles' answerability differs.
+    const a = runAt('a', 1, ['K']);
+    const b = { ...runAt('b', 1, ['K']), bundle: [{ ...(runAt('b', 1, ['K']).bundle[0] as PoolRun['bundle'][number]), passages: [{ passageId: 'p-other', sectionId: 'K:factual/aircraft-1', revisionId: 'r', kind: 'factual' as const, scope: 'aircraft' as const, aircraftKey: 1, start: 20, end: 30, textSha256: 's-other' }] }] };
+    const pool = poolOf([a, b], ['K']);
+    const ref = familyReference({ ...pool, cohort: null }, new Map<string, Label>([['K', 2]]));
+    const keyA = bundleKeyOf(a.bundle[0]?.passages ?? []);
+    const values = questionValues(pool, scoreRuns(pool, ref, new Map()));
+    // A's bundle is known answerable, B's unknown: the improvement lies in [-1/6, 0].
+    const [d] = methodDifferences(pool, ref, new Map([[`K|${keyA}`, 2]]), values, 'a', 'b', 'supported');
+    expect(d?.lower).toBeCloseTo(-1 / 6, 12);
+    expect(d?.upper).toBeCloseTo(0, 12);
+  });
+
+  it('declares a winner only when the bootstrapped interval of the improvement bounds clears zero', () => {
+    const boot = { resamples: 500, seed: 1 };
+    const sure = Array.from({ length: 8 }, (_, i) => ({ member: `m${i}`, family: `f${i}`, lower: 0.1, upper: 0.3, method: 'joint' as const }));
+    expect(compareMethods(sure, (m) => m, boot).conclusion).toBe('b-better');
+    const open = sure.map((d) => ({ ...d, lower: -0.1 }));
+    expect(compareMethods(open, (m) => m, boot).conclusion).toBe('inconclusive');
+    const worse = sure.map((d) => ({ ...d, lower: -0.3, upper: -0.1 }));
+    expect(compareMethods(worse, (m) => m, boot).conclusion).toBe('a-better');
   });
 });
 

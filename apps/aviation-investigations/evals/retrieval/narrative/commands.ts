@@ -43,12 +43,14 @@ import { DEFAULT_GRID, filterConsistency, gitState } from '../experiments/cli.js
 import { loadGrid } from '../experiments/grid.js';
 import { providerScopeCaller, runScopeSamples, scopeInventory, type ScopeRun } from '../experiments/scope.js';
 import { DEFAULT_CALIBRATION, DEFAULT_NARRATIVE_DATASET } from './build.js';
-import { CalibrationDatasetSchema, calibrationProblems, controlEvidence, type CalibrationDataset } from './calibration.js';
+import { CalibrationDatasetSchema, calibrationProblems, controlEvidence, itemKey, type CalibrationDataset } from './calibration.js';
+import { CALIBRATION_CRITERIA, CRITERIA_SHA256 } from './criteria.js';
+import { experimentIdentity, joinJudgments, type ExperimentData, type JudgmentFile, type JudgmentSet } from './identity.js';
 import { attemptReserveUsd, createAnthropicJudge, createOpenAIJudge, type JudgeCaller } from './clients.js';
 import { ADJUDICATOR, DEFAULT_CONCURRENCY, JUDGE_A, JUDGE_B, JUDGE_TIMEOUT_MS, RUN_LIMITS_USD } from './config.js';
 import { NarrativeDatasetSchema, families, narrativeDatasetProblems, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { CASE_TOKEN_BUDGET, bundleFingerprint, fingerprint, loadCaseEvidence, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
-import { AttemptSender, JudgmentCache, answerabilitySubject, byPriority, judgePairs, loggedSpendUsd, openAllocation, relevanceSubject, type Allocation, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
+import { AttemptSender, JudgmentCache, answerabilitySubject, bundleKeyOf, byPriority, judgePairs, loggedSpendUsd, openAllocation, relevanceSubject, type Allocation, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
 import {
   ASSUMPTIONS,
   addRuns,
@@ -68,7 +70,7 @@ import {
   type RunCost,
   type Samples,
 } from './plan.js';
-import { POOL_RULE, SCHEDULE, buildPools, bundlePairs, casePriority, indexCohort, poolFileVersion, tierOf, type FamilyPool, type PoolFile, type Stage } from './pool.js';
+import { POOL_RULE, SCHEDULE, buildPools, bundlePairs, casePriority, indexCohort, poolFileVersion, tierOf, verifyPoolFile, withFingerprints, type FamilyPool, type PoolFile, type Stage } from './pool.js';
 import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
 import {
   agreementReport,
@@ -76,6 +78,9 @@ import {
   answerabilityLabels,
   calibrationReport,
   compareMethods,
+  methodDifferences,
+  type CompareMetric,
+  type DifferenceBounds,
   discoveryByDepth,
   discrepancies,
   familyReference,
@@ -88,7 +93,7 @@ import {
   tailEstimate,
   type QuestionValue,
 } from './score.js';
-import { specSha256, sha256 } from './spec.js';
+import { canonicalJson, specSha256, sha256 } from './spec.js';
 
 export interface CommandOptions {
   config: AppConfig;
@@ -478,7 +483,7 @@ export async function poolsCommand(opts: CommandOptions & { samples: Samples; ma
     charge({ purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: billed.usd });
     const texts = new Map<string, string[]>();
     for (const q of d.questions) texts.set(q.id, run.samples.filter((s) => s.id === q.id).sort((x, y) => x.sample - y.sample).map((s) => s.keywordText));
-    const pools = await buildPools(
+    const built = await buildPools(
       { es: ctx.es, dataset: ctx.run.target, passagesIndex: ctx.run.index, casesIndex: ctx.casesIndex, eventAircraftQualification: ctx.run.contract.eventAircraftQualification },
       d,
       embedder,
@@ -486,6 +491,18 @@ export async function poolsCommand(opts: CommandOptions & { samples: Samples; ma
       texts,
       log,
     );
+    // Every pool case's complete-input fingerprint, from one read-only snapshot: the evidence identity the judgments must match.
+    const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-pools' });
+    await client.connect();
+    let fingerprints: Map<string, string>;
+    try {
+      const loaded = await loadCaseEvidence(client, ctx.source.generationId, [...new Set(built.flatMap((f) => f.cases.map((c) => c.ntsbNo)))]);
+      if (loaded.integrity.length > 0) log(`warning: ${loaded.integrity.length} pool case(s) failed the section hash check and stay unknown: ${loaded.integrity.slice(0, 5).map((x) => x.ntsbNo).join(', ')}`);
+      fingerprints = new Map([...loaded.evidence.entries()].map(([n, e]) => [n, fingerprint(e)]));
+    } finally {
+      await client.end();
+    }
+    const pools = built.map((f) => withFingerprints(POOL_RULE, f, fingerprints));
     const body: Omit<PoolFile, 'version'> = {
       kind: 'track-n-pools',
       rule: POOL_RULE,
@@ -503,11 +520,12 @@ export async function poolsCommand(opts: CommandOptions & { samples: Samples; ma
   }
 }
 
+/** A pool file, every family's version and the file's version recomputed from the content (nothing stored is trusted). */
 export function readPools(file: string): PoolFile {
   const p = JSON.parse(readFileSync(resolve(file), 'utf8')) as PoolFile;
   if (p.kind !== 'track-n-pools') throw new Error(`${file} is not a Track N pool file`);
-  const { version, ...body } = p;
-  if (poolFileVersion(body) !== version) throw new Error(`${file}: the pool version does not match its content`);
+  const problems = verifyPoolFile(p);
+  if (problems.length > 0) throw new Error(`${file}: ${problems.slice(0, 5).join('; ')}`);
   return p;
 }
 
@@ -534,7 +552,12 @@ export async function poolSubjects(ctx: NarrativeContext, pools: PoolFile): Prom
       for (const c of pool.cases) {
         const e = loaded.evidence.get(c.ntsbNo);
         if (!e) continue;
-        items.push({ subject: relevanceSubject(refOf(f, f.id), e, planChunks(e), fingerprint(e)), priority: casePriority(c, pool.type) });
+        const fp = fingerprint(e);
+        const recorded = pool.fingerprints[c.ntsbNo];
+        if (recorded !== undefined && recorded !== fp) {
+          throw new Error(`pool ${pool.family}: the record of ${c.ntsbNo} changed since the pool was built (fingerprint differs); build a new pool version; nothing paid`);
+        }
+        items.push({ subject: relevanceSubject(refOf(f, f.id), e, planChunks(e), fp), priority: casePriority(c, pool.type) });
       }
     }
     return { items: items.sort(byPriority), missing: [...loaded.missing, ...loaded.integrity.map((x) => x.ntsbNo)] };
@@ -689,6 +712,33 @@ export async function runJudging(
   }
 }
 
+/**
+ * D3 (criteria.ts): the holdout runs once per frozen configuration. A holdout run records
+ * its experiment identity under `<out-dir>/holdout-runs.jsonl`; a later holdout run of
+ * the same calibration set under another identity is refused (a configuration chosen
+ * after seeing the holdout needs a fresh holdout set). The same identity may resume.
+ */
+export function guardHoldout(outDir: string, labelsSha256: string, experiment: Record<string, unknown>): void {
+  const file = resolve(outDir, 'holdout-runs.jsonl');
+  const identity = sha256(canonicalJson(experiment));
+  const runs = existsSync(file)
+    ? readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((l) => l.trim() !== '')
+        .map((l) => JSON.parse(l) as { labelsSha256: string; experimentSha256: string; at: string })
+    : [];
+  const other = runs.find((r) => r.labelsSha256 === labelsSha256 && r.experimentSha256 !== identity);
+  if (other) {
+    throw new Error(
+      `the holdout of this calibration set was already run (${other.at}) under another configuration; a configuration chosen after seeing the holdout needs a fresh holdout set (D3); nothing paid`,
+    );
+  }
+  if (!runs.some((r) => r.labelsSha256 === labelsSha256 && r.experimentSha256 === identity)) {
+    mkdirSync(outDir, { recursive: true });
+    appendFileSync(file, `${JSON.stringify({ labelsSha256, experimentSha256: identity, at: new Date().toISOString() })}\n`);
+  }
+}
+
 /** `judge` / `answerability`: plan, then (with `--confirm-cost`) judge every pair with per-attempt reservations. */
 export async function judgeCommand(
   opts: CommandOptions & {
@@ -708,6 +758,7 @@ export async function judgeCommand(
   try {
     if (ctx.problems.length > 0) throw new Error(`preflight failed; nothing paid:\n  ${ctx.problems.join('\n  ')}`);
     let items: PairPlanItem[];
+    let pools: PoolFile | null = null;
     if (opts.set === 'calibration') {
       if (!opts.split) throw new Error('--split dev|holdout is required for calibration (dev first, holdout once)');
       const r = await calibrationSubjects(ctx, opts.split);
@@ -715,7 +766,7 @@ export async function judgeCommand(
       items = r.items;
     } else {
       if (!opts.pools) throw new Error('--pools is required');
-      const pools = readPools(opts.pools);
+      pools = readPools(opts.pools);
       if (pools.datasetSpecSha256 !== ctx.dataset.source.specSha256 || pools.generationId !== ctx.source.generationId) throw new Error('the pool file is of another dataset or generation; nothing paid');
       if (opts.set === 'relevance') {
         const r = await poolSubjects(ctx, pools);
@@ -728,6 +779,8 @@ export async function judgeCommand(
         items = r.items;
       }
     }
+    const experiment = experimentIdentity(opts.set, experimentData(opts.set, ctx.dataset, ctx.calibration, pools) as ExperimentData);
+    if (opts.set === 'calibration' && opts.split !== 'dev' && opts.confirm) guardHoldout(opts.outDir, ctx.calibration.labels.sha256, experiment);
     const share = opts.maxEscalationShare ?? (opts.set === 'calibration' ? 1 : ASSUMPTIONS.escalationBound);
     if (opts.set !== 'calibration' && share > ASSUMPTIONS.escalationBound) throw new Error(`escalation is bounded at ${ASSUMPTIONS.escalationBound} of the pairs`);
     const limit = opts.maxUsd ?? (opts.set === 'calibration' ? RUN_LIMITS_USD.calibration : opts.set === 'relevance' ? RUN_LIMITS_USD.relevance : RUN_LIMITS_USD.answerability);
@@ -746,6 +799,7 @@ export async function judgeCommand(
         outDir: opts.outDir,
         reference: ctx.dataset.reference,
         schedule: scheduleInfo(items, opts.set === 'relevance' ? (opts.stage ?? 2) : null),
+        experiment,
         log,
       },
       {
@@ -770,65 +824,141 @@ export { families };
 // ---------------------------------------------------------------------------
 // report (free)
 
-interface JudgmentFile {
-  kind: 'track-n-judgments';
-  set: 'calibration' | 'relevance' | 'answerability';
-  records: PairRecord[];
-}
-
-const readJudgments = (file: string): JudgmentFile => {
-  const j = JSON.parse(readFileSync(resolve(file), 'utf8')) as JudgmentFile;
-  if (j.kind !== 'track-n-judgments') throw new Error(`${file} is not a Track N judgments file`);
-  return j;
+const readJudgments = (file: string): { name: string; body: JudgmentFile } => {
+  const body = JSON.parse(readFileSync(resolve(file), 'utf8')) as JudgmentFile;
+  if (body.kind !== 'track-n-judgments') throw new Error(`${file} is not a Track N judgments file`);
+  return { name: file, body };
 };
 
-/** `report`: metrics and diagnostics from a pool file and judgment files (no target, nothing paid). */
+/** The experiment data of a set: the dataset and pool file, or the frozen calibration with its criteria (identity.ts). */
+export const experimentData = (set: JudgmentSet, d: NarrativeDataset, c: CalibrationDataset, pools: PoolFile | null): ExperimentData | null =>
+  set === 'calibration'
+    ? { calibrationVersion: c.version, labelsSha256: c.labels.sha256, criteriaSha256: CRITERIA_SHA256 }
+    : pools
+      ? { datasetSpecSha256: d.source.specSha256, poolVersion: pools.version }
+      : null;
+
+/** The checks of one record against the current data (identity.ts, "Joining records"); null when it passes. */
+export function recordCheck(d: NarrativeDataset, c: CalibrationDataset, pools: PoolFile | null): (set: JudgmentSet, r: PairRecord) => string | null {
+  const familiesById = new Map(families(d).map((f) => [f.id, f]));
+  const itemsByKey = new Map(c.items.map((i) => [itemKey(i), i]));
+  const poolsById = new Map((pools?.families ?? []).map((p) => [p.family, p]));
+  const bundles = new Map((pools?.families ?? []).map((p) => [p.family, new Set(bundlePairs(p).map((x) => `${x.ntsbNo}|${bundleKeyOf(x.passages)}`))]));
+  return (set, r) => {
+    if (set === 'calibration') {
+      const item = itemsByKey.get(`${r.kind}|${r.family}|${r.ntsbNo}|${r.bundleKey ?? ''}`);
+      if (!item) return 'no frozen calibration item matches it';
+      if (item.questionVersion !== r.questionVersion || item.rubricVersion !== r.rubricVersion) return 'its question or rubric version is not the frozen item\'s';
+      if (item.kind === 'relevance' && item.case.fingerprint !== r.fingerprint) return 'its evidence fingerprint is not the frozen item\'s';
+      return null;
+    }
+    const f = familiesById.get(r.family);
+    if (!f) return 'unknown question family';
+    if (f.questionVersion !== r.questionVersion || f.rubricVersion !== r.rubricVersion) return 'its question or rubric version is not the dataset\'s';
+    const pool = poolsById.get(r.family);
+    if (!pool) return 'its family is not in the pool file';
+    if (set === 'relevance') {
+      if (!pool.cases.some((x) => x.ntsbNo === r.ntsbNo)) return 'its case is not in the family\'s pool';
+      const recorded = pool.fingerprints[r.ntsbNo];
+      if (recorded !== undefined && recorded !== r.fingerprint) return 'its evidence fingerprint is not the one the pool recorded';
+      return null;
+    }
+    if (!bundles.get(r.family)?.has(`${r.ntsbNo}|${r.bundleKey ?? ''}`)) return 'its bundle is not a delivered bundle of the pool';
+    return null;
+  };
+}
+
+const DIAGNOSTIC_NOTE =
+  'Diagnostics, not validation: agreement between model judges (and with the adjudicator) measures their consistency, not their correctness; kappa 0.7 and agreement 0.8 are investigation thresholds.';
+
+/** `report`: metrics and diagnostics from a pool file and judgment files (no target, nothing paid). Refuses incompatible files and conflicting records. */
 export async function reportCommand(opts: { outDir: string; pools?: string; judgments: readonly string[]; log: (m: string) => void }): Promise<number> {
   const { log } = opts;
   const d = readDataset();
+  const c = readCalibration();
+  const pools = opts.pools ? readPools(opts.pools) : null;
   const files = opts.judgments.map(readJudgments);
-  const records = (set: JudgmentFile['set']) => files.filter((f) => f.set === set).flatMap((f) => f.records);
-  const tagsOf = (family: string) => d.questions.find((q) => q.id === family)?.tags ?? [];
-  const out: Record<string, unknown> = { kind: 'track-n-report', reference: d.reference, caveat: d.caveat, createdAt: new Date().toISOString(), git: gitState() };
-  const cal = records('calibration');
-  if (cal.length > 0) {
-    const c = readCalibration();
-    const calTags = (family: string) => [...new Set(c.items.filter((i) => i.question === family).flatMap((i) => i.tags))];
-    out.calibration = { report: calibrationReport(c.items, cal), agreement: agreementReport(cal, calTags) };
-    log(`calibration: ${cal.length} pair records`);
+  const joined = joinJudgments(
+    files,
+    (set) => {
+      const data = experimentData(set, d, c, pools);
+      return data ? experimentIdentity(set, data) : null;
+    },
+    recordCheck(d, c, pools),
+  );
+  if (joined.problems.length > 0) {
+    for (const p of joined.problems.slice(0, 50)) log(`refused: ${p}`);
+    log(`report refused: ${joined.problems.length} problem(s); no report written`);
+    return 1;
   }
-  const rel = records('relevance');
+  const tagsOf = (family: string) => d.questions.find((q) => q.id === family)?.tags ?? [];
+  const out: Record<string, unknown> = {
+    kind: 'track-n-report',
+    reference: d.reference,
+    caveat: d.caveat,
+    createdAt: new Date().toISOString(),
+    git: gitState(),
+    inputs: { files: files.map((f) => ({ file: f.name, set: f.body.set, run: f.body.run, records: f.body.records.length, stopped: f.body.stopped })), merged: joined.merged, superseded: joined.superseded },
+  };
+  const cal = joined.records.calibration;
+  if (cal.length > 0) {
+    const calTags = (family: string) => [...new Set(c.items.filter((i) => i.question === family).flatMap((i) => i.tags))];
+    const report = calibrationReport(c.items, cal);
+    out.calibration = { criteria: CALIBRATION_CRITERIA, report, agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(cal, calTags) } };
+    log(`calibration: ${cal.length} pair records; holdout verdict ${report.verdict.status}${report.verdict.reasons.length > 0 ? ` (${report.verdict.reasons.slice(0, 3).join('; ')})` : ''}`);
+  }
+  const rel = joined.records.relevance;
+  const ans = joined.records.answerability;
   if (rel.length > 0) {
-    if (!opts.pools) throw new Error('--pools is required to score relevance judgments');
-    const pools = readPools(opts.pools);
+    if (!pools) throw new Error('--pools is required to score relevance judgments');
     const labels = relevanceLabels(rel);
-    const answer = answerabilityLabels(records('answerability'));
+    const answer = answerabilityLabels(ans);
     const groups = questionGroups(d, labels);
     const values: QuestionValue[] = [];
     const diagnostics: Record<string, unknown>[] = [];
+    const methods = [...POOL_RULE.methods];
+    const metrics: CompareMetric[] = ['recallGate', 'p6', 'ndcg6', 'supported'];
+    const diffs = new Map<string, DifferenceBounds[]>();
     for (const pool of pools.families) {
       const f = families(d).find((x) => x.id === pool.family);
       const l = labels.get(pool.family) ?? new Map();
       const ref = familyReference({ type: pool.type, cases: pool.cases, cohort: f?.cohort.cases ?? null }, l);
-      const runs = scoreRuns(pool, ref, answer.get(pool.family) ?? new Map());
-      values.push(...questionValues(pool, runs));
+      const ansLabels = answer.get(pool.family) ?? new Map();
+      const runs = scoreRuns(pool, ref, ansLabels);
+      const mine = questionValues(pool, runs);
+      values.push(...mine);
+      for (let i = 0; i < methods.length; i += 1) {
+        for (let j = i + 1; j < methods.length; j += 1) {
+          const [a, b] = [methods[i] as string, methods[j] as string];
+          for (const m of metrics) {
+            const key = `${b} vs ${a}|${m}`;
+            diffs.set(key, [...(diffs.get(key) ?? []), ...methodDifferences(pool, ref, ansLabels, mine, a, b, m)]);
+          }
+        }
+      }
       diagnostics.push({ family: pool.family, coverage: judgedCoverage(pool, l, f?.cohort.cases ?? null), discovery: discoveryByDepth(pool, l), exclusive: methodExclusive(pool, l), tail: tailEstimate(pool, l) });
     }
     const boot = { resamples: 10_000, seed: 20261023 };
-    const methods = [...POOL_RULE.methods];
-    const comparisons: Record<string, unknown> = {};
-    for (let i = 0; i < methods.length; i += 1) {
-      for (let j = i + 1; j < methods.length; j += 1) {
-        const [a, b] = [methods[i] as string, methods[j] as string];
-        comparisons[`${b} vs ${a}`] = Object.fromEntries((['recallGate', 'p6', 'ndcg6', 'supported'] as const).map((m) => [m, compareMethods(values, (member) => groups.get(member) ?? member, a, b, m, boot)]));
-      }
+    const comparisons: Record<string, Record<string, unknown>> = {};
+    for (const [key, list] of diffs) {
+      const [pair, metric] = key.split('|') as [string, string];
+      comparisons[pair] = { ...(comparisons[pair] ?? {}), [metric]: { ...compareMethods(list, (member) => groups.get(member) ?? member, boot), perQuestion: list } };
     }
     const flagged = (k: 'noPositivePossible' | 'abstention') => values.filter((v) => v[k]).map((v) => ({ member: v.member, method: v.method }));
-    out.relevance = { poolVersion: pools.version, values, comparisons, noPositivePossible: flagged('noPositivePossible'), abstentions: flagged('abstention'), diagnostics, agreement: agreementReport(rel, tagsOf), discrepancies: discrepancies(d, rel), audit: auditSamples(rel, tagsOf) };
-    log(`relevance: ${rel.length} pair records over ${pools.families.length} families`);
+    out.relevance = {
+      poolVersion: pools.version,
+      values,
+      comparisons: { note: 'Improvement bounds per question (joint over shared unknowns for P@6 and supported P@6, cross-endpoint for nDCG@6), group-bootstrapped; a method is better only when the whole interval clears zero.', ...comparisons },
+      noPositivePossible: flagged('noPositivePossible'),
+      abstentions: flagged('abstention'),
+      diagnostics,
+      agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(rel, tagsOf) },
+      discrepancies: discrepancies(d, rel),
+      audit: auditSamples(rel, tagsOf),
+    };
+    log(`relevance: ${rel.length} pair records over ${pools.families.length} families (${joined.merged} duplicates merged, ${joined.superseded} superseded)`);
   }
-  const ans = records('answerability');
-  if (ans.length > 0) out.answerability = { agreement: agreementReport(ans, tagsOf), audit: auditSamples(ans, tagsOf) };
+  if (ans.length > 0) out.answerability = { agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(ans, tagsOf) }, audit: auditSamples(ans, tagsOf) };
   const file = writeJson(opts.outDir, `narrative-report-${stamp(new Date())}.json`, out);
   log(`report: ${file}`);
   return 0;

@@ -21,12 +21,16 @@
  *   of the cohort, each a seeded sample of fixed size. Its relevant share estimates the
  *   relevant cases the pool missed (a coverage diagnostic, never a metric bound).
  *
- * **Identity.** A family pool's version is sha256 over the rule, the judged question and
- * rubric versions, the members, every run (method, member, sample, ranking and bundle)
- * and the cases with their provenance; the pool file's version covers every family, the
- * target index identities, the embedding and the scope stage. A method that retrieves
- * an unjudged case needs a new pool version, and every comparison is re-scored against
- * one version.
+ * **Identity.** A family pool's version is sha256 over the rule and the family's complete
+ * canonical payload: the judged question and rubric versions, the members and their
+ * versions, every run (method, member, sample, ranking and bundle with passage text
+ * hashes), the cases with their provenance, the tail and every case's complete-input
+ * fingerprint at the time the pool was built. The pool file's version covers every
+ * family's version, the target index identities, the embedding and the scope stage.
+ * `verifyPoolFile` recomputes every family's version from its payload and the file's
+ * version from those, so no stored hash is trusted on load. A method that retrieves an
+ * unjudged case needs a new pool version, and every comparison is re-scored against one
+ * version.
  */
 import type { Client, estypes } from '@elastic/elasticsearch';
 import type { Embedder } from '../../../server/ai/embeddings.js';
@@ -92,6 +96,10 @@ export interface FamilyPool {
   rubricVersion: string;
   type: NarrativeItem['type'];
   members: string[];
+  /** Each member's question version (the paraphrases' texts are part of the pool's identity). */
+  memberVersions: Record<string, string>;
+  /** Each pool case's complete-input fingerprint when the pool was built; a case whose record changes needs a new pool. */
+  fingerprints: Record<string, string>;
   cohortSize: number;
   cases: PoolCase[];
   tail: { nearSize: number; farSize: number; near: string[]; far: string[] };
@@ -176,20 +184,47 @@ export function assemblePool(input: {
     rubricVersion: f.rubricVersion,
     type: f.type,
     members: input.members.map((m) => m.id),
+    memberVersions: Object.fromEntries(input.members.map((m) => [m.id, m.memberVersion])),
+    fingerprints: {},
     cohortSize: f.cohort.size,
     cases: list,
     tail: { nearSize, farSize, near, far },
     runs,
   };
-  return {
-    ...pool,
-    version: sha256(canonicalJson({ rule, ...pool, members: input.members.map((m) => [m.id, m.memberVersion]) })),
-  };
+  return { ...pool, version: familyVersion(rule, pool) };
+}
+
+/** A family pool's version: the rule and its complete canonical payload (everything but the version itself). */
+export const familyVersion = (rule: PoolRule, pool: Omit<FamilyPool, 'version'> & { version?: string }): string => {
+  const { version: _version, ...payload } = pool;
+  return sha256(canonicalJson({ rule, ...payload }));
+};
+
+/** The pool with each case's complete-input fingerprint recorded (sorted keys), its version recomputed. */
+export function withFingerprints(rule: PoolRule, pool: FamilyPool, fingerprints: ReadonlyMap<string, string>): FamilyPool {
+  const recorded: Record<string, string> = {};
+  for (const c of [...pool.cases].sort((a, b) => (a.ntsbNo < b.ntsbNo ? -1 : 1))) {
+    const fp = fingerprints.get(c.ntsbNo);
+    if (fp !== undefined) recorded[c.ntsbNo] = fp;
+  }
+  const next = { ...pool, fingerprints: recorded };
+  return { ...next, version: familyVersion(rule, next) };
 }
 
 /** The pool file's version: every family's version, the target and the methods. */
 export const poolFileVersion = (p: Omit<PoolFile, 'version'>): string =>
   sha256(canonicalJson({ rule: p.rule, datasetSpecSha256: p.datasetSpecSha256, generationId: p.generationId, target: p.target, methods: p.methods, families: p.families.map((f) => f.version) }));
+
+/** Problems of a pool file: every family's version recomputed from its payload, then the file's version from those. */
+export function verifyPoolFile(p: PoolFile): string[] {
+  const problems: string[] = [];
+  for (const f of p.families) {
+    if (familyVersion(p.rule, f) !== f.version) problems.push(`family ${f.family}: its version does not match its content`);
+  }
+  const { version, git: _git, ...body } = p;
+  if (poolFileVersion(body) !== version) problems.push('the pool file version does not match its families');
+  return problems;
+}
 
 // ---------------------------------------------------------------------------
 // Priorities and pairs

@@ -34,9 +34,11 @@
  * the cache, so the next run continues where this one stopped without paying again.
  *
  * **Cache.** Judge outcomes are keyed by (kind, question version, rubric version, case,
- * complete-input or bundle fingerprint, provider, model with its frozen settings, prompt
- * version, validator version, chunk budget); adjudications also by the two verdicts they
- * saw. A cached outcome is reused, never re-bought.
+ * complete-input or bundle fingerprint, provider, model with its frozen settings and
+ * caps, prompt version, the pinned request-format and schema hashes, validator version,
+ * chunk budget); the adjudicator's blind grade by the same key and its step, its decision
+ * also by the two verdicts and the blind grade it saw. A cached outcome is reused, never
+ * re-bought; a failed one is never cached.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -81,6 +83,7 @@ import {
   type ShownVerdict,
 } from './prompts.js';
 import { LABEL_OF, type Answerability, type ChunkVerdict, type Verdict } from './schemas.js';
+import { REQUEST_FORMAT_SHA256, SCHEMAS_SHA256 } from './identity.js';
 import { canonicalJson, sha256, type Grade, type Rubric } from './spec.js';
 
 /** Bound on escalations: at most this share of a run's pairs goes to the adjudicator. */
@@ -541,6 +544,9 @@ export function judgeKeyIdentity(s: Pick<Subject, 'kind' | 'ref' | 'ntsbNo' | 'f
     model: caller.config.model,
     judge: judgeIdentity(caller.config),
     prompts: s.kind === 'relevance' ? JUDGE_PROMPTS_VERSION : ANSWERABILITY_PROMPTS_VERSION,
+    // The pinned request formats and schemas (identity.ts): an edited prompt or format re-judges even without a version bump.
+    requests: REQUEST_FORMAT_SHA256,
+    schemas: SCHEMAS_SHA256,
     validator: VALIDATOR_VERSION,
     chunkBudget: s.kind === 'relevance' ? CASE_TOKEN_BUDGET : null,
   };
