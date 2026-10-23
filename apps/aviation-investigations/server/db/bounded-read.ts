@@ -6,6 +6,10 @@
  *
  * - **Acquisition** races the bound. A connection the pool hands over after the bound
  *   has passed is released straight back, so a late acquisition never strands a slot.
+ *   An acquisition that never completes (a server that stalls in the handshake, a queue
+ *   that does not move) is ended by the pool's own connect timeout (server/db/client.ts),
+ *   so neither the connecting client nor the queued waiter outlives it, and the pool can
+ *   still shut down.
  * - **Execution** is bounded twice: on the server by `SET LOCAL statement_timeout` (the
  *   statement runs in its own read-only transaction, so the setting never outlives it),
  *   and here by the same bound and the caller's signal. When either ends the wait first,

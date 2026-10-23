@@ -27,6 +27,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import pg from 'pg';
+import { DB_CONNECT_TIMEOUT_MS } from '../../server/db/client.js';
 import { APP_DIR } from '../../worker/config.js';
 import { evalConfig } from './config.js';
 import { readGenerationSource, type GenerationSource, type QuestionLabels } from './generation.js';
@@ -226,7 +227,7 @@ async function main(argv: string[]): Promise<number> {
   const config = evalConfig(values['env-files']);
   if (!config.databaseUrl) throw new Error('DATABASE_URL is not set');
   const out = values.out ? resolve(values.out) : DEFAULT_DATASET;
-  const client = new pg.Client({ connectionString: config.databaseUrl, application_name: 'aviation-eval-silver' });
+  const client = new pg.Client({ connectionString: config.databaseUrl, application_name: 'aviation-eval-silver', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await client.connect();
   try {
     let generationId: number;

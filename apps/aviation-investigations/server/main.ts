@@ -27,7 +27,7 @@ import { createAiRuntime } from './ai/runtime.js';
 import { buildApp } from './app.js';
 import { createHybridRetriever } from './briefs/retriever.js';
 import { createBriefServices, type BriefServices } from './briefs/services.js';
-import { closeDb, createDb, type Db } from './db/client.js';
+import { DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from './db/client.js';
 import { manifestCasesIndex } from './db/generations.js';
 import { startControlMaintenance } from './quota/maintenance.js';
 import { startTracing } from './observability/tracing.js';
@@ -76,7 +76,8 @@ async function main(): Promise<void> {
   }
 
   const tracing = startTracing(config);
-  const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api' });
+  // Opening a connection or waiting for one ends after 5 s (server/db/client.ts).
+  const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api', connectTimeoutMs: DB_CONNECT_TIMEOUT_MS });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 10_000, maxRetries: 1 });
   const evidence = briefServices(config, db, es);
   const app = buildApp({

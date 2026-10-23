@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { Client } from '@elastic/elasticsearch';
 import pg from 'pg';
-import { createDb, type Db } from '../../server/db/client.js';
+import { DB_CONNECT_TIMEOUT_MS, createDb, type Db } from '../../server/db/client.js';
 import { CONTROL_TABLES } from '../../server/db/schema/index.js';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 import { readDotenvAllowlisted } from '../../shared/env-files.js';
@@ -44,7 +44,7 @@ export function testDbUrl(role: 'app' | 'migrator' | 'ingest' = 'app'): string {
 }
 
 export function testPool(role: 'app' | 'migrator' | 'ingest' = 'app'): pg.Pool {
-  return new pg.Pool({ connectionString: testDbUrl(role), max: 2 });
+  return new pg.Pool({ connectionString: testDbUrl(role), max: 2, connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
 }
 
 /** Drizzle on aviation_test as the given role; close with `closeDb`. */

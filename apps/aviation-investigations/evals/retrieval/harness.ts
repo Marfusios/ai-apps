@@ -10,7 +10,7 @@ import pg from 'pg';
 import type { AppConfig } from '../../shared/config.js';
 import { queryEmbeddingInput, type Embedder } from '../../server/ai/embeddings.js';
 import { countTokens } from '../../server/ai/tokens.js';
-import { closeDb, createDb, type Db } from '../../server/db/client.js';
+import { DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from '../../server/db/client.js';
 import { getActiveManifest } from '../../server/db/generations.js';
 import type { RetrievalDataset } from '../../server/search/hybrid.js';
 import { RETRIEVAL_V1, retrievalConfig, retrievalIdentity } from '../../server/search/retrieval-config.js';
@@ -95,7 +95,7 @@ export async function checkTarget(
   generationId: number,
   rederive: (client: pg.ClientBase) => Promise<{ labels: ReadonlyMap<string, QuestionLabels>; warnings?: string[] }>,
 ): Promise<TargetCheck & { ms: number }> {
-  const client = new pg.Client({ connectionString: databaseUrl, application_name: 'aviation-eval-verify' });
+  const client = new pg.Client({ connectionString: databaseUrl, application_name: 'aviation-eval-verify', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await client.connect();
   const started = Date.now();
   try {
