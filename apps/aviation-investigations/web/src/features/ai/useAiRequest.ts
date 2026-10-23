@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiStatusResponse } from '../../../../shared/contracts/ai';
 import { ApiError, aiStatusQuery } from '../../api';
+import { forgetVisitor } from '../auth/visitor';
 import { askAvailability } from './status';
 import { AiCheckError, useAiCheck, type AiCheckFailure } from './TurnstileGate';
 
@@ -76,6 +77,8 @@ export function noticeFor(err: unknown): AiNotice {
       return { kind: 'free_paused', loginRequired: true };
     case 'moved':
       return { kind: 'moved' };
+    case 'signed_out':
+      return { kind: 'message', text: err.body?.message ?? '' };
     case 'rate_limited':
       return { kind: 'rate', seconds: err.retryAfter ?? 30 };
     case 'challenge_required':
@@ -93,11 +96,13 @@ export function noticeFor(err: unknown): AiNotice {
 
 /**
  * Runs one paid AI request (Ask AI, Refine, a reading, Re-run): checks the AI status,
- * gets a fresh Turnstile token for anonymous visitors (the first-check panel once per
- * trial identity, otherwise invisibly with "Checking…"; a second control waits its turn),
- * sends, and on a refused token takes one more, visible check. Each request releases its
- * check session at the end, refusals included, and the AI status is re-read so the
- * counters stay true.
+ * gets a fresh Turnstile token for anonymous visitors, and for a signed-in visitor the
+ * server asks to check (the first-check panel once per trial identity, otherwise
+ * invisibly with "Checking…"; a second control waits its turn), sends, and on a refused or
+ * missing token takes one more, visible check ("Quick check before this AI search"). Each
+ * request releases its check session at the end, refusals included, and the AI status is
+ * re-read so the counters stay true. A request refused because the session ended
+ * (`signed_out`) forgets the previous visitor's data, as signing out does.
  */
 export function useAiRequest() {
   const check = useAiCheck();
@@ -140,7 +145,7 @@ export function useAiRequest() {
       if (availability.kind === 'loading') return finish(refused, { kind: 'paused', status: null });
 
       const session = check.session();
-      let needToken = availability.anonymous;
+      let needToken = availability.check;
       let visible = false;
       let challengeRetried = false;
       let conflictRetried = false;
@@ -188,6 +193,7 @@ export function useAiRequest() {
               visible = false;
               continue;
             }
+            if (code === 'signed_out') void forgetVisitor(queryClient);
             return finish({ ok: false, outcomeUnknown: outcomeUnknown(err) }, keepUnknown(noticeFor(err)));
           } finally {
             void queryClient.invalidateQueries({ queryKey: ['ai-status'] });

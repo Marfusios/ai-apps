@@ -18,13 +18,24 @@
  * Host, no forwarding headers, no client copy of that header. Its answer is passed back
  * as it is (status, headers, every `Set-Cookie`, body).
  *
- * `GET /api/account` says who is signed in; `POST /api/account/delete` deletes the
- * signed-in account (server/auth/deletion.ts) and expires this browser's session cookie.
+ * `GET /api/account` says who is signed in (and whether this session may delete the
+ * account now). Deleting needs a recent Google sign-in (server/auth/deletion.ts):
+ * `POST /api/account/delete/start` confirms a session that signed in within the last 5
+ * minutes, or answers that the page must sign in with Google again first;
+ * `POST /api/account/delete` then deletes the signed-in account with that single-use
+ * confirmation (403 `reauth_required` without one) and expires this browser's session
+ * cookie. Both are refused cross-site and need a JSON body.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { AccountResponseSchema, DeleteAccountRequestSchema, DeleteAccountResponseSchema } from '../../shared/contracts/account.js';
+import {
+  AccountResponseSchema,
+  DeleteAccountRequestSchema,
+  DeleteAccountResponseSchema,
+  DeleteStartRequestSchema,
+  DeleteStartResponseSchema,
+} from '../../shared/contracts/account.js';
 import { AUTH_IP_HEADER, authClientIp } from '../auth/better-auth.js';
-import { deleteAccount } from '../auth/deletion.js';
+import { deleteAccount, deletionConfirmedUntil, issueDeletionConfirmation } from '../auth/deletion.js';
 import { crossSite, isJsonRequest } from '../http/origin.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import type { ApiContext } from './context.js';
@@ -98,7 +109,25 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
 
   app.get('/api/account', async (request, reply) => {
     const signedIn = ctx.auth ? await ctx.auth.signedIn(request.headers.cookie) : null;
-    const body = AccountResponseSchema.parse(signedIn ? { signedIn: true, user: { name: signedIn.name, email: signedIn.email } } : { signedIn: false });
+    const until = signedIn ? await deletionConfirmedUntil(ctx.db, signedIn.sessionId) : null;
+    const body = AccountResponseSchema.parse(
+      signedIn
+        ? { signedIn: true, user: { name: signedIn.name, email: signedIn.email }, ...(until ? { deletionConfirmedUntil: until.toISOString() } : {}) }
+        : { signedIn: false },
+    );
+    return reply.code(200).type(JSON_TYPE).send(JSON.stringify(body));
+  });
+
+  app.post('/api/account/delete/start', async (request, reply) => {
+    if (crossSite(request, appOrigin)) return sendError(reply, 403, 'forbidden');
+    const auth = ctx.auth;
+    if (!auth) return sendError(reply, 404, 'not_found');
+    const parsed = DeleteStartRequestSchema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(parsed.error.issues) });
+    const signedIn = await auth.signedIn(request.headers.cookie);
+    if (!signedIn) return sendError(reply, 403, 'sign_in_required', { message: 'Sign in to delete your account.' });
+    const until = await issueDeletionConfirmation(ctx.db, signedIn);
+    const body = DeleteStartResponseSchema.parse(until ? { next: 'confirm', until: until.toISOString() } : { next: 'reauthenticate' });
     return reply.code(200).type(JSON_TYPE).send(JSON.stringify(body));
   });
 
@@ -111,6 +140,8 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
     const signedIn = await auth.signedIn(request.headers.cookie);
     if (!signedIn) return sendError(reply, 403, 'sign_in_required', { message: 'Sign in to delete your account.' });
     const report = await deleteAccount({ db: ctx.db, runs: ctx.briefs?.runs ?? null, now }, signedIn);
+    if (report === 'not_confirmed') return sendError(reply, 403, 'reauth_required');
+    if (report === 'signed_out') return sendError(reply, 403, 'sign_in_required', { message: 'Sign in to delete your account.' });
     // Counts only: nothing that identifies the person.
     request.log.info({ accountDeleted: report }, 'account deleted');
     reply.header('set-cookie', auth.expiredSessionCookies());

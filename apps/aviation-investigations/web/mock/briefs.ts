@@ -354,12 +354,17 @@ interface MockStep {
   startedAt: Date;
 }
 
+/** Who reads a mock brief: the signed-in account or this browser's trial (one each in the mock). */
+export type MockReader = 'account' | 'trial';
+
 interface MockBrief {
   id: string;
   question: string;
   createdAt: Date;
   steps: MockStep[];
   keys: Map<string, number>;
+  /** The read owner (Task 20): only that visitor reads, refines or cancels it. */
+  owner: MockReader;
 }
 
 /**
@@ -395,6 +400,8 @@ export interface MockBriefsOptions {
   /** Polls of `GET` until a running step is done (default 4: one per checklist row). */
   pollsToFinish?: number;
   now?: () => Date;
+  /** Who is asking now (default: the trial): a brief is read only by its owner, like the server. */
+  visitor?: () => MockReader;
 }
 
 export class MockBriefs {
@@ -416,10 +423,29 @@ export class MockBriefs {
   private seq = 0;
   private readonly pollsToFinish: number;
   private readonly now: () => Date;
+  private readonly visitor: () => MockReader;
 
   constructor(opts: MockBriefsOptions = {}) {
     this.pollsToFinish = Math.max(1, opts.pollsToFinish ?? 4);
     this.now = opts.now ?? (() => new Date());
+    this.visitor = opts.visitor ?? (() => 'trial');
+  }
+
+  /** The brief when the visitor now asking reads it. */
+  private own(id: string): MockBrief | undefined {
+    const brief = this.briefs.get(id);
+    return brief && brief.owner === this.visitor() ? brief : undefined;
+  }
+
+  /** Signing in from a brief moves it from the trial to the account (the handover). */
+  handOver(id: string): void {
+    const brief = this.briefs.get(id);
+    if (brief?.owner === 'trial') brief.owner = 'account';
+  }
+
+  /** Deleting the account deletes the briefs it reads. */
+  dropAccountBriefs(): void {
+    for (const [id, brief] of this.briefs) if (brief.owner === 'account') this.briefs.delete(id);
   }
 
   private newId(): string {
@@ -450,12 +476,12 @@ export class MockBriefs {
       this.unfinished.add(body.idempotencyKey);
       return { status: 0, body: null, lost: true };
     }
-    const earlier = this.briefs.get(this.created.get(body.idempotencyKey) ?? '');
+    const earlier = this.own(this.created.get(body.idempotencyKey) ?? '');
     if (earlier) {
       if (earlier.question !== body.question) return error(409, 'conflict', 'This request key was used for another question.');
       return { ...this.start(earlier, earlier.steps[0]!), replayed: true };
     }
-    const brief: MockBrief = { id: this.newId(), question: body.question, createdAt: this.now(), steps: [], keys: new Map() };
+    const brief: MockBrief = { id: this.newId(), question: body.question, createdAt: this.now(), steps: [], keys: new Map(), owner: this.visitor() };
     const step = this.stepFor(1, body.question, { kind: 'question' }, body.filters ?? {});
     brief.steps.push(step);
     brief.keys.set(body.idempotencyKey, 1);
@@ -466,7 +492,7 @@ export class MockBriefs {
   }
 
   refine(id: string, body: RefinementRequest): MockReply<StartBriefResponse> {
-    const brief = this.briefs.get(id);
+    const brief = this.own(id);
     if (!brief) return NOT_FOUND();
     const replayed = brief.keys.get(body.idempotencyKey);
     if (replayed !== undefined) return { ...this.start(brief, brief.steps[replayed - 1]!), replayed: true };
@@ -534,7 +560,7 @@ export class MockBriefs {
 
   /** `GET /api/briefs/:id?step=n`: each poll of a running step moves it one stage on. */
   read(id: string, n?: number): MockReply<BriefStepResponse> {
-    const brief = this.briefs.get(id);
+    const brief = this.own(id);
     const step = brief ? (n === undefined ? brief.steps[brief.steps.length - 1] : brief.steps[n - 1]) : undefined;
     if (!brief || !step) return NOT_FOUND();
     const stage = this.stageOf(step);
@@ -558,7 +584,7 @@ export class MockBriefs {
   }
 
   cancel(id: string): MockReply<null> {
-    const brief = this.briefs.get(id);
+    const brief = this.own(id);
     if (!brief) return NOT_FOUND();
     const step = brief.steps[brief.steps.length - 1]!;
     if (this.stageOf(step) !== 'done') step.cancelled = true;
@@ -567,7 +593,7 @@ export class MockBriefs {
 
   /** `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`. */
   context(id: string, n: number, ntsbNo: string): MockReply<CaseContextResponse> {
-    const brief = this.briefs.get(id);
+    const brief = this.own(id);
     const step = brief?.steps[n - 1];
     const result = step ? this.resultOf(step) : undefined;
     if (!brief || !step || !result || (result.kind !== 'answer' && result.kind !== 'withheld' && result.kind !== 'no_match')) return NOT_FOUND();

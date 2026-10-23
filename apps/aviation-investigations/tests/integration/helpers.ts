@@ -77,7 +77,9 @@ export async function resetControls(): Promise<void> {
   const pool = testPool('migrator');
   try {
     await pool.query(`TRUNCATE ${[...CONTROL_TABLES, ...AUTH_TABLES].map((t) => `"${t}"`).join(', ')} RESTART IDENTITY`);
-    await pool.query(`UPDATE ai_switch SET enabled = true, anonymous_enabled = true, note = NULL, updated_at = now() WHERE id = 1`);
+    await pool.query(
+      `UPDATE ai_switch SET enabled = true, anonymous_enabled = true, account_check = 'suspicious', note = NULL, updated_at = now() WHERE id = 1`,
+    );
   } finally {
     await pool.end();
   }

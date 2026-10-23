@@ -3,9 +3,10 @@ import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { sql } from 'drizzle-orm';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { listGenerations } from '../../server/db/generations.js';
-import { testDb, testDbUrl } from './helpers.js';
+import { resetControls, testDb, testDbUrl } from './helpers.js';
 
 const run = promisify(execFile);
 const APP_DIR = resolve(import.meta.dirname, '../..');
@@ -26,6 +27,7 @@ async function worker(...args: string[]): Promise<{ stdout: string; stderr: stri
       // Nonempty process values win over .env.local: only the aviation_test logins are used.
       DATABASE_URL: testDbUrl('app'),
       DATABASE_INGEST_URL: testDbUrl('ingest'),
+      DATABASE_MIGRATOR_URL: testDbUrl('migrator'),
     },
   });
 }
@@ -62,5 +64,31 @@ describe('worker maintenance commands', () => {
     expect(stdout).toMatch(/^leases expired: \d+ \(charged [\d.]+ USD\)$/m);
     expect(stdout).toMatch(/^pruned trialIdentities: \d+$/m);
     expect(stdout).toMatch(/^pruned costLedger: \d+$/m);
+  });
+
+  it('restore-check passes on empty sign-in, brief and idempotency tables, names any with rows, and --empty empties them', async () => {
+    const migrator = testDb('migrator');
+    try {
+      await resetControls();
+      expect((await worker('restore-check')).stdout).toMatch(/^restore check passed: auth_deletion_confirmations, .*idempotency are empty$/m);
+      await migrator.execute(sql`
+        INSERT INTO auth_users (name, email, email_verified, created_at, updated_at) VALUES ('Restored', 'restored@example.com', true, now(), now())`);
+      await expect(worker('restore-check')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('auth_users: 1 rows') });
+      expect((await worker('restore-check', '--empty')).stdout).toMatch(/^restore check passed/m);
+      expect((await migrator.execute(sql`SELECT count(*)::int AS n FROM auth_users`)).rows).toEqual([{ n: 0 }]);
+    } finally {
+      await closeDb(migrator);
+    }
+  });
+
+  it('ai-switch --account-check sets when signed-in AI requests take a Turnstile check', async () => {
+    try {
+      expect((await worker('ai-switch', '--account-check', 'always')).stdout).toMatch(/EVERY signed-in request checked/);
+      expect((await worker('ai-switch')).stdout).toMatch(/EVERY signed-in request checked/);
+      expect((await worker('ai-switch', '--account-check', 'suspicious')).stdout).toMatch(/signed-in requests checked when suspicious/);
+      await expect(worker('ai-switch', '--account-check', 'sometimes')).rejects.toMatchObject({ code: 2 });
+    } finally {
+      await resetControls();
+    }
   });
 });

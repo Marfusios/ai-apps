@@ -33,6 +33,11 @@ export const AI_STATUS_SAMPLES = {
     state: 'available',
     remaining: { kind: 'account', leftToday: 18, limitToday: 20, leftThisMonth: 109, limitThisMonth: 150 },
   },
+  /** Signed in, and the server asks for a Turnstile check before the next AI request (DESIGN §8). */
+  checkedAccount: {
+    state: 'available',
+    remaining: { kind: 'account', leftToday: 8, limitToday: 20, leftThisMonth: 140, limitThisMonth: 150, check: true },
+  },
   /** Paused for everyone, daily budget: "AI back tomorrow". */
   pausedDaily: { state: 'paused', reason: 'daily_budget', retryAt: '2026-10-17T00:00:00.000Z', remaining: trial(3, false) },
   /** Paused for everyone, monthly budget: "AI back on 1 Nov". */

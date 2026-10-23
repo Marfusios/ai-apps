@@ -8,7 +8,12 @@
  * | `GET /api/auth/callback/google` | Google's redirect (`code`, `state`) | 302 to the page sign-in started from |
  * | `POST /api/auth/sign-out` | `{}` | `{ success: true }`, the session cookie expired |
  * | `GET /api/account` | — | `AccountResponse` |
- * | `POST /api/account/delete` | `DeleteAccountRequest` | `DeleteAccountResponse`, the session cookie expired |
+ * | `POST /api/account/delete/start` | `{}` | `DeleteStartResponse`: confirmed for 5 minutes, or sign in with Google again first |
+ * | `POST /api/account/delete` | `DeleteAccountRequest` | `DeleteAccountResponse`, the session cookie expired; 403 `reauth_required` without a confirmation |
+ *
+ * Deleting needs a recent Google sign-in (server/auth/deletion.ts): within 5 minutes of
+ * signing in, `start` confirms at once; otherwise the page signs in with Google again,
+ * returning to `DELETE_REAUTH_PATH`, and comes back confirmed when it was the same account.
  *
  * The `/api/auth` routes are Better Auth's (server/auth/better-auth.ts); only these three
  * are served, and only while Google sign-in is configured (`GET /api/config`
@@ -17,24 +22,38 @@
 import { z } from 'zod';
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+/** A `.` or `..` path segment, plainly or percent-encoded, or an encoded slash or backslash. */
+const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)|%2f|%5c/i;
 
 /**
  * A page of this site to come back to: a root-relative path with an optional query, never
- * `//host`, a backslash or a control character, at most 512 characters. Better Auth checks
+ * `//host`, an empty or dot segment (`/.//host` would resolve to `//host`), an encoded
+ * slash, a backslash or a control character, at most 512 characters. Better Auth checks
  * the same against the trusted origin; the server checks this first.
  */
 export const ReturnPathSchema = z
   .string()
   .min(1)
   .max(512)
-  .refine((p) => p.startsWith('/') && !p.startsWith('//') && !p.includes('\\') && !p.includes('#') && !CONTROL.test(p), {
-    message: 'expected a path on this site',
-  });
+  .refine(
+    (p) => {
+      const path = p.split('?', 1)[0]!;
+      return p.startsWith('/') && !path.includes('//') && !DOT_SEGMENT.test(path) && !p.includes('\\') && !p.includes('#') && !CONTROL.test(p);
+    },
+    { message: 'expected a path on this site' },
+  );
 
 /** Query parameter on the return path after a first sign-in: the welcome is shown once. */
 export const WELCOME_PARAM = 'welcome';
 /** Query parameter on the return path when sign-in did not complete (`signin=failed`). */
 export const SIGN_IN_ERROR_PARAM = 'signin';
+/** Query parameter of the account page after a deletion's Google sign-in (`delete=confirm`). */
+export const DELETE_PARAM = 'delete';
+/**
+ * Where a deletion's Google sign-in returns: a sign-in started for this path from a
+ * signed-in browser carries the deletion intent (server/auth/better-auth.ts).
+ */
+export const DELETE_REAUTH_PATH = `/account?${DELETE_PARAM}=confirm`;
 
 /**
  * `POST /api/auth/sign-in/social`. Exactly these fields: no ID-token sign-in, no extra
@@ -61,12 +80,30 @@ export const AccountUserSchema = z.strictObject({
   email: z.string().min(3).max(320),
 });
 
-/** `GET /api/account`: who is signed in on this browser (what the account page shows). */
+/**
+ * `GET /api/account`: who is signed in on this browser (what the account page shows), and
+ * until when this session may delete the account without another Google sign-in (a live
+ * deletion confirmation), if it may.
+ */
 export const AccountResponseSchema = z.discriminatedUnion('signedIn', [
   z.strictObject({ signedIn: z.literal(false) }),
-  z.strictObject({ signedIn: z.literal(true), user: AccountUserSchema }),
+  z.strictObject({ signedIn: z.literal(true), user: AccountUserSchema, deletionConfirmedUntil: z.iso.datetime().optional() }),
 ]);
 export type AccountResponse = z.infer<typeof AccountResponseSchema>;
+
+/** `POST /api/account/delete/start`: an empty body. */
+export const DeleteStartRequestSchema = z.strictObject({});
+
+/**
+ * Confirmed (`confirm`, until when) because this session signed in with Google in the last
+ * 5 minutes; otherwise `reauthenticate`: sign in with Google again first, returning to
+ * `DELETE_REAUTH_PATH`.
+ */
+export const DeleteStartResponseSchema = z.discriminatedUnion('next', [
+  z.strictObject({ next: z.literal('confirm'), until: z.iso.datetime() }),
+  z.strictObject({ next: z.literal('reauthenticate') }),
+]);
+export type DeleteStartResponse = z.infer<typeof DeleteStartResponseSchema>;
 
 /** `POST /api/account/delete`: the explicit confirmation is part of the body. */
 export const DeleteAccountRequestSchema = z.strictObject({ confirm: z.literal(true) });

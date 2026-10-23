@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SignInRequestSchema } from '../../shared/contracts/account';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { AiNoticeBox } from '../../web/src/features/ai/AiNoticeBox';
-import { returnPath, signInNavigation, signInRequest } from '../../web/src/features/auth/api';
+import { reauthRequest, returnPath, signInNavigation, signInRequest } from '../../web/src/features/auth/api';
 import { CONTINUE_WITH_GOOGLE, KEPT, PRIVACY_LINK, SIGN_IN_FAILED, SIGN_IN_TITLE, SIGN_IN_UNAVAILABLE, SignInDialog } from '../../web/src/features/auth/SignInDialog';
 import { WELCOME_TEXT, WELCOME_TITLE } from '../../web/src/features/auth/Welcome';
 import { MOCK_USER, createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
@@ -210,22 +210,53 @@ describe('account page (UI_DESIGN §4.8)', () => {
     expect(within(screen.getByRole('banner')).getByRole('button', { name: 'Sign in' })).toBeTruthy();
   });
 
-  it('delete account: says what goes, the 30-day backups and what stays, then asks once more', async () => {
+  it('delete account: says what goes, what backups hold and what stays, then asks once more (right after signing in)', async () => {
     freshApi({ signedIn: true });
     renderApp('/account');
     await screen.findByRole('heading', { level: 1, name: MOCK_USER.name });
     for (const text of [ACCOUNT_COPY.deleteNow, ACCOUNT_COPY.deleteBackups, ACCOUNT_COPY.deleteKept]) expect(screen.getByText(text)).toBeTruthy();
-    expect(ACCOUNT_COPY.deleteBackups).toContain('30 days');
+    expect(ACCOUNT_COPY.deleteBackups).toMatch(/Backups never include your account or your AI searches/);
     fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
-    const ask = screen.getByText(ACCOUNT_COPY.deleteAsk);
+    const ask = await screen.findByText(ACCOUNT_COPY.deleteAsk);
     await waitFor(() => expect(document.activeElement).toBe(ask));
     // Keep: nothing happens.
     fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteKeep }));
     expect(screen.queryByText(ACCOUNT_COPY.deleteAsk)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    await screen.findByText(ACCOUNT_COPY.deleteAsk);
     fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
     expect(await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle })).toBeTruthy();
     expect(screen.getByText(ACCOUNT_COPY.deleted)).toBeTruthy();
+  });
+
+  it('delete account with an older sign-in: confirm with Google first, come back confirmed, then asks once more', async () => {
+    freshApi({ signedIn: true, deletionNeedsReauth: true });
+    const went = recordNavigation();
+    const posted = recordSignInRequests();
+    const { router } = renderApp('/account');
+    await screen.findByRole('heading', { level: 1, name: MOCK_USER.name });
+    fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    const reauth = await screen.findByText(ACCOUNT_COPY.reauthText);
+    await waitFor(() => expect(document.activeElement).toBe(reauth));
+    fireEvent.click(screen.getByRole('button', { name: CONTINUE_WITH_GOOGLE }));
+    await waitFor(() => expect(went).toEqual(['http://localhost:3000/account?delete=confirm']));
+    expect(posted).toEqual([reauthRequest()]);
+    // Back from Google, confirmed: only the last question is left.
+    await act(() => router.navigate('/account?delete=confirm'));
+    expect(await screen.findByText(ACCOUNT_COPY.deleteAsk)).toBeTruthy();
+    await waitFor(() => expect(currentUrl(router)).toBe('/account'));
+    fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    expect(await screen.findByText(ACCOUNT_COPY.deleted)).toBeTruthy();
+  });
+
+  it('coming back without a confirmation says nothing was deleted', async () => {
+    freshApi({ signedIn: true, deletionNeedsReauth: true });
+    const { router } = renderApp('/account?delete=failed&error=access_denied');
+    expect(await screen.findByText(ACCOUNT_COPY.reauthFailed)).toBeTruthy();
+    await waitFor(() => expect(currentUrl(router)).toBe('/account'));
+    await act(() => router.navigate('/account?delete=confirm'));
+    expect(await screen.findByText(ACCOUNT_COPY.reauthOther)).toBeTruthy();
+    expect(screen.queryByText(ACCOUNT_COPY.deleteAsk)).toBeNull();
   });
 
   it('signed out: the page offers sign-in', async () => {

@@ -543,19 +543,33 @@ and answers remain outside telemetry by default; asynchronous evaluation uses on
 the existing 24-hour temporary-processing window. Public/synthetic benchmark
 fixtures have a separate lifecycle. See the [capture and retention policy](OBSERVABILITY_AND_EVALUATION.md#privacy-retention-cost-and-availability).
 
-**As built (Task 20).** Better Auth 1.7.7 serves three endpoints under `/api/auth`
-(sign-in, Google's callback, sign-out); anything else there is 404, and all of them are
-404 while the Google client is not configured (`googleEnabled: false`). Sessions last 7
+**As built (Task 20, with its review fixes).** Better Auth 1.7.7 serves three endpoints
+under `/api/auth` (sign-in, Google's callback, sign-out); anything else there is 404, and
+all of them are 404 while the Google client is not configured (`googleEnabled: false`).
+Live also keeps sign-in off until the final privacy notice is published. Sessions last 7
 days, are never extended and have no cookie cache. The ID token from Google's token
-endpoint is accepted on its claims (issuer, audience, expiry, `sub`, `email_verified`)
-and on a nonce the app adds to the redirect flow, which Better Auth's Google provider
-does not send; only the subject, name and email are stored. The handover runs at the
-callback when sign-in started from the brief's page and the browser's trial cookie
-still proves its owner, or at a signed-in refinement or retry on a brief the browser's
-trial owns; a retry from the old trial alone answers 403 `moved`. A re-registered
-account is a new account (the new-account allowance applies again) that finds its usage.
-Deletion removes the account's briefs with all their steps and its idempotency records
-in the same transaction as the user; it does not ask for a fresh sign-in first.
+endpoint (its only source) is accepted on its RS256 form, its claims (issuer, this client
+as the only audience and `azp`, finite `exp` and `iat`, `sub`, `email_verified`) and a
+nonce the app adds to the redirect flow, which Better Auth's Google provider does not
+send; only the subject, name and email are stored. A callback is used once: it claims its
+OAuth state atomically before Better Auth reads it. At most 500 sign-ins may be in
+progress at once. The handover runs at the callback when sign-in started from the brief's
+page and the browser's trial cookie still proves its owner, or at a signed-in refinement
+or retry on a brief the browser's trial owns; a retry from the old trial alone answers 403
+`moved`. Reads check the read owner in the statement that reads the content; a refinement
+or a cancel locks the brief and checks its owner before it writes. Deletion and everything
+that writes rows an account owns hold one lock per account and recheck the session first,
+so nothing is created or taken over for a deleted account. A re-registered account is a
+new account (the new-account allowance applies again) that finds its usage. Deletion
+needs a recent Google sign-in (OWASP re-authentication): within 5 minutes of signing in
+the account page confirms at once; otherwise it sends the person through Google again,
+for the same account, which confirms that session for 5 minutes, once, and ends the
+session the browser had. Google offers neither `max_age` nor `prompt=login`, so the
+re-authentication is Google's own account chooser and sign-in. Deletion removes the
+account's briefs with all their steps and its idempotency records in the same
+transaction as the user. Backups never hold the sign-in, brief or idempotency rows, so a
+restore cannot bring a deleted account back; it starts those tables empty and everyone
+signs in again (RUNBOOK, "Backups").
 
 ## 8. Abuse controls and atomic accounting
 
@@ -613,6 +627,20 @@ second pipeline. Expiry can free a local execution slot but not reserved money.
 Aborting a connection cannot guarantee remote inference stopped; the conservative
 charge still bounds spend. The concurrency target concerns local pipelines, not
 an unverifiable promise about provider execution after timeouts.
+
+**As built (Task 20 review): suspicious authenticated activity.** An ordinary signed-in
+AI request takes no Turnstile check. One does, verified like the anonymous gate's token
+(fresh, single-use, hostname and action), when the account made 3 AI attempts in the
+current minute (the limit is 5), has used half of today's allowance (10 of 20, 3 of a new
+account's 5), or its network identity made 10 signed-in AI attempts in the current hour
+(the limit is 30), and for every signed-in request while an operator sets
+`account_check = always` (`pnpm worker ai-switch --account-check always`). Each signal
+ends with its window; the check never blocks AI by itself and admission keeps the hard
+limits. `GET /api/ai/status` says `check: true` beforehand, so the page takes the check at
+click time ("Quick check before this AI search", UI_DESIGN §5). Every anonymous retry
+takes a fresh token too, before it replays. The /56 and /48 aggregation of §7 is not
+built: the network identity is an address or a /64, and a farm spread over many /64s
+meets the global budget instead.
 
 Fail closed for paid requests if quota storage or required abuse validation is
 unavailable; cached/bounded browsing can continue. Use 429 plus retry information

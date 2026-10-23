@@ -13,7 +13,10 @@
  *    as an exhausted quota); then the principal's quota (trial searches, account
  *    daily/monthly searches), the anonymous share, and the total and anonymous
  *    in-flight limits (two in total, one anonymous).
- * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
+ * 6. The caller's precondition, if any (for a signed-in account: its lifecycle lock and
+ *    a check that its session still exists, server/auth/lifecycle.ts); a failure rolls
+ *    everything back (`signed_out`).
+ * 7. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
  *    (90 s) with a fencing token. Commit before any provider call.
  *
  * Lock waits are bounded (2 s); a timeout rolls back and returns `busy`.
@@ -61,6 +64,8 @@ export type RejectionReason =
   | 'idempotency_conflict'
   /** The login-required emergency mode refuses trial principals (403); nothing is counted. */
   | 'login_required'
+  /** The caller's `precondition` failed (a signed-in account's session ended): nothing is kept (403). */
+  | 'signed_out'
   /** A lock wait timed out; nothing was admitted (fail closed, 503). */
   | 'busy';
 
@@ -81,6 +86,19 @@ export interface AdmissionInput {
   /** Content-free id copied to the ledger lines. */
   requestId?: string;
   now?: Date;
+  /**
+   * Checked last in the admission's transaction, once every limit has passed and before
+   * anything is reserved. False refuses the request (`signed_out`) and rolls the whole
+   * transaction back, attempt counters included. For an account, the route passes its
+   * lifecycle lock and session check (server/auth/lifecycle.ts), so a request whose
+   * account was deleted meanwhile reserves nothing.
+   */
+  precondition?: (tx: DbOrTx) => Promise<boolean>;
+}
+
+/** Thrown inside the admission's transaction when its precondition fails: rolls everything back. */
+class PreconditionFailed extends Error {
+  override readonly name = 'PreconditionFailed';
 }
 
 /** A fresh admission. Keep the fencing token server-side; it settles or releases the request. */
@@ -123,7 +141,7 @@ export type AdmissionResult = Admission | ReplayedAdmission | Rejection;
  */
 export function rejectionStatus(r: Rejection): 403 | 409 | 429 | 503 {
   if (r.reason === 'idempotency_conflict') return 409;
-  if (r.reason === 'login_required') return 403;
+  if (r.reason === 'login_required' || r.reason === 'signed_out') return 403;
   if (r.reason === 'global_paused' || r.reason === 'busy') return 503;
   return 429;
 }
@@ -343,6 +361,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
       if (flight.total >= l.globalInFlight || (anonymous && flight.anonymous >= l.anonymousInFlight)) {
         return { ok: false, reason: 'concurrency' };
       }
+      if (a.precondition && !(await a.precondition(tx))) throw new PreconditionFailed('admission precondition failed');
 
       const leaseExpiresAt = new Date(now.getTime() + policy.leaseTtlMs);
       const accountingDay = utcDay(now);
@@ -398,6 +417,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
       };
     });
   } catch (err) {
+    if (err instanceof PreconditionFailed) return { ok: false, reason: 'signed_out' };
     if (isLockTimeout(err)) return { ok: false, reason: 'busy' };
     throw err;
   }

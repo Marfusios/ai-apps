@@ -61,6 +61,8 @@ export const ERROR_MESSAGES = {
   conflict: 'This request conflicts with an earlier one.',
   refinement_limit: 'This brief has used its three refinements. Start a new search to keep going.',
   moved: 'This AI search moved to the account that signed in. Sign in to view it.',
+  signed_out: "You were signed out, so this AI search didn't start. Sign in to ask again.",
+  reauth_required: "Confirm with Google that it's you, then delete your account.",
 } as const satisfies Record<ErrorResponse['error'], string>;
 
 export function sendError(

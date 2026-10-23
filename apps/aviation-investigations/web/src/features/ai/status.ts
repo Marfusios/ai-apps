@@ -25,8 +25,12 @@ export function pausedNote(status: Extract<AiStatusResponse, { state: 'paused' }
 export type AskAvailability =
   /** Status not known yet: the button waits. */
   | { kind: 'loading' }
-  /** A click runs the AI. `counter` is the suffix ("3 free", "18 left today"). */
-  | { kind: 'available'; counter: string; anonymous: boolean; firstCheck: boolean }
+  /**
+   * A click runs the AI. `counter` is the suffix ("3 free", "18 left today"). `check`: the
+   * request takes a Turnstile check (every anonymous one; a signed-in one the server asks
+   * to check, DESIGN §8).
+   */
+  | { kind: 'available'; counter: string; anonymous: boolean; firstCheck: boolean; check: boolean }
   /** Only signed-in AI is open and this visitor is anonymous: "Ask AI · sign in". */
   | { kind: 'sign_in'; reason: Extract<AiStatusResponse, { state: 'signed_in_only' }>['reason'] }
   /**
@@ -42,13 +46,13 @@ export function askAvailability(status: AiStatusResponse | undefined, unreadable
   const remaining = status.remaining;
   if (status.state === 'signed_in_only' && remaining?.kind !== 'account') return { kind: 'sign_in', reason: status.reason };
   if (remaining?.kind === 'account') {
-    return { kind: 'available', counter: `${remaining.leftToday} left today`, anonymous: false, firstCheck: false };
+    return { kind: 'available', counter: `${remaining.leftToday} left today`, anonymous: false, firstCheck: false, check: remaining.check === true };
   }
   if (remaining?.kind === 'trial') {
-    return { kind: 'available', counter: `${remaining.left} free`, anonymous: true, firstCheck: !remaining.started };
+    return { kind: 'available', counter: `${remaining.left} free`, anonymous: true, firstCheck: !remaining.started, check: true };
   }
   // No counts to show (should not happen while available): still anonymous until proven otherwise.
-  return { kind: 'available', counter: 'free', anonymous: true, firstCheck: true };
+  return { kind: 'available', counter: 'free', anonymous: true, firstCheck: true, check: true };
 }
 
 /** The counter suffix of an AI button: "3 free", "sign in", or nothing when paused. */

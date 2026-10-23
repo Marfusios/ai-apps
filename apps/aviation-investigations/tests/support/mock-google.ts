@@ -9,6 +9,7 @@
  *   client (client id, redirect URI, response type `code`, the scopes, a PKCE S256
  *   challenge, a state) and returns the callback path Google would send the browser to,
  *   with a fresh code bound to that request and to the user who consented.
+ * - `hold()` keeps code exchanges waiting at the token endpoint (a callback paused there).
  * - The token endpoint accepts a code once, with this client's id and secret
  *   (`client_secret_post`), the same redirect URI and the PKCE verifier, and answers with
  *   an access token and an RS256-signed ID token: issuer, audience and `azp` this client,
@@ -50,6 +51,7 @@ export interface AuthorizeRequest {
   prompt: string | null;
   accessType: string | null;
   includeGrantedScopes: string | null;
+  loginHint: string | null;
 }
 
 export interface TokenRequest {
@@ -66,6 +68,9 @@ const b64url = (data: Buffer | string): string => Buffer.from(data).toString('ba
 
 export class MockGoogle {
   readonly tokenRequests: TokenRequest[] = [];
+  /** Code exchanges waiting at the token endpoint while it is held. */
+  waiting = 0;
+  private held: Promise<void> | null = null;
   private readonly grants = new Map<string, Grant>();
   private readonly privateKey: KeyObject;
   private readonly publicKey: KeyObject;
@@ -96,6 +101,7 @@ export class MockGoogle {
       prompt: p.get('prompt'),
       accessType: p.get('access_type'),
       includeGrantedScopes: p.get('include_granted_scopes'),
+      loginHint: p.get('login_hint'),
     };
   }
 
@@ -131,6 +137,16 @@ export class MockGoogle {
     return `${redirect.pathname}${redirect.search}`;
   }
 
+  /** Keep code exchanges waiting at the token endpoint until the returned function is called. */
+  hold(): () => void {
+    let release!: () => void;
+    this.held = new Promise<void>((resolve) => (release = resolve));
+    return () => {
+      this.held = null;
+      release();
+    };
+  }
+
   /** The user refuses at Google: the error redirect back to the app. */
   deny(url: string): string {
     const r = MockGoogle.parse(url);
@@ -144,7 +160,15 @@ export class MockGoogle {
   readonly fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const target = `${url.origin}${url.pathname}`;
-    if (target === GOOGLE_TOKEN_URL) return this.token(input instanceof Request ? await input.text() : String(init?.body ?? ''));
+    if (target === GOOGLE_TOKEN_URL) {
+      const body = input instanceof Request ? await input.text() : String(init?.body ?? '');
+      if (this.held) {
+        this.waiting += 1;
+        await this.held;
+        this.waiting -= 1;
+      }
+      return this.token(body);
+    }
     if (target === GOOGLE_CERTS_URL) return Response.json({ keys: [this.jwk()] });
     throw new Error(`unexpected outbound request to ${url.origin}`);
   };

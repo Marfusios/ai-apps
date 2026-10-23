@@ -1390,7 +1390,9 @@ AI is available only while the dataset reports the active passages index servabl
 `server/auth/` adds Google sign-in with [Better Auth](https://better-auth.com) (pinned,
 1.7.7), the account page's routes, the brief handover and account deletion (DESIGN §7,
 UI_DESIGN §4.8 and §5). The tables (`auth_users`, `auth_accounts`, `auth_sessions`,
-`auth_verifications`), their grants and the deletion function are in migration 0017.
+`auth_verifications`), their grants and the deletion function are in migration 0017;
+the used-state and deletion-confirmation tables, the brief lock, the operator's
+signed-in check switch and the locking deletion function in migration 0018.
 
 - **Configuration.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (a Google OAuth client
   of type *Web application* whose authorized redirect URI is
@@ -1398,24 +1400,30 @@ UI_DESIGN §4.8 and §5). The tables (`auth_users`, `auth_accounts`, `auth_sessi
   `pnpm services:setup` generates one into `.env.local`) and `IDENTITY_HMAC_SECRET`.
   Without any of them sign-in is off: `GET /api/config` says `googleEnabled: false`,
   the page offers no sign-in, every `/api/auth` route answers 404 and the startup log
-  names the missing setting. `APP_ENV=live` also needs an https `APP_URL`.
+  names the missing setting. `APP_ENV=live` also needs an https `APP_URL` and the final
+  privacy notice (`shared/privacy.ts`; RUNBOOK, "Google sign-in", step 0).
 - **The flow.** The page posts `POST /api/auth/sign-in/social` (Google, the page to come
-  back to, `disableRedirect`; any other field is refused) and opens the URL it gets:
-  scopes `openid email profile`, PKCE (S256), a state bound to the browser by a signed
-  cookie and stored for 10 minutes, and a nonce the server adds to the request and
-  checks in the ID token. Google sends the browser to
-  `GET /api/auth/callback/google`, which signs in and returns to the page, with
-  `welcome=1` after a first sign-in (the welcome dialog) or `signin=failed` (the dialog
-  again, saying so). `POST /api/auth/sign-out` ends the session. No other Better Auth
-  endpoint is served.
-- **What is accepted and kept.** An ID token from Google's token endpoint for this
-  client, unexpired, with this flow's nonce and an email Google reports as verified.
-  The account is the Google `sub`; a second Google account with an email already in use
-  is refused, never linked. Kept: the subject, the name and the email. Never kept
-  (database hooks clear them and CHECK constraints refuse them): the picture, provider
-  tokens and scopes, a password, and the session's IP address and user agent. Sessions
-  last 7 days and are never extended; there is no session cookie cache, so sign-out
-  and deletion take effect on the next request.
+  back to, `disableRedirect`; any other field is refused, and so is a return path with a
+  dot segment or an encoded slash) and opens the URL it gets: scopes
+  `openid email profile`, PKCE (S256), a state bound to the browser by a signed cookie
+  and stored for 10 minutes, and a nonce the server adds to the request and checks in
+  the ID token. At most 500 sign-ins may be in progress at once (503 past that). Google
+  sends the browser to `GET /api/auth/callback/google`, which signs in and returns to
+  the page, with `welcome=1` after a first sign-in (the welcome dialog) or
+  `signin=failed` (the dialog again, saying so). A callback is accepted once: it claims
+  its state atomically before Better Auth reads it, so a second one, even arriving at the
+  same time, is refused before Google is called. `POST /api/auth/sign-out` ends the
+  session. No other Better Auth endpoint is served.
+- **What is accepted and kept.** An ID token from Google's token endpoint (the only
+  source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
+  this client and no other audience, with finite `exp` (not passed) and `iat` (not in
+  the future), this flow's nonce and an email Google reports as verified. The account is
+  the Google `sub`; a second Google account with an email already in use is refused,
+  never linked. Kept: the subject, the name and the email. Never kept (database hooks
+  clear them and CHECK constraints refuse them): the picture, provider tokens and scopes,
+  a password, and the session's IP address and user agent. Sessions last 7 days and are
+  never extended; there is no session cookie cache, so sign-out and deletion take effect
+  on the next request.
 - **Cookies.** `__Host-aviation_session` and the OAuth state's `__Host-aviation_auth_state`:
   Secure, HttpOnly, SameSite=Lax, Path=/, host-only (plain names without Secure on a local
   http `APP_URL`).
@@ -1425,32 +1433,59 @@ UI_DESIGN §4.8 and §5). The tables (`auth_users`, `auth_accounts`, `auth_sessi
   besides the API's own limit). Cross-site and non-JSON posts are refused before Better
   Auth, which checks the `Origin` itself when cookies are sent. Its log lines go to the
   server log as their message only, email addresses replaced; telemetry is off.
-- **Signed in, AI.** A signed-in visitor's AI requests take no Turnstile check and are
-  billed to the account: its quota key is HMAC(issuer, sub) (`abuse_records`, usage
-  buckets), its daily allowance 5 for the first 3 days (from the account's creation),
-  then 20, and 150 a month. `GET /api/ai/status` reports the account's counts.
+- **Signed in, AI.** A signed-in visitor's AI requests are billed to the account: its
+  quota key is HMAC(issuer, sub) (`abuse_records`, usage buckets), its daily allowance 5
+  for the first 3 days (from the account's creation), then 20, and 150 a month.
+  `GET /api/ai/status` reports the account's counts. Ordinary use takes no Turnstile
+  check; a request takes one when the account made 3 AI attempts this minute, has used
+  half of today's allowance, or its network made 10 signed-in attempts this hour, and
+  every request does while an operator sets `pnpm worker ai-switch --account-check
+  always` (`server/identity/step-up.ts`, DESIGN §8). The status then says `check: true`,
+  so the page takes the check at click time.
+- **The account lifecycle** (`server/auth/lifecycle.ts`). Deleting an account, and every
+  transaction that writes rows the account owns (the end of its admission, its new brief
+  or step, a takeover of the browser's trial brief, the callback's handover), hold one
+  lock per account and first check that the request's session and user still exist. A
+  request paused while its account was deleted creates nothing, takes nothing over,
+  calls no model and gives back any admission (403 `signed_out`).
 - **Handover** (`server/auth/handover.ts`). Signing in from `/briefs/<id>` while this
   browser's trial owns that live brief moves the brief's read owner to the account, by
   one compare-and-set, at the callback, when the same browser's trial cookie still
   proves that trial; a second or concurrent callback changes nothing. Steps keep the
   billing principal they were admitted under; refinements after sign-in bill the
   account. A signed-in refinement, or a signed-in retry of the trial's request, of a
-  brief the browser's trial still owns moves it the same way. After a move the trial
-  cannot read the brief, and a retry of its request from the trial alone answers 403
-  `moved` (sign in to view it): never a replay or a new run.
-- **Account** (`GET /api/account`, `POST /api/account/delete`, `server/auth/deletion.ts`).
-  Deletion (a JSON `{"confirm": true}`, refused cross-site) cancels the account's running
-  steps, then in one transaction removes its briefs with every step (also those billed to
-  the trial that signed in) and its idempotency records, and the user with its sessions
-  and Google link, and keeps the anti-abuse record until the current month's quota window
-  ends plus 7 days. Charges, reservations and usage buckets stay (HMACs and amounts only);
-  signing up again with the same Google account finds the same counts. The response
-  expires this browser's session cookie; every other session ends with the user.
-- **Retention.** The API's control maintenance also deletes expired sessions and OAuth
-  state (`pruneAuth`).
+  brief the browser's trial still owns moves it the same way. Reads check the read owner
+  in the statement that reads the step; a refinement or a cancel locks the brief and
+  checks its owner before it writes, so a handover cannot slip in between. After a move
+  the trial cannot read the brief, and a retry of its request from the trial alone (which,
+  like every anonymous AI request, takes a fresh Turnstile check) answers 403 `moved`
+  (sign in to view it): never a replay or a new run.
+- **Account** (`GET /api/account`, `POST /api/account/delete/start`,
+  `POST /api/account/delete`, `server/auth/deletion.ts`). Deleting needs a recent Google
+  sign-in: within 5 minutes of signing in, `start` gives the session a 5-minute,
+  single-use confirmation; otherwise the page signs in with Google again
+  (`/account?delete=confirm`, Google asked for the same account), which confirms the new
+  session only when it is the same account and ends the old session. Deletion (a JSON
+  `{"confirm": true}` with that confirmation, refused cross-site) removes, in one
+  locked transaction, the account's briefs with every step (also those billed to the
+  trial that signed in) and its idempotency records, and the user with its sessions and
+  Google link; it stops the steps that were running; it keeps the anti-abuse record until
+  the current month's quota window ends plus 7 days. Charges, reservations and usage
+  buckets stay (HMACs and amounts only); signing up again with the same Google account
+  finds the same counts. The response expires this browser's session cookie; every other
+  session ends with the user. The page then forgets everything private it held
+  (`web/src/features/auth/visitor.ts`), as it does on sign-out.
+- **Backups** never hold the rows of the sign-in tables, the briefs or the idempotency
+  records (`server/db/backup.ts`; RUNBOOK, "Backups"), so a restore cannot bring back a
+  deleted account, its content, a session or OAuth state; `pnpm worker restore-check`
+  checks a restored database before the service opens.
+- **Retention.** The API's control maintenance also deletes expired sessions, OAuth
+  state, used states and deletion confirmations (`pruneAuth`).
 
 Tests run against a mocked Google (`tests/support/mock-google.ts`: the authorization
-endpoint the browser visits and the token endpoint the server calls), offline.
+endpoint the browser visits and the token endpoint the server calls), offline. The races
+with the handover and with deletion are reproduced with PostgreSQL locks held by the test
+(`tests/integration/auth.test.ts`).
 
 ## Deployment with Docker Compose
 

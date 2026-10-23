@@ -168,7 +168,8 @@ const isApiPath = (path: string): boolean => path === '/api' || path.startsWith(
 /**
  * The service, not the request, is at fault: Elasticsearch transport failures, an
  * index that is missing or overloaded, a search that timed out, PostgreSQL connection
- * failures, or no servable dataset.
+ * failures, a bounded lock wait that timed out or a deadlock (fail closed), or no
+ * servable dataset.
  */
 function isUnavailable(err: unknown): boolean {
   if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError || err instanceof AuthUnavailableError) return true;
@@ -176,7 +177,7 @@ function isUnavailable(err: unknown): boolean {
   if (['ConnectionError', 'TimeoutError', 'NoLivingConnectionsError'].includes(e.name ?? '')) return true;
   if (e.name === 'ResponseError' && [404, 429, 502, 503, 504].includes(e.meta?.statusCode ?? 0)) return true;
   const code = e.code ?? (err as { cause?: { code?: string } }).cause?.code ?? '';
-  return ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03', '53300'].includes(code) || code.startsWith('08');
+  return ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03', '53300', '55P03', '40P01'].includes(code) || code.startsWith('08');
 }
 
 /** Fastify's own request errors (body too large, unsupported media type, ...). */

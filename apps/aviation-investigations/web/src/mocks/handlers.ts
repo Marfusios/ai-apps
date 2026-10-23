@@ -15,7 +15,14 @@ import { delay, http, HttpResponse } from 'msw';
 import type { AiStatusResponse } from '../../../shared/contracts/ai';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import { CreateBriefRequestSchema, RefinementRequestSchema } from '../../../shared/contracts/briefs';
-import { DeleteAccountRequestSchema, SignInRequestSchema, type AccountResponse } from '../../../shared/contracts/account';
+import {
+  DELETE_REAUTH_PATH,
+  DeleteAccountRequestSchema,
+  DeleteStartRequestSchema,
+  SignInRequestSchema,
+  type AccountResponse,
+  type DeleteStartResponse,
+} from '../../../shared/contracts/account';
 import type { ErrorResponse } from '../../../shared/contracts/common';
 import { SearchRequestSchema, paramsToQuery } from '../../../shared/contracts/search';
 import cases from '../../mock/cases.json';
@@ -48,6 +55,13 @@ export interface HandlerOptions {
   turnstileSiteKey?: string | null;
   /** Offer Google sign-in (default false, as the fixture config says). */
   googleEnabled?: boolean;
+  /**
+   * Deleting the account asks to confirm with Google first, as for a session older than 5
+   * minutes (default false: as right after signing in, it asks only once more).
+   */
+  deletionNeedsReauth?: boolean;
+  /** Signed in, the server asks for a Turnstile check before every AI request (the step-up, DESIGN §8). */
+  accountCheck?: boolean;
 }
 
 /** The mock's Google account: synthetic. */
@@ -56,18 +70,35 @@ export const MOCK_USER = { name: 'Alex Example', email: 'alex@example.com' } as 
 /** This tab's mock sign-in: kept across the reload that coming back from "Google" causes. */
 const MOCK_ACCOUNT_KEY = 'casebook-mock-account';
 
+/** Set in this tab's session storage (end-to-end tests): deleting asks to confirm with Google first. */
+export const MOCK_DELETION_REAUTH_KEY = 'casebook-mock-deletion-reauth';
+
 interface MockAccountState {
   signedIn: boolean;
   /** The account exists (its next sign-in is not a first one). */
   registered: boolean;
+  /** Until when this tab's session may delete the account (kept across the reload back from "Google"). */
+  confirmedUntil?: string | null;
 }
 
 function loadAccountState(): MockAccountState {
   try {
     const raw = JSON.parse(window.sessionStorage.getItem(MOCK_ACCOUNT_KEY) ?? 'null') as Partial<MockAccountState> | null;
-    return { signedIn: raw?.signedIn === true, registered: raw?.registered === true };
+    return {
+      signedIn: raw?.signedIn === true,
+      registered: raw?.registered === true,
+      confirmedUntil: typeof raw?.confirmedUntil === 'string' ? raw.confirmedUntil : null,
+    };
   } catch {
     return { signedIn: false, registered: false };
+  }
+}
+
+function deletionReauthFlag(): boolean {
+  try {
+    return window.sessionStorage.getItem(MOCK_DELETION_REAUTH_KEY) === '1';
+  } catch {
+    return false;
   }
 }
 
@@ -109,18 +140,29 @@ export function createHandlers({
   briefPolls,
   turnstileSiteKey = TURNSTILE_TEST_SITE_KEY,
   googleEnabled = false,
+  deletionNeedsReauth = deletionReauthFlag(),
+  accountCheck = false,
 }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);
   };
-  const briefs = new MockBriefs(briefPolls === undefined ? {} : { pollsToFinish: briefPolls });
   let signIn: MockAccountState = googleEnabled ? loadAccountState() : { signedIn: false, registered: false };
-  let status: AiStatusResponse = signIn.signedIn ? AI_STATUS_SAMPLES.newAccount : aiStatus;
+  /** Until when this tab's session may delete the account (a recent sign-in's confirmation). */
+  let confirmedUntil: string | null = signIn.confirmedUntil ?? null;
+  const confirmNow = (): string => {
+    confirmedUntil = new Date(Date.now() + 5 * 60_000).toISOString();
+    setSignIn({ ...signIn, confirmedUntil });
+    return confirmedUntil;
+  };
+  // Briefs are read by their owner: the account while signed in, else this browser's trial.
+  const briefs = new MockBriefs({ ...(briefPolls === undefined ? {} : { pollsToFinish: briefPolls }), visitor: () => (signIn.signedIn ? 'account' : 'trial') });
+  const accountStatus = (): AiStatusResponse => (accountCheck ? AI_STATUS_SAMPLES.checkedAccount : AI_STATUS_SAMPLES.newAccount);
+  let status: AiStatusResponse = signIn.signedIn ? accountStatus() : aiStatus;
   const notFound = () => HttpResponse.json({ error: 'not_found', message: 'Not found.' } satisfies ErrorResponse, { status: 404, headers: NO_STORE });
-  const setSignIn = (next: MockAccountState): void => {
+  function setSignIn(next: MockAccountState): void {
     signIn = next;
     saveAccountState(next);
-  };
+  }
 
   /** The anonymous gate and admission, before any work (server/identity/gate.ts, DESIGN §8). */
   const refuse = (token: string | null | undefined): Response | null => {
@@ -133,6 +175,8 @@ export function createHandlers({
       return deny(429, 'free_searches_paused', "Today's free AI searches are used up.");
     }
     if (status.remaining?.kind === 'trial' && !token) return deny(403, 'challenge_required', 'Take the check, then try again.');
+    // A signed-in request the server flags takes a check too (the step-up).
+    if (status.remaining?.kind === 'account' && status.remaining.check && !token) return deny(403, 'challenge_required', 'Take the check, then try again.');
     return null;
   };
   /** An accepted request: the trial has started; a running search uses one. */
@@ -158,7 +202,8 @@ export function createHandlers({
     }),
     http.get('*/api/account', async () => {
       await wait();
-      const body: AccountResponse = signIn.signedIn ? { signedIn: true, user: { ...MOCK_USER } } : { signedIn: false };
+      const live = confirmedUntil !== null && Date.parse(confirmedUntil) > Date.now() ? { deletionConfirmedUntil: confirmedUntil } : {};
+      const body: AccountResponse = signIn.signedIn ? { signedIn: true, user: { ...MOCK_USER }, ...live } : { signedIn: false };
       return HttpResponse.json(body, { headers: NO_STORE });
     }),
     http.post('*/api/auth/sign-in/social', async ({ request }) => {
@@ -166,18 +211,36 @@ export function createHandlers({
       if (!googleEnabled) return notFound();
       const parsed = SignInRequestSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return badRequest(parsed.error.issues);
-      // As if Google sent the browser straight back: a new account gets the welcome.
+      // Confirming a deletion with Google: the same account signs in again and is confirmed.
+      if (parsed.data.callbackURL === DELETE_REAUTH_PATH && signIn.signedIn) {
+        confirmNow();
+        return HttpResponse.json({ url: parsed.data.callbackURL, redirect: false }, { headers: NO_STORE });
+      }
+      // As if Google sent the browser straight back: a new account gets the welcome, and a
+      // sign-in from a brief takes that brief over.
       const url = signIn.registered ? parsed.data.callbackURL : parsed.data.newUserCallbackURL;
+      const fromBrief = /^\/briefs\/([0-9a-f-]{36})(?:\?|$)/.exec(parsed.data.callbackURL)?.[1];
+      if (fromBrief) briefs.handOver(fromBrief);
       setSignIn({ signedIn: true, registered: true });
-      status = AI_STATUS_SAMPLES.newAccount;
+      status = accountStatus();
       return HttpResponse.json({ url, redirect: false }, { headers: NO_STORE });
     }),
     http.post('*/api/auth/sign-out', async () => {
       await wait();
       if (!googleEnabled) return notFound();
-      setSignIn({ ...signIn, signedIn: false });
+      confirmedUntil = null;
+      setSignIn({ ...signIn, signedIn: false, confirmedUntil: null });
       status = aiStatus;
       return HttpResponse.json({ success: true }, { headers: NO_STORE });
+    }),
+    http.post('*/api/account/delete/start', async ({ request }) => {
+      await wait();
+      if (!googleEnabled) return notFound();
+      const parsed = DeleteStartRequestSchema.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return badRequest(parsed.error.issues);
+      if (!signIn.signedIn) return HttpResponse.json({ error: 'sign_in_required', message: 'Sign in to delete your account.' } satisfies ErrorResponse, { status: 403, headers: NO_STORE });
+      const body: DeleteStartResponse = deletionNeedsReauth ? { next: 'reauthenticate' } : { next: 'confirm', until: confirmNow() };
+      return HttpResponse.json(body, { headers: NO_STORE });
     }),
     http.post('*/api/account/delete', async ({ request }) => {
       await wait();
@@ -185,7 +248,12 @@ export function createHandlers({
       const parsed = DeleteAccountRequestSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return badRequest(parsed.error.issues);
       if (!signIn.signedIn) return HttpResponse.json({ error: 'sign_in_required', message: 'Sign in to delete your account.' } satisfies ErrorResponse, { status: 403, headers: NO_STORE });
-      setSignIn({ signedIn: false, registered: false });
+      if (confirmedUntil === null || Date.parse(confirmedUntil) <= Date.now()) {
+        return HttpResponse.json({ error: 'reauth_required', message: "Confirm with Google that it's you, then delete your account." } satisfies ErrorResponse, { status: 403, headers: NO_STORE });
+      }
+      briefs.dropAccountBriefs();
+      confirmedUntil = null;
+      setSignIn({ signedIn: false, registered: false, confirmedUntil: null });
       status = aiStatus;
       return HttpResponse.json({ deleted: true }, { headers: NO_STORE });
     }),

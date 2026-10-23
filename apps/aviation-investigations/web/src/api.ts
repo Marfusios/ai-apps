@@ -11,6 +11,7 @@ import { ErrorResponseSchema, type ErrorResponse } from '../../shared/contracts/
 import { ConfigResponseSchema } from '../../shared/contracts/config';
 import { DashboardResponseSchema, type DashboardRequest } from '../../shared/contracts/dashboard';
 import { SearchResponseSchema, searchRequestToParams, type SearchRequest } from '../../shared/contracts/search';
+import { privateRead } from './features/auth/visitor';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -114,12 +115,12 @@ export const dashboardQuery = (cohort: DashboardRequest['cohort']) =>
 /**
  * AI availability for this visitor (UI_DESIGN §5): the header counter and the Ask AI
  * label read it before anyone clicks. Per visitor and never cached by the server;
- * refetch it after an AI request.
+ * refetch it after an AI request. A private read (web/src/features/auth/visitor.ts).
  */
 export const aiStatusQuery = () =>
   queryOptions({
     queryKey: ['ai-status'],
-    queryFn: ({ signal }) => getJson('/api/ai/status', AiStatusResponseSchema, signal),
+    queryFn: ({ signal }) => privateRead(() => getJson('/api/ai/status', AiStatusResponseSchema, signal)),
     staleTime: 30_000,
     retry,
   });

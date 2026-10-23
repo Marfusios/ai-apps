@@ -801,7 +801,14 @@ then state the processed cohort (DESIGN §5).
   - Sign out
   - **Delete account**, which explains what goes immediately, that backups
     expire within 30 days, and the minimal anti-abuse and financial records
-    that remain (DESIGN §7)
+    that remain (DESIGN §7). As built (Task 20 review, Proposed): backups never
+    hold accounts or AI searches, so the line says that instead; and deleting
+    needs a recent Google sign-in. Within 5 minutes of signing in the page asks
+    once more ("Delete your account now? This can't be undone."); otherwise it
+    first says "To delete your account, first confirm with Google that it's
+    you." with [Continue with Google], comes back to the account page and then
+    asks once more. Coming back without a confirmation says nothing was
+    deleted.
 - **Privacy page:** plain-language processing notice, linked from the footer
   and the sign-in dialog. The content follows DESIGN §7. The owner provides
   the final text.
@@ -890,7 +897,17 @@ The handover rules:
   is readable only by the new owner.
 - **Old identity loses access:** after the handover, the trial identity cannot
   read the brief. An idempotent retry from it returns "moved" (sign in to
-  view), never a replay or a new run.
+  view), never a replay or a new run. Like every anonymous AI request, the
+  retry takes a fresh Turnstile check first.
+- **Signed in elsewhere** (as built in Task 20; Proposed, needs the owner's
+  sign-off): when the visitor signed in from another page, a refinement of a
+  live brief this browser's trial still owns, or the retry of a request that
+  trial made, sent while signed in, moves the brief to the account by the same
+  compare-and-set before it runs (the refinement is billed to the account).
+  Only the trial proven by this browser's cookie can be moved this way; reads
+  never move a brief. On a shared browser this moves the earlier anonymous
+  person's brief to whoever signs in there and refines it, which the rule above
+  (signing in from the brief's page) does as well.
 
 Tests must cover logout followed by an anonymous replay, concurrent OAuth
 callbacks, and in-flight completion. The handover is part of the implementation

@@ -581,17 +581,24 @@ What lives only in PostgreSQL, and must be backed up:
   from the source archive;
 - the cost ledger, reservations and the budget switch (`cost_ledger`, `reservations`,
   `ai_switch`), which are the only record of spend;
-- trial, usage, lease, idempotency and abuse records (`trial_identities`,
-  `usage_buckets`, `leases`, `idempotency`, `abuse_records`);
-- accounts (`auth_users`, `auth_accounts`: each signed-in user's Google subject, name
-  and email). Sessions and OAuth state (`auth_sessions`, `auth_verifications`) are
-  transient: a restore without them only signs everyone out. Keep backups at most 30 days
-  (what the account page promises): a restore brings back an account deleted after the
-  backup was taken, and there is no record to replay that deletion from, so delete it
-  again on request;
+- trial, usage, lease and abuse records (`trial_identities`, `usage_buckets`, `leases`,
+  `abuse_records`): with them a restore keeps every quota and the anti-abuse record of
+  deleted accounts;
 - the report links (`report_links`) and their provenance, and the passage embedding
   cache (`embedding_cache`), which is what keeps a rebuild from paying again;
 - the generation pins and the index build records.
+
+**Never in a backup** (server/db/backup.ts): the rows of the account and sign-in tables
+(`auth_users`, `auth_accounts`, `auth_sessions`, `auth_verifications`, `auth_state_uses`,
+`auth_deletion_confirmations`), of the AI briefs (`briefs`, `brief_steps`) and of the
+idempotency records (`idempotency`); their definitions are kept. They hold people's
+accounts and what they asked, which deleting an account removes for good, so a backup
+that held them would bring a deleted account and its content back on restore; and
+sessions and OAuth state, which must never come back (a session token together with
+BETTER_AUTH_SECRET makes a valid cookie). A restore therefore starts them empty:
+everyone signs in again and finds the same usage counts and anti-abuse record (keyed by
+HMAC, and restored), a re-created account is new again for its first days, and briefs
+are 24-hour temporary processing anyway. Backups expire within 30 days.
 
 Rebuildable: the Elasticsearch indices. They are built from PostgreSQL (the cases
 index) and PostgreSQL plus `embedding_cache` (the passages index), so after a restore
@@ -600,14 +607,31 @@ Verification reports under `data/reports/` and the extraction directories are
 derived and need no backup; the source archive is kept wherever you keep it.
 
 ```sh
-# One environment's database, as a role that can read everything in it. Run it on the
-# host that can reach the database; keep the file off the repository and encrypted.
-pg_dump --format=custom --no-owner --file "<backup-dir>/aviation_<env>-$(date +%F).dump" \
+# One environment's database, as a role that can read everything in it, without the rows
+# a backup never holds. Run it on the host that can reach the database; keep the file off
+# the repository and encrypted.
+pg_dump --format=custom --no-owner \
+  --exclude-table-data=auth_deletion_confirmations --exclude-table-data=auth_sessions \
+  --exclude-table-data=auth_accounts --exclude-table-data=auth_verifications \
+  --exclude-table-data=auth_state_uses --exclude-table-data=auth_users \
+  --exclude-table-data=brief_steps --exclude-table-data=briefs --exclude-table-data=idempotency \
+  --file "<backup-dir>/aviation_<env>-$(date +%F).dump" \
   "postgresql://<backup-role>@<db-host>:<port>/aviation_<env>"
+```
 
-# Restore into an empty database, then re-run the migrations to check the schema.
+Restore, with the app stopped (`pnpm app:down`):
+
+```sh
+# 1. Into an empty database, then re-run the migrations to check the schema.
 pg_restore --no-owner --dbname "postgresql://<admin-role>@<db-host>:<port>/aviation_<env>" "<backup-dir>/<file>.dump"
 pnpm app:migrate
+# 2. On a host with DATABASE_MIGRATOR_URL (as for pnpm worker migrate): the tables a backup
+#    never holds must be empty. It fails, naming them, when the dump held their rows (one
+#    made before these exclusions); only then empty them, which also checks again:
+pnpm worker restore-check
+#    pnpm worker restore-check --empty
+# 3. Only after it passed, open the service.
+pnpm app:up
 ```
 
 Roles and grants are part of provisioning, not of the dump (`pnpm provision:shared`).
@@ -647,6 +671,11 @@ Sign-in is off until the environment has a Google OAuth client (README, "Google 
 and accounts"); the site then offers no sign-in and `/api/auth` answers 404. To turn it
 on for an environment:
 
+0. Publish the owner's final privacy notice first (DESIGN §7: before collecting real
+   users): replace the text of `web/src/pages/Privacy.tsx` and set `final: true` in
+   `shared/privacy.ts`, and deploy. Until then live keeps sign-in off whatever is
+   configured, and says so in the startup log ("Google sign-in off ... final privacy
+   notice").
 1. In the Google Cloud console, configure the OAuth consent screen (External; the app
    name, support email and the privacy notice URL `<APP_URL>/privacy`; scopes `openid`,
    `email` and `profile` only, which need no verification) and create an OAuth client of
@@ -664,6 +693,28 @@ Changing `BETTER_AUTH_SECRET` signs everyone out and fails sign-ins in flight; c
 record, like the trials'. Revoking the client in Google stops new sign-ins; sessions
 already issued last until they expire (7 days) unless their users sign out, or the
 secret is changed.
+
+At most 500 sign-ins may be in progress at once (each start keeps its OAuth state for 10
+minutes): past that, starting a sign-in answers 503 and the log says "too many sign-ins
+in progress" until some expire. It bounds what unauthenticated starts can write.
+
+**Deleting an account needs a recent Google sign-in** (server/auth/deletion.ts): a
+session signed in within the last 5 minutes may delete at once; any other is sent through
+Google again (for the same account, with Google's account chooser) and comes back with a
+5-minute, single-use confirmation, and the session it had before ends. The log line
+"sign-in re-authentication" says `confirmed`, `not_confirmed` or `other_account`.
+
+**Extra checks for signed-in AI** (DESIGN §8; server/identity/step-up.ts). Ordinary
+signed-in AI requests take no Turnstile check. One does when its account made 3 AI
+attempts in the current minute, has used half of today's allowance, or its network made
+10 signed-in attempts in the current hour; the log line "signed-in AI request checked"
+names the signal and whether the check passed. During an attack on signed-in AI, check
+every signed-in request, and go back afterwards:
+
+```sh
+pnpm worker ai-switch --account-check always
+pnpm worker ai-switch --account-check suspicious
+```
 
 ## Tunnel mode
 

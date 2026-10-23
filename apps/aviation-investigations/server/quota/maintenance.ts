@@ -2,8 +2,8 @@
  * Periodic upkeep of the control tables, run inside the API server: expire the leases of
  * reservations nobody settled (`expireLeases`), mark brief steps whose process died as
  * failed once their reservation is closed (`failOrphanedSteps`), apply retention
- * (`pruneControls`), and delete expired sign-in sessions and OAuth state (`pruneAuth`,
- * server/auth/deletion.ts).
+ * (`pruneControls`), and delete expired sign-in sessions, OAuth state, claimed states and
+ * deletion confirmations (`pruneAuth`, server/auth/deletion.ts).
  *
  * All are available to the app role (`prune_controls()` is granted to `aviation_app` in
  * migration 0008; `expireLeases` and `pruneAuth` need only the table privileges the app
@@ -32,8 +32,8 @@ export type MaintenanceResult =
       /** Brief steps marked failed because their process died. */
       orphanedSteps: number | null;
       pruned: PruneReport | null;
-      /** Expired sign-in sessions and OAuth state deleted. */
-      authPruned: { sessions: number; verifications: number } | null;
+      /** Expired sign-in rows deleted. */
+      authPruned: Awaited<ReturnType<typeof pruneAuth>> | null;
       failed: string[];
     }
   | { ran: false; reason: 'lock_held' | 'failed' };
@@ -50,7 +50,7 @@ export async function runControlMaintenance(db: Db, log: MaintenanceLog, now: Da
       let expired: { expired: number; chargedUsd: number } | null = null;
       let pruned: PruneReport | null = null;
       let orphanedSteps: number | null = null;
-      let authPruned: { sessions: number; verifications: number } | null = null;
+      let authPruned: Awaited<ReturnType<typeof pruneAuth>> | null = null;
       // Leases first, so what they close is retained like any other settled reservation.
       try {
         expired = await tx.transaction((sp) => expireLeases(sp as unknown as Db, now));

@@ -4,17 +4,27 @@
  * it; Google sends the browser back to the server, which sets an HttpOnly session cookie
  * and returns it to the page it started from (with `welcome=1` for a new account, or
  * `signin=failed`).
+ *
+ * Deleting the account needs a recent Google sign-in: `startDeletion` says whether this
+ * session may delete now; otherwise `confirmWithGoogle` signs in with Google again,
+ * coming back to `DELETE_REAUTH_PATH` (or `/account?delete=failed`). Signing out and
+ * deleting forget everything private the page held (`forgetVisitor`).
  */
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
 import {
   AccountResponseSchema,
+  DELETE_PARAM,
+  DELETE_REAUTH_PATH,
   DeleteAccountResponseSchema,
+  DeleteStartResponseSchema,
   SIGN_IN_ERROR_PARAM,
   SignInResponseSchema,
   WELCOME_PARAM,
+  type DeleteStartResponse,
   type SignInRequest,
 } from '../../../../shared/contracts/account';
 import { getJson, postJson, retry } from '../../api';
+import { forgetVisitor, privateRead } from './visitor';
 
 /** Google's authorization endpoint: the only other origin sign-in may open. */
 export const GOOGLE_ORIGIN = 'https://accounts.google.com';
@@ -23,7 +33,7 @@ export const GOOGLE_ORIGIN = 'https://accounts.google.com';
 export const accountQuery = () =>
   queryOptions({
     queryKey: ['account'],
-    queryFn: ({ signal }) => getJson('/api/account', AccountResponseSchema, signal),
+    queryFn: ({ signal }) => privateRead(() => getJson('/api/account', AccountResponseSchema, signal)),
     staleTime: 60_000,
     retry,
   });
@@ -54,6 +64,17 @@ export function signInRequest(path: string): SignInRequest {
   };
 }
 
+/** The sign-in request that confirms a deletion: back to the account page, `delete=confirm` or `delete=failed`. */
+export function reauthRequest(): SignInRequest {
+  return {
+    provider: 'google',
+    callbackURL: DELETE_REAUTH_PATH,
+    newUserCallbackURL: withParam(DELETE_REAUTH_PATH, WELCOME_PARAM, '1'),
+    errorCallbackURL: `/account?${DELETE_PARAM}=failed`,
+    disableRedirect: true,
+  };
+}
+
 /** How the page leaves for Google (component tests replace `go`). */
 export const signInNavigation = { go: (url: string): void => window.location.assign(url) };
 
@@ -61,26 +82,36 @@ export const signInNavigation = { go: (url: string): void => window.location.ass
  * Start Google sign-in and leave for Google. Throws when the server refuses or answers
  * with anything but Google's (or, in the mock, this site's) address.
  */
-export async function startGoogleSignIn(path: string, navigate: (url: string) => void = signInNavigation.go): Promise<void> {
-  const answer = await postJson('/api/auth/sign-in/social', signInRequest(path), SignInResponseSchema);
+export async function startGoogleSignIn(
+  path: string,
+  navigate: (url: string) => void = signInNavigation.go,
+  request: SignInRequest = signInRequest(path),
+): Promise<void> {
+  const answer = await postJson('/api/auth/sign-in/social', request, SignInResponseSchema);
   if (!answer) throw new Error('Sign-in did not start');
   const url = new URL(answer.url, window.location.origin);
   if (url.origin !== GOOGLE_ORIGIN && url.origin !== window.location.origin) throw new Error('Sign-in answered with an unexpected address');
   navigate(url.toString());
 }
 
-/** Forget what this page knew about the visitor: the account, the AI counts and any brief. */
-export async function refreshVisitor(queryClient: QueryClient): Promise<void> {
-  queryClient.removeQueries({ queryKey: ['brief'] });
-  await Promise.all([queryClient.invalidateQueries({ queryKey: ['account'] }), queryClient.invalidateQueries({ queryKey: ['ai-status'] })]);
-}
-
 export async function signOut(queryClient: QueryClient): Promise<void> {
   await postJson('/api/auth/sign-out', {}, null);
-  await refreshVisitor(queryClient);
+  await forgetVisitor(queryClient);
+}
+
+/** Whether this session may delete the account now, or must sign in with Google again first. */
+export async function startDeletion(): Promise<DeleteStartResponse> {
+  const answer = await postJson('/api/account/delete/start', {}, DeleteStartResponseSchema);
+  if (!answer) throw new Error('Deletion did not start');
+  return answer;
+}
+
+/** Sign in with Google again to confirm a deletion (leaves the page). */
+export function confirmWithGoogle(navigate?: (url: string) => void): Promise<void> {
+  return startGoogleSignIn(DELETE_REAUTH_PATH, navigate, reauthRequest());
 }
 
 export async function deleteAccount(queryClient: QueryClient): Promise<void> {
   await postJson('/api/account/delete', { confirm: true }, DeleteAccountResponseSchema);
-  await refreshVisitor(queryClient);
+  await forgetVisitor(queryClient);
 }

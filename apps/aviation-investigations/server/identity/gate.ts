@@ -37,7 +37,8 @@
  *
  * Every gate outcome is per visitor, so the reply is marked `no-store`. The pass
  * carries the trial principal and the validated network identity for admission.
- * Signed-in principals (Task 20) do not go through this gate.
+ * Signed-in principals (Task 20) do not go through this gate; `challenge` (steps 3 to 5
+ * alone) checks a signed-in request the step-up policy flags, and an anonymous retry.
  */
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../db/client.js';
@@ -141,6 +142,20 @@ export class AnonymousGate {
     return result;
   }
 
+  /**
+   * The Turnstile part of the gate alone (steps 3 to 5): a fresh single-use token, well
+   * formed, claimed, and verified by Cloudflare. For AI requests that need a check without
+   * the rest of the gate: an anonymous retry, which replays and spends nothing
+   * (UI_DESIGN §5: retries take a fresh token as well), and a signed-in request the
+   * step-up policy flags (server/identity/step-up.ts). Null when the check passes.
+   */
+  async challenge(request: FastifyRequest, reply: FastifyReply, token: unknown): Promise<GateRefusal | null> {
+    reply.header('cache-control', 'no-store');
+    const refused = await this.verifyToken(request, token, this.now());
+    if (refused) request.log.info({ gate: refused.reason, detail: refused.detail }, 'AI request check refused');
+    return refused;
+  }
+
   private async decide(request: FastifyRequest, reply: FastifyReply, networkId: string, token: unknown): Promise<GateResult> {
     const now = this.now();
     if (!(await readAiSwitch(this.db)).anonymousEnabled) return refusal('login_required', 403);
@@ -150,6 +165,18 @@ export class AnonymousGate {
       if (refused) return refused;
     }
 
+    const refused = await this.verifyToken(request, token, now);
+    if (refused) return refused;
+
+    if (existing) return { ok: true, principal: existing, networkId, trialStarted: false };
+    const started = await this.trials.start(reply, networkId, now);
+    if (started.ok) return { ok: true, principal: started.principal, networkId, trialStarted: true };
+    if (started.reason === 'trial_limit') return refusal('trial_limit', 429, 'trial_limit', started.retryAt);
+    return refusal('unavailable', 503, 'busy');
+  }
+
+  /** Steps 3 to 5: the token is there and well formed, claimed once, and Cloudflare accepts it. */
+  private async verifyToken(request: FastifyRequest, token: unknown, now: Date): Promise<GateRefusal | null> {
     if (token === undefined || token === null || token === '') return refusal('challenge_required', 403);
     if (!isWellFormedToken(token)) return refusal('challenge_failed', 403, 'malformed');
     const dummy = this.testKeys && token === TURNSTILE_DUMMY_TOKEN;
@@ -164,12 +191,7 @@ export class AnonymousGate {
       }
       return refusal('challenge_failed', 403, verdict.reason);
     }
-
-    if (existing) return { ok: true, principal: existing, networkId, trialStarted: false };
-    const started = await this.trials.start(reply, networkId, now);
-    if (started.ok) return { ok: true, principal: started.principal, networkId, trialStarted: true };
-    if (started.reason === 'trial_limit') return refusal('trial_limit', 429, 'trial_limit', started.retryAt);
-    return refusal('unavailable', 503, 'busy');
+    return null;
   }
 }
 

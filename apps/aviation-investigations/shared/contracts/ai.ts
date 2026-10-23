@@ -7,9 +7,10 @@
 import { z } from 'zod';
 
 /**
- * The Turnstile action of every anonymous AI request (DESIGN §8). The widget is rendered
- * with it and the server refuses tokens solved for another action. Cloudflare allows up
- * to 32 characters of `A-Za-z0-9_-`.
+ * The Turnstile action of every AI request that takes a check (DESIGN §8: every anonymous
+ * one, and a signed-in one the server asks to check). The widget is rendered with it and
+ * the server refuses tokens solved for another action. Cloudflare allows up to 32
+ * characters of `A-Za-z0-9_-`.
  */
 export const TURNSTILE_ACTION = 'ask-ai';
 
@@ -49,13 +50,19 @@ export const TrialRemainingSchema = z.strictObject({
   started: z.boolean(),
 });
 
-/** A signed-in account: searches left today and this month (the daily limit is 5 for new accounts). */
+/**
+ * A signed-in account: searches left today and this month (the daily limit is 5 for new
+ * accounts). `check: true` when its next AI request needs a Turnstile check (DESIGN §8,
+ * "suspicious authenticated activity"; server/identity/step-up.ts), so the page takes one
+ * at click time; absent for ordinary use.
+ */
 export const AccountRemainingSchema = z.strictObject({
   kind: z.literal('account'),
   leftToday: count,
   limitToday: count,
   leftThisMonth: count,
   limitThisMonth: count,
+  check: z.literal(true).optional(),
 });
 
 /** The visitor's own counts; null when they cannot be read (`paused` with `dependency`). */

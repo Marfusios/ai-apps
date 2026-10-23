@@ -15,23 +15,24 @@ import { sql } from 'drizzle-orm';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
-import { AccountResponseSchema } from '../../shared/contracts/account.js';
+import { AccountResponseSchema, DELETE_REAUTH_PATH } from '../../shared/contracts/account.js';
 import { TURNSTILE_ACTION } from '../../shared/contracts/ai.js';
 import { StartBriefResponseSchema, type StartBriefResponse } from '../../shared/contracts/briefs.js';
 import { createFakeProvider, type FakeProvider, type FakeScript } from '../../server/ai/fake.js';
 import type { ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime } from '../../server/ai/runtime.js';
 import { buildApp } from '../../server/app.js';
-import { AUTH_IP_HEADER, GOOGLE_ISSUER, createAuthService, type AuthLog, type AuthService } from '../../server/auth/better-auth.js';
+import { AUTH_IP_HEADER, AUTH_STATE_CAP, GOOGLE_ISSUER, createAuthService, type AuthLog, type AuthService } from '../../server/auth/better-auth.js';
 import { pruneAuth } from '../../server/auth/deletion.js';
+import { accountLockKey } from '../../server/auth/lifecycle.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
 import { closeDb, type Db } from '../../server/db/client.js';
-import { accountIdentityHash } from '../../server/quota/policy.js';
+import { SPEND_LOCK_KEY, accountIdentityHash } from '../../server/quota/policy.js';
 import { FakeRetriever } from '../support/fake-retriever.js';
 import { FakeSiteverify, REAL_SECRET, REAL_SITE_KEY } from '../support/fake-siteverify.js';
 import { CookieJar, MockGoogle, type GoogleUser } from '../support/mock-google.js';
 import { sqlState } from './corpus-helpers.js';
-import { resetControls, testDb } from './helpers.js';
+import { resetControls, testDb, testPool } from './helpers.js';
 
 const IDENTITY_SECRET = 'test-identity-hmac-secret-0123456789';
 const NETWORK_SECRET = 'test-network-hmac-secret-0123456789';
@@ -317,6 +318,7 @@ describe('Google sign-in', () => {
       prompt: 'select_account',
       accessType: 'online',
       includeGrantedScopes: null,
+      loginHint: null,
     });
     expect(asked.state).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(asked.nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -400,6 +402,77 @@ async function aiStatus(h: Harness, jar: CookieJar) {
   expect(r.status).toBe(200);
   return r.json as { state: string; remaining: Record<string, unknown> | null };
 }
+
+/**
+ * Delete the signed-in account as the page does: confirm first (right after a sign-in no
+ * other Google prompt is needed), then delete.
+ */
+async function deleteAccount(h: Harness, jar: CookieJar): Promise<Sent> {
+  const start = await send(h, 'POST', '/api/account/delete/start', { jar, body: {} });
+  expect(start.status, JSON.stringify(start.json)).toBe(200);
+  return send(h, 'POST', '/api/account/delete', { jar, body: { confirm: true } });
+}
+
+// Races ------------------------------------------------------------------------
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A migrator transaction holding locks (`statement`): the app's statements that need them
+ * wait until it commits. Always end it (`rollback` in a `finally`), or the next reset waits.
+ */
+async function holdLocks(statement: string) {
+  const pool = testPool('migrator');
+  const client = await pool.connect();
+  await client.query('BEGIN');
+  await client.query(statement);
+  let open = true;
+  const end = async (how: 'COMMIT' | 'ROLLBACK') => {
+    if (!open) return;
+    open = false;
+    try {
+      await client.query(how);
+    } finally {
+      client.release();
+      await pool.end();
+    }
+  };
+  return {
+    query: (text: string, values?: unknown[]) => client.query(text, values),
+    commit: () => end('COMMIT'),
+    rollback: () => end('ROLLBACK'),
+  };
+}
+
+/** Until `n` sessions wait for a lock (requests paused at a held lock). */
+async function untilBlocked(n = 1): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    const waiting = (await rows<{ n: number }>(sql`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`))[0]!.n;
+    if (waiting >= n) return;
+    await sleep(10);
+  }
+  throw new Error(`fewer than ${n} sessions waited for a held lock`);
+}
+
+/** Until `check` holds (polling). */
+async function until(check: () => boolean | Promise<boolean>, what: string): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    if (await check()) return;
+    await sleep(10);
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+/** Account deletion as it commits, done by hand in a session that holds the locks a paused request waits for. */
+async function deleteInLocker(locker: Awaited<ReturnType<typeof holdLocks>>, sub: string): Promise<void> {
+  await locker.query('SELECT delete_account_content($1)', [accountHash(sub)]);
+  await locker.query(`DELETE FROM auth_users WHERE id IN (SELECT user_id FROM auth_accounts WHERE account_id = $1)`, [sub]);
+}
+
+/** The reservations, in order: status, whether the search still counts, and the charge. */
+const reservationsNow = () =>
+  rows<{ principal_kind: string; status: string; quota_counted: boolean; charged: string | null }>(sql`
+    SELECT principal_kind, status, quota_counted, charged_usd::text AS charged FROM reservations ORDER BY id`);
 
 describe('sign-in protections', () => {
   it('cookies: host-only, HttpOnly, SameSite=Lax, Secure with __Host- names over https; sign-out expires the session', async () => {
@@ -513,6 +586,8 @@ describe('sign-in protections', () => {
       { ...signInBody('/'), callbackURL: '//evil.example/x' },
       { ...signInBody('/'), errorCallbackURL: 'javascript:alert(1)' },
       { ...signInBody('/'), newUserCallbackURL: '/\\evil.example' },
+      // `/.//evil.example/x` would resolve to the same-origin path `//evil.example/x`.
+      signInBody('/.//evil.example/x'),
     ];
     for (const body of offSite) {
       const r = await send(h, 'POST', '/api/auth/sign-in/social', { jar, body });
@@ -554,6 +629,47 @@ describe('sign-in protections', () => {
     expect(denied.headers.location).toBe('/dashboard?signin=failed&error=access_denied');
     expect(await account(h, other)).toEqual({ signedIn: false });
     expect(await count('auth_sessions')).toBe(1);
+  });
+
+  it('a callback is used once: a second one with the same state is refused before Google is called', async () => {
+    const h = harness();
+    const jar = new CookieJar();
+    const url = await startSignIn(h, jar, '/dashboard');
+    const path = google.authorize(url, newUser());
+    // The first callback has read the state and waits to delete it (Better Auth reads, then deletes).
+    const locker = await holdLocks('LOCK TABLE auth_verifications IN EXCLUSIVE MODE');
+    let first: Promise<Sent> | null = null;
+    try {
+      first = callback(h, jar.clone(), path);
+      await untilBlocked();
+      // A second callback with the same state and code still finds the state, but it is claimed.
+      const second = await callback(h, jar.clone(), path);
+      expect(second.headers.location).toBe('/dashboard?signin=failed&error=state_mismatch');
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect((await first!).headers.location).toBe('/dashboard?welcome=1');
+    expect(google.tokenRequests).toHaveLength(1);
+    expect(await count('auth_sessions')).toBe(1);
+    expect(h.logs.some((l) => (JSON.parse(l) as { signIn?: string }).signIn === 'state_reused')).toBe(true);
+    // A SHA-256 of the state is kept until the state would have expired; never the state.
+    expect(await rows(sql`SELECT state_hash FROM auth_state_uses`)).toEqual([
+      { state_hash: createHash('sha256').update(MockGoogle.parse(url).state!).digest('hex') },
+    ]);
+  });
+
+  it('at most AUTH_STATE_CAP sign-ins may be in progress at once, whoever started them', async () => {
+    const h = harness();
+    await migrator.execute(sql`
+      INSERT INTO auth_verifications (identifier, value, expires_at, created_at, updated_at)
+      SELECT 'auth-state:filler-' || g, '{}', now() + interval '10 minutes', now(), now() FROM generate_series(1, ${AUTH_STATE_CAP}) g`);
+    const busy = await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/') });
+    expect(busy.status).toBe(503);
+    expect(await count('auth_verifications')).toBe(AUTH_STATE_CAP);
+    // Expired state does not count.
+    await migrator.execute(sql`UPDATE auth_verifications SET expires_at = now() - interval '1 minute' WHERE identifier = 'auth-state:filler-1'`);
+    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/') })).status).toBe(200);
   });
 
   it('nonce and claims: an ID token without this flow’s nonce, for another client, expired, or with an unverified email stores nothing', async () => {
@@ -627,6 +743,7 @@ describe('sign-in protections', () => {
     expect(errorOf(await send(h, 'GET', '/api/auth/callback/google?code=a&state=b', { jar }))).toEqual([404, 'not_found']);
     expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([404, 'not_found']);
     expect(await account(h, jar)).toEqual({ signedIn: false });
+    expect(errorOf(await send(h, 'POST', '/api/account/delete/start', { jar, body: {} }))).toEqual([404, 'not_found']);
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar, body: { confirm: true } }))).toEqual([404, 'not_found']);
     // A short BETTER_AUTH_SECRET keeps it off too.
     expect(harness({}, { config: { authSecret: 'short' } }).auth).toBeNull();
@@ -755,23 +872,28 @@ describe('retries and billing after sign-in', () => {
     // Signed out again: the browser is its trial alone, and retries both earlier requests.
     expect((await send(h, 'POST', '/api/auth/sign-out', { jar: browser, body: {} })).status).toBe(200);
     expect(browser.get(SESSION)).toBeUndefined();
-    const before = { reservations: await count('reservations'), steps: await count('brief_steps'), siteverify: h.sv.calls.length };
+    const before = { reservations: await count('reservations'), steps: await count('brief_steps') };
+    const checks = h.sv.calls.length;
     const trialUsed = await rows(sql`SELECT requests_used FROM trial_identities`);
     advance(MIN);
+    // Like every anonymous AI request, a retry takes a fresh Turnstile check (UI_DESIGN §5).
+    expect(errorOf(await ask(h, browser, 'Write me a poem about the sea', { key: askKey, token: false }))).toEqual([403, 'challenge_required']);
     expect(errorOf(await ask(h, browser, 'Write me a poem about the sea', { key: askKey }))).toEqual([403, 'moved']);
     expect(errorOf(await refine(h, browser, briefId, 'Only seaplanes', { key: refineKey }))).toEqual([403, 'moved']);
-    // Never a replay and never a new run: nothing admitted, charged or checked.
-    expect({ reservations: await count('reservations'), steps: await count('brief_steps'), siteverify: h.sv.calls.length }).toEqual(before);
+    expect(h.sv.calls).toHaveLength(checks + 2);
+    // Never a replay and never a new run: nothing admitted or charged.
+    expect({ reservations: await count('reservations'), steps: await count('brief_steps') }).toEqual(before);
     expect(await rows(sql`SELECT requests_used FROM trial_identities`)).toEqual(trialUsed);
     // The brief itself is not the trial's to read.
     expect((await send(h, 'GET', `/api/briefs/${briefId}`, { jar: browser })).status).toBe(404);
 
-    // Signed in again, the same retry is redirected to the account: the brief, not a second run.
+    // Signed in again, the same retry is redirected to the account: the brief, not a second run, and no check.
     await signIn(h, browser, user, '/');
     const replay = await ask(h, browser, 'Write me a poem about the sea', { key: askKey, token: false });
     expect(replay.status).toBe(200);
     expect(replay.json).toMatchObject({ kind: 'scope_reply', briefId, step: 1 });
-    expect({ reservations: await count('reservations'), steps: await count('brief_steps'), siteverify: h.sv.calls.length }).toEqual(before);
+    expect({ reservations: await count('reservations'), steps: await count('brief_steps') }).toEqual(before);
+    expect(h.sv.calls).toHaveLength(checks + 2);
   });
 
   it('a signed-in retry of a request the trial made, sign-in having started elsewhere, takes the brief over and is never billed twice', async () => {
@@ -849,7 +971,7 @@ describe('retries and billing after sign-in', () => {
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', leftToday: 3, limitToday: 5, leftThisMonth: 148 } });
     const firstUser = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
 
-    expect((await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } })).status).toBe(200);
+    expect((await deleteAccount(h, browser)).status).toBe(200);
     expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'trial' } });
     // The anti-abuse record: HMAC(issuer, sub) only, kept through the month's window plus 7 days.
     expect(await abuseRecords()).toEqual([{ identity_hash: accountHash(user.sub), retain_until: '2026-12-08T00:00:00.000Z' }]);
@@ -887,13 +1009,14 @@ describe('account deletion', () => {
     const accountKey = accountHash(user.sub);
     const kept = { reservations: await count('reservations'), ledger: await count('cost_ledger'), buckets: await count('usage_buckets') };
 
-    // Refused: signed out, cross-site, or without the confirmation.
+    // Refused: signed out, cross-site, without the explicit confirmation, or without a recent sign-in's confirmation.
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: trialOnly(browser), body: { confirm: true } }))).toEqual([403, 'sign_in_required']);
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true }, headers: { 'sec-fetch-site': 'cross-site' } }))).toEqual([403, 'forbidden']);
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: {} }))).toEqual([400, 'bad_request']);
+    expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
     expect(await count('auth_users')).toBe(1);
 
-    const deleted = await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+    const deleted = await deleteAccount(h, browser);
     expect(deleted.status).toBe(200);
     expect(deleted.json).toEqual({ deleted: true });
     expect(deleted.headers['cache-control']).toBe('private, no-store');
@@ -916,6 +1039,7 @@ describe('account deletion', () => {
     // The account's brief is gone for good; nothing is left to read.
     expect((await send(h, 'GET', `/api/briefs/${own.json.briefId}`, { jar: browser })).status).toBe(404);
     // Deleting again: there is no account.
+    expect(errorOf(await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} }))).toEqual([403, 'sign_in_required']);
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } }))).toEqual([403, 'sign_in_required']);
     // The server log names counts only.
     const line = h.logs.map((l) => JSON.parse(l) as { msg?: string; accountDeleted?: unknown }).find((l) => l.msg === 'account deleted');
@@ -933,15 +1057,455 @@ describe('account deletion', () => {
     await signIn(h, browser, newUser());
     const started = await ask(h, browser, 'Engine power loss after maintenance', { token: false });
     expect(started.json).toMatchObject({ kind: 'started', stage: 'retrieve' });
-    const deleted = await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
-    expect(deleted.status).toBe(200);
-    release();
+    try {
+      expect((await deleteAccount(h, browser)).status).toBe(200);
+    } finally {
+      release();
+    }
     await h.svc.settled();
     expect(await count('briefs')).toBe(0);
     expect(await rows(sql`SELECT status FROM reservations`)).toEqual([{ status: 'settled' }]);
     expect(await rows(sql`SELECT count(*)::int AS n FROM leases WHERE released_at IS NULL`)).toEqual([{ n: 0 }]);
     const line = h.logs.map((l) => JSON.parse(l) as { msg?: string; accountDeleted?: { cancelledSteps: number } }).find((l) => l.msg === 'account deleted');
     expect(line?.accountDeleted?.cancelledSteps).toBe(1);
+  });
+});
+
+/** Make every session's Google sign-in `minutes` older (as if it signed in that long ago). */
+async function ageSessions(minutes: number): Promise<void> {
+  await migrator.execute(sql`UPDATE auth_sessions SET created_at = created_at - make_interval(mins => ${minutes})`);
+}
+
+const reauthLogs = (h: Harness) =>
+  h.logs.map((l) => JSON.parse(l) as { msg?: string; reauthentication?: string }).filter((l) => l.msg === 'sign-in re-authentication').map((l) => l.reauthentication);
+
+describe('deleting needs a recent Google sign-in (OWASP re-authentication)', () => {
+  it('an older session, a stolen copy included, cannot delete; signing in with Google again as the same account confirms it and ends the old session', async () => {
+    const h = harness();
+    const browser = new CookieJar();
+    const user = newUser();
+    await signIn(h, browser, user);
+    await ageSessions(10);
+    const thief = browser.clone();
+    expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: thief, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: thief, body: {} })).json).toEqual({ next: 'reauthenticate' });
+    expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: thief, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
+    expect(await count('auth_deletion_confirmations')).toBe(0);
+    expect(await account(h, browser)).toEqual({ signedIn: true, user: { name: user.name, email: user.email } });
+
+    // The owner signs in with Google again from the account page; Google is asked for this account.
+    const url = await startSignIn(h, browser, DELETE_REAUTH_PATH);
+    expect(MockGoogle.parse(url).loginHint).toBe(user.sub);
+    const back = await callback(h, browser, google.authorize(url, user));
+    expect(back.headers.location).toBe(DELETE_REAUTH_PATH);
+    expect(reauthLogs(h)).toEqual(['confirmed']);
+    // The session the browser had (and the thief's copy of it) ended; the new one is confirmed for 5 minutes.
+    expect(await account(h, thief)).toEqual({ signedIn: false });
+    const confirmed = await account(h, browser);
+    expect(confirmed).toMatchObject({ signedIn: true, user: { email: user.email } });
+    const until = Date.parse((confirmed as { deletionConfirmedUntil?: string }).deletionConfirmedUntil ?? '');
+    expect(until - Date.now()).toBeGreaterThan(4 * MIN);
+    expect(until - Date.now()).toBeLessThanOrEqual(5 * MIN);
+    expect(await count('auth_sessions')).toBe(1);
+    const deleted = await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+    expect(deleted.status).toBe(200);
+    expect(await count('auth_users')).toBe(0);
+  });
+
+  it('signing in again as another Google account confirms nothing', async () => {
+    const h = harness();
+    const owner = newUser();
+    const other = newUser();
+    await signIn(h, new CookieJar(), other);
+    const browser = new CookieJar();
+    await signIn(h, browser, owner);
+    await ageSessions(10);
+    const url = await startSignIn(h, browser, DELETE_REAUTH_PATH);
+    await callback(h, browser, google.authorize(url, other));
+    expect(reauthLogs(h)).toEqual(['other_account']);
+    expect(await account(h, browser)).toEqual({ signedIn: true, user: { name: other.name, email: other.email } });
+    expect(await count('auth_deletion_confirmations')).toBe(0);
+    expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
+    expect(await count('auth_users')).toBe(2);
+  });
+
+  it('right after signing in no other prompt is needed; the confirmation is the session’s own, lasts 5 minutes and is used once', async () => {
+    const h = harness();
+    const browser = new CookieJar();
+    const laptop = new CookieJar();
+    const user = newUser();
+    await signIn(h, browser, user);
+    await signIn(h, laptop, user);
+    expect(errorOf(await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {}, headers: { 'sec-fetch-site': 'cross-site' } }))).toEqual([403, 'forbidden']);
+    expect(errorOf(await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: { confirm: true } }))).toEqual([400, 'bad_request']);
+    expect(errorOf(await send(h, 'POST', '/api/account/delete/start', { jar: new CookieJar(), body: {} }))).toEqual([403, 'sign_in_required']);
+    const start = await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} });
+    expect(start.json).toMatchObject({ next: 'confirm' });
+    // Asking again replaces it: one per session.
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).status).toBe(200);
+    expect(await count('auth_deletion_confirmations')).toBe(1);
+    // Another session of the same account cannot use it.
+    expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: laptop, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
+    // Once expired it is refused.
+    await migrator.execute(sql`UPDATE auth_deletion_confirmations SET created_at = created_at - interval '6 minutes', expires_at = expires_at - interval '6 minutes'`);
+    expect(await account(h, browser)).not.toHaveProperty('deletionConfirmedUntil');
+    expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
+    // A fresh one deletes once: of two deletions sent together, one deletes and the other finds nothing to delete.
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).json).toMatchObject({ next: 'confirm' });
+    const [a, b] = await Promise.all([
+      send(h, 'POST', '/api/account/delete', { jar: browser.clone(), body: { confirm: true } }),
+      send(h, 'POST', '/api/account/delete', { jar: browser.clone(), body: { confirm: true } }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 403]);
+    expect(await count('auth_users')).toBe(0);
+  });
+
+  it('after deletion, the old trial’s retry of a request whose brief moved to the account finds nothing: 404, never “ask again”', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const askKey = key();
+    const { briefId } = await trialBrief(h, browser, { key: askKey });
+    await signIn(h, browser, newUser(), `/briefs/${briefId}`);
+    expect((await deleteAccount(h, browser)).status).toBe(200);
+    const reservations = await count('reservations');
+    advance(MIN);
+    const retry = await ask(h, browser, 'Write me a poem about the sea', { key: askKey });
+    expect(errorOf(retry)).toEqual([404, 'not_found']);
+    expect(await count('reservations')).toBe(reservations);
+  });
+});
+
+describe('extra checks for signed-in AI (DESIGN §8: suspicious authenticated activity)', () => {
+  const asked = (h: Harness, jar: CookieJar, question: string, token?: string) =>
+    send(h, 'POST', '/api/briefs', { jar, body: { question, idempotencyKey: key(), ...(token ? { turnstileToken: token } : {}) } });
+
+  it('ordinary use takes no check; past half of today’s allowance the status asks for one and requests need it', async () => {
+    const h = harness({ scope: REFUSED });
+    const browser = new CookieJar();
+    await signIn(h, browser, newUser());
+    // A new account has 5 a day: the first 3 take no check.
+    for (let i = 0; i < 3; i++) {
+      expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', leftToday: 5 - i } });
+      expect((await aiStatus(h, browser)).remaining).not.toHaveProperty('check');
+      advance(MIN);
+      expect((await asked(h, browser, `Engine power loss ${i}`)).status).toBe(202);
+      await h.svc.settled();
+    }
+    expect(h.sv.calls).toHaveLength(0);
+    expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', leftToday: 2, check: true } });
+    advance(MIN);
+    const reservations = await count('reservations');
+    expect(errorOf(await asked(h, browser, 'Engine power loss 3'))).toEqual([403, 'challenge_required']);
+    expect(errorOf(await asked(h, browser, 'Engine power loss 3', '0.not-a-token-from-the-widget'))).toEqual([403, 'challenge_failed']);
+    // Nothing was admitted for the refused requests.
+    expect(await count('reservations')).toBe(reservations);
+    const passed = await asked(h, browser, 'Engine power loss 3', h.sv.issue());
+    expect(passed.status).toBe(202);
+    await h.svc.settled();
+    const lines = h.logs.map((l) => JSON.parse(l) as { msg?: string; accountCheck?: string[]; passed?: boolean }).filter((l) => l.msg === 'signed-in AI request checked');
+    expect(lines.map((l) => [l.accountCheck, l.passed])).toEqual([
+      [['daily_share'], false],
+      [['daily_share'], false],
+      [['daily_share'], true],
+    ]);
+  });
+
+  it('a burst within one minute needs a check', async () => {
+    const h = harness({ scope: [OFF_TOPIC, OFF_TOPIC, OFF_TOPIC, OFF_TOPIC] });
+    const browser = new CookieJar();
+    await signIn(h, browser, newUser());
+    for (let i = 0; i < 3; i++) {
+      expect((await asked(h, browser, `Write me a poem ${i}`)).status).toBe(200);
+      await h.svc.settled();
+    }
+    expect(await aiStatus(h, browser)).toMatchObject({ remaining: { check: true } });
+    expect(errorOf(await asked(h, browser, 'Write me a poem 3'))).toEqual([403, 'challenge_required']);
+    // The next minute is ordinary again (off-topic replies gave their searches back).
+    advance(MIN);
+    expect((await aiStatus(h, browser)).remaining).not.toHaveProperty('check');
+    expect((await asked(h, browser, 'Write me a poem 3')).status).toBe(200);
+  });
+
+  it('many signed-in attempts from one network need a check from every account there', async () => {
+    const h = harness({ scope: Array.from({ length: 12 }, () => OFF_TOPIC) });
+    const accounts = Array.from({ length: 5 }, () => new CookieJar());
+    for (const jar of accounts) await signIn(h, jar, newUser());
+    // Ten attempts in this hour from one address, two per account.
+    for (let i = 0; i < 10; i++) {
+      advance(MIN);
+      expect((await asked(h, accounts[i % 4]!, `Write me a poem ${i}`)).status).toBe(200);
+      await h.svc.settled();
+    }
+    expect(await aiStatus(h, accounts[4]!)).toMatchObject({ remaining: { check: true } });
+    expect(errorOf(await asked(h, accounts[4]!, 'Write me a poem 10'))).toEqual([403, 'challenge_required']);
+    // Another network is not affected.
+    const elsewhere = await send(h, 'POST', '/api/briefs', { jar: accounts[4]!, from: '198.51.100.77', body: { question: 'Write me a poem 11', idempotencyKey: key() } });
+    expect(elsewhere.status).toBe(200);
+  });
+
+  it('an operator can check every signed-in request (aviation_ingest sets it; the app cannot)', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    await signIn(h, browser, newUser());
+    expect(await sqlState(appDb.execute(sql`UPDATE ai_switch SET account_check = 'always' WHERE id = 1`))).toBe('42501');
+    await ingest.execute(sql`UPDATE ai_switch SET account_check = 'always' WHERE id = 1`);
+    expect(await aiStatus(h, browser)).toMatchObject({ remaining: { kind: 'account', check: true } });
+    expect(errorOf(await asked(h, browser, 'Write me a poem'))).toEqual([403, 'challenge_required']);
+    expect((await asked(h, browser, 'Write me a poem', h.sv.issue())).status).toBe(200);
+    expect(await sqlState(ingest.execute(sql`UPDATE ai_switch SET account_check = 'sometimes' WHERE id = 1`))).toBe('23514');
+  });
+});
+
+describe('races with the handover: reads and changes check the read owner atomically', () => {
+  const ACCOUNT_ONLY = { origin: 'text', question: 'Write me a poem about the sea', refinement: 'ACCOUNT-ONLY refinement', readings: {} };
+
+  it('a read racing a handover never shows the old trial a step only the account reads', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const { briefId, trialHash } = await trialBrief(h, browser);
+    const user = newUser();
+    await signIn(h, new CookieJar(), user);
+    const accountKey = accountHash(user.sub);
+    // The read waits for the steps table while the brief moves and the account adds a step.
+    const locker = await holdLocks('LOCK TABLE brief_steps IN ACCESS EXCLUSIVE MODE');
+    let read: Promise<Sent> | null = null;
+    try {
+      read = send(h, 'GET', `/api/briefs/${briefId}`, { jar: trialOnly(browser) });
+      await untilBlocked();
+      await locker.query('SELECT move_brief_read_owner($1::uuid, $2, $3)', [briefId, trialHash, accountKey]);
+      await locker.query(
+        `INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, created_at, updated_at)
+         VALUES ($1::uuid, 2, $2, 'account', 1, $3::jsonb, $4, $4)`,
+        [briefId, accountKey, JSON.stringify(ACCOUNT_ONLY), clock],
+      );
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    const r = await read!;
+    expect(errorOf(r)).toEqual([404, 'not_found']);
+    expect(JSON.stringify(r.json)).not.toContain('ACCOUNT-ONLY');
+  });
+
+  it('an anonymous refinement racing the handover adds no step to the account’s brief, calls no model and gives its search back', async () => {
+    const h = harness({ scope: [OFF_TOPIC, OFF_TOPIC] });
+    const browser = new CookieJar();
+    const { briefId, trialHash } = await trialBrief(h, browser);
+    advance(MIN);
+    const checks = h.sv.calls.length;
+    const release = h.sv.hold();
+    let pending: Promise<Sent> | null = null;
+    try {
+      // Another tab refines as the trial; its check waits at Cloudflare.
+      pending = refine(h, browser.clone(), briefId, 'Only seaplanes');
+      await until(() => h.sv.calls.length > checks, 'the refinement’s check');
+      // Meanwhile this tab signs in from the brief, which moves to the account.
+      const user = newUser();
+      await signIn(h, browser, user, `/briefs/${briefId}`);
+      expect(await ownerOf(briefId)).toMatchObject({ read_owner: accountHash(user.sub), read_owner_kind: 'account' });
+    } finally {
+      release();
+    }
+    expect(errorOf(await pending!)).toEqual([404, 'not_found']);
+    await h.svc.settled();
+    expect(await stepsOf(briefId)).toEqual([{ n: 1, billing_principal: trialHash, billing_kind: 'trial' }]);
+    expect(h.llm.calls).toHaveLength(1);
+    // Admitted, then given back before any step: settled at zero, the search returned.
+    const [, second] = await reservationsNow();
+    expect(second).toEqual({ principal_kind: 'trial', status: 'settled', quota_counted: false, charged: '0.000000' });
+    expect(await rows(sql`SELECT requests_used FROM trial_identities`)).toEqual([{ requests_used: 0 }]);
+  });
+
+  it('a cancel racing the handover never stops the account’s step', async () => {
+    let releaseRetrieval!: () => void;
+    const held = new Promise<void>((resolve) => (releaseRetrieval = resolve));
+    const h = harness({ scope: { output: scopeOut({ intent: 'case_search', mechanicalCause: true, keywordText: 'engine power loss maintenance' }) } }, { served: async () => {
+      await held;
+      return { chunkerVersion: 'none' };
+    } });
+    const browser = new CookieJar();
+    const started = await ask(h, browser, 'Engine power loss after maintenance');
+    expect(started.status).toBe(202);
+    const briefId = started.json.briefId;
+    const trialHash = (await ownerOf(briefId))!.read_owner;
+    const user = newUser();
+    await signIn(h, new CookieJar(), user);
+    // The cancel waits for the brief while it moves to the account.
+    const locker = await holdLocks('LOCK TABLE briefs, brief_steps IN EXCLUSIVE MODE');
+    let cancel: Promise<Sent> | null = null;
+    try {
+      cancel = send(h, 'POST', `/api/briefs/${briefId}/cancel`, { jar: trialOnly(browser), body: {} });
+      await untilBlocked();
+      await locker.query('SELECT move_brief_read_owner($1::uuid, $2, $3)', [briefId, trialHash, accountHash(user.sub)]);
+      await locker.commit();
+      expect(errorOf(await cancel!)).toEqual([404, 'not_found']);
+    } finally {
+      await locker.rollback();
+      releaseRetrieval();
+    }
+    await h.svc.settled();
+    // The step ran to its end for the account.
+    expect(await rows(sql`SELECT status, cancel_requested_at FROM brief_steps WHERE brief_id = ${briefId}::uuid`)).toEqual([
+      { status: 'no_results', cancel_requested_at: null },
+    ]);
+  });
+});
+
+describe('races with account deletion: nothing is created or taken over for a deleted account', () => {
+  it('a signed-in question paused in admission while the account is deleted creates nothing and calls no model', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const user = newUser();
+    await signIn(h, browser, user);
+    const locker = await holdLocks(`SELECT pg_advisory_xact_lock(${SPEND_LOCK_KEY})`);
+    let pending: Promise<Sent> | null = null;
+    try {
+      advance(MIN);
+      // Admission waits for the spend lock, after the session was read.
+      pending = ask(h, browser, 'PRIVATE question asked during deletion', { token: false });
+      await untilBlocked();
+      expect((await deleteAccount(h, browser.clone())).status).toBe(200);
+      expect(await count('auth_users')).toBe(0);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect(errorOf(await pending!)).toEqual([403, 'signed_out']);
+    await h.svc.settled();
+    expect(await count('briefs')).toBe(0);
+    expect(await count('reservations')).toBe(0);
+    expect(await count('idempotency')).toBe(0);
+    expect(h.llm.calls).toHaveLength(0);
+    // The same Google account signs up again: nothing from before is there.
+    const again = new CookieJar();
+    await signIn(h, again, user);
+    expect(await count('briefs')).toBe(0);
+  });
+
+  it('a signed-in question waiting for the account’s lock while the account is deleted is refused; nothing is kept', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const user = newUser();
+    await signIn(h, browser, user);
+    const [classId, objectId] = accountLockKey(accountHash(user.sub));
+    const locker = await holdLocks(`SELECT pg_advisory_xact_lock(${classId}, ${objectId})`);
+    let pending: Promise<Sent> | null = null;
+    try {
+      advance(MIN);
+      pending = ask(h, browser, 'PRIVATE question asked during deletion', { token: false });
+      await untilBlocked();
+      await deleteInLocker(locker, user.sub);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect(errorOf(await pending!)).toEqual([403, 'signed_out']);
+    await h.svc.settled();
+    for (const table of ['briefs', 'reservations', 'idempotency']) expect(await count(table), table).toBe(0);
+    expect(h.llm.calls).toHaveLength(0);
+  });
+
+  it('a signed-in question whose account is deleted after its admission gives the admission back and calls no model', async () => {
+    const h = harness({ scope: [OFF_TOPIC, OFF_TOPIC] });
+    const browser = new CookieJar();
+    const user = newUser();
+    await signIn(h, browser, user);
+    // A first question gives the account its anti-abuse record.
+    expect((await ask(h, browser, 'Write me a poem about the sea', { token: false })).status).toBe(200);
+    await h.svc.settled();
+    advance(MIN);
+    // The next admission passes its account check, then waits on that record; the account is deleted meanwhile.
+    const locker = await holdLocks(`SELECT 1 FROM abuse_records WHERE identity_hash = '${accountHash(user.sub)}' FOR UPDATE`);
+    let pending: Promise<Sent> | null = null;
+    try {
+      pending = ask(h, browser, 'PRIVATE question asked during deletion', { token: false });
+      await untilBlocked();
+      await deleteInLocker(locker, user.sub);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect(errorOf(await pending!)).toEqual([403, 'signed_out']);
+    await h.svc.settled();
+    // Admitted, then given back before any step: no brief, no model call, settled at zero, the search returned.
+    expect(await count('briefs')).toBe(0);
+    expect(h.llm.calls).toHaveLength(1);
+    const [, second] = await reservationsNow();
+    expect(second).toEqual({ principal_kind: 'account', status: 'settled', quota_counted: false, charged: '0.000000' });
+  });
+
+  it('a signed-in refinement paused while the account is deleted takes nothing over and spends nothing', async () => {
+    const h = harness({ scope: [OFF_TOPIC, OFF_TOPIC] });
+    const browser = new CookieJar();
+    const { briefId, trialHash } = await trialBrief(h, browser);
+    const user = newUser();
+    // Signed in from elsewhere: the trial still owns the brief.
+    await signIn(h, browser, user, '/');
+    advance(MIN);
+    const locker = await holdLocks('LOCK TABLE ai_switch IN ACCESS EXCLUSIVE MODE');
+    let pending: Promise<Sent> | null = null;
+    try {
+      pending = refine(h, browser, briefId, 'Only seaplanes', { token: false });
+      await untilBlocked();
+      await deleteInLocker(locker, user.sub);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect(errorOf(await pending!)).toEqual([403, 'signed_out']);
+    await h.svc.settled();
+    expect(await ownerOf(briefId)).toMatchObject({ read_owner: trialHash, read_owner_kind: 'trial', moved: false });
+    expect(await stepsOf(briefId)).toEqual([{ n: 1, billing_principal: trialHash, billing_kind: 'trial' }]);
+    expect(h.llm.calls).toHaveLength(1);
+    expect(await count('reservations')).toBe(1);
+  });
+
+  it('a signed-in retry paused while the account is deleted takes nothing over', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const askKey = key();
+    const { briefId, trialHash } = await trialBrief(h, browser, { key: askKey });
+    const user = newUser();
+    await signIn(h, browser, user, '/');
+    const locker = await holdLocks('LOCK TABLE idempotency IN ACCESS EXCLUSIVE MODE');
+    let pending: Promise<Sent> | null = null;
+    try {
+      pending = ask(h, browser, 'Write me a poem about the sea', { key: askKey, token: false });
+      await untilBlocked();
+      await deleteInLocker(locker, user.sub);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    const r = await pending!;
+    // The browser's trial still owns the brief: the retry replays it, and nothing moved.
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect(r.json).toMatchObject({ kind: 'scope_reply', briefId, step: 1 });
+    expect(await ownerOf(briefId)).toMatchObject({ read_owner: trialHash, read_owner_kind: 'trial', moved: false });
+    expect(await count('reservations')).toBe(1);
+  });
+
+  it('a sign-in callback paused while the account is deleted hands nothing over', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const { briefId, trialHash } = await trialBrief(h, browser);
+    const user = newUser();
+    const url = await startSignIn(h, browser, `/briefs/${briefId}`);
+    // The callback's handover waits for the trial's row while the new account is deleted.
+    const locker = await holdLocks('LOCK TABLE trial_identities IN ACCESS EXCLUSIVE MODE');
+    let back: Promise<Sent> | null = null;
+    try {
+      back = callback(h, browser, google.authorize(url, user));
+      await untilBlocked();
+      await deleteInLocker(locker, user.sub);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect((await back!).status).toBe(302);
+    expect(await ownerOf(briefId)).toMatchObject({ read_owner: trialHash, read_owner_kind: 'trial', moved: false });
+    expect(handoverLogs(h)).toEqual(['account_gone']);
+    expect(await account(h, browser)).toEqual({ signedIn: false });
   });
 });
 
@@ -984,7 +1548,7 @@ describe('storage', () => {
     await migrator.execute(sql`
       INSERT INTO auth_verifications (identifier, value, expires_at, created_at, updated_at)
       VALUES ('auth-state:old', '{}', now() - interval '1 hour', now() - interval '2 hours', now() - interval '2 hours')`);
-    expect(await pruneAuth(appDb)).toEqual({ sessions: 1, verifications: 1 });
+    expect(await pruneAuth(appDb)).toEqual({ sessions: 1, verifications: 1, stateUses: 0, confirmations: 0 });
     expect(await count('auth_sessions')).toBe(1);
     expect(await count('auth_verifications')).toBe(1);
     expect(await account(h, jar)).toMatchObject({ signedIn: true });
@@ -998,7 +1562,7 @@ describe('storage', () => {
     const url = await startSignIn(h, browser, `/briefs/${briefId}`);
     const asked = MockGoogle.parse(url);
     await callback(h, browser, google.authorize(url, user));
-    await send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+    expect((await deleteAccount(h, browser)).status).toBe(200);
     const text = h.logs.join('\n');
     for (const secret of [user.email, user.sub, asked.state!, asked.nonce!, browser.get(TRIAL)!, AUTH_SECRET, CLIENT_SECRET]) {
       expect(text.includes(secret), secret).toBe(false);

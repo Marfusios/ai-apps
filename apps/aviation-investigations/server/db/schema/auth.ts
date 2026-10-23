@@ -16,12 +16,19 @@
  * - `auth_sessions`: the database session behind the session cookie and its fixed
  *   expiry. No IP address or user agent (CHECK).
  * - `auth_verifications`: OAuth state for at most 10 minutes (the PKCE verifier, the
- *   return paths, the ID-token nonce and the brief a sign-in may take over), deleted when
- *   the callback consumes it.
+ *   return paths, the ID-token nonce, the brief a sign-in may take over and a deletion's
+ *   re-authentication), deleted when the callback consumes it.
+ * - `auth_state_uses`: a SHA-256 of each OAuth state brought back to the callback, until
+ *   the state would have expired, so a callback is accepted once even when two arrive
+ *   together (Better Auth looks the state up and deletes it in two steps).
+ * - `auth_deletion_confirmations`: a single-use, 5-minute confirmation that the person
+ *   deleting an account signed in with that Google account just now, bound to the
+ *   session that did and to the account; it goes with either.
  *
  * The anti-abuse record that outlives an account is `abuse_records` (controls.ts), keyed
  * by HMAC(issuer, sub) and never linked to these rows. Grants, account deletion and
- * retention are in migration 0017.
+ * retention are in migrations 0017 and 0018. None of these tables is backed up
+ * (server/db/backup.ts).
  */
 import { sql } from 'drizzle-orm';
 import { boolean, check, index, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
@@ -129,6 +136,44 @@ export const authVerifications = pgTable(
   ],
 );
 
+export const authStateUses = pgTable(
+  'auth_state_uses',
+  {
+    /** SHA-256 (hex) of the OAuth state; the state itself is never kept here. */
+    stateHash: text('state_hash').primaryKey(),
+    usedAt: tsz('used_at').notNull(),
+    /** When the state itself expires: the row is useless afterwards and pruned. */
+    expiresAt: tsz('expires_at').notNull(),
+  },
+  (t) => [
+    check('auth_state_uses_values_check', sql`${t.stateHash} ~ '^[0-9a-f]{64}$' and ${t.expiresAt} > ${t.usedAt}`),
+    index('auth_state_uses_expires_idx').on(t.expiresAt),
+  ],
+);
+
+export const authDeletionConfirmations = pgTable(
+  'auth_deletion_confirmations',
+  {
+    /** The session that proved the recent sign-in; one confirmation per session. */
+    sessionId: uuid('session_id')
+      .primaryKey()
+      .references(() => authSessions.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    createdAt: tsz('created_at').notNull(),
+    expiresAt: tsz('expires_at').notNull(),
+  },
+  (t) => [
+    check(
+      'auth_deletion_confirmations_expiry_check',
+      sql`${t.expiresAt} > ${t.createdAt} and ${t.expiresAt} <= ${t.createdAt} + interval '10 minutes'`,
+    ),
+    index('auth_deletion_confirmations_user_idx').on(t.userId),
+    index('auth_deletion_confirmations_expires_idx').on(t.expiresAt),
+  ],
+);
+
 /** The tables in the shape the Better Auth Drizzle adapter addresses them (by model name). */
 export const AUTH_SCHEMA = {
   user: authUsers,
@@ -138,4 +183,11 @@ export const AUTH_SCHEMA = {
 } as const;
 
 /** Sign-in tables, children first (test resets). */
-export const AUTH_TABLES = ['auth_sessions', 'auth_accounts', 'auth_verifications', 'auth_users'] as const;
+export const AUTH_TABLES = [
+  'auth_deletion_confirmations',
+  'auth_sessions',
+  'auth_accounts',
+  'auth_verifications',
+  'auth_state_uses',
+  'auth_users',
+] as const;

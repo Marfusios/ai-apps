@@ -14,20 +14,25 @@
  * retrieval is not bound or refuses it),
  * or, for an anonymous visitor who would otherwise be offered AI, Turnstile is not
  * configured.
+ * A signed-in visitor's counts carry `check: true` while its next AI request needs a
+ * Turnstile check (the step-up policy, server/identity/step-up.ts), so the page takes the
+ * check at click time.
  * The response is per visitor: `no-store`, and it never sets a cookie.
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { AiStatusResponseSchema, type AiRemaining, type AiStatusResponse } from '../../shared/contracts/ai.js';
 import { JSON_TYPE } from '../http/reply.js';
+import { accountCheckSignals } from '../identity/step-up.js';
 import type { Principal } from '../quota/policy.js';
 import { aiStatus, type AiStatus } from '../quota/status.js';
 import type { ApiContext } from './context.js';
 
 const dependency = (remaining: AiRemaining = null): AiStatusResponse => ({ state: 'paused', reason: 'dependency', remaining });
 
-/** The public form of `aiStatus`: ISO retry time and the trial's `started` flag. */
-export function toStatusResponse(s: AiStatus, trialStarted: boolean): AiStatusResponse {
-  const remaining: AiRemaining = s.remaining.kind === 'trial' ? { ...s.remaining, started: trialStarted } : s.remaining;
+/** The public form of `aiStatus`: ISO retry time, the trial's `started` flag, and an account's `check`. */
+export function toStatusResponse(s: AiStatus, trialStarted: boolean, check = false): AiStatusResponse {
+  const remaining: AiRemaining =
+    s.remaining.kind === 'trial' ? { ...s.remaining, started: trialStarted } : { ...s.remaining, ...(check ? { check: true as const } : {}) };
   if (s.state === 'available') return { state: 'available', remaining };
   // The schema checks that the reason belongs to the state.
   return AiStatusResponseSchema.parse({
@@ -44,24 +49,28 @@ async function statusFor(ctx: ApiContext, request: FastifyRequest): Promise<AiSt
   if (!ai || reservationUsd === undefined || !ai.policy || !ai.trials || !ai.llm) return dependency();
   let s: AiStatus;
   let principal: Principal | null;
+  let check = false;
   try {
     const now = ai.now();
     const signedIn = ctx.auth ? await ctx.auth.signedIn(request.headers.cookie) : null;
     principal = signedIn ? signedIn.principal : await ai.trials.fromRequest(request, now);
     s = await aiStatus(ctx.db, principal, { policy: ai.policy, reservationUsd, now });
+    if (signedIn && s.state === 'available') {
+      check = (await accountCheckSignals(ctx.db, ai.policy, signedIn.principal, request.networkIdentity ?? null, now)).length > 0;
+    }
   } catch (err) {
     request.log.warn({ err: { name: (err as Error).name } }, 'AI status unavailable');
     return dependency();
   }
-  const body = toStatusResponse(s, principal !== null);
+  const body = toStatusResponse(s, principal !== null, check);
   // Nothing to search: AI cannot answer anyone.
   const evidence = await ctx.aiEvidence().catch((err: unknown) => {
     request.log.warn({ err: { name: (err as Error).name } }, 'AI evidence check failed');
     return null;
   });
   if (!evidence) return dependency(body.remaining);
-  // Every anonymous AI request needs a Turnstile check.
-  if (body.state === 'available' && s.remaining.kind === 'trial' && !ai.gate) return dependency(body.remaining);
+  // Every anonymous AI request needs a Turnstile check, and so does a flagged signed-in one.
+  if (body.state === 'available' && (s.remaining.kind === 'trial' || check) && !ai.gate) return dependency(body.remaining);
   return body;
 }
 

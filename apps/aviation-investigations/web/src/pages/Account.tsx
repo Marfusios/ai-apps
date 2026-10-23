@@ -1,17 +1,18 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router';
-import { aiStatusQuery, configQuery } from '../api';
+import { Link, useLocation, useNavigate } from 'react-router';
+import { DELETE_PARAM } from '../../../shared/contracts/account';
+import { ApiError, aiStatusQuery, configQuery } from '../api';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
-import { accountQuery, deleteAccount, signOut } from '../features/auth/api';
+import { accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
 import { GoogleButton, useSignIn } from '../features/auth/SignInDialog';
 
 /**
  * Account copy. UI_DESIGN §4.8 gives the contents (name and email, searches left, Sign
- * out, Delete account with what goes, the 30-day backups and what stays); the sentences
- * are Builder copy for the owner's review, except the searches-left line, which follows
- * the §4.8 example.
+ * out, Delete account with what goes, backups and what stays); the sentences are Builder
+ * copy for the owner's review, except the searches-left line, which follows the §4.8
+ * example.
  */
 export const ACCOUNT_COPY = {
   signedOutTitle: 'You aren’t signed in.',
@@ -21,8 +22,8 @@ export const ACCOUNT_COPY = {
   signOut: 'Sign out',
   deleteHeading: 'Delete account',
   deleteNow:
-    'Deleting your account signs you out everywhere and at once removes your name, your email, the link to your Google account and any AI searches still held.',
-  deleteBackups: 'Backups that still hold them expire within 30 days.',
+    'Deleting your account signs you out everywhere and at once removes your name, your email, the link to your Google account and the AI searches your account holds.',
+  deleteBackups: 'Backups never include your account or your AI searches, so a restore can’t bring them back.',
   deleteKept:
     'Two minimal records stay. How many AI searches this Google account has used, kept under a one-way code instead of your details until 7 days after the current month’s limits reset, so that deleting and signing up again doesn’t restart them. And cost records without names or content, for 90 days.',
   deleteAsk: 'Delete your account now? This can’t be undone.',
@@ -30,7 +31,14 @@ export const ACCOUNT_COPY = {
   deleteKeep: 'Keep account',
   deleted: 'Your account is deleted.',
   failed: 'That didn’t work. Try again in a moment.',
+  reauthText: 'To delete your account, first confirm with Google that it’s you.',
+  reauthFailed: 'Google didn’t confirm it’s you, so nothing was deleted.',
+  reauthOther: 'You signed in with a different Google account, so nothing was deleted.',
+  reauthExpired: 'That confirmation has expired. Confirm with Google again.',
 } as const;
+
+/** Where deleting stands: nothing asked yet, the last question, or a Google sign-in first. */
+type Deleting = 'idle' | 'confirm' | 'reauth';
 
 /** "18 of 20 left today · 109 of 150 left this month" (UI_DESIGN §4.8). */
 function SearchesLeft() {
@@ -62,32 +70,59 @@ function Frame({ title, children }: { title: string; children: ReactNode }) {
 
 /**
  * The account (UI_DESIGN §4.8): name and email, AI searches left, Sign out and Delete
- * account, which first says what goes, that backups expire within 30 days and what
- * minimal records stay (DESIGN §7), and asks once more. Signed out, the page offers
- * sign-in; when Google sign-in is not configured it says so.
+ * account, which first says what goes, what backups hold and what minimal records stay
+ * (DESIGN §7). Deleting needs a recent Google sign-in (server/auth/deletion.ts): right
+ * after signing in it asks once more and deletes; otherwise it asks to confirm with Google
+ * first, comes back here (`delete=confirm`, or `delete=failed`) and then asks once more.
+ * Signed out, the page offers sign-in; when Google sign-in is not configured it says so.
  */
 export function Account() {
   const config = useQuery(configQuery());
   const signIn = useSignIn();
   const account = useQuery({ ...accountQuery(), enabled: config.data?.googleEnabled === true });
   const queryClient = useQueryClient();
-  const [confirming, setConfirming] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState<Deleting>('idle');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const confirmHeading = useRef<HTMLParagraphElement>(null);
+  const panelHeading = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
-    if (confirming) confirmHeading.current?.focus();
-  }, [confirming]);
+    if (deleting !== 'idle') panelHeading.current?.focus();
+  }, [deleting]);
 
-  const act = async (work: () => Promise<void>, done: string | null): Promise<void> => {
+  // Back from confirming with Google: `delete=confirm` (confirmed only when it was this
+  // account, which a fresh read of the account says) or `delete=failed`.
+  const googleEnabled = config.data?.googleEnabled === true;
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const value = params.get(DELETE_PARAM);
+    if (value === null || !googleEnabled) return;
+    for (const name of [DELETE_PARAM, 'error', 'error_description']) params.delete(name);
+    const rest = params.toString();
+    navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true, state: location.state });
+    void queryClient
+      .fetchQuery({ ...accountQuery(), staleTime: 0 })
+      .then((fresh) => {
+        if (value === 'confirm' && fresh.signedIn && fresh.deletionConfirmedUntil) setDeleting('confirm');
+        else setNotice(value === 'confirm' && fresh.signedIn ? ACCOUNT_COPY.reauthOther : ACCOUNT_COPY.reauthFailed);
+      })
+      .catch(() => setNotice(ACCOUNT_COPY.failed));
+  }, [googleEnabled, location, navigate, queryClient]);
+
+  const run = async (work: () => Promise<void>): Promise<void> => {
+    if (busy) return;
     setBusy(true);
     setNotice(null);
     try {
       await work();
-      setConfirming(false);
-      setNotice(done);
-    } catch {
-      setNotice(ACCOUNT_COPY.failed);
+    } catch (err) {
+      if (err instanceof ApiError && err.body?.error === 'reauth_required') {
+        setDeleting('reauth');
+        setNotice(ACCOUNT_COPY.reauthExpired);
+      } else {
+        setNotice(ACCOUNT_COPY.failed);
+      }
     } finally {
       setBusy(false);
     }
@@ -131,6 +166,8 @@ export function Account() {
   }
 
   const { user } = account.data;
+  const panel = 'mt-4 rounded-card border border-l-4 border-hairline border-l-ink px-4 py-3';
+  const panelTitle = 'font-serif text-[17px] font-semibold outline-none';
   return (
     <Frame title={user.name || user.email}>
       <p className="mt-1 text-ui text-muted break-all">{user.email}</p>
@@ -142,7 +179,7 @@ export function Account() {
       </div>
       <SearchesLeft />
       <div className="mt-5">
-        <Button variant="search" aria-disabled={busy} onClick={() => !busy && void act(() => signOut(queryClient), null)}>
+        <Button variant="search" aria-disabled={busy} onClick={() => void run(() => signOut(queryClient))}>
           {ACCOUNT_COPY.signOut}
         </Button>
       </div>
@@ -157,21 +194,39 @@ export function Account() {
         <p>{ACCOUNT_COPY.deleteBackups}</p>
         <p>{ACCOUNT_COPY.deleteKept}</p>
       </div>
-      {confirming ? (
-        <div className="mt-4 rounded-card border border-l-4 border-hairline border-l-ink px-4 py-3">
-          <p ref={confirmHeading} tabIndex={-1} className="font-serif text-[17px] font-semibold outline-none">
+      {deleting === 'confirm' ? (
+        <div className={panel}>
+          <p ref={panelHeading} tabIndex={-1} className={panelTitle}>
             {ACCOUNT_COPY.deleteAsk}
           </p>
           <div className="mt-2.5 flex flex-wrap gap-2.5">
             <button
               type="button"
               aria-disabled={busy}
-              onClick={() => !busy && void act(() => deleteAccount(queryClient), ACCOUNT_COPY.deleted)}
+              onClick={() =>
+                void run(async () => {
+                  await deleteAccount(queryClient);
+                  setDeleting('idle');
+                  setNotice(ACCOUNT_COPY.deleted);
+                })
+              }
               className="inline-flex cursor-pointer items-center rounded-full border-[1.5px] border-ink bg-ink px-3.5 py-[5px] text-ui font-bold text-paper hover:shadow-[0_0_0_3px_var(--hairline)] aria-disabled:cursor-wait pointer-coarse:min-h-11"
             >
               {ACCOUNT_COPY.deleteConfirm}
             </button>
-            <Button variant="ghost" onClick={() => setConfirming(false)}>
+            <Button variant="ghost" onClick={() => setDeleting('idle')}>
+              {ACCOUNT_COPY.deleteKeep}
+            </Button>
+          </div>
+        </div>
+      ) : deleting === 'reauth' ? (
+        <div className={panel}>
+          <p ref={panelHeading} tabIndex={-1} className={panelTitle}>
+            {ACCOUNT_COPY.reauthText}
+          </p>
+          <div className="mt-2.5 flex flex-wrap gap-2.5">
+            <GoogleButton busy={busy} onClick={() => void run(() => confirmWithGoogle())} />
+            <Button variant="ghost" onClick={() => setDeleting('idle')}>
               {ACCOUNT_COPY.deleteKeep}
             </Button>
           </div>
@@ -180,8 +235,14 @@ export function Account() {
         <div className="mt-4">
           <button
             type="button"
-            onClick={() => setConfirming(true)}
-            className="inline-flex cursor-pointer items-center rounded-full border-[1.5px] border-ink px-3.5 py-[5px] text-ui font-bold text-ink hover:bg-blue-wash pointer-coarse:min-h-11"
+            aria-disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                const next = await startDeletion();
+                setDeleting(next.next === 'confirm' ? 'confirm' : 'reauth');
+              })
+            }
+            className="inline-flex cursor-pointer items-center rounded-full border-[1.5px] border-ink px-3.5 py-[5px] text-ui font-bold text-ink hover:bg-blue-wash aria-disabled:cursor-wait pointer-coarse:min-h-11"
           >
             {ACCOUNT_COPY.deleteConfirm}
           </button>

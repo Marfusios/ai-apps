@@ -20,25 +20,29 @@
  *    trial that owns that live brief, the brief and the trial's HMAC ride the OAuth state
  *    as server-trusted context (`addOAuthServerContext`; the client cannot set it).
  * 2. **Callback** (`GET /api/auth/callback/google`, an `after` hook, once the session
- *    exists): the same browser's trial cookie must still prove that trial; then the
- *    compare-and-set moves the brief to the account. The OAuth state is single-use, so a
- *    replayed callback fails before it gets here; two concurrent callbacks (two tabs)
- *    both try, and only one moves the brief.
+ *    exists): the same browser's trial cookie must still prove that trial; then, under
+ *    the account's lifecycle lock with its new session checked live (server/auth/
+ *    lifecycle.ts) and with the brief locked, the compare-and-set moves the brief to the
+ *    account. A callback is accepted once (its OAuth state is claimed atomically,
+ *    server/auth/better-auth.ts), so a replay never gets here; two concurrent callbacks
+ *    of two sign-ins (two tabs) both try, and only one moves the brief.
  * 3. **A signed-in request on a brief this browser's trial still owns** (a sign-in that
  *    started elsewhere): a refinement, admitted and billed to the account, or the retry of
- *    a request the trial made, takes the brief over by the same compare-and-set first
- *    (server/routes/briefs.ts). Reads never move anything.
+ *    a request the trial made, takes the brief over by the same compare-and-set first,
+ *    under the same lock and checks (server/routes/briefs.ts). Reads never move anything.
  *
  * After a move the trial cannot read the brief (404), and an idempotent retry from the
  * trial alone gets 403 `moved` ("sign in to view"): never a replay, never a new run. The
- * same retry from the signed-in browser replays the brief for the account.
+ * same retry from the signed-in browser replays the brief for the account. An account
+ * deleted meanwhile takes nothing over (`account_gone`): the brief stays the trial's.
  */
 import { sql } from 'drizzle-orm';
 import { BriefIdSchema } from '../../shared/contracts/briefs.js';
-import { moveBriefReadOwner, readBrief } from '../briefs/store.js';
+import { lockBrief, moveBriefReadOwner, readBrief } from '../briefs/store.js';
 import type { Db, DbOrTx } from '../db/client.js';
 import type { TrialIdentities } from '../identity/trial.js';
 import { principalHash, type QuotaPolicy } from '../quota/policy.js';
+import { ACCOUNT_GONE, withLiveAccount, type AccountSession } from './lifecycle.js';
 
 /** The key of the handover in the OAuth state's server context. */
 export const HANDOVER_CONTEXT_KEY = 'aviationHandover';
@@ -59,10 +63,11 @@ export interface HandoverCandidate {
 
 /**
  * What the callback did: `moved` the brief; found it `already_moved` to this account; the
- * browser's trial cookie no longer proves the owner (`trial_changed`); or the brief is no
- * longer the trial's to give (`not_moved`: expired, or another account took it first).
+ * browser's trial cookie no longer proves the owner (`trial_changed`); the brief is no
+ * longer the trial's to give (`not_moved`: expired, or another account took it first); or
+ * the account or its new session was gone by then (`account_gone`: deleted meanwhile).
  */
-export type HandoverOutcome = 'moved' | 'already_moved' | 'trial_changed' | 'not_moved';
+export type HandoverOutcome = 'moved' | 'already_moved' | 'trial_changed' | 'not_moved' | 'account_gone';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const BRIEF_PATH = /^\/briefs\/([0-9a-f-]{36})(?:\?[^#]*)?$/;
@@ -100,31 +105,39 @@ export async function handoverCandidate(deps: HandoverDeps, cookieHeader: string
 
 /**
  * At the callback, once the account's session exists: move the brief when this browser's
- * trial cookie still proves the trial recorded at sign-in start.
+ * trial cookie still proves the trial recorded at sign-in start, under the account's
+ * lifecycle lock with its session checked live.
  */
 export async function completeHandover(
   deps: HandoverDeps,
   cookieHeader: string | null,
   candidate: HandoverCandidate,
-  accountHash: string,
+  account: AccountSession,
 ): Promise<HandoverOutcome> {
   const now = deps.now();
   const trial = await deps.trials.fromCookieHeader(cookieHeader, now);
   if (!trial || principalHash(deps.policy, trial) !== candidate.from) return 'trial_changed';
-  if (await moveBriefReadOwner(deps.db, candidate.briefId, candidate.from, accountHash)) return 'moved';
-  const brief = await readBrief(deps.db, candidate.briefId, now);
-  return brief?.readOwner === accountHash ? 'already_moved' : 'not_moved';
+  const outcome = await withLiveAccount(deps.db, account, async (tx): Promise<HandoverOutcome> => {
+    const took = await takeOver(tx, candidate.briefId, candidate.from, account.hash, now);
+    if (took === 'moved') return 'moved';
+    return took === 'already' ? 'already_moved' : 'not_moved';
+  });
+  return outcome === ACCOUNT_GONE ? 'account_gone' : outcome;
 }
 
 /**
- * A signed-in request takes over a brief its browser's trial still owns (the same
- * compare-and-set). True when the account reads the brief afterwards: moved now, or by a
- * concurrent request of the same browser.
+ * A signed-in request takes over a brief its browser's trial still owns: the brief is
+ * locked (`lock_brief()`), its owner checked, then the compare-and-set moves it. Must run
+ * in a transaction that holds the account's lifecycle lock with its session checked live
+ * (`withLiveAccount`). `moved` now, `already` the account's (a concurrent request of the
+ * same browser moved it), or `no` (not this trial's live brief).
  */
-export async function takeOver(db: DbOrTx, briefId: string, trialHash: string, accountHash: string, now: Date): Promise<boolean> {
-  if (await moveBriefReadOwner(db, briefId, trialHash, accountHash)) return true;
-  const brief = await readBrief(db, briefId, now);
-  return brief?.readOwner === accountHash;
+export async function takeOver(tx: DbOrTx, briefId: string, trialHash: string, accountHash: string, now: Date): Promise<'moved' | 'already' | 'no'> {
+  const brief = await lockBrief(tx, briefId);
+  if (!brief || brief.expiresAt <= now) return 'no';
+  if (brief.readOwner === accountHash && brief.readOwnerKind === 'account') return 'already';
+  if (brief.readOwner !== trialHash || brief.readOwnerKind !== 'trial') return 'no';
+  return (await moveBriefReadOwner(tx, briefId, trialHash, accountHash)) ? 'moved' : 'no';
 }
 
 /**

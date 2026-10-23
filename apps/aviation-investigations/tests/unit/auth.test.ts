@@ -8,7 +8,8 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
-import { AccountResponseSchema, ReturnPathSchema, SignInRequestSchema } from '../../shared/contracts/account.js';
+import { AccountResponseSchema, DELETE_REAUTH_PATH, DeleteStartResponseSchema, ReturnPathSchema, SignInRequestSchema } from '../../shared/contracts/account.js';
+import { PRIVACY_NOTICE } from '../../shared/privacy.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { ConfigResponseSchema } from '../../shared/contracts/config.js';
 import {
@@ -24,6 +25,7 @@ import {
   type AuthService,
 } from '../../server/auth/better-auth.js';
 import { briefOfReturnPath, parseHandoverCandidate } from '../../server/auth/handover.js';
+import { ACCOUNT_LOCK_CLASS, accountLockKey } from '../../server/auth/lifecycle.js';
 import type { Db } from '../../server/db/client.js';
 import { isNoStoreRoute } from '../../server/http/cache-headers.js';
 import { ERROR_MESSAGES } from '../../server/http/reply.js';
@@ -37,7 +39,8 @@ const NOW = Date.parse('2026-11-01T10:00:00Z');
 const NONCE = 'n'.repeat(43);
 
 const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url');
-const jwt = (claims: Record<string, unknown>) => `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64(claims)}.c2lnbmF0dXJl`;
+const jwt = (claims: Record<string, unknown>, header: Record<string, unknown> = { alg: 'RS256', typ: 'JWT' }, signature = 'c2lnbmF0dXJl') =>
+  `${b64(header)}.${b64(claims)}.${signature}`;
 const claims = (over: Record<string, unknown> = {}) => {
   const c: Record<string, unknown> = {
     iss: 'https://accounts.google.com',
@@ -70,7 +73,9 @@ describe('the Google ID token', () => {
       expect(v.claims.sub).toBe('109876543210987654321');
     }
     expect(verify({ iss: 'accounts.google.com' }).ok).toBe(true);
-    expect(verify({ aud: ['other', CLIENT_ID], azp: undefined }).ok).toBe(true);
+    // An audience list naming only this client, with or without azp.
+    expect(verify({ aud: [CLIENT_ID] }).ok).toBe(true);
+    expect(verify({ aud: [CLIENT_ID], azp: undefined }).ok).toBe(true);
   });
 
   it.each([
@@ -78,7 +83,19 @@ describe('the Google ID token', () => {
     ['issuer', { iss: 'https://evil.example' }],
     ['audience', { aud: 'someone-else' }],
     ['audience', { azp: 'someone-else' }],
+    // OIDC Core 3.1.3.7 step 3: an additional audience the client does not trust refuses the token.
+    ['audience', { aud: ['other', CLIENT_ID], azp: undefined }],
+    ['audience', { aud: [CLIENT_ID, 'other'] }],
+    ['audience', { aud: [] }],
+    ['audience', { aud: 42 }],
     ['expired', { exp: NOW / 1000 - 61 }],
+    ['expired', { exp: undefined }],
+    ['expired', { exp: String(NOW / 1000 + 3600) }],
+    ['expired', { exp: 1e400 }],
+    ['issued_at', { iat: undefined }],
+    ['issued_at', { iat: String(NOW / 1000) }],
+    ['issued_at', { iat: NOW / 1000 + 120 }],
+    ['issued_at', { iat: NOW / 1000 + 4000, exp: NOW / 1000 + 3600 }],
     ['subject', { sub: '' }],
     ['subject', { sub: 'has space' }],
     ['subject', { sub: 'x'.repeat(256) }],
@@ -91,6 +108,18 @@ describe('the Google ID token', () => {
   ] as const)('refuses: %s %j', (reason, over) => {
     const v = typeof over === 'string' ? verifiedGoogleUser(over, { clientId: CLIENT_ID, nonce: NONCE, nowMs: NOW }) : verify(over);
     expect(v).toEqual({ ok: false, reason });
+  });
+
+  it('only an RS256-signed form is read: an unsigned, alg none or other-algorithm token is refused before its claims', () => {
+    const good = claims();
+    const read = (token: string) => verifiedGoogleUser(token, { clientId: CLIENT_ID, nonce: NONCE, nowMs: NOW });
+    expect(read(jwt(good)).ok).toBe(true);
+    expect(read(jwt(good, { alg: 'none' }, ''))).toEqual({ ok: false, reason: 'algorithm' });
+    expect(read(jwt(good, { alg: 'none' }))).toEqual({ ok: false, reason: 'algorithm' });
+    expect(read(jwt(good, { alg: 'RS256' }, ''))).toEqual({ ok: false, reason: 'algorithm' });
+    expect(read(jwt(good, { alg: 'HS256' }))).toEqual({ ok: false, reason: 'algorithm' });
+    expect(read(jwt(good, { typ: 'JWT' }))).toEqual({ ok: false, reason: 'algorithm' });
+    expect(read(`${Buffer.from('not json').toString('base64url')}.${b64(good)}.c2ln`)).toEqual({ ok: false, reason: 'malformed' });
   });
 
   it('no expected nonce (lost OAuth state) refuses every token; a long name is cut, control characters dropped', () => {
@@ -125,6 +154,12 @@ describe('configuration', () => {
     expect(authConfigProblem(base({}, { appEnv: 'dev', appUrl: 'http://localhost:3000' }))).toBeNull();
   });
 
+  it('live keeps Google sign-in off while the privacy notice is a draft (DESIGN §7)', () => {
+    expect(PRIVACY_NOTICE.final).toBe(false);
+    expect(authConfigProblem(base({}, { appEnv: 'live' }))).toMatch(/final privacy notice/);
+    expect(authConfigProblem(base({}, { appEnv: 'dev' }))).toBeNull();
+  });
+
   it('problems name settings, never values', () => {
     const problem = authConfigProblem(base({ secret: 'a-short-secret' }));
     expect(problem).not.toContain('a-short-secret');
@@ -142,7 +177,7 @@ describe('configuration', () => {
   });
 
   it('every auth and account route is per visitor and never stored', () => {
-    for (const route of ['/api/auth/*', '/api/account', '/api/account/delete']) expect(isNoStoreRoute(route), route).toBe(true);
+    for (const route of ['/api/auth/*', '/api/account', '/api/account/delete/start', '/api/account/delete']) expect(isNoStoreRoute(route), route).toBe(true);
   });
 });
 
@@ -157,6 +192,12 @@ describe('the handover state', () => {
     }
   });
 
+  it('one lifecycle lock per account: the class and the first 32 bits of its HMAC (a re-registered account has the same)', () => {
+    expect(accountLockKey('8'.repeat(64))).toEqual([ACCOUNT_LOCK_CLASS, 0x88888888 | 0]);
+    expect(accountLockKey(`0000000a${'f'.repeat(56)}`)).toEqual([ACCOUNT_LOCK_CLASS, 10]);
+    for (const bad of ['', 'x'.repeat(64), 'A'.repeat(64), '8'.repeat(63)]) expect(() => accountLockKey(bad), bad).toThrow();
+  });
+
   it('reads back only a well-formed candidate', () => {
     expect(parseHandoverCandidate({ briefId: id, from: 'a'.repeat(64) })).toEqual({ briefId: id, from: 'a'.repeat(64) });
     for (const bad of [null, 'x', { briefId: id }, { briefId: 'x', from: 'a'.repeat(64) }, { briefId: id, from: 'A'.repeat(64) }]) {
@@ -167,8 +208,14 @@ describe('the handover state', () => {
 
 describe('contracts and copy', () => {
   it('return paths stay on this site', () => {
-    for (const ok of ['/', '/briefs/x?step=2', '/account?signin=failed']) expect(ReturnPathSchema.safeParse(ok).success, ok).toBe(true);
+    for (const ok of ['/', '/briefs/x?step=2', '/account?signin=failed', DELETE_REAUTH_PATH, '/files/a.b', '/x?next=//y', '/.well']) {
+      expect(ReturnPathSchema.safeParse(ok).success, ok).toBe(true);
+    }
     for (const bad of ['', 'https://evil.example/', '//evil.example', '/\\evil', '/a#b', 'javascript:alert(1)', `/${'x'.repeat(512)}`, '/a\nb']) {
+      expect(ReturnPathSchema.safeParse(bad).success, bad).toBe(false);
+    }
+    // Dot segments and encoded separators: `/.//evil.example/x` resolves to `//evil.example/x`.
+    for (const bad of ['/.//evil.example/x', '/./x', '/../x', '/a/..', '/a/.', '/%2e%2e/x', '/%2E/x', '/a%2fb', '/a%5Cb', '/a//b']) {
       expect(ReturnPathSchema.safeParse(bad).success, bad).toBe(false);
     }
   });
@@ -183,6 +230,17 @@ describe('contracts and copy', () => {
   it('the account says who is signed in and nothing more', () => {
     expect(AccountResponseSchema.safeParse({ signedIn: true, user: { name: 'A', email: 'a@example.com', id: 'x' } }).success).toBe(false);
     expect(AccountResponseSchema.safeParse({ signedIn: false, user: { name: 'A', email: 'a@example.com' } }).success).toBe(false);
+    expect(AccountResponseSchema.safeParse({ signedIn: false, deletionConfirmedUntil: '2026-11-01T10:05:00.000Z' }).success).toBe(false);
+    const until = '2026-11-01T10:05:00.000Z';
+    expect(AccountResponseSchema.parse({ signedIn: true, user: { name: 'A', email: 'a@example.com' }, deletionConfirmedUntil: until })).toMatchObject({ deletionConfirmedUntil: until });
+  });
+
+  it('deleting starts with a confirmation, or a Google sign-in first', () => {
+    expect(DeleteStartResponseSchema.parse({ next: 'confirm', until: '2026-11-01T10:05:00.000Z' })).toEqual({ next: 'confirm', until: '2026-11-01T10:05:00.000Z' });
+    expect(DeleteStartResponseSchema.parse({ next: 'reauthenticate' })).toEqual({ next: 'reauthenticate' });
+    expect(DeleteStartResponseSchema.safeParse({ next: 'confirm' }).success).toBe(false);
+    expect(DELETE_REAUTH_PATH).toBe('/account?delete=confirm');
+    for (const code of ['signed_out', 'reauth_required'] as const) expect(ErrorResponseSchema.parse({ error: code, message: ERROR_MESSAGES[code] }).error).toBe(code);
   });
 
   it('a retry from the trial a brief moved away from is told to sign in', () => {

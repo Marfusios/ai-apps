@@ -11,7 +11,8 @@
  *   when storage is unavailable or refuses a write, the entry lives in memory instead.
  * - **Lifetime:** an entry is cleared by a 2xx or by the 409 swap (the earlier attempt never
  *   completed), and it expires with the server's idempotency record, 24 hours after it was
- *   first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`).
+ *   first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or
+ *   deleting the account clears them all (`forgetAllUnsettled`).
  */
 import type { BriefFilterFacet, BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
 import { FACET_VALUES } from '../../../../shared/contracts/search';
@@ -190,6 +191,11 @@ export function forgetUnsettled(id: string): void {
 
 /** Test hook: forget every entry, in memory and in this tab's storage. */
 export function resetUnsettledForTests(): void {
+  forgetAllUnsettled();
+}
+
+/** Forget every entry, in memory and in this tab's storage (the visitor changed: web/src/features/auth/visitor.ts). */
+export function forgetAllUnsettled(): void {
   memory.clear();
   try {
     const store = session();

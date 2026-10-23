@@ -10,25 +10,43 @@
  * account with an email already in use is refused. Off (`googleEnabled: false`, every
  * `/api/auth` route 404) unless GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, BETTER_AUTH_SECRET
  * (at least 32 characters) and the identity HMAC key are set, and in live an https
- * APP_URL (`authConfigProblem`).
+ * APP_URL and the final privacy notice (`authConfigProblem`).
  *
- * **What the callback accepts.** The ID token comes straight from Google's token endpoint
- * over TLS, in exchange for this flow's single-use code, PKCE verifier and the client
- * secret, so its signature is not checked again (OIDC Core 3.1.3.7, step 6). Its claims
- * are (`verifiedGoogleUser`): the issuer, the audience (and `azp`), the expiry, a
- * well-formed `sub`, an email Google reports as verified (`email_verified`), and the
- * nonce. Better Auth's Google provider sends no nonce in the redirect flow, so this
- * module adds one: a `before` hook on `/sign-in/social` puts a random nonce in the OAuth
- * state's server context (which only the server can write and which the callback consumes
- * once), an `after` hook adds it to Google's authorization URL, and the callback refuses
- * an ID token without that nonce. A refusal stores nothing: no user, no account link, no
- * session. Of the profile only the name and email are kept (no picture), and of the
- * provider response nothing else: no tokens, no scopes (database hooks clear them, and
- * CHECK constraints in migration 0017 refuse them).
+ * **What the callback accepts.** The only way to an ID token here is Google's token
+ * endpoint, which Better Auth calls over TLS at a fixed address with this flow's
+ * single-use code, PKCE verifier and the client secret: ID-token sign-in is off
+ * (`disableIdTokenSignIn`) and the route serves no other endpoint that takes a token. So
+ * the signature is not checked again (OIDC Core 3.1.3.7, step 6). Everything else is
+ * (`verifiedGoogleUser`): the header must name RS256 and carry a signature (an unsigned or
+ * `alg: none` token is refused before its claims are read); the issuer; the audience must
+ * be this client and nothing else, and `azp`, when present, this client; finite numeric
+ * `exp` (not passed) and `iat` (not in the future); a well-formed `sub`; an email Google
+ * reports as verified (`email_verified`); and the nonce. Better Auth's Google provider
+ * sends no nonce in the redirect flow, so this module adds one: a `before` hook on
+ * `/sign-in/social` puts a random nonce in the OAuth state's server context (which only
+ * the server can write), an `after` hook adds it to Google's authorization URL, and the
+ * callback refuses an ID token without that nonce. A refusal stores nothing: no user, no
+ * account link, no session. Of the profile only the name and email are kept (no picture),
+ * and of the provider response nothing else: no tokens, no scopes (database hooks clear
+ * them, and CHECK constraints in migration 0017 refuse them).
+ *
+ * **One use per callback.** Better Auth looks the OAuth state up and deletes it in two
+ * steps, so two callbacks with one state could both pass it. A `before` hook on the
+ * callback claims the state first (a SHA-256 of it in `auth_state_uses`, one row per
+ * state, inserted only while the state is stored and live): the first callback goes on,
+ * any other is sent back to the sign-in's error page before Google is called. Google's
+ * authorization code is single-use as well.
  *
  * **Sessions.** Database sessions with a fixed 7-day lifetime: no refresh, and no cookie
  * cache, so sign-out, deletion and expiry take effect on the next request. Sessions keep
  * no IP address or user agent.
+ *
+ * **Deleting the account needs a recent sign-in** (server/auth/deletion.ts). A sign-in
+ * that returns to `DELETE_REAUTH_PATH` from a signed-in browser carries the deletion intent
+ * (the user and session it started from) in the state's server context and asks Google for
+ * that account (`login_hint` = its subject). At the callback, when Google signed in the
+ * same account, the new session gets the deletion confirmation, and the session the
+ * browser had before ends (the re-authentication rotates it).
  *
  * **Cookies.** Host-only, HttpOnly, SameSite=Lax, Path=/; over https Secure with the
  * `__Host-` prefix (`__Host-aviation_session`, the OAuth state's
@@ -40,30 +58,34 @@
  * whenever cookies are sent, and every return path must be on APP_URL. Before Better Auth
  * sees a POST, the route refuses cross-site requests (`Sec-Fetch-Site`, else `Origin`) and
  * non-JSON bodies. The OAuth state is bound to the browser by a signed cookie and stored
- * server-side for 10 minutes; a callback without it, with another browser's, or a second
- * time fails.
+ * server-side for 10 minutes; a callback without it, or with another browser's, fails.
  *
  * **Rate limits.** Better Auth's limiter, per network identity: the route passes the
  * validated identity of server/http/network-identity.ts (never `request.ip` or a client
  * header; any client header of that name is dropped) as `AUTH_IP_HEADER`. On top of the
- * API's own limit per network identity.
+ * API's own limit per network identity. Starting a sign-in writes the OAuth state, so at
+ * most `AUTH_STATE_CAP` states may be live at once, whoever started them: past it,
+ * sign-in answers 503 until some expire (10 minutes).
  *
  * **Logging.** Better Auth's log lines go to the server log as their message only, with
  * any email address replaced; never the values it attaches (errors may quote a row).
  * Telemetry is off.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, addOAuthServerContext, createAuthMiddleware, getOAuthState } from 'better-auth/api';
 import { sql } from 'drizzle-orm';
 import type { AppConfig } from '../../shared/config.js';
-import { SignInRequestSchema } from '../../shared/contracts/account.js';
+import { DELETE_REAUTH_PATH, ReturnPathSchema, SignInRequestSchema } from '../../shared/contracts/account.js';
+import { PRIVACY_NOTICE } from '../../shared/privacy.js';
 import type { Db } from '../db/client.js';
 import { AUTH_PROVIDER, AUTH_SCHEMA } from '../db/schema/auth.js';
 import { isHttpsUrl } from '../http/security-headers.js';
 import type { TrialIdentities } from '../identity/trial.js';
 import { MIN_SECRET_LENGTH, principalHash, type Principal, type QuotaPolicy } from '../quota/policy.js';
+import { endSession, issueDeletionConfirmation } from './deletion.js';
+import type { AccountSession } from './lifecycle.js';
 import { HANDOVER_CONTEXT_KEY, completeHandover, handoverCandidate, parseHandoverCandidate, type HandoverDeps } from './handover.js';
 
 export type AccountPrincipal = Extract<Principal, { kind: 'account' }>;
@@ -80,6 +102,10 @@ export const AUTH_IP_HEADER = 'x-aviation-client-ip';
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 /** The OAuth-state key of the ID-token nonce. */
 export const NONCE_CONTEXT_KEY = 'aviationNonce';
+/** The OAuth-state key of a deletion's re-authentication: the user and session it started from, and the subject to ask Google for. */
+export const REAUTH_CONTEXT_KEY = 'aviationReauth';
+/** At most this many OAuth states may be live at once (each sign-in start writes one for 10 minutes). */
+export const AUTH_STATE_CAP = 500;
 /** Allowed difference between our clock and Google's. */
 const CLOCK_SKEW_MS = 60_000;
 
@@ -113,6 +139,8 @@ export function authConfigProblem(config: Pick<AppConfig, 'appEnv' | 'appUrl' | 
     return `IDENTITY_HMAC_SECRET must be set (at least ${MIN_SECRET_LENGTH} characters) for Google sign-in`;
   }
   if (config.appEnv === 'live' && !isHttpsUrl(config.appUrl)) return 'APP_ENV=live requires an https APP_URL for Google sign-in';
+  // DESIGN §7: publish the privacy notice before collecting real users (RUNBOOK, "Google sign-in").
+  if (config.appEnv === 'live' && !PRIVACY_NOTICE.final) return 'APP_ENV=live keeps Google sign-in off until the final privacy notice is published (shared/privacy.ts)';
   return null;
 }
 
@@ -137,22 +165,29 @@ export interface GoogleClaims {
   email_verified: boolean;
   name?: string;
   exp: number;
-  iat?: number;
+  iat: number;
   nonce?: string;
 }
 
-/** The claims of a compact JWT, unverified (see the module comment), or null. */
-export function decodeJwtClaims(token: string): Record<string, unknown> | null {
+/** One base64url JSON object of a compact JWT (its header or claims), unverified, or null. */
+function decodeJwtPart(token: string, index: 0 | 1): Record<string, unknown> | null {
   const parts = token.split('.');
-  if (parts.length !== 3 || parts.some((p) => !/^[A-Za-z0-9_-]*$/.test(p)) || !parts[1]) return null;
+  if (parts.length !== 3 || parts.some((p) => !/^[A-Za-z0-9_-]*$/.test(p)) || !parts[index]) return null;
   try {
-    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as unknown;
-    return typeof claims === 'object' && claims !== null && !Array.isArray(claims) ? (claims as Record<string, unknown>) : null;
+    const value = JSON.parse(Buffer.from(parts[index], 'base64url').toString('utf8')) as unknown;
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
   } catch {
     return null;
   }
 }
 
+/** The claims of a compact JWT, unverified (see the module comment), or null. */
+export function decodeJwtClaims(token: string): Record<string, unknown> | null {
+  return decodeJwtPart(token, 1);
+}
+
+/** The algorithm Google signs ID tokens with. */
+const GOOGLE_ID_TOKEN_ALG = 'RS256';
 const SUBJECT = /^[!-~]{1,255}$/;
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,253}$/;
 
@@ -161,25 +196,44 @@ function clip(text: string, max: number): string {
   return Array.from(text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '')).slice(0, max).join('');
 }
 
-export type GoogleRefusal = 'malformed' | 'issuer' | 'audience' | 'expired' | 'subject' | 'email' | 'email_not_verified' | 'nonce';
+const finiteSeconds = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+export type GoogleRefusal =
+  | 'malformed'
+  | 'algorithm'
+  | 'issuer'
+  | 'audience'
+  | 'expired'
+  | 'issued_at'
+  | 'subject'
+  | 'email'
+  | 'email_not_verified'
+  | 'nonce';
 
 /**
- * The user a Google ID token stands for, or why it is refused: the issuer, the audience
- * (and `azp` when present) must be this client, the token must not have expired, the
- * `sub` must be one printable token, the email must be one Google reports as verified,
- * and the nonce must be this flow's.
+ * The user a Google ID token stands for, or why it is refused (OIDC Core 3.1.3.7; the
+ * signature is not verified, see the module comment): an RS256 header and a signature
+ * part (never an unsigned token); the issuer; the audience must be this client and only
+ * this client (a token with any other audience is refused), and `azp`, when present, this
+ * client; `exp` and `iat` finite numbers, the token not expired and not issued in the
+ * future; the `sub` one printable token; the email one Google reports as verified; and
+ * the nonce this flow's.
  */
 export function verifiedGoogleUser(
   idToken: string | undefined,
   expect: { clientId: string; nonce: string | null; nowMs: number },
 ): { ok: true; claims: GoogleClaims; user: { name: string; email: string; emailVerified: true } } | { ok: false; reason: GoogleRefusal } {
+  const header = idToken ? decodeJwtPart(idToken, 0) : null;
   const c = idToken ? decodeJwtClaims(idToken) : null;
-  if (!c) return { ok: false, reason: 'malformed' };
+  if (!idToken || !header || !c) return { ok: false, reason: 'malformed' };
+  if (header.alg !== GOOGLE_ID_TOKEN_ALG || !idToken.split('.')[2]) return { ok: false, reason: 'algorithm' };
   if (typeof c.iss !== 'string' || !GOOGLE_ISSUERS.includes(c.iss)) return { ok: false, reason: 'issuer' };
   const aud = c.aud;
   const audiences = typeof aud === 'string' ? [aud] : Array.isArray(aud) && aud.every((a) => typeof a === 'string') ? (aud as string[]) : [];
-  if (!audiences.includes(expect.clientId) || (c.azp !== undefined && c.azp !== expect.clientId)) return { ok: false, reason: 'audience' };
-  if (typeof c.exp !== 'number' || c.exp * 1000 + CLOCK_SKEW_MS <= expect.nowMs) return { ok: false, reason: 'expired' };
+  if (audiences.length === 0 || audiences.some((a) => a !== expect.clientId)) return { ok: false, reason: 'audience' };
+  if (c.azp !== undefined && c.azp !== expect.clientId) return { ok: false, reason: 'audience' };
+  if (!finiteSeconds(c.exp) || c.exp * 1000 + CLOCK_SKEW_MS <= expect.nowMs) return { ok: false, reason: 'expired' };
+  if (!finiteSeconds(c.iat) || c.iat * 1000 - CLOCK_SKEW_MS > expect.nowMs || c.iat > c.exp) return { ok: false, reason: 'issued_at' };
   if (typeof c.sub !== 'string' || !SUBJECT.test(c.sub)) return { ok: false, reason: 'subject' };
   if (typeof c.email !== 'string' || c.email.length > 320 || !EMAIL.test(c.email)) return { ok: false, reason: 'email' };
   if (c.email_verified !== true) return { ok: false, reason: 'email_not_verified' };
@@ -208,13 +262,30 @@ export function sanitizeAuthLogMessage(message: unknown): string {
 }
 
 /** The signed-in account behind a request's session cookie. */
-export interface SignedIn {
-  userId: string;
+export interface SignedIn extends AccountSession {
   name: string;
   email: string;
   principal: AccountPrincipal;
-  /** HMAC(issuer, sub): the account's quota key, read owner and billing principal. */
+  /** HMAC(issuer, sub): the account's quota key, read owner, billing principal and lifecycle lock. */
   hash: string;
+}
+
+/** The deletion intent a re-authentication carries in the OAuth state (server context). */
+interface ReauthIntent {
+  userId: string;
+  sessionId: string;
+}
+
+function parseReauthIntent(value: unknown): ReauthIntent | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { userId, sessionId } = value as Record<string, unknown>;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  return typeof userId === 'string' && uuid.test(userId) && typeof sessionId === 'string' && uuid.test(sessionId) ? { userId, sessionId } : null;
+}
+
+/** `path` with `name=value` appended to its query. */
+function withQueryParam(path: string, name: string, value: string): string {
+  return `${path}${path.includes('?') ? '&' : '?'}${name}=${encodeURIComponent(value)}`;
 }
 
 /** Session storage failed: the request is refused (503), never treated as signed out. */
@@ -353,13 +424,25 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path === '/callback/:id') {
+          await claimCallbackState(ctx);
+          return;
+        }
         if (ctx.path !== '/sign-in/social') return;
         const body = SignInRequestSchema.safeParse(ctx.body);
         if (!body.success) throw new APIError('BAD_REQUEST', { message: 'This sign-in request is not valid.' });
-        const candidate = await handoverCandidate(handover, ctx.headers?.get('cookie') ?? null, body.data.callbackURL);
+        if (await tooManyLiveStates()) {
+          log.warn({ signIn: 'busy' }, 'Google sign-in refused: too many sign-ins in progress');
+          throw new APIError('SERVICE_UNAVAILABLE', { message: 'Sign-in is busy. Try again in a few minutes.' });
+        }
+        const cookie = ctx.headers?.get('cookie') ?? null;
+        const candidate = await handoverCandidate(handover, cookie, body.data.callbackURL);
+        // Deleting the account: Google again, for the account this browser is signed in to.
+        const signedIn = body.data.callbackURL === DELETE_REAUTH_PATH ? await service.signedIn(cookie ?? undefined) : null;
         await addOAuthServerContext({
           [NONCE_CONTEXT_KEY]: randomBytes(32).toString('base64url'),
           ...(candidate ? { [HANDOVER_CONTEXT_KEY]: candidate } : {}),
+          ...(signedIn ? { [REAUTH_CONTEXT_KEY]: { userId: signedIn.userId, sessionId: signedIn.sessionId, subject: signedIn.principal.subject } } : {}),
         });
       }),
       after: createAuthMiddleware(async (ctx) => {
@@ -367,25 +450,40 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
           // Bind the ID token to this flow: Google echoes the authorization request's nonce.
           const returned = ctx.context.returned as { url?: unknown } | null | undefined;
           if (!returned || typeof returned !== 'object' || typeof returned.url !== 'string') return;
-          const nonce = (await getOAuthState())?.serverContext?.[NONCE_CONTEXT_KEY];
+          const context = (await getOAuthState())?.serverContext;
+          const nonce = context?.[NONCE_CONTEXT_KEY];
           if (typeof nonce !== 'string') throw new APIError('INTERNAL_SERVER_ERROR', { message: 'Sign-in could not start.' });
           const url = new URL(returned.url);
           url.searchParams.set('nonce', nonce);
+          const subject = (context?.[REAUTH_CONTEXT_KEY] as { subject?: unknown } | undefined)?.subject;
+          if (typeof subject === 'string') url.searchParams.set('login_hint', subject);
           return ctx.json({ ...returned, url: url.toString() });
         }
         if (ctx.path === '/callback/:id') {
           const created = ctx.context.newSession;
           if (!created) return;
-          const candidate = parseHandoverCandidate((await getOAuthState())?.serverContext?.[HANDOVER_CONTEXT_KEY]);
-          if (!candidate) return;
+          const context = (await getOAuthState())?.serverContext;
+          const candidate = parseHandoverCandidate(context?.[HANDOVER_CONTEXT_KEY]);
+          const reauth = parseReauthIntent(context?.[REAUTH_CONTEXT_KEY]);
+          if (!candidate && !reauth) return;
           try {
             const account = await accountPrincipal(deps.db, created.user.id);
             if (!account) return;
-            const outcome = await completeHandover(handover, ctx.headers?.get('cookie') ?? null, candidate, principalHash(deps.policy, account));
-            log.info({ handover: outcome }, 'sign-in handover');
+            const session: AccountSession = { hash: principalHash(deps.policy, account), userId: created.user.id, sessionId: created.session.id };
+            if (candidate) {
+              const outcome = await completeHandover(handover, ctx.headers?.get('cookie') ?? null, candidate, session);
+              log.info({ handover: outcome }, 'sign-in handover');
+            }
+            if (reauth) {
+              // A re-authentication replaces the session the browser had (OWASP: rotate after re-authenticating).
+              if (reauth.sessionId !== session.sessionId) await endSession(deps.db, reauth.sessionId);
+              const same = reauth.userId === session.userId;
+              const until = same ? await issueDeletionConfirmation(deps.db, session) : null;
+              log.info({ reauthentication: same ? (until ? 'confirmed' : 'not_confirmed') : 'other_account' }, 'sign-in re-authentication');
+            }
           } catch (err) {
-            // Signing in still succeeds; the brief stays with the trial.
-            log.warn({ err: { name: (err as Error)?.name } }, 'sign-in handover failed');
+            // Signing in still succeeds; the brief stays with the trial and nothing is confirmed.
+            log.warn({ err: { name: (err as Error)?.name } }, 'sign-in follow-up failed');
           }
         }
       }),
@@ -413,13 +511,63 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
 
   const expire = (name: string) => `${name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 
-  return {
+  /** True when `AUTH_STATE_CAP` OAuth states are live: no new sign-in may start. */
+  async function tooManyLiveStates(): Promise<boolean> {
+    const res = await deps.db.execute(sql`
+      SELECT count(*)::int AS n FROM (
+        SELECT 1 FROM auth_verifications WHERE identifier LIKE 'auth-state:%' AND expires_at > now() LIMIT ${AUTH_STATE_CAP}
+      ) live`);
+    return ((res.rows[0] as { n: number } | undefined)?.n ?? 0) >= AUTH_STATE_CAP;
+  }
+
+  /**
+   * The callback's OAuth state is used once (see the module comment): claim it before
+   * Better Auth reads it, but only from the browser that started the sign-in (its signed
+   * state cookie names this state), so a stranger's callback cannot spend it. A stored,
+   * live state claimed already sends this callback to the sign-in's error page; anything
+   * else (no or another state cookie, an unknown or expired state) is left to Better Auth,
+   * which refuses it.
+   */
+  async function claimCallbackState(ctx: {
+    query?: Record<string, unknown>;
+    redirect: (url: string) => unknown;
+    getSignedCookie: (name: string, secret: string) => Promise<string | null | false | undefined>;
+  }): Promise<void> {
+    const state = ctx.query?.state;
+    if (typeof state !== 'string' || state.length === 0 || state.length > 128) return;
+    if ((await ctx.getSignedCookie(names.state, config.auth.secret!)) !== state) return;
+    const res = await deps.db.execute(sql`
+      WITH stored AS (
+        SELECT value, expires_at FROM auth_verifications
+        WHERE identifier = ${`auth-state:${state}`} AND expires_at > now()
+        ORDER BY expires_at DESC LIMIT 1
+      ), claimed AS (
+        INSERT INTO auth_state_uses (state_hash, used_at, expires_at)
+        SELECT ${createHash('sha256').update(state).digest('hex')}, now(), stored.expires_at FROM stored
+        ON CONFLICT (state_hash) DO NOTHING
+        RETURNING 1
+      )
+      SELECT (SELECT value FROM stored) AS value, EXISTS (SELECT 1 FROM claimed) AS claimed`);
+    const row = res.rows[0] as { value: string | null; claimed: boolean } | undefined;
+    if (!row || row.value === null || row.claimed) return;
+    log.warn({ signIn: 'state_reused' }, 'Google sign-in refused: the callback was already used');
+    let errorURL = '/account?signin=failed';
+    try {
+      const stored = (JSON.parse(row.value) as { errorURL?: unknown }).errorURL;
+      if (ReturnPathSchema.safeParse(stored).success) errorURL = stored as string;
+    } catch {
+      // The default error page.
+    }
+    throw ctx.redirect(withQueryParam(errorURL, 'error', 'state_mismatch'));
+  }
+
+  const service: AuthService = {
     secure,
     handle: (request) => auth.handler(request),
     async signedIn(cookieHeader) {
       // No session cookie: nothing to look up.
       if (!cookieHeader || !cookieHeader.includes(`${names.session_token}=`)) return null;
-      let found: { user: { id: string; name: string; email: string } } | null;
+      let found: { session: { id: string }; user: { id: string; name: string; email: string } } | null;
       try {
         found = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader }) });
       } catch {
@@ -432,6 +580,7 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
       if (!principal) return null;
       return {
         userId: found.user.id,
+        sessionId: found.session.id,
         name: found.user.name,
         email: found.user.email,
         principal,
@@ -444,6 +593,7 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
       await context.checkSchema?.();
     },
   };
+  return service;
 }
 
 /** The quota principal of a user: Google's issuer and the account's `sub`, and when the user was created. */

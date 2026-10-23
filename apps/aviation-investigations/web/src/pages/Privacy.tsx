@@ -1,9 +1,11 @@
+import { PRIVACY_NOTICE } from '../../../shared/privacy';
 import { TextPage } from './About';
 
 /**
  * Privacy notice, plain language (UI_DESIGN §4.8, DESIGN §7). This covers what the
  * site does today; the owner provides the final text before accounts and AI
- * searches open.
+ * searches open, and sets `PRIVACY_NOTICE.final` (shared/privacy.ts) with it: until
+ * then the page says it is a draft and live keeps Google sign-in off.
  */
 export function Privacy() {
   return (
@@ -31,9 +33,11 @@ export function Privacy() {
         account ID, email and name for signed-in users, and questions and answers held for up to 24 hours to deliver them,
         then deleted.
       </p>
-      <p className="font-sans text-meta text-muted">
-        Draft notice. The final privacy text is published before accounts or AI searches are offered.
-      </p>
+      {!PRIVACY_NOTICE.final && (
+        <p className="font-sans text-meta text-muted">
+          Draft notice. The final privacy text is published before accounts or AI searches are offered.
+        </p>
+      )}
     </TextPage>
   );
 }
