@@ -34,7 +34,7 @@ import { compileFilters } from '../../../server/search/filters.js';
 import { assertCompleteResponse, keywordChannelBody, toHit } from '../../../server/search/hybrid.js';
 import { uniqueTop } from '../metrics.js';
 import { controlEvidence, seededSample, type CalibrationDataset } from './calibration.js';
-import { attemptReserveUsd, estimateOpenAIInput, type JudgeCaller, type JudgeModelConfig } from './clients.js';
+import { SONNET_CACHE_READ_USD, attemptReserveUsd, estimateOpenAIInput, type JudgeCaller, type JudgeModelConfig } from './clients.js';
 import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from './config.js';
 import { families, membersOf, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { loadCaseEvidence, planChunks, renderBundleCase, type CaseEvidence } from './evidence.js';
@@ -57,7 +57,7 @@ export const ASSUMPTIONS = Object.freeze({
   /** Judge calls retried after an invalid output. */
   invalidRetryShare: 0.05,
   /** Sonnet 5.5 cache reads at the published $0.20 per million (the repository row is being corrected in task 16d). */
-  sonnetCacheRead: 0.2,
+  sonnetCacheRead: SONNET_CACHE_READ_USD,
 });
 
 export type Samples = 1 | 3;

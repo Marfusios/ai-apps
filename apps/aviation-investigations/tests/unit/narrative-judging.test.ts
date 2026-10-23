@@ -14,10 +14,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
 import { createAnthropicProvider } from '../../server/ai/anthropic.js';
+import { llmPrice } from '../../server/ai/pricing.js';
 import { StageError, stageCtx } from '../../server/ai/provider.js';
 import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
 import {
   JudgeCallError,
+  SONNET_CACHE_READ_USD,
   attemptReserveUsd,
   createAnthropicJudge,
   createFakeJudge,
@@ -236,6 +238,10 @@ describe('the OpenAI judge client', () => {
     });
     expect(openAIUsage({ input_tokens: 10, input_tokens_details: { cached_tokens: 20 }, output_tokens: 1 })).toBeNull();
     expect(judgeCostUsd('gpt-5.6-luna', { inputTokens: 1_500, outputTokens: 400, cacheWriteTokens: 500, cacheReadTokens: 1_000 })).toBeCloseTo((1_500 * 0.2 + 400 * 1.2 + 500 * 0.25 + 1_000 * 0.02) / 1e6, 12);
+    // Sonnet 5.5 cache reads settle at no less than the published $0.20 per million.
+    const sonnet = { inputTokens: 1_000, outputTokens: 300, cacheWriteTokens: 0, cacheReadTokens: 10_000 };
+    const row = llmPrice('claude-sonnet-5-5');
+    expect(judgeCostUsd('claude-sonnet-5-5', sonnet)).toBeCloseTo((1_000 * row.input + 300 * row.output + 10_000 * Math.max(row.cacheRead, SONNET_CACHE_READ_USD)) / 1e6, 12);
   });
 });
 
