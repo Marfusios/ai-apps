@@ -174,7 +174,7 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
       // The scope row is done on every read, so the readings and filters ride along.
       expect(r.checklist.interpretation).toEqual({ interpretations: seedAnswer().interpretations, filters: {} });
       if (r.stage === 'done') {
-        expect(r.checklist).toMatchObject({ question: 'in_scope', searched: { cases: 4, passages: 9 }, written: true, verified: 'passed' });
+        expect(r.checklist).toMatchObject({ question: 'in_scope', searched: { cases: 4, passages: 9 }, written: true, verified: 'partially_checked', removedStatements: 0 });
         expect(r.result?.kind).toBe('answer');
       }
     }

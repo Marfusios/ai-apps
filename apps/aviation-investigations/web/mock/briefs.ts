@@ -17,6 +17,9 @@
  * - "no match": the answer model's explicit abstention (no retrieved case supports the question);
  * - "midair": an "Examples found" answer about two-aircraft events (SEA08LA057, WPR15FA010),
  *   whose evidence is event-scoped, with two adjacent case citations in the summary;
+ * - "partial": the seed answer as claim-level display shows it with statements removed
+ *   (Task 16e): a removed summary sentence, a case shown unclassified with a quote left out,
+ *   a case whose reading was removed, and a timing fact not verified;
  * - "unavailable" (the first time a question is asked): 503 `unavailable`, which releases the
  *   admission; the server keeps the key with no result, so a retry under the same key is a
  *   409 `conflict`;
@@ -49,7 +52,7 @@ import type { CaseDetail } from '../../shared/contracts/cases.js';
 import type { ErrorResponse } from '../../shared/contracts/common.js';
 import type { CaseRow } from '../../shared/contracts/search.js';
 import { clarificationReadings, timingWindowLabel } from '../../server/briefs/clarify.js';
-import { readingLines } from '../../server/briefs/context.js';
+import { readingLines, readingRemovedLines } from '../../server/briefs/context.js';
 import {
   NO_MATCH_LINES,
   clarificationReply,
@@ -235,6 +238,60 @@ export function seedAnswer(filters: BriefFilters = {}): Extract<BriefResult, { k
     ],
     cases: seedCards(),
     gaps: [NYC_GAP],
+    check: checkRecord(SEED_SHOWN, {}),
+  };
+}
+
+/** Statements the seed answer shows: 3 summary sentences, 8 per case (why, classification, maintenance, symptom, timing, criterion, two quotes) and the gap note, every one confirmed. */
+const SEED_SHOWN = 28;
+
+/** The result's check record: statements shown, and removed by kind (Task 16d, 16e). */
+function checkRecord(shown: number, removed: Partial<NonNullable<Extract<BriefResult, { kind: 'answer' }>['check']>['removed']>, extra: { unclassified?: string[]; excerpts?: number } = {}) {
+  return {
+    rules: 'display-deps-v2' as const,
+    status: 'partially_checked' as const,
+    shown,
+    ...(extra.excerpts ? { omitted: { excerpts: extra.excerpts, ordinals: 0 } } : {}),
+    removed: { summary: 0, why: 0, classification: 0, maintenance: 0, symptom: 0, timing: 0, attribution: 0, criterion: 0, gap: 0, ...removed },
+    unclassified: extra.unclassified ?? [],
+  };
+}
+
+/**
+ * The seed answer as claim-level display shows it with statements removed (Task 16e,
+ * partial display): MIA08LA156's sentence and classification removed (it stays, unclassified,
+ * with one quote left out by the excerpt rule), DEN08LA103's reading removed (its card shows
+ * its NTSB text), and DFW08TA066's timing fact not verified.
+ */
+export function partialAnswer(filters: BriefFilters = {}): Extract<BriefResult, { kind: 'answer' }> {
+  const [dfw, mia, den] = seedCards() as [CaseCard, CaseCard, CaseCard];
+  return {
+    kind: 'answer',
+    interpretations: INTERPRETATIONS,
+    filters,
+    grouping: 'mechanical',
+    summary: [
+      { kind: 'text', text: 'In one investigation, a mechanic left a control-rod nut unsecured after an engine change, and investigators found that it caused the power loss ' },
+      { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: true },
+      { kind: 'text', text: '.' },
+      { kind: 'removed', count: 1 },
+      { kind: 'text', text: 'In the third, the reason for the power loss was never determined ' },
+      { kind: 'case', ntsbNo: 'DEN08LA103', unconfirmed: false },
+      { kind: 'text', text: '.' },
+    ],
+    groups: [
+      { kind: 'causal', caseNumbers: ['DFW08TA066'] },
+      { kind: 'defect_not_causal', caseNumbers: [] },
+      { kind: 'no_fault', caseNumbers: [] },
+      { kind: 'insufficient', caseNumbers: [] },
+    ],
+    cases: [
+      { ...dfw, reading: { ...dfw.reading!, timing: [], criteria: [{ criterion: 'timing_window', decision: 'unconfirmed', notVerified: true }] }, notVerified: ['timing', 'criterion'] },
+      { ...mia, reading: { ...mia.reading!, glyph: null, quotes: mia.reading!.quotes.slice(0, 1) }, notVerified: ['classification'], quotesOmitted: 1 },
+      { ...den, reading: null, notVerified: ['why', 'classification', 'maintenance', 'symptom', 'timing', 'attribution', 'criterion'] },
+    ],
+    gaps: [NYC_GAP],
+    check: checkRecord(15, { summary: 1, why: 1, classification: 2, maintenance: 1, symptom: 1, timing: 2, attribution: 3, criterion: 2 }, { unclassified: ['MIA08LA156'], excerpts: 1 }),
   };
 }
 
@@ -256,6 +313,7 @@ export function seedNoMatch(filters: BriefFilters = {}): Extract<BriefResult, { 
     lines: [...NO_MATCH_LINES],
     cases: [...SEED_CASES, 'NYC08LA106'].map(plainCard),
     gaps: [NYC_GAP],
+    check: checkRecord(1, {}),
   };
 }
 
@@ -291,6 +349,7 @@ export function midairAnswer(filters: BriefFilters = {}): Extract<BriefResult, {
       { kind: 'text', text: '.' },
     ],
     groups: [{ kind: 'examples', caseNumbers: ['SEA08LA057', 'WPR15FA010'] }],
+    check: checkRecord(7, {}),
     cases: [
       card('SEA08LA057', 'A departing airplane took off into the path of an airplane landing at the same fly-in.', [
         'The witness was flying above the airport and advised the departing pilot that an airplane was landing.',
@@ -330,6 +389,7 @@ export const RESULT_SAMPLES = {
   withheld: seedWithheld(),
   noMatch: seedNoMatch(),
   midair: midairAnswer(),
+  partial: partialAnswer(),
   noResults: { kind: 'no_results', interpretations: INTERPRETATIONS, filters: { category: ['BALL'], injury: ['FATL'] } },
   failedCounted: { kind: 'failed', countedAsSearch: true },
   failedFree: { kind: 'failed', countedAsSearch: false },
@@ -340,7 +400,7 @@ export const RESULT_SAMPLES = {
 // ---------------------------------------------------------------------------
 // The in-memory server
 
-type Variant = 'answer' | 'withheld' | 'no_match' | 'no_results' | 'midair';
+type Variant = 'answer' | 'withheld' | 'no_match' | 'no_results' | 'midair' | 'partial';
 
 interface MockStep {
   n: number;
@@ -385,6 +445,7 @@ function scopeOf(question: string, filters: BriefFilters): { reply: ScopeReply |
   if (/\bnothing\b/.test(q)) return { reply: null, variant: 'no_results' };
   if (/\bno match\b/.test(q)) return { reply: null, variant: 'no_match' };
   if (/\bmidair\b/.test(q)) return { reply: null, variant: 'midair' };
+  if (/\bpartial\b/.test(q)) return { reply: null, variant: 'partial' };
   return { reply: null, variant: /withheld/.test(q) ? 'withheld' : 'answer' };
 }
 
@@ -512,6 +573,7 @@ export class MockBriefs {
     if (s.variant === 'no_match') return seedNoMatch(s.filters);
     if (s.variant === 'no_results') return { kind: 'no_results', ...this.contextOf(s) };
     if (s.variant === 'midair') return midairAnswer(s.filters);
+    if (s.variant === 'partial') return partialAnswer(s.filters);
     return seedAnswer(s.filters);
   }
 
@@ -527,7 +589,12 @@ export class MockBriefs {
     const interpretation = this.contextOf(s);
     if (stage === 'done') {
       if (s.variant === 'no_results') return { question: 'in_scope', interpretation, searched: { cases: 0, passages: 0 } };
-      return { ...STAGES[2]!, interpretation, verified: s.variant === 'withheld' ? 'withheld' : 'passed' };
+      if (s.variant === 'withheld') return { ...STAGES[2]!, interpretation, verified: 'withheld' };
+      // What the check removed, from the result's own counts (Task 16e).
+      const result = this.resultOf(s);
+      const check = result && (result.kind === 'answer' || result.kind === 'no_match') ? result.check : undefined;
+      const removed = check ? Object.values(check.removed).reduce((a, b) => a + b, 0) : 0;
+      return { ...STAGES[2]!, interpretation, verified: 'partially_checked', removedStatements: removed };
     }
     return { ...STAGES[Math.min(s.polls, 2)]!, interpretation };
   }
@@ -590,7 +657,11 @@ export class MockBriefs {
         highlights: (reading?.quotes ?? []).filter((q) => q.passageId === passageId(ntsbNo, kind)).map((q) => q.span),
       };
     });
-    const lines = reading ? readingLines(reading, SEED_DIMENSIONS[ntsbNo]) : [];
+    const lines = reading
+      ? readingLines(reading, SEED_DIMENSIONS[ntsbNo], card?.notVerified ?? [], card?.quotesOmitted ?? 0)
+      : result.kind === 'answer' && card && (card.notVerified || card.quotesOmitted)
+        ? readingRemovedLines(card.quotesOmitted ?? 0)
+        : [];
     return { status: 200, body: { briefId: brief.id, step: n, ntsbNo, reading, lines, gaps, passages } };
   }
 }

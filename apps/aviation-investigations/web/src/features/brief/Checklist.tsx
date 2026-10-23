@@ -23,13 +23,51 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 'S'}`;
 }
 
+/**
+ * The evidence check's row (Task 16e): what the check did, from the server's count, never
+ * a blanket status. "COMPLETED · 2 STATEMENTS REMOVED"; "COMPLETED" for a step written
+ * before the count existed; "NOTHING TO CHECK" for an abstention with no statement of its own.
+ */
+export function verifiedResult(checklist: ChecklistResults): string | null {
+  switch (checklist.verified) {
+    case 'passed':
+      return 'PASSED';
+    case 'withheld':
+      return 'WITHHELD';
+    case 'nothing_to_check':
+      return 'NOTHING TO CHECK';
+    case 'partially_checked':
+      return checklist.removedStatements === undefined ? 'COMPLETED' : `COMPLETED · ${plural(checklist.removedStatements, 'STATEMENT')} REMOVED`;
+    default:
+      return null;
+  }
+}
+
+/** What the live region says when the check row completes. */
+export function verifiedSpoken(checklist: ChecklistResults): string | null {
+  switch (checklist.verified) {
+    case 'passed':
+      return 'Quotes verified: passed.';
+    case 'withheld':
+      return 'Evidence check: summary withheld.';
+    case 'nothing_to_check':
+      return 'Evidence check: nothing to check.';
+    case 'partially_checked': {
+      const n = checklist.removedStatements;
+      return n === undefined ? 'Evidence check completed.' : `Evidence check completed: ${n} ${n === 1 ? 'statement' : 'statements'} removed.`;
+    }
+    default:
+      return null;
+  }
+}
+
 /** The four rows (UI_DESIGN §4.4): scope, retrieve, compose, validate. */
 export function checklistRows(checklist: ChecklistResults, stage: BriefStage, cohort: number | null): Row[] {
   const results: (string | null)[] = [
     checklist.question ? 'IN SCOPE' : null,
     checklist.searched ? `${plural(checklist.searched.cases, 'CASE')} · ${plural(checklist.searched.passages, 'PASSAGE')}` : null,
     checklist.written ? 'DONE' : null,
-    checklist.verified === 'passed' ? 'PASSED' : checklist.verified === 'partially_checked' ? 'PARTLY CHECKED' : checklist.verified === 'withheld' ? 'WITHHELD' : null,
+    verifiedResult(checklist),
   ];
   const spoken: (string | null)[] = [
     checklist.question ? 'Question: in scope.' : null,
@@ -37,9 +75,7 @@ export function checklistRows(checklist: ChecklistResults, stage: BriefStage, co
       ? `Search done: ${checklist.searched.cases} ${checklist.searched.cases === 1 ? 'case' : 'cases'}, ${checklist.searched.passages} ${checklist.searched.passages === 1 ? 'passage' : 'passages'}.`
       : null,
     checklist.written ? 'Answer written.' : null,
-    checklist.verified
-      ? `Quotes verified: ${checklist.verified === 'passed' ? 'passed' : checklist.verified === 'partially_checked' ? 'partly checked, unconfirmed statements not shown' : 'summary withheld'}.`
-      : null,
+    verifiedSpoken(checklist),
   ];
   const at = ORDER.indexOf(stage);
   const challenges = ['Question', cohort === null ? 'Search investigations' : `Search ${formatCount(cohort)} investigations`, 'Write answer', 'Verify every quote'];

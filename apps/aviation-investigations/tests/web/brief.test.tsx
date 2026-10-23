@@ -45,6 +45,7 @@ import { WithheldNotice, withheldText } from '../../web/src/features/brief/Withh
 import { PassageText, cleanSpans, paragraphRanges } from '../../web/src/features/case/BriefContext';
 import { TURNSTILE_TEST_SITE_KEY, createHandlers } from '../../web/src/mocks/handlers';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
+import printCss from '../../web/src/styles/print.css?raw';
 
 const server = setupMockApi({ briefPolls: 1 });
 
@@ -251,11 +252,21 @@ describe('Checklist (UI_DESIGN §4.4)', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
   });
 
-  it('says a partly checked answer is partly checked, never passed (Task 16d partial display)', () => {
-    render(<Checklist {...props} stage="validate" checklist={{ question: 'in_scope', searched: { cases: 6, passages: 12 }, written: true, verified: 'partially_checked' }} />);
-    const rows = screen.getAllByRole('listitem').map((li) => li.textContent);
-    expect(rows[3]).toBe('Verify every quotePARTLY CHECKED✓ done');
-    expect(screen.queryByText('PASSED')).toBeNull();
+  it('says what the evidence check did, from the actual count; never a blanket status (Task 16e)', () => {
+    const done = { question: 'in_scope' as const, searched: { cases: 6, passages: 12 }, written: true as const };
+    const { rerender } = render(<Checklist {...props} stage="validate" checklist={{ ...done, verified: 'partially_checked', removedStatements: 0 }} />);
+    const rows = () => screen.getAllByRole('listitem').map((li) => li.textContent);
+    const live = document.querySelector('[aria-live="polite"]') as HTMLElement;
+    expect(rows()[3]).toBe('Verify every quoteCOMPLETED · 0 STATEMENTS REMOVED✓ done');
+    expect(live.textContent).toBe('Evidence check completed: 0 statements removed.');
+    rerender(<Checklist {...props} stage="validate" checklist={{ ...done, verified: 'partially_checked', removedStatements: 1 }} />);
+    expect(rows()[3]).toBe('Verify every quoteCOMPLETED · 1 STATEMENT REMOVED✓ done');
+    // A step written before the count existed, and an abstention with nothing of its own to check.
+    rerender(<Checklist {...props} stage="validate" checklist={{ ...done, verified: 'partially_checked' }} />);
+    expect(rows()[3]).toBe('Verify every quoteCOMPLETED✓ done');
+    rerender(<Checklist {...props} stage="validate" checklist={{ ...done, verified: 'nothing_to_check' }} />);
+    expect(rows()[3]).toBe('Verify every quoteNOTHING TO CHECK✓ done');
+    expect(screen.queryByText(/PARTLY CHECKED|PASSED/)).toBeNull();
   });
 });
 
@@ -1323,3 +1334,117 @@ describe('Unconfirmed criteria on the case card', () => {
     expect(unconfirmedLines({ glyph: null, why: 'w', timing: [], quotes: [], evidence: { scope: 'event', multiAircraft: false }, criteria: [{ criterion: 'timing_window', decision: 'matches' }] } as CaseReading)).toEqual([]);
   });
 });
+
+describe('Partial display: every state the projection can produce (Task 16e; review I2, gate 16d finding 3)', { timeout: 20_000 }, () => {
+  const sheet = (result: Parameters<typeof BriefingSheet>[0]['result']) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <BriefingSheet result={result} caseTo={(n) => `/briefs/x?case=${n}`} inCompare={() => false} onToggleCompare={() => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  };
+  const cardOf = (n: string) => document.querySelector(`article[data-card="${n}"]`) as HTMLElement;
+
+  it('partial display off (whole mode): the answer says the check completed with nothing removed, and nothing else changes', () => {
+    sheet(RESULT_SAMPLES.answer);
+    expect(screen.getByText('Evidence check completed · 0 statements removed')).toBeTruthy();
+    expect(document.querySelector('[data-ungrouped]')).toBeNull();
+    expect(document.querySelector('[data-check-notes]')).toBeNull();
+    expect(document.querySelectorAll('article[data-card]')).toHaveLength(RESULT_SAMPLES.answer.cases.length);
+    expect(screen.queryByText(/PARTLY CHECKED|partly checked/i)).toBeNull();
+  });
+
+  it('partial display on: every counted case is on the sheet, unclassified or without its reading, with its markers', () => {
+    const r = RESULT_SAMPLES.partial;
+    sheet(r);
+    // The results label counts every case, and every case is rendered: none silently dropped.
+    expect(screen.getByText(`${r.cases.length} examples found · not every matching investigation`)).toBeTruthy();
+    expect(document.querySelectorAll('article[data-card]')).toHaveLength(r.cases.length);
+    // The factual status line, from the actual count (13 statements).
+    expect(screen.getByText('Evidence check completed · 13 statements removed')).toBeTruthy();
+    // The removed summary sentence: a count marker, never its text.
+    expect(screen.getByText('[one statement not shown: the check could not confirm it]')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('a fuel-system check valve was installed backwards');
+    // The cases outside every group: MIA08LA156 (reading kept, unclassified) and DEN08LA103 (reading removed).
+    const ungrouped = screen.getByRole('region', { name: 'Not classified, 2 cases' });
+    expect(within(ungrouped).getByText('The evidence check could not confirm a classification for these cases.')).toBeTruthy();
+    expect(within(ungrouped).getAllByRole('article').map((a) => a.getAttribute('data-card'))).toEqual(['MIA08LA156', 'DEN08LA103']);
+    // A grouped card with a timing fact and its criterion not verified.
+    expect(cardOf('DFW08TA066').textContent).toContain('Not verified The check could not confirm the timing and your criteria against the cited passages, so they are not shown.');
+    // The unclassified card: its classification not verified, and a quote left out by the excerpt rule.
+    const mia = cardOf('MIA08LA156');
+    expect(mia.textContent).toContain('The check could not confirm the classification against the cited passages, so it is not shown.');
+    expect(mia.textContent).toContain('One quote left out: it needs the report’s surrounding text to keep its meaning.');
+    expect(mia.textContent).not.toContain('During both test phases, the engine accelerated normally');
+    expect(within(mia).getByText(/Why it matched/i)).toBeTruthy();
+    // The card whose reading was removed: it says so, and shows its NTSB text with no AI lines.
+    const den = cardOf('DEN08LA103');
+    expect(den.textContent).toContain('AI reading not shown');
+    expect(den.textContent).toContain('The check could not confirm this case’s AI reading against the cited passages. Its NTSB text is below.');
+    expect(within(den).queryByText(/Why it matched/i)).toBeNull();
+    expect(den.textContent).not.toContain('The reason for the loss of engine power was not determined.');
+  });
+
+  it('print: the markers, notes and the cases outside every group all print (none is hidden from print)', () => {
+    sheet(RESULT_SAMPLES.partial);
+    const printed = [
+      ...document.querySelectorAll('[data-check-status], [data-ungrouped], [data-check-notes], article[data-card]'),
+      screen.getByText('[one statement not shown: the check could not confirm it]'),
+    ];
+    expect(printed.length).toBeGreaterThan(6);
+    for (const el of printed) expect(el.closest('[data-print="hide"]'), el.textContent ?? '').toBeNull();
+    for (const card of document.querySelectorAll('article[data-card]')) expect(card.getAttribute('data-print')).toBe('keep');
+    // The print stylesheet hides only what is marked to hide.
+    expect(printCssHides()).toEqual(['[data-print="hide"]']);
+  });
+
+  it('the drawer says what was not shown for a case without its reading, and for a quote left out', async () => {
+    freshApi();
+    installTurnstile();
+    const { router } = await askFromHome('Engine power loss after maintenance (partial)');
+    const label = await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const id = currentUrl(router).split('/')[2] as string;
+    fireEvent.click(within(label.parentElement as HTMLElement).getByRole('link', { name: 'DEN08LA103' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('AI reading not shown: the check could not confirm it against the cited passages', {}, SLOW)).toBeTruthy();
+    expect(within(dialog).queryByText(/Why it matched/i)).toBeNull();
+    // MIA08LA156 (in the ungrouped section): its drawer names the quote left out and the classification not verified.
+    await act(() => router.navigate(`/briefs/${id}?case=MIA08LA156`));
+    const mia = await screen.findByRole('dialog');
+    expect(await within(mia).findByText('One quote left out: it needs the report’s surrounding text to keep its meaning', {}, SLOW)).toBeTruthy();
+    expect(within(mia).getAllByText('Not verified: the check could not confirm this against the cited passages').length).toBeGreaterThan(0);
+  });
+
+  it('Compare cells say what the check did not confirm, never "not in this brief" for a case of the answer', async () => {
+    freshApi();
+    installTurnstile();
+    const { router } = await askFromHome('Engine power loss after maintenance (partial)');
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const id = currentUrl(router).split('/')[2] as string;
+    await act(() => router.navigate(`/compare?cases=DFW08TA066,MIA08LA156,DEN08LA103&brief=${id}&step=1`));
+    const den = await screen.findByRole('article', { name: 'DEN08LA103, strip 3' }, SLOW);
+    expect(within(den).getAllByText('AI reading not shown: the check could not confirm it').length).toBe(2);
+    expect(within(den).queryByText('Not in this brief')).toBeNull();
+    const dfw = await screen.findByRole('article', { name: 'DFW08TA066, strip 1' }, SLOW);
+    expect(await within(dfw).findByText('Timing not verified by the check', {}, SLOW)).toBeTruthy();
+    const mia = await screen.findByRole('article', { name: 'MIA08LA156, strip 2' }, SLOW);
+    expect(await within(mia).findByText('Classification not verified by the check', {}, SLOW)).toBeTruthy();
+  });
+
+  it('partial display off over the mock API: the checklist\'s last state and the sheet say the check completed with 0 removed', async () => {
+    freshApi();
+    installTurnstile();
+    await askFromHome(MOCK_SEED_QUESTION);
+    expect(await screen.findByText('Evidence check completed · 0 statements removed', {}, SLOW)).toBeTruthy();
+    expect(document.querySelector('[data-ungrouped]')).toBeNull();
+  });
+});
+
+/** The selectors the print stylesheet sets `display: none` on. */
+function printCssHides(): string[] {
+  const block = printCss.slice(printCss.indexOf('@media print'));
+  return [...block.matchAll(/([^{}]+)\{[^}]*display:\s*none/g)].map((m) => m[1]!.trim());
+}

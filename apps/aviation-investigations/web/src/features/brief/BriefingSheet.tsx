@@ -1,9 +1,9 @@
-import { Fragment } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { Link, type To } from 'react-router';
 import { GLYPH_KINDS, type BriefResult, type CaseCard as CaseCardData, type Gap, type SummarySegment } from '../../../../shared/contracts/briefs';
 import { AiBlock } from '../../components/AiBlock';
 import { CaseCard, UnconfirmedTag } from './CaseCard';
-import { resultsLabel } from './display';
+import { checkStatusLine, resultsLabel, ungroupedTitle } from './display';
 import { EvidenceGroup } from './EvidenceGroup';
 import { WithheldNotice } from './WithheldNotice';
 
@@ -69,6 +69,35 @@ function Summary({ segments, caseTo }: { segments: readonly SummarySegment[]; ca
         ))}
       </p>
     </AiBlock>
+  );
+}
+
+/** What the evidence check did, from the server's counts (Task 16e): never a blanket status. */
+function CheckStatus({ check }: { check: NonNullable<Extract<SheetResult, { kind: 'answer' }>['check']> }) {
+  return (
+    <p className="mb-2 text-meta text-muted" data-check-status="">
+      {checkStatusLine(check)}
+    </p>
+  );
+}
+
+/**
+ * The answer's cards outside every group (Task 16e; partial display): a case whose group
+ * placement the check removed keeps its reading here, unclassified; a case whose reading
+ * was removed shows here with its NTSB text. Never dropped from the sheet while counted in
+ * the results label.
+ */
+function Ungrouped({ grouping, children, count }: { grouping: 'mechanical' | 'examples'; children: ReactNode; count: number }) {
+  const { title, note } = ungroupedTitle(grouping);
+  return (
+    <section aria-label={`${title}, ${count} ${count === 1 ? 'case' : 'cases'}`} className="mt-4" data-ungrouped="">
+      <h3 className="mb-[3px] flex flex-wrap items-center gap-x-[7px] gap-y-0.5 text-ui font-bold after:ml-1 after:h-px after:min-w-6 after:flex-1 after:bg-hairline">
+        <span>{title}</span>
+        <span className="font-normal whitespace-nowrap text-muted">{`${count} ${count === 1 ? 'case' : 'cases'}`}</span>
+      </h3>
+      <p className="mb-[7px] text-meta text-muted">{note}</p>
+      {children}
+    </section>
   );
 }
 
@@ -138,6 +167,7 @@ export function BriefingSheet({ result, caseTo, inCompare, onToggleCompare }: Br
           {result.cases.map((c) => card(c))}
         </div>
         <Gaps gaps={result.gaps} caseTo={caseTo} />
+        {result.check && <div className="mt-2">{<CheckStatus check={result.check} />}</div>}
       </>
     );
   }
@@ -147,9 +177,13 @@ export function BriefingSheet({ result, caseTo, inCompare, onToggleCompare }: Br
     result.grouping === 'mechanical'
       ? GLYPH_KINDS.map((kind) => ({ kind, caseNumbers: result.groups.find((g) => g.kind === kind)?.caseNumbers ?? [] }))
       : result.groups;
+  // Every case is on the sheet: those in no group (unclassified, or without a reading) after the groups.
+  const grouped = new Set(groups.flatMap((g) => g.caseNumbers));
+  const ungrouped = result.cases.filter((c) => !grouped.has(c.case.ntsbNo));
   return (
     <>
       <Summary segments={result.summary} caseTo={caseTo} />
+      {result.check && <CheckStatus check={result.check} />}
       {label}
       {groups.map((g) => {
         const cards = g.caseNumbers.map((n) => byNumber.get(n)).filter((c): c is CaseCardData => c !== undefined);
@@ -159,6 +193,11 @@ export function BriefingSheet({ result, caseTo, inCompare, onToggleCompare }: Br
           </EvidenceGroup>
         );
       })}
+      {ungrouped.length > 0 && (
+        <Ungrouped grouping={result.grouping} count={ungrouped.length}>
+          {ungrouped.map((c) => card(c))}
+        </Ungrouped>
+      )}
       <Gaps gaps={result.gaps} caseTo={caseTo} />
     </>
   );

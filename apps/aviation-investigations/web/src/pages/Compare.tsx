@@ -2,7 +2,7 @@ import { useQueries, useQuery, type UseQueryResult } from '@tanstack/react-query
 import { X } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
-import type { CaseContextResponse } from '../../../shared/contracts/briefs';
+import type { CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import { caseQuery, configQuery, isNotFound } from '../api';
 import { Button } from '../components/Button';
@@ -42,6 +42,11 @@ const PC_PREVIEW = 300;
 export const AI_NOTES_GONE_PLURAL = "The AI notes for these cases have expired or aren't yours.";
 export const AI_NOTES_FAILED_PLURAL = "The AI notes for these cases didn't load.";
 export const AI_READING_FAILED = "The AI reading didn't load.";
+/** A case of the brief whose AI reading the evidence check removed (Task 16e, partial display). */
+export const AI_READING_NOT_SHOWN = 'AI reading not shown: the check could not confirm it';
+/** A timing or classification the check removed, where the strip would otherwise say it was never there. */
+export const TIMING_NOT_VERIFIED = 'Timing not verified by the check';
+export const CLASSIFICATION_NOT_VERIFIED = 'Classification not verified by the check';
 
 function Cell({ label, children, className, ai = false }: { label: string; children: ReactNode; className?: string; ai?: boolean }) {
   return (
@@ -64,10 +69,11 @@ function flightHours(context: CaseContextResponse | undefined): number | null {
  * brief's private context. Magenta and labelled, because the AI extracted them.
  */
 function AiCells({ ai, detail }: { ai: StripAi; detail: CaseDetail }) {
-  const { context, inBrief, failed, retry } = ai;
+  const { context, inBrief, failed, retry, card } = ai;
   const reading = context?.reading ?? null;
   if (!reading) {
-    const note = !inBrief ? 'Not in this brief' : failed ? AI_READING_FAILED : context ? 'No AI reading for this case' : 'Loading the AI reading…';
+    const removed = card !== undefined && card.reading === null;
+    const note = !inBrief && !removed ? 'Not in this brief' : removed ? AI_READING_NOT_SHOWN : failed ? AI_READING_FAILED : context ? 'No AI reading for this case' : 'Loading the AI reading…';
     const cell = (
       <span className="text-meta text-muted">
         {note}
@@ -107,6 +113,8 @@ function AiCells({ ai, detail }: { ai: StripAi; detail: CaseDetail }) {
             {rest.length > 0 && <span className="block font-mono text-label tracking-mono text-magenta">{rest.map((t) => t.label).join(' · ')}</span>}
             {timingLine && <span className="block text-magenta">{timingLine}</span>}
           </>
+        ) : card?.notVerified?.includes('timing') ? (
+          <span className="block text-muted">{TIMING_NOT_VERIFIED}</span>
         ) : (
           <span className="block text-magenta">Timing not established by this analysis</span>
         )}
@@ -114,6 +122,7 @@ function AiCells({ ai, detail }: { ai: StripAi; detail: CaseDetail }) {
       </Cell>
       <Cell label={AI_COLUMNS[1]} ai>
         <span className="block font-bold text-magenta">{reading.glyph ? EVIDENCE_WORDS[reading.glyph] : 'Not classified'}</span>
+        {!reading.glyph && card?.notVerified?.includes('classification') && <span className="block text-meta text-muted">{CLASSIFICATION_NOT_VERIFIED}</span>}
         {maintenance && <span className="block text-magenta">{maintenance}</span>}
         {attribution && <span className="mt-1 block text-meta text-muted">{attribution}</span>}
       </Cell>
@@ -143,6 +152,8 @@ function sourceLink(detail: CaseDetail) {
 interface StripAi {
   context: CaseContextResponse | undefined;
   inBrief: boolean;
+  /** The case's card on the brief's answer: what the check removed (`notVerified`, a removed reading). */
+  card?: CaseCard;
   /** The private read failed (not a 404): show it, and offer a retry. */
   failed: boolean;
   retry: () => void;
@@ -316,18 +327,22 @@ export function Compare() {
   const briefStep = useQuery({ ...briefStepQuery(brief?.id ?? '', brief?.step ?? 1), enabled: brief !== null, refetchInterval: false });
   const answer = briefStep.data?.result?.kind === 'answer' ? briefStep.data.result : null;
   const briefCases = new Set(answer?.cases.filter((c) => c.reading !== null).map((c) => c.case.ntsbNo) ?? []);
+  // Cases of the answer whose AI reading the evidence check removed (partial display): in the brief, without a reading.
+  const removedCases = new Set(answer?.cases.filter((c) => c.reading === null).map((c) => c.case.ntsbNo) ?? []);
   const contexts = useQueries({
     queries: list.map((n) => ({ ...caseContextQuery(brief?.id ?? '', brief?.step ?? 1, n), enabled: brief !== null && briefCases.has(n) })),
   });
-  const aiOn = list.some((n) => briefCases.has(n));
+  const aiOn = list.some((n) => briefCases.has(n) || removedCases.has(n));
   const aiGone = ref === 'invalid' || (brief !== null && isNotFound(briefStep.error));
   const aiFailed = brief !== null && briefStep.isError && !isNotFound(briefStep.error);
   const aiFor = (ntsbNo: string): StripAi | null => {
     if (!aiOn) return null;
     const read = contexts[list.indexOf(ntsbNo)];
+    const card = answer?.cases.find((c) => c.case.ntsbNo === ntsbNo);
     return {
       context: read?.data,
       inBrief: briefCases.has(ntsbNo),
+      ...(card ? { card } : {}),
       failed: read?.isError === true,
       retry: () => void read?.refetch(),
     };

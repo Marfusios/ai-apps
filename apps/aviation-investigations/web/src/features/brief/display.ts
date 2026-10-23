@@ -3,7 +3,7 @@
  * deterministic), the AI's reading of who is speaking, and unconfirmed criteria.
  */
 import { aircraftLetter, aircraftName } from '../../../../shared/case-view';
-import type { BriefQuote, CaseReading, Criterion, Speaker } from '../../../../shared/contracts/briefs';
+import type { BriefCheck, BriefQuote, CardStatementKind, CaseReading, Criterion, Speaker } from '../../../../shared/contracts/briefs';
 import { SECTION_LABEL, type AircraftBrief, type SectionKind } from '../../../../shared/contracts/search';
 
 /** "NTSB · ANALYSIS": whose words follow, from the section kind, never from the AI. */
@@ -87,4 +87,54 @@ export function quoteAttribution(ntsbNo: string, aircraft: readonly AircraftRef[
 /** "6 examples found · not every matching investigation" (required by DESIGN §5). */
 export function resultsLabel(n: number): string {
   return `${n} ${n === 1 ? 'example' : 'examples'} found · not every matching investigation`;
+}
+
+// ---------------------------------------------------------------------------
+// The evidence check's outcome (Tasks 16d and 16e): what was checked and what was not
+// shown, from the server's counts and kinds. The copy describes the checking, never the
+// NTSB record (the passages may well show what was removed).
+
+/** Statements the check removed, every kind and cause. */
+export function removedStatements(check: BriefCheck): number {
+  return Object.values(check.removed).reduce((a, b) => a + b, 0);
+}
+
+/** "Evidence check completed · 2 statements removed" (factual, from the actual count; never a blanket status). */
+export function checkStatusLine(check: BriefCheck): string {
+  const n = removedStatements(check);
+  return `Evidence check completed · ${n} ${n === 1 ? 'statement' : 'statements'} removed`;
+}
+
+const KIND_WORDS: Readonly<Record<CardStatementKind, string>> = {
+  why: 'why it matched',
+  classification: 'the classification',
+  maintenance: 'the maintenance relation',
+  symptom: 'the symptom',
+  timing: 'the timing',
+  attribution: 'a quote',
+  criterion: 'your criteria',
+};
+
+/** "The check could not confirm the timing and a quote against the cited passages, so they are not shown." */
+export function notVerifiedLine(kinds: readonly CardStatementKind[]): string {
+  const words = kinds.map((k) => KIND_WORDS[k]);
+  const list = words.length <= 1 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`;
+  return `The check could not confirm ${list} against the cited passages, so ${words.length === 1 ? 'it is' : 'they are'} not shown.`;
+}
+
+/** Quotes left out by the excerpt rule (the server's drawer line says the same). */
+export function quotesOmittedLine(n: number): string {
+  return n === 1
+    ? 'One quote left out: it needs the report’s surrounding text to keep its meaning.'
+    : `${n} quotes left out: they need the report’s surrounding text to keep their meaning.`;
+}
+
+/** A case of an answer whose AI reading the check removed. */
+export const READING_NOT_SHOWN = 'The check could not confirm this case’s AI reading against the cited passages. Its NTSB text is below.';
+
+/** The section of an answer's cards outside every group (unclassified, or without a reading). */
+export function ungroupedTitle(grouping: 'mechanical' | 'examples'): { title: string; note: string } {
+  return grouping === 'mechanical'
+    ? { title: 'Not classified', note: 'The evidence check could not confirm a classification for these cases.' }
+    : { title: 'Not confirmed', note: 'The evidence check could not confirm an AI reading of these cases.' };
 }

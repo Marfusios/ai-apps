@@ -11,10 +11,13 @@ import { formatDate } from '../../lib/format';
 import { CAUTION_SHORT, aircraftName, aircraftSummary, letterOf, phaseEventShort, placeShort, profileSteps } from '../case/display';
 import {
   EVENT_SCOPE_CAUTION,
+  READING_NOT_SHOWN,
   attributionAmbiguous,
   evidenceAttribution,
+  notVerifiedLine,
   ntsbSectionTag,
   quoteAttribution,
+  quotesOmittedLine,
   speakerTag,
   unconfirmedLines,
 } from './display';
@@ -64,12 +67,36 @@ function SourceLink({ card }: { card: CaseCardData }) {
   );
 }
 
+/** What the evidence check left off this card (Tasks 16d, 16e): never the removed text, only that it is not shown and why. */
+function CheckNotes({ card }: { card: CaseCardData }) {
+  const kinds = card.reading ? (card.notVerified ?? []) : [];
+  if (kinds.length === 0 && !card.quotesOmitted && card.reading) return null;
+  return (
+    <div className="mb-1.5 space-y-0.5 text-meta text-muted" data-check-notes="">
+      {!card.reading && (
+        <p>
+          <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">AI reading not shown</span> {READING_NOT_SHOWN}
+        </p>
+      )}
+      {kinds.length > 0 && (
+        <p>
+          <span className="mr-1.5 text-micro font-bold tracking-caps uppercase">Not verified</span> {notVerifiedLine(kinds)}
+        </p>
+      )}
+      {card.quotesOmitted !== undefined && <p>{quotesOmittedLine(card.quotesOmitted)}</p>}
+    </div>
+  );
+}
+
 /**
  * A case on the briefing sheet (UI_DESIGN §4.3): the NTSB header row and Compare box;
  * WHY IT MATCHED and timing chips in magenta (AI); UNCONFIRMED when the passages do not
  * settle a criterion; the quoted NTSB passages in serif with their deterministic section
  * label; the mini flight profile, cautions and source link. A plain card (no AI reading:
- * withheld, no match) shows the case's best NTSB excerpt instead.
+ * withheld, no match) shows the case's best NTSB excerpt instead. On an answer with
+ * statements removed (partial display), a muted note says what the check did not confirm
+ * (`notVerified`), which quotes were left out (`quotesOmitted`), or that the reading itself
+ * is not shown.
  */
 export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph = false }: CaseCardProps) {
   const { case: row, reading } = card;
@@ -131,6 +158,7 @@ export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph =
               {unconfirmed.join(' ')}
             </p>
           )}
+          <CheckNotes card={card} />
           {(attribution || ambiguous) && (
             <p className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
               {ambiguous && <DataCaution variant="chip">{EVENT_SCOPE_CAUTION}</DataCaution>}
@@ -161,16 +189,23 @@ export function CaseCard({ card, caseTo, inCompare, onToggleCompare, showGlyph =
           </div>
         </>
       ) : (
-        <blockquote className="mt-1.5 border-l-2 border-rule py-px pl-[11px]">
-          <p className="font-serif text-body leading-[1.45]">
-            {card.excerpt.truncatedStart && '…'}
-            {card.excerpt.text}
-            {card.excerpt.truncatedEnd && '…'}
-          </p>
-          <footer className="mt-[3px] text-[10px] tracking-[.12em] text-muted">
-            <cite className="not-italic">{ntsbSectionTag(card.excerpt.section)}</cite>
-          </footer>
-        </blockquote>
+        <>
+          {(card.notVerified !== undefined || card.quotesOmitted !== undefined) && (
+            <div className="mt-[5px]">
+              <CheckNotes card={card} />
+            </div>
+          )}
+          <blockquote className="mt-1.5 border-l-2 border-rule py-px pl-[11px]">
+            <p className="font-serif text-body leading-[1.45]">
+              {card.excerpt.truncatedStart && '…'}
+              {card.excerpt.text}
+              {card.excerpt.truncatedEnd && '…'}
+            </p>
+            <footer className="mt-[3px] text-[10px] tracking-[.12em] text-muted">
+              <cite className="not-italic">{ntsbSectionTag(card.excerpt.section)}</cite>
+            </footer>
+          </blockquote>
+        </>
       )}
 
       <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-meta">
