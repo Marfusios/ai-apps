@@ -42,14 +42,16 @@
  * provider counts the exact request before sending and refuses above the cap, unbilled):
  * scope and check fail the stage; compose re-packs first. A failed or inconclusive check,
  * a failed criterion or a failed compose call withholds the summary and returns the case
- * cards; there is no repair loop. Results are written stage by stage and only stage
- * status and counts are visible before the end. The whole step has a deadline
+ * cards; there is no repair loop. Results are written stage by stage and before the end
+ * a read shows only stage status and counts, plus, once the scope stage is done, its
+ * readings and filters as server templates (`checklistOf`, server/routes/briefs.ts,
+ * from the stored intent; never the planner's own words). The whole step has a deadline
  * (`PIPELINE_DEADLINE_MS`) at least the sum of the stage timeouts, so the check always
  * gets its full timeout after slow earlier stages (each stage's timeout is still cut to
- * what is left). Cancel aborts the running call and keeps
- * the search counted (UI_DESIGN §4.4); a server shutdown aborts it too and fails the step
- * (a step started after shutdown began stops before its first provider call, gives the
- * search back and settles at zero).
+ * what is left). Cancel aborts the running call and keeps the search counted (UI_DESIGN
+ * §4.4); a server shutdown aborts it too and fails the step (a step started after
+ * shutdown began stops before its first provider call, gives the search back and settles
+ * at zero).
  *
  * Counting (UI_DESIGN §5): scope replies and empty results give the free search back,
  * as does a failure before anything was spent; withheld summaries, abstentions,

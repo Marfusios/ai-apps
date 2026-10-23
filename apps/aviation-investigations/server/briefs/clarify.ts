@@ -3,10 +3,12 @@
  * chips, clarification readings ("AI SUGGESTED READINGS") and the interpretation
  * lines the answer model receives. The planner returns only an allowlisted ambiguity
  * type and single-token values (server/ai/provider.ts `AmbiguitySchema`); every word a
- * reader sees comes from the tables below. A value without a template is dropped.
+ * reader sees comes from the tables below or, for failure types, the contract's
+ * `FAILURE_TYPE_LABELS`. A value without a template is dropped.
  */
 import { PHASE_LABEL, type PhaseGroup } from '../../shared/codes.js';
 import {
+  FAILURE_TYPE_LABELS,
   FAILURE_TYPES,
   type BriefFilters,
   type FailureType,
@@ -73,14 +75,8 @@ export function timingToken(w: TimingWindow): string {
 }
 
 // ---------------------------------------------------------------------------
-// Failure types, aircraft categories, phases
-
-export const FAILURE_TYPE_LABEL: Readonly<Record<FailureType, string>> = {
-  total_power_loss: 'Total loss of engine power',
-  partial_power_loss: 'Partial loss of engine power',
-  rough_running: 'Engine running rough',
-  failure_to_climb: 'Unable to climb',
-};
+// Failure types (labels: the contract's `FAILURE_TYPE_LABELS`, shared with the web
+// client's chip editor), aircraft categories, phases
 
 const FAILURE_TYPE_INTERPRETATION: Readonly<Record<FailureType, string>> = {
   total_power_loss: 'Read the failure in the question as: a total loss of engine power.',
@@ -127,7 +123,7 @@ export function interpretationChips(r: ReadingState): InterpretationChip[] {
     chips.push({ field: 'first_flight_only', value: true, label: FIRST_FLIGHT_LABEL, pinned: r.firstFlightOnly.pinned });
   }
   if (r.failureType) {
-    chips.push({ field: 'failure_type', value: r.failureType.value, label: FAILURE_TYPE_LABEL[r.failureType.value], pinned: r.failureType.pinned });
+    chips.push({ field: 'failure_type', value: r.failureType.value, label: FAILURE_TYPE_LABELS[r.failureType.value], pinned: r.failureType.pinned });
   }
   return chips;
 }
@@ -195,7 +191,7 @@ export function clarificationReadings(ambiguity: Ambiguity, filters: BriefFilter
         break;
       }
       case 'failure_type':
-        if (isFailureType(value)) add({ label: FAILURE_TYPE_LABEL[value], refinement: { kind: 'interpretation', field: 'failure_type', value } });
+        if (isFailureType(value)) add({ label: FAILURE_TYPE_LABELS[value], refinement: { kind: 'interpretation', field: 'failure_type', value } });
         break;
       case 'aircraft_category':
         if (CATEGORIES.includes(value) && Object.hasOwn(CATEGORY_READING_LABEL, value)) {
@@ -217,7 +213,7 @@ export function clarificationTemplateLabels(): { fixed: string[]; patterns: RegE
   return {
     fixed: [
       FIRST_FLIGHT_LABEL,
-      ...Object.values(FAILURE_TYPE_LABEL),
+      ...Object.values(FAILURE_TYPE_LABELS),
       ...Object.values(CATEGORY_READING_LABEL),
       ...(PHASES.filter((p) => p !== 'blank') as PhaseGroup[]).map(phaseReadingLabel),
     ],

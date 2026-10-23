@@ -43,13 +43,16 @@ import {
   BriefIdSchema,
   BriefStepResponseSchema,
   CaseContextResponseSchema,
+  ChecklistSchema,
   CreateBriefRequestSchema,
+  FAILURE_TYPE_LABELS,
   MAX_BRIEF_STEPS,
   RefinementRequestSchema,
   StartBriefResponseSchema,
   StepNumberSchema,
   refinementChange,
   type BriefStepResponse,
+  type Checklist,
   type StartBriefResponse,
 } from '../../shared/contracts/briefs.js';
 import { NtsbNoSchema } from '../../shared/contracts/common.js';
@@ -73,7 +76,7 @@ import {
 import type { EvidenceDataset } from '../briefs/evidence.js';
 import { MAX_QUERY_INPUT_TOKENS, QueryTooLongError, queryEmbeddingInput } from '../ai/embeddings.js';
 import { countTokens } from '../ai/tokens.js';
-import { FAILURE_TYPE_LABEL, FIRST_FLIGHT_LABEL, timingWindowLabel } from '../briefs/clarify.js';
+import { FIRST_FLIGHT_LABEL, interpretationChips, isFailureType, timingWindowLabel } from '../briefs/clarify.js';
 import type { LlmProvider } from '../ai/provider.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { retryAfterSeconds, sendGateRefusal } from '../identity/gate.js';
@@ -321,11 +324,38 @@ function originOf(step: StepRow): BriefStepResponse['origin'] {
             ? c.value === true
               ? FIRST_FLIGHT_LABEL
               : 'Any flight after maintenance'
-            : typeof c.value === 'string' && c.value in FAILURE_TYPE_LABEL
-              ? FAILURE_TYPE_LABEL[c.value as keyof typeof FAILURE_TYPE_LABEL]
+            : typeof c.value === 'string' && isFailureType(c.value)
+              ? FAILURE_TYPE_LABELS[c.value]
               : 'Reading changed';
       return { kind: 'interpretation', label };
     }
+  }
+}
+
+/**
+ * The step's checklist as a read returns it (UI_DESIGN §4.4: the question and chips stay
+ * on top while the step runs). Once the scope stage has sent the step on to search
+ * (`question: 'in_scope'`, stored together with the step's intent), it carries the
+ * readings and filters that stage settled on: interpretation chips rendered from the
+ * stored intent with the server's templates, and its validated filters, which the
+ * finished result repeats. It stays in every later checklist, a cancelled or failed
+ * step's included; a step before or without a search (a static reply) has none. The
+ * planner's own words (`keywordText`) are never sent. A stored intent that would not
+ * render to the contract (a value out of range, or a shape the pipeline never writes) is
+ * left out rather than failing the read: the step answers without the field.
+ */
+export function checklistOf(step: Pick<StepRow, 'checklist' | 'intent'>): Checklist {
+  const { checklist, intent } = step;
+  if (checklist.question !== 'in_scope' || !intent) return checklist;
+  try {
+    const withReadings = ChecklistSchema.safeParse({
+      ...checklist,
+      interpretation: { interpretations: interpretationChips(intent.readings), filters: intent.filters },
+    });
+    return withReadings.success ? withReadings.data : checklist;
+  } catch {
+    // The chips could not be built from the stored readings (a row written outside the pipeline).
+    return checklist;
   }
 }
 
@@ -340,7 +370,7 @@ function stepResponse(briefId: string, step: StepRow, steps: number, expiresAt: 
     question: step.request.question,
     origin: originOf(step),
     stage: stale ? 'failed' : step.stage,
-    checklist: step.checklist,
+    checklist: checklistOf(step),
     startedAt: step.createdAt.toISOString(),
     finishedAt: finished ? (step.finishedAt ?? now).toISOString() : null,
     expiresAt: expiresAt.toISOString(),

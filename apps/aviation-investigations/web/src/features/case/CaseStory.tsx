@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode, type Ref } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { Link } from 'react-router';
 import type { AircraftDetail, CaseDetail, Finding, Section } from '../../../../shared/contracts/cases';
 import type { Snippet } from '../../../../shared/contracts/search';
@@ -10,6 +10,7 @@ import { SectionHead } from '../../components/SectionHead';
 import { StatusBadge } from '../../components/StatusBadge';
 import { cx } from '../../lib/cx';
 import { formatDate } from '../../lib/format';
+import { BriefSections, BriefVerdict, citedTarget, passageAnchor, type AiCaseContext } from './BriefContext';
 import {
   aircraftName,
   findingParts,
@@ -30,6 +31,13 @@ export interface CaseStoryProps {
   matched?: Snippet | null;
   /** Page actions under the meta line (+ Compare, Print for class). */
   actions?: ReactNode;
+  /**
+   * The viewer's own live brief context for this case (private endpoint), when the story
+   * is opened from a brief. Without it the story is NTSB data only.
+   */
+  ai?: AiCaseContext;
+  /** Scroll to the cited passage once the AI context arrives (the drawer opened from a citation). */
+  openAtCited?: boolean;
 }
 
 function lowerFirst(text: string): string {
@@ -382,14 +390,38 @@ function Provenance({ detail }: { detail: CaseDetail }) {
 }
 
 /**
- * A case in story order (UI_DESIGN §4.5): identity, headline, meta, cautions, the
- * flight, then what investigators established, and provenance. NTSB data only:
- * the verdict pill, "why it's in your results" and cited passages belong to briefs.
- * The full page adds the aircraft and the factual and analysis narratives.
+ * Scrolls to the cited passage once per visit to a case, when its AI context is ready (focus
+ * stays on the headline). The drawer starts every case at the top, so coming back to a case
+ * (‹ ›, even before the other case showed its passage) scrolls again.
  */
-export function CaseStory({ detail, mode, headingRef, headingId, matched, actions }: CaseStoryProps) {
+function useOpenAtCited(ai: AiCaseContext | undefined, ntsbNo: string, enabled: boolean): void {
+  const done = useRef<string | null>(null);
+  const visiting = useRef<string | null>(null);
+  useEffect(() => {
+    if (visiting.current !== ntsbNo) {
+      visiting.current = ntsbNo;
+      done.current = null;
+    }
+    if (!enabled || ai?.state !== 'ready') return;
+    const key = `${ai.briefId}:${ai.step}:${ntsbNo}`;
+    if (done.current === key) return;
+    done.current = key;
+    const target = citedTarget(ai.context);
+    if (target) document.getElementById(passageAnchor(target))?.scrollIntoView?.({ block: 'start' });
+  }, [ai, ntsbNo, enabled]);
+}
+
+/**
+ * A case in story order (UI_DESIGN §4.5): identity, headline, meta, cautions, the
+ * flight, then what investigators established, and provenance. NTSB data only,
+ * unless it is opened from the viewer's own live brief (`ai`): then the verdict pill,
+ * "why it's in your results" and the cited passages come from the brief's private
+ * context. The full page adds the aircraft and the factual and analysis narratives.
+ */
+export function CaseStory({ detail, mode, headingRef, headingId, matched, actions, ai, openAtCited = false }: CaseStoryProps) {
   const Heading = mode === 'page' ? 'h1' : 'h2';
   const completed = detail.completion.class === 'completed';
+  useOpenAtCited(ai, detail.ntsbNo, openAtCited);
   return (
     <article className="text-ink">
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-meta">
@@ -408,6 +440,7 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
       </Heading>
       <MetaLine detail={detail} />
       {actions}
+      {ai && <BriefVerdict ai={ai} ntsbNo={detail.ntsbNo} aircraft={detail.aircraft} />}
       {detail.cautions.map((c) => (
         <DataCaution key={c.kind} className="mt-3.5">
           {c.text}
@@ -427,6 +460,7 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
           {matched && matched.section !== 'probable_cause' && <Matched detail={detail} matched={matched} />}
         </>
       )}
+      {ai && <BriefSections ai={ai} ntsbNo={detail.ntsbNo} aircraft={detail.aircraft} mode={mode} />}
       <Provenance detail={detail} />
     </article>
   );

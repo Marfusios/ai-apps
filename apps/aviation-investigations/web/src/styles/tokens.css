@@ -41,6 +41,9 @@
   --ask-shadow: 0 1px 0 rgba(31, 81, 154, .15), 0 10px 30px -18px rgba(30, 42, 54, .45);
   --drawer-shadow: -30px 0 60px -30px rgba(30, 42, 54, .55);
   --sheet-shadow: 0 -18px 40px -24px rgba(30, 42, 54, .55);
+  --checklist-head: var(--ink);
+  --checklist-head-ink: var(--paper);
+  --checklist-edge: var(--ink);
 
   /* Signature details (§2.5, §2.8). */
   --graticule:
@@ -95,6 +98,10 @@
   --ask-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 1px 0 rgba(0, 0, 0, .6);
   --drawer-shadow: -30px 0 60px -30px rgba(0, 0, 0, .9);
   --sheet-shadow: 0 -18px 40px -24px rgba(0, 0, 0, .9);
+  /* The checklist's header bar is an engraved placard at night, not a white bar. */
+  --checklist-head: var(--placard);
+  --checklist-head-ink: var(--placard-ink);
+  --checklist-edge: rgba(255, 255, 255, .22);
 
   /* Panel: no graticule; placards, bezels and a near-white tick scale instead. */
   --graticule: none;
