@@ -19,7 +19,7 @@ describe('Home', () => {
     expect(currentUrl(router)).toBe('/');
     fireEvent.change(box, { target: { value: 'carburetor icing' } });
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
-    expect(currentUrl(router)).toBe('/'); // Ctrl/Cmd+Enter is reserved for Ask AI.
+    expect(currentUrl(router)).toBe('/'); // Ctrl/Cmd+Enter asks the AI; it never runs Search.
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(currentUrl(router)).toBe('/explore?q=carburetor+icing'));
     // The coverage line is computed from /api/config.
@@ -27,12 +27,12 @@ describe('Home', () => {
     expect(await screen.findByText(/completed US NTSB investigations · 2008 → 2026 · snapshot 16 OCT 2026/)).toBeTruthy();
   });
 
-  it('Ask AI is present but disabled, with the later-step tooltip', () => {
+  it('Ask AI shows the live AI counter, like the header', async () => {
     renderApp('/');
-    const ask = screen.getAllByRole('button', { name: 'Ask AI' })[0] as HTMLElement;
-    expect(ask.getAttribute('aria-disabled')).toBe('true');
-    const tip = document.getElementById(ask.getAttribute('aria-describedby') ?? '');
-    expect(tip?.textContent).toBe('AI search arrives in a later step');
+    // The status loads after the first paint; the name joins "Ask AI" and its counter.
+    const ask = await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ });
+    expect(ask.getAttribute('aria-disabled')).toBe('false');
+    expect(within(screen.getByRole('banner')).getAllByText('3 of 3').length).toBeGreaterThan(0);
   });
 });
 

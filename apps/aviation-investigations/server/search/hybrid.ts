@@ -62,7 +62,7 @@ import { MAX_CASES, MAX_PASSAGES } from '../ai/provider.js';
 import { countTokens } from '../ai/tokens.js';
 import { packEvidence, SECTION_ORDER, type PackOptions, type PackRole, type PassageKind, type SkipReason } from './evidence.js';
 import { RetrievalFiltersSchema, compileFilters, type Query, type RetrievalFilters } from './filters.js';
-import { IndexMetaError } from './index-meta.js';
+import { IndexMetaError, abortAwareBackoff } from './index-meta.js';
 import {
   PASSAGES_CONTRACTS,
   PassagesIndexIncompatibleError,
@@ -140,7 +140,12 @@ export const numCandidates = (p: Pick<RetrievalParams, 'perChannel' | 'numCandid
 // ---------------------------------------------------------------------------
 // Errors
 
-export type RetrievalUnavailableReason = 'no_passages_index' | 'index_mismatch';
+/**
+ * `no_passages_index`: the dataset publishes none; `no_cases_index`: a version with the
+ * cases channel finds no cases index paired with the dataset's passages index;
+ * `index_mismatch`: an index breaks its contract (passages, or cases: generation, servable version).
+ */
+export type RetrievalUnavailableReason = 'no_passages_index' | 'no_cases_index' | 'index_mismatch';
 
 /** Retrieval cannot serve evidence for this dataset; AI answers must stay off (no keyword fallback). */
 export class RetrievalUnavailableError extends Error {
@@ -153,10 +158,10 @@ export class RetrievalUnavailableError extends Error {
   }
 }
 
-/** A search answered for part of the index only: timed out, failed shards or missing shards. */
+/** A search answered for part of the index only: timed out, failed shards or missing shards (or, for the cases channel and mapping, a malformed answer). */
 export class IncompleteSearchError extends Error {
   constructor(
-    readonly request: 'keyword' | 'vector' | 'fetch',
+    readonly request: 'keyword' | 'vector' | 'fetch' | 'cases' | 'mapping',
     reason: string,
   ) {
     super(`the ${request} search was incomplete: ${reason}`);
@@ -284,8 +289,19 @@ function hitsOf(res: estypes.SearchResponse<Record<string, unknown>>): PassageHi
 // ---------------------------------------------------------------------------
 // Request bodies (pure; exported for tests and the evaluation report)
 
-/** The BM25 channel: `multi_match` over the passage text, the compiled filter as `bool.filter`. */
-export function keywordChannelBody(index: string, text: string, filter: Query[], size: number): estypes.SearchRequest {
+/**
+ * The sort that makes a lexical channel's cut deterministic (task 10e fix round 1): score,
+ * then the id, applied by Elasticsearch while it collects the top `size`, so equal-score
+ * hits at the cut are chosen by the id, not by Lucene's document order.
+ */
+export const PASSAGE_TIEBREAK_SORT: estypes.SortCombinations[] = [{ _score: { order: 'desc' } }, { passage_id: { order: 'asc' } }];
+
+/**
+ * The BM25 channel: `multi_match` over the passage text, the compiled filter as
+ * `bool.filter`. `tiebreak` (case-level versions) adds `PASSAGE_TIEBREAK_SORT`;
+ * `retrieval.v1` sends the body without it, as before.
+ */
+export function keywordChannelBody(index: string, text: string, filter: Query[], size: number, opts: { tiebreak?: boolean } = {}): estypes.SearchRequest {
   return {
     index,
     size,
@@ -298,6 +314,7 @@ export function keywordChannelBody(index: string, text: string, filter: Query[],
         filter,
       },
     },
+    ...(opts.tiebreak ? { sort: PASSAGE_TIEBREAK_SORT.map((x) => ({ ...(x as object) }) as estypes.SortCombinations) } : {}),
   };
 }
 
@@ -358,6 +375,11 @@ export interface RetrievalDataset {
 
 /** Indexes that passed the contract, per generation, embedding and accepted contracts (bounded), with their version's contract. */
 const verified = new Map<string, PassagesContract>();
+
+/** Forget every remembered pass, so the next check reads the index again (evaluation: a cold start). */
+export function forgetPassagesIndexChecks(): void {
+  verified.clear();
+}
 
 export interface IndexCheckOptions {
   /** The accepted contracts (tests and future versions); default `PASSAGES_CONTRACTS`. */
@@ -473,14 +495,18 @@ export interface CandidateResult {
   timingsMs: { embed: number; channels: number };
 }
 
-const transport = (p: RetrievalParams, signal?: AbortSignal) => ({ requestTimeout: p.timeoutMs, ...(signal ? { signal } : {}) });
+/** Transport options of one retrieval request: the per-request timeout, the request's signal, and no retry wait once it aborted. */
+export const transport = (p: Pick<RetrievalParams, 'timeoutMs'>, signal?: AbortSignal) => ({
+  requestTimeout: p.timeoutMs,
+  ...(signal ? { signal, retryBackoff: abortAwareBackoff(signal) } : {}),
+});
 
 /**
  * Embed the query and report its usage through `onUsage` as soon as the embedder
  * returns, before the vector is checked: a paid embedding is reported even when its
  * vector turns out unusable.
  */
-async function embedQuery(
+export async function embedQuery(
   embedder: Embedder | QueryEmbedder,
   text: string,
   signal: AbortSignal | undefined,

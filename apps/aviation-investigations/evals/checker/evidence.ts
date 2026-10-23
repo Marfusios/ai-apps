@@ -1,12 +1,21 @@
 /**
- * The checker calibration's frozen evidence (`evidence.json`, Task 16c): the real
- * retrieval bundles of `questions.ts` as the brief pipeline checked them (every passage
- * resolved against its canonical row and section revision, `verifyBundle`), with the
- * aircraft of each case. Public NTSB text. The builder rebuilds the pipeline's
- * `VerifiedCase`s from it, so the calibration claims are rendered by production code.
+ * The checker calibration's frozen evidence: the real retrieval bundles of `questions.ts`
+ * as the brief pipeline checked them (every passage resolved against its canonical row
+ * and section revision, `verifyBundle`), with the aircraft of each case. Public NTSB text.
+ * The builder rebuilds the pipeline's `VerifiedCase`s from it, so the calibration claims
+ * are rendered by production code.
+ *
+ * - `evidence.json` (`checker-evidence-v1`, Task 16c, frozen): the nine 16c bundles.
+ * - `evidence-16d.json` (`checker-evidence-v2`, Task 16d): every case's header line from
+ *   the NTSB record's coded fields (`caseHeader`, the check input's server data since
+ *   Task 16d), for the 16c cases and the new ones, and the new held-out bundles.
+ *
+ * Both files were retrieved before retrieval versions existed (task 10e), so they carry no
+ * `source.retrievalVersion`: they are `retrieval.v1` bundles.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { RetrievalVersionSchema } from '../../shared/contracts/retrieval.js';
 import type { CaseSummary } from '../../server/briefs/evidence.js';
 import type { VerifiedCase } from '../../server/briefs/render.js';
 
@@ -52,6 +61,8 @@ export const EvidenceFileSchema = z.strictObject({
     generationId: z.number().int().positive(),
     passagesIndex: z.string().min(1),
     chunkerVersion: z.string().min(1),
+    /** The retrieval version the bundles were retrieved under; absent in files retrieved before versions existed (`retrieval.v1`). */
+    retrievalVersion: RetrievalVersionSchema.optional(),
     retrievedAt: z.iso.datetime(),
     note: z.string(),
   }),
@@ -59,14 +70,39 @@ export const EvidenceFileSchema = z.strictObject({
 });
 export type EvidenceFile = z.infer<typeof EvidenceFileSchema>;
 
+/** `evidence-16d.json`: headers for every calibration case, and the 16d bundles. */
+export const EvidenceV2FileSchema = z.strictObject({
+  version: z.literal('checker-evidence-v2'),
+  source: z.strictObject({
+    generationId: z.number().int().positive(),
+    passagesIndex: z.string().min(1),
+    chunkerVersion: z.string().min(1),
+    /** As in `checker-evidence-v1`: absent in files retrieved before versions existed (`retrieval.v1`). */
+    retrievalVersion: RetrievalVersionSchema.optional(),
+    retrievedAt: z.iso.datetime(),
+    note: z.string(),
+  }),
+  /** NTSB number → `checkHeader` of its canonical case summary (the check stage's server data). */
+  headers: z.record(z.string().regex(/^[A-Z0-9]{6,16}$/), z.string().min(1).max(400)),
+  bundles: z.array(EvidenceBundleSchema),
+});
+export type EvidenceV2File = z.infer<typeof EvidenceV2FileSchema>;
+
 export const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 
-/** The pipeline's verified cases of a frozen bundle (only the fields the check renderer and the criteria read). */
-export function verifiedCases(bundle: EvidenceBundle): VerifiedCase[] {
+/**
+ * The pipeline's verified cases of a frozen bundle (only the fields the check renderer and
+ * the criteria read). `headers`: each case's server header line; without one (the 16c
+ * inputs, which had none) the aircraft names stand in, and only claim structure is read.
+ */
+export function verifiedCases(bundle: EvidenceBundle, headers: ReadonlyMap<string, string> = new Map()): VerifiedCase[] {
   return bundle.cases.map((c) => ({
     ntsbNo: c.ntsbNo,
     rank: c.rank,
     summary: { row: { aircraft: c.aircraft }, report: {}, aircraftNumbers: [] } as unknown as CaseSummary,
+    // Calibration runs the check stage only: its header is the check header.
+    header: headers.get(c.ntsbNo) ?? (c.aircraft.map((a) => [a.make, a.model].filter(Boolean).join(' ')).join(', ') || c.ntsbNo),
+    checkHeader: headers.get(c.ntsbNo) ?? (c.aircraft.map((a) => [a.make, a.model].filter(Boolean).join(' ')).join(', ') || c.ntsbNo),
     passages: c.passages.map((p) => ({
       passageId: p.passageId,
       role: p.role,

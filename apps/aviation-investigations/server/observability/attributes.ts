@@ -1,7 +1,9 @@
 import { createHmac } from 'node:crypto';
 import { CRITERIA, WITHHELD_REASONS, type WithheldReason } from '../../shared/contracts/briefs.js';
+import { RETRIEVAL_VERSIONS, type RetrievalVersion } from '../../shared/contracts/retrieval.js';
 import { STAGE_WARNINGS } from '../ai/provider.js';
 import { VALIDATION_CODES } from '../briefs/validate.js';
+import { DISPLAY_WITHHELD_CODES } from '../briefs/display.js';
 import { CHECK_CODES } from '../briefs/verdicts.js';
 
 /**
@@ -52,11 +54,14 @@ export function stopReasonOf(raw: string | null | undefined): StopReason | undef
 
 /**
  * The codes a withheld summary records with its reason (`withheldCodes`): the validation
- * codes of a `citation_check`, the criteria a case failed in a `criteria_check`, and the
- * judged check's codes in an `evidence_check` (server/briefs/verdicts.ts: verdicts other
- * than `supported`, `chronology_missed`, and incomplete or invalid check output).
+ * codes of a `citation_check`, the criteria a case failed in a `criteria_check`, and in an
+ * `evidence_check` the judged check's codes (server/briefs/verdicts.ts: verdicts other than
+ * `supported`, `chronology_missed`, and incomplete or invalid check output) with the
+ * display projection's (server/briefs/display.ts: a failed or structurally unusable check,
+ * more than a third of the summary removed, two contradictions, no minimum content, or
+ * anything removed in `whole` mode).
  */
-export const WITHHELD_CODES = [...new Set<string>([...VALIDATION_CODES, ...CRITERIA, ...CHECK_CODES])];
+export const WITHHELD_CODES = [...new Set<string>([...VALIDATION_CODES, ...CRITERIA, ...CHECK_CODES, ...DISPLAY_WITHHELD_CODES])];
 
 /**
  * Values of a closed set joined with `+` (a span attribute holds one string), in order,
@@ -109,6 +114,8 @@ export interface AllowedAttrs {
   withheld?: WithheldReason;
   /** Its codes, `+`-joined (`WITHHELD_CODES`). */
   withheldCodes?: string;
+  /** The frozen retrieval configuration a `brief.retrieve` span ran (`RETRIEVAL_VERSIONS`). */
+  retrievalVersion?: RetrievalVersion;
 }
 
 const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
@@ -135,6 +142,7 @@ const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
   warnings: 'string',
   withheld: 'string',
   withheldCodes: 'string',
+  retrievalVersion: 'string',
 };
 
 /** Attributes that take only the values of a closed set. */
@@ -143,6 +151,7 @@ const ENUMS: Readonly<Partial<Record<keyof AllowedAttrs, ReadonlySet<string>>>> 
   failureStage: new Set(FAILURE_STAGES),
   stopReason: new Set(STOP_REASONS),
   withheld: new Set(WITHHELD_REASONS),
+  retrievalVersion: new Set(RETRIEVAL_VERSIONS),
 };
 
 /** Attributes that take `+`-joined values of a closed set (`enumList`). */

@@ -116,7 +116,7 @@ describe('brief-diagnose', () => {
       'failure: compose truncated',
       'no diagnostics: the summary was withheld before a composition existed (compose_failed), or the step predates them',
     ]);
-    expect(formatDiagnosis(step({}, null), null).at(-1)).toBe('no diagnostics: only a withheld summary keeps them');
+    expect(formatDiagnosis(step({}, null), null).at(-1)).toBe('no diagnostics: only a withheld or partially shown summary keeps them');
   });
 
   it('reads only own properties along a path, and takes a UUID and a step from 1 to 4', () => {

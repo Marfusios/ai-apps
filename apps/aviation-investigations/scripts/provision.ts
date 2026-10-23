@@ -18,6 +18,7 @@ import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Client as EsClient } from '@elastic/elasticsearch';
 import pg from 'pg';
+import { DB_CONNECT_TIMEOUT_MS } from '../server/db/client.js';
 
 export const ROLE_KINDS = ['migrator', 'ingest', 'app'] as const;
 export type RoleKind = (typeof ROLE_KINDS)[number];
@@ -145,7 +146,7 @@ export async function provisionPostgres(opts: PgProvisionOptions): Promise<Recor
   const owner = ownerRole(opts.env);
   const logins = ROLE_KINDS.map((k) => loginRole(opts.env, k));
   const created = opts.dryRun ? 'would create' : 'created';
-  const admin = new pg.Client({ connectionString: opts.adminUrl, application_name: 'aviation-provision' });
+  const admin = new pg.Client({ connectionString: opts.adminUrl, application_name: 'aviation-provision', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await admin.connect();
   const passwords = {} as Record<RoleKind, string>;
   try {
@@ -226,7 +227,7 @@ export async function provisionPostgres(opts: PgProvisionOptions): Promise<Recor
   // Inside the database: `public` belongs to the owner role; the migrator may use and
   // create in it (objects stay owned by aviation_migrator, as the migrations expect)
   // and owns the `drizzle` schema of the migration journal. Nothing else.
-  const inDb = new pg.Client({ connectionString: withDatabase(opts.adminUrl, db), application_name: 'aviation-provision' });
+  const inDb = new pg.Client({ connectionString: withDatabase(opts.adminUrl, db), application_name: 'aviation-provision', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await inDb.connect();
   try {
     await inDb.query(`

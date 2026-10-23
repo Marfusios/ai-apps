@@ -88,7 +88,8 @@ describe('the adversarial summary corpus', () => {
 
   it('keeps every family the review found, and the legitimate summaries', () => {
     const count = (expectation: string) => SUMMARY_CORPUS.filter((c) => c.expect === expectation).length;
-    expect([count('withheld'), count('valid'), count('accepted')]).toEqual([184, 39, 14]);
+    // Task 16d: one trailing-newline summary moved from valid to withheld (nothing is trimmed before the allow-list).
+    expect([count('withheld'), count('valid'), count('accepted')]).toEqual([185, 38, 14]);
     for (const family of ['required', 'abbr', 'quote', 'ellipsis', 'decimal', 'qe', 'newline', 'markers', 'unicode', 'space', 'zerowidth', 'markup', 'compound', 'legit']) {
       expect(SUMMARY_CORPUS.some((c) => c.family === family), family).toBe(true);
     }

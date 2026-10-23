@@ -687,6 +687,7 @@ export interface PassagesIndexReport {
  * the pool the build needs.
  */
 async function withGenerationLock<T>(db: Db, generationId: number, fn: () => Promise<T>): Promise<T> {
+  // The pool's options, its connect timeout included (server/db/client.ts).
   const client = new pg.Client({ ...db.$client.options, application_name: 'aviation-passages-generation-lock' });
   await client.connect();
   try {

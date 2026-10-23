@@ -53,10 +53,12 @@ export const DEFAULT_RATE_LIMITS = {
 } as const satisfies Partial<QuotaLimits>;
 
 /**
- * Total application pipeline deadline (DESIGN §8): 90 s since the calibrated checker
- * (Task 16c) needs up to 45 s after a compose of up to 35 s.
+ * Total application pipeline deadline (DESIGN §8): at least the stage timeouts added up
+ * (scope 10 s, retrieve 8 s, compose 35 s and the calibrated checker's 45 s: 98 s; the 16c
+ * review M7 found 90 s), with 2 s for the stage writes between them, so the check gets its
+ * whole timeout after slow earlier stages. A unit test keeps the sum within it.
  */
-export const PIPELINE_DEADLINE_MS = 90_000;
+export const PIPELINE_DEADLINE_MS = 100_000;
 /** Lease TTL, longer than the pipeline deadline. */
 export const LEASE_TTL_MS = 120_000;
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60_000;

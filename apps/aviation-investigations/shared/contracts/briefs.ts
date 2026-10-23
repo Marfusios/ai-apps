@@ -77,16 +77,30 @@ export type Symptom = (typeof SYMPTOMS)[number];
 /** The failure readings a clarification or interpretation can pin. */
 export const FAILURE_TYPES = ['total_power_loss', 'partial_power_loss', 'rough_running', 'failure_to_climb'] as const;
 export type FailureType = (typeof FAILURE_TYPES)[number];
+/**
+ * The reader's words for each failure type: the one table that the server's templates
+ * (interpretation chips and clarification readings in server/briefs/clarify.ts, step
+ * origins in server/routes/briefs.ts, the case drawer's SYMPTOM line in
+ * server/briefs/context.ts) and the web client's chip editor use.
+ */
+export const FAILURE_TYPE_LABELS: Readonly<Record<FailureType, string>> = {
+  total_power_loss: 'Total loss of engine power',
+  partial_power_loss: 'Partial loss of engine power',
+  rough_running: 'Engine running rough',
+  failure_to_climb: 'Unable to climb',
+};
 
 /**
  * Timing since the relevant maintenance (DESIGN §3), as the chips show it: one chip per
  * chronology fact the passages state from the relevant maintenance to the event (flight
- * hours, calendar days, the same or the previous calendar day, completed immediately
- * before the event flight, which flight, completed flights in between, or wording
- * without a number). Facts no passage states are left out.
+ * hours, hours a passage counts without calling them flight hours, calendar days, the same
+ * or the previous calendar day, completed immediately before the event flight, which
+ * flight, completed flights in between, or wording without a number). Facts no passage
+ * states are left out. `operating_hours` (Task 16d) is never shown or read as flight hours.
  */
 export const TIMING_BASES = [
   'flight_hours',
+  'operating_hours',
   'calendar_days',
   'same_day',
   'previous_day',
@@ -118,7 +132,11 @@ export type ChronologyAnchor = (typeof CHRONOLOGY_ANCHORS)[number];
  * How a chronology fact relates its anchor to the flight on which the event happened
  * (server/briefs/criteria.ts `CHRONOLOGY_RULES_VERSION` says what each one settles):
  * - `flight_hours`, `calendar_days`: a number with its bound (`value`, `bound`);
- *   calendar days count calendar dates, not 24-hour periods;
+ *   calendar days count calendar dates, not 24-hour periods; flight hours only where a
+ *   passage calls them flight hours or flight time;
+ * - `operating_hours` (Task 16d): hours a passage counts without calling them flight
+ *   hours (engine, tachometer or Hobbs time, time in service, or "hours" after the
+ *   maintenance), with its bound; they never decide a flight-hour window;
  * - `same_day`, `previous_day`: the anchor's calendar date is the event's, or the one
  *   before it (one calendar-date boundary, not 24 elapsed hours);
  * - `flight_ordinal`: the event flight was the `value`-th flight after the anchor (1:
@@ -132,6 +150,7 @@ export type ChronologyAnchor = (typeof CHRONOLOGY_ANCHORS)[number];
  */
 export const CHRONOLOGY_RELATIONS = [
   'flight_hours',
+  'operating_hours',
   'calendar_days',
   'same_day',
   'previous_day',
@@ -142,8 +161,8 @@ export const CHRONOLOGY_RELATIONS = [
 ] as const;
 export type ChronologyRelation = (typeof CHRONOLOGY_RELATIONS)[number];
 /** Relations that carry a number, and the ones whose number carries a bound. */
-export const NUMBERED_RELATIONS: ReadonlySet<ChronologyRelation> = new Set(['flight_hours', 'calendar_days', 'flight_ordinal', 'intervening_flights']);
-export const BOUNDED_RELATIONS: ReadonlySet<ChronologyRelation> = new Set(['flight_hours', 'calendar_days', 'intervening_flights']);
+export const NUMBERED_RELATIONS: ReadonlySet<ChronologyRelation> = new Set(['flight_hours', 'operating_hours', 'calendar_days', 'flight_ordinal', 'intervening_flights']);
+export const BOUNDED_RELATIONS: ReadonlySet<ChronologyRelation> = new Set(['flight_hours', 'operating_hours', 'calendar_days', 'intervening_flights']);
 
 // ---------------------------------------------------------------------------
 // Shared pieces
@@ -352,13 +371,35 @@ export const StartBriefResponseSchema = z.discriminatedUnion('kind', [
 ]);
 export type StartBriefResponse = z.infer<typeof StartBriefResponseSchema>;
 
+/** An interpretation chip: a server-rendered reading, editable as a refinement (1 search). */
+export const InterpretationChipSchema = z.discriminatedUnion('field', [
+  z.strictObject({ field: z.literal('timing_window'), value: TimingWindowSchema, label: z.string().min(1).max(120), pinned: z.boolean() }),
+  z.strictObject({ field: z.literal('first_flight_only'), value: z.boolean(), label: z.string().min(1).max(120), pinned: z.boolean() }),
+  z.strictObject({ field: z.literal('failure_type'), value: z.enum(FAILURE_TYPES), label: z.string().min(1).max(120), pinned: z.boolean() }),
+]);
+export type InterpretationChip = z.infer<typeof InterpretationChipSchema>;
+
 /**
  * Checklist results (UI_DESIGN §4.4), filled in as stages complete. The server sends
- * stage status and counts only, never partial answer text.
+ * stage status and counts, plus the scope stage's readings and filters as server
+ * templates once it has sent the step on to search; never partial answer text.
  */
 export const ChecklistSchema = z.strictObject({
   /** Question → IN SCOPE. */
   question: z.literal('in_scope').optional(),
+  /**
+   * The readings and filters the scope stage settled on, sent once that stage has
+   * completed, so the chips can stay on top while the rest of the step runs (UI_DESIGN
+   * §4.4). The same server templates and validated filters as the finished result's.
+   * Every later checklist of the step keeps it, a cancelled or failed one's included; a
+   * static reply has none (server/routes/briefs.ts `checklistOf`).
+   */
+  interpretation: z
+    .strictObject({
+      interpretations: z.array(InterpretationChipSchema).max(3),
+      filters: BriefFiltersSchema,
+    })
+    .optional(),
   /** Search → "6 CASES · 12 PASSAGES". */
   searched: z
     .strictObject({
@@ -368,18 +409,16 @@ export const ChecklistSchema = z.strictObject({
     .optional(),
   /** Write answer → done. */
   written: z.literal(true).optional(),
-  /** Verify every quote → passed, or withheld (the summary is not shown). */
-  verified: z.enum(['passed', 'withheld']).optional(),
+  /**
+   * Check every statement → `partially_checked` (Task 16d: each statement shown was
+   * confirmed against its cited passages; anything the check could not confirm was
+   * removed, with the counts in the result's `check`), or `withheld` (nothing generated is
+   * shown). `passed` is the blanket status of steps written before Task 16d; the server no
+   * longer writes it.
+   */
+  verified: z.enum(['passed', 'withheld', 'partially_checked']).optional(),
 });
 export type Checklist = z.infer<typeof ChecklistSchema>;
-
-/** An interpretation chip: a server-rendered reading, editable as a refinement (1 search). */
-export const InterpretationChipSchema = z.discriminatedUnion('field', [
-  z.strictObject({ field: z.literal('timing_window'), value: TimingWindowSchema, label: z.string().min(1).max(120), pinned: z.boolean() }),
-  z.strictObject({ field: z.literal('first_flight_only'), value: z.boolean(), label: z.string().min(1).max(120), pinned: z.boolean() }),
-  z.strictObject({ field: z.literal('failure_type'), value: z.enum(FAILURE_TYPES), label: z.string().min(1).max(120), pinned: z.boolean() }),
-]);
-export type InterpretationChip = z.infer<typeof InterpretationChipSchema>;
 
 /** A timing chip: typed value plus its server-rendered label ("5.1 FH", "≤ 17 DAYS", "PREVIOUS DAY", "1ST FLIGHT"). */
 export const TimingChipSchema = z.strictObject({
@@ -454,6 +493,12 @@ export const CRITERION_DECISIONS = ['matches', 'unconfirmed'] as const;
 export const CriterionDecisionSchema = z.strictObject({
   criterion: z.enum(CRITERIA),
   decision: z.enum(CRITERION_DECISIONS),
+  /**
+   * Task 16d: the check could not confirm this decision (its own statement, or a timing
+   * fact or symptom it used, was removed). Always with `unconfirmed`: a decision is never
+   * recomputed, so it never becomes a match after a removal.
+   */
+  notVerified: z.literal(true).optional(),
 });
 export type CriterionDecision = z.infer<typeof CriterionDecisionSchema>;
 
@@ -472,6 +517,14 @@ export const CaseReadingSchema = z.strictObject({
 });
 export type CaseReading = z.infer<typeof CaseReadingSchema>;
 
+/**
+ * The kinds of a case card's AI statements (Task 16d): what `notVerified` names when the
+ * check could not confirm one of them, so the card can say the field was not verified
+ * instead of leaving it silently empty.
+ */
+export const CARD_STATEMENT_KINDS = ['why', 'classification', 'maintenance', 'symptom', 'timing', 'attribution', 'criterion'] as const;
+export type CardStatementKind = (typeof CARD_STATEMENT_KINDS)[number];
+
 /** A case on the briefing sheet: NTSB fields from the dataset, plus the AI reading when one passed validation. */
 export const CaseCardSchema = z.strictObject({
   case: CaseRowSchema.omit({ snippet: true }),
@@ -479,6 +532,12 @@ export const CaseCardSchema = z.strictObject({
   /** The case's best retrieved NTSB passage. */
   excerpt: NtsbExcerptSchema,
   reading: CaseReadingSchema.nullable(),
+  /**
+   * Task 16d: kinds of this case's AI statements that were removed because the check could
+   * not confirm them (or a statement they depend on). With `reading: null`, the reading as
+   * a whole did not keep its minimum content (a confirmed `why` and quote).
+   */
+  notVerified: z.array(z.enum(CARD_STATEMENT_KINDS)).min(1).max(CARD_STATEMENT_KINDS.length).optional(),
 });
 export type CaseCard = z.infer<typeof CaseCardSchema>;
 
@@ -490,11 +549,15 @@ export const EvidenceGroupSchema = z.strictObject({
 /**
  * Summary text with case citations as server-owned case numbers (rendered as blue mono
  * citations). `unconfirmed`: the cited case's passages do not settle one of the reader's
- * criteria, so the citation carries the UNCONFIRMED label wherever the summary cites it.
+ * criteria (or the check could not confirm its decision), so the citation carries the
+ * UNCONFIRMED label wherever the summary cites it. `removed` (Task 16d): `count` whole
+ * sentences were removed at this position because the check could not confirm them, or a
+ * statement they depend on (server copy `removedStatementsLine`); no text replaces them.
  */
 export const SummarySegmentSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('text'), text: z.string().min(1).max(1_500) }),
   z.strictObject({ kind: z.literal('case'), ntsbNo: NtsbNoSchema, unconfirmed: z.boolean() }),
+  z.strictObject({ kind: z.literal('removed'), count: z.number().int().min(1).max(50) }),
 ]);
 export type SummarySegment = z.infer<typeof SummarySegmentSchema>;
 
@@ -534,6 +597,35 @@ const resultContext = {
   filters: BriefFiltersSchema,
 };
 
+const RemovedCount = z.number().int().min(0).max(100);
+
+/**
+ * What the display projection did (Task 16d, `display-deps-v1`, server/briefs/display.ts):
+ * the result is partially checked. `shown`: statements shown, each confirmed by the
+ * evidence check against its cited passages; `removed`: statements not shown, by kind,
+ * because the check could not confirm them or a statement they depend on (counts only,
+ * never text); `unclassified`: presented cases shown without a group because their group
+ * placement was removed. Copy: `partialCheckLine` (server/briefs/static-replies.ts).
+ */
+export const BriefCheckSchema = z.strictObject({
+  rules: z.literal('display-deps-v1'),
+  status: z.literal('partially_checked'),
+  shown: z.number().int().min(0).max(100),
+  removed: z.strictObject({
+    summary: RemovedCount,
+    why: RemovedCount,
+    classification: RemovedCount,
+    maintenance: RemovedCount,
+    symptom: RemovedCount,
+    timing: RemovedCount,
+    attribution: RemovedCount,
+    criterion: RemovedCount,
+    gap: RemovedCount,
+  }),
+  unclassified: z.array(NtsbNoSchema).max(MAX_BRIEF_CASES),
+});
+export type BriefCheck = z.infer<typeof BriefCheckSchema>;
+
 /** The outcome of a finished step. */
 export const BriefResultSchema = z.discriminatedUnion('kind', [
   z.strictObject({
@@ -545,6 +637,8 @@ export const BriefResultSchema = z.discriminatedUnion('kind', [
     groups: z.array(EvidenceGroupSchema).min(1).max(GLYPH_KINDS.length),
     cases: z.array(CaseCardSchema).min(1).max(MAX_BRIEF_CASES),
     gaps: z.array(GapSchema).max(2),
+    /** Task 16d: present on every answer the display projection produced. */
+    check: BriefCheckSchema.optional(),
   }),
   z.strictObject({
     kind: z.literal('withheld'),
@@ -566,6 +660,8 @@ export const BriefResultSchema = z.discriminatedUnion('kind', [
     lines: z.array(Line).min(1).max(3),
     cases: z.array(CaseCardSchema).min(1).max(MAX_BRIEF_CASES),
     gaps: z.array(GapSchema).max(2),
+    /** Task 16d: present on every abstention the display projection produced (its gap notes are checked). */
+    check: BriefCheckSchema.optional(),
   }),
   z.strictObject({ kind: z.literal('scope_reply'), reply: ScopeReplySchema }),
   z.strictObject({ kind: z.literal('no_results'), ...resultContext }),

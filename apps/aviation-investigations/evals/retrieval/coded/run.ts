@@ -31,7 +31,7 @@ import { APP_DIR } from '../../../worker/config.js';
 import { evalConfig } from '../config.js';
 import { MODES } from '../evaluate.js';
 import { targetProblems, type TargetCheck } from '../generation.js';
-import { checkTarget, describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, stamp } from '../harness.js';
+import { checkTarget, describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, retrievalReport, stamp } from '../harness.js';
 import { NDCG_ENUMERATION_LIMIT, RECALL_TARGET } from '../metrics.js';
 import type { RunOptions } from '../run.js';
 import { DEFAULT_CODED_DATASET, rederiveCoded } from './build-coded.js';
@@ -233,6 +233,7 @@ export async function runCodedEvaluation(opts: RunOptions): Promise<number> {
         target: { source: target.source, questionsRederived: target.labels.size, warnings: target.warnings, ms: target.ms },
       },
       index: indexReport(run),
+      retrieval: retrievalReport(config),
       embedder: { kind: fake ? 'fake' : 'openai', model, dims, inputs: plan.inputs.length, countedTokens: plan.inputTokens, billed },
       params: {
         live: { ...RETRIEVAL_DEFAULTS, numCandidates: numCandidates(RETRIEVAL_DEFAULTS) },

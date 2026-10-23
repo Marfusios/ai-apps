@@ -12,6 +12,8 @@ import {
 } from '../../server/quota/pacing.js';
 import {
   DEFAULT_RATE_LIMITS,
+  LEASE_TTL_MS,
+  PIPELINE_DEADLINE_MS,
   QuotaConfigError,
   QuotaInputError,
   accountIdentityHash,
@@ -22,6 +24,8 @@ import {
   quotaPolicy,
   type QuotaBudgets,
 } from '../../server/quota/policy.js';
+import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
+import { STALE_STEP_MS } from '../../server/briefs/store.js';
 import { loadConfig } from '../../shared/config.js';
 
 const BUDGETS: QuotaBudgets = {
@@ -229,5 +233,17 @@ describe('policy and hashing', () => {
     expect(canonicalRequestHash({ q: 'x', skip: undefined })).toBe(canonicalRequestHash({ q: 'x' }));
     expect(() => canonicalRequestHash({ n: Number.NaN })).toThrow(QuotaInputError);
     expect(() => canonicalRequestHash({ d: new Date() })).toThrow(QuotaInputError);
+  });
+});
+
+describe('the pipeline deadline (16c review M7, 16d gate condition 4)', () => {
+  it('covers every stage timeout added up, with room for the writes between them, inside the lease and the stale-step limit', () => {
+    const { scope, retrieve, compose, check, total } = STAGE_TIMEOUTS;
+    expect(total).toBe(PIPELINE_DEADLINE_MS);
+    // The check, the calibrated stage, always gets its whole timeout after slow earlier stages.
+    expect(scope + retrieve + compose + check).toBeLessThanOrEqual(PIPELINE_DEADLINE_MS - 2_000);
+    expect(check).toBe(45_000);
+    expect(LEASE_TTL_MS).toBeGreaterThan(PIPELINE_DEADLINE_MS);
+    expect(STALE_STEP_MS).toBeGreaterThan(LEASE_TTL_MS);
   });
 });

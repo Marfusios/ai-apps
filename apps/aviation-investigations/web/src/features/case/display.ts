@@ -3,7 +3,7 @@
  * phrases, flight-profile steps. Deterministic and NTSB-only.
  */
 import { aircraftLetter, aircraftName } from '../../../../shared/case-view';
-import type { CaseDetail, Finding, Weather } from '../../../../shared/contracts/cases';
+import type { CaseDetail, Caution, Finding, Weather } from '../../../../shared/contracts/cases';
 import type { PhaseGroup } from '../../../../shared/codes';
 import type { Coded } from '../../../../shared/contracts/common';
 import type { AircraftBrief, CaseRow } from '../../../../shared/contracts/search';
@@ -11,6 +11,15 @@ import type { FlightProfileStep } from '../../components/flight-profile-layout';
 import { PHASE_SHORT } from '../../components/flight-profile-layout';
 
 export { aircraftLetter, aircraftName };
+
+/** Data cautions as short chip phrases (strips and cards); the drawer shows the full sentence. */
+export const CAUTION_SHORT: Readonly<Record<Caution['kind'], string>> = {
+  status_blank: 'status blank',
+  status_conflict: 'status',
+  injury_mismatch: 'injury codes',
+  shared_narrative: 'shared narrative',
+  defining_event_conflict: 'defining event',
+};
 
 const LIGHT_SHORT: Readonly<Record<string, string>> = {
   DAYL: 'DAY',

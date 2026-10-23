@@ -31,6 +31,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import pg from 'pg';
+import { DB_CONNECT_TIMEOUT_MS } from '../../../server/db/client.js';
 import { z } from 'zod';
 import { APP_DIR } from '../../../worker/config.js';
 import { evalConfig } from '../config.js';
@@ -212,7 +213,7 @@ async function main(argv: string[]): Promise<number> {
   const committed = existsSync(out) ? readFileSync(out, 'utf8') : null;
   const { frozen, pinned: committedPins } = frozenSplits(committed);
   const pinned = values['reassign-splits'] ? new Map<string, Split>() : committedPins;
-  const client = new pg.Client({ connectionString: config.databaseUrl, application_name: 'aviation-eval-coded' });
+  const client = new pg.Client({ connectionString: config.databaseUrl, application_name: 'aviation-eval-coded', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await client.connect();
   try {
     let generationId: number;

@@ -148,18 +148,28 @@ calling it a confirmed causal failure should fail that fixture even if it retrie
 the right case and supplies a valid quotation. The seed labels remain provisional
 until expert adjudication.
 
-**The evidence checker's calibration** (`evals/checker`, Task 16c) is the first
+**The evidence checker's calibration** (`evals/checker`, Tasks 16c and 16d) is the first
 implemented component evaluation. It runs the production check stage on frozen inputs
 rendered by the production code from real retrieval bundles: the first paid brief's 35
 claims as regressions, controls by error family and mutation, and complete briefs, wholly
-supported or with exactly one known error. Labels are `constructed` or `model-reviewed`
-(never expert), frozen by hash with the protocol before any comparison; the development
-split tunes, the held-out split confirms once. Scores are the production judgement
-(`judgeCheck`): whole-brief false withholding, per-family detection, critical
-regressions, claim-level false flags, `chronology_missed`, cost and latency, with Wilson
-intervals; a failed call counts as a withheld brief. It is metered on the evaluation
-ledger and logs every paid call. Results and the frozen choice: DESIGN §12; commands:
-README "Checker calibration".
+supported, with one known error, or (Task 16d) with several. Labels are `constructed` or
+`model-reviewed` (never expert), frozen by hash with the protocol before any comparison;
+the development split tunes, the held-out split confirms once. Task 16d (protocol v2)
+scores two layers separately. The **verdict layer** is the production judgement
+(`judgeCheck`): semantic detection per family over the error claims the checker judged,
+with a failed call's claims counted apart as blocked output and never as detections (16c
+review I2), false flags by claim kind, critical regressions and `chronology_missed`. The
+**display layer** runs every judged trial through the production display projection
+(`display-deps-v1`), so what is measured is what production would show: M1 supported
+claims retained, M2 wholly supported briefs shown with minimum content, M3 error claims
+displayed per family, M4 error briefs showing any error, M5 dependency violations, and
+the exposure figures (unsupported claims among displayed ones; displayed briefs carrying
+any). Intervals are clustered by source bundle (cluster bootstrap) and widened to a Wilson
+interval with one observation per bundle; a gate is inconclusive while its interval
+straddles the threshold. Each run has a manifest that binds the candidate configuration,
+dataset hashes and planned slots, and resumes only an identical run. It is metered on the
+evaluation ledger, and every paid call is logged. Results and the frozen choice: DESIGN
+§12; commands: README "Checker calibration".
 
 **Retrieval relevance without an expert** (task 10c protocol). Track C scores retrieval
 of coded facts exactly (`coded-reference`); Track N (`evals/retrieval/narrative`) scores
@@ -310,7 +320,7 @@ hash (`hashBrief`). `scripts/trace-smoke.ts` sends one synthetic span by hand.
 | Where | Keys |
 | --- | --- |
 | Resource (every span) | `service.name` = `aviation-casebook`; `deployment.environment` and `deployment.environment.name` = `APP_ENV` (`dev` or `live`). Set explicitly: the SDK default (`unknown_service:<node path>`) would export a filesystem path. |
-| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `thinkingTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage`, `stopReason`, `warnings`, `withheld`, `withheldCodes` |
+| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `thinkingTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage`, `stopReason`, `warnings`, `withheld`, `withheldCodes`, `retrievalVersion` |
 | GenAI keys (model-call spans only, derived) | `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cost` |
 | Instrumentation scope | `aviation-casebook` |
 
@@ -333,6 +343,18 @@ or log field. A server shutdown also stops a running stage: its span carries
 with `failureStage: pipeline` (on `brief.step`, in `meta.failure` and on the log line).
 Neither stop is an error of the stage, so its span ends with status unset; a failed
 stage's span ends with status error.
+
+`retrievalVersion` is the frozen retrieval configuration a `brief.retrieve` span ran
+(`RETRIEVAL_VERSIONS`: `retrieval.v1`, `retrieval.v2`, `retrieval.v2-nf`; anything
+else is dropped), set when the span starts, so a failed retrieval carries it too. The
+step's `meta.retrievalVersion` holds the same value, and under a case-level version
+`meta.retrieval` holds the cases index the step read and the mapping counts
+(`{casesIndex, casesIndexVersion, mapped, unmapped}`: the index name and its `_meta`
+version, then the leading candidate cases no passage channel returned that got their
+own passages, and those that could not and were never packed). The index name stays in
+the step's private metadata: no response or span carries it. Evaluation reports name
+the version they measured with its configuration sha256 (`retrievalIdentity`), so
+numbers from different versions are never mixed.
 
 `thinkingTokens` is the provider's reported reasoning share of a stage's output
 (`usage.output_tokens_details.thinking_tokens`), when it reports one; it is also kept
@@ -374,9 +396,21 @@ them), the criteria a case failed (`timing_window`, `first_flight_only`,
 miss, recorded beside `contradicted`), and the completeness codes
 `check_missing_verdict`, `check_duplicate_verdict`, `check_unknown_claim`,
 `check_invalid_evidence` (a verdict naming a passage outside the claim's cases, or a
-`supported` verdict naming one the claim does not cite) and `check_invalid_quote`. The
-`brief step finished` log line has `withheld: {reason, codes}` with every code. Neither
-holds text.
+`supported` verdict naming one the claim does not cite) and `check_invalid_quote`, and
+the display projection's codes (`DISPLAY_WITHHELD_CODES`, server/briefs/display.ts):
+`check_failed`, `check_structural`, `display_removed_share`, `display_contradictions`,
+`display_minimum_content` and `display_whole_brief` (the `whole` mode, production's
+default until gate G6 clears partial display). The `brief step finished` log line has
+`withheld: {reason, codes}` with every code. Neither holds text.
+
+The step's `meta.display` records the projection: `rules` (`display-deps-v1`), `mode`,
+`shown`, its `withheld` codes, `claimsShown`, `removed` (counts by claim kind),
+`removedKeys` (each removed claim's stable key, such as `summary.2` or
+`case.<ntsbNo>.timing.0`, with its cause: `contradicted`, `not_established` or
+`dependency`), `suppressed` (cases whose summary sentences and group placement a
+contradicted essential claim removed), `contradictions` and `removedSentences`. A shown
+answer with removals keeps its diagnostics too (reason `partial_display`), so the raw
+verdicts behind a partial display can be read like a withheld one's.
 
 The step's `meta.check` has `supported`, the claim count, the verdict `counts`, the
 `codes`, each problem as `{claim, claimIndex, kind, code}` (the claim id the server
@@ -384,8 +418,8 @@ issued, `C1`..), and `chronologyMissed: [{claim, ntsbNo, criterion}]`. `meta.cri
 lists each criterion decision with the timing rules that decided it (`rules`: `TW-N`,
 `TW-C`, `TW-I`, `FF-O`, `FF-Z`, `FF-I`) and, for `unknown`, its `reason` (`unstated`,
 `other_anchor`, `ambiguous_attribution`, `approximate`, `insufficient_bound`,
-`not_settling`, `conflict`); `meta.criteriaRules` is the rules version
-(`chronology-rules-v1`). All are fixed codes, ids and counts.
+`not_settling`, `operating_hours`, `conflict`); `meta.criteriaRules` is the rules version
+(`chronology-rules-v2`). All are fixed codes, ids and counts.
 
 **Diagnosing one.** The step's `meta.validation` records each validation reason with
 its path (`reasons: [{code, path}]`, e.g. `summary.2`, `cases.1.why`,
@@ -393,7 +427,8 @@ its path (`reasons: [{code, path}]`, e.g. `summary.2`, `cases.1.why`,
 split the summary into (`summary.<i>` is sentence `i`, from 0); `meta.check.problems`
 gives each problem's claim id and `claimIndex`. The text those point at is kept apart, in
 the step's `diagnostics` column (migration 0016), only for a summary withheld after a
-composition existed (a citation, criteria or evidence check): the composition as the
+composition existed (a citation, criteria or evidence check) or shown with claims removed
+(`partial_display`): the composition as the
 answer model returned it (passage aliases as it saw them), the alias map, the summary
 sentences as the validator split them, and for an evidence check the claims the checker
 read (with their ids, citations and absence flags) and, when it answered, its verdicts

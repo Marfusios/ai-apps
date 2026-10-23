@@ -34,6 +34,9 @@
     --ask-shadow: none;
     --drawer-shadow: none;
     --sheet-shadow: none;
+    --checklist-head: #1E2A36;
+    --checklist-head-ink: #FFFFFF;
+    --checklist-edge: #1E2A36;
     --grid: transparent;
     --graticule: none;
     --header-rule: #1E2A36;

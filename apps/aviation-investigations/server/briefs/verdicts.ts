@@ -5,8 +5,8 @@
  * **Completeness, deterministic.** Exactly one verdict for every claim id the server
  * issued (`C1`..): a missing id (`check_missing_verdict`), a repeated id
  * (`check_duplicate_verdict`) or an id the server never issued (`check_unknown_claim`)
- * withholds the summary. A truncated, refused, unparseable or schema-invalid response
- * never reaches this module: the adapter fails the stage, which withholds too.
+ * makes the output unusable as a whole. A truncated, refused, unparseable or
+ * schema-invalid response never reaches this module: the adapter fails the stage.
  *
  * **References.** Every passage a verdict names must be a supplied passage of a case the
  * claim is about (`check_invalid_evidence`). A `supported` verdict rests on passages the
@@ -14,21 +14,43 @@
  * claim (it cites every supplied passage of its case) may name none. A `contradicted`
  * verdict names the passages that conflict. A quote must belong to a `contradicted`
  * verdict, come from one of its passages and be found there word for word under the
- * quote rule (`quote-ws-v2`), once per claim (`check_invalid_quote`). A verified quote
- * shows the words exist, not that they entail anything.
+ * checker's quote rule (`checker-quote-v1`), once per claim (`check_invalid_quote`). A
+ * verified quote shows the words exist, not that they entail anything.
  *
- * **Aggregation, conservative.** Only a claim judged `supported` can be shown, whatever
- * its kind: any `contradicted` or `not_established` verdict withholds the summary. A
- * displayed absence claim needs `supported` too: `not_established` never authorizes "no
- * maintenance was mentioned". A `contradicted` verdict on a server claim that the
- * supplied passages do not settle a criterion is also recorded as `chronology_missed`: a
- * likely extraction failure (or a checker error), diagnostic only. It withholds like any
- * contradiction, and nothing is retried or repaired.
+ * **Structural codes** (`STRUCTURAL_CHECK_CODES`: incomplete, repeated or unknown verdict
+ * ids, invalid references, invalid quotes) mean the output is not a usable verdict set:
+ * the display projection withholds the whole output (server/briefs/display.ts), as it does
+ * for a failed call.
+ *
+ * **Per claim.** A claim is *confirmed* only with exactly one valid `supported` verdict,
+ * whatever its kind; `contradicted` and `not_established` are not. A displayed absence
+ * claim needs `supported` too: `not_established` never authorizes "no maintenance was
+ * mentioned". A `contradicted` verdict on a server claim that the supplied passages do not
+ * settle a criterion is also recorded as `chronology_missed`: a likely extraction failure
+ * (or a checker error), diagnostic only; the checker's reading never replaces the server
+ * decision, and nothing is retried or repaired. What a rejected claim removes from the
+ * display is the projection's business (`display-deps-v1`).
+ *
+ * **Checker quote rule `checker-quote-v1`** (Task 16d, versioned apart from the public
+ * citation rule `quote-ws-v2`, which stays as it is): the same whitespace normalization
+ * and exact matching, at least `QUOTE_MIN_WORDS` words, and a source span of at most
+ * `CHECK_QUOTE_MAX_SOURCE` code units (the public rule allows 600). A checker quote is
+ * diagnostic and never shown, so its bound follows the check output's
+ * (`CHECK_QUOTE_MAX`, `check-output-v2`).
  */
 import type { Criterion } from '../../shared/contracts/briefs.js';
-import type { CheckInput, CheckOutput, CheckVerdict, ClaimKind } from '../ai/provider.js';
+import { CHECK_QUOTE_MAX, type CheckInput, type CheckOutput, type CheckVerdict, type ClaimKind } from '../ai/provider.js';
 import type { ClaimMeta } from './render.js';
-import { matchQuote } from './validate.js';
+import { matchQuote, type QuoteMatch } from './validate.js';
+
+export const CHECKER_QUOTE_RULE_VERSION = 'checker-quote-v1';
+/** The passage text a checker quote may resolve to, in UTF-16 code units. */
+export const CHECK_QUOTE_MAX_SOURCE = CHECK_QUOTE_MAX;
+
+/** Locate a checker quote in its passage under `checker-quote-v1`. */
+export function matchCheckerQuote(passage: string, quote: string): QuoteMatch {
+  return matchQuote(passage, quote, CHECK_QUOTE_MAX_SOURCE);
+}
 
 /** The codes a judged check can produce (content-free; `withheldCodes`, `meta.check`). */
 export const CHECK_CODES = [
@@ -43,6 +65,17 @@ export const CHECK_CODES = [
 ] as const;
 export type CheckCode = (typeof CHECK_CODES)[number];
 
+/** Codes that make the output unusable as a whole: the whole output is withheld. */
+export const STRUCTURAL_CHECK_CODES = [
+  'check_missing_verdict',
+  'check_duplicate_verdict',
+  'check_unknown_claim',
+  'check_invalid_evidence',
+  'check_invalid_quote',
+] as const satisfies readonly CheckCode[];
+export type StructuralCheckCode = (typeof STRUCTURAL_CHECK_CODES)[number];
+const STRUCTURAL: ReadonlySet<CheckCode> = new Set(STRUCTURAL_CHECK_CODES);
+
 /** One content-free problem: the claim id (as issued, or as the model wrote it when unknown), its index (-1 for an unknown id), its kind and the code. */
 export interface CheckProblem {
   claim: string;
@@ -51,14 +84,25 @@ export interface CheckProblem {
   code: CheckCode;
 }
 
+/** One claim as judged: its first verdict (null when it has none) and whether it is confirmed. */
+export interface ClaimVerdict {
+  verdict: CheckVerdict | null;
+  /** Exactly one valid `supported` verdict (valid evidence; no structural problem with this claim). */
+  confirmed: boolean;
+}
+
 export interface CheckJudgement {
-  /** True only when every claim has exactly one valid `supported` verdict and every quote is valid. */
+  /** True only when every claim is confirmed and the output has no structural problem. */
   ok: boolean;
   /** Every code found, in `CHECK_CODES` order. */
   codes: CheckCode[];
+  /** The structural codes among `codes`: when any is present, the output is unusable as a whole. */
+  structural: StructuralCheckCode[];
   /** Verdicts per value, counting each claim's first verdict. */
   counts: Record<CheckVerdict, number>;
   problems: CheckProblem[];
+  /** Per claim, by index (claim `C<i+1>`). */
+  claims: ClaimVerdict[];
   /** Server "do not settle" criterion claims the checker contradicted (diagnostic). */
   chronologyMissed: { claim: string; index: number; ntsbNo: string | null; criterion: Criterion }[];
 }
@@ -75,8 +119,12 @@ export function judgeCheck(input: CheckInput, output: CheckOutput, meta: readonl
   const chronologyMissed: CheckJudgement['chronologyMissed'] = [];
   const passages = new Map(input.passages.map((p) => [p.passageId, p]));
   const index = new Map(input.claims.map((c, i) => [c.id, i]));
-  const problem = (claim: string, i: number, code: CheckCode) =>
+  const claims: ClaimVerdict[] = input.claims.map(() => ({ verdict: null, confirmed: false }));
+  const invalid = new Set<number>();
+  const problem = (claim: string, i: number, code: CheckCode) => {
     problems.push({ claim, index: i, kind: i >= 0 ? input.claims[i]!.kind : 'unknown', code });
+    if (i >= 0 && code !== 'contradicted' && code !== 'not_established' && code !== 'chronology_missed') invalid.add(i);
+  };
 
   /** Every supplied passage of the cases a claim is about. */
   const scopeOf = (c: CheckInput['claims'][number]): Set<string> => {
@@ -97,6 +145,7 @@ export function judgeCheck(input: CheckInput, output: CheckOutput, meta: readonl
     }
     judged.set(v.claim, v);
     counts[v.verdict] += 1;
+    claims[i]!.verdict = v.verdict;
     const claim = input.claims[i]!;
     const scope = scopeOf(claim);
     const cited = new Set(claim.passageIds);
@@ -131,11 +180,15 @@ export function judgeCheck(input: CheckInput, output: CheckOutput, meta: readonl
       v.passages.includes(q.passage) &&
       p !== undefined &&
       !quoted.has(q.claim) &&
-      matchQuote(p.text, q.text).ok;
+      matchCheckerQuote(p.text, q.text).ok;
     quoted.add(q.claim);
     if (!ok) problem(q.claim, i ?? -1, 'check_invalid_quote');
   }
 
+  claims.forEach((c, i) => {
+    c.confirmed = c.verdict === 'supported' && !invalid.has(i);
+  });
   const codes = [...new Set(problems.map((p) => p.code))].sort((a, b) => ORDER.get(a)! - ORDER.get(b)!);
-  return { ok: codes.length === 0, codes, counts, problems, chronologyMissed };
+  const structural = codes.filter((c): c is StructuralCheckCode => STRUCTURAL.has(c));
+  return { ok: codes.length === 0, codes, structural, counts, problems, claims, chronologyMissed };
 }

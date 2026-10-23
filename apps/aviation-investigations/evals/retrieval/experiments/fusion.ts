@@ -6,14 +6,18 @@
  *   baseline never goes through experiment code.
  * - `caseRrfFuse`: case-level RRF. Each channel is first collapsed to its unique cases
  *   in list order (a case at its best passage), then fused over those case ranks, so
- *   agreement on the same case through different passages counts. Ties: the best rank
- *   any list gave the case, then the case number (deterministic).
+ *   agreement on the same case through different passages counts. Since task 10e it is
+ *   production's own comparator (`exactRrf`, server/search/case-fusion.ts): exact
+ *   fractions and the total tie order (best rank, ranks list by list, case number), with
+ *   the weights scaled to the smallest equivalent integers (`integerWeights`), so a
+ *   harness variant orders tied cases exactly as the adopted code would.
  * - `roundRobinCases`: a bounded, channel-balanced case pool: the lists' unique cases
  *   taken in turn, first list first, skipping cases already taken.
  * - `candidatesFor`: a case order as packing candidates. Each case keeps its passages
  *   in passage-fused order; a case only the case-level channel found gets the passages
  *   `mapped` to it (`cases-channel.ts`), ranked after every fused passage.
  */
+import { exactRrf } from '../../../server/search/case-fusion.js';
 import { rankCases, rrfFuse, type CaseCandidate, type FusedHit, type RankedItem } from '../../../server/search/rrf.js';
 import type { PassageHit } from '../../../server/search/hybrid.js';
 
@@ -66,31 +70,30 @@ export interface FusedCase {
   rank: number;
 }
 
-/** Case-level weighted RRF over case lists (each list's cases unique; a repeat keeps its first rank). */
+const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+
+/**
+ * The smallest non-negative integers in the same proportions as `weights` (RRF orders are
+ * unchanged by scaling every weight alike), for production's exact comparator. Weights
+ * with more than six decimals are refused.
+ */
+export function integerWeights(weights: readonly number[]): number[] {
+  if (weights.some((w) => !Number.isFinite(w) || w < 0)) throw new Error('weights must be finite and non-negative');
+  for (let scale = 1; scale <= 1_000_000; scale *= 10) {
+    const scaled = weights.map((w) => w * scale);
+    if (scaled.every((x) => Math.abs(x - Math.round(x)) < 1e-9 && Number.isSafeInteger(Math.round(x)))) {
+      const ints = scaled.map((x) => Math.round(x));
+      const g = ints.reduce((a, b) => gcd(a, b), 0);
+      return g > 1 ? ints.map((x) => x / g) : ints;
+    }
+  }
+  throw new Error('weights need at most six decimals to be fused exactly');
+}
+
+/** Case-level weighted RRF over case lists (each list's cases unique; a repeat keeps its first rank), exactly as production fuses. */
 export function caseRrfFuse(lists: readonly (readonly string[])[], weights: readonly number[], k: number): FusedCase[] {
   if (weights.length !== lists.length) throw new Error('one weight per list');
-  if (weights.some((w) => !Number.isFinite(w) || w < 0)) throw new Error('weights must be finite and non-negative');
-  if (!Number.isFinite(k) || k < 0) throw new Error(`invalid RRF constant: ${k}`);
-  const byCase = new Map<string, Omit<FusedCase, 'rank'>>();
-  lists.forEach((list, li) => {
-    const seen = new Set<string>();
-    const w = weights[li] as number;
-    list.forEach((ntsbNo, i) => {
-      if (seen.has(ntsbNo)) return;
-      seen.add(ntsbNo);
-      let c = byCase.get(ntsbNo);
-      if (!c) {
-        c = { ntsbNo, score: 0, ranks: lists.map(() => null) };
-        byCase.set(ntsbNo, c);
-      }
-      c.ranks[li] = i + 1;
-      c.score += w / (k + i + 1);
-    });
-  });
-  const best = (c: Omit<FusedCase, 'rank'>) => Math.min(...c.ranks.map((r) => r ?? Number.POSITIVE_INFINITY));
-  return [...byCase.values()]
-    .sort((a, b) => b.score - a.score || best(a) - best(b) || (a.ntsbNo < b.ntsbNo ? -1 : a.ntsbNo > b.ntsbNo ? 1 : 0))
-    .map((c, i) => ({ ...c, rank: i + 1 }));
+  return exactRrf(lists, (n) => n, integerWeights(weights), k).map((c) => ({ ntsbNo: c.id, score: c.score, ranks: [...c.ranks], rank: c.rank }));
 }
 
 /** A channel-balanced pool: the lists' cases taken in turn (first list first), unique, at most `size`. */

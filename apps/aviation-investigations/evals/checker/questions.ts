@@ -70,3 +70,115 @@ export const QUESTIONS: readonly CalibrationQuestion[] = [
     keywordText: 'midair collision annual inspection maintenance first flight',
   },
 ];
+
+/**
+ * Task 16d's held-out questions: maintenance topics the 16c questions did not ask, so their
+ * bundles' cases can be disjoint from both 16c splits (the builder refuses a held-out case
+ * that was in either). Retrieved with `retrieve --questions 16d`; a bundle that shares a
+ * case with 16c is not used.
+ */
+export const QUESTIONS_16D: readonly CalibrationQuestion[] = [
+  {
+    id: 'q16d-magneto',
+    split: 'holdout',
+    question: 'Engine problems after a magneto was replaced or its timing was set',
+    keywordText: 'magneto replaced magneto timing ignition engine power loss after maintenance',
+  },
+  {
+    id: 'q16d-carburetor',
+    split: 'holdout',
+    question: 'Power loss after the carburetor was overhauled or reinstalled',
+    keywordText: 'carburetor overhauled reinstalled float bowl power loss maintenance',
+  },
+  {
+    id: 'q16d-propeller',
+    split: 'holdout',
+    question: 'Propeller failures after propeller maintenance',
+    keywordText: 'propeller blade separated propeller overhaul maintenance governor',
+  },
+  {
+    id: 'q16d-landing-gear',
+    split: 'holdout',
+    question: 'Landing gear problems after the landing gear was serviced or repaired',
+    keywordText: 'landing gear collapse actuator repaired serviced maintenance retraction',
+  },
+  {
+    id: 'q16d-controls',
+    split: 'holdout',
+    question: 'Flight controls rigged or connected incorrectly during maintenance',
+    keywordText: 'flight control cables reversed misrigged rigging elevator aileron maintenance',
+  },
+  {
+    id: 'q16d-throttle',
+    split: 'holdout',
+    question: 'Throttle or mixture linkage that came apart after maintenance',
+    keywordText: 'throttle cable mixture linkage disconnected cotter pin nut maintenance',
+  },
+  {
+    id: 'q16d-helicopter',
+    split: 'holdout',
+    question: 'Helicopter tail rotor or drive system failures after maintenance',
+    keywordText: 'helicopter tail rotor drive shaft maintenance failure installation',
+  },
+  {
+    id: 'q16d-fire',
+    split: 'holdout',
+    question: 'Engine fires after maintenance on the engine',
+    keywordText: 'engine fire fuel leak maintenance fitting fire in flight',
+  },
+  {
+    id: 'q16d-cylinder',
+    split: 'holdout',
+    question: 'Cylinder failures after a cylinder was replaced',
+    keywordText: 'cylinder replaced cylinder head separated hold down nuts torque power loss',
+  },
+  {
+    id: 'q16d-fuel-water',
+    split: 'holdout',
+    question: 'Water or debris in the fuel after maintenance or refueling',
+    keywordText: 'water in fuel contamination fuel tank sump debris maintenance power loss',
+  },
+  {
+    id: 'q16d-exhaust',
+    split: 'holdout',
+    question: 'Exhaust system failures after an inspection',
+    keywordText: 'exhaust muffler cracked exhaust stack separated annual inspection',
+  },
+  {
+    id: 'q16d-fuel-selector',
+    split: 'holdout',
+    question: 'Fuel starvation from a fuel selector or fuel valve after maintenance',
+    keywordText: 'fuel selector valve fuel starvation maintenance installed incorrectly',
+  },
+  {
+    id: 'q16d-spark-plugs',
+    split: 'holdout',
+    question: 'Rough running after spark plugs or ignition leads were serviced',
+    keywordText: 'spark plugs ignition harness leads rough running maintenance',
+  },
+  {
+    id: 'q16d-oil-line',
+    split: 'holdout',
+    question: 'Oil line or oil cooler failures after maintenance',
+    keywordText: 'oil line oil cooler hose loose fitting oil leak maintenance power loss',
+  },
+  {
+    id: 'q16d-fuel-pump',
+    split: 'holdout',
+    question: 'Engine-driven fuel pump problems after it was replaced',
+    keywordText: 'engine driven fuel pump replaced installed power loss fuel pressure',
+  },
+  {
+    id: 'q16d-rotorcraft-engine',
+    split: 'holdout',
+    question: 'Helicopter engine power loss after an engine change or inspection',
+    keywordText: 'helicopter engine power loss engine change inspection maintenance',
+  },
+  {
+    // Added before any 16d checker output (16c review M8): the other bundles state the previous calendar day only once.
+    id: 'q16d-day-after-part',
+    split: 'holdout',
+    question: 'Engine trouble on the day after an engine part was replaced',
+    keywordText: 'replaced the day before the accident engine part installed run-up',
+  },
+];

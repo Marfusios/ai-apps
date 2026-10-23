@@ -226,7 +226,7 @@ export const SUMMARY_CORPUS: readonly SummaryCase[] = [
   { family: 'legit', expect: 'valid', text: 'A mechanic left a nut unsecured after an engine change [[case:DFW08TA066]]. In another case the cause was never found [[case:DEN08LA103]].' },
   { family: 'legit', expect: 'valid', text: 'The nut was loose [[case:DFW08TA066]] [[case:DEN08LA103]]!' },
   { family: 'legit', expect: 'valid', text: 'The nut was loose. [[case:DFW08TA066]] The fuel was bad. [[case:DEN08LA103]]' },
-  { family: 'legit', expect: 'valid', text: 'The nut was loose [[case:DFW08TA066]]. The fuel was bad. [[case:DEN08LA103]]\u{A}' },
+  { family: 'legit', expect: 'withheld', text: 'The nut was loose [[case:DFW08TA066]]. The fuel was bad. [[case:DEN08LA103]]\u{A}', note: 'Task 16d (16c review M6): nothing is trimmed before the allow-list, so a trailing line break withholds' },
   { family: 'legit', expect: 'valid', text: 'The No. 2 engine lost power during the climb [[case:DFW08TA066]].' },
   { family: 'legit', expect: 'valid', text: 'Cylinders Nos. 3 and 4 had low compression [[case:DFW08TA066]].' },
   { family: 'legit', expect: 'valid', text: 'The engine ran approx. 5 minutes after the restart [[case:DFW08TA066]].' },

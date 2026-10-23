@@ -1,0 +1,733 @@
+{
+  "protocol": "checker-cal-protocol-v2",
+  "candidate": "haiku-think-v8",
+  "split": "holdout",
+  "manifest": "b8a086916856f68baa3e5c0827edc4aff3706a4e91ec835b615f1670eb00030a",
+  "dataset": "evals/checker/dataset.v2.json",
+  "trials": "data/work/checker/holdout-haiku-think-v8-b8a086916856.jsonl",
+  "complete": true,
+  "raw": {
+    "calls": 123,
+    "failedCalls": {},
+    "structuralCalls": {
+      "check_invalid_evidence": 3
+    },
+    "wholeBriefWithholding": {
+      "k": 17,
+      "n": 39,
+      "rate": 0.4358974358974359,
+      "low": 0.2930475377708262,
+      "high": 0.590243084664468
+    },
+    "semanticDetection": {
+      "timing": {
+        "k": 78,
+        "n": 78,
+        "rate": 1,
+        "low": 0.9530621895820832,
+        "high": 1
+      },
+      "attribution": {
+        "k": 34,
+        "n": 36,
+        "rate": 0.9444444444444444,
+        "low": 0.8185534265532164,
+        "high": 0.9846300134744463
+      },
+      "contradiction": {
+        "k": 35,
+        "n": 35,
+        "rate": 1,
+        "low": 0.901099006269668,
+        "high": 1
+      },
+      "unsupported_addition": {
+        "k": 22,
+        "n": 22,
+        "rate": 1,
+        "low": 0.8513451233948545,
+        "high": 1
+      },
+      "all": {
+        "k": 169,
+        "n": 171,
+        "rate": 0.9883040935672515,
+        "low": 0.9583643539358601,
+        "high": 0.9967866787112666
+      }
+    },
+    "errorWithholding": {
+      "timing": {
+        "k": 78,
+        "n": 78,
+        "rate": 1,
+        "low": 0.9530621895820832,
+        "high": 1
+      },
+      "attribution": {
+        "k": 34,
+        "n": 36,
+        "rate": 0.9444444444444444,
+        "low": 0.8185534265532164,
+        "high": 0.9846300134744463
+      },
+      "contradiction": {
+        "k": 35,
+        "n": 35,
+        "rate": 1,
+        "low": 0.901099006269668,
+        "high": 1
+      },
+      "unsupported_addition": {
+        "k": 22,
+        "n": 22,
+        "rate": 1,
+        "low": 0.8513451233948545,
+        "high": 1
+      },
+      "all": {
+        "k": 169,
+        "n": 171,
+        "rate": 0.9883040935672515,
+        "low": 0.9583643539358601,
+        "high": 0.9967866787112666
+      }
+    },
+    "failedErrorClaims": 0,
+    "critical": {
+      "items": 58,
+      "flaggedEveryTrial": 56,
+      "failures": [
+        {
+          "item": "holdout16d.helicopter.context.C17",
+          "batch": "holdout16d.helicopter.context",
+          "sample": 1,
+          "verdict": "supported"
+        },
+        {
+          "item": "holdout16d.rotor.earlier.C23",
+          "batch": "holdout16d.rotor.earlier",
+          "sample": 1,
+          "verdict": "supported"
+        }
+      ],
+      "failedCallTrials": 0
+    },
+    "falseFlags": {
+      "k": 179,
+      "n": 3528,
+      "rate": 0.05073696145124717,
+      "low": 0.04397139198765494,
+      "high": 0.058479825909285604
+    },
+    "falseFlagsByKind": {
+      "attribution": {
+        "k": 14,
+        "n": 762,
+        "rate": 0.01837270341207349,
+        "low": 0.010975260721825041,
+        "high": 0.03060182878154091
+      },
+      "classification": {
+        "k": 42,
+        "n": 451,
+        "rate": 0.09312638580931264,
+        "low": 0.06963539031701829,
+        "high": 0.12349005409024003
+      },
+      "criterion": {
+        "k": 15,
+        "n": 344,
+        "rate": 0.0436046511627907,
+        "low": 0.026600369313026312,
+        "high": 0.0706895253134929
+      },
+      "gap": {
+        "k": 7,
+        "n": 127,
+        "rate": 0.05511811023622047,
+        "low": 0.026952774511976918,
+        "high": 0.10940659532264407
+      },
+      "maintenance": {
+        "k": 27,
+        "n": 450,
+        "rate": 0.06,
+        "low": 0.041559959526454984,
+        "high": 0.08588864118947177
+      },
+      "summary": {
+        "k": 31,
+        "n": 423,
+        "rate": 0.07328605200945626,
+        "low": 0.05210703735466052,
+        "high": 0.10214568929906975
+      },
+      "symptom": {
+        "k": 0,
+        "n": 230,
+        "rate": 0,
+        "low": 0,
+        "high": 0.016427621088551385
+      },
+      "timing": {
+        "k": 13,
+        "n": 308,
+        "rate": 0.04220779220779221,
+        "low": 0.024829801211524213,
+        "high": 0.07086452688824041
+      },
+      "why": {
+        "k": 30,
+        "n": 433,
+        "rate": 0.06928406466512702,
+        "low": 0.0489594653195481,
+        "high": 0.09718384956816223
+      }
+    },
+    "chronologyMissed": {
+      "trials": 9,
+      "claims": 10
+    },
+    "verdicts": {
+      "supported": 3351,
+      "not_established": 215,
+      "contradicted": 133
+    },
+    "cost": {
+      "totalUsd": 0.3487516000000001,
+      "perCallUsd": 0.0028353788617886187,
+      "perBriefUsd": 0.002883568421052633
+    },
+    "latencyMs": {
+      "p50": 15664,
+      "p95": 23322,
+      "max": 31447,
+      "overTimeout": 0,
+      "timeoutMs": 45000
+    },
+    "thinkingTokens": {
+      "total": 382505,
+      "max": 6730
+    },
+    "outputTokens": {
+      "max": 8049
+    }
+  },
+  "display": {
+    "mode": "claims",
+    "m1": {
+      "k": 890,
+      "n": 1194,
+      "rate": 0.7453936348408711,
+      "low": 0.7199237293900921,
+      "high": 0.7692895931703784,
+      "clusters": 9,
+      "clusterLow": 0.4525889666922117,
+      "clusterHigh": 0.9729272419627749
+    },
+    "m1ByKind": {
+      "attribution": {
+        "k": 195,
+        "n": 255,
+        "rate": 0.7647058823529411,
+        "low": 0.7089528686617137,
+        "high": 0.8126019107907951
+      },
+      "classification": {
+        "k": 111,
+        "n": 150,
+        "rate": 0.74,
+        "low": 0.6644356712002655,
+        "high": 0.8035786113186956
+      },
+      "criterion": {
+        "k": 79,
+        "n": 111,
+        "rate": 0.7117117117117117,
+        "low": 0.6214831808828685,
+        "high": 0.7877766844814402
+      },
+      "gap": {
+        "k": 37,
+        "n": 45,
+        "rate": 0.8222222222222222,
+        "low": 0.6867017525239622,
+        "high": 0.9070561053336711
+      },
+      "maintenance": {
+        "k": 109,
+        "n": 150,
+        "rate": 0.7266666666666667,
+        "low": 0.6503549206201166,
+        "high": 0.7916585684255689
+      },
+      "summary": {
+        "k": 116,
+        "n": 150,
+        "rate": 0.7733333333333333,
+        "low": 0.6999980600587085,
+        "high": 0.8330182061434416
+      },
+      "symptom": {
+        "k": 55,
+        "n": 81,
+        "rate": 0.6790123456790124,
+        "low": 0.571236237608555,
+        "high": 0.7705777809430906
+      },
+      "timing": {
+        "k": 71,
+        "n": 102,
+        "rate": 0.696078431372549,
+        "low": 0.6010479522736643,
+        "high": 0.7768757878446675
+      },
+      "why": {
+        "k": 117,
+        "n": 150,
+        "rate": 0.78,
+        "low": 0.7071768995518571,
+        "high": 0.8388397633869308
+      }
+    },
+    "m2": {
+      "k": 32,
+      "n": 39,
+      "rate": 0.8205128205128205,
+      "low": 0.6733195420678146,
+      "high": 0.9102273457557151,
+      "clusters": 9,
+      "clusterLow": 0.4525889666922117,
+      "clusterHigh": 1
+    },
+    "m3": {
+      "timing": {
+        "k": 0,
+        "n": 78,
+        "rate": 0,
+        "low": 0,
+        "high": 0.04693781041791674,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      },
+      "attribution": {
+        "k": 2,
+        "n": 36,
+        "rate": 0.05555555555555555,
+        "low": 0.015369986525553617,
+        "high": 0.18144657344678355,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.4349997083707909
+      },
+      "contradiction": {
+        "k": 0,
+        "n": 35,
+        "rate": 0,
+        "low": 0,
+        "high": 0.0989009937303319,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      },
+      "unsupported_addition": {
+        "k": 0,
+        "n": 22,
+        "rate": 0,
+        "low": 0,
+        "high": 0.14865487660514556,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      },
+      "all": {
+        "k": 2,
+        "n": 171,
+        "rate": 0.011695906432748537,
+        "low": 0.003213321288733424,
+        "high": 0.04163564606413996,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      }
+    },
+    "critical": {
+      "items": 58,
+      "neverDisplayed": 56,
+      "displayed": [
+        {
+          "item": "holdout16d.helicopter.context.C17",
+          "batch": "holdout16d.helicopter.context",
+          "sample": 1
+        },
+        {
+          "item": "holdout16d.rotor.earlier.C23",
+          "batch": "holdout16d.rotor.earlier",
+          "sample": 1
+        }
+      ]
+    },
+    "m4": {
+      "k": 2,
+      "n": 75,
+      "rate": 0.02666666666666667,
+      "low": 0.007343688940032171,
+      "high": 0.09211488263589632,
+      "clusters": 9,
+      "clusterLow": 0,
+      "clusterHigh": 0.299145051727044
+    },
+    "m4ByCategory": {
+      "one_error": {
+        "k": 2,
+        "n": 57,
+        "rate": 0.03508771929824561,
+        "low": 0.009675664257795792,
+        "high": 0.11920781463108138
+      },
+      "mixed_error": {
+        "k": 0,
+        "n": 18,
+        "rate": 0,
+        "low": 0,
+        "high": 0.17587922593328437
+      }
+    },
+    "m5": {
+      "violations": 0,
+      "trials": 123
+    },
+    "e1": {
+      "k": 2,
+      "n": 1961,
+      "rate": 0.0010198878123406426,
+      "low": 0.0002797345921809779,
+      "high": 0.0037111517186975704,
+      "clusters": 9,
+      "clusterLow": 0,
+      "clusterHigh": 0.299145051727044
+    },
+    "e2": {
+      "k": 2,
+      "n": 72,
+      "rate": 0.027777777777777776,
+      "low": 0.0076510218356241055,
+      "high": 0.09574175299969566,
+      "clusters": 9,
+      "clusterLow": 0,
+      "clusterHigh": 0.299145051727044
+    },
+    "withheld": {
+      "trials": 7,
+      "blocked": {},
+      "rules": {
+        "display_removed_share": 7,
+        "display_contradictions": 1
+      }
+    },
+    "errorBriefsShown": {
+      "k": 40,
+      "n": 75,
+      "rate": 0.5333333333333333,
+      "low": 0.42157537303990233,
+      "high": 0.641843037412497
+    },
+    "unknown": {
+      "claims": 0,
+      "of": 2903,
+      "unresolvedBriefs": 0,
+      "briefs": 88
+    },
+    "trials": {
+      "supported": 39,
+      "one_error": 57,
+      "mixed_error": 18,
+      "claims": 9
+    }
+  },
+  "whole": {
+    "mode": "whole",
+    "m1": {
+      "k": 606,
+      "n": 1194,
+      "rate": 0.507537688442211,
+      "low": 0.4792016011671754,
+      "high": 0.535825429218641,
+      "clusters": 9,
+      "clusterLow": 0.2497991967871486,
+      "clusterHigh": 0.8112214802294544
+    },
+    "m1ByKind": {
+      "attribution": {
+        "k": 125,
+        "n": 255,
+        "rate": 0.49019607843137253,
+        "low": 0.42944135042000314,
+        "high": 0.5512418058965707
+      },
+      "classification": {
+        "k": 74,
+        "n": 150,
+        "rate": 0.49333333333333335,
+        "low": 0.41449676934126956,
+        "high": 0.5725028339220926
+      },
+      "criterion": {
+        "k": 60,
+        "n": 111,
+        "rate": 0.5405405405405406,
+        "low": 0.4480286060383164,
+        "high": 0.6303403043505938
+      },
+      "gap": {
+        "k": 30,
+        "n": 45,
+        "rate": 0.6666666666666666,
+        "low": 0.5207048819335636,
+        "high": 0.7864112514410742
+      },
+      "maintenance": {
+        "k": 74,
+        "n": 150,
+        "rate": 0.49333333333333335,
+        "low": 0.41449676934126956,
+        "high": 0.5725028339220926
+      },
+      "summary": {
+        "k": 74,
+        "n": 150,
+        "rate": 0.49333333333333335,
+        "low": 0.41449676934126956,
+        "high": 0.5725028339220926
+      },
+      "symptom": {
+        "k": 38,
+        "n": 81,
+        "rate": 0.4691358024691358,
+        "low": 0.3643337327829732,
+        "high": 0.5767328157426049
+      },
+      "timing": {
+        "k": 57,
+        "n": 102,
+        "rate": 0.5588235294117647,
+        "low": 0.46207044759072957,
+        "high": 0.65130667444477
+      },
+      "why": {
+        "k": 74,
+        "n": 150,
+        "rate": 0.49333333333333335,
+        "low": 0.41449676934126956,
+        "high": 0.5725028339220926
+      }
+    },
+    "m2": {
+      "k": 22,
+      "n": 39,
+      "rate": 0.5641025641025641,
+      "low": 0.4097569153355321,
+      "high": 0.7069524622291739,
+      "clusters": 9,
+      "clusterLow": 0.26665129180087416,
+      "clusterHigh": 0.8112214802294544
+    },
+    "m3": {
+      "timing": {
+        "k": 0,
+        "n": 78,
+        "rate": 0,
+        "low": 0,
+        "high": 0.04693781041791674,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      },
+      "attribution": {
+        "k": 2,
+        "n": 36,
+        "rate": 0.05555555555555555,
+        "low": 0.015369986525553617,
+        "high": 0.18144657344678355,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.4349997083707909
+      },
+      "contradiction": {
+        "k": 0,
+        "n": 35,
+        "rate": 0,
+        "low": 0,
+        "high": 0.0989009937303319,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      },
+      "unsupported_addition": {
+        "k": 0,
+        "n": 22,
+        "rate": 0,
+        "low": 0,
+        "high": 0.14865487660514556,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      },
+      "all": {
+        "k": 2,
+        "n": 171,
+        "rate": 0.011695906432748537,
+        "low": 0.003213321288733424,
+        "high": 0.04163564606413996,
+        "clusters": 9,
+        "clusterLow": 0,
+        "clusterHigh": 0.299145051727044
+      }
+    },
+    "critical": {
+      "items": 58,
+      "neverDisplayed": 56,
+      "displayed": [
+        {
+          "item": "holdout16d.helicopter.context.C17",
+          "batch": "holdout16d.helicopter.context",
+          "sample": 1
+        },
+        {
+          "item": "holdout16d.rotor.earlier.C23",
+          "batch": "holdout16d.rotor.earlier",
+          "sample": 1
+        }
+      ]
+    },
+    "m4": {
+      "k": 2,
+      "n": 75,
+      "rate": 0.02666666666666667,
+      "low": 0.007343688940032171,
+      "high": 0.09211488263589632,
+      "clusters": 9,
+      "clusterLow": 0,
+      "clusterHigh": 0.299145051727044
+    },
+    "m4ByCategory": {
+      "one_error": {
+        "k": 2,
+        "n": 57,
+        "rate": 0.03508771929824561,
+        "low": 0.009675664257795792,
+        "high": 0.11920781463108138
+      },
+      "mixed_error": {
+        "k": 0,
+        "n": 18,
+        "rate": 0,
+        "low": 0,
+        "high": 0.17587922593328437
+      }
+    },
+    "m5": {
+      "violations": 0,
+      "trials": 123
+    },
+    "e1": {
+      "k": 2,
+      "n": 648,
+      "rate": 0.0030864197530864196,
+      "low": 0.0008468160648636104,
+      "high": 0.011182886517653427,
+      "clusters": 7,
+      "clusterLow": 0,
+      "clusterHigh": 0.35433043867586833
+    },
+    "e2": {
+      "k": 2,
+      "n": 24,
+      "rate": 0.08333333333333333,
+      "low": 0.023158815087796644,
+      "high": 0.2584880237049766,
+      "clusters": 7,
+      "clusterLow": 0,
+      "clusterHigh": 0.5131278321392249
+    },
+    "withheld": {
+      "trials": 17,
+      "blocked": {},
+      "rules": {
+        "display_whole_brief": 17,
+        "display_removed_share": 7,
+        "display_contradictions": 1
+      }
+    },
+    "errorBriefsShown": {
+      "k": 2,
+      "n": 75,
+      "rate": 0.02666666666666667,
+      "low": 0.007343688940032171,
+      "high": 0.09211488263589632
+    },
+    "unknown": {
+      "claims": 0,
+      "of": 2903,
+      "unresolvedBriefs": 0,
+      "briefs": 88
+    },
+    "trials": {
+      "supported": 39,
+      "one_error": 57,
+      "mixed_error": 18,
+      "claims": 9
+    }
+  },
+  "latency": {
+    "timeoutMs": 45000,
+    "calls": 123,
+    "p50": 15664,
+    "p95": 23322,
+    "max": 31447,
+    "timeouts": 0,
+    "overTimeout": 0,
+    "byClaims": {
+      "11-20": {
+        "calls": 24,
+        "p50": 12034,
+        "p95": 14370,
+        "max": 16624
+      },
+      "21-30": {
+        "calls": 36,
+        "p50": 14575,
+        "p95": 18882,
+        "max": 19575
+      },
+      "31-40": {
+        "calls": 51,
+        "p50": 16930,
+        "p95": 21078,
+        "max": 21344
+      },
+      "41-50": {
+        "calls": 12,
+        "p50": 23322,
+        "p95": 31447,
+        "max": 31447
+      }
+    },
+    "maxSize": {
+      "calls": 0,
+      "claims": [],
+      "ms": [],
+      "timeouts": 0
+    }
+  },
+  "maxSize": {
+    "calls": 0,
+    "failed": {},
+    "structural": {},
+    "latencyMs": [],
+    "outputTokens": [],
+    "thinkingTokens": []
+  }
+}

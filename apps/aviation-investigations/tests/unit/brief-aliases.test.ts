@@ -44,7 +44,7 @@ describe('passage aliases', () => {
     expect(compose.cases.flatMap((c) => c.passages.map((p) => p.passageId))).toEqual(['P1', 'P2', 'P3']);
     const check = checkForModel(
       {
-        criteria: [],
+        cases: [{ ntsbNo: 'DEN08LA103', header: 'h' }],
         passages: [{ passageId: hex(3), ntsbNo: 'DEN08LA103', section: 'Analysis', scope: 'event', text: 't' }],
         claims: [{ id: 'C1', kind: 'why', ntsbNo: 'DEN08LA103', text: 'w', passageIds: [hex(3), hex(1)], absence: false }],
       },

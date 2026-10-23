@@ -8,16 +8,21 @@
  * never just the first quote: a TIMING line its fact's passages, a CRITERIA line the
  * passage set its criterion claim cited (G6 #3). A case on the sheet or a case a gap
  * note is about has a context; a withheld step returns the NTSB passages with no
- * reading.
+ * reading. Everything here was stored after the display projection (Task 16d): a
+ * statement the check could not confirm is absent, and the card's not-verified fields and
+ * decisions get a "not verified" line that describes the checking outcome, never the
+ * evidence.
  */
-import type {
-  CaseContextResponse,
-  CaseReading,
-  CriterionDecision,
-  GlyphKind,
-  MaintenanceRelation,
-  Symptom,
-  TimingChip,
+import {
+  FAILURE_TYPE_LABELS,
+  type CardStatementKind,
+  type CaseContextResponse,
+  type CaseReading,
+  type CriterionDecision,
+  type GlyphKind,
+  type MaintenanceRelation,
+  type Symptom,
+  type TimingChip,
 } from '../../shared/contracts/briefs.js';
 import { ordinalWord, timingValueText } from './render.js';
 import type { StepRow, StoredDimensions } from './store.js';
@@ -35,12 +40,12 @@ const MAINTENANCE_LINE: Readonly<Record<Exclude<MaintenanceRelation, 'unknown'>,
   no_evidence: 'No relevant maintenance in the supplied passages',
 };
 
-const SYMPTOM_LINE: Readonly<Record<Exclude<Symptom, 'other'>, string>> = {
-  total_power_loss: 'Total loss of engine power',
-  partial_power_loss: 'Partial loss of engine power',
-  rough_running: 'Engine running rough',
-  failure_to_climb: 'Unable to climb',
-};
+/**
+ * The SYMPTOM line says the symptom in the same words as the failure-type chip and
+ * reading (the contract's one table), so a label edited there changes both. `other` has
+ * no line; the type fails to compile if a symptom is added without a label.
+ */
+const SYMPTOM_LINE: Readonly<Record<Exclude<Symptom, 'other'>, string>> = FAILURE_TYPE_LABELS;
 
 /**
  * Definite wording only for a decision the facts settle under the timing rules (an
@@ -63,6 +68,20 @@ export const CRITERION_LINE: Readonly<Record<CriterionDecision['criterion'], Rec
   },
 };
 
+/**
+ * A statement the check could not confirm (Task 16d): it describes the checking outcome,
+ * never the NTSB evidence (the passages may well show it).
+ */
+export const NOT_VERIFIED_LINE = 'Not verified: the check could not confirm this against the cited passages';
+
+/** The context line of each kind of removed card statement that has one (`notVerified`). */
+const NOT_VERIFIED_LABEL: Partial<Record<CardStatementKind, CaseContextResponse['lines'][number]['label']>> = {
+  classification: 'EVIDENCE',
+  maintenance: 'MAINTENANCE',
+  symptom: 'SYMPTOM',
+  timing: 'TIMING',
+};
+
 /** "the maintenance (the annual inspection)": the relevant maintenance a TIMING line is about. */
 const maintenanceLabel = (m: string | undefined) => (m ? `the maintenance (${m})` : 'the maintenance');
 
@@ -74,6 +93,8 @@ export function timingLine(t: TimingChip, maintenance?: string): string {
     switch (t.basis) {
       case 'flight_hours':
         return `${bound}${v} flight ${t.value === 1 ? 'hour' : 'hours'} after ${m}`;
+      case 'operating_hours':
+        return `${bound}${v} ${t.value === 1 ? 'hour' : 'hours'} after ${m}, not stated as flight hours`;
       case 'calendar_days':
         return `${bound}${v} calendar ${t.value === 1 ? 'day' : 'days'} after ${m}`;
       case 'same_day':
@@ -91,7 +112,7 @@ export function timingLine(t: TimingChip, maintenance?: string): string {
           ? `No completed flight between ${m} and the event flight`
           : `${bound}${v} completed ${t.value === 1 ? 'flight' : 'flights'} between ${m} and the event flight`;
       case 'qualitative':
-        return `Time since ${m} also described in words`;
+        return `Time since ${m} described in words`;
     }
   })();
   return line.length <= 200 ? line : `${line.slice(0, 199)}…`;
@@ -99,9 +120,10 @@ export function timingLine(t: TimingChip, maintenance?: string): string {
 
 /**
  * WHY IT'S IN YOUR RESULTS: labelled lines from server templates, each with the passages
- * its claim was checked on (empty for a statement about what the passages lack).
+ * its claim was checked on (empty for a statement about what the passages lack), then a
+ * "not verified" line for each kind of statement the projection removed (`notVerified`).
  */
-export function readingLines(reading: CaseReading, dims: StoredDimensions | undefined): CaseContextResponse['lines'] {
+export function readingLines(reading: CaseReading, dims: StoredDimensions | undefined, notVerified: readonly CardStatementKind[] = []): CaseContextResponse['lines'] {
   const lines: CaseContextResponse['lines'] = [];
   if (reading.glyph) lines.push({ label: 'EVIDENCE', text: EVIDENCE_LINE[reading.glyph], passageIds: dims?.evidencePassageIds ?? [] });
   if (dims?.maintenance && dims.maintenance.relation !== 'unknown') {
@@ -118,7 +140,7 @@ export function readingLines(reading: CaseReading, dims: StoredDimensions | unde
   for (const c of reading.criteria) {
     // The passage set the criterion's own claim cited, never the symptom's or timing's.
     const passageIds = dims?.criteria?.find((x) => x.criterion === c.criterion)?.passageIds ?? [];
-    lines.push({ label: 'CRITERIA', text: CRITERION_LINE[c.criterion][c.decision], passageIds });
+    lines.push({ label: 'CRITERIA', text: c.notVerified ? NOT_VERIFIED_LINE : CRITERION_LINE[c.criterion][c.decision], passageIds: c.notVerified ? [] : passageIds });
   }
   const account = reading.quotes.find((q) => q.speaker !== 'investigators');
   if (account) {
@@ -127,6 +149,10 @@ export function readingLines(reading: CaseReading, dims: StoredDimensions | unde
       text: account.speaker === 'pilot' ? "Quotes the pilot's account" : "Quotes a witness's account",
       passageIds: [account.passageId],
     });
+  }
+  for (const kind of notVerified) {
+    const label = NOT_VERIFIED_LABEL[kind];
+    if (label) lines.push({ label, text: NOT_VERIFIED_LINE, passageIds: [] });
   }
   return lines.slice(0, 12);
 }
@@ -155,6 +181,6 @@ export function caseContext(step: StepRow, ntsbNo: string): CaseContextResponse 
       highlights: (reading?.quotes ?? []).filter((q) => q.passageId === p.passageId).map((q) => q.span),
     }));
   if (passages.length === 0) return null;
-  const lines = reading ? readingLines(reading, evidence.dimensions?.find((d) => d.ntsbNo === ntsbNo)) : [];
+  const lines = reading ? readingLines(reading, evidence.dimensions?.find((d) => d.ntsbNo === ntsbNo), card?.notVerified ?? []) : [];
   return { briefId: step.briefId, step: step.n, ntsbNo, reading, lines, gaps, passages };
 }

@@ -25,6 +25,7 @@ import { TURNSTILE_ACTION } from '../../shared/contracts/ai.js';
 import {
   BriefStepResponseSchema,
   CaseContextResponseSchema,
+  FAILURE_TYPE_LABELS,
   StartBriefResponseSchema,
   type BriefStepResponse,
   type ComposeChronology,
@@ -35,12 +36,13 @@ import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
+import { PRODUCTION_CHECK_PROMPT } from '../../server/ai/anthropic.js';
 import { startTracing } from '../../server/observability/tracing.js';
 import type { CheckInput, CheckOutput, CheckVerdict, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
 import { SHUTDOWN_GRACE_MS, buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
-import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder } from '../../server/ai/embeddings.js';
+import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder, type QueryEmbedder } from '../../server/ai/embeddings.js';
 import { CACHED_PREFIX_MAX, RESERVATIONS, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { createCaseCatalog } from '../../server/briefs/catalog.js';
@@ -53,13 +55,14 @@ import {
   type EvidenceRetriever,
 } from '../../server/briefs/evidence.js';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
+import { RETRIEVAL_V1, RETRIEVAL_V2 } from '../../server/search/retrieval-config.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
 import { NO_MATCH_LINES, OUT_OF_SCOPE_LINES, OPERATIONAL_LINES, OPERATIONAL_TITLE } from '../../server/briefs/static-replies.js';
 import { failOrphanedSteps, moveBriefReadOwner, type StepDiagnostics } from '../../server/briefs/store.js';
 import { SPAN_ATTR_KEYS } from '../../server/observability/attributes.js';
 import { diagnoseBrief } from '../../worker/brief-diagnose.js';
 import { closeDb, type Db } from '../../server/db/client.js';
-import { publishManifest } from '../../server/db/generations.js';
+import { manifestCasesIndex, publishManifest } from '../../server/db/generations.js';
 import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
 import { SPEND_LOCK_KEY } from '../../server/quota/policy.js';
 import { assertServablePassagesIndex } from '../../server/search/hybrid.js';
@@ -171,6 +174,8 @@ interface HarnessOptions {
   /** The configured embedding the dataset resolver checks the passages index against (default `FIXTURE_EMBEDDING`; null: none). */
   embedding?: { model: string; dims: number } | null;
   timeouts?: Partial<{ scope: number; retrieve: number; compose: number; check: number; total: number }>;
+  /** The display projection's mode (default: the services' default, `whole`). */
+  displayMode?: 'claims' | 'whole';
   trialRequests?: number;
   /** Which evidence index a new brief pins (default: the dataset resolver's servable index). */
   aiEvidence?: () => Promise<{ generationId: number; passagesIndex: string } | null>;
@@ -198,6 +203,7 @@ function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
   const svc = createBriefServices(appDb, {
     retriever: opts.evidence ?? retriever,
     ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
+    ...(opts.displayMode ? { displayMode: opts.displayMode } : {}),
     ...(opts.catalog ? { catalog: opts.catalog(createCaseCatalog(appDb)) } : {}),
   });
   const embedding = opts.embedding === undefined ? FIXTURE_EMBEDDING : opts.embedding;
@@ -230,6 +236,17 @@ const scopeOut = (over: Partial<ScopeOutput> = {}): ScopeOutput => ({
   ambiguity: { type: 'timing_window', values: ['30d_or_10h'] },
   ...over,
 });
+
+/** The interpretation chip of `scopeOut()`'s default reading (`30d_or_10h`, not pinned). */
+const DEFAULT_TIMING_CHIP = {
+  field: 'timing_window',
+  value: { days: 30, flightHours: 10 },
+  label: 'Within 30 days or 10 flight hours',
+  pinned: false,
+} as const;
+
+/** `checklist.interpretation` of a step that ran with `scopeOut()` and no filters. */
+const DEFAULT_INTERPRETATION = { interpretations: [DEFAULT_TIMING_CHIP], filters: {} };
 
 /** The first sentence of a passage: an exact substring, as the prompt asks. */
 function firstSentence(text: string): string {
@@ -270,7 +287,7 @@ type Claim = CheckInput['claims'][number];
 type Judged = CheckVerdict | { verdict: CheckVerdict; passages?: string[]; quote?: { passage: string; text: string } };
 
 /**
- * The checker's answer as check.v5 returns it: one verdict per claim id, from `judge`
+ * The checker's answer as check.v7 and later return it: one verdict per claim id, from `judge`
  * (default `supported`). A supported claim names its first cited passages (an absence
  * claim none), a contradicted one its first cited passage unless `judge` names others.
  */
@@ -617,7 +634,14 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(started.status).toBe(202);
     expect(started.json).toEqual({ kind: 'started', briefId, step: 1, stage: 'retrieve' });
     expect(step).toMatchObject({ step: 1, steps: 1, refinementsLeft: 3, stage: 'done', origin: { kind: 'question' } });
-    expect(step.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 }, written: true, verified: 'passed' });
+    // No blanket "passed" (Task 16d): each statement shown was checked, and the result says what was removed.
+    expect(step.checklist).toEqual({
+      question: 'in_scope',
+      interpretation: DEFAULT_INTERPRETATION,
+      searched: { cases: 4, passages: 8 },
+      written: true,
+      verified: 'partially_checked',
+    });
     const result = step.result!;
     if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
     expect(result.grouping).toBe('mechanical');
@@ -628,9 +652,7 @@ describe('POST /api/briefs: the pipeline', () => {
       ['insufficient', []],
     ]);
     expect(result.cases.map((c) => c.case.ntsbNo)).toEqual(SEEDS);
-    expect(result.interpretations).toEqual([
-      { field: 'timing_window', value: { days: 30, flightHours: 10 }, label: 'Within 30 days or 10 flight hours', pinned: false },
-    ]);
+    expect(result.interpretations).toEqual([DEFAULT_TIMING_CHIP]);
     const dfw = result.cases[0]!;
     expect(dfw.reading?.glyph).toBe('causal');
     expect(dfw.reading?.evidence).toEqual({ scope: 'aircraft', aircraftKey: expect.any(Number) });
@@ -675,10 +697,18 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v6', check: 'check.v5' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v7', check: PRODUCTION_CHECK_PROMPT.version },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
-      criteriaRules: 'chronology-rules-v1',
+      criteriaRules: 'chronology-rules-v2',
       check: { supported: true, claims: check.claims.length, counts: { supported: check.claims.length, contradicted: 0, not_established: 0 }, codes: [], problems: [], chronologyMissed: [] },
+      display: { rules: 'display-deps-v1', mode: 'whole', shown: true, withheld: [], claimsShown: check.claims.length, removed: {}, removedKeys: [], suppressed: [] },
+    });
+    expect(result.check).toEqual({
+      rules: 'display-deps-v1',
+      status: 'partially_checked',
+      shown: check.claims.length,
+      removed: { summary: 0, why: 0, classification: 0, maintenance: 0, symptom: 0, timing: 0, attribution: 0, criterion: 0, gap: 0 },
+      unclassified: [],
     });
 
     // The case context: the cited passage with its highlight, and template lines.
@@ -749,7 +779,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const { briefId, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'compose_failed' });
     if (step.result?.kind === 'withheld') expect(step.result.cases).toHaveLength(4);
-    expect(step.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 }, verified: 'withheld' });
+    expect(step.checklist).toEqual({ question: 'in_scope', interpretation: DEFAULT_INTERPRETATION, searched: { cases: 4, passages: 8 }, verified: 'withheld' });
     // The refusal was billed: its usage is a ledger line, and the settlement is certain.
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose']]);
     const [res] = await reservations();
@@ -810,7 +840,7 @@ describe('POST /api/briefs: the pipeline', () => {
     advance(MIN);
     const none = await askAndWait(empty, 'Engine power loss shortly after maintenance', { cookie: null });
     expect(none.step.result).toMatchObject({ kind: 'no_results', filters: {} });
-    expect(none.step.checklist).toEqual({ question: 'in_scope', searched: { cases: 0, passages: 0 } });
+    expect(none.step.checklist).toEqual({ question: 'in_scope', interpretation: DEFAULT_INTERPRETATION, searched: { cases: 0, passages: 0 } });
     expect((await trialUsed())[1]).toBe(0);
   });
 });
@@ -1152,7 +1182,11 @@ describe('admission order', () => {
   });
 });
 
-describe('hybrid retrieval behind the port', () => {
+describe.each([RETRIEVAL_V1, RETRIEVAL_V2])('hybrid retrieval behind the port ($version)', (config) => {
+  /** The binding under this version; the cases index comes from the manifest, as in the server. */
+  const hybrid = (o: { es: Client; embedder: Embedder | QueryEmbedder }) =>
+    createHybridRetriever({ ...o, retrieval: config, casesIndexOf: (d, signal) => manifestCasesIndex(appDb, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }) });
+  const caseLevel = config.fusion.level === 'case';
   /** The motivating question (DESIGN §3) as the scope stage reads it: 2008, keyword text for BM25. */
   const SEED_QUESTION = 'Find 2008 investigations involving engine power loss shortly after maintenance';
   const SEED_KEYWORDS = 'engine power loss maintenance overhaul replaced mechanic';
@@ -1166,11 +1200,21 @@ describe('hybrid retrieval behind the port', () => {
   });
   const live = () => new AbortController().signal;
 
+  type SearchKind = 'keyword' | 'vector' | 'cases' | 'mapping' | 'fetch';
+  /** Which retrieval request a body is. */
+  const kindOf = (b: estypes.SearchRequest): SearchKind => {
+    if (b.index === dataset.casesIndex) return 'cases';
+    const knn = b.knn as estypes.KnnSearch | undefined;
+    if (knn) return JSON.stringify(knn.filter).includes('"ntsb_no"') ? 'mapping' : 'vector';
+    if (b.size === 0) return 'mapping';
+    return b.query?.bool?.must ? 'keyword' : 'fetch';
+  };
+
   /**
    * The API's client with `search` observed: every request body is recorded, and
-   * `tamper` may fail the n-th search (1-based) or change its response.
+   * `tamper` may fail a search (by its kind and its 1-based position) or change its response.
    */
-  function searchSpy(tamper: (n: number, res: estypes.SearchResponse) => Error | void = () => undefined) {
+  function searchSpy(tamper: (kind: SearchKind, n: number, res: estypes.SearchResponse) => Error | void = () => undefined) {
     const bodies: estypes.SearchRequest[] = [];
     const client = new Proxy(es, {
       get(target, prop) {
@@ -1179,7 +1223,7 @@ describe('hybrid retrieval behind the port', () => {
             bodies.push(body);
             const n = bodies.length;
             const res = (await target.search(body, opts as never)) as estypes.SearchResponse;
-            const err = tamper(n, res);
+            const err = tamper(kindOf(body), n, res);
             if (err) throw err;
             return res;
           };
@@ -1224,7 +1268,7 @@ describe('hybrid retrieval behind the port', () => {
   it('seed question returns groups and four seed cases in fixture corpus', async () => {
     const embedder = fixtureEmbedder();
     const spy = searchSpy();
-    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: createHybridRetriever({ es: spy.client, embedder }) });
+    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: hybrid({ es: spy.client, embedder }) });
     expect((await inject<{ state: string }>(h, 'GET', '/api/ai/status')).json).toMatchObject({ state: 'available' });
     const { briefId, cookie, step } = await askAndWait(h, SEED_QUESTION);
     const result = step.result!;
@@ -1246,11 +1290,17 @@ describe('hybrid retrieval behind the port', () => {
       expect(c.reading?.quotes.length).toBeGreaterThan(0);
       for (const q of c.reading!.quotes) expect(q.span.end).toBeGreaterThan(q.span.start);
     }
-    expect(step.checklist).toMatchObject({ verified: 'passed', searched: { cases: 5 } });
+    expect(step.checklist).toMatchObject({ verified: 'partially_checked', searched: { cases: 5 } });
 
-    // The dense channel embedded the question once; BM25 searched the scope stage's keyword text.
+    // The dense channel embedded the question once; BM25 (and the cases channel) searched the scope stage's keyword text.
     expect(embedder.calls).toEqual([[queryEmbeddingInput(SEED_QUESTION)]]);
-    expect(spy.keywordQueries()).toEqual([SEED_KEYWORDS]);
+    expect(spy.keywordQueries()).toEqual(caseLevel ? [SEED_KEYWORDS, SEED_KEYWORDS] : [SEED_KEYWORDS]);
+    expect(spy.bodies.filter((b) => kindOf(b) === 'cases')).toHaveLength(caseLevel ? 1 : 0);
+    // The step records the version it retrieved under (and, case-level, its mapping counts).
+    const meta = (await stepRow(briefId)).meta;
+    expect(meta.retrievalVersion).toBe(config.version);
+    if (caseLevel) expect(meta.retrieval).toEqual({ casesIndex: dataset.casesIndex, casesIndexVersion: 'cases-v3', mapped: expect.any(Number), unmapped: 0 });
+    else expect(meta.retrieval).toBeUndefined();
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
     const embed = await rows<{ model: string; tokens: unknown }>(sql`SELECT model, tokens FROM cost_ledger WHERE stage = 'embed'`);
     expect(embed).toEqual([{ model: FIXTURE_EMBEDDING.model, tokens: { input: countTokens(queryEmbeddingInput(SEED_QUESTION)) } }]);
@@ -1267,7 +1317,7 @@ describe('hybrid retrieval behind the port', () => {
   it('settles the query embedding once, from the callback, whatever fails after it', async () => {
     const usages: EmbeddingUsage[] = [];
     const embedder = fixtureEmbedder();
-    const retrieved = await createHybridRetriever({ es, embedder }).retrieve(evidenceQuery(), live(), (u) => usages.push(u));
+    const retrieved = await hybrid({ es, embedder }).retrieve(evidenceQuery(), live(), (u) => usages.push(u));
     expect(usages).toEqual([{ provider: 'openai', model: FIXTURE_EMBEDDING.model, tokens: countTokens(queryEmbeddingInput(SEED_QUESTION)), usd: 0, billing: 'reported' }]);
     expect(retrieved.bundle.cases.map((c) => c.ntsbNo)).toEqual(expect.arrayContaining(SEEDS));
     expect(retrieved.bundle.cases.every((c) => c.passages.some((p) => p.role === 'probable_cause'))).toBe(true);
@@ -1278,31 +1328,40 @@ describe('hybrid retrieval behind the port', () => {
     expect(embedder.calls).toHaveLength(1);
     expect(usages).toHaveLength(1);
 
-    // A channel, the evidence fetch or a completeness check failing after the embedding.
-    const cases: [number, (res: estypes.SearchResponse) => Error | void, string][] = [
-      [1, () => new errors.ConnectionError('SENTINEL_UPSTREAM'), 'search'],
-      [3, () => new Error('SENTINEL_UPSTREAM'), 'other'],
-      [3, (res) => void (res.timed_out = true), 'incomplete_search'],
+    // A channel, the evidence fetch or a completeness check failing (case-level: the lexical
+    // channels run while the embedding is in flight; the embedding is still settled once).
+    const cases: [SearchKind, (res: estypes.SearchResponse) => Error | void, string][] = [
+      ['keyword', () => new errors.ConnectionError('SENTINEL_UPSTREAM'), 'search'],
+      ['vector', () => new Error('SENTINEL_UPSTREAM'), 'other'],
+      ['fetch', () => new Error('SENTINEL_UPSTREAM'), 'other'],
+      ['fetch', (res) => void (res.timed_out = true), 'incomplete_search'],
+      ...(caseLevel
+        ? ([
+            ['cases', () => new errors.ConnectionError('SENTINEL_UPSTREAM'), 'search'],
+            ['cases', (res) => void (res.timed_out = true), 'incomplete_search'],
+            ['cases', (res) => void (res._shards.failed = 1), 'incomplete_search'],
+          ] as [SearchKind, (res: estypes.SearchResponse) => Error | void, string][])
+        : []),
     ];
-    for (const [at, fail, reason] of cases) {
+    for (const [kind, fail, reason] of cases) {
       const seen: EmbeddingUsage[] = [];
-      const spy = searchSpy((n, res) => (n === at ? fail(res) : undefined));
-      const f = await failureOf(createHybridRetriever({ es: spy.client, embedder: fixtureEmbedder() }).retrieve(evidenceQuery(), live(), (u) => seen.push(u)));
-      expect(f).toMatchObject({ kind: 'failed', embedding: 'none', reason });
-      expect(seen).toHaveLength(1);
+      const spy = searchSpy((k, _n, res) => (k === kind ? fail(res) : undefined));
+      const f = await failureOf(hybrid({ es: spy.client, embedder: fixtureEmbedder() }).retrieve(evidenceQuery(), live(), (u) => seen.push(u)));
+      expect(f, `${kind} ${reason}`).toMatchObject({ kind: 'failed', embedding: 'none', reason });
+      expect(seen, `${kind} ${reason}`).toHaveLength(1);
     }
 
     // A usage report the provider did not give: handed on once, as uncertain.
     const seen: EmbeddingUsage[] = [];
     const unsure = embedderWith((r) => ({ ...r, usageUncertain: true }));
-    await createHybridRetriever({ es, embedder: unsure }).retrieve(evidenceQuery(), live(), (u) => seen.push(u));
+    await hybrid({ es, embedder: unsure }).retrieve(evidenceQuery(), live(), (u) => seen.push(u));
     expect(seen).toEqual([expect.objectContaining({ billing: 'uncertain' })]);
   });
 
   it('a failed embedding is settled by its own billing; refusals before it charge nothing', async () => {
     const run = async (embedder: Embedder, q: EvidenceQuery = evidenceQuery(), signal = live()) => {
       const seen: EmbeddingUsage[] = [];
-      const f = await failureOf(createHybridRetriever({ es, embedder }).retrieve(q, signal, (u) => seen.push(u)));
+      const f = await failureOf(hybrid({ es, embedder }).retrieve(q, signal, (u) => seen.push(u)));
       return { f, seen };
     };
     const provider = (billing: 'none' | 'usage' | 'uncertain', billed: number | null = null) =>
@@ -1318,10 +1377,11 @@ describe('hybrid retrieval behind the port', () => {
     expect(await run(failingEmbedder(() => new Error('SENTINEL_UPSTREAM')))).toMatchObject({ f: { embedding: 'uncertain' }, seen: [] });
 
     // Refused before the embedder is called: nothing sent, nothing charged, no index name passed on.
+    // Case-level: a passages index no manifest of the generation names has no paired cases index.
     for (const [passagesIndex, reason] of [
       [null, 'no_passages_index'],
-      [dataset.casesIndex, 'index_mismatch'],
-      [`${PREFIX}-missing-passages`, 'index_mismatch'],
+      [dataset.casesIndex, caseLevel ? 'no_cases_index' : 'index_mismatch'],
+      [`${PREFIX}-missing-passages`, caseLevel ? 'no_cases_index' : 'index_mismatch'],
     ] as const) {
       const embedder = failingEmbedder(() => new Error('never called'));
       const r = await run(embedder, evidenceQuery({ dataset: { generationId, passagesIndex: passagesIndex as string } }));
@@ -1334,8 +1394,8 @@ describe('hybrid retrieval behind the port', () => {
   });
 
   it('a retrieval failure after the embedding keeps one embed line; an uncertain embedding settles in full', async () => {
-    const spy = searchSpy((n) => (n === 3 ? new Error('SENTINEL_UPSTREAM') : undefined));
-    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: createHybridRetriever({ es: spy.client, embedder: fixtureEmbedder() }) });
+    const spy = searchSpy((kind) => (kind === 'fetch' ? new Error('SENTINEL_UPSTREAM') : undefined));
+    const h = harness(answering({ scope: { output: SEED_SCOPE } }), { evidence: hybrid({ es: spy.client, embedder: fixtureEmbedder() }) });
     const { briefId, step } = await askAndWait(h, SEED_QUESTION);
     expect(step.result).toEqual({ kind: 'failed', countedAsSearch: true });
     expect(await ledgerStages()).toEqual([['scope', 'embed']]);
@@ -1343,7 +1403,7 @@ describe('hybrid retrieval behind the port', () => {
     expect(h.logs.join('\n')).not.toContain('SENTINEL');
 
     const unsure = harness(answering({ scope: { output: SEED_SCOPE } }), {
-      evidence: createHybridRetriever({ es, embedder: embedderWith((r) => ({ ...r, usageUncertain: true })) }),
+      evidence: hybrid({ es, embedder: embedderWith((r) => ({ ...r, usageUncertain: true })) }),
     });
     advance(MIN);
     const second = await askAndWait(unsure, SEED_QUESTION, { cookie: null });
@@ -1369,7 +1429,7 @@ describe('hybrid retrieval behind the port', () => {
     const embedder = createOpenAIQueryEmbedder({ apiKey: 'sk-test-not-a-real-key', model: FIXTURE_EMBEDDING.model, dims: FIXTURE_EMBEDDING.dims, fetch: hanging });
     const usages: EmbeddingUsage[] = [];
     const controller = new AbortController();
-    const pending = createHybridRetriever({ es, embedder }).retrieve(evidenceQuery(), controller.signal, (u) => usages.push(u));
+    const pending = hybrid({ es, embedder }).retrieve(evidenceQuery(), controller.signal, (u) => usages.push(u));
     await until(() => called === 1);
     controller.abort();
     const failure = await failureOf(pending);
@@ -1409,7 +1469,7 @@ describe('hybrid retrieval behind the port', () => {
           return judge(input);
         },
       },
-      { evidence: createHybridRetriever({ es, embedder }), trialRequests: 10 },
+      { evidence: hybrid({ es, embedder }), trialRequests: 10 },
     );
 
     const one = await askAndWait(h, SEED_QUESTION);
@@ -1544,6 +1604,201 @@ describe('cancel and expiry', () => {
   });
 });
 
+/** A promise the test opens: a scripted stage waits on it, so reads see the step mid-run. */
+function gate(): { opened: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { opened, open };
+}
+
+describe('checklist interpretation: the chips stay on top while a step runs (UI_DESIGN §4.4)', () => {
+  it('once the scope stage is done, a running step carries its readings and filters as server templates; done, they are the result’s', async () => {
+    const writing = gate();
+    const checking = gate();
+    const h = harness(
+      answering({
+        scope: { output: scopeOut({ filters: { injury: ['FATL'] }, keywordText: 'planner-written keyword text' }) },
+        compose: async (input) => {
+          await writing.opened;
+          return composition(input);
+        },
+        check: async (input) => {
+          await checking.opened;
+          return SUPPORTED(input);
+        },
+      }),
+    );
+    // The question's own filters win per facet over the planner's.
+    const started = await ask(h, 'Engine power loss shortly after maintenance', { filters: { category: ['AIR'] } });
+    expect(started.json).toMatchObject({ kind: 'started', step: 1, stage: 'retrieve' });
+    const cookie = cookieOf(started.setCookie);
+    const { briefId } = started.json;
+    const interpretation = { interpretations: [DEFAULT_TIMING_CHIP], filters: { injury: ['FATL'], category: ['AIR'] } };
+
+    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
+    const composing = await read(h, briefId, cookie, 1);
+    expect(composing.json).toMatchObject({ stage: 'compose', finishedAt: null });
+    expect(composing.json.result).toBeUndefined();
+    expect(composing.json.checklist).toEqual({ question: 'in_scope', interpretation, searched: { cases: 4, passages: 8 } });
+    // Templates only: each label is a reading template, and nothing the planner wrote is sent.
+    const templates = clarificationTemplateLabels();
+    for (const { label } of composing.json.checklist.interpretation!.interpretations) {
+      expect(templates.fixed.includes(label) || templates.patterns.some((p) => p.test(label)), label).toBe(true);
+    }
+    expect(JSON.stringify(composing.json)).not.toContain('planner-written');
+
+    writing.open();
+    await until(() => h.llm.calls.some((c) => c.stage === 'check'));
+    const validating = await read(h, briefId, cookie);
+    expect(validating.json).toMatchObject({ stage: 'validate', finishedAt: null });
+    expect(validating.json.checklist).toEqual({ question: 'in_scope', interpretation, searched: { cases: 4, passages: 8 }, written: true });
+
+    checking.open();
+    await h.svc.settled();
+    const done = (await read(h, briefId, cookie)).json;
+    // Task 16d: an answer is described as partially checked, never with a blanket "passed".
+    expect(done).toMatchObject({ stage: 'done', checklist: { verified: 'partially_checked' }, result: { kind: 'answer' } });
+    if (done.result?.kind !== 'answer') throw new Error(`expected an answer, got ${done.result?.kind}`);
+    expect(done.checklist.interpretation).toEqual({ interpretations: done.result.interpretations, filters: done.result.filters });
+    expect(done.checklist.interpretation).toEqual(interpretation);
+  });
+
+  it('before its scope stage is done a step has none; a refinement then carries its own', async () => {
+    const scoping = gate();
+    const writing = gate();
+    const h = harness(
+      answering({
+        scope: [
+          { output: scopeOut({ filters: { injury: ['FATL'] } }) },
+          async () => {
+            await scoping.opened;
+            return { output: scopeOut() };
+          },
+        ],
+        compose: [
+          (input) => composition(input),
+          async (input) => {
+            await writing.opened;
+            return composition(input);
+          },
+        ],
+      }),
+    );
+    const first = await askAndWait(h);
+    const firstInterpretation = { interpretations: [DEFAULT_TIMING_CHIP], filters: { injury: ['FATL'] } };
+    expect(first.step.checklist.interpretation).toEqual(firstInterpretation);
+    advance(MIN);
+
+    // The refine request waits for its scope stage; the step is read meanwhile.
+    const refining = refine(h, first.briefId, first.cookie, { kind: 'interpretation', field: 'failure_type', value: 'total_power_loss' });
+    await until(() => h.llm.calls.filter((c) => c.stage === 'scope').length === 2);
+    for (const n of [2, undefined]) {
+      const scope = await read(h, first.briefId, first.cookie, n);
+      expect(scope.json).toMatchObject({ step: 2, steps: 2, stage: 'scope', finishedAt: null });
+      expect(scope.json.checklist).toEqual({});
+    }
+
+    scoping.open();
+    expect((await refining).json).toMatchObject({ kind: 'started', step: 2, stage: 'retrieve' });
+    await until(() => h.llm.calls.filter((c) => c.stage === 'compose').length === 2);
+    // The refinement's own readings (the reader's pick, pinned) and the filters it kept.
+    const interpretation = {
+      interpretations: [DEFAULT_TIMING_CHIP, { field: 'failure_type', value: 'total_power_loss', label: FAILURE_TYPE_LABELS.total_power_loss, pinned: true }],
+      filters: { injury: ['FATL'] },
+    };
+    const composing = await read(h, first.briefId, first.cookie, 2);
+    expect(composing.json).toMatchObject({ stage: 'compose', finishedAt: null });
+    expect(composing.json.checklist).toEqual({ question: 'in_scope', interpretation, searched: { cases: 4, passages: 8 } });
+    // The earlier step keeps its own.
+    expect((await read(h, first.briefId, first.cookie, 1)).json.checklist.interpretation).toEqual(firstInterpretation);
+
+    writing.open();
+    await h.svc.settled();
+    const done = (await read(h, first.briefId, first.cookie, 2)).json;
+    expect(done).toMatchObject({ stage: 'done', result: { kind: 'answer' } });
+    if (done.result?.kind !== 'answer') throw new Error(`expected an answer, got ${done.result?.kind}`);
+    expect(done.checklist.interpretation).toEqual({ interpretations: done.result.interpretations, filters: done.result.filters });
+    expect(done.checklist.interpretation).toEqual(interpretation);
+  });
+
+  it('a step cancelled or failed after its scope stage keeps them (Try again asks with those filters)', async () => {
+    const interpretation = { interpretations: [DEFAULT_TIMING_CHIP], filters: { injury: ['FATL'] } };
+    const script = answering({ scope: { output: scopeOut({ filters: { injury: ['FATL'] } }) } });
+    // Cancelled while searching.
+    const h = harness(script, { retriever: { hang: true }, timeouts: { retrieve: 20_000 } });
+    const started = await ask(h, 'Engine power loss shortly after maintenance');
+    const cookie = cookieOf(started.setCookie);
+    await until(() => h.retriever.queries.length === 1);
+    const searching = await read(h, started.json.briefId, cookie);
+    expect(searching.json).toMatchObject({ stage: 'retrieve', finishedAt: null });
+    expect(searching.json.checklist).toEqual({ question: 'in_scope', interpretation });
+    expect((await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie })).status).toBe(204);
+    await h.svc.settled();
+    const cancelled = (await read(h, started.json.briefId, cookie)).json;
+    expect(cancelled).toMatchObject({ stage: 'failed', result: { kind: 'cancelled' } });
+    expect(cancelled.checklist).toEqual({ question: 'in_scope', interpretation });
+
+    // Failed in retrieval.
+    const failing = harness(script, { retriever: { fail: { failure: new RetrievalFailure('failed', 'none'), afterEmbedding: true } } });
+    advance(MIN);
+    const failed = await askAndWait(failing, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect(failed.step).toMatchObject({ stage: 'failed', result: { kind: 'failed' } });
+    expect(failed.step.checklist).toEqual({ question: 'in_scope', interpretation });
+  });
+
+  it('a static reply or a failed scope stage has none', async () => {
+    const h = harness({
+      scope: [{ output: scopeOut({ intent: 'out_of_scope', mechanicalCause: false, keywordText: '', ambiguity: undefined }) }, { fail: 'refusal' }],
+    });
+    const reply = await ask(h, 'Write me a poem about the sea');
+    expect(reply.json).toMatchObject({ kind: 'scope_reply' });
+    const cookie = cookieOf(reply.setCookie);
+    await h.svc.settled();
+    const replied = (await read(h, reply.json.briefId, cookie)).json;
+    expect(replied).toMatchObject({ stage: 'done', result: { kind: 'scope_reply' } });
+    expect(replied.checklist).toEqual({});
+
+    advance(MIN);
+    const refused = await ask(h, 'Engine power loss shortly after maintenance', { cookie });
+    expect(refused.json).toMatchObject({ kind: 'started', stage: 'failed' });
+    await h.svc.settled();
+    const failed = (await read(h, refused.json.briefId, cookie)).json;
+    expect(failed).toMatchObject({ stage: 'failed', result: { kind: 'failed' } });
+    expect(failed.checklist).toEqual({});
+  });
+
+  it('a stored reading that would not render to the contract is left out, and the read still answers', async () => {
+    const h = harness(answering());
+    const first = await askAndWait(h);
+    const { reservation_id: reservation, billing_principal: billing } = (
+      await rows<{ reservation_id: number; billing_principal: string }>(
+        sql`SELECT reservation_id::int AS reservation_id, billing_principal FROM brief_steps WHERE brief_id = ${first.briefId}::uuid AND n = 1`,
+      )
+    )[0]!;
+    // A running step past its scope stage whose stored reading is out of the contract's range.
+    const request = JSON.stringify({ origin: 'text', question: 'q', refinement: 'r', readings: {} });
+    const checklist = JSON.stringify({ question: 'in_scope', searched: { cases: 4, passages: 8 } });
+    const intent = JSON.stringify({
+      intent: 'case_search',
+      mechanicalCause: true,
+      filters: {},
+      keywordText: 'k',
+      readings: { timingWindow: { value: { days: 0, flightHours: null }, pinned: false } },
+      caseNumbers: [],
+    });
+    await migrator.execute(sql`
+      INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, created_at, updated_at)
+      VALUES (${first.briefId}::uuid, 2, ${billing}, 'trial', ${reservation}, ${request}::jsonb, ${clock}, ${clock})`);
+    await appDb.execute(sql`
+      UPDATE brief_steps SET stage = 'compose', checklist = ${checklist}::jsonb, intent = ${intent}::jsonb
+      WHERE brief_id = ${first.briefId}::uuid AND n = 2`);
+    const r = await read(h, first.briefId, first.cookie, 2);
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ step: 2, stage: 'compose', finishedAt: null });
+    expect(r.json.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 } });
+  });
+});
+
 describe('storage', () => {
   it('the app role cannot update briefs or a step’s billing; finished steps are immutable; ingest sees nothing', async () => {
     const h = harness(answering());
@@ -1668,7 +1923,9 @@ describe('gate G6: evidence semantics through the routes', () => {
       passageIds: dfw.map((p) => p.passageId),
       absence: true,
     });
-    expect(checks[0]!.criteria).toEqual(['Timing: the event happened within 1 flight hour after the relevant maintenance.']);
+    // No criteria lines in the check input (Task 16d): the criterion claim states its own; each case has its server header.
+    expect(checks[0]!).not.toHaveProperty('criteria');
+    expect(checks[0]!.cases.map((c) => c.ntsbNo)).toContain('DFW08TA066');
     const meta = (await stepRow(briefId)).meta;
     expect(meta).toMatchObject({
       criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'unstated' }]),
@@ -1682,7 +1939,8 @@ describe('gate G6: evidence semantics through the routes', () => {
     });
     // Diagnostic only: still withheld, and no repair call was made.
     expect(h.llm.calls.map((c) => c.stage)).toEqual(['scope', 'compose', 'check']);
-    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted', 'chronology_missed'] } });
+    // In whole mode (the default until G6) anything removed withholds the summary.
+    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: expect.arrayContaining(['contradicted', 'chronology_missed', 'display_whole_brief']) } });
     expect(await reportOf(briefId)).toContain('chronology_missed: DFW08TA066 timing_window');
   });
 
@@ -1830,7 +2088,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(reading('NYC08LA106').timing).toEqual([]);
     expect(reading('NYC08LA106').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
     expect((await stepRow(briefId)).meta).toMatchObject({
-      criteriaRules: 'chronology-rules-v1',
+      criteriaRules: 'chronology-rules-v2',
       criteria: expect.arrayContaining([
         { ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'matches', rules: ['TW-I'] },
         { ntsbNo: 'NYC08LA106', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'other_anchor' },
@@ -1894,6 +2152,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     // A port reporting another chunker: no canonical row under it holds these passages.
     const fake = new FakeRetriever(appDb, { cases: SEEDS, served: servedContract });
     const other: EvidenceRetriever = {
+      version: fake.version,
       available: (d) => fake.available(d),
       retrieve: async (q, signal, onUsage) => ({ ...(await fake.retrieve(q, signal, onUsage)), chunkerVersion: 'chunk-other' }),
     };
@@ -2271,7 +2530,7 @@ describe('diagnosable withholding and model-call telemetry', () => {
     expect(d.claims![1]).toMatchObject({ id: 'C2', kind: 'summary', text: expect.stringContaining('Power was lost after maintenance') });
     expect(d.verdicts!.verdicts).toHaveLength(input.claims.length);
     expect(d.verdicts!.quotes).toEqual([{ claim: 'C2', passage: input.claims[1]!.passageIds[0], text: quoted }]);
-    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted'] } });
+    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: expect.arrayContaining(['contradicted', 'display_whole_brief']) } });
     const report = await reportOf(briefId);
     expect(report).toContain('contradicted at C2 (summary');
     expect(report).toContain(`claim: ${JSON.stringify(d.claims![1]!.text)}`);
@@ -2309,7 +2568,8 @@ describe('diagnosable withholding and model-call telemetry', () => {
       const { briefId, step } = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
       expect(step.result, code).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
       expect((await stepRow(briefId)).meta.check, code).toMatchObject({ supported: false, codes: [code] });
-      expect(finishedLine(h), code).toMatchObject({ withheld: { reason: 'evidence_check', codes: [code] } });
+      // A structurally unusable output withholds everything (`check_structural`); a rejected claim, in whole mode, the summary.
+      expect(finishedLine(h), code).toMatchObject({ withheld: { reason: 'evidence_check', codes: expect.arrayContaining([code, code.startsWith('check_') ? 'check_structural' : 'display_whole_brief']) } });
       advance(MIN);
     }
     // Each was one check call; nothing was retried or repaired.
@@ -2699,6 +2959,138 @@ describe('admission: the paced daily budget and other checks before spend', () =
     const r = await refine(h, first.briefId, first.cookie, { kind: 'text', text: 'Only airplanes' });
     expect([r.status, (r.json as unknown as { error: string }).error]).toEqual([503, 'unavailable']);
     expect(h.sv.calls.length).toBe(calls);
+  });
+});
+
+describe('claim-level display (Task 16d, display-deps-v1): one projection for every surface', () => {
+  /** Distinctive texts the checker will reject, so their absence can be searched for. */
+  const REJECTED = {
+    sentence: 'Rejected sentence about the defect case',
+    why: 'Rejected why line about the defect case',
+    gap: 'Rejected gap note about the defect case',
+  };
+  /** MIA08LA156's summary sentence and why line, rejected by the checker; DEN08LA103 gets a gap note it rejects too. */
+  const partial = (input: ComposeInput) =>
+    composition(input, (c) => {
+      c.summary = c.cases
+        .map((k) => (k.ntsbNo === 'MIA08LA156' ? `${REJECTED.sentence} [[case:MIA08LA156]].` : `Power was lost after maintenance [[case:${k.ntsbNo}]].`))
+        .join(' ');
+      const mia = c.cases.find((k) => k.ntsbNo === 'MIA08LA156')!;
+      mia.why = `${REJECTED.why}.`;
+      const den = input.cases.find((k) => k.ntsbNo === 'DEN08LA103')!;
+      c.gaps = [{ ntsbNo: 'DEN08LA103', note: `${REJECTED.gap}.`, passageIds: [den.passages[0]!.passageId] }];
+    });
+  const rejecting = (input: CheckInput) =>
+    verdicts(input, (claim) => (Object.values(REJECTED).some((t) => claim.text.includes(t)) ? 'not_established' : 'supported'));
+  const absent = (json: unknown) => {
+    const text = JSON.stringify(json);
+    for (const t of Object.values(REJECTED)) expect(text).not.toContain(t);
+  };
+
+  it('removed statements are absent from the step response, the case contexts, the stored step and any later prompt; the raw stays in the diagnostics', async () => {
+    const h = harness(answering({ compose: (input) => partial(input), check: rejecting }), { displayMode: 'claims' });
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    // GET /api/briefs/:id: the removed sentence is a marker, the defect case a plain card that says what was not verified.
+    absent(step);
+    expect(step.checklist.verified).toBe('partially_checked');
+    expect(result.summary.filter((s) => s.kind === 'removed')).toEqual([{ kind: 'removed', count: 1 }]);
+    const mia = result.cases.find((c) => c.case.ntsbNo === 'MIA08LA156')!;
+    expect(mia.reading).toBeNull();
+    expect(mia.notVerified).toEqual(expect.arrayContaining(['why']));
+    expect(result.groups.flatMap((g) => g.caseNumbers)).not.toContain('MIA08LA156');
+    expect(result.gaps).toEqual([]);
+    expect(result.check).toMatchObject({ status: 'partially_checked', removed: { summary: 1, why: 1, gap: 1 } });
+    expect(result.cases.filter((c) => c.reading !== null).map((c) => c.case.ntsbNo)).toEqual(['DFW08TA066', 'DEN08LA103', 'NYC08LA106']);
+    // Every step read (the latest and by number), every case context: nothing rejected.
+    absent((await read(h, briefId, cookie, 1)).json);
+    for (const n of SEEDS) {
+      const ctx = await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/${n}`, { cookie });
+      expect(ctx.status, n).toBe(200);
+      absent(ctx.json);
+      const parsed = CaseContextResponseSchema.parse(ctx.json);
+      if (n === 'MIA08LA156') expect(parsed).toMatchObject({ reading: null, lines: [] });
+    }
+    // The stored step (result, evidence, meta) holds none of it; the diagnostics column keeps the raw for developers.
+    const row = await rows<{ result: unknown; evidence: unknown; meta: Record<string, unknown>; diagnostics: StepDiagnostics | null }>(
+      sql`SELECT result, evidence, meta, diagnostics FROM brief_steps WHERE brief_id = ${briefId}::uuid`,
+    );
+    absent({ result: row[0]!.result, evidence: row[0]!.evidence, meta: row[0]!.meta });
+    expect(row[0]!.meta).toMatchObject({
+      display: { rules: 'display-deps-v1', mode: 'claims', shown: true, removedKeys: expect.arrayContaining([{ key: 'summary.2', cause: 'not_established' }, { key: 'case.MIA08LA156.why', cause: 'not_established' }]) },
+    });
+    expect(row[0]!.diagnostics).toMatchObject({ reason: 'partial_display' });
+    expect(JSON.stringify(row[0]!.diagnostics)).toContain(REJECTED.why);
+    expect(await reportOf(briefId)).toContain('removed case.MIA08LA156.why: not_established');
+    // A refinement reads the brief's request and intent, never an answer: the scope and compose inputs it builds from the
+    // earlier step hold nothing rejected (its own new composition is checked and projected again).
+    const before = h.llm.calls.length;
+    const refined = await refine(h, briefId, cookie, { kind: 'text', text: 'Only the defect cases' });
+    expect(refined.status).toBeLessThan(300);
+    await h.svc.settled();
+    const later = h.llm.calls.slice(before).filter((c) => c.stage === 'scope' || c.stage === 'compose');
+    expect(later.map((c) => c.stage)).toEqual(['scope', 'compose']);
+    for (const call of later) absent(call.input);
+  });
+
+  it('decisions never promote: 2 days and 40 days against 30 days stays unconfirmed when the 40-day fact is removed; a removed fact downgrades a match', async () => {
+    const probe = (input: ComposeInput) =>
+      composition(input, (c) => {
+        const dfw = input.cases.find((k) => k.ntsbNo === 'DFW08TA066')!;
+        const nyc = input.cases.find((k) => k.ntsbNo === 'NYC08LA106')!;
+        c.cases.find((k) => k.ntsbNo === 'DFW08TA066')!.chronology = {
+          maintenance: 'the engine replacement',
+          facts: [
+            { anchor: 'relevant_maintenance', relation: 'calendar_days', value: 2, bound: 'exact', passageIds: [dfw.passages[0]!.passageId] },
+            { anchor: 'relevant_maintenance', relation: 'calendar_days', value: 40, bound: 'exact', passageIds: [dfw.passages[0]!.passageId] },
+          ],
+        };
+        c.cases.find((k) => k.ntsbNo === 'NYC08LA106')!.chronology = chronologyOf('the fuel pump installation', nyc.passages[0]!.passageId, { relation: 'previous_day' });
+      });
+    const check = (input: CheckInput) =>
+      verdicts(input, (claim) => (claim.kind === 'timing' && (claim.text.includes('40 calendar days') || claim.text.includes('the fuel pump installation')) ? 'not_established' : 'supported'));
+    const h = harness(answering({ compose: (input) => probe(input), check }), { displayMode: 'claims' });
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    // Decided once, before the check: DFW's conflict is unknown, NYC's previous day matches.
+    expect((await stepRow(briefId)).meta).toMatchObject({
+      criteria: expect.arrayContaining([
+        { ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'conflict' },
+        { ntsbNo: 'NYC08LA106', criterion: 'timing_window', decision: 'matches', rules: ['TW-C'] },
+      ]),
+    });
+    const reading = (n: string) => result.cases.find((c) => c.case.ntsbNo === n)!.reading!;
+    // Neither becomes a match once its fact is gone: both are shown unconfirmed and not verified.
+    expect(reading('DFW08TA066').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed', notVerified: true }]);
+    expect(reading('NYC08LA106').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed', notVerified: true }]);
+    expect(reading('DFW08TA066').timing.map((t) => t.label)).toEqual(['2 DAYS']);
+    // The summary flags them UNCONFIRMED from the projection.
+    for (const s of result.summary) if (s.kind === 'case' && (s.ntsbNo === 'DFW08TA066' || s.ntsbNo === 'NYC08LA106')) expect(s.unconfirmed).toBe(true);
+    const ctx = CaseContextResponseSchema.parse((await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/NYC08LA106`, { cookie })).json);
+    expect(ctx.lines.filter((l) => l.label === 'CRITERIA')).toEqual([{ label: 'CRITERIA', text: 'Not verified: the check could not confirm this against the cited passages', passageIds: [] }]);
+    expect(ctx.lines).toContainEqual({ label: 'TIMING', text: 'Not verified: the check could not confirm this against the cited passages', passageIds: [] });
+    expect(JSON.stringify(step)).not.toContain('PREVIOUS DAY');
+  });
+
+  it('whole mode (the default until G6) withholds the same brief, and two contradictions withhold it in claims mode too', async () => {
+    const whole = harness(answering({ compose: (input) => partial(input), check: rejecting }));
+    const w = await askAndWait(whole);
+    expect(w.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    expect(w.step.checklist.verified).toBe('withheld');
+    absent(w.step);
+    expect(finishedLine(whole)).toMatchObject({ withheld: { codes: expect.arrayContaining(['not_established', 'display_whole_brief']) } });
+    const twice = harness(
+      answering({
+        check: (input) => verdicts(input, (claim) => (claim.kind === 'symptom' && (claim.ntsbNo === 'DFW08TA066' || claim.ntsbNo === 'DEN08LA103') ? 'contradicted' : 'supported')),
+      }),
+      { displayMode: 'claims' },
+    );
+    const t = await askAndWait(twice);
+    expect(t.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    expect(finishedLine(twice)).toMatchObject({ withheld: { codes: expect.arrayContaining(['contradicted', 'display_contradictions']) } });
+    expect((await stepRow(t.briefId)).meta).toMatchObject({ display: { mode: 'claims', shown: false, withheld: ['display_contradictions'], contradictions: 2 } });
   });
 });
 

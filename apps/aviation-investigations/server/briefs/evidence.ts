@@ -22,6 +22,7 @@
  */
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { ReportLink } from '../../shared/contracts/cases.js';
+import type { RetrievalVersion } from '../../shared/contracts/retrieval.js';
 import type { CaseRow, SectionKind } from '../../shared/contracts/search.js';
 import type { CanonicalPassage } from './validate.js';
 
@@ -91,6 +92,17 @@ export interface EvidenceBundle {
 export interface RetrievedEvidence {
   bundle: EvidenceBundle;
   /**
+   * A case-level retrieval version: how many of the leading candidate cases no passage
+   * channel returned were mapped to their own passages, and how many could not be (they
+   * are never packed). Null for a passage-level version. Counts only.
+   */
+  mapping: { mapped: number; unmapped: number } | null;
+  /**
+   * The cases index the bundle's cases channel read (name and `_meta` version), for the
+   * step's private metadata; null for a passage-level version.
+   */
+  casesIndex: { name: string; version: string } | null;
+  /**
    * The chunker version of the served index's passages contract (the contract
    * `assertServablePassagesIndex` matched, v1 or v2): the canonical `passages` rows the
    * pipeline checks the bundle against are read under it.
@@ -105,6 +117,8 @@ export type RetrievalFailureKind = 'unavailable' | 'timeout' | 'failed';
 /** Why retrieval failed, as a fixed category for the step's record (never an error message). */
 export type RetrievalFailureReason =
   | 'no_passages_index'
+  | 'no_cases_index'
+  | 'cases_index_lookup'
   | 'index_mismatch'
   | 'aborted'
   | 'query_too_long'
@@ -133,7 +147,9 @@ export class RetrievalFailure extends Error {
 }
 
 export interface EvidenceRetriever {
-  /** Whether the dataset can serve evidence: a published, compatible passages index. */
+  /** The frozen retrieval configuration it runs (`AVIATION_RETRIEVAL_VERSION`); recorded with every step. */
+  readonly version: RetrievalVersion;
+  /** Whether the dataset can serve evidence: a published, compatible passages index (and, for a version with the cases channel, the paired cases index). */
   available(dataset: { generationId: number; passagesIndex: string | null }): Promise<boolean>;
   /**
    * Retrieve one bundle. Calls `onEmbeddingUsage` once, as soon as the query embedding

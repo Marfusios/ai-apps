@@ -169,6 +169,16 @@ pnpm worker brief-diagnose <brief-id> [--step <n>] [--include-expired]  # why a 
 instead: the briefs and control tables are the app's, and `aviation_ingest` cannot
 read them.
 
+**Connection timeouts** (`server/db/client.ts`). Every PostgreSQL pool and client the
+app, the worker and the tools open has a finite connect timeout. For a pool it bounds
+both opening a connection (an attempt that stalls in the handshake is cut off and its
+slot freed) and waiting for a free one (the acquisition fails, also while the pool shuts
+down), so a server that accepts TCP and never answers cannot hold a slot, the queue or
+`pool.end()`. It is 5 s for the API's pool, every tool's pool and every single client
+(migrations, provisioning, the evaluation readers), and 120 s for the worker's pools,
+whose long locks and snapshot streams are sized never to queue an acquisition.
+Request-path reads keep their own, shorter bound (the cases index lookup: 2 s).
+
 - **Dataset generations.** Every load writes a new generation in one transaction:
   it inserts the generation as `loading`, inserts every row, records its ingestion
   run as `succeeded` and seals the generation (`loaded`) before committing. A
@@ -414,6 +424,23 @@ none or when the index breaks the passages contract
 dataset loader use). The contract is checked before the query is embedded, within
 the request's deadline. There is no keyword-only fallback for AI answers.
 
+**Retrieval versions** (task 10e, `server/search/retrieval-config.ts`). How retrieval
+works is one frozen configuration per version, chosen by `AVIATION_RETRIEVAL_VERSION`
+(empty: `retrieval.v2`), logged at start, recorded in every brief step's
+`meta.retrievalVersion` and on its `brief.retrieve` span, and named (with the
+configuration's sha256) in evaluation reports. Index mappings do not depend on it.
+
+| Version | What it does | Status |
+| --- | --- | --- |
+| `retrieval.v1` | passage BM25 and passage kNN, 50 passages each (kNN `num_candidates` 200), passage-level fusion, cases at their best passage | the rollback: the behaviour before task 10e |
+| `retrieval.v2` | passage BM25 (200), passage kNN (200, `num_candidates` 800) and BM25 over the cases index's narratives (200 cases), fused at case level; cases no passage channel returned are mapped to their own passages | the default (task 10d's `c200+n-kt`) |
+| `retrieval.v2-nf` | `retrieval.v2` with `findings_text` in the cases channel | experimental: `dev` only, `live` refuses it |
+
+Every version searches the scope stage's keyword text with BM25 and embeds the
+question (with the text refinement in effect); packing is the same. The bullets below
+describe `retrieval.v1`'s stage 1 and both versions' filter and packing; the
+case-level stage 1 follows them.
+
 - **One filter.** `compileFilters` (in `server/search/filters.ts`, the compiler
   keyword search uses too) always adds `country: USA` and `answer_eligible: true`.
   With any aircraft facet the aircraft clause depends on the index version, which
@@ -443,6 +470,51 @@ the request's deadline. There is no keyword-only fallback for AI answers.
   4 × k) each return `perChannel` passages (50 live; the evaluation also runs 100).
   Reciprocal rank fusion in TypeScript (`sum 1/(60 + rank)`) and deduplication to
   cases at their best passage give the case ranking.
+- **Stage 1 under `retrieval.v2`** (`server/search/case-retrieval.ts`). Both index
+  contracts are checked before anything is embedded: the passages contract, and the
+  cases index the manifest of the brief's generation pairs with its passages index
+  (same generation, and `cases-v3`, the version the validation covered; `cases-v2`
+  makes AI retrieval unavailable). The manifest lookup is a bounded read
+  (`server/db/bounded-read.ts`: acquisition and statement within the retrieval's
+  lookup bound and its cancel, a server-side `statement_timeout`, and a connection that
+  may still run a statement is destroyed, never returned to the pool); a lookup that
+  fails or times out fails retrieval (`cases_index_lookup`) before anything is
+  embedded. The step records the cases index it read (name and version) in its private
+  `meta.retrieval`. The query embedding, passage BM25 and the cases channel start
+  together; kNN starts when the vector arrives. A failed
+  search aborts the other searches but never the paid embedding, which is awaited and
+  settled exactly once before retrieval fails; a failed or incomplete channel always
+  fails retrieval (no bundle from the other channels).
+  - **The cases channel** (`server/search/cases-channel.ts`) is BM25 over
+    `probable_cause`, `analysis` and `factual` of the cases index. Its filter reaches
+    exactly the cases the passages filter can (US, answer-eligible, with aircraft
+    rows; event facets and years as the passages compiler emits them; the passages
+    contract's aircraft semantics on the nested `aircraft`, never keyword search's
+    "some aircraft matches"). It only nominates cases: its hits carry no text. A case
+    scores by its best single field (`best_fields`).
+  - **Cutoffs.** Both BM25 channels sort by `_score`, then `passage_id` or `ntsb_no`,
+    inside Elasticsearch, so equal scores at the 200th place are decided by the id
+    while the top 200 are collected, not by Lucene's document order. kNN is
+    approximate discovery: its set and scores belong to one index state (HNSW, int8
+    quantization per segment), and no sort applies to it.
+  - **Fusion** (`server/search/case-fusion.ts`): each channel's returned hits in a
+    total order (score, then id), collapsed to unique cases, then reciprocal rank
+    fusion over the case lists, compared as exact fractions, with a total tie order
+    (best rank, the ranks channel by channel, the case number). Each case's passages
+    follow exact passage-level fusion of the two passage lists. Fusion is exact over
+    what the channels returned; with the kNN's approximation it is reproducible for one
+    index state, not across rebuilds.
+  - **Mapping** (`server/search/case-mapping.ts`): each of the leading 12 cases that
+    no passage channel returned gets its best 3 passages by the same in-memory query
+    vector, under the passages filter, case by case: the count `n` of its passages
+    first, then an exact kNN that returns all `n` (`k` = `num_candidates` = `n`), cut
+    to the best 3 by score, then passage id. An answer that is not exactly those `n`
+    passages of that case, each once and scored, fails the whole retrieval
+    (`IncompleteSearchError('mapping')`); the first failed mapping request cancels the
+    others. A case is reported unmapped, and never packed, only when it has no
+    passages under the filter (`no_passages`) or more than 1,000, the mapping-size
+    limit (`too_many_passages`; the largest `dev` case holds 63). A re-pack reuses the
+    mapped candidates: nothing is embedded or mapped twice.
 - **Stage 2, packing** (`server/search/evidence.ts`). At most 6 cases, 12 passages,
   3 passages per case and 10,000 passage-text tokens. Each selected case first
   reserves its justification: its best retrieved passage and every probable-cause
@@ -571,6 +643,14 @@ default configuration sends exactly the production request bodies. Runs are read
 against the target (the ledger records paid calls), refuse a target or dataset other
 than the frozen one, and write their reports to `--out-dir`.
 
+The experiments' `applyRule` ranks qualifying variants by the improvement on each
+variant's own declared target metric (task 10e); phase A's variants all declared
+narrow Recall@20, so its selection is unchanged. Case-level fusion in the experiments
+uses production's comparator (`exactRrf`: exact fractions, the same total tie order),
+with fractional channel weights scaled to integers (at most six decimals), so a
+variant orders tied cases exactly as the adopted code would; a case-level variant
+needs an integer RRF constant.
+
 ```sh
 pnpm eval:retrieval:experiments preflight                  # free: target, contract, frozen identity, labels re-derived, filter consistency
 pnpm eval:retrieval:experiments scope                      # free dry run: scope-stage input tokens and reservations per question
@@ -581,6 +661,34 @@ pnpm eval:retrieval:experiments holdout --dev-results <file> --confirm-cost     
 
 `--keys-file <file>` reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from a dotenv
 file and never replaces a nonempty process value.
+
+**Adoption validation** (`evals/retrieval/adoption/`, task 10e). `retrieval.v2` (and the
+experimental `retrieval.v2-nf`) against `retrieval.v1` through the production stages,
+on phase A's frozen target and the coded development questions only, with phase A's
+cached scope samples: identical keyword texts, filters and query vectors for every
+arm, under the evaluation filters and under the scope stage's own filters as the
+pipeline resolves them. It reports narrow Recall@20 and broad P@6/nDCG@6 with paired
+group-bootstrap intervals, per-question changes, delivered coded cases by the channels
+that brought them, and the regression cases (`REGRESSION_CASES`). `load` measures
+p50/p95/p99 over individual requests through the production binding at up to 8
+concurrent requests, with a cold pass, cancellations, injected search failures while
+the embedding is in flight and the mapping at its bound. Read-only; the only paid
+step is one embedding per question (refused above $0.10 in all), and `dev --vectors
+<file>` reuses the query vectors an earlier run saved (no paid call). Both reports
+name the target they read (generation, both indexes with version and fingerprint).
+The load test's limits: the arms run in consecutive blocks per concurrency, not
+interleaved, so cluster noise during one block is attributed to its arm; "cold" is the
+first pass of a fresh process, each distinct request once, with the remembered index
+checks forgotten once per arm (only an arm's first request checks the indexes cold;
+Elasticsearch's and the OS caches stay warm); and no measured request tail includes a
+mapping (the dev questions never map; the mapping at its bound is timed apart).
+
+```sh
+pnpm eval:retrieval:adoption preflight --scope-samples <phase A dev scope file>             # free: target, labels, filter parity
+pnpm eval:retrieval:adoption dev --scope-samples <file> [--phase-a <dev run>] --confirm-cost # embed (about $0.00001), run every arm
+pnpm eval:retrieval:adoption dev --scope-samples <file> --vectors <file from dev>          # free: the saved vectors again
+pnpm eval:retrieval:adoption load --scope-samples <file> --vectors <file from dev> [--embed-delay-ms 200]
+```
 
 **Narrative-relevance track** (Track N of the task 10c protocol, `evals/retrieval/narrative/`).
 It measures what the codes cannot express: negation, maintenance chronology, causal
@@ -707,59 +815,84 @@ and the cache go to `--out-dir` (default `data/work/narrative`).
 
 ### Checker calibration
 
-`evals/checker/` calibrates the evidence checker (Task 16c, gate G6): which model,
-thinking and prompt judge claims well enough to show a summary. Every check input is
-rendered by the production code from real retrieval bundles, so the checker reads what
-it reads in a brief.
+`evals/checker/` calibrates the evidence checker (Tasks 16c and 16d, gate G6): which model,
+thinking and prompt judge claims well enough to show a summary, and, since Task 16d, what
+the display projection would show with that judgement. Every check input is rendered by
+the production code from real retrieval bundles, so the checker reads what it reads in a
+brief.
 
 ```sh
-pnpm eval:checker retrieve                    # plan only; --confirm-cost embeds 9 questions (about $0.000005) and writes evidence.json
-pnpm eval:checker build                       # evidence.json + items/ → dataset.json (labels hashed); --check compares instead
-pnpm eval:checker inventory --config haiku-think --split dev   # free: provider token counts, expected and worst-case cost
-pnpm eval:checker run --config haiku-think --split dev --confirm-cost   # paid, on the evaluation ledger
-pnpm eval:checker select data/work/checker/*-dev-*.summary.json        # the frozen selection rule → selection.json
+pnpm eval:checker retrieve --questions 16d    # plan only; --confirm-cost embeds the 17 Task 16d questions and writes evidence-16d.json
+pnpm eval:checker headers                     # free: the case header of every calibration case (read-only), into evidence-16d.json
+pnpm eval:checker build                       # evidence + items → dataset.v2.json (labels hashed per split); --check compares instead
+pnpm eval:checker simulate                    # free: the 16c recordings through the display projection → results/16d-simulation.json
+pnpm eval:checker inventory --candidate haiku-think-v8 --split dev   # free: provider token counts, expected and worst-case cost
+pnpm eval:checker run --candidate haiku-think-v8 --split dev --confirm-cost   # paid, on the evaluation ledger
+pnpm eval:checker select data/work/checker/dev-*.summary.json        # the frozen selection rule → selection.v2.json
 ```
 
 All take `--env-files a,b` and `--keys-file <file>` (only `ANTHROPIC_API_KEY` and
-`OPENAI_API_KEY` are read from it, never over a nonempty process value). A run reserves
-each call's worst case on the evaluation ledger (`DATABASE_INGEST_URL`), settles it,
-appends it to `data/work/checker/spend.jsonl` and stops before a call that would take the
-logged total above `CALIBRATION_LIMIT_USD` ($3); trials and a counts-only summary go to
-`data/work/checker/`, and `--resume <trials.jsonl>` continues a run a crash interrupted.
-The held-out split runs once, for the configuration frozen in `selection.json`.
+`OPENAI_API_KEY` are read from it, never over a nonempty process value). A run is bound
+to a manifest (`manifest.ts`: the candidate's complete configuration, the dataset and
+label hashes and the planned slots), reserves each call's worst case on the evaluation
+ledger (`DATABASE_INGEST_URL`), settles it, appends it to
+`data/work/checker/spend-16d.jsonl`, and stops before a call that would take the logged
+total above `BUDGET_V2_USD` ($1.50); `--resume <manifest>` continues only an identical
+run. The candidates run the production adapter with the production caps, call timeout
+and maximum claim count (a call that runs out of time is a failed call, as in
+production). The held-out split runs once, for the candidate frozen in
+`selection.v2.json`, and a unit test holds production to that selection.
 
-- **Evidence** (`evidence.json`): nine real hybrid-retrieval bundles from the served
-  passages index, verified like a brief's (`verifyBundle`); five development and four
-  held-out bundles, split by case (no case in both).
-- **Items** (`items/`): the first paid brief's 35 claims, verbatim, as regressions
-  (`paid-run.ts`; the six known critical errors marked); controls by family and mutation
-  (`dev.ts`, `holdout.ts`: negations, the wrong aircraft in multi-aircraft events, hours
-  and days, before and after, wrong anchors, "the day before" as 24 hours, the first
-  flight as a window, causal overstatement, unsupported additions, compound claims,
-  correct statements with the wrong citation, misleading and context-losing excerpts, the
-  wrong speaker or actor); and complete briefs (`briefs.ts`), each wholly supported, with
-  reading variants and with exactly one known error (an edit the builder proves changes
-  exactly one rendered claim). 51 check inputs, 487 distinct claims over 46 cases.
-- **Labels** are `constructed` (by how a claim was made, checked against the complete
-  supplied passages) or `model-reviewed`; none is expert ground truth, and three
-  unresolved ones are `unknown` and count nowhere. `labels.sha256` froze them before any
-  checker output was compared; `protocol.ts` froze the configurations, trials, targets and
-  selection rule with them.
-- **Figures** (`metrics.ts`, judged by the production `judgeCheck`): whole-brief false
-  withholding on wholly supported briefs (target at most 10%), detection per family
-  (timing, attribution, contradiction, unsupported addition; at least 95%), critical
-  regressions withheld in every trial, false flags by claim kind, `chronology_missed`,
-  cost and latency, with Wilson 95% intervals. Run summaries are in
+- **Protocol** (`protocol.v2.ts`, committed before any paid 16d call): the complete
+  candidate definitions (model, thinking, effort, prompt and its hash, output schema and
+  its hash, caps, timeout, maximum claims), the trials per batch, the targets and the
+  selection code. `protocol.ts` and `v1.ts` keep 16c's protocol and selection as the
+  record.
+- **Dataset v2** (`dataset.v2.json`; `dataset.json` stays the frozen 16c set): both 16c
+  splits are development now, with the labels corrected in `labels.v2.ts` (each with its
+  reason), the 16d context-loss regressions (`items/v2-dev.ts`) and three maximum-size
+  inputs (60 claims, for latency and caps, kept out of the accuracy figures). The
+  held-out split is new (`items/v2-holdout.ts`, `evidence-16d.json`): nine bundles whose
+  cases are in neither 16c split, each with a brief as compose.v7 would write it, one-error
+  and mixed-error variants, reading variants and a claim batch; every critical timing
+  mutation is in at least two bundles. Labels are `constructed` or `model-reviewed`, never
+  expert ground truth; a claim review cannot settle is `unknown`, and a brief with one is
+  never wholly supported. `retrieve` runs the configured retrieval version
+  (`AVIATION_RETRIEVAL_VERSION`) and records it in `source.retrievalVersion`; both
+  committed evidence files predate retrieval versions and were retrieved under
+  `retrieval.v1`.
+- **Figures** (`metrics.ts`). Verdicts: semantic detection per family (failed calls
+  apart, as blocked output, never as detections), false flags by claim kind, critical
+  regressions, `chronology_missed`. Display, through the production projection
+  (`display-deps-v1`, `claims` mode, and `whole` for comparison): M1 supported claims
+  shown, M2 wholly supported briefs shown with minimum useful content, M3 error claims
+  shown per family, M4 error briefs showing an error, M5 dependency violations, and the
+  exposure figures. Intervals are clustered by source bundle. Latency and output size
+  are reported by claim count and for the maximum-size inputs. Run summaries are in
   `evals/checker/results/`.
 
-**Result** (2026-10-23, $1.98 of the $3 limit): no configuration met every target. Eight
-development runs (Haiku 5.5 without thinking, with adaptive thinking, and Sonnet 5.5
+**Task 16c result** (2026-10-23, $1.98 of its $3 limit): no configuration met every target.
+Eight development runs (Haiku 5.5 without thinking, with adaptive thinking, and Sonnet 5.5
 without thinking; prompts `check.v4` to `check.v6`) went through the fallback order, which
-froze Haiku 5.5 with adaptive thinking on `check.v5` (every critical regression and all 92
-development errors withheld; 7 of 21 supported-brief trials withheld). The held-out split
-did not confirm it: 17 of 21 supported-brief trials withheld (81%), detection 81 of 86
-(attribution 15 of 18). Production runs that configuration; most summaries will be
-withheld until a better checker passes the gate (DESIGN §12).
+froze Haiku 5.5 with adaptive thinking on `check.v5`: every critical regression withheld,
+and 91 of the 91 development errors it judged detected (the published "92 of 92" counted
+one more error claim whose call failed: blocked output, not a detection; 16c review I2); 7
+of 21 supported-brief trials withheld. The held-out split did not confirm it: 17 of 21
+supported-brief trials withheld (81%), detection 81 of 86 (attribution 15 of 18).
+
+**Task 16d result** (2026-10-23, $0.76 of its $1.50 limit; summaries in
+`evals/checker/results/16d-*.json`): the checker measured through the display projection
+(`display-deps-v1`, claim-level display). Neither development candidate (Haiku 5.5 with adaptive
+thinking on `check.v7`, then on `check.v8`) met every target, and the pre-registered fallback
+froze `haiku-think-v8`, which production runs: in development it showed 19 of 21 supported-brief
+trials (12 of 21 under the whole-brief rule), 82.2% of their supported claims, one of 11 critical
+regressions, no error in 30 error briefs and no unsupported claim among 1,244 shown. The held-out
+pilot (nine new bundles, 123 calls, run once) is inconclusive by design and is not a pass: 32 of
+39 supported-brief trials shown (22 under the whole-brief rule), 74.5% of their supported claims,
+2 of 171 errors shown (both critical context-losing excerpts; every timing error withheld), 2 of
+75 error briefs showing an error, 2 unsupported claims among 1,961 shown; p50 15.7 s, p95 23.3 s.
+Production keeps whole-brief display (`AI_PARTIAL_DISPLAY` off) until gate G6 reviews these
+results (DESIGN §12).
 
 ### Web client
 
@@ -772,12 +905,58 @@ breakpoints. Components never use raw colours.
 
 Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with facet
 counts, the case drawer and the compare tray), the full case page and Compare
-(flight strips with NTSB columns, "Same in all", sort and Print for class), plus
-About and Privacy. They show NTSB data only; Ask AI is present but disabled until
-briefs arrive. View state is in the URL: the search keys of `SearchRequest`
-(`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`, `sort`, `page`), the
-open case (`case`) and the compare selection (`cases`). Phones get a "Filters (n)"
-sheet, a full-screen case sheet and a compare bar.
+(flight strips with NTSB columns, "Same in all", sort and Print for class), the AI
+brief (`/briefs/:id`), plus About and Privacy. View state is in the URL: the search
+keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`,
+`sort`, `page`), the open case (`case`), the compare selection (`cases`) and, for
+briefs, the step (`step`) and the brief a case or compare page was opened from
+(`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
+compare bar.
+
+The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
+
+- **Ask AI and the counter** read `GET /api/ai/status` before anyone clicks ("Ask AI ·
+  3 free", "AI searches left: 2 of 3", "AI back tomorrow"). Ask AI needs a click or
+  Ctrl/Cmd+Enter; Enter runs the free Search.
+- **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from
+  a new widget, which is removed as soon as its token is taken. Each request holds a
+  check session: a second control waits its turn ("Checking…"), and ending one session
+  never cancels another. The first request of a trial identity (`started: false`) shows
+  "Quick check before your first AI search"; later ones run invisibly while the button
+  reads "Checking…". When no answer comes back (a network or server error), the notice
+  does not claim the search was free, and Try again replays the same request under the
+  same idempotency key; if that replay is a 409 `conflict` (the earlier attempt never
+  completed), it is sent once more under a new key. The key is kept until a 2xx or that
+  409 settles it: a refused retry (a failed or cancelled check, a paused or used-up status,
+  a known refusal of the replay) leaves it for the next ask. Such keys are kept for the
+  tab (`web/src/features/ai/unsettled.ts`: `sessionStorage`, or memory when storage is
+  unavailable) under a hash of the normalised request (question and canonical filters, or
+  brief and change), so the same request from any page or control replays them; they
+  expire after 24 hours, with the server's idempotency record. A 503 `unavailable` or `ai_paused`
+  released the admission and spent nothing: the paused copy shows, and the next ask uses
+  a new key. The site key comes from `/api/config`, and Cloudflare's script loads only
+  when an AI request needs it. The server's Content-Security-Policy allows
+  `https://challenges.cloudflare.com` as a script and frame source whenever anonymous
+  AI is configured (see "Security headers" under API server).
+- **The brief page** polls the running step once a second and shows the answer
+  checklist (completions announced politely, once each). Polling stops on a 404 (the
+  expired view never polls) or another refusal, waits for `Retry-After` on a 429, and
+  backs off exponentially (up to 30 s) after other failures. The chips stay on top
+  while a step runs: the scope stage's `checklist.interpretation` once it is sent,
+  else, for a refinement, the previous step's. Then the briefing sheet:
+  the AI summary with case citations, evidence groups, case cards with WHY IT
+  MATCHED, timing chips and UNCONFIRMED labels, gap notes, the step switcher and
+  REFINE. Two citations in a row are separated ("DFW08TA066, MIA08LA156"). In a
+  multi-aircraft event, cards, the drawer and compare say whose evidence it is: an
+  aircraft, or the event narrative, which is never attributed to one aircraft.
+  Withheld summaries, the explicit abstention, scope replies, failures and
+  cancels use the server's or UI_DESIGN's copy. Every control that runs the AI on a
+  brief says "· uses 1" before the click.
+- **AI context** for a case (the drawer, the case page, compare's AI columns) comes
+  only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, never merged into the
+  public case data. A citation opens the drawer at the cited passage, with the quoted
+  spans highlighted from their UTF-16 offsets; all AI and NTSB text is rendered as
+  text.
 
 ```sh
 pnpm dev:web          # Vite dev server; /api is proxied to the API server
@@ -808,17 +987,27 @@ simple stand-in for the analyzer.
 `web/src/mocks/handlers.ts` serves it through MSW, in the dev mock mode and in tests;
 production builds contain no mock code. `GET /api/ai/status` answers one of the
 hand-written samples in `web/mock/ai-status.ts` (a fresh anonymous visitor by
-default; `createHandlers({ aiStatus })` picks another). The brief routes are answered by
+default; `createHandlers({ aiStatus })` picks another) and changes like the server's:
+the trial is `started` after the first accepted request, a running search uses one, and
+an anonymous request without a Turnstile token is refused. `/api/config` offers
+Cloudflare's documented always-passing test site key. The brief routes are answered by
 `web/mock/briefs.ts`: an in-memory brief server with hand-written readings of the four
 seed cases whose quotes are located in the fixture texts, the server's own static
 replies and reading templates, a checklist that moves one row per poll
-(`createHandlers({ briefPolls })`), and question keywords that select the other outcomes
-(withheld, out of scope, operational, counting, comparison, clarification, no results).
+(`createHandlers({ briefPolls })`) and carries the step's readings and filters after the
+scope row, replays of a request key, and question keywords that select the other
+outcomes (withheld, no match, a two-aircraft "midair" answer with adjacent citations, out
+of scope, operational, counting, comparison, clarification, no results) or, the first time
+a question is asked, a failure: "unavailable" (503, its key then a 409), "lost before
+start" (no answer, its key then a 409) and "lost response" (no answer, its key then
+replays the started brief).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
-`--with-deps` on a fresh Linux machine).
+`--with-deps` on a fresh Linux machine). `tests/e2e/brief.spec.ts` installs a local
+stand-in for Cloudflare's widget before the app loads, so the AI tests make no
+network requests.
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`
@@ -887,7 +1076,8 @@ headers and a JSON body, and the connection is closed.
   503. It serves the current `CASES_INDEX_VERSION` and the earlier versions listed in
   `EARLIER_SERVABLE_CASES_VERSIONS` with their exact fingerprints: only versions with
   the same fields qualify. `cases-v2` (without the glued-heading char filter) stays
-  servable until every environment has published a `cases-v3` index. The dataset
+  servable for keyword search until every environment has published a `cases-v3`
+  index; AI retrieval's cases channel reads `cases-v3` only. The dataset
   revision is `g<generation>-<index version>-<8 hex of the index names>`. The
   snapshot date is the newest source change (`lchg_date`) in the generation, i.e.
   the date the data is current to; the archive's own date is not recorded.
@@ -980,7 +1170,7 @@ reset `aviation_test`'s corpus, so do not run them at the same time.
 `server/ai/` holds the provider interface (`provider.ts`) that the scope, compose
 and check stages call, the Anthropic adapter (`anthropic.ts`), a deterministic fake
 for tests (`fake.ts`, allowed only with `NODE_ENV=test`) and versioned prompts
-(`prompts/scope.v2.ts`, `compose.v6.ts`, `check.v5.ts`; earlier versions are in the git
+(`prompts/scope.v2.ts`, `compose.v7.ts`, `check.v8.ts`; `check.v7.ts` stays as the checker calibration's round-1 candidate; earlier versions are in the git
 history, each file's header says what changed). The scope stage
 returns the intent, validated filters, a `keywordText` query for the keyword channel
 and at most one ambiguity as allowlisted tokens. Each stage validates its bounded input, sends the question and
@@ -1218,29 +1408,38 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    sentence except a decimal point (`ambiguous_boundary`), so "1,000 ft.", "St. Louis",
    "a.m." or ".3" withholds the summary (the compose prompt asks for words written out);
    each stated
-   chronology fact (compose v6: the relevant maintenance named once, each fact with its
-   anchor, relation, value and bound, and passages; `chronology_shape` when a fact's parts
-   do not fit its relation) cites its own passages, with one decimal place for flight
-   hours and whole days; every NTSB-number-shaped token in generated text must be
-   allowlisted). Then the reader's criteria in code (`criteria.ts`, the timing rules
-   `chronology-rules-v1`, DESIGN §3: only facts from the relevant maintenance decide,
-   bound-aware; "the day before" and "immediately before" are calendar dates, never
-   hours; the first flight never settles a window; an approximate value or wording
-   without a number decides nothing; a presented case outside the criteria withholds the
-   summary). Every decision is then a server-template claim, including "under the timing
-   rules, the supplied passages of this case do not settle whether…", so a fact the
-   composition left out settles nothing. The check stage (`check.v5`, 45 s; Haiku 5.5
-   with adaptive thinking, the configuration the checker calibration froze, below) gives
-   every claim, by its server-issued id, exactly one verdict (`supported`, `contradicted`
-   or `not_established`) against every verified passage of each case. Code judges the
-   answer (`verdicts.ts`): only a `supported` verdict for every claim, naming passages the
-   claim cites (none for an absence claim, which cites every passage of its case), shows
-   the summary; a missing, duplicate or unknown id, an invalid passage or quote, and any
-   other verdict withhold it (`CHECK_CODES`), and a contradicted "do not settle" claim is
-   recorded as `chronology_missed`. A check input over its cap withholds too (recorded in
-   the step's `meta`, the evidence never cut to fit). A case whose passages do not settle
-   a criterion is shown labelled unconfirmed, on its card and its summary citations: this
-   analysis could not establish it from the supplied passages. There is no repair loop.
+   chronology fact (compose v7: the relevant maintenance named once, each fact with its
+   anchor, relation, value and bound, and passages, hours a passage does not call flight
+   hours as `operating_hours`; `chronology_shape` when a fact's parts do not fit its
+   relation, `zero_interval` for a zero number of days or hours) cites its own passages,
+   with one decimal place for hours and whole days; every NTSB-number-shaped token in
+   generated text must be allowlisted). Then the reader's criteria in code
+   (`criteria.ts`, the timing rules `chronology-rules-v2`, DESIGN §3: only facts from the
+   relevant maintenance decide, one aircraft at a time; facts that cannot hold together
+   decide nothing, checked before any decision; "the day before" and "immediately
+   before" are calendar dates, never hours; operating hours never decide flight hours; the
+   first flight never settles a window; an approximate value or wording without a number
+   decides nothing; a presented case outside the criteria withholds the summary). Every
+   decision is then a server-template claim, including "under the timing rules, the
+   supplied passages of this case do not settle whether…", so a fact the composition
+   left out settles nothing. The check stage (`check.v8`, 45 s, at most 60 claims;
+   Haiku 5.5 with adaptive thinking, the configuration the checker calibration froze,
+   below) reads a server-built header per case (aircraft, place, date) and gives every
+   claim, by its server-issued id, exactly one verdict (`supported`, `contradicted` or
+   `not_established`) against every verified passage of each case. Code judges it
+   (`verdicts.ts`): a claim is confirmed only by a valid `supported` verdict naming
+   passages it cites (none for an absence claim, which cites every passage of its case);
+   a missing, duplicate or unknown id, an invalid passage or quote, or a failed call
+   withholds everything, and a contradicted "do not settle" claim is recorded as
+   `chronology_missed`. What is shown is then decided by the display projection
+   (`display.ts`, `display-deps-v1`, DESIGN §5): with `AI_PARTIAL_DISPLAY` unset (the
+   default until gate G6 clears partial display), any claim the check did not confirm
+   withholds the summary, as before; with it set, only the unconfirmed claims and what
+   depends on them are removed, whole sentences only, and the step says it was partially
+   checked. A check input over its cap withholds too (recorded in the step's `meta`, the
+   evidence never cut to fit). A case whose passages do not settle a criterion is shown
+   labelled unconfirmed, on its card and its summary citations: this analysis could not
+   establish it from the supplied passages. There is no repair loop.
    A withheld summary is diagnosable: the step's `meta` lists each validation reason
    with its path (`summary.2`, `cases.1.why`) and the summary's sentence count, the
    judged check's codes per claim id, the criteria's rules and reasons, and each stage's
@@ -1251,7 +1450,11 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
 
 The step has a 90-second deadline. Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
-only stage status and counts are visible until the end. Each stage's usage is settled
+until the end a read shows only stage status and counts, plus, once the scope stage has
+sent the step on to search, the readings and filters it settled on
+(`checklist.interpretation`: chips rendered from the stored intent with the server's
+templates, and the validated filters, the same as the finished result's; a cancelled or
+failed step keeps them, a static reply has none). Each stage's usage is settled
 as itemized ledger lines with one request id; a call without reliable usage (timeout,
 abort) settles the full reservation as uncertain. Scope replies (settled before they
 are sent), empty results and failures before any spend give the free search back;
@@ -1307,11 +1510,28 @@ embedder):
   embedding aborted mid-request (cancel or deadline) is `uncertain`. A usage callback
   arriving after `retrieve` returned or threw is ignored.
 - A re-pack for the compose cap packs the same candidates again; nothing is embedded
-  twice.
+  (or mapped) twice.
+- The binding runs the configured retrieval version (`AVIATION_RETRIEVAL_VERSION`) and
+  reports it as the port's `version`: the step's `meta.retrievalVersion`, the
+  `retrievalVersion` attribute of `brief.retrieve`, and under `retrieval.v2` the cases
+  index read and the mapping counts in `meta.retrieval` (`{casesIndex,
+  casesIndexVersion, mapped, unmapped}`; private: `stepResponse` never returns `meta`).
+  For the cases channel it reads the cases index the manifest of the brief's generation
+  pairs with the brief's pinned passages index (`manifestCasesIndex`, a bounded read:
+  2 s, and the request's signal), before anything is embedded; none (the generation was
+  published again with another passages index, or is gone) is `unavailable` with
+  reason `no_cases_index`, and a lookup that fails or times out is `failed` or
+  `timeout` with reason `cases_index_lookup`. `available()` bounds the same lookup by
+  its check deadline. Republishing the passages index invalidates the briefs made from
+  the old one (their later steps are `no_cases_index`); republishing only the cases
+  index can change what later retrieval returns, which `meta.retrieval.casesIndex`
+  shows.
 - Failures become a `RetrievalFailure` with a fixed kind (`unavailable`, `timeout`,
-  `failed`) and reason (`index_mismatch`, `incomplete_search`, `embedding`, …) in the
-  step's `meta`; the underlying message (index names, contract values, upstream text)
-  is dropped.
+  `failed`) and reason (`index_mismatch`, `no_cases_index`, `cases_index_lookup`,
+  `incomplete_search`, `embedding`, …) in the step's `meta`; the underlying message
+  (index names, contract values, upstream text) is dropped. An aborted request ends at
+  once: retrieval's requests skip the transport's retry backoff once their signal
+  aborted.
 
 AI is available only while the dataset reports the active passages index servable
 (`PinnedDataset.passages`, the passages contract for `OPENAI_EMBEDDING_MODEL` and

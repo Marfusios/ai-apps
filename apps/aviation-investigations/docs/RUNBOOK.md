@@ -94,6 +94,13 @@ database:
   is `aviation_migrator`, so objects are always owned by the group role. Both
   node-postgres and `psql` read the option from the URL; a connection pooler in
   transaction mode would not keep it.
+- **Connection timeouts.** Opening a PostgreSQL connection, or waiting for a free
+  pooled one, fails after 5 s in the API, the tools and the migration runner, and
+  after 120 s in the worker (`server/db/client.ts`). A database that accepts
+  connections but never answers therefore shows up as failing requests within seconds
+  (a brief step's cases index lookup ends at its own 2 s bound, `cases_index_lookup`),
+  the API still shuts down within its grace, and a worker command fails after two
+  minutes instead of hanging.
 
 Elasticsearch has one role pair per environment: `aviation_<env>_reader`
 (`read`, `view_index_metadata`) and `aviation_<env>_writer` (`create_index`,
@@ -270,6 +277,7 @@ TURNSTILE_SITE_KEY=
 IP_HMAC_SECRET=
 IDENTITY_HMAC_SECRET=            # rotating it ends every trial cookie
 AVIATION_TRACING_ENABLED=false   # true adds compose.tracing.yaml
+AVIATION_RETRIEVAL_VERSION=      # empty: retrieval.v2; retrieval.v1 rolls retrieval back (Retrieval version)
 SHARED_OBSERVABILITY_NETWORK=    # unless the Langfuse file sets it
 TUNNEL_TOKEN=                    # required on live; on dev it switches to tunnel mode
 EDGE_SUBNET=                     # tunnel mode: a private /28, distinct per environment
@@ -373,6 +381,56 @@ and the cached prefix (against `CACHED_PREFIX_MAX`), and prints each against its
 1 when anything is over: do not run paid tests or deploy until the cap or the request
 is fixed. A cap below a stage's fixed request refuses every brief at that stage, free
 but useless (the first paid end-to-end test stopped this way at scope).
+
+### Retrieval version
+
+AI evidence is retrieved under one frozen configuration, chosen by
+`AVIATION_RETRIEVAL_VERSION` in the settings file (README, "Evidence retrieval";
+`server/search/retrieval-config.ts`):
+
+- empty or `retrieval.v2`: the default; case-level fusion of passage BM25, passage
+  kNN and BM25 over the cases index's narratives;
+- `retrieval.v1`: the rollback, the passage-only retrieval before task 10e;
+- `retrieval.v2-nf`: experimental, `dev` only. The app refuses to start with it on
+  `live`.
+
+Nothing is rebuilt or migrated to switch: index mappings and the published manifest
+are the same for every version. `retrieval.v2` reads the cases index the active
+manifest already serves, so it needs nothing beyond a published manifest: the brief's
+generation must still have its manifest row pairing that cases index with the brief's
+passages index (`worker publish` writes both together), and the cases index must be a
+servable `cases-v3` index of that generation: the version the validation covered. A
+`cases-v2` index still serves keyword search but not AI retrieval; republish with a
+`cases-v3` index first. If either fails, AI answers 503 `unavailable` (status
+`dependency`) and steps fail with `meta.failure.reason` `no_cases_index` or
+`index_mismatch`. The manifest lookup is bounded (2 s, and the request's cancel); a
+lookup that fails or times out fails the step with `cases_index_lookup` before the
+question is embedded.
+
+Each step under `retrieval.v2` records the cases index it read in its private
+`meta.retrieval` (`casesIndex`, `casesIndexVersion`, with the mapping counts). The
+pairing ties a cases index to a generation, not to a brief: republishing the passages
+index invalidates the briefs made from the old one (their later steps fail
+`no_cases_index`), and republishing only the cases index can change what later
+retrieval returns for the same question (compare a step's `meta.retrieval.casesIndex`
+with the manifest when that matters).
+
+To switch, or to roll back:
+
+1. Set `AVIATION_RETRIEVAL_VERSION` in the environment's settings file
+   (`retrieval.v1` to roll back; empty for the default).
+2. `pnpm app:up`. Compose recreates the app container with the new value; steps
+   running in the old container are stopped by its shutdown (they fail as
+   `shutdown` and settle).
+3. Check: the app's start log line `AI retrieval configuration` names the version;
+   new brief steps record it in `meta.retrievalVersion`, and their `brief.retrieve`
+   spans carry `retrievalVersion` in Langfuse. A refinement of an older brief runs
+   under the version in force when it runs; each step keeps its own.
+
+The task 10e validation (`pnpm eval:retrieval:adoption`, README) is bound to the
+frozen phase A target on `dev` (generation 1 and its two indexes): its preflight
+refuses any other target. Its numbers say nothing about another generation; validate
+again there before relying on them.
 
 ## Ingestion
 
@@ -489,6 +547,14 @@ an expired brief (exit 1) unless you pass `--include-expired`, and after the pas
 nothing. A summary withheld because the answer call failed (`compose_failed`) has no
 composition; the command prints the failure and the stop reason instead.
 
+The same command reads an answer that was shown with claims removed (Task 16d's
+claim-level display, `meta.display`; its diagnostics have the reason `partial_display`):
+it prints the display projection (rules, mode, what was removed and why, by claim key)
+beside the raw verdicts. Claim-level display stays off in production until gate G6 clears
+it: with `AI_PARTIAL_DISPLAY` unset the projection runs in `whole` mode, and any claim
+the check did not confirm withholds the summary as before (code `display_whole_brief`).
+Do not set `AI_PARTIAL_DISPLAY` on a shared or public environment without that decision.
+
 ## Costs of the opt-in commands
 
 Nothing in the test suite or in a default command calls a paid provider. These do,
@@ -507,8 +573,8 @@ and each needs an explicit flag or key:
 | `pnpm eval:retrieval:narrative pools --confirm-cost --allocation <name>` | three scope-stage samples per question (75 calls) and 25 query embeddings | about $0.05; reservations about $0.08 |
 | `pnpm eval:retrieval:narrative judge --set relevance --stage 1` and `answerability ... --confirm-cost --allocation <name>` | both judges on stage 1 of the pools (about 1,060 pairs: the bounded cohorts and the broad questions' delivered and first-20 cases) and on every delivered bundle (about 290), escalations up to 25% | about $7.92 and $1.68 expected ($10.21 and $2.12 at the escalation bound) |
 | `pnpm eval:retrieval:narrative judge --set relevance --confirm-cost --allocation <name>` (stage 2, a later month) | the rest of the pools (about 2,020 pairs) | about $16.81 expected ($21.80 at the bound); the cache keeps stage 1, so it is not paid again |
-| `pnpm eval:checker retrieve --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9) | about $0.000005 |
-| `pnpm eval:checker run --config <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input (37 to 42 calls) | about $0.04 (Haiku), $0.09 (Haiku with thinking) or $0.76 (Sonnet) a development pass; `inventory` (free) prints it first; stops at $3 logged in total |
+| `pnpm eval:checker retrieve [--questions 16d] --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9; 17 with `--questions 16d`) | about $0.000005 |
+| `pnpm eval:checker run --candidate <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input of a split (84 development or 123 held-out calls, Task 16d) | $0.20 (`check.v7`) and $0.22 (`check.v8`) a development pass, $0.35 the held-out pilot; `inventory` (free) prints the expected and worst-case cost first; stops before a call that would take the logged 16d total above $1.50 |
 | AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
 | `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |

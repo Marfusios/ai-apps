@@ -855,7 +855,7 @@ It reveals no budget amounts. Labels follow it:
 | Signed-in daily cap (Proposed) | "You've used today's 20 AI searches." (5 for new accounts) / "They reset at 00:00 UTC. Keyword search, cases and compare work as usual." |
 | Signed-in monthly cap (Proposed) | "You've used this month's 150 AI searches." / "They reset on 1 {month}. Keyword search, cases and compare work as usual." |
 | Extra check, signed in (Proposed) | Same panel as the first anonymous check, titled "Quick check before this AI search". |
-| Brief expired (Proposed) | "This AI search has expired. We delete questions and answers after 24 hours." / An empty search box with [Search] and [Ask AI]. The server keeps nothing to restore. If the question is still held in the memory of the page already open in this tab, [Ask again] can refill the box. Nothing is written to browser storage, and server retention is never extended. |
+| Brief expired (Proposed) | "This AI search has expired. We delete questions and answers after 24 hours." / An empty search box with [Search] and [Ask AI]. The server keeps nothing to restore. If the question is still held in the memory of the page already open in this tab, [Ask again] can refill the box. The question is never written to browser storage; if an AI request gets no reply, the tab's session storage keeps a one-way hash of that request, a random retry key and the time it saved them, so trying again within 24 hours isn't counted twice. Server retention is never extended. |
 | Limit reached (rate) (Proposed) | "Slow down a moment. Try again in {n} seconds." Uses the 429 retry information. |
 
 **Counting rules (Owner-approved):**

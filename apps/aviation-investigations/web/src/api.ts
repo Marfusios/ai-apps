@@ -15,35 +15,59 @@ import { SearchResponseSchema, searchRequestToParams, type SearchRequest } from 
 export class ApiError extends Error {
   readonly status: number;
   readonly body: ErrorResponse | null;
-  constructor(status: number, body: ErrorResponse | null) {
+  /** Seconds to wait before asking again: the body's `retryAfter`, else the `Retry-After` header. */
+  readonly retryAfter: number | null;
+  constructor(status: number, body: ErrorResponse | null, retryAfter: number | null = body?.retryAfter ?? null) {
     super(body?.message ?? `Request failed (${status})`);
     this.name = 'ApiError';
     this.status = status;
     this.body = body;
+    this.retryAfter = retryAfter;
   }
 }
 
 export const isNotFound = (err: unknown): boolean => err instanceof ApiError && err.status === 404;
 
-async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+/** Delay-seconds form of `Retry-After` (the server never sends the date form). */
+function retryAfterHeader(response: Response): number | null {
+  const raw = response.headers.get('retry-after');
+  const seconds = raw === null ? NaN : Number(raw);
+  return Number.isInteger(seconds) && seconds > 0 ? seconds : null;
+}
+
+async function errorOf(response: Response): Promise<ApiError> {
+  let body: ErrorResponse | null = null;
+  try {
+    body = ErrorResponseSchema.parse(await response.json());
+  } catch {
+    body = null;
+  }
+  return new ApiError(response.status, body, body?.retryAfter ?? retryAfterHeader(response));
+}
+
+export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const response = await fetch(new URL(path, window.location.origin), {
     signal,
     headers: { Accept: 'application/json' },
   });
-  if (!response.ok) {
-    let body: ErrorResponse | null = null;
-    try {
-      body = ErrorResponseSchema.parse(await response.json());
-    } catch {
-      body = null;
-    }
-    throw new ApiError(response.status, body);
-  }
+  if (!response.ok) throw await errorOf(response);
+  return schema.parse(await response.json());
+}
+
+/** POSTs JSON; `schema` null for an empty (204) answer. */
+export async function postJson<T>(path: string, body: unknown, schema: z.ZodType<T> | null): Promise<T | null> {
+  const response = await fetch(new URL(path, window.location.origin), {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!response.ok) throw await errorOf(response);
+  if (schema === null || response.status === 204) return null;
   return schema.parse(await response.json());
 }
 
 /** Retry once on network or server errors, never on 4xx. */
-function retry(failures: number, err: unknown): boolean {
+export function retry(failures: number, err: unknown): boolean {
   if (err instanceof ApiError && err.status < 500) return false;
   return failures < 1;
 }

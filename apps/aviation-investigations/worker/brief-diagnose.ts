@@ -78,7 +78,7 @@ export function formatDiagnosis(step: StepRow, d: StepDiagnostics | null): strin
     out.push(
       step.status === 'withheld'
         ? 'no diagnostics: the summary was withheld before a composition existed (compose_failed), or the step predates them'
-        : 'no diagnostics: only a withheld summary keeps them',
+        : 'no diagnostics: only a withheld or partially shown summary keeps them',
     );
     return out;
   }
@@ -136,6 +136,15 @@ export function formatDiagnosis(step: StepRow, d: StepDiagnostics | null): strin
       for (const c of asArray(check.chronologyMissed).filter(isRecord)) {
         out.push(`  chronology_missed: ${String(c.ntsbNo)} ${String(c.criterion)} (${String(c.claim)}): the checker found timing the composition did not extract, or the checker erred; nothing was repaired`);
       }
+    }
+    const display = isRecord(meta.display) ? meta.display : null;
+    if (display) {
+      out.push(
+        `display (${String(display.rules)}, ${String(display.mode)}): ${display.shown ? 'shown' : `withheld (${asArray(display.withheld).join(', ')})`}; ${String(display.claimsShown)} claim(s) shown, ${String(display.contradictions)} contradiction(s), ${String(display.removedSentences)} summary sentence(s) removed`,
+      );
+      for (const r of asArray(display.removedKeys).filter(isRecord)) out.push(`  removed ${String(r.key)}: ${String(r.cause)}`);
+      const suppressed = asArray(display.suppressed);
+      if (suppressed.length > 0) out.push(`  summary suppressed for ${suppressed.join(', ')} (an essential contradiction)`);
     }
   }
   out.push(`summary as the validator split it (${d.summarySentences.length}):`);

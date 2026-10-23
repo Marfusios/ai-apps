@@ -7,22 +7,13 @@ import { Privacy } from './pages/Privacy';
 
 /**
  * Routes from UI_DESIGN §3. View state (query, facets, open case, compared cases,
- * and later the brief step) lives in the query string, so each view is one route.
+ * the brief step) lives in the query string, so each view is one route.
  */
 const pages: RouteObject[] = [
   { index: true, element: <Home /> },
   // Explore, case and compare load on first use, which keeps the home page light.
   { path: 'explore', lazy: async () => ({ Component: (await import('./pages/Explore')).Explore }) },
-  {
-    path: 'briefs/:id',
-    element: (
-      <ComingSoon
-        eyebrow="Ask AI"
-        title="Brief"
-        description="An answer to your question, with every claim one click from the NTSB passage it came from. Briefs last 24 hours."
-      />
-    ),
-  },
+  { path: 'briefs/:id', lazy: async () => ({ Component: (await import('./pages/Brief')).Brief }) },
   { path: 'cases/:ntsbNo', lazy: async () => ({ Component: (await import('./pages/CasePage')).CasePage }) },
   { path: 'compare', lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
   { path: 'dashboard', lazy: async () => ({ Component: (await import('./pages/Dashboard')).Dashboard }) },

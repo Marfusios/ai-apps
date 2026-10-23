@@ -1,0 +1,29 @@
+{
+  "protocol": "checker-cal-protocol-v2",
+  "candidate": "haiku-think-v8",
+  "model": "claude-haiku-5-5",
+  "thinking": "adaptive",
+  "effort": "low",
+  "prompt": {
+    "version": "check.v8",
+    "systemSha256": "873ba4a8814f3bf2f864815481684eb0210095ff8a6505171c96126634902f74"
+  },
+  "outputSchema": {
+    "version": "check-output-v2",
+    "sha256": "390156050c874dd4b41951e426b3459fe7304f161495355f43591b48ff574fe4"
+  },
+  "caps": {
+    "input": 40000,
+    "output": 24500
+  },
+  "timeoutMs": 45000,
+  "maxClaims": 60,
+  "dataset": {
+    "fileSha256": "25e879adb80f0bc3703b41d32843f8fd441ea1162939e4f52e00fcf6c4dd61f7",
+    "devLabelsSha256": "2f3923866166b904326c852d8ef84a5684f0129cbe6ba4d5289214cb35eef1f6",
+    "holdoutLabelsSha256": "58aa05821f52a253aa5aa5855134d2fb19cfc3a1799f7e2e0baa11482a24f496"
+  },
+  "devManifest": "ff45d30523229ac50243687fe9de12137e00b0dbb7b30d038b98a40e79801515",
+  "frozenAt": "2026-10-23T05:54:09.995Z",
+  "reason": "no candidate eligible (2 development runs); by the fallback order: haiku-think-v8, critical 10/11, highest-family M3 3.6%, M2 90.5%, M1 82.2%; missing critical regressions, M1 ≥ 90%"
+}

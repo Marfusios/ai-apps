@@ -298,6 +298,9 @@ describe('one filter for every retrieval request', () => {
     expect(JSON.stringify(compiled)).not.toContain('event_aircraft');
     // Both channels ask for the same number of passages; kNN looks at 4x as many candidates.
     expect(kw?.size).toBe(50);
+    // retrieval.v1 keeps Elasticsearch's own cut: no tie-break sort (the case-level versions add one).
+    expect(kw).not.toHaveProperty('sort');
+    expect(vec).not.toHaveProperty('sort');
     // No search may return partial results.
     for (const body of [kw, vec, fetch]) expect(body?.allow_partial_search_results).toBe(false);
     expect((vec?.knn as estypes.KnnSearch).k).toBe(50);

@@ -12,6 +12,8 @@ export interface CompareTrayProps {
   notice: string | null;
   /** Where "Back to results" on the compare page returns to. */
   from?: string;
+  /** Extra compare-page parameters, e.g. the brief and step whose AI columns to show. */
+  extra?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -19,7 +21,7 @@ export interface CompareTrayProps {
  * ticked cases, up to four, with "Compare →". On phones it reads
  * "Compare · 2 cases · Compare →".
  */
-export function CompareTray({ selected, onRemove, notice, from }: CompareTrayProps) {
+export function CompareTray({ selected, onRemove, notice, from, extra }: CompareTrayProps) {
   if (selected.length === 0 && !notice) return null;
   const ready = selected.length >= 2;
   return (
@@ -57,7 +59,7 @@ export function CompareTray({ selected, onRemove, notice, from }: CompareTrayPro
         <span className="ml-auto" />
         {ready ? (
           <Link
-            to={compareHref(selected)}
+            to={compareHref(selected, extra)}
             state={from ? { from } : undefined}
             className="inline-flex items-center gap-1 rounded-full border-[1.5px] border-tray-ink px-3 py-[3px] text-ui font-bold whitespace-nowrap hover:bg-tray-ink/10 pointer-coarse:min-h-11"
           >

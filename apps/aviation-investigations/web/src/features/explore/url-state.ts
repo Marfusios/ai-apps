@@ -88,9 +88,10 @@ export function readOpenCase(params: URLSearchParams): string | null {
   return NtsbNoSchema.safeParse(value).success ? value : null;
 }
 
-/** `/compare?cases=…`, keeping where the selection came from for "Back to results". */
-export function compareHref(list: readonly string[]): string {
-  return `/compare?${CASES_PARAM}=${list.join(',')}`;
+/** `/compare?cases=…` (plus `brief` and `step` when the cases came from a brief). */
+export function compareHref(list: readonly string[], extra?: Readonly<Record<string, string>>): string {
+  const rest = extra ? new URLSearchParams(extra as Record<string, string>).toString() : '';
+  return `/compare?${CASES_PARAM}=${list.join(',')}${rest ? `&${rest}` : ''}`;
 }
 
 export type ToggleResult = 'added' | 'removed' | 'full';

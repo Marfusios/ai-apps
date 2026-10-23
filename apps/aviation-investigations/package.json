@@ -28,6 +28,7 @@
     "eval:retrieval:coded": "tsx evals/retrieval/coded/build-coded.ts",
     "eval:retrieval:experiments": "tsx evals/retrieval/experiments/cli.ts",
     "eval:retrieval:narrative": "tsx evals/retrieval/narrative/cli.ts",
+    "eval:retrieval:adoption": "tsx evals/retrieval/adoption/cli.ts",
     "eval:checker": "tsx evals/checker/cli.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.ts",

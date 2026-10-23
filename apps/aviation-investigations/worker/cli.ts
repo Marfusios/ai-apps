@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createAnthropicClient, createAnthropicProvider, type AnthropicMessagesClient } from '../server/ai/anthropic.js';
-import { closeDb, createDb, type Db } from '../server/db/client.js';
+import { WORKER_DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from '../server/db/client.js';
 import { listGenerations, pruneGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
 import { pruneControls } from '../server/quota/retention.js';
@@ -59,7 +59,7 @@ const USAGE = [
 function ingestDb(max = 2): Db {
   const url = workerConfig().databaseIngestUrl;
   if (!url) throw new Error('DATABASE_INGEST_URL is not set; run pnpm services:setup');
-  return createDb(url, { max, applicationName: 'aviation-worker' });
+  return createDb(url, { max, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
 }
 
 async function withDb<T>(fn: (db: Db) => Promise<T>, max = 2): Promise<T> {
@@ -618,7 +618,7 @@ async function main(argv: string[]): Promise<number> {
     parseArgs({ args: rest, options: {}, strict: true });
     const url = workerConfig().databaseUrl;
     if (!url) throw new Error('DATABASE_URL is not set (the aviation_app login); run pnpm services:setup');
-    const db = createDb(url, { max: 2, applicationName: 'aviation-worker-controls' });
+    const db = createDb(url, { max: 2, applicationName: 'aviation-worker-controls', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {
       const leases = await expireLeases(db);
       const pruned = await pruneControls(db);
@@ -682,7 +682,7 @@ async function main(argv: string[]): Promise<number> {
     }
     const url = workerConfig().databaseUrl;
     if (!url) throw new Error('DATABASE_URL is not set (the aviation_app login); run pnpm services:setup');
-    const db = createDb(url, { max: 1, applicationName: 'aviation-worker-diagnose' });
+    const db = createDb(url, { max: 1, applicationName: 'aviation-worker-diagnose', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {
       const d = await diagnoseBrief(db, positionals[0]!, step, { includeExpired: values['include-expired'] === true });
       if (d.kind === 'missing') {
