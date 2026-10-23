@@ -148,6 +148,19 @@ calling it a confirmed causal failure should fail that fixture even if it retrie
 the right case and supplies a valid quotation. The seed labels remain provisional
 until expert adjudication.
 
+**The evidence checker's calibration** (`evals/checker`, Task 16c) is the first
+implemented component evaluation. It runs the production check stage on frozen inputs
+rendered by the production code from real retrieval bundles: the first paid brief's 35
+claims as regressions, controls by error family and mutation, and complete briefs, wholly
+supported or with exactly one known error. Labels are `constructed` or `model-reviewed`
+(never expert), frozen by hash with the protocol before any comparison; the development
+split tunes, the held-out split confirms once. Scores are the production judgement
+(`judgeCheck`): whole-brief false withholding, per-family detection, critical
+regressions, claim-level false flags, `chronology_missed`, cost and latency, with Wilson
+intervals; a failed call counts as a withheld brief. It is metered on the evaluation
+ledger and logs every paid call. Results and the frozen choice: DESIGN §12; commands:
+README "Checker calibration".
+
 ## Production feedback and evaluations
 
 Retain deterministic validation outcomes and sampled operational traces. Start
@@ -339,21 +352,38 @@ is in the ledger and in the request span's `usd`.
 **Withheld summaries.** `brief.step` carries `withheld`, the reason
 (`citation_check`, `criteria_check`, `evidence_check` or `compose_failed`), and
 `withheldCodes`, its fixed codes `+`-joined (as many as fit 64 characters): the
-validation codes of a citation check (`VALIDATION_CODES`), the criteria a case failed
-(`timing_window`, `first_flight_only`, `failure_type`), or the checker's problem reasons
-(`CHECK_REASONS`). The `brief step finished` log line has
-`withheld: {reason, codes}` with every code. Neither holds text.
+validation codes of a citation check (`VALIDATION_CODES`, `chronology_shape` among
+them), the criteria a case failed (`timing_window`, `first_flight_only`,
+`failure_type`), or the judged check's codes (`CHECK_CODES`, server/briefs/verdicts.ts):
+`contradicted` and `not_established` (a claim the checker did not judge `supported`),
+`chronology_missed` (a contradicted "do not settle" criterion claim: a likely extraction
+miss, recorded beside `contradicted`), and the completeness codes
+`check_missing_verdict`, `check_duplicate_verdict`, `check_unknown_claim`,
+`check_invalid_evidence` (a verdict naming a passage outside the claim's cases, or a
+`supported` verdict naming one the claim does not cite) and `check_invalid_quote`. The
+`brief step finished` log line has `withheld: {reason, codes}` with every code. Neither
+holds text.
+
+The step's `meta.check` has `supported`, the claim count, the verdict `counts`, the
+`codes`, each problem as `{claim, claimIndex, kind, code}` (the claim id the server
+issued, `C1`..), and `chronologyMissed: [{claim, ntsbNo, criterion}]`. `meta.criteria`
+lists each criterion decision with the timing rules that decided it (`rules`: `TW-N`,
+`TW-C`, `TW-I`, `FF-O`, `FF-Z`, `FF-I`) and, for `unknown`, its `reason` (`unstated`,
+`other_anchor`, `ambiguous_attribution`, `approximate`, `insufficient_bound`,
+`not_settling`, `conflict`); `meta.criteriaRules` is the rules version
+(`chronology-rules-v1`). All are fixed codes, ids and counts.
 
 **Diagnosing one.** The step's `meta.validation` records each validation reason with
 its path (`reasons: [{code, path}]`, e.g. `summary.2`, `cases.1.why`,
 `cases.0.quotes.1.quote`) and `summarySentences`, how many sentences the validator
 split the summary into (`summary.<i>` is sentence `i`, from 0); `meta.check.problems`
-gives each problem's `claimIndex`. The text those point at is kept apart, in the step's
-`diagnostics` column (migration 0016), only for a summary withheld after a composition
-existed (a citation, criteria or evidence check): the composition as the answer model
-returned it (passage aliases as it saw them), the alias map, the summary sentences as
-the validator split them, and for an evidence check the claims the checker read, by
-index. It is model output about public NTSB passages and may restate the reader's
+gives each problem's claim id and `claimIndex`. The text those point at is kept apart, in
+the step's `diagnostics` column (migration 0016), only for a summary withheld after a
+composition existed (a citation, criteria or evidence check): the composition as the
+answer model returned it (passage aliases as it saw them), the alias map, the summary
+sentences as the validator split them, and for an evidence check the claims the checker
+read (with their ids, citations and absence flags) and, when it answered, its verdicts
+and quotes. It is model output about public NTSB passages and may restate the reader's
 question, so it is treated as user data.
 
 - **Where it lives:** in the step's `brief_steps` row in PostgreSQL only. No route

@@ -106,11 +106,17 @@ export interface StageTimeouts {
   total: number;
 }
 
+/**
+ * The check stage's 45 s is the calibrated checker's (Haiku 5.5 with adaptive thinking,
+ * evals/checker): on development briefs of 15 to 42 claims it took 13 s at the median,
+ * 21 s at the 95th percentile and 27 s at most, about 0.7 s a claim at the largest. A
+ * check that runs out of time withholds the summary, like any failed check.
+ */
 export const STAGE_TIMEOUTS: Readonly<StageTimeouts> = Object.freeze({
   scope: 10_000,
   retrieve: 8_000,
   compose: 35_000,
-  check: 12_000,
+  check: 45_000,
   total: PIPELINE_DEADLINE_MS,
 });
 

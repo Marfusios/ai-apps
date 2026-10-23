@@ -66,10 +66,12 @@ export const THINKING_ALLOWANCE = 1_500;
 
 /**
  * Output tokens left for thinking under the check stage's output cap, for the check
- * configuration the calibration chose (Task 16c, evals/checker): its reasoning share of
- * the billed output, measured on production-shaped bundles, with headroom.
+ * configuration the calibration froze (Task 16c, evals/checker: Haiku 5.5, adaptive
+ * thinking at effort `low`). Measured on the development split (126 calls, 1 to 42
+ * claims): at most 4,915 thinking tokens, at most about 140 a claim on the larger checks;
+ * the 100-claim bound at that rate is 14,000 → 15,000.
  */
-export const CHECK_THINKING_ALLOWANCE = 3_000;
+export const CHECK_THINKING_ALLOWANCE = 15_000;
 
 /**
  * Offline sizing (no provider call), for the unit test that keeps the caps honest

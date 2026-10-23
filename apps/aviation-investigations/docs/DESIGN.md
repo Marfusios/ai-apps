@@ -107,7 +107,7 @@ Keep independent dimensions instead of a single “mechanical failure” flag:
 | Symptom | Total/partial power loss, rough running, failure to climb |
 | Mechanical evidence | Causal fault established; no relevant fault identified within examination scope; defect found without established causal link; insufficient/conflicting evidence |
 | Maintenance relationship | Investigator-attributed contribution; preceding maintenance without established causality; no evidence; unknown |
-| Timing | Calendar days, flight hours, first/subsequent flight, qualitative wording, unknown |
+| Timing | Stated facts from the relevant maintenance: calendar days, flight hours, the same or the previous calendar day, immediately before the event flight, which flight, completed flights in between, qualitative wording; unknown |
 | Attribution | Pilot/witness statement, examination, analysis, probable cause, application interpretation |
 
 “No fault identified” does not prove a fault was impossible. An undetermined cause
@@ -124,10 +124,45 @@ For “shortly,” suggest a visible, editable interpretation such as **within 3
 calendar days OR 10 flight hours**, plus an optional first-flight constraint.
 Qualitative intervals remain a separate “timing not quantified” group. Never
 silently substitute inspection date or hours since inspection for maintenance.
-Timing facts are recorded independently (a case can state both calendar days and
-flight hours, and which flight it was); an approximate value (“about eight hours”)
-supplies no bound, so it never confirms a window. A case whose passages do not
-settle a criterion is shown as unconfirmed, never as a match.
+
+**Chronology** (compose v6, Task 16c, gate G6). A case's chronology names its relevant
+maintenance once and lists each stated time relation that ends at the event flight as
+its own fact, stored as parts: the anchor (the relevant maintenance, or another event in
+the passage's own words, so "the accident flight was conducted 2 days later" after the
+second test flight keeps that flight as its antecedent), the relation and its value and
+bound (`exact`, `about`, `at_most`, `at_least`), and the passages that state it. The
+attribution (one aircraft, or the whole event) is never written by the model: the server
+derives it from the cited passages' verified scope. A fact no passage states is left out,
+and leaving one out never makes a case match. The reader's criteria are decided in code by
+the versioned timing rules **`chronology-rules-v1`** (server/briefs/criteria.ts; the
+check prompt states the same rules):
+
+- Only a fact from the relevant maintenance to the event flight decides anything; in an
+  event with more than one aircraft, only a fact cited from one aircraft's passages.
+- Calendar days and flight hours are compared on their own basis, bound-aware: an exact
+  value decides, `at most` can only match, `at least` can only fail, `about` decides
+  nothing (no tolerance is assumed), and neither does wording without a number. Days
+  counted from stated dates are exact.
+- "The same day" and "the day before" are one calendar date (0 or 1): within any
+  calendar-day window, never a number of hours. Maintenance completed immediately before
+  the event flight is within any calendar-day window and establishes the first flight;
+  it is never a zero-day or zero-hour interval.
+- Which flight it was (the first flight, or zero completed flights in between) decides
+  only the first-flight criterion, and calendar days or flight hours never decide which
+  flight it was. The first flight alone never establishes a calendar-day window.
+- A window matches when either unit is within; it fails only when every unit it names is
+  outside; conflicting facts decide nothing. Anything else is `unknown`, with a
+  content-free reason (`unstated`, `other_anchor`, `ambiguous_attribution`,
+  `approximate`, `insufficient_bound`, `not_settling`, `conflict`).
+
+A case whose passages do not settle a criterion is shown labelled unconfirmed, never as a
+match; the copy says this analysis could not establish the timing from the supplied
+passages, never that the investigation has none. Every decision, `unknown` included,
+becomes a server-template claim ("Under the timing rules, the supplied passages of this
+case do not settle whether …") that the evidence checker judges against every supplied
+passage of the case; a contradiction of a "do not settle" claim is recorded as
+`chronology_missed` (a likely extraction miss) and withholds the summary like any other
+contradiction. There is no repair call.
 
 The [data assessment](DATA_REVIEW.md) gives four real seed cases. DFW08TA066
 supports a maintenance-related causal fault; DEN08LA103 an undetermined cause
@@ -293,9 +328,19 @@ The online pipeline is fixed:
 4. **Compose:** one model call emits structured comparisons and references from
    an allowlisted set of retrieved passages.
 5. **Validate:** code checks IDs, revisions, offsets, exact quotation matches, and
-   schema; a separate small model checks scope/claim support against the evidence.
-   It receives bounded claim/citation pairs and a fixed policy, not the raw user
-   question/history or planner instructions. Validate referenced case identifiers
+   schema; then the reader's criteria in code (the timing rules, §3); then a separate
+   model, the evidence checker, judges every claim against the evidence. It receives
+   bounded claims with server-issued ids and their citations, every supplied passage of
+   the cases they are about, and a fixed policy, not the raw user question/history or
+   planner instructions. It returns exactly one verdict per claim id (`supported`,
+   `contradicted` or `not_established`) with the passages it rests on and, for a
+   contradiction, the decisive words, which code finds in the passage. Code decides the
+   outcome (server/briefs/verdicts.ts): a missing, duplicate or unknown id, a verdict
+   naming passages outside the claim's cases (or, for `supported`, outside its own
+   citations), an unverifiable quote, a truncated or malformed response, and any verdict
+   but `supported` withhold the summary; an absence claim ("none of the supplied passages
+   mentions maintenance"), which cites every passage of its case, needs `supported` too.
+   Validate referenced case identifiers
    in free text too; an unallowlisted identifier rejects the whole generated answer
    and falls back to retrieved case cards. Render labels/links from server-owned fields. The checker
    is still fallible and has no tools or authorization role.
@@ -513,9 +558,9 @@ does not prove an individual request was free. Provider organization/admin billi
 credentials, if needed, belong to operator tooling, never the public app/worker.
 User credit refunds are separate from actual provider-spend accounting.
 
-Give each lease an ownership/fencing token. Enforce a total 60-second application
-pipeline deadline, per-stage timeouts within it, and a longer lease TTL (initially
-90 seconds). Settlements/releases require the current ownership token. A retry
+Give each lease an ownership/fencing token. Enforce a total 90-second application
+pipeline deadline (60 seconds until the calibrated checker, Task 16c, needed up to 45
+seconds of it), per-stage timeouts within it, and a longer lease TTL (120 seconds). Settlements/releases require the current ownership token. A retry
 finding running/expired work returns its state/result, never silently starts a
 second pipeline. Expiry can free a local execution slot but not reserved money.
 Aborting a connection cannot guarantee remote inference stopped; the conservative
@@ -574,7 +619,7 @@ implementing.
 | --- | --- | --- |
 | Scope/plan | `claude-haiku-5-5`, thinking disabled, effort `low` | $0.10 / $0.50 (prompts ≤100K tokens) |
 | Evidence comparison | `claude-opus-5-5`, effort `low` (thinking cannot be disabled) | $4 / $20 |
-| Output check | `claude-haiku-5-5`, effort `low` | $0.10 / $0.50 |
+| Output check | `claude-haiku-5-5`, adaptive thinking, effort `low` (the calibrated configuration, below) | $0.10 / $0.50 |
 | Cheaper answer candidates | `claude-sonnet-5-5` / `claude-haiku-5-5` | $2 / $10 and $0.10 / $0.50 |
 | Embeddings | OpenAI `text-embedding-3-small` | $0.02 input |
 
@@ -595,24 +640,25 @@ free) on 2026-10-22 against real shared-dev passages; `claude-haiku-5-5` and
 tokens of the same NTSB text (median 1.59, 90th percentile 1.68, maximum 1.89 over
 100 passages; 1.62 over a 12-passage bundle), and a structured-output schema costs
 about 2.5× its JSON size. Each stage's fixed request (system prompt and schema) is
-3,204 tokens for scope, 4,752 for the answer and 1,961 for the check (the `compose.v5`
-and `check.v3` prompts, measured by the preflight on 2026-10-23). A typical request,
-estimated from those sizes until settled usage from paid runs replaces it:
+3,204 tokens for scope, 5,007 for the answer and 3,421 for the check (the `compose.v6`
+and `check.v5` prompts, measured by the preflight on 2026-10-23). A typical request,
+estimated from those sizes and, for the check, from the calibration's settled usage
+(about 30 claims; Haiku thinks adaptively):
 
 | Stage | Tokens (input / output) | Cost |
 | --- | --- | --- |
 | Scope | 3,250 / 150 | $0.0004 |
 | Answer | 13,000 / 2,600, including about 800 thinking tokens | $0.104 on Opus 5.5 |
-| Check | 14,000 / 100 | $0.0014 |
+| Check | 14,000 / 4,000, including about 2,500 thinking tokens | $0.0034 |
 | Embedding | — | ~$0 |
 
 Total per request:
 
 | Answer model | Typical | Hard-cap reservation |
 | --- | --- | --- |
-| Opus 5.5 | about $0.11 | $0.31 |
-| Sonnet 5.5 | about $0.054 | $0.16 |
-| Haiku 5.5 | about $0.004 | $0.02 |
+| Opus 5.5 | about $0.11 | $0.36 |
+| Sonnet 5.5 | about $0.056 | $0.19 |
+| Haiku 5.5 | about $0.007 | $0.03 |
 
 These exclude ingestion, evaluations, taxes and hosting. Meter all billable
 output, including thinking. Built-in web or file tools are unnecessary.
@@ -624,8 +670,8 @@ synthetic worst cases of `pnpm worker ai-preflight`):
 | Stage | Input | Output | Largest measured request |
 | --- | --- | --- | --- |
 | Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
-| Answer | 28,000 | 9,000, including thinking | fixed 4,752; a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,292 synthetic (22,096 with real passages under the earlier `compose.v2`); the 10,000-token evidence budget at 1.75× bounds it near 25,300, and the measured stress cases fit without re-packing; output at its schema bounds 6,556 plus 1,500 for thinking |
-| Check | 36,000 | 3,000 | fixed 1,961; a full bundle's complete evidence with 91 claims 27,356 synthetic (28,020 with real passages under `check.v2`), bounded near 30,400; a problem for each of 100 claims 2,414 |
+| Answer | 28,000 | 11,000, including thinking | fixed 5,007 (`compose.v6`); a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,547 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,600, and the measured stress cases fit without re-packing; output at its schema bounds (six cases, each with four chronology facts naming their anchors) 8,000 plus 1,500 for thinking |
+| Check | 40,000 | 21,500, including thinking | fixed 3,421 (`check.v5`); a full bundle's complete evidence with 91 claims 30,987 synthetic; a verdict for each of 100 claims, each naming four passages, and eight 200-character quotes 4,320, plus the calibrated checker's 15,000-token thinking allowance (the development split measured at most 4,915 thinking tokens, about 140 a claim on the larger checks) |
 | Embedding | 1,000 | — | — |
 
 The models read passage ids as short aliases (`P1`..`P12`): a 64-character id costs
@@ -642,19 +688,22 @@ tests and deployments (RUNBOOK). Between preflights a unit test sizes the same
 requests offline (`cl100k_base` × 2.2 for system prompt plus schema, × 1.8 for text).
 
 **Prompt caching:** only the frozen system prefix of each stage is cached, with
-the 5-minute TTL and at most 5,500 tokens (the largest, the answer stage's, is 4,628
+the 5-minute TTL and at most 6,500 tokens (the largest, the answer stage's, is 4,883
 with its schema). The reservation is the **sum over all stages** of each stage's
 hard-cap cost at the worst applicable price, plus the cache-write premium on its
 cached prefix:
 
 | Answer model | Uncached sum | Answer-prefix premium | Haiku scope and check prefixes | Total | Reservation |
 | --- | --- | --- | --- | --- | --- |
-| Opus 5.5 | $0.29807 | 5,500 × $1/M = $0.0055 | $0.000275 | about $0.304 | $0.31 |
-| Sonnet 5.5 | $0.15207 | 5,500 × $0.50/M = $0.00275 | $0.000275 | about $0.155 | $0.16 |
-| Haiku 5.5 | $0.01337 | 5,500 × $0.025/M = $0.0001375 | $0.000275 | about $0.0138 | $0.02 |
+| Opus 5.5 | $0.34772 | 6,500 × $1/M = $0.0065 | $0.000325 | about $0.3545 | $0.36 |
+| Sonnet 5.5 | $0.18172 | 6,500 × $0.50/M = $0.00325 | $0.000325 | about $0.1853 | $0.19 |
+| Haiku 5.5 | $0.02402 | 6,500 × $0.025/M = $0.0001625 | $0.000325 | about $0.0245 | $0.03 |
 
-With the Opus answer model, the $3 daily cap holds nine worst-case reservations, and
-a fresh 30-day month's paced allowance (the lower of $3 and $80 / 30 = $2.67) eight.
+The check's share is $0.0149 (40,000 input and 21,500 output tokens on Haiku, thinking
+included); a Sonnet checker at the same caps would add $0.28 and need about $0.64 with
+the Opus answer model. With the Opus answer model, the $3 daily cap holds eight
+worst-case reservations, and a fresh 30-day month's paced allowance (the lower of $3 and
+$80 / 30 = $2.67) seven.
 That is **budget capacity, not concurrency**: separate in-flight limits apply (one
 request per principal, `AI_GLOBAL_CONCURRENCY` overall, and currently one anonymous
 request at a time). Each admission needs its whole reservation as headroom under the
@@ -709,9 +758,9 @@ rule, the shipped budgets and the shipped reservations):
 
 | Answer model | Typical cost / reservation | Admitted per day | Per month | Anonymous searches per day |
 | --- | --- | --- | --- | --- |
-| Opus 5.5 | about $0.11 / $0.31 | about 22, rising to 25 | about 708 | 4 to 5 (about one complete trial) |
-| Sonnet 5.5 | about $0.054 / $0.16 | about 47, rising to 53 | about 1,474 | 10 to 11 |
-| Haiku 5.5 | about $0.004 / $0.02 | hundreds; per-user and network limits bind first | — | per-user and network limits bind first |
+| Opus 5.5 | about $0.11 / $0.36 | about 21, rising to 25 | about 703 | 3 to 4 (less than one complete trial) |
+| Sonnet 5.5 | about $0.056 / $0.19 | about 45, rising to 51 | about 1,418 | 9 to 11 |
+| Haiku 5.5 | about $0.007 / $0.03 | hundreds; per-user and network limits bind first | — | per-user and network limits bind first |
 
 The anonymous column applies the same rule to the 25% anonymous share of the allowance.
 These are budget capacity, not concurrency (see the reservation table above), and none
@@ -720,13 +769,14 @@ reservation) and unresolved reservations reduce them. The typical costs are esti
 from measured request sizes; the paid runs' settled usage replaces them.
 
 **Capacity trade-off** (the owner's decision after the paid run): the Opus answer
-model's $0.31 reservation is mostly its output cap (9,000 tokens, including room for
-thinking), so it admits about 22 briefs and 4 anonymous searches a day. Sonnet roughly
+model's $0.36 reservation is mostly its output cap (11,000 tokens, including room for
+thinking), so it admits about 21 briefs and 3 to 4 anonymous searches a day. The
+calibrated checker (Haiku with adaptive thinking, Task 16c) adds about $0.002 to a typical
+brief, and its 15,000-token thinking allowance about $0.0075 to the worst case. Sonnet roughly
 doubles both at half the cost per brief; a lower answer output cap or a larger anonymous
 share would also raise them, at the cost of truncated answers or of signed-in capacity.
-The caps, reservations and anonymous share stay as they are until the paid runs have
-measured actual usage. Opus 5.5 stays the default answer model; the owner picks the
-production model from the evaluation results (§12).
+The anonymous share and daily caps stay as they are. Opus 5.5 stays the default answer
+model; the owner picks the production model from the evaluation results (§12).
 
 Compute remaining money after subtracting settled charges and the full amount of
 all unsettled or uncertain reservations. Pacing must never make those funds
@@ -909,6 +959,34 @@ Proposed targets to measure:
 - Test cross-user caches/idempotency/sessions, XSS, CSRF, OAuth redirects,
   unsafe source redirects, and malicious retrieved text.
 
+**Evidence checker calibration** (Task 16c, gate G6; `evals/checker`, README "Checker
+calibration"). Targets frozen before any comparison: whole-brief false withholding on
+wholly supported briefs at most 10%; at least 95% detection in each family (timing,
+attribution, contradiction, unsupported addition, provisional); every known critical
+regression withheld in every trial. Labels are constructed or model-reviewed, never
+expert ground truth; tuning used the development split only, at most two prompt
+revisions.
+
+| Run (development; 21 supported-brief trials, 92 errors, 8 critical) | False withholding | Detection | Critical | Cost / brief | p50 / p95 latency |
+| --- | --- | --- | --- | --- | --- |
+| Haiku 5.5, no thinking, `check.v4` / v5 / v6 | 20, 18, 21 of 21 | 69, 68, 74 of 92 | 2, 3, 3 | $0.0009 | 3.4 / 4.4 s |
+| Haiku 5.5, adaptive thinking, `check.v4` | 9 of 21 | 87 of 92 | 5 | $0.0020 | 14.5 / 22.2 s |
+| **Haiku 5.5, adaptive thinking, `check.v5`** (frozen) | 7 of 21 (33%) | 92 of 92 | 8 | $0.0018 | 13.3 / 20.1 s |
+| Haiku 5.5, adaptive thinking, `check.v6` | 6 of 21 | 87 of 92 | 6 | $0.0018 | 13.4 / 21.3 s |
+| Sonnet 5.5, no thinking, `check.v4` / v5 | 18, 18 of 21 | 86, 84 of 92 | 4, 3 | $0.0172 | 5.0 / 9.0 s |
+
+No run met every target, so the fallback order (critical regressions, then the lowest
+family detection, then false withholding) froze Haiku 5.5 with adaptive thinking on
+`check.v5` (`selection.json`). The held-out split, run once with it, did not confirm the
+primary target: **17 of 21 supported-brief trials withheld (81%; 95% interval
+60–92%)**; detection 81 of 86 (timing 19 of 20, attribution 15 of 18, contradiction 28
+of 28, unsupported addition 19 of 20); 11 of 12 one-error briefs withheld for their
+error; 13% of supported claims flagged; p50 11.9 s, p95 26.2 s. The flags are mostly
+`not_established` on plain restatements, and more of them when the reader's criteria
+include the first flight. Production runs the frozen configuration and fails closed: a
+withheld summary returns the case cards. Shipping summaries needs a checker that passes
+these gates on fresh held-out data (the gate's decision).
+
 Network-independent tests run in CI. Prepared-dataset ("offline") evaluations can
 call real models: run them only as explicit, budgeted jobs, recording dataset,
 corpus, prompt, model, evaluator, and code versions. Missing/failed required scores
@@ -916,7 +994,8 @@ must fail the release gate. Background production judges use the same $20/month
 indexing/evaluation allocation and shared paid-call gate; Langfuse cost charts do
 not enforce the app's spending limit. Aim for
 subsecond cached browsing and roughly ten-second AI responses, then measure on
-the target host; these are targets, not observed benchmarks.
+the target host; these are targets, not observed benchmarks. The calibrated checker alone
+takes 12 to 26 seconds (p50 to p95), so a brief takes longer than that today.
 
 ## 13. Delivery plan
 

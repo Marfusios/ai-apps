@@ -136,13 +136,15 @@ abbreviation contexts ("No."/"Nos." before a number, "approx."/"ca." before a nu
 ends. A sentence that really ends with one of them joins the next one ("Was anyone hurt?
 No. 3 passengers were injured"), which the code cannot tell apart from one sentence. The
 evidence checker still judges the joined claim whole against the case's passages, and
-compose v5 asks for no abbreviations with periods. Compound sentences joined by ";", ":",
+the compose prompt (v5 and later) asks for no abbreviations with periods. Compound sentences joined by ";", ":",
 a dash or a comma are one sentence by the same policy.
 
-**Withheld-summary diagnostics** (Task 16, after the first paid end-to-end run). A
-withheld summary keeps its rejected composition in `brief_steps.diagnostics` (migration
-0016), with the passage alias map, the summary sentences as the validator split them and,
-for an evidence check, the claims the checker read. It is model output about public NTSB
+**Withheld-summary diagnostics** (Task 16, after the first paid end-to-end run; verdicts
+added in Task 16c). A withheld summary keeps its rejected composition in
+`brief_steps.diagnostics` (migration 0016), with the passage alias map, the summary
+sentences as the validator split them and, for an evidence check, the claims the checker
+read and its verdicts and quotes (passage aliases, verdict values, and words copied from
+public NTSB passages). It is model output about public NTSB
 passages, but it may restate or quote the reader's question, so it is **treated as
 potentially containing user data**: the same class as the step's `request` and `result`,
 under the same controls. It lives only in the application database: no route selects the

@@ -94,8 +94,8 @@ describe('the stage caps against the requests they bound (offline sizing)', () =
 describe('runAiPreflight with a stub counter', () => {
   const models: StageModels = { scope: 'claude-haiku-5-5', answer: 'claude-opus-5-5', check: 'claude-haiku-5-5' };
   const key = (x: unknown) => JSON.stringify(x);
-  /** The provider's count of each stage's fixed request (the preflight's measurements with compose.v6 and check.v4); 1,000 for anything else. */
-  const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 5_007, check: 2_889 };
+  /** The provider's count of each stage's fixed request (the preflight's measurements with compose.v6 and check.v5); 1,000 for anything else. */
+  const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 5_007, check: 3_421 };
   const fixedInputs = new Map<string, LlmStage>([
     [key(r.fixed.scope), 'scope'],
     [key(r.fixed.compose), 'compose'],
@@ -113,7 +113,7 @@ describe('runAiPreflight with a stub counter', () => {
   const userTurns = new Map([
     [renderScopeUser(r.fixed.scope), 22],
     [renderComposeUser(r.fixed.compose), 124],
-    [renderCheckUser(r.fixed.check), 127],
+    [renderCheckUser(r.fixed.check), 133],
   ]);
   const countText = async (_model: string, text: string) => userTurns.get(text) ?? 10;
   const prefixRows = async () => (await runAiPreflight(provider, countText, models)).filter((row) => row.request.startsWith('cached prefix'));
@@ -127,7 +127,7 @@ describe('runAiPreflight with a stub counter', () => {
       limit: CACHED_PREFIX_MAX,
       ok: true,
     });
-    expect(await prefixRows()).toEqual([row('scope', 3_182), row('answer', 4_883), row('check', 2_762)]);
+    expect(await prefixRows()).toEqual([row('scope', 3_182), row('answer', 4_883), row('check', 3_288)]);
   });
 
   it('a prefix over the bound fails the preflight even when its request fits the stage cap', async () => {

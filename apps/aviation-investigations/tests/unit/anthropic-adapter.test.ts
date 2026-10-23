@@ -248,10 +248,14 @@ describe('Anthropic adapter requests', () => {
     }
   });
 
-  it('Haiku stages disable thinking; Opus sends no thinking param; Sonnet uses between_tools', async () => {
+  it('Haiku scope disables thinking and the Haiku check thinks adaptively; Opus sends no thinking param; Sonnet uses between_tools', async () => {
+    const scope = provider(jsonResponse(200, messageJson(JSON.stringify(scopeOutput))));
+    await scope.p.scope({ question: 'Engine power loss shortly after maintenance' }, ctx('scope'));
+    expect(scope.bodies[0]!.thinking).toEqual({ type: 'disabled' });
+    // The checker calibration's frozen configuration (evals/checker/selection.json).
     const haiku = provider(jsonResponse(200, messageJson(JSON.stringify(checkOutput))));
     await haiku.p.check(checkInput, ctx('check'));
-    expect(haiku.bodies[0]!.thinking).toEqual({ type: 'disabled' });
+    expect(haiku.bodies[0]!.thinking).toEqual({ type: 'adaptive' });
 
     const opus = provider(jsonResponse(200, messageJson(JSON.stringify(composeOutput))));
     await opus.p.compose(composeInput, ctx('compose'));

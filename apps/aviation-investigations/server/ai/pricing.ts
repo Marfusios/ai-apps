@@ -78,21 +78,22 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  *   refinement) 22,547; the 10,000-token evidence budget at 1.75 Claude tokens per
  *   `cl100k` token bounds it near 25,600 → 28,000: the measured stress cases fit without
  *   re-packing.
- * - check input: fixed part 2,889 (`check.v4`); complete evidence of a full bundle with 91
- *   claims at their longest 30,455 → 40,000 (gate G6 ruling 5: the evidence is never cut
+ * - check input: fixed part 3,421 (`check.v5`); complete evidence of a full bundle with 91
+ *   claims at their longest 30,987 → 40,000 (gate G6 ruling 5: the evidence is never cut
  *   to fit).
  * - outputs, counted as text at their schema bounds: scope 445 → 600; a composition at
  *   every bound (six cases, each with four chronology facts naming their anchors) 8,000
  *   plus 1,500 for thinking (Opus cannot turn it off) → 11,000 (the offline sizing, at
  *   1.8 tokens per `cl100k` token, puts it at 10,612); a check with a verdict for each of
  *   100 claims, each naming four passages, and eight 200-character quotes 4,320, plus the
- *   check stage's thinking allowance (`CHECK_THINKING_ALLOWANCE`, worker/ai-preflight.ts)
- *   → 9,500 (offline 9,052).
+ *   calibrated checker's thinking allowance (`CHECK_THINKING_ALLOWANCE` 15,000,
+ *   worker/ai-preflight.ts; Haiku 5.5 thinks adaptively, Task 16c) → 21,500 (the offline
+ *   sizing, at 1.8 tokens per `cl100k` token, puts it at 21,052).
  */
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
   scope: { input: 6_500, output: 600 },
   answer: { input: 28_000, output: 11_000 },
-  check: { input: 40_000, output: 9_500 },
+  check: { input: 40_000, output: 21_500 },
   embed: { input: 1_000, output: 0 },
 };
 
@@ -104,14 +105,14 @@ export const CACHED_PREFIX_MAX = 6_500;
 
 /**
  * Per-request reservation in USD, keyed by the answer model: the worst case rounded up
- * (DESIGN §9), with a Haiku check. Provisional until the checker calibration
- * (evals/checker) settles the check model and its caps; a check on Sonnet costs more,
- * and with it the startup check refuses these reservations.
+ * (DESIGN §9), with the check model the calibration froze (`claude-haiku-5-5`, adaptive
+ * thinking, evals/checker/selection.json). A check on Sonnet costs more: with it the
+ * startup check refuses these reservations.
  */
 export const RESERVATIONS: Readonly<Record<string, number>> = {
-  'claude-opus-5-5': 0.35,
-  'claude-sonnet-5-5': 0.18,
-  'claude-haiku-5-5': 0.02,
+  'claude-opus-5-5': 0.36,
+  'claude-sonnet-5-5': 0.19,
+  'claude-haiku-5-5': 0.03,
 };
 
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';

@@ -476,9 +476,10 @@ AVIATION_ENV_FILES=<the environment's settings file> pnpm worker brief-diagnose 
 It reads the step (the latest without `--step`) and prints its reasons with what they
 point at: each validation code with its path and text (the offending summary sentence
 as the validator split it, the `why` line, quote or gap note, the passage alias and its
-id), the failed criteria with the case's chronology, or the checker's problems with
-their claims, then the summary's sentences as split, the failure category and each
-stage's stop reason. The text is the rejected composition: model output about public
+id), the failed criteria with the case's chronology, or the judged check: its verdict
+counts and codes, then each claim the checker read (id, kind, citations, absence) with
+its verdict, the passages the verdict named, any quote and any `chronology_missed`, then
+the summary's sentences as split, the failure category and each stage's stop reason. The text is the rejected composition: model output about public
 NTSB passages that may restate the reader's question, so treat it as user data. It is
 printed to your terminal only. The command is read-only and free, and nothing runs it
 automatically. A brief expires 24 hours after it was created; the next maintenance pass
@@ -497,7 +498,9 @@ and each needs an explicit flag or key:
 | --- | --- | --- |
 | `pnpm ingest index passages --generation <id> --confirm-cost` | OpenAI embeddings of every passage (`text-embedding-3-small`) | about $0.57 for the full corpus, measured; the dry run (no flag) prints the planned tokens and cost and spends nothing; `--cache-only` never pays |
 | `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
-| AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.31 until it settles (DESIGN §9); capped by the budgets below |
+| `pnpm eval:checker retrieve --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9) | about $0.000005 |
+| `pnpm eval:checker run --config <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input (37 to 42 calls) | about $0.04 (Haiku), $0.09 (Haiku with thinking) or $0.76 (Sonnet) a development pass; `inventory` (free) prints it first; stops at $3 logged in total |
+| AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
 | `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |
 

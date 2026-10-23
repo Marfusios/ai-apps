@@ -52,10 +52,13 @@ export const DEFAULT_RATE_LIMITS = {
   anonymousInFlight: 1,
 } as const satisfies Partial<QuotaLimits>;
 
-/** Total application pipeline deadline (DESIGN §8). */
-export const PIPELINE_DEADLINE_MS = 60_000;
+/**
+ * Total application pipeline deadline (DESIGN §8): 90 s since the calibrated checker
+ * (Task 16c) needs up to 45 s after a compose of up to 35 s.
+ */
+export const PIPELINE_DEADLINE_MS = 90_000;
 /** Lease TTL, longer than the pipeline deadline. */
-export const LEASE_TTL_MS = 90_000;
+export const LEASE_TTL_MS = 120_000;
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60_000;
 /** Quota buckets and the anti-abuse record outlive their window by 7 days. */
 export const WINDOW_RETENTION_MS = 7 * 24 * 60 * 60_000;

@@ -247,10 +247,10 @@ export async function readStepWithCount(db: DbOrTx, briefId: string, n?: number)
 
 /**
  * A step still `running` this long after it started has lost its process (the deadline
- * is 60 s and settlement follows at once): it reads as failed, it no longer blocks a
+ * is 90 s and settlement follows at once): it reads as failed, it no longer blocks a
  * refinement, and maintenance marks it failed once its reservation is closed.
  */
-export const STALE_STEP_MS = 120_000;
+export const STALE_STEP_MS = 150_000;
 
 export function isLiveStep(step: { status: BriefStepStatus; createdAt: Date }, now: Date): boolean {
   return step.status === 'running' && now.getTime() - step.createdAt.getTime() <= STALE_STEP_MS;

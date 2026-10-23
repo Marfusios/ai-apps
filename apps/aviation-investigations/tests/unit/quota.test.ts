@@ -177,7 +177,7 @@ describe('policy and hashing', () => {
       globalInFlight: 2,
     });
     expect(policy.budgets).toEqual(BUDGETS);
-    expect(policy.leaseTtlMs).toBe(90_000);
+    expect(policy.leaseTtlMs).toBe(120_000);
   });
 
   it('refuses to build without HMAC secrets', () => {

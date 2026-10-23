@@ -501,6 +501,62 @@ questions answered by inspection dates and hours are kept as `section: "structur
 not run by the RAG evaluation. A unit test fails when `dataset.json` no longer matches
 the rules.
 
+### Checker calibration
+
+`evals/checker/` calibrates the evidence checker (Task 16c, gate G6): which model,
+thinking and prompt judge claims well enough to show a summary. Every check input is
+rendered by the production code from real retrieval bundles, so the checker reads what
+it reads in a brief.
+
+```sh
+pnpm eval:checker retrieve                    # plan only; --confirm-cost embeds 9 questions (about $0.000005) and writes evidence.json
+pnpm eval:checker build                       # evidence.json + items/ → dataset.json (labels hashed); --check compares instead
+pnpm eval:checker inventory --config haiku-think --split dev   # free: provider token counts, expected and worst-case cost
+pnpm eval:checker run --config haiku-think --split dev --confirm-cost   # paid, on the evaluation ledger
+pnpm eval:checker select data/work/checker/*-dev-*.summary.json        # the frozen selection rule → selection.json
+```
+
+All take `--env-files a,b` and `--keys-file <file>` (only `ANTHROPIC_API_KEY` and
+`OPENAI_API_KEY` are read from it, never over a nonempty process value). A run reserves
+each call's worst case on the evaluation ledger (`DATABASE_INGEST_URL`), settles it,
+appends it to `data/work/checker/spend.jsonl` and stops before a call that would take the
+logged total above `CALIBRATION_LIMIT_USD` ($3); trials and a counts-only summary go to
+`data/work/checker/`, and `--resume <trials.jsonl>` continues a run a crash interrupted.
+The held-out split runs once, for the configuration frozen in `selection.json`.
+
+- **Evidence** (`evidence.json`): nine real hybrid-retrieval bundles from the served
+  passages index, verified like a brief's (`verifyBundle`); five development and four
+  held-out bundles, split by case (no case in both).
+- **Items** (`items/`): the first paid brief's 35 claims, verbatim, as regressions
+  (`paid-run.ts`; the six known critical errors marked); controls by family and mutation
+  (`dev.ts`, `holdout.ts`: negations, the wrong aircraft in multi-aircraft events, hours
+  and days, before and after, wrong anchors, "the day before" as 24 hours, the first
+  flight as a window, causal overstatement, unsupported additions, compound claims,
+  correct statements with the wrong citation, misleading and context-losing excerpts, the
+  wrong speaker or actor); and complete briefs (`briefs.ts`), each wholly supported, with
+  reading variants and with exactly one known error (an edit the builder proves changes
+  exactly one rendered claim). 51 check inputs, 487 distinct claims over 46 cases.
+- **Labels** are `constructed` (by how a claim was made, checked against the complete
+  supplied passages) or `model-reviewed`; none is expert ground truth, and three
+  unresolved ones are `unknown` and count nowhere. `labels.sha256` froze them before any
+  checker output was compared; `protocol.ts` froze the configurations, trials, targets and
+  selection rule with them.
+- **Figures** (`metrics.ts`, judged by the production `judgeCheck`): whole-brief false
+  withholding on wholly supported briefs (target at most 10%), detection per family
+  (timing, attribution, contradiction, unsupported addition; at least 95%), critical
+  regressions withheld in every trial, false flags by claim kind, `chronology_missed`,
+  cost and latency, with Wilson 95% intervals. Run summaries are in
+  `evals/checker/results/`.
+
+**Result** (2026-10-23, $1.98 of the $3 limit): no configuration met every target. Eight
+development runs (Haiku 5.5 without thinking, with adaptive thinking, and Sonnet 5.5
+without thinking; prompts `check.v4` to `check.v6`) went through the fallback order, which
+froze Haiku 5.5 with adaptive thinking on `check.v5` (every critical regression and all 92
+development errors withheld; 7 of 21 supported-brief trials withheld). The held-out split
+did not confirm it: 17 of 21 supported-brief trials withheld (81%), detection 81 of 86
+(attribution 15 of 18). Production runs that configuration; most summaries will be
+withheld until a better checker passes the gate (DESIGN §12).
+
 ### Web client
 
 `web/` is a React 19 single-page app built with Vite, React Router, TanStack Query
@@ -720,7 +776,8 @@ reset `aviation_test`'s corpus, so do not run them at the same time.
 `server/ai/` holds the provider interface (`provider.ts`) that the scope, compose
 and check stages call, the Anthropic adapter (`anthropic.ts`), a deterministic fake
 for tests (`fake.ts`, allowed only with `NODE_ENV=test`) and versioned prompts
-(`prompts/{scope,compose,check}.v2.ts`; v1 was never sent to a model). The scope stage
+(`prompts/scope.v2.ts`, `compose.v6.ts`, `check.v5.ts`; earlier versions are in the git
+history, each file's header says what changed). The scope stage
 returns the intent, validated filters, a `keywordText` query for the keyword channel
 and at most one ambiguity as allowlisted tokens. Each stage validates its bounded input, sends the question and
 passages as delimited untrusted data in the user turn, and returns a Zod-validated
@@ -729,8 +786,10 @@ read), provider, model and prompt version. The OpenAI adapter is not built yet.
 
 Anthropic calls use `messages.parse` with structured outputs, effort `low`, no
 retries, a cached system prompt, and no prefill, sampling parameters or refusal
-fallbacks. Thinking is disabled on Haiku 5.5, turned off with `between_tools` on
-Sonnet 5.5, and cannot be disabled on Opus 5.5. Each stage first counts its input
+fallbacks. Thinking is a stage's setting (`STAGE_THINKING`): off for scope and
+compose, adaptive for the check (the checker calibration's choice). Off is `disabled`
+on Haiku 5.5 and `between_tools` on Sonnet 5.5; Opus 5.5 cannot turn it off. Thinking
+counts against the stage's output cap, the only allowance there is. Each stage first counts its input
 with `messages.countTokens` on the identical request (`countInputTokens` exposes the
 same count for evidence packing) and sends nothing above the stage cap. The whole
 call is bounded by the caller's deadline signal and the stage's `timeoutMs`. A
@@ -738,10 +797,11 @@ refusal, `max_tokens`, unparsed output, a failed count or input above the cap fa
 the stage with a `StageError` that says whether the call was billed.
 
 `pricing.ts` holds the allowlisted prices, the hard token caps per stage and the
-per-request reservations ($0.31 Opus, $0.16 Sonnet, $0.02 Haiku answer model). The
-caps were measured with the provider's own counter (free) against real passages
-(DESIGN §9 "Hard caps"): scope 6,500 in / 600 out, answer 28,000 / 9,000, check
-36,000 / 3,000, in provider tokens, so the measured stress cases fit: a full
+per-request reservations ($0.36 Opus, $0.19 Sonnet, $0.03 Haiku answer model, with the
+calibrated Haiku checker). The caps were measured with the provider's own counter
+(free) against real passages (DESIGN §9 "Hard caps"): scope 6,500 in / 600 out, answer
+28,000 / 11,000, check 40,000 / 21,500 (15,000 of it the checker's thinking allowance),
+in provider tokens, so the measured stress cases fit: a full
 12-passage bundle with the longest question and refinement without re-packing, and a
 check of a full bundle's complete evidence whole. `startupAiCheck(config)` enables AI only when the
 provider has an adapter, its keys are set, every reachable model is priced and the
@@ -762,7 +822,8 @@ prompt and structured-output schema) and a synthetic worst case at the server's 
 bounds (the longest refinement in English and in dense text at the query-embedding
 cap; a full bundle of 12 chunker-maximum passages within the 10,000-token evidence
 budget, with every claim the composition schema allows), each stage's output at its
-schema bounds (the answer stage with 1,500 tokens left for thinking) and each stage's
+schema bounds (the answer stage with 1,500 tokens left for thinking, the check stage
+with 15,000) and each stage's
 cached prefix (system prompt and schema) against `CACHED_PREFIX_MAX`, and exits 1 when
 anything is over its cap. Its client refuses generation. Between preflights,
 `tests/unit/ai-preflight.test.ts` sizes the same requests offline with `cl100k_base`
@@ -919,7 +980,7 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    retrieved passage and all its probable-cause passages. A violation fails the step;
    nothing is dropped or cut.
 3. **Compose** (35 s): the full input is counted with the provider's own counter;
-   above the answer input cap (28,000 tokens; a synthetic full bundle measures 22,292,
+   above the answer input cap (28,000 tokens; a synthetic full bundle measures 22,547,
    DESIGN §9) the candidates are packed again under a smaller budget, and the re-packed
    bundle is checked like the first. The compose and check stages read passages under short
    aliases (`P1`..`P12`, `aliases.ts`): a 64-character passage id costs about 42 tokens
@@ -953,35 +1014,45 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    sentence except a decimal point (`ambiguous_boundary`), so "1,000 ft.", "St. Louis",
    "a.m." or ".3" withholds the summary (the compose prompt asks for words written out);
    each stated
-   chronology fact (flight hours, calendar days, which flight, wording) cites its own
-   passages, with one decimal place for flight hours and whole days; every
-   NTSB-number-shaped token in generated text must be allowlisted). Then the reader's
-   criteria in code (`criteria.ts`: the timing window, first-flight requirement and
-   failure type in effect, decided from the stated facts; an approximate value decides
-   nothing; a presented case outside them withholds the summary). Every decision is
-   then a server-template claim, including "the passages do not establish whether…",
-   so a fact the composition left out settles nothing: the check stage (12 s) judges
-   every claim against every verified passage of each case, with the criteria as
-   server templates. Only `supported` with no problems shows the summary; anything else
-   (a check input over its cap included, recorded in the step's `meta`, the evidence
-   never cut to fit) returns the case cards with the summary withheld. A case whose
-   passages do not settle a criterion is shown labelled unconfirmed, on its card and
-   its summary citations. There is no repair loop. A withheld summary is diagnosable:
-   the step's `meta` lists each validation reason with its path (`summary.2`,
-   `cases.1.why`) and the summary's sentence count, the checker's problems with their
-   claim index, and each stage's stop reason; the rejected composition itself is kept
-   server-side (`brief_steps.diagnostics`, migration 0016; never in a response, trace or
-   log; deleted with the brief by the maintenance pass after it expires) for
-   `pnpm worker brief-diagnose` (docs/OBSERVABILITY_AND_EVALUATION.md).
+   chronology fact (compose v6: the relevant maintenance named once, each fact with its
+   anchor, relation, value and bound, and passages; `chronology_shape` when a fact's parts
+   do not fit its relation) cites its own passages, with one decimal place for flight
+   hours and whole days; every NTSB-number-shaped token in generated text must be
+   allowlisted). Then the reader's criteria in code (`criteria.ts`, the timing rules
+   `chronology-rules-v1`, DESIGN §3: only facts from the relevant maintenance decide,
+   bound-aware; "the day before" and "immediately before" are calendar dates, never
+   hours; the first flight never settles a window; an approximate value or wording
+   without a number decides nothing; a presented case outside the criteria withholds the
+   summary). Every decision is then a server-template claim, including "under the timing
+   rules, the supplied passages of this case do not settle whether…", so a fact the
+   composition left out settles nothing. The check stage (`check.v5`, 45 s; Haiku 5.5
+   with adaptive thinking, the configuration the checker calibration froze, below) gives
+   every claim, by its server-issued id, exactly one verdict (`supported`, `contradicted`
+   or `not_established`) against every verified passage of each case. Code judges the
+   answer (`verdicts.ts`): only a `supported` verdict for every claim, naming passages the
+   claim cites (none for an absence claim, which cites every passage of its case), shows
+   the summary; a missing, duplicate or unknown id, an invalid passage or quote, and any
+   other verdict withhold it (`CHECK_CODES`), and a contradicted "do not settle" claim is
+   recorded as `chronology_missed`. A check input over its cap withholds too (recorded in
+   the step's `meta`, the evidence never cut to fit). A case whose passages do not settle
+   a criterion is shown labelled unconfirmed, on its card and its summary citations: this
+   analysis could not establish it from the supplied passages. There is no repair loop.
+   A withheld summary is diagnosable: the step's `meta` lists each validation reason
+   with its path (`summary.2`, `cases.1.why`) and the summary's sentence count, the
+   judged check's codes per claim id, the criteria's rules and reasons, and each stage's
+   stop reason; the rejected composition itself is kept
+   server-side with the checker's verdicts (`brief_steps.diagnostics`, migration 0016;
+   never in a response, trace or log; deleted with the brief by the maintenance pass after
+   it expires) for `pnpm worker brief-diagnose` (docs/OBSERVABILITY_AND_EVALUATION.md).
 
-The step has a 60-second deadline. Every stage enforces its own input cap with the
+The step has a 90-second deadline. Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
 only stage status and counts are visible until the end. Each stage's usage is settled
 as itemized ledger lines with one request id; a call without reliable usage (timeout,
 abort) settles the full reservation as uncertain. Scope replies (settled before they
 are sent), empty results and failures before any spend give the free search back;
 withheld summaries, abstentions, cancellations and failures after spending keep it.
-A step still running 120 s after it started has lost its process: it reads as failed,
+A step still running 150 s after it started has lost its process: it reads as failed,
 no longer blocks a refinement, and the maintenance pass marks it failed once its
 reservation is closed. Closing the server runs within one 9 s deadline (the process
 exits by force at 10 s): first, before the HTTP drain, running steps are aborted (they

@@ -52,20 +52,20 @@ describe('budget capacity (DESIGN §9)', () => {
     expect(budgets).toEqual({ monthlyUsd: 100, interactiveMonthlyUsd: 80, interactiveDailyUsd: 3, ingestionMonthlyUsd: 20, anonymousShare: 0.25 });
   });
 
-  it('Opus 5.5 answer model: about 22 a day rising to 25, about 705 a month, 3 to 4 anonymous searches a day', () => {
+  it('Opus 5.5 answer model: about 21 a day rising to 25, about 703 a month, 3 to 4 anonymous searches a day', () => {
     const days = admittedPerDay(RESERVATIONS['claude-opus-5-5']!, 0.11, 'signed-in');
-    expect([days[0], days.at(-1), Math.min(...days), Math.max(...days)]).toEqual([22, 25, 22, 25]);
-    expect(sum(days)).toBe(705);
+    expect([days[0], days.at(-1), Math.min(...days), Math.max(...days)]).toEqual([21, 25, 21, 25]);
+    expect(sum(days)).toBe(703);
     const anonymous = admittedPerDay(RESERVATIONS['claude-opus-5-5']!, 0.11, 'anonymous');
     expect([Math.min(...anonymous), Math.max(...anonymous)]).toEqual([3, 4]);
   });
 
-  it('Sonnet 5.5 answer model: about 47 a day rising to 53, about 1,472 a month, 10 to 11 anonymous searches a day', () => {
-    const days = admittedPerDay(RESERVATIONS['claude-sonnet-5-5']!, 0.054, 'signed-in');
-    expect([days[0], days.at(-1), Math.min(...days), Math.max(...days)]).toEqual([47, 53, 47, 53]);
-    expect(sum(days)).toBe(1_472);
-    const anonymous = admittedPerDay(RESERVATIONS['claude-sonnet-5-5']!, 0.054, 'anonymous');
-    expect([Math.min(...anonymous), Math.max(...anonymous)]).toEqual([10, 11]);
+  it('Sonnet 5.5 answer model: about 45 a day rising to 51, about 1,418 a month, 9 to 11 anonymous searches a day', () => {
+    const days = admittedPerDay(RESERVATIONS['claude-sonnet-5-5']!, 0.056, 'signed-in');
+    expect([days[0], days.at(-1), Math.min(...days), Math.max(...days)]).toEqual([45, 51, 45, 51]);
+    expect(sum(days)).toBe(1_418);
+    const anonymous = admittedPerDay(RESERVATIONS['claude-sonnet-5-5']!, 0.056, 'anonymous');
+    expect([Math.min(...anonymous), Math.max(...anonymous)]).toEqual([9, 11]);
   });
 
   it('a whole reservation of headroom: eight at once under $3, seven under a fresh month’s paced $2.67', () => {

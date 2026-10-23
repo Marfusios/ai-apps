@@ -6,7 +6,10 @@ import { buildCalibration, readDataset, type CalibrationBatch } from '../../eval
 import { EvidenceFileSchema } from '../../evals/checker/evidence.js';
 import { rate, report, type Trial } from '../../evals/checker/metrics.js';
 import { plannedTrials, selectConfiguration } from '../../evals/checker/run.js';
-import { SUPPORTED_SAMPLES } from '../../evals/checker/protocol.js';
+import { CONFIGS, SUPPORTED_SAMPLES } from '../../evals/checker/protocol.js';
+import { STAGE_THINKING } from '../../server/ai/anthropic.js';
+import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v5.js';
+import { loadConfig } from '../../shared/config.js';
 import { FAMILIES } from '../../evals/checker/types.js';
 
 const DIR = resolve(import.meta.dirname, '../../evals/checker');
@@ -148,5 +151,15 @@ describe('the checker calibration set (evals/checker)', () => {
     // Runs of earlier prompt versions compete too: the choice is a configuration with its prompt.
     const versions = selectConfiguration([summary('a', 0.3, 1, true, 0.002, 'check.v5'), summary('a', 0.2, 0.9, false, 0.002, 'check.v6')]);
     expect(versions).toMatchObject({ config: 'a', checkPrompt: 'check.v5' });
+  });
+
+  it('is what production runs: the frozen model, thinking and prompt', () => {
+    const selection = JSON.parse(readFileSync(resolve(DIR, 'selection.json'), 'utf8')) as { config: string; checkPrompt: string; labelsSha256: string; model: string };
+    const frozen = CONFIGS[selection.config]!;
+    expect(selection.labelsSha256).toBe(dataset.labels.sha256);
+    expect(selection.model).toBe(frozen.model);
+    expect(selection.checkPrompt).toBe(CHECK_PROMPT_VERSION);
+    expect(STAGE_THINKING.check).toBe(frozen.thinking);
+    expect(loadConfig({ env: {}, files: [] }).ai.anthropic.checkModel).toBe(frozen.model);
   });
 });
