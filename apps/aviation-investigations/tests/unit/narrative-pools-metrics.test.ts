@@ -14,7 +14,8 @@ import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from '../../evals/retr
 import { llmPrice } from '../../server/ai/pricing.js';
 import { NarrativeDatasetSchema, type NarrativeItem } from '../../evals/retrieval/narrative/dataset.js';
 import type { PairRecord } from '../../evals/retrieval/narrative/judging.js';
-import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, caseCost, outputsFor, poolEstimates, protocolArithmetic, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
+import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, canaryOf, caseCost, fullEscalationUsd, measuredUsage, outputsFor, planInputs, poolEstimates, protocolArithmetic, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
+import { attemptReserveUsd } from '../../evals/retrieval/narrative/clients.js';
 import { POOL_RULE, assemblePool, bundlePairs, casePriority, poolFileVersion, verifyPoolFile, withFingerprints, type PoolFile, type PoolRun } from '../../evals/retrieval/narrative/pool.js';
 import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import {
@@ -449,6 +450,47 @@ describe('the dry run arithmetic', () => {
     expect(statsOf([3, 1, 2])).toEqual({ n: 3, mean: 2, p90: 3, max: 3 });
     expect([JUDGE_B.provider, ADJUDICATOR.model]).toEqual(['openai', 'claude-sonnet-5-5']);
   });
+
+  it('takes measured output tokens and disagreement in place of the assumptions (review N13)', () => {
+    const attempt = (role: string, outputTokens: number) => ({ purpose: 'relevance', role, provider: 'p', model: 'm', status: 'ok', category: null, billing: 'usage', inputTokens: 1, reservedUsd: 0, chargedUsd: 0, usage: { inputTokens: 1, outputTokens, cacheWriteTokens: 0, cacheReadTokens: 0 }, latencyMs: 1 });
+    const judges = (failed = false) => [{ status: 'valid' }, { status: failed ? 'failed' : 'valid' }];
+    const records = [
+      { judges: judges(), adjudication: null, status: 'agreed', attempts: [attempt('judge-a', 900), attempt('judge-b', 2_100)] },
+      { judges: judges(), adjudication: {}, status: 'adjudicated', attempts: [attempt('judge-a', 1_100), attempt('judge-b', 1_900), attempt('adjudicator', 500)] },
+      { judges: judges(), adjudication: null, status: 'escalation-budget-exhausted', attempts: [] },
+      { judges: judges(true), adjudication: null, status: 'incomplete', attempts: [] },
+    ] as never[];
+    const m = measuredUsage(records);
+    expect(m.pairs).toBe(3);
+    expect(m.outputTokens).toEqual({ a: 1_000, b: 2_000, adj: 500 });
+    expect(m.calls).toEqual({ a: 2, b: 2, adj: 1 });
+    expect(m.disagreement).toBeCloseTo(2 / 3, 12);
+    const measured = planInputs(m);
+    expect(measured.outputs).toEqual({ a: 1_000, b: 2_000, adj: 500 });
+    expect(measured.calibrationDisagreement).toBeCloseTo(2 / 3, 12);
+    // A measured disagreement stands in for the pool escalation share, within the bound.
+    expect(measured.escalation).toBe(ASSUMPTIONS.escalationBound);
+    expect(measured.source).toEqual({ outputs: 'measured', escalation: 'measured' });
+    const given = planInputs(m, { outputTokens: { a: 700, b: 800 }, disagreement: 0.1 });
+    expect(given.outputs).toMatchObject({ a: 700, b: 800 });
+    expect(given.escalation).toBe(0.1);
+    expect(given.source).toEqual({ outputs: 'given', escalation: 'given' });
+    expect(planInputs(null)).toMatchObject({ escalation: ASSUMPTIONS.escalationExpected, calibrationDisagreement: ASSUMPTIONS.calibrationDisagreement, source: { outputs: 'assumed', escalation: 'assumed' } });
+    expect(outputsFor('visible', measured.outputs)).toMatchObject({ a: EXPECTED_OUTPUT['judge-a'].visible, b: EXPECTED_OUTPUT['judge-b'].visible });
+  });
+
+  it('picks the canary as the judge orders the dev items, and sizes its limit for one full escalation at its caps (review N9)', () => {
+    const items = [
+      { split: 'holdout', question: 'a', case: { ntsbNo: 'AAA00LA000' }, bundle: null },
+      { split: 'dev', question: 'b', case: { ntsbNo: 'CEN19LA911' }, bundle: null },
+      { split: 'dev', question: 'a', case: { ntsbNo: 'CEN19LA911' }, bundle: null },
+      { split: 'dev', question: 'a', case: { ntsbNo: 'ERA15LA961' }, bundle: null },
+    ];
+    expect(canaryOf(items)).toBe(items[2]);
+    const m: Measured = { ntsbNo: 'X', family: 'f', claude: [5_000], openai: [4_000], caseTokens: 3_000, chunks: 1, uncovered: false };
+    const c = caseCost(m, { claude: 2_000, openai: 1_800 }, 900);
+    expect(fullEscalationUsd(c)).toBeCloseTo(attemptReserveUsd(JUDGE_A, 5_000) + attemptReserveUsd(JUDGE_B, 4_000) + attemptReserveUsd(ADJUDICATOR, 5_000) + attemptReserveUsd(ADJUDICATOR, 5_900), 12);
+  });
 });
 
 describe('the CLI', () => {
@@ -461,6 +503,10 @@ describe('the CLI', () => {
       expect(await main(['launch'])).toBe(2);
       expect(await main(['plan', '--samples', '2'])).toBe(2);
       expect(await main(['judge', '--split', 'later'])).toBe(2);
+      // Calibration runs one split at a time: never dev and holdout together (review N11).
+      expect(await main(['judge', '--set', 'calibration', '--split', 'all'])).toBe(2);
+      expect(await main(['plan', '--disagreement', '1.5'])).toBe(2);
+      expect(await main(['plan', '--output-tokens', '900'])).toBe(2);
       expect(await main(['report'])).toBe(2);
     } finally {
       console.error = original;

@@ -7,8 +7,8 @@
  * escalation bound, per-attempt ledger reservations, budget stops and the cache.
  * No request leaves the process.
  */
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
@@ -35,6 +35,8 @@ import {
   JudgmentCache,
   adjudicationOrder,
   judgePairs,
+  lockAllocation,
+  openAllocation,
   relevanceSubject,
   type FamilyRef,
   type PairPlanItem,
@@ -493,6 +495,25 @@ describe('the paid judging step', () => {
     expect(await runJudging(pairs('c'), opts(dir, { confirm: true, allocation: { name: 'next-month', capUsd: 0.000001 } }), deps())).toBe(1);
     const stoppedFile = readdirSync(dir).filter((f) => f.startsWith('narrative-judgments-')).sort().at(-1) as string;
     expect((JSON.parse(readFileSync(join(dir, stoppedFile), 'utf8')) as { stopped: string }).stopped).toMatch(/allocation next-month/);
+  });
+
+  it("lets one run at a time spend from an allocation: a held lock refuses a second run, a dead holder's lock is taken over (review N12)", async () => {
+    const dir = tmp();
+    const deps = { callers: fakes, ledger: () => ({ gate: createMemorySpendGate(20), close: async () => undefined }) };
+    expect(await runJudging(items(), opts(dir, { confirm: true }), deps)).toBe(0);
+    const lock = join(dir, 'allocations', 'track-n-test.lock');
+    expect(existsSync(lock)).toBe(false);
+    const held = lockAllocation(openAllocation(dir, 'track-n-test', undefined), 'other-run');
+    await expect(runJudging(items(), opts(dir, { confirm: true }), deps)).rejects.toThrow(/in use by run other-run/);
+    held.release();
+    expect(existsSync(lock)).toBe(false);
+    // A lock left by a process that no longer runs on this host is taken over, and released at the end.
+    writeFileSync(lock, JSON.stringify({ run: 'crashed', pid: 999_999_999, host: hostname(), at: '2026-10-01T00:00:00.000Z' }));
+    expect(await runJudging(items(), opts(dir, { confirm: true }), deps)).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+    // A lock from another host is never taken over.
+    writeFileSync(lock, JSON.stringify({ run: 'elsewhere', pid: 999_999_999, host: `${hostname()}-other`, at: '2026-10-01T00:00:00.000Z' }));
+    await expect(runJudging(items(), opts(dir, { confirm: true }), deps)).rejects.toThrow(/in use by run elsewhere/);
   });
 
   it('stops before the run limit and keeps what it has', async () => {

@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { families, guardHoldout, readCalibration, readDataset, recordCheck } from '../../evals/retrieval/narrative/commands.js';
+import { families, guardHoldout, holdoutIdentity, readCalibration, readDataset, recordCheck } from '../../evals/retrieval/narrative/commands.js';
 import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import type { FamilyPool, PoolFile } from '../../evals/retrieval/narrative/pool.js';
 import { itemKey } from '../../evals/retrieval/narrative/calibration.js';
@@ -135,17 +135,36 @@ describe('joining judgment files', () => {
   });
 });
 
-describe('the holdout runs once per configuration', () => {
-  it('lets the same configuration resume and refuses another one on the same holdout', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'narrative-holdout-'));
-    const a = experimentIdentity('calibration', { calibrationVersion: 'v', labelsSha256: 'labels', criteriaSha256: 'c' });
-    const b = { ...a, judges: { changed: true } };
-    guardHoldout(dir, 'labels', a);
-    guardHoldout(dir, 'labels', a);
-    expect(() => guardHoldout(dir, 'labels', b)).toThrow(/needs a fresh holdout set/);
-    // A new calibration set (new labels) is a fresh holdout.
-    guardHoldout(dir, 'labels-2', b);
-    expect(readFileSync(join(dir, 'holdout-runs.jsonl'), 'utf8').trim().split('\n')).toHaveLength(2);
+describe('the holdout runs once per configuration (D3, review N8)', () => {
+  const item = (id: string, ntsbNo: string, split: 'dev' | 'holdout', label: 0 | 1 | 2, rubricVersion = 'r-1') =>
+    ({ id, set: 'narrative-control', kind: 'relevance', bundle: null, split, tags: ['negation'], question: 'q', questionVersion: 'q-1', rubricVersion, case: { ntsbNo, source: 'synthetic', fingerprint: `fp-${ntsbNo}` }, label, provenance: 'constructed', mutation: null, anchors: [], why: 'why' }) as never;
+  const calibration = (over: { label?: 0 | 1 | 2; rubric?: string; dev?: 0 | 1 | 2; cases?: string[] } = {}) => ({
+    items: [
+      ...(over.cases ?? ['WPR21LA901', 'WPR21LA902']).map((n, k) => item(`nc-h${k}`, n, 'holdout', k === 0 ? (over.label ?? 2) : 0, over.rubric)),
+      item('nc-d0', 'CEN19LA911', 'dev', over.dev ?? 1),
+    ],
+  });
+  const experiment = (labels: string, judges = 'a') => ({ ...experimentIdentity('calibration', { calibrationVersion: 'v', labelsSha256: labels, criteriaSha256: 'c' }), judges: { version: judges } });
+
+  it('keys the lock on the holdout items in a fixed file: the same configuration resumes, a dev-only edit does not open the holdout', () => {
+    const lock = join(mkdtempSync(join(tmpdir(), 'narrative-holdout-')), 'holdout-runs.jsonl');
+    expect(guardHoldout(lock, holdoutIdentity(calibration(), experiment('labels-1')))).toBe('recorded');
+    expect(guardHoldout(lock, holdoutIdentity(calibration(), experiment('labels-1')))).toBe('resumed');
+    // A dev label edit changes the whole-file label hash, not the holdout's identity or configuration.
+    expect(guardHoldout(lock, holdoutIdentity(calibration({ dev: 2 }), experiment('labels-2')))).toBe('resumed');
+    expect(readFileSync(lock, 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  it('refuses another configuration on any case already held out, a relabelled holdout and an edited rubric', () => {
+    const lock = join(mkdtempSync(join(tmpdir(), 'narrative-holdout-')), 'holdout-runs.jsonl');
+    guardHoldout(lock, holdoutIdentity(calibration(), experiment('labels-1')));
+    expect(() => guardHoldout(lock, holdoutIdentity(calibration(), experiment('labels-1', 'b')))).toThrow(/fresh holdout with new cases/);
+    // Renamed or regrouped, a holdout that keeps one case is still refused under another configuration.
+    expect(() => guardHoldout(lock, holdoutIdentity(calibration({ cases: ['WPR21LA902', 'WPR21LA999'] }), experiment('labels-1', 'b')))).toThrow(/fresh holdout with new cases/);
+    expect(() => guardHoldout(lock, holdoutIdentity(calibration({ label: 1 }), experiment('labels-1')))).toThrow(/changed after the holdout ran/);
+    expect(() => guardHoldout(lock, holdoutIdentity(calibration({ rubric: 'r-2' }), experiment('labels-1')))).toThrow(/fresh holdout with new cases/);
+    // A fresh holdout (new cases) may run under the new configuration.
+    expect(guardHoldout(lock, holdoutIdentity(calibration({ cases: ['ERA22LA951', 'ERA22LA952'] }), experiment('labels-1', 'b')))).toBe('recorded');
   });
 });
 

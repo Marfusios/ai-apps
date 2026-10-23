@@ -42,7 +42,7 @@ import { BASELINE_CONFIG, experimentConfig } from '../experiments/config.js';
 import { DEFAULT_GRID, filterConsistency, gitState } from '../experiments/cli.js';
 import { loadGrid } from '../experiments/grid.js';
 import { providerScopeCaller, runScopeSamples, scopeInventory, type ScopeRun } from '../experiments/scope.js';
-import { DEFAULT_CALIBRATION, DEFAULT_NARRATIVE_DATASET } from './build.js';
+import { DEFAULT_CALIBRATION, DEFAULT_NARRATIVE_DATASET, HOLDOUT_LOCK_FILE } from './build.js';
 import { CalibrationDatasetSchema, calibrationProblems, controlEvidence, itemKey, itemPassages, resolveRecord, type CalibrationDataset, type ControlBundle } from './calibration.js';
 import { CALIBRATION_CRITERIA, CRITERIA_SHA256 } from './criteria.js';
 import { experimentIdentity, joinJudgments, type ExperimentData, type JudgmentFile, type JudgmentSet } from './identity.js';
@@ -50,7 +50,7 @@ import { attemptReserveUsd, createAnthropicJudge, createOpenAIJudge, type JudgeC
 import { ADJUDICATOR, DEFAULT_CONCURRENCY, JUDGE_A, JUDGE_B, JUDGE_TIMEOUT_MS, RUN_LIMITS_USD } from './config.js';
 import { NarrativeDatasetSchema, families, narrativeDatasetProblems, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { CASE_TOKEN_BUDGET, bundleFingerprint, fingerprint, loadCaseEvidence, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
-import { AttemptSender, JudgmentCache, answerabilitySubject, bundleKeyOf, byPriority, judgePairs, loggedSpendUsd, openAllocation, relevanceSubject, type Allocation, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
+import { AttemptSender, JudgmentCache, answerabilitySubject, bundleKeyOf, byPriority, judgePairs, lockAllocation, loggedSpendUsd, openAllocation, relevanceSubject, type Allocation, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
 import {
   ASSUMPTIONS,
   addRuns,
@@ -70,8 +70,13 @@ import {
   type Measured,
   type RunCost,
   type Samples,
+  canaryOf,
+  fullEscalationUsd,
+  measuredUsage,
   outputsFor,
+  planInputs,
   protocolArithmetic,
+  type MeasuredUsage,
 } from './plan.js';
 import { POOL_RULE, SCHEDULE, buildPools, bundlePairs, casePriority, indexCohort, poolFileVersion, tierOf, verifyPoolFile, withFingerprints, type FamilyPool, type PoolFile, type Stage } from './pool.js';
 import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
@@ -224,11 +229,27 @@ async function remainingAllowance(ctx: NarrativeContext): Promise<number | null>
 /** The members (questions) of the dataset as scope-stage items. */
 const scopeItems = (d: NarrativeDataset) => d.questions.map((q) => ({ id: q.id, question: q.question }));
 
-export async function planCommand(opts: CommandOptions & { samples: Samples; broadSample: { bm25: number; lure: number; random: number }; allocationUsd?: number }): Promise<number> {
+export async function planCommand(
+  opts: CommandOptions & {
+    samples: Samples;
+    broadSample: { bm25: number; lure: number; random: number };
+    allocationUsd?: number;
+    /** Judgment files whose records give the measured output tokens and disagreement (review N13). */
+    measured?: string[];
+    /** Mean output tokens per judge call (visible plus thinking or reasoning), judge A and judge B. */
+    outputTokens?: { a: number; b: number };
+    /** The share of pairs whose judges disagree. */
+    disagreement?: number;
+  },
+): Promise<number> {
   const { log } = opts;
+  const usage: MeasuredUsage | null = opts.measured && opts.measured.length > 0 ? measuredUsage(opts.measured.flatMap((f) => (JSON.parse(readFileSync(resolve(f), 'utf8')) as { records: PairRecord[] }).records)) : null;
+  const inputs = planInputs(usage, { ...(opts.outputTokens ? { outputTokens: opts.outputTokens } : {}), ...(opts.disagreement !== undefined ? { disagreement: opts.disagreement } : {}) });
   const ctx = await openContext(opts.config, log);
   try {
     const d = ctx.dataset;
+    if (usage) log(`measured (${opts.measured?.join(', ')}): ${usage.pairs} finished pairs, disagreement ${usage.disagreement === null ? 'n/a' : `${(usage.disagreement * 100).toFixed(1)}%`}; mean output tokens per call: judge A ${usage.outputTokens.a?.toFixed(0) ?? 'n/a'} (${usage.calls.a} calls), judge B ${usage.outputTokens.b?.toFixed(0) ?? 'n/a'} (${usage.calls.b}), adjudicator ${usage.outputTokens.adj?.toFixed(0) ?? 'n/a'} (${usage.calls.adj})`);
+    log(`inputs: output tokens per call A ${Math.round(inputs.outputs.a)}, B ${Math.round(inputs.outputs.b)}, adjudicator ${Math.round(inputs.outputs.adj)} (${inputs.source.outputs}); escalation ${(inputs.escalation * 100).toFixed(1)}% of pool pairs, ${(inputs.calibrationDisagreement * 100).toFixed(1)}% of calibration items (${inputs.source.escalation})`);
     const anthropicKey = ctx.config.ai.anthropic.apiKey;
     if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY is required for the free token counts (pass --keys-file)');
     // Pool building: scope samples and query embeddings.
@@ -276,6 +297,7 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     // Calibration items.
     const calMeasured: Measured[] = [];
     const calSplit = new Map<Measured, 'dev' | 'holdout'>();
+    const calByItem = new Map<string, Measured>();
     for (const item of ctx.calibration.items) {
       const record = ctx.calibration.records[item.case.ntsbNo];
       const e = item.case.source === 'synthetic' ? (record ? controlEvidence(resolveRecord(record, ctx.calibration.fillers)) : undefined) : loaded.evidence.get(item.case.ntsbNo);
@@ -284,6 +306,7 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
       const m = item.kind === 'answerability' ? await measureBundle(haiku, item.question, q, e, itemPassages(e, item.bundle as ControlBundle)) : await measureCase(haiku, item.question, q, e);
       calMeasured.push(m);
       calSplit.set(m, item.split);
+      calByItem.set(item.id, m);
     }
     // Sonnet counts like Haiku? A subset.
     const check = measured.filter((m) => m.chunks === 1).slice(0, 25);
@@ -311,38 +334,52 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     }
     const block = adjudicationBlockTokens();
     const defaultPrefix = { claude: 1_500, openai: 1_400 };
-    const costOf = (m: Measured) => caseCost(m, prefixes.get(m.family) ?? defaultPrefix, block);
+    const costOf = (m: Measured) => caseCost(m, prefixes.get(m.family) ?? defaultPrefix, block, inputs.outputs);
     // (b) the full pooled run: per family, the mean cost of its sampled cases scaled to its estimated pairs.
     const familyRuns = (s: Samples, k: 'mean' | 'max', escalation: number): RunCost[] =>
       estimates[s].map((e) => scaleRun(measured.filter((m) => m.family === e.family && !m.uncovered).map(costOf), e[k], escalation));
     const answerRuns = (s: Samples, k: 'mean' | 'max', escalation: number): RunCost[] =>
       estimates[s].map((e) => scaleRun(ansMeasured.filter((m) => m.family === e.family).map(costOf), e.answerabilityPairs[k], escalation));
-    const relevance = addRuns(familyRuns(opts.samples, 'mean', ASSUMPTIONS.escalationExpected));
-    const relevanceMax = addRuns(familyRuns(opts.samples, 'max', ASSUMPTIONS.escalationExpected));
-    const answerability = addRuns(answerRuns(opts.samples, 'mean', ASSUMPTIONS.escalationExpected));
+    const relevance = addRuns(familyRuns(opts.samples, 'mean', inputs.escalation));
+    const relevanceMax = addRuns(familyRuns(opts.samples, 'max', inputs.escalation));
+    const answerability = addRuns(answerRuns(opts.samples, 'mean', inputs.escalation));
     const alternative: Samples = opts.samples === 3 ? 1 : 3;
-    const relevanceAlt = addRuns(familyRuns(alternative, 'mean', ASSUMPTIONS.escalationExpected));
-    const answerabilityAlt = addRuns(answerRuns(alternative, 'mean', ASSUMPTIONS.escalationExpected));
+    const relevanceAlt = addRuns(familyRuns(alternative, 'mean', inputs.escalation));
+    const answerabilityAlt = addRuns(answerRuns(alternative, 'mean', inputs.escalation));
     // (a) the calibration run: every item once, every disagreement adjudicated.
-    const calibration = scaleRun(calMeasured.map((m) => caseCost(m, defaultPrefix, block)), ctx.calibration.items.length, ASSUMPTIONS.calibrationDisagreement, 1);
+    const calCost = (m: Measured) => caseCost(m, defaultPrefix, block, inputs.outputs);
+    const calibration = scaleRun(calMeasured.map(calCost), ctx.calibration.items.length, inputs.calibrationDisagreement, 1);
     const poolBuilding = scope.upperUsd + (emb.inputTokens * emb.usdPerMillionTokens) / 1e6;
     const pooled = relevance.usd.total + answerability.usd.total + poolBuilding;
     const pooledBound = relevance.totalAtBoundUsd + answerability.totalAtBoundUsd + poolBuilding;
     // The frozen schedule's stages (pool.ts SCHEDULE): stage 1, and what stage 2 adds.
     const stageRuns = (part: 'stage1' | 'rest', escalation: number): RunCost =>
       addRuns(estimates[opts.samples].map((e) => scaleRun(measured.filter((m) => m.family === e.family && !m.uncovered).map(costOf), part === 'stage1' ? e.stage1.mean : e.mean - e.stage1.mean, escalation)));
-    const stage1 = stageRuns('stage1', ASSUMPTIONS.escalationExpected);
-    const stage2 = stageRuns('rest', ASSUMPTIONS.escalationExpected);
+    const stage1 = stageRuns('stage1', inputs.escalation);
+    const stage2 = stageRuns('rest', inputs.escalation);
     // Calibration by split: dev first, then the holdout once (criteria.ts).
     const calibrationOf = (split: 'dev' | 'holdout') => {
       const mine = calMeasured.filter((m) => calSplit.get(m) === split);
-      return scaleRun(mine.map((m) => caseCost(m, defaultPrefix, block)), mine.length, ASSUMPTIONS.calibrationDisagreement, 1);
+      return scaleRun(mine.map(calCost), mine.length, inputs.calibrationDisagreement, 1);
     };
     const calibrationDev = calibrationOf('dev');
     const calibrationHoldout = calibrationOf('holdout');
+    // The canary (review N9): the first dev item in the schedule's order; its cap covers one full escalation at the caps, and the dev run does not pay for it again (cached).
+    const canaryItem = canaryOf(ctx.calibration.items);
+    const canaryMeasured = canaryItem ? calByItem.get(canaryItem.id) : undefined;
+    const canaryCost = canaryMeasured ? calCost(canaryMeasured) : null;
+    const canaryRun = canaryCost ? scaleRun([canaryCost], 1, inputs.calibrationDisagreement, 1) : null;
+    const canary = {
+      item: canaryItem?.id ?? null,
+      expectedUsd: canaryRun?.usd.total ?? 0,
+      adjudicatedUsd: canaryRun?.totalAtBoundUsd ?? 0,
+      fullEscalationAtCapsUsd: canaryCost ? fullEscalationUsd(canaryCost) : 0,
+      // The limit to pass: one full escalation at the caps, rounded up to the cent.
+      maxUsd: canaryCost ? Math.ceil(fullEscalationUsd(canaryCost) * 100) / 100 : 0.1,
+    };
     // Where the relevance money goes, and the protocol's own estimate at the same prices (review M14).
     const relevanceWith = (part: 'input' | 'visible' | 'full') =>
-      addRuns(estimates[opts.samples].map((e) => scaleRun(measured.filter((m) => m.family === e.family && !m.uncovered).map((m) => caseCost(m, prefixes.get(m.family) ?? defaultPrefix, block, outputsFor(part))), e.mean, ASSUMPTIONS.escalationExpected)));
+      addRuns(estimates[opts.samples].map((e) => scaleRun(measured.filter((m) => m.family === e.family && !m.uncovered).map((m) => caseCost(m, prefixes.get(m.family) ?? defaultPrefix, block, outputsFor(part, inputs.outputs))), e.mean, inputs.escalation)));
     const inputRun = relevanceWith('input');
     const visibleRun = relevanceWith('visible');
     const judges = (r: RunCost) => r.usd.judgeA + r.usd.judgeB;
@@ -356,8 +393,8 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     };
     // The month's sequence (the gate's ruling): canary, dev calibration, holdout once, pools, relevance stage 1, answerability.
     const sequence = [
-      { step: 'canary: one dev calibration pair (--max-pairs 1 --max-usd 0.05)', expectedUsd: Math.min(0.05, calibrationDev.usd.total / Math.max(1, calibrationDev.pairs)), boundUsd: 0.05 },
-      { step: 'calibration, dev split, one pair at a time (--concurrency 1)', expectedUsd: calibrationDev.usd.total, boundUsd: calibrationDev.totalAtBoundUsd },
+      { step: `canary: one dev calibration pair (--max-pairs 1 --max-usd ${canary.maxUsd.toFixed(2)})`, expectedUsd: canary.expectedUsd, boundUsd: canary.maxUsd },
+      { step: 'calibration, dev split, the rest, one pair at a time (--concurrency 1)', expectedUsd: calibrationDev.usd.total - canary.expectedUsd, boundUsd: calibrationDev.totalAtBoundUsd - canary.adjudicatedUsd },
       { step: 'calibration, holdout split, once', expectedUsd: calibrationHoldout.usd.total, boundUsd: calibrationHoldout.totalAtBoundUsd },
       { step: 'pools (scope samples and query embeddings)', expectedUsd: poolBuilding, boundUsd: scope.reserveUsd + emb.reserveUsd },
       { step: 'relevance, stage 1 (bounded cohorts; broad delivered and first-20 cases)', expectedUsd: stage1.usd.total, boundUsd: stage1.totalAtBoundUsd },
@@ -378,7 +415,7 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     );
     const perFamily = estimates[opts.samples].map((e) => {
       const mine = measured.filter((m) => m.family === e.family);
-      const run = scaleRun(mine.filter((m) => !m.uncovered).map(costOf), e.mean, ASSUMPTIONS.escalationExpected);
+      const run = scaleRun(mine.filter((m) => !m.uncovered).map(costOf), e.mean, inputs.escalation);
       return { family: e.family, type: e.type, members: e.members, pairs: e.mean, pairsLargest: e.max, sampled: mine.length, claudeMean: statsOf(mine.map((m) => m.claude.reduce((a, b) => a + b, 0))).mean, chunked: mine.filter((m) => m.chunks > 1).length, expectedUsd: run.usd.total };
     });
     const remaining = await remainingAllowance(ctx);
@@ -404,6 +441,8 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
       preflight: ctx.preflight,
       judges: { judgeA: JUDGE_A, judgeB: JUDGE_B, adjudicator: ADJUDICATOR },
       assumptions: ASSUMPTIONS,
+      inputs: { ...inputs, measured: usage ? { files: opts.measured, ...usage } : null },
+      canary,
       samples: opts.samples,
       poolBuilding: { scope, embeddings: { tokens: emb.inputTokens, usd: (emb.inputTokens * emb.usdPerMillionTokens) / 1e6, reserveUsd: emb.reserveUsd }, usd: poolBuilding },
       pools: { estimates: estimates[opts.samples], relevancePairs: { mean: sum(opts.samples, 'mean'), max: sum(opts.samples, 'max') }, answerabilityPairs: { mean: pairsAns(opts.samples, 'mean'), max: pairsAns(opts.samples, 'max') } },
@@ -461,6 +500,9 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     log(
       `where the relevance money goes: judges' input ${usd(breakdown.judgesInputUsd)}, judges' visible output ${usd(breakdown.judgesVisibleOutputUsd)}, judges' reasoning ${usd(breakdown.judgesReasoningUsd)}, adjudication ${usd(breakdown.adjudicationUsd)}; ` +
         `the protocol's estimate at the same prices (${breakdown.protocol.pairs} pairs, ${breakdown.protocol.input} input and ${breakdown.protocol.output} output tokens, ${breakdown.protocol.escalation * 100}% to one Sonnet call) ${usd(breakdown.protocol.usd.total)}`,
+    );
+    log(
+      `canary: ${canary.item ?? 'none'}; expected ${usd(canary.expectedUsd)}, adjudicated ${usd(canary.adjudicatedUsd)}; one full escalation at its caps ${usd(canary.fullEscalationAtCapsUsd)}, so --max-usd ${canary.maxUsd.toFixed(2)} lets it finish (the adjudicator runs only if the judges disagree on it)`,
     );
     log(`this month's sequence${opts.allocationUsd !== undefined ? ` against an allocation of $${opts.allocationUsd}` : ''}:`);
     let running = 0;
@@ -531,61 +573,67 @@ export async function poolsCommand(opts: CommandOptions & { samples: Samples; ma
     if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
     const allocation = openAllocation(opts.outDir, opts.allocation, opts.allocationUsd);
     const purpose = `eval-10c2-pools-${stamp(new Date())}`;
-    const spendLog = runSpendLog(opts.outDir, purpose);
-    const limit = Math.min(opts.maxUsd ?? RUN_LIMITS_USD.pools, allocation.capUsd - loggedSpendUsd(allocation.log));
-    if (inventory.reserveUsd + emb.reserveUsd > limit + 1e-12) throw new Error(`the pool reservations ($${(inventory.reserveUsd + emb.reserveUsd).toFixed(6)}) exceed the run limit or what remains of allocation ${allocation.name} ($${limit.toFixed(6)}); nothing sent`);
-    if (!ctx.config.databaseIngestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
-    const ingest = createDb(ctx.config.databaseIngestUrl, { max: 2, applicationName: 'aviation-eval-narrative-ledger' });
-    let run: ScopeRun;
+    // One run at a time per allocation (review N12): the lock is held from before the allocation's spend is read until the run ends.
+    const held = lockAllocation(allocation, purpose);
     try {
-      const gate = createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' });
-      run = await runScopeSamples(caller, gate, items, { samples: opts.samples, retries: 1, maxUsd: limit - emb.reserveUsd, purpose, log });
-    } finally {
-      await closeDb(ingest);
-    }
-    const charge = (entry: Record<string, unknown>) => {
-      for (const file of [spendLog, allocation.log]) {
-        mkdirSync(dirname(file), { recursive: true });
-        appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, ...entry })}\n`);
+      const spendLog = runSpendLog(opts.outDir, purpose);
+      const limit = Math.min(opts.maxUsd ?? RUN_LIMITS_USD.pools, allocation.capUsd - loggedSpendUsd(allocation.log));
+      if (inventory.reserveUsd + emb.reserveUsd > limit + 1e-12) throw new Error(`the pool reservations ($${(inventory.reserveUsd + emb.reserveUsd).toFixed(6)}) exceed the run limit or what remains of allocation ${allocation.name} ($${limit.toFixed(6)}); nothing sent`);
+      if (!ctx.config.databaseIngestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
+      const ingest = createDb(ctx.config.databaseIngestUrl, { max: 2, applicationName: 'aviation-eval-narrative-ledger' });
+      let run: ScopeRun;
+      try {
+        const gate = createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' });
+        run = await runScopeSamples(caller, gate, items, { samples: opts.samples, retries: 1, maxUsd: limit - emb.reserveUsd, purpose, log });
+      } finally {
+        await closeDb(ingest);
       }
-    };
-    charge({ purpose: 'scope', provider: 'anthropic', model: a.scopeModel, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd });
-    const { embedder, billed } = await embedPlan(emb, { fake: false, config: ctx.config, purpose, log });
-    charge({ purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: billed.usd });
-    const texts = new Map<string, string[]>();
-    for (const q of d.questions) texts.set(q.id, run.samples.filter((s) => s.id === q.id).sort((x, y) => x.sample - y.sample).map((s) => s.keywordText));
-    const built = await buildPools(
-      { es: ctx.es, dataset: ctx.run.target, passagesIndex: ctx.run.index, casesIndex: ctx.casesIndex, eventAircraftQualification: ctx.run.contract.eventAircraftQualification },
-      d,
-      embedder,
-      methods,
-      texts,
-      log,
-    );
-    // Every pool case's complete-input fingerprint, from one read-only snapshot: the evidence identity the judgments must match.
-    const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-pools' });
-    await client.connect();
-    let fingerprints: Map<string, string>;
-    try {
-      const loaded = await loadCaseEvidence(client, ctx.source.generationId, [...new Set(built.flatMap((f) => f.cases.map((c) => c.ntsbNo)))]);
-      if (loaded.integrity.length > 0) log(`warning: ${loaded.integrity.length} pool case(s) failed the section hash check and stay unknown: ${loaded.integrity.slice(0, 5).map((x) => x.ntsbNo).join(', ')}`);
-      fingerprints = new Map([...loaded.evidence.entries()].map(([n, e]) => [n, fingerprint(e)]));
+      const charge = (entry: Record<string, unknown>) => {
+        for (const file of [spendLog, allocation.log]) {
+          mkdirSync(dirname(file), { recursive: true });
+          appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, ...entry })}\n`);
+        }
+      };
+      charge({ purpose: 'scope', provider: 'anthropic', model: a.scopeModel, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd });
+      const { embedder, billed } = await embedPlan(emb, { fake: false, config: ctx.config, purpose, log });
+      charge({ purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: billed.usd });
+      const texts = new Map<string, string[]>();
+      for (const q of d.questions) texts.set(q.id, run.samples.filter((s) => s.id === q.id).sort((x, y) => x.sample - y.sample).map((s) => s.keywordText));
+      const built = await buildPools(
+        { es: ctx.es, dataset: ctx.run.target, passagesIndex: ctx.run.index, casesIndex: ctx.casesIndex, eventAircraftQualification: ctx.run.contract.eventAircraftQualification },
+        d,
+        embedder,
+        methods,
+        texts,
+        log,
+      );
+      // Every pool case's complete-input fingerprint, from one read-only snapshot: the evidence identity the judgments must match.
+      const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-pools' });
+      await client.connect();
+      let fingerprints: Map<string, string>;
+      try {
+        const loaded = await loadCaseEvidence(client, ctx.source.generationId, [...new Set(built.flatMap((f) => f.cases.map((c) => c.ntsbNo)))]);
+        if (loaded.integrity.length > 0) log(`warning: ${loaded.integrity.length} pool case(s) failed the section hash check and stay unknown: ${loaded.integrity.slice(0, 5).map((x) => x.ntsbNo).join(', ')}`);
+        fingerprints = new Map([...loaded.evidence.entries()].map(([n, e]) => [n, fingerprint(e)]));
+      } finally {
+        await client.end();
+      }
+      const pools = built.map((f) => withFingerprints(POOL_RULE, f, fingerprints));
+      const body: Omit<PoolFile, 'version'> = {
+        kind: 'track-n-pools',
+        rule: POOL_RULE,
+        datasetSpecSha256: d.source.specSha256,
+        generationId: ctx.source.generationId,
+        target: { ...indexReport(ctx.run), casesIndex: ctx.casesIndex, scope: { model: a.scopeModel, promptVersion: run.promptVersion, samples: run.samples.map((s) => ({ id: s.id, sample: s.sample, status: s.status, keywordTextSha256: sha256(s.keywordText) })) } },
+        methods,
+        families: pools,
+      };
+      const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, { ...body, version: poolFileVersion(body), git: gitState() });
+      log(`pools: ${pools.reduce((n, p) => n + p.cases.length, 0)} cases in ${pools.length} families; ${file}`);
+      return 0;
     } finally {
-      await client.end();
+      held.release();
     }
-    const pools = built.map((f) => withFingerprints(POOL_RULE, f, fingerprints));
-    const body: Omit<PoolFile, 'version'> = {
-      kind: 'track-n-pools',
-      rule: POOL_RULE,
-      datasetSpecSha256: d.source.specSha256,
-      generationId: ctx.source.generationId,
-      target: { ...indexReport(ctx.run), casesIndex: ctx.casesIndex, scope: { model: a.scopeModel, promptVersion: run.promptVersion, samples: run.samples.map((s) => ({ id: s.id, sample: s.sample, status: s.status, keywordTextSha256: sha256(s.keywordText) })) } },
-      methods,
-      families: pools,
-    };
-    const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, { ...body, version: poolFileVersion(body), git: gitState() });
-    log(`pools: ${pools.reduce((n, p) => n + p.cases.length, 0)} cases in ${pools.length} families; ${file}`);
-    return 0;
   } finally {
     await closeContext(ctx);
   }
@@ -638,9 +686,9 @@ export async function poolSubjects(ctx: NarrativeContext, pools: PoolFile): Prom
 }
 
 /** The calibration pairs (one split or both), each case's evidence checked against the fingerprint its label was made against. */
-export async function calibrationSubjects(ctx: NarrativeContext, split: 'dev' | 'holdout' | 'all'): Promise<{ items: PairPlanItem[]; problems: string[] }> {
+export async function calibrationSubjects(ctx: NarrativeContext, split: 'dev' | 'holdout'): Promise<{ items: PairPlanItem[]; problems: string[] }> {
   const cal = ctx.calibration;
-  const chosen = cal.items.filter((i) => split === 'all' || i.split === split);
+  const chosen = cal.items.filter((i) => i.split === split);
   const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-judge' });
   await client.connect();
   try {
@@ -773,10 +821,13 @@ export async function runJudging(
   }
   if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
   const allocation: Allocation = openAllocation(opts.outDir, opts.allocation.name, opts.allocation.capUsd);
-  const callers = deps.callers();
-  const ledger = deps.ledger();
   const runId = `eval-10c2-${opts.set}-${stamp(new Date())}`;
+  // One run at a time per allocation (review N12): held from before the allocation's spend is read until the run ends.
+  const held = lockAllocation(allocation, runId);
+  let ledger: ReturnType<JudgingDeps['ledger']> | null = null;
   try {
+    const callers = deps.callers();
+    ledger = deps.ledger();
     const sender = new AttemptSender({ gate: ledger.gate, limitUsd: opts.limitUsd, spendLog: runSpendLog(opts.outDir, runId), allocation, run: runId }, JUDGE_TIMEOUT_MS);
     log(`allocation ${allocation.name}: $${sender.allocationSpentUsd.toFixed(4)} of $${allocation.capUsd} spent before this run`);
     const cache = new JudgmentCache(resolve(opts.outDir, 'cache.jsonl'));
@@ -796,42 +847,83 @@ export async function runJudging(
     log(`${records.length} pair records; run spend ${usd(sender.spentUsd)}; allocation ${allocation.name} ${usd(sender.allocationSpentUsd)} of $${allocation.capUsd}; ${stopped ? `stopped: ${stopped}; ` : ''}${file}`);
     return stopped ? 1 : 0;
   } finally {
-    await ledger.close();
+    try {
+      await ledger?.close();
+    } finally {
+      held.release();
+    }
   }
+}
+
+/** What a holdout run records in the lock. */
+export interface HoldoutRun {
+  kind: 'track-n-holdout-run';
+  at: string;
+  /** The holdout split's identity: its items' kind, question, case and bundle (labels, rubrics and texts excluded). */
+  holdoutSha256: string;
+  /** What the holdout is judged under: the experiment identity without the whole-file label hash, with each holdout item's question and rubric versions and evidence fingerprint. */
+  configurationSha256: string;
+  /** Each holdout item's key, case and label at the run. */
+  items: { key: string; ntsbNo: string; label: 0 | 1 | 2 }[];
+}
+
+/** The holdout split's identity and configuration (module comment of `guardHoldout`). */
+export function holdoutIdentity(calibration: Pick<CalibrationDataset, 'items'>, experiment: Record<string, unknown>): Omit<HoldoutRun, 'kind' | 'at'> {
+  const items = calibration.items.filter((i) => i.split === 'holdout').sort((x, y) => (itemKey(x) < itemKey(y) ? -1 : itemKey(x) > itemKey(y) ? 1 : 0));
+  const data = (experiment.data ?? {}) as Record<string, unknown>;
+  const { labelsSha256: _wholeFile, ...rest } = data;
+  return {
+    holdoutSha256: sha256(canonicalJson(items.map((i) => itemKey(i)))),
+    configurationSha256: sha256(
+      canonicalJson({
+        experiment: { ...experiment, data: rest },
+        items: items.map((i) => ({ key: itemKey(i), questionVersion: i.questionVersion, rubricVersion: i.rubricVersion, fingerprint: i.case.fingerprint })),
+      }),
+    ),
+    items: items.map((i) => ({ key: itemKey(i), ntsbNo: i.case.ntsbNo, label: i.label })),
+  };
 }
 
 /**
  * D3 (criteria.ts): the holdout runs once per frozen configuration. A holdout run records
- * its experiment identity under `<out-dir>/holdout-runs.jsonl`; a later holdout run of
- * the same calibration set under another identity is refused (a configuration chosen
- * after seeing the holdout needs a fresh holdout set). The same identity may resume.
+ * the holdout split's identity, its configuration and its labels in the fixed lock
+ * (`HOLDOUT_LOCK_FILE`). A later holdout run is refused when any of its cases was in a
+ * holdout run under another configuration (a configuration chosen after seeing the
+ * holdout needs a fresh holdout with new cases), or when a label of an item already run
+ * changed (a relabelled holdout is no longer held out). Edits that touch only the dev
+ * split change neither, so the same configuration may resume.
  */
-export function guardHoldout(outDir: string, labelsSha256: string, experiment: Record<string, unknown>): void {
-  const file = resolve(outDir, 'holdout-runs.jsonl');
-  const identity = sha256(canonicalJson(experiment));
-  const runs = existsSync(file)
-    ? readFileSync(file, 'utf8')
+export function guardHoldout(lockFile: string, id: Omit<HoldoutRun, 'kind' | 'at'>): 'recorded' | 'resumed' {
+  const runs = existsSync(lockFile)
+    ? readFileSync(lockFile, 'utf8')
         .split('\n')
         .filter((l) => l.trim() !== '')
-        .map((l) => JSON.parse(l) as { labelsSha256: string; experimentSha256: string; at: string })
+        .map((l) => JSON.parse(l) as HoldoutRun)
     : [];
-  const other = runs.find((r) => r.labelsSha256 === labelsSha256 && r.experimentSha256 !== identity);
+  const cases = new Set(id.items.map((i) => i.ntsbNo));
+  const other = runs.find((r) => r.configurationSha256 !== id.configurationSha256 && r.items.some((i) => cases.has(i.ntsbNo)));
   if (other) {
     throw new Error(
-      `the holdout of this calibration set was already run (${other.at}) under another configuration; a configuration chosen after seeing the holdout needs a fresh holdout set (D3); nothing paid`,
+      `cases of this holdout were already judged in a holdout run under another configuration (${other.at}); a configuration chosen after seeing the holdout needs a fresh holdout with new cases (D3); nothing paid`,
     );
   }
-  if (!runs.some((r) => r.labelsSha256 === labelsSha256 && r.experimentSha256 === identity)) {
-    mkdirSync(outDir, { recursive: true });
-    appendFileSync(file, `${JSON.stringify({ labelsSha256, experimentSha256: identity, at: new Date().toISOString() })}\n`);
+  const labels = new Map(id.items.map((i) => [i.key, i.label]));
+  for (const r of runs) {
+    const changed = r.items.find((i) => labels.has(i.key) && labels.get(i.key) !== i.label);
+    if (changed) throw new Error(`the label of holdout item ${changed.key} changed after the holdout ran (${r.at}); a relabelled holdout is no longer held out (D3); nothing paid`);
   }
+  if (runs.some((r) => r.holdoutSha256 === id.holdoutSha256 && r.configurationSha256 === id.configurationSha256)) return 'resumed';
+  const line: HoldoutRun = { kind: 'track-n-holdout-run', at: new Date().toISOString(), ...id };
+  mkdirSync(dirname(lockFile), { recursive: true });
+  appendFileSync(lockFile, `${JSON.stringify(line)}\n`);
+  return 'recorded';
 }
 
 /** `judge` / `answerability`: plan, then (with `--confirm-cost`) judge every pair with per-attempt reservations. */
 export async function judgeCommand(
   opts: CommandOptions & {
     set: 'calibration' | 'relevance' | 'answerability';
-    split?: 'dev' | 'holdout' | 'all';
+    split?: 'dev' | 'holdout';
     stage?: Stage;
     pools?: string;
     maxUsd?: number;
@@ -841,6 +933,8 @@ export async function judgeCommand(
     allocationUsd?: number;
     /** Judge only the first `maxPairs` pairs of the schedule (the canary). */
     maxPairs?: number;
+    /** The holdout lock (tests only; runs use `HOLDOUT_LOCK_FILE`). */
+    holdoutLock?: string;
   },
 ): Promise<number> {
   const { log } = opts;
@@ -850,7 +944,7 @@ export async function judgeCommand(
     let items: PairPlanItem[];
     let pools: PoolFile | null = null;
     if (opts.set === 'calibration') {
-      if (!opts.split) throw new Error('--split dev|holdout is required for calibration (dev first, holdout once)');
+      if (opts.split !== 'dev' && opts.split !== 'holdout') throw new Error('--split dev|holdout is required for calibration (dev first, holdout once; never both in one run)');
       const r = await calibrationSubjects(ctx, opts.split);
       if (r.problems.length > 0) throw new Error(`calibration inputs: ${r.problems.join('; ')}; nothing paid`);
       items = r.items;
@@ -871,7 +965,10 @@ export async function judgeCommand(
     }
     if (opts.maxPairs !== undefined) items = [...items].sort(byPriority).slice(0, opts.maxPairs);
     const experiment = experimentIdentity(opts.set, experimentData(opts.set, ctx.dataset, ctx.calibration, pools) as ExperimentData);
-    if (opts.set === 'calibration' && opts.split !== 'dev' && opts.confirm) guardHoldout(opts.outDir, ctx.calibration.labels.sha256, experiment);
+    if (opts.set === 'calibration' && opts.split === 'holdout' && opts.confirm) {
+      const lock = opts.holdoutLock ?? HOLDOUT_LOCK_FILE;
+      log(`holdout lock ${lock}: ${guardHoldout(lock, holdoutIdentity(ctx.calibration, experiment)) === 'resumed' ? 'the same configuration resumes' : 'this run recorded; commit the file'}`);
+    }
     const share = opts.maxEscalationShare ?? (opts.set === 'calibration' ? 1 : ASSUMPTIONS.escalationBound);
     if (opts.set !== 'calibration' && share > ASSUMPTIONS.escalationBound) throw new Error(`escalation is bounded at ${ASSUMPTIONS.escalationBound} of the pairs`);
     const limit = opts.maxUsd ?? (opts.set === 'calibration' ? RUN_LIMITS_USD.calibration : opts.set === 'relevance' ? RUN_LIMITS_USD.relevance : RUN_LIMITS_USD.answerability);

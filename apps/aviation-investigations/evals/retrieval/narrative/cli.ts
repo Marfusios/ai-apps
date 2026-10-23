@@ -4,7 +4,8 @@
  *
  *   build         [--generation <id>] [--out <file>] [--dry-run | --check]   the question set (PostgreSQL, read-only)
  *   calibration   --generation <id> [--out <file>] [--check]                 the calibration sets, labels frozen
- *   plan          [--samples 1|3] [--allocation-usd <usd>]                   the free dry run: preflight, inventory, cost, the month's sequence
+ *   plan          [--samples 1|3] [--allocation-usd <usd>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>]
+ *                 the free dry run: preflight, inventory, cost, the month's sequence; measured usage replaces the assumptions
  *   pools         [--samples 1|3] [--confirm-cost --allocation <name>]       paid: scope samples and query embeddings; builds the pools
  *   judge         --set calibration --split dev|holdout [--max-pairs <n>] [--confirm-cost --allocation <name>]
  *   judge         --set relevance --pools <file> [--stage 1|2] [--confirm-cost --allocation <name>]
@@ -31,7 +32,7 @@ import { judgeCommand, planCommand, poolsCommand, reportCommand } from './comman
 export const USAGE = [
   'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]',
   '       pnpm eval:retrieval:narrative calibration [--env-files <a,b>] --generation <id> [--out <file>] [--check]',
-  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--allocation-usd <usd>] [--out-dir <dir>]',
+  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--allocation-usd <usd>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>] [--out-dir <dir>]',
   '       pnpm eval:retrieval:narrative pools [--samples 1|3] [--max-usd <usd>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
   '       pnpm eval:retrieval:narrative judge --set calibration --split dev|holdout [--max-pairs <n>] [--max-usd <usd>] [--concurrency <n>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
   '       pnpm eval:retrieval:narrative judge --set relevance --pools <file> [--stage 1|2] [--max-usd <usd>] [--concurrency <n>] [--max-escalation-share <share>] [--confirm-cost --allocation <name>] ...',
@@ -73,6 +74,9 @@ export async function main(argv: string[]): Promise<number> {
       allocation: { type: 'string' },
       'allocation-usd': { type: 'string' },
       'max-pairs': { type: 'string' },
+      measured: { type: 'string' },
+      'output-tokens': { type: 'string' },
+      disagreement: { type: 'string' },
     },
     allowPositionals: true,
     strict: true,
@@ -87,9 +91,9 @@ export async function main(argv: string[]): Promise<number> {
     console.error('--samples is 1 or 3');
     return 2;
   }
-  const split = values.split as 'dev' | 'holdout' | 'all' | undefined;
-  if (split !== undefined && !['dev', 'holdout', 'all'].includes(split)) {
-    console.error('--split is dev, holdout or all');
+  const split = values.split as 'dev' | 'holdout' | undefined;
+  if (split !== undefined && !['dev', 'holdout'].includes(split)) {
+    console.error('--split is dev or holdout: the dev split first, the holdout once, never both in one run');
     return 2;
   }
   const stage = values.stage === undefined ? undefined : Number(values.stage);
@@ -130,7 +134,32 @@ export async function main(argv: string[]): Promise<number> {
   const base = { config, outDir, confirm: values['confirm-cost'] === true, log };
   const maxUsd = positiveNumber(values['max-usd'], '--max-usd');
   const allocationUsd = positiveNumber(values['allocation-usd'], '--allocation-usd');
-  if (command === 'plan') return planCommand({ ...base, confirm: false, samples, broadSample: { bm25: 30, lure: 5, random: 5 }, ...(allocationUsd !== undefined ? { allocationUsd } : {}) });
+  if (command === 'plan') {
+    let outputTokens: { a: number; b: number } | undefined;
+    if (values['output-tokens'] !== undefined) {
+      const [a, b, ...rest] = values['output-tokens'].split(',').map((x) => Number(x.trim()));
+      if (rest.length > 0 || !(a !== undefined && a > 0) || !(b !== undefined && b > 0)) {
+        console.error('--output-tokens takes two positive numbers: judge A,judge B (mean output tokens per call, thinking or reasoning included)');
+        return 2;
+      }
+      outputTokens = { a, b };
+    }
+    const disagreement = values.disagreement === undefined ? undefined : Number(values.disagreement);
+    if (disagreement !== undefined && !(disagreement >= 0 && disagreement <= 1)) {
+      console.error('--disagreement is a share between 0 and 1');
+      return 2;
+    }
+    return planCommand({
+      ...base,
+      confirm: false,
+      samples,
+      broadSample: { bm25: 30, lure: 5, random: 5 },
+      ...(allocationUsd !== undefined ? { allocationUsd } : {}),
+      ...(values.measured ? { measured: values.measured.split(',').map((f) => f.trim()).filter(Boolean) } : {}),
+      ...(outputTokens ? { outputTokens } : {}),
+      ...(disagreement !== undefined ? { disagreement } : {}),
+    });
+  }
   const allocation = { ...(values.allocation ? { allocation: values.allocation } : {}), ...(allocationUsd !== undefined ? { allocationUsd } : {}) };
   if (command === 'pools') return poolsCommand({ ...base, samples, ...(maxUsd !== undefined ? { maxUsd } : {}), ...allocation });
   const set = command === 'answerability' ? 'answerability' : values.set;

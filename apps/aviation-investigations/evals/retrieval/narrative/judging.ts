@@ -40,7 +40,8 @@
  * also by the two verdicts and the blind grade it saw. A cached outcome is reused, never
  * re-bought; a failed one is never cached.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SpendGate } from '../../../worker/index/spend-gate.js';
 import { SpendRefusedError } from '../../../worker/index/spend-gate.js';
@@ -189,6 +190,73 @@ export function openAllocation(dir: string, name: string, capUsd: number | undef
   const header: AllocationHeader = { kind: 'track-n-allocation', name, capUsd, createdAt: new Date().toISOString() };
   writeFileSync(log, `${JSON.stringify(header)}\n`, { flag: 'wx' });
   return { name, capUsd, log };
+}
+
+/** An allocation held by one run (`lockAllocation`). */
+export interface AllocationLock {
+  path: string;
+  release(): void;
+}
+
+interface LockHolder {
+  run: string;
+  pid: number;
+  host: string;
+  at: string;
+}
+
+const processAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+};
+
+/**
+ * One run at a time per allocation (review N12): a run takes an exclusive lock file next
+ * to the allocation's log before it reads the log's spend, and keeps it until it ends, so
+ * two runs can never both count the same remaining cap. A lock left by a process that no
+ * longer runs on this host is taken over; any other lock refuses the run (remove it by
+ * hand only when its run is known to have ended).
+ */
+export function lockAllocation(a: Allocation, run: string): AllocationLock {
+  const path = a.log.replace(/\.jsonl$/, '.lock');
+  const mine: LockHolder = { run, pid: process.pid, host: hostname(), at: new Date().toISOString() };
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify(mine)}\n`, { flag: 'wx' });
+      return {
+        path,
+        release: () => {
+          try {
+            const held = JSON.parse(readFileSync(path, 'utf8')) as Partial<LockHolder>;
+            if (held.run === run && held.pid === process.pid) unlinkSync(path);
+          } catch {
+            // Already gone.
+          }
+        },
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      let held: Partial<LockHolder> = {};
+      try {
+        held = JSON.parse(readFileSync(path, 'utf8')) as Partial<LockHolder>;
+      } catch {
+        // Unreadable: treated as held.
+      }
+      const stale = held.host === mine.host && typeof held.pid === 'number' && held.pid !== process.pid && !processAlive(held.pid);
+      if (!stale || attempt > 0) {
+        throw new Error(
+          `allocation ${a.name} is in use by run ${held.run ?? 'unknown'} (process ${held.pid ?? '?'}, since ${held.at ?? '?'}): one run at a time per allocation; nothing sent. ` +
+            `Remove ${path} only if that run has ended.`,
+        );
+      }
+      unlinkSync(path);
+    }
+  }
 }
 
 export interface RunMoney {

@@ -40,6 +40,7 @@ import { families, membersOf, type NarrativeDataset, type NarrativeItem } from '
 import { loadCaseEvidence, planChunks, renderBundleCase, type CaseEvidence, type DeliveredPassage } from './evidence.js';
 import { adjudicationBlock, answerabilityRequest, chunkRequest, consolidateRequest, relevanceRequest, type JudgeRequest } from './prompts.js';
 import { POOL_RULE, lureCases } from './pool.js';
+import type { PairRecord } from './judging.js';
 import type { Rubric } from './spec.js';
 
 /** Phase A (task 10d) dev runs of p50-kt, c200+n-kt and c200+nf-kt on 21 questions: unique cases in the union of their first 100, per question, by scope samples. */
@@ -232,13 +233,95 @@ export function protocolArithmetic(): { pairs: number; input: number; output: nu
   return { pairs, input, output, escalation, usd: { judgeA, judgeB, adjudicator, total: judgeA + judgeB + adjudicator } };
 }
 
-/** Outputs for a cost breakdown: none, visible verdicts only, or visible verdicts with the judges' reasoning. */
-export const outputsFor = (part: 'input' | 'visible' | 'full') => {
-  const full = expectedOutputs();
+/** Outputs for a cost breakdown: none, visible verdicts only, or visible verdicts with the judges' reasoning (`full`, the assumptions unless given). */
+export const outputsFor = (part: 'input' | 'visible' | 'full', full: { a: number; b: number; adj: number } = expectedOutputs()) => {
   if (part === 'full') return full;
-  if (part === 'visible') return { a: EXPECTED_OUTPUT['judge-a'].visible, b: EXPECTED_OUTPUT['judge-b'].visible, adj: full.adj };
+  if (part === 'visible') return { a: Math.min(full.a, EXPECTED_OUTPUT['judge-a'].visible), b: Math.min(full.b, EXPECTED_OUTPUT['judge-b'].visible), adj: full.adj };
   return { a: 0, b: 0, adj: full.adj };
 };
+
+// ---------------------------------------------------------------------------
+// Measured inputs (review N13)
+
+/** What judged pairs measured: each role's mean output tokens per call with a reported usage (visible plus thinking or reasoning), and the escalated share. */
+export interface MeasuredUsage {
+  /** Pairs both judges finished (neither failed). */
+  pairs: number;
+  outputTokens: { a: number | null; b: number | null; adj: number | null };
+  calls: { a: number; b: number; adj: number };
+  /** Of those pairs, the share that escalated to the adjudicator (or would have, but for the escalation bound). */
+  disagreement: number | null;
+}
+
+/** Measured usage of judgment records (a dev calibration run's records, for example). */
+export function measuredUsage(records: readonly Pick<PairRecord, 'judges' | 'adjudication' | 'status' | 'attempts'>[]): MeasuredUsage {
+  const outputs = (role: string) =>
+    records.flatMap((r) => r.attempts).filter((a) => a.role === role && a.status === 'ok' && a.usage !== null).map((a) => (a.usage as NonNullable<typeof a.usage>).outputTokens);
+  const mean = (xs: number[]) => (xs.length === 0 ? null : xs.reduce((n, x) => n + x, 0) / xs.length);
+  const [a, b, adj] = [outputs('judge-a'), outputs('judge-b'), outputs('adjudicator')];
+  const finished = records.filter((r) => r.judges.length === 2 && r.judges.every((j) => j.status !== 'failed'));
+  const escalated = finished.filter((r) => r.adjudication !== null || r.status === 'escalation-budget-exhausted');
+  return {
+    pairs: finished.length,
+    outputTokens: { a: mean(a), b: mean(b), adj: mean(adj) },
+    calls: { a: a.length, b: b.length, adj: adj.length },
+    disagreement: finished.length === 0 ? null : escalated.length / finished.length,
+  };
+}
+
+/** The plan's inputs: the assumptions (config.ts, `ASSUMPTIONS`), replaced by measured usage, then by values given explicitly. */
+export interface PlanInputs {
+  /** Expected output tokens per call (visible plus thinking or reasoning) of each role. */
+  outputs: { a: number; b: number; adj: number };
+  /** The escalated share of pool pairs (relevance and answerability) and of calibration items. */
+  escalation: number;
+  calibrationDisagreement: number;
+  source: { outputs: 'assumed' | 'measured' | 'given'; escalation: 'assumed' | 'measured' | 'given' };
+}
+
+export function planInputs(measured: MeasuredUsage | null, given: { outputTokens?: { a: number; b: number }; disagreement?: number } = {}): PlanInputs {
+  const assumed = expectedOutputs();
+  const outputs = {
+    a: given.outputTokens?.a ?? measured?.outputTokens.a ?? assumed.a,
+    b: given.outputTokens?.b ?? measured?.outputTokens.b ?? assumed.b,
+    adj: measured?.outputTokens.adj ?? assumed.adj,
+  };
+  const disagreement = given.disagreement ?? measured?.disagreement ?? null;
+  return {
+    outputs,
+    // A measured disagreement (calibration items are harder than most pool pairs) stands in for the pool escalation share too, within the bound.
+    escalation: disagreement === null ? ASSUMPTIONS.escalationExpected : Math.min(disagreement, ASSUMPTIONS.escalationBound),
+    calibrationDisagreement: disagreement ?? ASSUMPTIONS.calibrationDisagreement,
+    source: {
+      outputs: given.outputTokens ? 'given' : measured && (measured.outputTokens.a !== null || measured.outputTokens.b !== null) ? 'measured' : 'assumed',
+      escalation: given.disagreement !== undefined ? 'given' : measured?.disagreement !== null && measured !== null ? 'measured' : 'assumed',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The canary (review N9)
+
+/**
+ * The canary pair: the first dev calibration item in the schedule's order (every item has
+ * priority 0, so `byPriority` orders them by case, family and bundle key), and the cap
+ * that lets one full escalation finish: both judges, the adjudicator's blind step and its
+ * decision, each at its caps (no retry). The canary reaches the adjudicator only when the
+ * judges disagree on it.
+ */
+export function canaryOf<T extends { split: string; question: string; case: { ntsbNo: string }; bundle: { key: string } | null }>(items: readonly T[]): T | undefined {
+  const key = (i: T): [string, string, string] => [i.case.ntsbNo, i.question, i.bundle?.key ?? ''];
+  return items
+    .filter((i) => i.split === 'dev')
+    .sort((x, y) => {
+      const [a, b] = [key(x), key(y)];
+      for (let k = 0; k < 3; k += 1) if ((a[k] as string) !== (b[k] as string)) return (a[k] as string) < (b[k] as string) ? -1 : 1;
+      return 0;
+    })[0];
+}
+
+/** One full escalation of a measured case at its caps: what the canary's limit must cover. */
+export const fullEscalationUsd = (c: CaseCost): number => c.worstJudges + c.worstAdjudication;
 
 export interface RunCost {
   /** Expected pairs and calls, unrounded (so per-family runs add up); round when printing. */

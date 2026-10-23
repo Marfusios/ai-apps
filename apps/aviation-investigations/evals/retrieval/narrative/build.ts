@@ -209,6 +209,12 @@ export async function buildCommand(opts: { databaseUrl: string; generation?: num
 // The calibration sets
 
 export const DEFAULT_CALIBRATION = resolve(APP_DIR, 'evals/retrieval/narrative/calibration.json');
+/**
+ * The holdout lock of D3 (criteria.ts, review N8): one file at a fixed place next to the
+ * calibration file, whatever `--out-dir` a run uses. A holdout run appends its line; commit
+ * it with the run's report.
+ */
+export const HOLDOUT_LOCK_FILE = resolve(APP_DIR, 'evals/retrieval/narrative/holdout-runs.jsonl');
 
 /**
  * `calibration` (cli.ts): draw the code-reading items from the generation (the Track C
