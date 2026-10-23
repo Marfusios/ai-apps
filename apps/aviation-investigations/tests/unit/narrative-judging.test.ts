@@ -1,0 +1,387 @@
+/**
+ * Track N judging: the evaluation-only judge clients (the Anthropic one classifies
+ * failures exactly as the production adapter does; the OpenAI one mirrors it, with
+ * strict structured outputs, explicit caching, reasoning tokens and billing), and the
+ * pair procedure: independent judges, one retry of an invalid output, adjudication with
+ * a recorded blind first decision, abstentions and unresolved pairs as `unknown`, the
+ * escalation bound, per-attempt ledger reservations, budget stops and the cache.
+ * No request leaves the process.
+ */
+import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
+import { describe, expect, it } from 'vitest';
+import { createAnthropicProvider } from '../../server/ai/anthropic.js';
+import { StageError, stageCtx } from '../../server/ai/provider.js';
+import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
+import {
+  JudgeCallError,
+  attemptReserveUsd,
+  createAnthropicJudge,
+  createFakeJudge,
+  createOpenAIJudge,
+  judgeCostUsd,
+  openAIUsage,
+  type JudgeModelConfig,
+  type OpenAIResponsesClient,
+} from '../../evals/retrieval/narrative/clients.js';
+import { fingerprint, planChunks } from '../../evals/retrieval/narrative/evidence.js';
+import {
+  AttemptSender,
+  BudgetStop,
+  FatalJudgeError,
+  JudgmentCache,
+  adjudicationOrder,
+  judgePairs,
+  relevanceSubject,
+  type FamilyRef,
+  type PairPlanItem,
+} from '../../evals/retrieval/narrative/judging.js';
+import { relevanceRequest, type JudgeRequest } from '../../evals/retrieval/narrative/prompts.js';
+import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
+import { questionVersion, rubricVersion } from '../../evals/retrieval/narrative/spec.js';
+import { evidence } from '../support/narrative-fixtures.js';
+
+const HAIKU: JudgeModelConfig = { role: 'judge-a', provider: 'anthropic', model: 'claude-haiku-5-5', settings: { thinking: 'adaptive', effort: 'low' }, maxOutputTokens: 6_000, maxInputTokens: 30_000 };
+const LUNA: JudgeModelConfig = { role: 'judge-b', provider: 'openai', model: 'gpt-5.6-luna', settings: { reasoning: 'low' }, maxOutputTokens: 6_000, maxInputTokens: 30_000 };
+const SONNET: JudgeModelConfig = { role: 'adjudicator', provider: 'anthropic', model: 'claude-sonnet-5-5', settings: { thinking: 'off', effort: 'low' }, maxOutputTokens: 4_000, maxInputTokens: 30_000 };
+
+const q = NARRATIVE_QUESTIONS[0] as (typeof NARRATIVE_QUESTIONS)[number];
+const ref: FamilyRef = { family: q.id, question: q.question, rubric: q.rubric, questionVersion: questionVersion(q), rubricVersion: rubricVersion(q.rubric) };
+
+const VERDICT = {
+  relevant: { grade: 'relevant', evidence: [{ source: 'S1', quote: 'the engine lost total power during the climb' }, { source: 'S1', quote: 'revealed no mechanical malfunctions or anomalies' }], absent_from_record: false, absent: null, rationale: 'Both conditions.' },
+  partial: { grade: 'partial', evidence: [{ source: 'S1', quote: 'the engine lost total power during the climb' }], absent_from_record: false, absent: null, rationale: 'Power loss only.' },
+  invalid: { grade: 'relevant', evidence: [{ source: 'S1', quote: 'a quote that is not in the record at all' }], absent_from_record: false, absent: null, rationale: 'x' },
+  abstain: { grade: 'abstain', evidence: [], absent_from_record: false, absent: null, rationale: 'The rubric does not settle it.' },
+} as const;
+
+// ---------------------------------------------------------------------------
+// Anthropic: a real SDK client with a stubbed fetch
+
+type Body = Record<string, unknown>;
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'request-id': 'req_test' } });
+const anthropicError = (status: number, type: string) => json(status, { type: 'error', error: { type, message: 'synthetic' } });
+const message = (output: unknown, over: Body = {}) => ({
+  id: 'msg_test',
+  type: 'message',
+  role: 'assistant',
+  model: 'test',
+  content: [{ type: 'text', text: JSON.stringify(output), citations: null }],
+  stop_reason: 'end_turn',
+  stop_sequence: null,
+  stop_details: null,
+  usage: { input_tokens: 900, output_tokens: 300, cache_creation_input_tokens: 0, cache_read_input_tokens: 1_200, output_tokens_details: { thinking_tokens: 120 } },
+  ...over,
+});
+
+function anthropicStub(reply: () => Response | Promise<Response>, count = 2_000) {
+  const bodies: Body[] = [];
+  const countBodies: Body[] = [];
+  const fetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const body = JSON.parse(String(init?.body)) as Body;
+    if (String(url).endsWith('/v1/messages/count_tokens')) {
+      countBodies.push(body);
+      return json(200, { input_tokens: count });
+    }
+    bodies.push(body);
+    return reply();
+  };
+  return { client: new Anthropic({ apiKey: 'test-key', baseURL: 'https://api.invalid', maxRetries: 0, fetch }), bodies, countBodies };
+}
+
+async function failure(p: Promise<unknown>): Promise<unknown> {
+  return p.then(
+    () => {
+      throw new Error('expected a failure');
+    },
+    (e: unknown) => e,
+  );
+}
+
+describe('the Anthropic judge client', () => {
+  const req = relevanceRequest(q, evidence());
+
+  it('classifies every failure exactly as the production adapter does', async () => {
+    const cases: [string, () => Response | Promise<Response>][] = [
+      ['429', () => anthropicError(429, 'rate_limit_error')],
+      ['401', () => anthropicError(401, 'authentication_error')],
+      ['403', () => anthropicError(403, 'permission_error')],
+      ['400', () => anthropicError(400, 'invalid_request_error')],
+      ['404', () => anthropicError(404, 'not_found_error')],
+      ['422', () => anthropicError(422, 'invalid_request_error')],
+      ['409', () => anthropicError(409, 'conflict_error')],
+      ['529', () => anthropicError(529, 'overloaded_error')],
+      ['500', () => anthropicError(500, 'api_error')],
+      ['network', () => Promise.reject(new TypeError('fetch failed'))],
+      ['refusal', () => json(200, message(VERDICT.partial, { stop_reason: 'refusal' }))],
+      ['max_tokens', () => json(200, message(VERDICT.partial, { stop_reason: 'max_tokens' }))],
+      ['unparseable', () => json(200, message('not the schema'))],
+    ];
+    for (const [name, reply] of cases) {
+      const adapter = createAnthropicProvider({ models: { scope: 'claude-haiku-5-5', answer: 'claude-haiku-5-5', check: 'claude-haiku-5-5' }, client: anthropicStub(reply).client });
+      const stage = (await failure(adapter.scope({ question: 'Engine power loss after maintenance?' }, stageCtx('scope', new AbortController().signal, 5_000)))) as StageError;
+      const judge = createAnthropicJudge(HAIKU, { client: anthropicStub(reply).client });
+      const mine = (await failure(judge.call(req, 5_000))) as JudgeCallError;
+      expect(stage).toBeInstanceOf(StageError);
+      expect(mine).toBeInstanceOf(JudgeCallError);
+      expect([name, mine.category, mine.billing.kind]).toEqual([name, stage.category, stage.billing.kind]);
+    }
+  });
+
+  it('sends the frozen settings with cache marks on the system prompt and the cacheable blocks only', async () => {
+    const stub = anthropicStub(() => json(200, message(VERDICT.relevant)));
+    const r = await createAnthropicJudge(HAIKU, { client: stub.client }).call(req, 5_000);
+    const body = stub.bodies[0] as { system: Body[]; messages: { content: Body[] }[]; output_config: Body; thinking: Body; max_tokens: number };
+    expect(body.system[0]).toMatchObject({ cache_control: { type: 'ephemeral' } });
+    expect(body.messages[0]?.content.map((c) => 'cache_control' in c)).toEqual([true, false, false]);
+    expect(body.output_config).toMatchObject({ effort: 'low', format: { type: 'json_schema' } });
+    expect(body.thinking).toEqual({ type: 'adaptive' });
+    expect(body.max_tokens).toBe(6_000);
+    expect(r.output).toMatchObject({ grade: 'relevant' });
+    expect(r.usage).toEqual({ inputTokens: 900, outputTokens: 300, cacheWriteTokens: 0, cacheReadTokens: 1_200, reasoningTokens: 120 });
+    expect(stub.countBodies).toHaveLength(1);
+  });
+
+  it('refuses a request above the input cap before sending it, and turns thinking off where configured', async () => {
+    const stub = anthropicStub(() => json(200, message(VERDICT.relevant)), 40_000);
+    expect(await failure(createAnthropicJudge(HAIKU, { client: stub.client }).call(req, 5_000))).toMatchObject({ category: 'cap_exceeded', billing: { kind: 'none' } });
+    expect(stub.bodies).toHaveLength(0);
+    const off = anthropicStub(() => json(200, message(VERDICT.relevant)));
+    await createAnthropicJudge(SONNET, { client: off.client }).call(req, 5_000);
+    expect((off.bodies[0] as { thinking: Body }).thinking).toEqual({ type: 'between_tools' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenAI: a real SDK client with a stubbed fetch
+
+const response = (output: unknown, over: Body = {}) => ({
+  id: 'resp_test',
+  object: 'response',
+  status: 'completed',
+  incomplete_details: null,
+  output: [{ type: 'message', id: 'msg', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(output), annotations: [] }] }],
+  usage: { input_tokens: 2_400, input_tokens_details: { cached_tokens: 1_500, cache_write_tokens: 0 }, output_tokens: 700, output_tokens_details: { reasoning_tokens: 450 }, total_tokens: 3_100 },
+  ...over,
+});
+const openAIError = (status: number, code: string) => json(status, { error: { message: 'synthetic', type: 'error', code } });
+
+function openAIStub(reply: () => Response | Promise<Response>) {
+  const bodies: Body[] = [];
+  const fetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    bodies.push(JSON.parse(String(init?.body)) as Body);
+    return reply();
+  };
+  const client = new OpenAI({ apiKey: 'test-key', baseURL: 'https://api.invalid/v1', maxRetries: 0, fetch }) as unknown as OpenAIResponsesClient;
+  return { client, bodies };
+}
+
+describe('the OpenAI judge client', () => {
+  const req = relevanceRequest(q, evidence());
+
+  it('sends strict structured output, reasoning effort, explicit caching on the cacheable blocks and no storage', async () => {
+    const stub = openAIStub(() => json(200, response(VERDICT.partial)));
+    const r = await createOpenAIJudge(LUNA, { client: stub.client }).call(req, 5_000);
+    const body = stub.bodies[0] as { input: { role: string; content: Body[] }[]; text: { format: Body }; reasoning: Body; prompt_cache_options: Body; store: boolean; max_output_tokens: number };
+    expect(body.input.map((m) => m.role)).toEqual(['developer', 'user']);
+    expect(body.input[1]?.content.map((c) => 'prompt_cache_breakpoint' in c)).toEqual([true, false, false]);
+    expect(body.prompt_cache_options).toEqual({ mode: 'explicit' });
+    expect(body.store).toBe(false);
+    expect(body.reasoning).toEqual({ effort: 'low' });
+    expect(body.text.format).toMatchObject({ type: 'json_schema', strict: true, name: 'verdict' });
+    expect(body.max_output_tokens).toBe(6_000);
+    expect(r.output).toMatchObject({ grade: 'partial' });
+    expect(r.usage).toEqual({ inputTokens: 900, outputTokens: 700, cacheWriteTokens: 0, cacheReadTokens: 1_500, reasoningTokens: 450 });
+  });
+
+  it('mirrors the adapter classification for transport failures', async () => {
+    const cases: [() => Response | Promise<Response>, string, string][] = [
+      [() => openAIError(429, 'rate_limit_exceeded'), 'rate_limited', 'none'],
+      [() => openAIError(401, 'invalid_api_key'), 'auth', 'none'],
+      [() => openAIError(403, 'forbidden'), 'auth', 'none'],
+      [() => openAIError(400, 'invalid_request'), 'bad_request', 'none'],
+      [() => openAIError(404, 'model_not_found'), 'bad_request', 'none'],
+      [() => openAIError(409, 'conflict'), 'provider_error', 'none'],
+      [() => openAIError(500, 'server_error'), 'provider_error', 'uncertain'],
+      [() => Promise.reject(new TypeError('fetch failed')), 'network', 'uncertain'],
+    ];
+    for (const [reply, category, billing] of cases) {
+      const e = (await failure(createOpenAIJudge(LUNA, { client: openAIStub(reply).client }).call(req, 5_000))) as JudgeCallError;
+      expect([e.category, e.billing.kind]).toEqual([category, billing]);
+    }
+  });
+
+  it('bills truncated, filtered, refused and unparseable outputs at their usage', async () => {
+    const usage = { kind: 'usage' };
+    const run = async (body: unknown) => (await failure(createOpenAIJudge(LUNA, { client: openAIStub(() => json(200, body)).client }).call(req, 5_000))) as JudgeCallError;
+    expect(await run(response(VERDICT.partial, { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }))).toMatchObject({ category: 'truncated', billing: usage });
+    expect(await run(response(VERDICT.partial, { status: 'incomplete', incomplete_details: { reason: 'content_filter' } }))).toMatchObject({ category: 'refusal', billing: usage });
+    expect(await run(response(null, { output: [{ type: 'message', id: 'm', role: 'assistant', status: 'completed', content: [{ type: 'refusal', refusal: 'no' }] }] }))).toMatchObject({ category: 'refusal', billing: usage });
+    expect(await run(response({ grade: 'maybe' }))).toMatchObject({ category: 'invalid_output', billing: usage });
+    expect(await run(response(VERDICT.partial, { usage: undefined }))).toMatchObject({ category: 'invalid_output', billing: { kind: 'uncertain' } });
+  });
+
+  it('maps usage: ordinary input excludes cached and written tokens', () => {
+    expect(openAIUsage({ input_tokens: 3_000, input_tokens_details: { cached_tokens: 1_000, cache_write_tokens: 500 }, output_tokens: 400, output_tokens_details: { reasoning_tokens: 100 } })).toEqual({
+      inputTokens: 1_500,
+      outputTokens: 400,
+      cacheWriteTokens: 500,
+      cacheReadTokens: 1_000,
+      reasoningTokens: 100,
+    });
+    expect(openAIUsage({ input_tokens: 10, input_tokens_details: { cached_tokens: 20 }, output_tokens: 1 })).toBeNull();
+    expect(judgeCostUsd('gpt-5.6-luna', { inputTokens: 1_500, outputTokens: 400, cacheWriteTokens: 500, cacheReadTokens: 1_000 })).toBeCloseTo((1_500 * 0.2 + 400 * 1.2 + 500 * 0.25 + 1_000 * 0.02) / 1e6, 12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pairs
+
+function subject(over: Partial<FamilyRef> = {}) {
+  const e = evidence();
+  return relevanceSubject({ ...ref, ...over }, e, planChunks(e), fingerprint(e));
+}
+
+function harness(opts: { allowance?: number; limit?: number; cache?: JudgmentCache } = {}) {
+  const gate = createMemorySpendGate(opts.allowance ?? 20);
+  const sender = new AttemptSender({ gate, limitUsd: opts.limit ?? 5, spendLog: null, run: 'test' }, 5_000, async () => undefined);
+  return { gate, sender, cache: opts.cache ?? new JudgmentCache(null) };
+}
+
+const reply = (seq: readonly unknown[]) => (_req: JudgeRequest, n: number) => seq[Math.min(n - 1, seq.length - 1)];
+
+describe('judging pairs', () => {
+  it('labels an agreement, reserving and settling every attempt on the ledger', async () => {
+    const h = harness();
+    const a = createFakeJudge(HAIKU, reply([VERDICT.relevant]));
+    const b = createFakeJudge(LUNA, reply([VERDICT.relevant]));
+    const adj = createFakeJudge(SONNET, reply([VERDICT.relevant]));
+    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 2 });
+    expect(r).toMatchObject({ label: 2, status: 'agreed', adjudication: null });
+    expect(adj.calls).toHaveLength(0);
+    expect(h.gate.records).toHaveLength(2);
+    expect(h.gate.records.every((x) => x.status === 'settled')).toBe(true);
+    expect(r?.attempts.map((x) => x.reservedUsd)).toEqual([attemptReserveUsd(HAIKU, r?.attempts[0]?.inputTokens as number), attemptReserveUsd(LUNA, r?.attempts[1]?.inputTokens as number)]);
+  });
+
+  it('adjudicates a disagreement: a blind first decision, then both verdicts as A and B', async () => {
+    const h = harness();
+    const a = createFakeJudge(HAIKU, reply([VERDICT.relevant]));
+    const b = createFakeJudge(LUNA, reply([VERDICT.partial]));
+    const adj = createFakeJudge(SONNET, reply([VERDICT.partial, VERDICT.relevant]));
+    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(r).toMatchObject({ label: 2, status: 'adjudicated', adjudication: { initial: 1, final: 2, status: 'valid' } });
+    const [first, second] = adj.calls;
+    const text = (x: JudgeRequest | undefined) => (x?.blocks ?? []).map((b2) => b2.text).join('\n');
+    expect(text(first)).not.toMatch(/<verdicts>|<initial>|Both conditions|Power loss only/);
+    expect(first?.blocks[1]?.cache).toBe(true);
+    expect(text(second)).toContain('<initial>');
+    expect(text(second)).toContain('<verdict grader="A">');
+    expect(text(second)).toContain('Both conditions.');
+    expect(text(second)).toContain('Power loss only.');
+    expect(r?.adjudication?.order).toEqual(adjudicationOrder(subject()).map((i) => (i === 0 ? 'judge-a' : 'judge-b')));
+  });
+
+  it('turns an abstention, an invalid adjudication and two unjudgeable judges into unknown', async () => {
+    const run = async (aSeq: unknown[], bSeq: unknown[], adjSeq: unknown[]) => {
+      const h = harness();
+      const [r] = await judgePairs([{ subject: subject(), priority: 0 }], {
+        judges: [createFakeJudge(HAIKU, reply(aSeq)), createFakeJudge(LUNA, reply(bSeq))],
+        adjudicator: createFakeJudge(SONNET, reply(adjSeq)),
+        sender: h.sender,
+        cache: h.cache,
+        concurrency: 1,
+        maxEscalationShare: 1,
+      });
+      return r;
+    };
+    expect(await run([VERDICT.relevant], [VERDICT.partial], [VERDICT.partial, VERDICT.abstain])).toMatchObject({ label: 'unknown', status: 'abstained' });
+    expect(await run([VERDICT.relevant], [VERDICT.partial], [VERDICT.partial, VERDICT.invalid, VERDICT.invalid])).toMatchObject({ label: 'unknown', status: 'adjudication-unjudgeable' });
+    expect(await run([VERDICT.invalid], [VERDICT.invalid], [VERDICT.relevant])).toMatchObject({ label: 'unknown', status: 'unjudgeable', adjudication: null });
+  });
+
+  it('retries an invalid output once with feedback, and escalates when only one judge is usable', async () => {
+    const h = harness();
+    const a = createFakeJudge(HAIKU, reply([VERDICT.invalid, VERDICT.relevant]));
+    const b = createFakeJudge(LUNA, reply([VERDICT.invalid, VERDICT.invalid]));
+    const adj = createFakeJudge(SONNET, reply([VERDICT.relevant, VERDICT.relevant]));
+    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(a.calls).toHaveLength(2);
+    expect(a.calls[1]?.blocks.at(-1)?.text).toContain('quote_not_found:S1');
+    expect(b.calls).toHaveLength(2);
+    expect(r?.judges.map((j) => j.status)).toEqual(['valid', 'unjudgeable']);
+    expect(r).toMatchObject({ label: 2, status: 'adjudicated' });
+    expect(adj.calls[1]?.blocks.at(-1)?.text).toContain('no usable verdict');
+  });
+
+  it('bounds escalations to a share of the pairs, in priority order', async () => {
+    const h = harness();
+    const items: PairPlanItem[] = [3, 0, 2, 1].map((priority, i) => ({ subject: subject({ family: `f-${i}` }), priority }));
+    const records = await judgePairs(items, {
+      judges: [createFakeJudge(HAIKU, reply([VERDICT.relevant])), createFakeJudge(LUNA, reply([VERDICT.partial]))],
+      adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])),
+      sender: h.sender,
+      cache: h.cache,
+      concurrency: 2,
+      maxEscalationShare: 0.25,
+    });
+    expect(records.map((r) => [r.family, r.status])).toEqual([
+      ['f-1', 'adjudicated'],
+      ['f-3', 'escalation-budget-exhausted'],
+      ['f-2', 'escalation-budget-exhausted'],
+      ['f-0', 'escalation-budget-exhausted'],
+    ]);
+    expect(records.filter((r) => r.label === 'unknown')).toHaveLength(3);
+  });
+
+  it('retries transient failures, then leaves the pair incomplete and uncached', async () => {
+    const h = harness();
+    const flaky = createFakeJudge(HAIKU, reply([new JudgeCallError('overloaded', { kind: 'none' }), VERDICT.relevant]));
+    const [ok] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [flaky, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h.sender, cache: h.cache, concurrency: 1 });
+    expect(ok).toMatchObject({ status: 'agreed', label: 2 });
+    expect(flaky.calls).toHaveLength(2);
+    const down = createFakeJudge(HAIKU, reply([new JudgeCallError('network', { kind: 'uncertain' })]));
+    const h2 = harness();
+    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [down, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h2.sender, cache: h2.cache, concurrency: 1 });
+    expect(r).toMatchObject({ status: 'incomplete', label: 'unknown' });
+    expect(down.calls).toHaveLength(3);
+    expect(h2.cache.size).toBe(1);
+    expect(h2.gate.records.filter((x) => x.status === 'uncertain')).toHaveLength(3);
+  });
+
+  it('stops the run on an authentication error', async () => {
+    const h = harness();
+    await expect(
+      judgePairs([{ subject: subject(), priority: 0 }], { judges: [createFakeJudge(HAIKU, reply([new JudgeCallError('auth', { kind: 'none' }, 401)])), createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h.sender, cache: h.cache, concurrency: 1 }),
+    ).rejects.toBeInstanceOf(FatalJudgeError);
+  });
+
+  it('stops before a reservation above the run limit or the remaining evaluation allowance', async () => {
+    for (const h of [harness({ limit: 0.000001 }), harness({ allowance: 0.000001 })]) {
+      const a = createFakeJudge(HAIKU, reply([VERDICT.relevant]));
+      await expect(
+        judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h.sender, cache: h.cache, concurrency: 1 }),
+      ).rejects.toBeInstanceOf(BudgetStop);
+      expect(a.calls).toHaveLength(0);
+      expect(h.gate.records).toHaveLength(0);
+    }
+  });
+
+  it('reuses cached outcomes, and re-judges when the rubric version changes', async () => {
+    const cache = new JudgmentCache(null);
+    const make = () => [createFakeJudge(HAIKU, reply([VERDICT.relevant])), createFakeJudge(LUNA, reply([VERDICT.partial]))] as const;
+    const adj = createFakeJudge(SONNET, reply([VERDICT.relevant, VERDICT.relevant]));
+    const first = make();
+    await judgePairs([{ subject: subject(), priority: 0 }], { judges: first, adjudicator: adj, sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    const second = make();
+    const adj2 = createFakeJudge(SONNET, reply([VERDICT.relevant, VERDICT.relevant]));
+    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: second, adjudicator: adj2, sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(second[0].calls.length + second[1].calls.length + adj2.calls.length).toBe(0);
+    expect(r).toMatchObject({ status: 'adjudicated', label: 2 });
+    expect(r?.judges.every((j) => j.cached)).toBe(true);
+    expect(r?.adjudication?.cached).toBe(true);
+    const third = make();
+    await judgePairs([{ subject: subject({ rubricVersion: 'r-0000000000000000' }), priority: 0 }], { judges: third, adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant, VERDICT.relevant])), sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(third[0].calls).toHaveLength(1);
+  });
+});
