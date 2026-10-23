@@ -19,7 +19,7 @@ import { BRIEF_LABELS_V2, CLAIM_LABELS_V2 } from '../../evals/checker/labels.v2.
 import { identityDifferences, inputsSha256, manifestId, newManifest, readManifest, resumeState, type RunIdentity } from '../../evals/checker/manifest.js';
 import { clusteredRate, displayReport, gateOf, rate, rawReport, type Trial } from '../../evals/checker/metrics.js';
 import { CANDIDATES_V2, HELDOUT_V2, PROTOCOL_V2, candidateMismatch, selectV2, type DevRunV2 } from '../../evals/checker/protocol.v2.js';
-import { plannedSlots, SELECTION_V2_PATH, type SelectionV2 } from '../../evals/checker/run.js';
+import { plannedSlots, runFigures, SELECTION_V2_PATH, type SelectionV2 } from '../../evals/checker/run.js';
 import { selectConfiguration } from '../../evals/checker/v1.js';
 import { STAGE_THINKING } from '../../server/ai/anthropic.js';
 import { loadConfig } from '../../shared/config.js';
@@ -135,7 +135,8 @@ describe('the checker calibration sets (evals/checker)', () => {
     const r = rawReport(batches, failed, 45_000);
     // Nothing answered: no detection at all, and the error claims of failed calls are counted apart.
     expect(r.semanticDetection.all).toMatchObject({ k: 0, n: 0, rate: null });
-    expect(r.failedErrorClaims).toBe(batches.flatMap((b) => b.labels.filter((l) => l.label === 'not_supported')).length * 1);
+    const errorsIn = (t: Trial) => batches.find((b) => b.id === t.batch)!.labels.filter((l) => l.label === 'not_supported').length;
+    expect(r.failedErrorClaims).toBe(failed.reduce((n, t) => n + errorsIn(t), 0));
     expect(r.failedCalls).toEqual({ timeout: failed.length });
     // Production-faithful withholding is a separate figure.
     expect(r.errorWithholding.all.rate).toBe(1);
@@ -254,12 +255,24 @@ describe('run manifests (16d reply §6 High 2)', () => {
     expect(() => resumeState(m, trials)).toThrow(/twice/);
   });
 
-  it('plans three trials of a brief without a known error, one of anything else', () => {
+  it('plans three trials of a brief without a known error, two of a maximum-size input, one of anything else', () => {
     const slotsAll = plannedSlots(v2, 'dev');
     for (const b of v2.batches.filter((x) => x.split === 'dev')) {
       const n = slotsAll.filter((s) => s.batch === b.id).length;
-      expect(n, b.id).toBe(b.kind === 'brief' && (b.brief === 'supported' || b.brief === 'unresolved') ? 3 : 1);
+      expect(n, b.id).toBe(b.maxSize ? 2 : b.kind === 'brief' && (b.brief === 'supported' || b.brief === 'unresolved') ? 3 : 1);
     }
+    // The maximum-size inputs are at the claim limit, with real bundles' passages.
+    const max = v2.batches.filter((b) => b.maxSize);
+    expect(max.map((b) => b.input.claims.length)).toEqual([60, 60, 60]);
+    for (const b of max) expect(b.input.passages.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('keeps the maximum-size inputs out of the accuracy figures (their claims are their sources\' claims)', () => {
+    const batches = v2.batches.filter((b) => b.split === 'dev');
+    const f = runFigures(batches, trialsOf(v2, 'dev', (b) => oracle(b)), 45_000);
+    expect(f.maxSize.calls).toBe(6);
+    expect(f.display.trials.claims).toBe(batches.filter((b) => b.kind === 'claims' && !b.maxSize).length);
+    expect(f.latency.calls).toBe(plannedSlots(v2, 'dev').length);
   });
 });
 

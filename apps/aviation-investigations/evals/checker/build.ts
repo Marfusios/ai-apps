@@ -23,7 +23,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CheckInputSchema, type CheckInput } from '../../server/ai/provider.js';
+import { CheckInputSchema, MAX_CHECK_CLAIMS, type CheckInput } from '../../server/ai/provider.js';
 import { checkForModel, citationsFromModel, compositionFromModel, passageAliases, type PassageAliases } from '../../server/briefs/aliases.js';
 import type { ReadingState } from '../../server/briefs/clarify.js';
 import { CHRONOLOGY_RULES_VERSION, evaluateCase, type CriterionCheck } from '../../server/briefs/criteria.js';
@@ -33,7 +33,7 @@ import { validateComposition, type AllowedPassage, type Allowlist } from '../../
 import { APP_DIR } from '../../worker/config.js';
 import type { ComposeOutput } from '../../shared/contracts/briefs.js';
 import { EvidenceFileSchema, EvidenceV2FileSchema, evidenceProblems, sha256, verifiedCases, type EvidenceBundle, type EvidenceFile, type EvidenceV2File } from './evidence.js';
-import { BRIEFS, CLAIM_BATCHES, V2_BRIEFS, V2_CLAIM_BATCHES } from './items/index.js';
+import { BRIEFS, CLAIM_BATCHES, V2_BRIEFS, V2_CLAIM_BATCHES, V2_MAX_SIZE } from './items/index.js';
 import { BRIEF_LABELS_V2, CLAIM_LABELS_V2, LABELS_V2_VERSION } from './labels.v2.js';
 import { QUESTIONS } from './questions.js';
 import type { BriefCategory, BriefClaimLabel, BriefSpec, ClaimBatch, Family, Label, Provenance } from './types.js';
@@ -502,6 +502,40 @@ function buildBatches(
   return batches;
 }
 
+/**
+ * A maximum-size input (gate condition 4): a claim batch's claims followed by a brief's,
+ * both of one bundle and so under the same passage aliases, up to `MAX_CHECK_CLAIMS`, with
+ * every passage and header of the cases they are about. Its claims keep their labels; it is
+ * measured for latency and structure, not for accuracy (`maxSize`).
+ */
+function maxSizeBatch(id: string, claims: CalibrationBatch, brief: CalibrationBatch): CalibrationBatch {
+  if (claims.bundle !== brief.bundle) throw new BuildError(`${id}: ${claims.id} and ${brief.id} are of different bundles`);
+  const alias = (p: string) => Number(p.slice(1));
+  const passages = [...new Map([...claims.input.passages, ...brief.input.passages].map((p) => [p.passageId, p])).values()].sort((a, b) => alias(a.passageId) - alias(b.passageId));
+  const order = new Map(passages.map((p, i) => [p.ntsbNo, i]));
+  const cases = [...new Map([...claims.input.cases, ...brief.input.cases].map((c) => [c.ntsbNo, c])).values()].sort((a, b) => (order.get(a.ntsbNo) ?? 99) - (order.get(b.ntsbNo) ?? 99));
+  const merged = [
+    ...claims.input.claims.map((c, i) => ({ c, l: claims.labels[i]!, from: claims.id })),
+    ...brief.input.claims.map((c, i) => ({ c, l: brief.labels[i]!, from: brief.id })),
+  ].slice(0, MAX_CHECK_CLAIMS);
+  if (merged.length < MAX_CHECK_CLAIMS) throw new BuildError(`${id}: only ${merged.length} claims`);
+  const input = CheckInputSchema.parse({ cases, passages, claims: merged.map(({ c }, i) => ({ ...c, id: `C${i + 1}` })) });
+  return {
+    id,
+    split: claims.split,
+    kind: 'claims',
+    bundle: claims.bundle,
+    input,
+    labels: merged.map(({ l, from }, i) => {
+      const { key: _key, ...rest } = l;
+      return { ...rest, claim: `C${i + 1}`, item: `${from}/${l.item}` };
+    }),
+    plan: claimsPlan(input),
+    base: id,
+    maxSize: true,
+  };
+}
+
 export function buildCalibrationV2(evidence: EvidenceFile, evidenceText: string, v2: EvidenceV2File, v2Text: string): CalibrationDataset {
   const problems = [...evidenceProblems(evidence), ...evidenceProblems({ ...evidence, bundles: v2.bundles })];
   if (problems.length > 0) throw new BuildError(`evidence: ${problems.join('; ')}`);
@@ -513,6 +547,12 @@ export function buildCalibrationV2(evidence: EvidenceFile, evidenceText: string,
   const batches = buildBatches(bundles, headers, [...CLAIM_BATCHES, ...V2_CLAIM_BATCHES], [...BRIEFS, ...V2_BRIEFS], 'v2', (b) =>
     v1Bundles.has(b.question) ? 'dev' : b.split,
   );
+  for (const m of V2_MAX_SIZE) {
+    const claims = batches.find((b) => b.id === m.claims);
+    const brief = batches.find((b) => b.id === m.brief);
+    if (!claims || !brief) throw new BuildError(`${m.id}: no batch ${!claims ? m.claims : m.brief}`);
+    batches.push(maxSizeBatch(m.id, claims, brief));
+  }
   checkSplits(batches);
   // No 16d held-out case was judged in 16c.
   const v1Cases = new Set(evidence.bundles.flatMap((b) => b.cases.map((c) => c.ntsbNo)));

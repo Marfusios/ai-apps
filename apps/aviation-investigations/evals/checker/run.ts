@@ -69,11 +69,33 @@ export interface SelectionV2 {
 
 const briefWithoutError = (b: CalibrationBatch) => b.kind === 'brief' && (b.brief === 'supported' || b.brief === 'unresolved');
 
+const samplesOf = (b: CalibrationBatch) => (b.maxSize ? SAMPLES_V2.maxSize : briefWithoutError(b) ? SAMPLES_V2.briefWithoutError : SAMPLES_V2.other);
+
 /** The planned slots of a split (`SAMPLES_V2`). */
 export function plannedSlots(dataset: CalibrationDataset, split: 'dev' | 'holdout'): { batch: string; sample: number }[] {
-  return dataset.batches
-    .filter((b) => b.split === split)
-    .flatMap((b) => Array.from({ length: briefWithoutError(b) ? SAMPLES_V2.briefWithoutError : SAMPLES_V2.other }, (_, i) => ({ batch: b.id, sample: i + 1 })));
+  return dataset.batches.filter((b) => b.split === split).flatMap((b) => Array.from({ length: samplesOf(b) }, (_, i) => ({ batch: b.id, sample: i + 1 })));
+}
+
+/** The figures of a run: accuracy over every batch but the maximum-size inputs, which are reported for latency and structure. */
+export function runFigures(batches: readonly CalibrationBatch[], trials: readonly Trial[], timeoutMs: number) {
+  const max = new Set(batches.filter((b) => b.maxSize).map((b) => b.id));
+  const accuracy = batches.filter((b) => !max.has(b.id));
+  const measured = trials.filter((t) => !max.has(t.batch));
+  const big = trials.filter((t) => max.has(t.batch));
+  return {
+    raw: rawReport(accuracy, measured, timeoutMs),
+    display: displayReport(accuracy, measured, { mode: 'claims' }),
+    whole: displayReport(accuracy, measured, { mode: 'whole' }),
+    latency: latencyReport(batches, trials, timeoutMs),
+    maxSize: {
+      calls: big.length,
+      failed: Object.fromEntries([...new Set(big.flatMap((t) => (t.failure ? [t.failure] : [])))].map((f) => [f, big.filter((t) => t.failure === f).length])),
+      structural: rawReport(batches.filter((b) => max.has(b.id)), big, timeoutMs).structuralCalls,
+      latencyMs: big.map((t) => t.latencyMs),
+      outputTokens: big.map((t) => t.usage?.outputTokens ?? null),
+      thinkingTokens: big.map((t) => t.usage?.thinkingTokens ?? null),
+    },
+  };
 }
 
 /** Logged spend so far (every paid 16d step). */
@@ -279,9 +301,7 @@ export async function runCommand(
   }
   const batches = dataset.batches.filter((b) => b.split === opts.split);
   const complete = stopped === null && manifest.slots.every((s) => done.some((d) => d.batch === s.batch && d.sample === s.sample));
-  const raw = rawReport(batches, done, manifest.timeoutMs);
-  const display = displayReport(batches, done, { mode: 'claims' });
-  const whole = displayReport(batches, done, { mode: 'whole' });
+  const { raw, display, whole, latency, maxSize } = runFigures(batches, done, manifest.timeoutMs);
   const summary = {
     protocol: PROTOCOL_V2,
     candidate: opts.candidate,
@@ -294,10 +314,12 @@ export async function runCommand(
     raw,
     display,
     whole,
-    latency: latencyReport(batches, done, manifest.timeoutMs),
+    latency,
+    maxSize,
   };
   writeFileSync(files.summary, `${JSON.stringify(summary, null, 2)}\n`);
   for (const line of [...rawLines(`${opts.candidate} ${opts.split}`, raw), ...displayLines(`${opts.candidate} ${opts.split}`, display)]) opts.log(line);
+  opts.log(`latency: p50 ${latency.p50} ms, p95 ${latency.p95} ms, max ${latency.max} ms, ${latency.timeouts} timeouts; maximum-size inputs ${JSON.stringify(maxSize)}`);
   if (stopped) opts.log(`stopped: ${stopped}`);
   opts.log(`logged 16d spend now $${loggedSpendUsd().toFixed(6)}; summary ${files.summary}`);
   return stopped ? 1 : 0;

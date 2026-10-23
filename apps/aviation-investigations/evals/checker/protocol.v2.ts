@@ -113,8 +113,13 @@ export function candidateMismatch(name: string): string[] {
   return out;
 }
 
-/** Trials per batch: briefs without a known error (wholly supported or unresolved) three times; error briefs and claim batches once. */
-export const SAMPLES_V2 = { briefWithoutError: 3, other: 1 } as const;
+/**
+ * Trials per batch: briefs without a known error (wholly supported or unresolved) three
+ * times; the maximum-size inputs (60 claims; latency, output size and timeouts at the
+ * largest checks, kept out of the accuracy figures) twice; error briefs and claim batches
+ * once.
+ */
+export const SAMPLES_V2 = { briefWithoutError: 3, maxSize: 2, other: 1 } as const;
 
 /** Pre-registered targets (display figures, `claims` mode). */
 export const TARGETS_V2 = {
@@ -129,7 +134,23 @@ export const TARGETS_V2 = {
 /** The spend limit of every paid 16d step (the evaluation ledger and `spend-16d.jsonl`), USD. */
 export const BUDGET_V2_USD = 1.5;
 
-/** The held-out pilot's sizing facts. */
+/**
+ * The held-out set and pilot (pre-registered). The set is built and its labels frozen (the
+ * held-out split's own label hash in `dataset.v2.json`) before any 16d checker output is
+ * seen: new real retrieval bundles (`QUESTIONS_16D`) whose cases are in neither 16c split
+ * (the builder refuses any), each with one wholly supported brief as compose.v7 would write
+ * it, one-error variants spread over the four families, at least one mixed-error variant,
+ * reading variants where the bundle's timing allows, and a claim batch of controls by family
+ * that covers each critical timing mutation (`criticalTimingMutations`) in at least
+ * `minimumBundlesPerTimingMutation` bundles (16c review M8). It is priced first (free
+ * inventory): the pilot runs only when its worst case fits the budget left after the
+ * development rounds; otherwise the held-out batches are run in the order supported briefs,
+ * error briefs, claim batches until the reservation limit stops it (reported as a partial
+ * pilot). It runs once, for the selected candidate. It cannot reach the size the targets
+ * need (`independentTrialsFor5pct` independent zero-miss trials per family), so M3 and M4
+ * are reported as an inconclusive pilot whatever they show, and nothing here is called a
+ * pass.
+ */
 export const HELDOUT_V2 = {
   /** Wilson 95% upper bound of 0 misses in n independent trials is below 5% from n = 73. */
   independentTrialsFor5pct: 73,
@@ -137,6 +158,10 @@ export const HELDOUT_V2 = {
   cluster: 'bundle',
   /** Runs once, for the selected candidate, every held-out batch at `SAMPLES_V2`. */
   runs: 1,
+  criticalTimingMutations: ['zero_interval', 'previous_day_hours', 'before_after', 'first_flight_window', 'wrong_ordinal', 'settled_as_unknown'],
+  minimumBundlesPerTimingMutation: 2,
+  /** Development rounds come first: round 1 (`haiku-think-v7`) on every development slot, then at most one round 2. */
+  developmentRounds: 2,
 } as const;
 
 /** What the selection reads from a development run. */
