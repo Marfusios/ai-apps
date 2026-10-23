@@ -13,7 +13,7 @@ import { BriefChips } from '../features/brief/BriefChips';
 import { BriefingSheet } from '../features/brief/BriefingSheet';
 import { Checklist } from '../features/brief/Checklist';
 import { exploreHref, filtersInWords } from '../features/brief/filters';
-import { rememberedFilters, rememberedQuestion } from '../features/brief/memory';
+import { rememberedAsk, rememberedQuestion } from '../features/brief/memory';
 import { RefineBox } from '../features/brief/RefineBox';
 import { ScopeReply } from '../features/brief/ScopeReply';
 import { StepSwitcher } from '../features/brief/StepSwitcher';
@@ -86,9 +86,12 @@ function Expired({ id }: { id: string }) {
 
 /**
  * "The AI search didn't finish." with what it cost, and Try again (a new paid step). A
- * failed first step is asked again with the brief's filters: the ones this page asked
- * with, else the ones the scope stage settled on. The page's live region announces the
- * failure once, so this box is not a live region itself.
+ * failed first step is asked again with the filters the reader set: the ones this page
+ * asked with, or none if it asked without any, never the ones the scope stage inferred
+ * (the new scope run infers its own). Only a brief this page did not ask (a reload, a
+ * link) has no record of them, and then the filters its scope stage settled on stand in.
+ * The page's live region announces the failure once, so this box is not a live region
+ * itself.
  */
 function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsSearch: boolean }) {
   const ask = useAskAi();
@@ -97,7 +100,10 @@ function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsS
   const retry = (): void => {
     if (step.refinementsLeft > 0 && origin.kind === 'text') void refine.refine({ kind: 'text', text: origin.text });
     else if (step.refinementsLeft > 0 && origin.kind === 'filters') void refine.refine({ kind: 'filters', filters: origin.filters });
-    else void ask.ask(step.question, rememberedFilters(step.briefId) ?? step.checklist.interpretation?.filters);
+    else {
+      const asked = rememberedAsk(step.briefId);
+      void ask.ask(step.question, asked ? asked.filters : step.checklist.interpretation?.filters);
+    }
   };
   const notice = refine.notice ?? ask.notice;
   return (

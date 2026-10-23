@@ -6,7 +6,13 @@
  */
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
 
-const asked = new Map<string, { question: string; filters: BriefFilters | undefined }>();
+interface Asked {
+  question: string;
+  /** The reader's own filters; `undefined` when the question was asked without any. */
+  filters: BriefFilters | undefined;
+}
+
+const asked = new Map<string, Asked>();
 
 export function rememberQuestion(briefId: string, question: string, filters?: BriefFilters): void {
   asked.set(briefId, { question, filters });
@@ -16,7 +22,11 @@ export function rememberedQuestion(briefId: string): string | null {
   return asked.get(briefId)?.question ?? null;
 }
 
-/** The filters the brief was asked with from this page, if it was. */
-export function rememberedFilters(briefId: string): BriefFilters | undefined {
-  return asked.get(briefId)?.filters;
+/**
+ * What this page asked the brief with, or null when it did not ask it (a reload, a link).
+ * A brief asked without filters is remembered as that, which is not the same as not
+ * remembering it: only the second leaves the reader's filters unknown.
+ */
+export function rememberedAsk(briefId: string): Asked | null {
+  return asked.get(briefId) ?? null;
 }

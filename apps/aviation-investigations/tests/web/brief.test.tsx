@@ -24,6 +24,7 @@ import {
 import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, type PollState } from '../../web/src/features/brief/api';
 import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
 import { attributionAmbiguous, evidenceAttribution, quoteAttribution } from '../../web/src/features/brief/display';
+import { exploreHref } from '../../web/src/features/brief/filters';
 import {
   FILTER_FACETS,
   UNSETTLED_TTL_MS,
@@ -501,6 +502,54 @@ describe('Brief outcomes read from the server', { timeout: 15_000 }, () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }));
     await waitFor(() => expect(posted).toHaveLength(1), SLOW);
     expect(posted[0]).toMatchObject({ question: 'Engine failure after an oil change', filters: { category: ['HELI'] } });
+  });
+
+  describe('Try again on a failed first step that this page asked', () => {
+    // The scope stage settled on more than the reader set: Helicopters and Fatal were inferred.
+    const failedAfterScope = (id: string) => ({
+      ...step(id, { kind: 'failed', countedAsSearch: true }),
+      checklist: { question: 'in_scope', interpretation: { interpretations: [], filters: { category: ['HELI'], injury: ['FATL'] } } },
+    });
+
+    /** Fails every brief read the way the scope stage left it, and records each brief POST body. */
+    function failAndRecordPosts(): Record<string, unknown>[] {
+      const posted: Record<string, unknown>[] = [];
+      server.use(
+        http.get('*/api/briefs/:id', ({ params }) => HttpResponse.json(failedAfterScope(String(params.id)))),
+        http.post('*/api/briefs', async ({ request }) => {
+          posted.push((await request.clone().json()) as Record<string, unknown>);
+          return undefined;
+        }),
+      );
+      return posted;
+    }
+
+    it('asked with no filters, it sends none: what the scope stage inferred is not pinned', async () => {
+      freshApi();
+      installTurnstile();
+      const posted = failAndRecordPosts();
+      await askFromHome(MOCK_SEED_QUESTION);
+      expect(posted).toHaveLength(1);
+      expect(posted[0]).not.toHaveProperty('filters');
+      fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }));
+      await waitFor(() => expect(posted).toHaveLength(2), SLOW);
+      expect(posted[1]).toMatchObject({ question: 'Engine failure after an oil change' });
+      expect(posted[1]).not.toHaveProperty('filters');
+    });
+
+    it('asked with filters, it sends exactly those, not the ones the scope stage added', async () => {
+      freshApi();
+      installTurnstile();
+      const posted = failAndRecordPosts();
+      const { router } = renderApp(exploreHref({ category: ['HELI'] }, MOCK_SEED_QUESTION));
+      const bar = await screen.findByRole('search');
+      fireEvent.click(await within(bar).findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }, SLOW));
+      await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+      expect(posted[0]).toMatchObject({ filters: { category: ['HELI'] } });
+      fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+      await waitFor(() => expect(posted).toHaveLength(2), SLOW);
+      expect(posted[1]?.filters).toEqual({ category: ['HELI'] });
+    });
   });
 
   it('a case or compare link to a brief that is gone shows NTSB data with a muted note', async () => {
