@@ -198,11 +198,27 @@ export interface AllocationLock {
   release(): void;
 }
 
-interface LockHolder {
+/** Who holds an allocation's lock. */
+export interface LockHolder {
   run: string;
   pid: number;
   host: string;
   at: string;
+}
+
+/** The lock file of an allocation, next to its log. */
+export const allocationLockPath = (a: Pick<Allocation, 'log'>): string => a.log.replace(/\.jsonl$/, '.lock');
+/** The claim one recovery holds while it reconciles and removes a lock. */
+export const recoveryClaimPath = (a: Pick<Allocation, 'log'>): string => a.log.replace(/\.jsonl$/, '.recovering');
+
+/** The holder recorded in a lock file; null when there is no lock (an unreadable lock reads as an unknown holder). */
+export function readLockHolder(path: string): Partial<LockHolder> | null {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Partial<LockHolder>;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return {};
+  }
 }
 
 const processAlive = (pid: number): boolean => {
@@ -215,46 +231,184 @@ const processAlive = (pid: number): boolean => {
 };
 
 /**
- * One run at a time per allocation (review N12): a run takes an exclusive lock file next
- * to the allocation's log before it reads the log's spend, and keeps it until it ends, so
- * two runs can never both count the same remaining cap. A lock left by a process that no
- * longer runs on this host is taken over; any other lock refuses the run (remove it by
- * hand only when its run is known to have ended).
+ * One run at a time per allocation (review N12, the gate's fix-round-2 item 1): a run
+ * takes an exclusive lock file next to the allocation's log before it reads the log's
+ * spend, and releases it when it ends. An existing lock is **never** removed here,
+ * whoever holds it and whether or not its process still runs: two processes recovering
+ * the same stale lock could otherwise both acquire the allocation. A lock left by an
+ * interrupted run is removed only by `recoverAllocation` (the `recover` command), after
+ * it reconciles that run's ledger reservations and allocation charges.
  */
 export function lockAllocation(a: Allocation, run: string): AllocationLock {
-  const path = a.log.replace(/\.jsonl$/, '.lock');
+  const path = allocationLockPath(a);
   const mine: LockHolder = { run, pid: process.pid, host: hostname(), at: new Date().toISOString() };
-  for (let attempt = 0; ; attempt += 1) {
+  mkdirSync(dirname(path), { recursive: true });
+  try {
+    writeFileSync(path, `${JSON.stringify(mine)}\n`, { flag: 'wx' });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    const held = readLockHolder(path) ?? {};
+    throw new Error(
+      `allocation ${a.name} is held by run ${held.run ?? 'unknown'} (process ${held.pid ?? '?'} on ${held.host ?? '?'}, since ${held.at ?? '?'}): one run at a time per allocation; nothing sent. ` +
+        `If that run has ended, recover the allocation: pnpm eval:retrieval:narrative recover --allocation ${a.name} --run ${held.run ?? '<run>'} ` +
+        '(it reconciles the run\'s ledger reservations and allocation charges, then removes the lock).',
+    );
+  }
+  return {
+    path,
+    release: () => {
+      try {
+        const held = readLockHolder(path);
+        if (held?.run === run && held.pid === process.pid) unlinkSync(path);
+      } catch {
+        // Already gone.
+      }
+    },
+  };
+}
+
+/** A reservation of an interrupted run on the evaluation ledger (`reservations`). */
+export interface RunReservation {
+  id: string;
+  requestId: string;
+  /** `open` until settled; `settled` (its cost, or in full when uncertain) or `expired_charged` (in full) after. */
+  status: string;
+  reservedUsd: number;
+  /** Null while open. */
+  chargedUsd: number | null;
+  /** True when settled as uncertain or expired (charged in full); null while open. */
+  uncertain: boolean | null;
+  leaseExpiresAt: Date;
+}
+
+/** What a recovery reads from the ledger; it never writes to it. */
+export interface RecoveryLedger {
+  /** The run's evaluation reservations: request id equal to the run id, or starting with it and a hyphen. */
+  runReservations(run: string): Promise<RunReservation[]>;
+}
+
+/** What a recovery reconciled (`recoverAllocation`). */
+export interface AllocationRecovery {
+  allocation: string;
+  run: string;
+  holder: Partial<LockHolder>;
+  ledger: {
+    reservations: number;
+    settled: { count: number; usd: number };
+    /** Settled as uncertain or expired: the full reservation. */
+    chargedInFull: { count: number; usd: number };
+    /** Still open but past their lease: the ledger charges each in full when it sweeps or settles it. */
+    openPastLease: { count: number; usd: number };
+    chargedUsd: number;
+  };
+  /** The run's charges in the allocation's log before the recovery. */
+  loggedUsd: number;
+  /** The difference appended to the allocation's log (and the run's spend log), so the allocation counts every ledger charge. */
+  appendedUsd: number;
+  /** The allocation's log held more for the run than the ledger charged (kept: the allocation stays conservative). */
+  surplusUsd: number;
+  /** True when the reconciliation was written and the lock removed (`confirm`). */
+  recovered: boolean;
+}
+
+/** A run's charges in an allocation or spend log. */
+export function loggedRunUsd(path: string | null, run: string): number {
+  if (!path || !existsSync(path)) return 0;
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => JSON.parse(l) as Partial<SpendLogEntry>)
+    .filter((e) => e.run === run)
+    .reduce((n, e) => n + (e.chargedUsd ?? 0), 0);
+}
+
+/**
+ * Recover an allocation whose run was interrupted (the gate's fix-round-2 item 1), the
+ * only way a lock is removed. It refuses unless the lock is held by the named run, that
+ * run's process is not running on this host, no recovery of the allocation is in
+ * progress (an exclusive claim file, taken before anything is read, so two recoveries of
+ * one lock cannot both proceed) and none of the run's ledger reservations is still open
+ * within its lease. It then reconciles: the run's charges on the ledger (settled costs,
+ * full reservations of uncertain, expired and lease-expired open ones) against what the
+ * allocation's log holds for the run, and with `confirm` appends the difference to the
+ * allocation's log (and the run's own spend log) before it removes the lock. Without
+ * `confirm` it changes nothing and reports what it would reconcile. It never writes to
+ * the ledger: the ledger charges every unsettled reservation in full by itself.
+ */
+export async function recoverAllocation(
+  a: Allocation,
+  run: string,
+  ledger: RecoveryLedger,
+  opts: { confirm: boolean; spendLog?: string | null; now?: Date },
+): Promise<AllocationRecovery> {
+  const path = allocationLockPath(a);
+  const claim = recoveryClaimPath(a);
+  const holder = readLockHolder(path);
+  if (holder === null) throw new Error(`allocation ${a.name} is not locked: nothing to recover`);
+  if (holder.run !== run) throw new Error(`allocation ${a.name} is held by run ${holder.run ?? 'unknown'}, not ${run}: nothing changed`);
+  if (holder.host === hostname() && typeof holder.pid === 'number' && processAlive(holder.pid)) {
+    throw new Error(`run ${run} is still running (process ${holder.pid}): nothing changed`);
+  }
+  let claimed = false;
+  if (opts.confirm) {
     try {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, `${JSON.stringify(mine)}\n`, { flag: 'wx' });
-      return {
-        path,
-        release: () => {
-          try {
-            const held = JSON.parse(readFileSync(path, 'utf8')) as Partial<LockHolder>;
-            if (held.run === run && held.pid === process.pid) unlinkSync(path);
-          } catch {
-            // Already gone.
-          }
-        },
-      };
+      writeFileSync(claim, `${JSON.stringify({ recovering: run, pid: process.pid, host: hostname(), at: new Date().toISOString() })}\n`, { flag: 'wx' });
+      claimed = true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      let held: Partial<LockHolder> = {};
-      try {
-        held = JSON.parse(readFileSync(path, 'utf8')) as Partial<LockHolder>;
-      } catch {
-        // Unreadable: treated as held.
-      }
-      const stale = held.host === mine.host && typeof held.pid === 'number' && held.pid !== process.pid && !processAlive(held.pid);
-      if (!stale || attempt > 0) {
-        throw new Error(
-          `allocation ${a.name} is in use by run ${held.run ?? 'unknown'} (process ${held.pid ?? '?'}, since ${held.at ?? '?'}): one run at a time per allocation; nothing sent. ` +
-            `Remove ${path} only if that run has ended.`,
-        );
+      throw new Error(`another recovery of allocation ${a.name} holds ${claim}: nothing changed (remove it by hand only once that recovery has ended)`);
+    }
+  }
+  try {
+    const now = opts.now ?? new Date();
+    const rows = await ledger.runReservations(run);
+    const live = rows.filter((r) => r.status === 'open' && r.leaseExpiresAt.getTime() > now.getTime());
+    if (live.length > 0) {
+      const until = new Date(Math.max(...live.map((r) => r.leaseExpiresAt.getTime())));
+      throw new Error(
+        `${live.length} reservation(s) of run ${run} are still open, the last until ${until.toISOString()}: a run that is still sending holds them; ` +
+          'recover after that, when the ledger charges every unsettled one in full; nothing changed',
+      );
+    }
+    const sum = (xs: RunReservation[], f: (r: RunReservation) => number) => ({ count: xs.length, usd: xs.reduce((n, r) => n + f(r), 0) });
+    const open = rows.filter((r) => r.status === 'open');
+    const closed = rows.filter((r) => r.status !== 'open');
+    const inFull = closed.filter((r) => r.status === 'expired_charged' || r.uncertain === true);
+    const settled = closed.filter((r) => !inFull.includes(r));
+    const ledgerSummary = {
+      reservations: rows.length,
+      settled: sum(settled, (r) => r.chargedUsd ?? r.reservedUsd),
+      chargedInFull: sum(inFull, (r) => r.chargedUsd ?? r.reservedUsd),
+      openPastLease: sum(open, (r) => r.reservedUsd),
+      chargedUsd: 0,
+    };
+    ledgerSummary.chargedUsd = ledgerSummary.settled.usd + ledgerSummary.chargedInFull.usd + ledgerSummary.openPastLease.usd;
+    const loggedUsd = loggedRunUsd(a.log, run);
+    const difference = ledgerSummary.chargedUsd - loggedUsd;
+    const appendedUsd = difference > 1e-9 ? difference : 0;
+    const surplusUsd = difference < -1e-9 ? -difference : 0;
+    if (opts.confirm) {
+      // Only this recovery (it holds the claim) can remove the lock, and no run replaces an existing one.
+      const again = readLockHolder(path);
+      if (!again || again.run !== holder.run || again.pid !== holder.pid || again.at !== holder.at) throw new Error(`the lock of allocation ${a.name} changed during the recovery: nothing changed`);
+      if (appendedUsd > 0) {
+        const entry = { at: now.toISOString(), run, purpose: 'recovery', provider: 'ledger', model: 'reconciled', reservedUsd: appendedUsd, chargedUsd: appendedUsd, reservations: rows.length };
+        for (const log of [a.log, opts.spendLog ?? null]) {
+          if (!log) continue;
+          mkdirSync(dirname(log), { recursive: true });
+          appendFileSync(log, `${JSON.stringify(entry)}\n`);
+        }
       }
       unlinkSync(path);
+    }
+    return { allocation: a.name, run, holder, ledger: ledgerSummary, loggedUsd, appendedUsd, surplusUsd, recovered: opts.confirm };
+  } finally {
+    if (claimed) {
+      try {
+        unlinkSync(claim);
+      } catch {
+        // Already gone.
+      }
     }
   }
 }

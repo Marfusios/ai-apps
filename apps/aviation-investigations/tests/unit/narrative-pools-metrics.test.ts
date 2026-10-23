@@ -507,6 +507,9 @@ describe('the CLI', () => {
       expect(await main(['judge', '--set', 'calibration', '--split', 'all'])).toBe(2);
       expect(await main(['plan', '--disagreement', '1.5'])).toBe(2);
       expect(await main(['plan', '--output-tokens', '900'])).toBe(2);
+      // Recovery names the allocation and the run that holds its lock.
+      expect(await main(['recover', '--allocation', 'track-n-2026-10'])).toBe(2);
+      expect(await main(['recover', '--run', 'eval-10c2-relevance-20261023T000000Z'])).toBe(2);
       expect(await main(['report'])).toBe(2);
     } finally {
       console.error = original;

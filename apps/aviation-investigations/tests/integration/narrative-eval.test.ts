@@ -9,16 +9,21 @@
  *   fingerprints;
  * - pools build from the experiment harness's runs (case-level fusion with the cases
  *   channel, scope keyword text given), the lure's hard negatives and the tail sample,
- *   and every delivered passage's text is the stored section text at its offsets.
+ *   and every delivered passage's text is the stored section text at its offsets;
+ * - an interrupted run's allocation is recovered against the ledger: its evaluation
+ *   reservations (and only its own) are read, an open one blocks the recovery within its
+ *   lease and counts in full after it, and the allocation's log gains the difference.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
+import { quotaPolicy, reserveSpend, settleSpend } from '../../server/quota/index.js';
+import { loadConfig } from '../../shared/config.js';
 import type { RetrievalFilters } from '../../server/search/filters.js';
 import { rebuildCasesIndex } from '../../worker/index/cases-index.js';
 import { createFakeEmbedder } from '../../worker/index/embed.js';
@@ -28,12 +33,14 @@ import { experimentConfig } from '../../evals/retrieval/experiments/config.js';
 import { loadNarrativeCorpus } from '../../evals/retrieval/narrative/build.js';
 import { deriveCohort, type NarrativeItem } from '../../evals/retrieval/narrative/dataset.js';
 import { fingerprint, loadCaseEvidence, EVIDENCE_QUERIES } from '../../evals/retrieval/narrative/evidence.js';
+import { ledgerRecovery } from '../../evals/retrieval/narrative/commands.js';
+import { allocationLockPath, loggedRunUsd, openAllocation, recoverAllocation } from '../../evals/retrieval/narrative/judging.js';
 import { assemblePool, bundlePairs, indexCohort, lureCases, poolRun } from '../../evals/retrieval/narrative/pool.js';
 import { questionVersion, rubricVersion, sha256 } from '../../evals/retrieval/narrative/spec.js';
 import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
 import { makeExtractDir, removeDir } from '../support/extract-dir.js';
 import { loadVerified } from './corpus-helpers.js';
-import { TEST_INDEX_PREFIX, resetCorpus, testDbUrl, testEs } from './helpers.js';
+import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDbUrl, testEs } from './helpers.js';
 
 const PREFIX = `${TEST_INDEX_PREFIX}${randomBytes(4).toString('hex')}`;
 const embedder = createFakeEmbedder(PASSAGES_EMBEDDING_DIMS, 'text-embedding-3-small');
@@ -174,4 +181,47 @@ describe('pools', () => {
       }
     }
   }, 120_000);
+});
+
+describe('allocation recovery against the ledger', () => {
+  it("reads the interrupted run's own evaluation reservations, waits out a live lease and appends the difference", async () => {
+    await resetControls();
+    const policy = quotaPolicy({
+      ai: loadConfig({ env: {}, files: [] }).ai,
+      auth: { identityHmacSecret: 'test-identity-hmac-secret-0123456789', ipHmacSecret: 'test-network-hmac-secret-0123456789' },
+    });
+    const T = new Date('2026-12-01T10:00:00Z');
+    const at = (ms: number) => new Date(T.getTime() + ms);
+    const run = 'eval-10c2-relevance-20261201T100000Z';
+    const reserve = async (requestId: string, usd: number) => {
+      const r = await reserveSpend(ingest, { category: 'evaluation', usd, request: { provider: 'anthropic', model: 'claude-haiku-5-5', stage: 'judge', requestId }, budgets: policy.budgets, now: T, ttlMs: 60_000 });
+      if (!r.ok) throw new Error(`reservation refused: ${JSON.stringify(r)}`);
+      return r;
+    };
+    const settled = await reserve(`${run}-relevance-judge-a`, 0.02);
+    expect(await settleSpend(ingest, settled, { lines: [{ usd: 0.01 }] }, settled.fencingToken, at(1_000))).toMatchObject({ ok: true });
+    const uncertain = await reserve(`${run}-relevance-judge-b`, 0.03);
+    expect(await settleSpend(ingest, uncertain, 'uncertain', uncertain.fencingToken, at(1_000))).toMatchObject({ ok: true });
+    await reserve(`${run}-adjudicate-initial-adjudicator`, 0.05);
+    // Another run whose id starts with this one, and an unrelated run: neither is read.
+    await reserve(`${run}2-relevance-judge-a`, 0.07);
+    await reserve('eval-10c2-calibration-20261201T090000Z-relevance-judge-a', 0.11);
+    const ledger = ledgerRecovery(ingest);
+    const rows = await ledger.runReservations(run);
+    expect(rows.map((r) => [r.requestId, r.status, r.reservedUsd, r.chargedUsd, r.uncertain])).toEqual([
+      [`${run}-relevance-judge-a`, 'settled', 0.02, 0.01, false],
+      [`${run}-relevance-judge-b`, 'settled', 0.03, 0.03, true],
+      [`${run}-adjudicate-initial-adjudicator`, 'open', 0.05, null, null],
+    ]);
+    const dir = mkdtempSync(join(tmpdir(), 'aviation-narrative-recover-'));
+    const a = openAllocation(dir, 'track-n-test', 1);
+    writeFileSync(allocationLockPath(a), JSON.stringify({ run, pid: 999_999_999, host: hostname(), at: T.toISOString() }));
+    await expect(recoverAllocation(a, run, ledger, { confirm: true, now: at(30_000) })).rejects.toThrow(/still open/);
+    const done = await recoverAllocation(a, run, ledger, { confirm: true, now: at(61_000) });
+    expect(done.ledger).toMatchObject({ reservations: 3, settled: { count: 1 }, chargedInFull: { count: 1 }, openPastLease: { count: 1 } });
+    expect(done.ledger.chargedUsd).toBeCloseTo(0.09, 9);
+    expect(done.appendedUsd).toBeCloseTo(0.09, 9);
+    expect(loggedRunUsd(a.log, run)).toBeCloseTo(0.09, 9);
+    await resetControls();
+  });
 });

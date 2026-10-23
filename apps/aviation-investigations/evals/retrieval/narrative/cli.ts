@@ -11,6 +11,8 @@
  *   judge         --set relevance --pools <file> [--stage 1|2] [--confirm-cost --allocation <name>]
  *   answerability --pools <file> [--confirm-cost --allocation <name>]
  *   report        [--pools <file>] --judgments <a,b,...>                     free: metrics and diagnostics
+ *   recover       --allocation <name> --run <id> [--confirm]                remove the lock an interrupted run left, after
+ *                 reconciling its ledger reservations and allocation charges (without --confirm: a report only)
  *
  * Common options: `--env-files a,b` (as the other evaluation commands), `--keys-file
  * <file>` (only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are read from it, never over a
@@ -27,7 +29,7 @@ import { describeWorkerError } from '../../../worker/errors.js';
 import { evalConfig } from '../config.js';
 import { experimentAppConfig } from '../experiments/cli.js';
 import { buildCommand, calibrationCommand } from './build.js';
-import { judgeCommand, planCommand, poolsCommand, reportCommand } from './commands.js';
+import { judgeCommand, planCommand, poolsCommand, recoverCommand, reportCommand } from './commands.js';
 
 export const USAGE = [
   'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]',
@@ -38,9 +40,10 @@ export const USAGE = [
   '       pnpm eval:retrieval:narrative judge --set relevance --pools <file> [--stage 1|2] [--max-usd <usd>] [--concurrency <n>] [--max-escalation-share <share>] [--confirm-cost --allocation <name>] ...',
   '       pnpm eval:retrieval:narrative answerability --pools <file> [--confirm-cost --allocation <name>] ...',
   '       pnpm eval:retrieval:narrative report [--pools <file>] --judgments <a,b,...> [--out-dir <dir>]',
+  '       pnpm eval:retrieval:narrative recover --allocation <name> --run <id> [--confirm] [--env-files <a,b>] [--out-dir <dir>]',
 ].join('\n');
 
-const COMMANDS = ['build', 'calibration', 'plan', 'pools', 'judge', 'answerability', 'report'] as const;
+const COMMANDS = ['build', 'calibration', 'plan', 'pools', 'judge', 'answerability', 'report', 'recover'] as const;
 type Command = (typeof COMMANDS)[number];
 
 const positiveNumber = (v: string | undefined, name: string): number | undefined => {
@@ -77,6 +80,8 @@ export async function main(argv: string[]): Promise<number> {
       measured: { type: 'string' },
       'output-tokens': { type: 'string' },
       disagreement: { type: 'string' },
+      run: { type: 'string' },
+      confirm: { type: 'boolean' },
     },
     allowPositionals: true,
     strict: true,
@@ -130,7 +135,12 @@ export async function main(argv: string[]): Promise<number> {
       dryRun: values['dry-run'] === true,
     });
   }
+  if (command === 'recover' && (!values.allocation || !values.run)) {
+    console.error('recover needs --allocation <name> and --run <id> (the run that holds the lock)');
+    return 2;
+  }
   const config = experimentAppConfig(values['env-files'], values['keys-file']);
+  if (command === 'recover') return recoverCommand({ config, outDir, confirm: values.confirm === true, log, allocation: values.allocation as string, run: values.run as string });
   const base = { config, outDir, confirm: values['confirm-cost'] === true, log };
   const maxUsd = positiveNumber(values['max-usd'], '--max-usd');
   const allocationUsd = positiveNumber(values['allocation-usd'], '--allocation-usd');

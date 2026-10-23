@@ -673,6 +673,7 @@ pnpm eval:retrieval:narrative pools --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative judge --set relevance --pools <file> --stage 1 --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative answerability --pools <file> --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative report --pools <file> --judgments <a,b>   # free
+pnpm eval:retrieval:narrative recover --allocation <name> --run <id> [--confirm]   # an interrupted run's lock: reconcile, then remove
 ```
 
 Paid commands print their plan and send nothing without `--confirm-cost`. Each attempt
@@ -681,7 +682,14 @@ run stops before a reservation would take its own spend above its limit (`--max-
 its allocation above the cap fixed when the allocation was created (`--allocation`,
 shared by the runs of one phase or month, one run at a time: a run holds the
 allocation's lock until it ends), or the ledger below what remains of the monthly
-indexing and evaluation allowance. A budget stop keeps the run's records, and
+indexing and evaluation allowance. A lock is never removed automatically: a run
+refuses any existing lock, and the lock of an interrupted run stays until `recover`
+removes it. `recover` refuses while that run's process still runs on this host or one of
+its ledger reservations is still within its lease, and takes an exclusive claim, so two
+recoveries cannot both proceed. It reconciles the run's ledger charges (settled costs,
+full reservations of uncertain, expired and lease-expired ones) with what the
+allocation's log holds for the run, prints both, and with `--confirm` appends the
+difference to the log before it removes the lock. A budget stop keeps the run's records, and
 the judgment cache, shared by every run and allocation, lets the next run (or month)
 continue without paying again. A rejected request stops the run: its own attempt is not
 billed, but the other judge's concurrent attempts are, so the canary runs one pair with

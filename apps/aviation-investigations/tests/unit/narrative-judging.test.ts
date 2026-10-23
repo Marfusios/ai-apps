@@ -7,9 +7,9 @@
  * escalation bound, per-attempt ledger reservations, budget stops and the cache.
  * No request leaves the process.
  */
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
@@ -36,8 +36,13 @@ import {
   adjudicationOrder,
   judgePairs,
   lockAllocation,
+  loggedRunUsd,
+  loggedSpendUsd,
   openAllocation,
+  recoverAllocation,
   relevanceSubject,
+  type RecoveryLedger,
+  type RunReservation,
   type FamilyRef,
   type PairPlanItem,
   type PairRecord,
@@ -497,23 +502,132 @@ describe('the paid judging step', () => {
     expect((JSON.parse(readFileSync(join(dir, stoppedFile), 'utf8')) as { stopped: string }).stopped).toMatch(/allocation next-month/);
   });
 
-  it("lets one run at a time spend from an allocation: a held lock refuses a second run, a dead holder's lock is taken over (review N12)", async () => {
+  it('lets one run at a time spend from an allocation, and never removes an existing lock by itself (review N12, fix round 3)', async () => {
     const dir = tmp();
     const deps = { callers: fakes, ledger: () => ({ gate: createMemorySpendGate(20), close: async () => undefined }) };
     expect(await runJudging(items(), opts(dir, { confirm: true }), deps)).toBe(0);
     const lock = join(dir, 'allocations', 'track-n-test.lock');
     expect(existsSync(lock)).toBe(false);
     const held = lockAllocation(openAllocation(dir, 'track-n-test', undefined), 'other-run');
-    await expect(runJudging(items(), opts(dir, { confirm: true }), deps)).rejects.toThrow(/in use by run other-run/);
+    await expect(runJudging(items(), opts(dir, { confirm: true }), deps)).rejects.toThrow(/held by run other-run/);
     held.release();
     expect(existsSync(lock)).toBe(false);
-    // A lock left by a process that no longer runs on this host is taken over, and released at the end.
-    writeFileSync(lock, JSON.stringify({ run: 'crashed', pid: 999_999_999, host: hostname(), at: '2026-10-01T00:00:00.000Z' }));
-    expect(await runJudging(items(), opts(dir, { confirm: true }), deps)).toBe(0);
-    expect(existsSync(lock)).toBe(false);
-    // A lock from another host is never taken over.
-    writeFileSync(lock, JSON.stringify({ run: 'elsewhere', pid: 999_999_999, host: `${hostname()}-other`, at: '2026-10-01T00:00:00.000Z' }));
-    await expect(runJudging(items(), opts(dir, { confirm: true }), deps)).rejects.toThrow(/in use by run elsewhere/);
+    // A stale lock (its process no longer runs on this host) is refused like any other: only `recover` removes it.
+    const stale = JSON.stringify({ run: 'crashed', pid: 999_999_999, host: hostname(), at: '2026-10-01T00:00:00.000Z' });
+    writeFileSync(lock, stale);
+    await expect(runJudging(items(), opts(dir, { confirm: true }), deps)).rejects.toThrow(/held by run crashed.*recover --allocation track-n-test --run crashed/);
+    expect(readFileSync(lock, 'utf8')).toBe(stale);
+  });
+
+  it('never lets two processes recovering the same stale lock both acquire the allocation (the gate\'s fix-round-2 item 1)', () => {
+    const dir = tmp();
+    const a = openAllocation(dir, 'race', 1);
+    const lock = join(dir, 'allocations', 'race.lock');
+    const stale = JSON.stringify({ run: 'crashed', pid: 999_999_999, host: hostname(), at: '2026-10-01T00:00:00.000Z' });
+    writeFileSync(lock, stale);
+    // The gate's interleaving: both competitors read the same stale holder, then both try to take the allocation.
+    const first = (() => {
+      try {
+        return lockAllocation(a, 'first');
+      } catch (err) {
+        return err as Error;
+      }
+    })();
+    const second = (() => {
+      try {
+        return lockAllocation(a, 'second');
+      } catch (err) {
+        return err as Error;
+      }
+    })();
+    expect(first).toBeInstanceOf(Error);
+    expect(second).toBeInstanceOf(Error);
+    expect(readFileSync(lock, 'utf8')).toBe(stale);
+  });
+
+  describe('recovering an interrupted run', () => {
+    const NOW = new Date('2026-10-24T12:00:00.000Z');
+    const reservation = (id: string, status: string, reservedUsd: number, chargedUsd: number | null, uncertain: boolean | null, leaseMs: number): RunReservation => ({
+      id,
+      requestId: `crashed-relevance-judge-${id}`,
+      status,
+      reservedUsd,
+      chargedUsd,
+      uncertain,
+      leaseExpiresAt: new Date(NOW.getTime() + leaseMs),
+    });
+    // A settled attempt the log holds, an uncertain one, one the ledger expired and one still open past its lease.
+    const LEDGER = [
+      reservation('1', 'settled', 0.02, 0.01, false, -60_000),
+      reservation('2', 'settled', 0.03, 0.03, true, -60_000),
+      reservation('3', 'expired_charged', 0.04, 0.04, true, -60_000),
+      reservation('4', 'open', 0.05, null, null, -1_000),
+    ];
+    const ledgerOf = (rows: RunReservation[]): RecoveryLedger => ({ runReservations: async () => rows });
+    const setup = () => {
+      const dir = tmp();
+      const a = openAllocation(dir, 'month', 1);
+      appendFileSync(a.log, `${JSON.stringify({ at: 'x', run: 'crashed', purpose: 'relevance', provider: 'anthropic', model: 'm', reservedUsd: 0.02, chargedUsd: 0.01 })}\n`);
+      appendFileSync(a.log, `${JSON.stringify({ at: 'x', run: 'earlier', purpose: 'relevance', provider: 'anthropic', model: 'm', reservedUsd: 0.5, chargedUsd: 0.2 })}\n`);
+      const lock = join(dir, 'allocations', 'month.lock');
+      writeFileSync(lock, JSON.stringify({ run: 'crashed', pid: 999_999_999, host: hostname(), at: '2026-10-24T11:00:00.000Z' }));
+      return { dir, a, lock };
+    };
+
+    it('reconciles the ledger reservations and allocation charges before it removes the lock, and only with --confirm', async () => {
+      const { dir, a, lock } = setup();
+      const before = readFileSync(a.log, 'utf8');
+      const report = await recoverAllocation(a, 'crashed', ledgerOf(LEDGER), { confirm: false, now: NOW });
+      expect(report.ledger).toMatchObject({ reservations: 4, settled: { count: 1 }, chargedInFull: { count: 2 }, openPastLease: { count: 1 } });
+      expect(report.ledger.chargedUsd).toBeCloseTo(0.01 + 0.03 + 0.04 + 0.05, 9);
+      expect(report.loggedUsd).toBeCloseTo(0.01, 9);
+      expect(report.appendedUsd).toBeCloseTo(0.12, 9);
+      expect(report.recovered).toBe(false);
+      // Without --confirm nothing changes.
+      expect(readFileSync(a.log, 'utf8')).toBe(before);
+      expect(existsSync(lock)).toBe(true);
+      const spendLog = join(dir, 'spend', 'crashed.jsonl');
+      const done = await recoverAllocation(a, 'crashed', ledgerOf(LEDGER), { confirm: true, now: NOW, spendLog });
+      expect(done.recovered).toBe(true);
+      expect(existsSync(lock)).toBe(false);
+      expect(existsSync(join(dir, 'allocations', 'month.recovering'))).toBe(false);
+      // The allocation now counts every ledger charge of the run, and the earlier run's spend is untouched.
+      expect(loggedRunUsd(a.log, 'crashed')).toBeCloseTo(0.13, 9);
+      expect(loggedSpendUsd(a.log)).toBeCloseTo(0.33, 9);
+      expect(loggedRunUsd(spendLog, 'crashed')).toBeCloseTo(0.12, 9);
+      await expect(recoverAllocation(a, 'crashed', ledgerOf(LEDGER), { confirm: true, now: NOW })).rejects.toThrow(/not locked/);
+    });
+
+    it('lets one of two competing recoveries proceed, and then one of two competing runs acquire', async () => {
+      const { a, lock } = setup();
+      let release: () => void = () => undefined;
+      const slow: RecoveryLedger = { runReservations: () => new Promise((r) => (release = () => r(LEDGER))) };
+      const one = recoverAllocation(a, 'crashed', slow, { confirm: true, now: NOW });
+      const two = recoverAllocation(a, 'crashed', slow, { confirm: true, now: NOW });
+      await expect(two).rejects.toThrow(/another recovery of allocation month/);
+      // The second recovery left the lock and the first recovery's claim alone.
+      expect(existsSync(lock)).toBe(true);
+      release();
+      expect((await one).recovered).toBe(true);
+      expect(loggedRunUsd(a.log, 'crashed')).toBeCloseTo(0.13, 9);
+      // The lock is free again: of two competing runs, one acquires it and the other is refused.
+      const first = lockAllocation(a, 'next-1');
+      expect(() => lockAllocation(a, 'next-2')).toThrow(/held by run next-1/);
+      first.release();
+    });
+
+    it('refuses another run, a holder still running, a reservation still within its lease, and changes nothing', async () => {
+      const { a, lock } = setup();
+      const before = readFileSync(a.log, 'utf8');
+      await expect(recoverAllocation(a, 'other', ledgerOf(LEDGER), { confirm: true, now: NOW })).rejects.toThrow(/held by run crashed, not other/);
+      const live = [...LEDGER, reservation('5', 'open', 0.05, null, null, 60_000)];
+      await expect(recoverAllocation(a, 'crashed', ledgerOf(live), { confirm: true, now: NOW })).rejects.toThrow(/still open, the last until 2026-10-24T12:01:00.000Z/);
+      writeFileSync(lock, JSON.stringify({ run: 'crashed', pid: process.pid, host: hostname(), at: '2026-10-24T11:00:00.000Z' }));
+      await expect(recoverAllocation(a, 'crashed', ledgerOf(LEDGER), { confirm: true, now: NOW })).rejects.toThrow(/still running/);
+      expect(readFileSync(a.log, 'utf8')).toBe(before);
+      expect(existsSync(lock)).toBe(true);
+      expect(existsSync(join(dirname(a.log), 'month.recovering'))).toBe(false);
+    });
   });
 
   it('stops before the run limit and keeps what it has', async () => {

@@ -26,6 +26,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
+import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { createAnthropicProvider } from '../../../server/ai/anthropic.js';
 import { closeDb, createDb, type Db } from '../../../server/db/client.js';
@@ -50,7 +51,25 @@ import { attemptReserveUsd, createAnthropicJudge, createOpenAIJudge, type JudgeC
 import { ADJUDICATOR, DEFAULT_CONCURRENCY, JUDGE_A, JUDGE_B, JUDGE_TIMEOUT_MS, RUN_LIMITS_USD } from './config.js';
 import { NarrativeDatasetSchema, families, narrativeDatasetProblems, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { CASE_TOKEN_BUDGET, bundleFingerprint, fingerprint, loadCaseEvidence, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
-import { AttemptSender, JudgmentCache, answerabilitySubject, bundleKeyOf, byPriority, judgePairs, lockAllocation, loggedSpendUsd, openAllocation, relevanceSubject, type Allocation, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
+import {
+  AttemptSender,
+  JudgmentCache,
+  answerabilitySubject,
+  bundleKeyOf,
+  byPriority,
+  judgePairs,
+  lockAllocation,
+  loggedSpendUsd,
+  openAllocation,
+  recoverAllocation,
+  relevanceSubject,
+  type Allocation,
+  type FamilyRef,
+  type PairPlanItem,
+  type PairRecord,
+  type RecoveryLedger,
+  type RunReservation,
+} from './judging.js';
 import {
   ASSUMPTIONS,
   addRuns,
@@ -1060,6 +1079,63 @@ const DIAGNOSTIC_NOTE =
   'Diagnostics, not validation: agreement between model judges (and with the adjudicator) measures their consistency, not their correctness; kappa 0.7 and agreement 0.8 are investigation thresholds.';
 
 /** `report`: metrics and diagnostics from a pool file and judgment files (no target, nothing paid). Refuses incompatible files and conflicting records. */
+// ---------------------------------------------------------------------------
+// Allocation recovery
+
+/** The run's evaluation reservations on the ledger (read-only; row-level security limits the ingest role to indexing and evaluation). */
+export function ledgerRecovery(db: Db): RecoveryLedger {
+  return {
+    async runReservations(run) {
+      const res = await db.execute(sql`
+        SELECT id::text AS id, request_id, status, (usd * 1000000)::bigint AS usd_micros,
+          (charged_usd * 1000000)::bigint AS charged_micros, uncertain, lease_expires_at
+        FROM reservations
+        WHERE category = 'evaluation' AND (request_id = ${run} OR starts_with(request_id, ${`${run}-`}))
+        ORDER BY id`);
+      return (res.rows as { id: string; request_id: string; status: string; usd_micros: string; charged_micros: string | null; uncertain: boolean | null; lease_expires_at: Date | string }[]).map(
+        (r): RunReservation => ({
+          id: r.id,
+          requestId: r.request_id,
+          status: r.status,
+          reservedUsd: Number(r.usd_micros) / 1e6,
+          chargedUsd: r.charged_micros === null ? null : Number(r.charged_micros) / 1e6,
+          uncertain: r.uncertain,
+          leaseExpiresAt: new Date(r.lease_expires_at),
+        }),
+      );
+    },
+  };
+}
+
+/**
+ * `recover`: remove the lock an interrupted run left on its allocation, after reconciling
+ * that run's ledger reservations and allocation charges (`recoverAllocation`). Without
+ * `--confirm` it prints what it would reconcile and changes nothing.
+ */
+export async function recoverCommand(opts: CommandOptions & { allocation: string; run: string }): Promise<number> {
+  const { log } = opts;
+  const allocation = openAllocation(opts.outDir, opts.allocation, undefined);
+  const ingestUrl = opts.config.databaseIngestUrl;
+  if (!ingestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger the run reserved on)');
+  const ingest = createDb(ingestUrl, { max: 1, applicationName: 'aviation-eval-narrative-recover' });
+  try {
+    const r = await recoverAllocation(allocation, opts.run, ledgerRecovery(ingest), { confirm: opts.confirm, spendLog: runSpendLog(opts.outDir, opts.run) });
+    const h = r.holder;
+    const l = r.ledger;
+    log(`allocation ${r.allocation} is held by run ${r.run} (process ${h.pid ?? '?'} on ${h.host ?? '?'}, since ${h.at ?? '?'})`);
+    log(
+      `ledger: ${l.reservations} reservation(s) of the run: ${l.settled.count} settled (${usd(l.settled.usd)}), ${l.chargedInFull.count} charged in full as uncertain or expired (${usd(l.chargedInFull.usd)}), ` +
+        `${l.openPastLease.count} open past their lease, which the ledger charges in full (${usd(l.openPastLease.usd)}); the run's ledger charges ${usd(l.chargedUsd)}`,
+    );
+    log(`allocation log: ${usd(r.loggedUsd)} for the run; reconciliation: ${r.appendedUsd > 0 ? `append ${usd(r.appendedUsd)}` : 'nothing to append'}${r.surplusUsd > 0 ? ` (the log holds ${usd(r.surplusUsd)} more than the ledger charged; kept)` : ''}`);
+    if (r.recovered) log(`recovered: ${r.appendedUsd > 0 ? `appended ${usd(r.appendedUsd)} to ${allocation.log} and the run's spend log, ` : ''}lock removed; the allocation now counts ${usd(loggedSpendUsd(allocation.log))} of $${allocation.capUsd}`);
+    else log('nothing changed: rerun with --confirm to append the reconciliation and remove the lock');
+    return 0;
+  } finally {
+    await closeDb(ingest);
+  }
+}
+
 export async function reportCommand(opts: { outDir: string; pools?: string; judgments: readonly string[]; log: (m: string) => void }): Promise<number> {
   const { log } = opts;
   const d = readDataset();
