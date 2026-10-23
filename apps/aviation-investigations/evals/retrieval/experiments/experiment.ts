@@ -23,7 +23,7 @@ import { codedReference, scoreQuestion, type ProtocolScore } from '../metrics.js
 import { BASELINE_CONFIG, canonicalConfig, changedKnobs, experimentConfig, type ExperimentConfig } from './config.js';
 import { roundRobinCases } from './fusion.js';
 import type { Grid, PoolSpec } from './grid.js';
-import { GATE_METRICS, applyRule, median, nearestRank, pairedGroupBootstrap, type BootstrapResult, type GateMetric, type RuleOutcome, type VariantEvaluation } from './stats.js';
+import { GATE_METRICS, applyRule, clearsZero, median, nearestRank, pairedGroupBootstrap, type BootstrapResult, type GateMetric, type RuleOutcome, type VariantEvaluation } from './stats.js';
 import { runVariant, type VariantRun } from './variant.js';
 
 export interface ExperimentItem {
@@ -342,6 +342,10 @@ export interface ExperimentSummary {
   rule: RuleOutcome;
 }
 
+/** A pool is recommended when its oracle-ceiling gain over the baseline pool reaches the registered size and its one-sided lower bound clears zero (`clearsZero`). */
+export const poolRecommended = (versus: BootstrapResult | null, poolImprovementPp: number): boolean =>
+  versus !== null && versus.delta * 100 >= poolImprovementPp && clearsZero(versus.lower95);
+
 /** Everything the report needs from the runs (module comment). */
 export function summarize(
   grid: Grid,
@@ -430,7 +434,7 @@ export function summarize(
       ceiling: narrow.length === 0 ? Number.NaN : Object.values(perQuestion).reduce((a, b) => a + b, 0) / narrow.length,
       perQuestion,
       versusBaselinePool: versus,
-      recommended: versus !== null && versus.delta * 100 >= grid.rule.poolImprovementPp && versus.lower95 > 0,
+      recommended: poolRecommended(versus, grid.rule.poolImprovementPp),
     };
   });
 

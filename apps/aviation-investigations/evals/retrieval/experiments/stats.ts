@@ -16,7 +16,8 @@
  *
  * **Rule** (`applyRule`): a variant qualifies when its paired improvement on its
  * declared target metric is at least `improvementPp` (point estimate) and the group
- * bootstrap's one-sided 95% lower bound of that improvement is above zero; no other gate
+ * bootstrap's one-sided 95% lower bound of that improvement is above zero (`clearsZero`:
+ * a bound within `ZERO_TOLERANCE` of zero is zero; PREREG amendment 2); no other gate
  * metric falls by more than `regressionTolerancePp` (point estimates); its p95 added and
  * total latency are within the limits; it adds no paid call per request; and none of its
  * runs failed. Among qualifying variants the largest improvement on each variant's own
@@ -29,6 +30,18 @@
  * in task 10e). All 37 of its variants declared narrow Recall@20, so that selection is
  * the same under both readings.
  */
+
+/**
+ * Bounds within this distance of zero are zero. The metrics are ratios of small integers,
+ * so a difference that is not zero is many orders of magnitude larger, while sums of such
+ * ratios in floating point leave residue around an exact zero (0.1 + 0.2 - 0.3 is
+ * 5.6e-17), which must never clear zero. Every zero comparison of the experiments and of
+ * Track N uses it.
+ */
+export const ZERO_TOLERANCE = 1e-9;
+
+/** Whether a bound is above zero under `ZERO_TOLERANCE`. */
+export const clearsZero = (x: number): boolean => x > ZERO_TOLERANCE;
 
 /** mulberry32: a small deterministic PRNG returning floats in [0, 1). */
 export function mulberry32(seed: number): () => number {
@@ -175,7 +188,7 @@ export function applyRule(evals: readonly VariantEvaluation[], t: RuleThresholds
     const reasons: string[] = [];
     const target = e.metrics[e.target];
     if (target.delta * 100 < t.improvementPp) reasons.push(`target ${e.target} improves ${pp(target.delta)} pp (< ${t.improvementPp})`);
-    if (!(target.lower95 > 0)) reasons.push(`target ${e.target} one-sided 95% group-bootstrap lower bound ${pp(target.lower95)} pp is not above 0`);
+    if (!clearsZero(target.lower95)) reasons.push(`target ${e.target} one-sided 95% group-bootstrap lower bound ${pp(target.lower95)} pp is not above 0`);
     for (const m of GATE_METRICS) {
       if (m === e.target) continue;
       if (e.metrics[m].delta * 100 < -t.regressionTolerancePp) reasons.push(`${m} falls ${pp(-e.metrics[m].delta)} pp (> ${t.regressionTolerancePp})`);

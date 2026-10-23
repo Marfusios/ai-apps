@@ -308,3 +308,18 @@ every question, and a unit test compares the request bodies. The reservation per
 attempt becomes the worst case at those caps, $0.0010875 (63 attempts: $0.0685 before
 retries), within the registered $0.10 scope limit and $0.50 phase limit. The grid, the
 rule, the limits and the questions are unchanged.
+
+**Amendment 2** (2026-10-23, after phase A ran, for the rule's next use). The zero
+comparisons of the rule (section 6, item 2: the one-sided lower bound "above zero") and of
+the pool recommendation count a bound within 1e-9 of zero as zero (`ZERO_TOLERANCE` and
+`clearsZero` in `stats.ts`). The metrics are ratios of small integers, so a difference
+that is not zero is many orders of magnitude larger, while floating-point sums of such
+ratios leave residue around an exact zero: Track N found a lower bound of exactly zero
+computed as 3.5e-18 and counted as above zero. This is a numerical correction, not a
+change to the rule's meaning, and phase A's recorded result stands as it was written.
+Re-scored offline from the saved dev and holdout runs with the corrected code, every
+metric, verdict and reason, the selection (`c200+nf-kt`, 15 qualifying variants) and the
+eight recommended pools are unchanged, and the holdout's metrics reproduce exactly. No
+bound the rule or the recommendation compares with zero lay within 1e-9 of it without
+being exactly zero (six variants' target bounds are exactly zero and fail the rule
+either way), and no holdout bound is near zero.

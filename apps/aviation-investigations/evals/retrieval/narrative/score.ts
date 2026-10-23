@@ -45,7 +45,7 @@
  * whether a supported bundle rests on a mapped passage or only on the attached cause).
  */
 import { codedReference, makeReference, scoreQuestion, uniqueTop, type Bounds, type Label, type ProtocolScore, type Reference } from '../metrics.js';
-import { mulberry32, pairedGroupBootstrap, percentile, type BootstrapResult } from '../experiments/stats.js';
+import { ZERO_TOLERANCE, mulberry32, pairedGroupBootstrap, percentile, type BootstrapResult } from '../experiments/stats.js';
 import { itemFamily, itemKey, seededSample, type CalibrationItem } from './calibration.js';
 import { CALIBRATION_CRITERIA } from './criteria.js';
 import type { NarrativeDataset, NarrativeItem } from './dataset.js';
@@ -272,14 +272,6 @@ export function methodDifferences(pool: FamilyPool, ref: Reference, answerabilit
   }
   return out;
 }
-
-/**
- * Bounds within this distance of zero are zero. Every metric is a ratio of small integers, so a
- * difference that is not zero is many orders of magnitude larger, while sums of such ratios in
- * floating point leave residue around an exact zero (0.1 + 0.2 - 0.3 is 5.6e-17), which must never
- * clear zero.
- */
-export const ZERO_TOLERANCE = 1e-9;
 
 export interface Comparison {
   questions: number;

@@ -26,14 +26,14 @@ import { caseAircraftClause, caseChannelBody, caseChannelFilter, caseMappingBody
 import { experimentAppConfig, spentUsd } from '../../evals/retrieval/experiments/cli.js';
 import { BASELINE_CONFIG, canonicalConfig, changedKnobs, experimentConfig, isBaseline, paramsOf } from '../../evals/retrieval/experiments/config.js';
 import { classify, representableVia, thresholdsOf, type Signals } from '../../evals/retrieval/experiments/diagnose.js';
-import { gridConfigs, latencyOf, poolCases, poolCeiling, questionValue, runKey, summarize, type ExperimentItem, type StoredRun } from '../../evals/retrieval/experiments/experiment.js';
+import { gridConfigs, latencyOf, poolCases, poolCeiling, poolRecommended, questionValue, runKey, summarize, type ExperimentItem, type StoredRun } from '../../evals/retrieval/experiments/experiment.js';
 import { candidatesFor, caseRrfFuse, integerWeights, roundRobinCases, uniqueCaseOrder, weightedRrfFuse } from '../../evals/retrieval/experiments/fusion.js';
 import { exactRrf } from '../../server/search/case-fusion.js';
 import { GRID_VERSION, GridSchema, gridProblems, loadGrid, sha256, type Grid } from '../../evals/retrieval/experiments/grid.js';
 import { CodedDatasetSchema } from '../../evals/retrieval/coded/coded.js';
 import { SCOPE_STAGE_TIMEOUT_MS, ScopeBudgetError, attemptReserveUsd, providerScopeCaller, runScopeSamples, scopeInventory } from '../../evals/retrieval/experiments/scope.js';
 import { DEPLOYED_SCOPE_CAPS, createDeployedScopeCaller, scopeRequestBody } from '../../evals/retrieval/experiments/deployed-scope.js';
-import { applyRule, mulberry32, nearestRank, pairedGroupBootstrap, percentile, type BootstrapResult, type VariantEvaluation } from '../../evals/retrieval/experiments/stats.js';
+import { ZERO_TOLERANCE, applyRule, clearsZero, mulberry32, nearestRank, pairedGroupBootstrap, percentile, type BootstrapResult, type VariantEvaluation } from '../../evals/retrieval/experiments/stats.js';
 import { runVariant } from '../../evals/retrieval/experiments/variant.js';
 import { codedReference, scoreQuestion } from '../../evals/retrieval/metrics.js';
 
@@ -574,6 +574,22 @@ describe('the registered selection rule', () => {
     // Every phase A variant declared narrow Recall@20: the ranking is the narrow one, as registered.
     const phaseA = [evaluation('a', 0.258), evaluation('b', 0.248), evaluation('c', 0.147, { ndcg: 0.12 })];
     expect(applyRule(phaseA, RULE).order).toEqual(['a', 'b', 'c']);
+  });
+
+  it('counts a lower bound that is zero but for floating-point residue as zero', () => {
+    // A bootstrapped mean of small-integer ratios that is exactly zero can come out as 1e-17.
+    const residue = applyRule([evaluation('residue', 0.1, { lower: 1e-17 })], RULE);
+    expect(residue.verdicts[0]?.reasons.join('; ')).toMatch(/lower bound 0\.0 pp is not above 0/);
+    expect(residue.selected).toBeNull();
+    expect(applyRule([evaluation('clear', 0.1, { lower: 0.001 })], RULE).selected).toBe('clear');
+    expect(clearsZero(1e-17)).toBe(false);
+    expect(clearsZero(-1e-17)).toBe(false);
+    expect(clearsZero(2 * ZERO_TOLERANCE)).toBe(true);
+    // The pool recommendation follows the same policy.
+    expect(poolRecommended(boot(0.1, 1e-17), 5)).toBe(false);
+    expect(poolRecommended(boot(0.1, 0.01), 5)).toBe(true);
+    expect(poolRecommended(boot(0.04, 0.01), 5)).toBe(false);
+    expect(poolRecommended(null, 5)).toBe(false);
   });
 });
 
