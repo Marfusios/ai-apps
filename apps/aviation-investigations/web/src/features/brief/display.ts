@@ -18,13 +18,19 @@ export function speakerTag(speaker: Speaker): string | null {
   return null;
 }
 
+/**
+ * The drawer's CRITERIA line for the same decision without its "Unconfirmed:" lead
+ * (server/briefs/context.ts `CRITERION_LINE`, which a test holds this to): the analysis
+ * could not establish it from the supplied passages, never that the passages or the
+ * investigation lack the information (DESIGN §3).
+ */
 const UNCONFIRMED_LINE: Readonly<Record<Criterion, string>> = {
-  timing_window: 'The passages do not establish your timing window.',
-  first_flight_only: 'The passages do not establish the first flight after maintenance.',
-  failure_type: 'The passages do not establish the failure type.',
+  timing_window: 'This analysis could not establish your timing window from the supplied passages.',
+  first_flight_only: 'This analysis could not establish the first flight from the supplied passages.',
+  failure_type: 'This analysis could not establish the failure type from the supplied passages.',
 };
 
-/** What the passages do not settle, one line per unconfirmed criterion (UNCONFIRMED label). */
+/** What this analysis could not settle, one line per unconfirmed criterion (UNCONFIRMED label). */
 export function unconfirmedLines(reading: CaseReading | null): string[] {
   return (reading?.criteria ?? []).filter((c) => c.decision === 'unconfirmed').map((c) => UNCONFIRMED_LINE[c.criterion]);
 }

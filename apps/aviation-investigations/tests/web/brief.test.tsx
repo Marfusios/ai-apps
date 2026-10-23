@@ -5,7 +5,8 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiStatusResponse } from '../../shared/contracts/ai';
-import { BRIEF_FILTER_FACETS, BriefStepResponseSchema } from '../../shared/contracts/briefs';
+import { BRIEF_FILTER_FACETS, BriefStepResponseSchema, CRITERIA, type CaseReading } from '../../shared/contracts/briefs';
+import { CRITERION_LINE } from '../../server/briefs/context';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_MIDAIR_QUESTION, MOCK_SEED_QUESTION, RESULT_SAMPLES } from '../../web/mock/briefs';
@@ -23,7 +24,7 @@ import {
 } from '../../web/src/features/ai/TurnstileGate';
 import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, type PollState } from '../../web/src/features/brief/api';
 import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
-import { attributionAmbiguous, evidenceAttribution, quoteAttribution } from '../../web/src/features/brief/display';
+import { attributionAmbiguous, evidenceAttribution, quoteAttribution, unconfirmedLines } from '../../web/src/features/brief/display';
 import { exploreHref } from '../../web/src/features/brief/filters';
 import {
   FILTER_FACETS,
@@ -1280,5 +1281,18 @@ describe('Unknown-outcome keys for the tab (web/src/features/ai/unsettled.ts)', 
     rememberUnsettled(id, 'key-00000005');
     expect(unsettledKey(id)).toBe('key-00000005');
     setItem.mockRestore();
+  });
+});
+
+describe('Unconfirmed criteria on the case card', () => {
+  it('say what the drawer line says: this analysis could not establish it from the supplied passages', () => {
+    for (const criterion of CRITERIA) {
+      const reading = { glyph: null, why: 'w', timing: [], quotes: [], evidence: { scope: 'event', multiAircraft: false }, criteria: [{ criterion, decision: 'unconfirmed' }] } as CaseReading;
+      const lead = CRITERION_LINE[criterion].unconfirmed.replace(/^Unconfirmed: /, '');
+      expect(unconfirmedLines(reading), criterion).toEqual([`${lead.charAt(0).toUpperCase()}${lead.slice(1)}.`]);
+      expect(unconfirmedLines(reading)[0], criterion).not.toMatch(/investigation|no timing|Within/);
+    }
+    // A criterion the case matches has no line.
+    expect(unconfirmedLines({ glyph: null, why: 'w', timing: [], quotes: [], evidence: { scope: 'event', multiAircraft: false }, criteria: [{ criterion: 'timing_window', decision: 'matches' }] } as CaseReading)).toEqual([]);
   });
 });
