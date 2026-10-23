@@ -5,9 +5,11 @@ import { TURNSTILE_TEST_SECRET_KEYS, TURNSTILE_TEST_SITE_KEYS } from '../server/
 
 await setupPostgres();
 await setupElasticsearch();
-// HMAC keys for stored identities (the cost gate refuses to run without them). Generated
-// once when missing, kept on later runs (rotating them resets usage counters), never printed.
-ensureSecrets(['IDENTITY_HMAC_SECRET', 'IP_HMAC_SECRET']);
+// HMAC keys for stored identities (the cost gate refuses to run without them) and the
+// Better Auth secret (sign-in also needs a Google OAuth client). Generated once when
+// missing, kept on later runs (rotating the HMAC keys resets usage counters, the Better
+// Auth secret signs everyone out), never printed.
+ensureSecrets(['IDENTITY_HMAC_SECRET', 'IP_HMAC_SECRET', 'BETTER_AUTH_SECRET']);
 // Local development uses Cloudflare's public Turnstile test keys (every check passes, any
 // hostname). Real keys already in .env.local or the environment are kept; APP_ENV=live
 // refuses test keys.

@@ -114,6 +114,16 @@
     print-color-adjust: exact;
   }
 
+  /* The mark on "Continue with Google" (UI_DESIGN §4.8 mockup): Google's own four colours, its brand, not a token. */
+  .google-mark {
+    display: inline-block;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: conic-gradient(#4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0);
+  }
+
   .link {
     color: var(--blue);
     text-decoration-line: underline;

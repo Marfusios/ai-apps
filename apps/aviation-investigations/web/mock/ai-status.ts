@@ -23,10 +23,20 @@ export const AI_STATUS_SAMPLES = {
   },
   /** The login-required emergency mode. */
   loginRequired: { state: 'signed_in_only', reason: 'login_required', remaining: trial(2, true) },
+  /** Signed in for the first time: "AI left today: 5 of 5" (new accounts, their first three days). */
+  newAccount: {
+    state: 'available',
+    remaining: { kind: 'account', leftToday: 5, limitToday: 5, leftThisMonth: 150, limitThisMonth: 150 },
+  },
   /** Signed in: "AI left today: 18 of 20". */
   signedIn: {
     state: 'available',
     remaining: { kind: 'account', leftToday: 18, limitToday: 20, leftThisMonth: 109, limitThisMonth: 150 },
+  },
+  /** Signed in, and the server asks for a Turnstile check before the next AI request (DESIGN §8). */
+  checkedAccount: {
+    state: 'available',
+    remaining: { kind: 'account', leftToday: 8, limitToday: 20, leftThisMonth: 140, limitThisMonth: 150, check: true },
   },
   /** Paused for everyone, daily budget: "AI back tomorrow". */
   pausedDaily: { state: 'paused', reason: 'daily_budget', retryAt: '2026-10-17T00:00:00.000Z', remaining: trial(3, false) },

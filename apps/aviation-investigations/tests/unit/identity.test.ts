@@ -269,7 +269,7 @@ describe('AI status contract', () => {
   it('carries counts and coarse reasons only, never amounts', () => {
     const keys = schemaKeys(AiStatusResponseSchema);
     expect(new Set(keys)).toEqual(
-      new Set(['state', 'reason', 'retryAt', 'remaining', 'kind', 'left', 'limit', 'started', 'leftToday', 'limitToday', 'leftThisMonth', 'limitThisMonth']),
+      new Set(['state', 'reason', 'retryAt', 'remaining', 'kind', 'left', 'limit', 'started', 'leftToday', 'limitToday', 'leftThisMonth', 'limitThisMonth', 'check']),
     );
     expect(keys.join(' ')).not.toMatch(/usd|amount|budget|spend|cost|dollar|allowance/i);
     expect(AI_STATUS_REASONS).toHaveLength(9);
@@ -310,5 +310,9 @@ describe('AI status contract', () => {
       remaining: account,
     });
     expect(() => toStatusResponse({ state: 'paused', reason: 'trial_used', remaining: trial }, true)).toThrow();
+    // A signed-in account the step-up policy flags: its counts say a check is needed (DESIGN §8).
+    const ready = { kind: 'account', leftToday: 9, limitToday: 20, leftThisMonth: 140, limitThisMonth: 150 } as const;
+    expect(toStatusResponse({ state: 'available', remaining: ready }, false, true)).toEqual({ state: 'available', remaining: { ...ready, check: true } });
+    expect(toStatusResponse({ state: 'available', remaining: ready }, false)).toEqual({ state: 'available', remaining: ready });
   });
 });

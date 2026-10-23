@@ -2,7 +2,7 @@ import type { RouteObject } from 'react-router';
 import { AppShell } from './AppShell';
 import { About } from './pages/About';
 import { Home } from './pages/Home';
-import { ComingSoon, NotFound } from './pages/Placeholder';
+import { NotFound } from './pages/Placeholder';
 import { Privacy } from './pages/Privacy';
 
 /**
@@ -17,16 +17,7 @@ const pages: RouteObject[] = [
   { path: 'cases/:ntsbNo', lazy: async () => ({ Component: (await import('./pages/CasePage')).CasePage }) },
   { path: 'compare', lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
   { path: 'dashboard', lazy: async () => ({ Component: (await import('./pages/Dashboard')).Dashboard }) },
-  {
-    path: 'account',
-    element: (
-      <ComingSoon
-        eyebrow="Account"
-        title="Account"
-        description="Your AI searches left, and the controls to sign out or delete your account."
-      />
-    ),
-  },
+  { path: 'account', lazy: async () => ({ Component: (await import('./pages/Account')).Account }) },
   { path: 'privacy', element: <Privacy /> },
   { path: 'about', element: <About /> },
 ];

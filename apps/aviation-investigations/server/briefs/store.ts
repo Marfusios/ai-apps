@@ -4,8 +4,12 @@
  * cancellation, and the read-owner handover for Task 20. Every step write is
  * conditional on the step still running; the database refuses changes to a finished
  * step, to a step's billing principal or request, and any direct update of a brief.
+ *
+ * For a reader, the owner check and the content come from one statement
+ * (`readOwnedStep`); a change to a brief locks it first (`lockBrief`), so the handover
+ * and account deletion cannot slip between the owner check and the write (Task 20 review).
  */
-import { and, asc, desc, eq, getTableColumns, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, gt, isNull, or, sql } from 'drizzle-orm';
 import type {
   BriefResult,
   Checklist,
@@ -245,6 +249,82 @@ export async function readStepWithCount(db: DbOrTx, briefId: string, n?: number)
   return r ? { step: toStep(r.row), steps: Number(r.steps) } : null;
 }
 
+/** An identity that may read briefs: an account's or a trial's HMAC (Task 20). */
+export interface BriefReader {
+  hash: string;
+  kind: PrincipalKind;
+}
+
+/**
+ * Step `n` of a live brief (or its latest step), the number of its steps and its expiry,
+ * only when one of `readers` is the brief's read owner. One statement: the owner check and
+ * the content come from the same snapshot, so a handover committed meanwhile never lets
+ * the identity it moved away from read what the new owner added (Task 20 review).
+ */
+export async function readOwnedStep(
+  db: DbOrTx,
+  briefId: string,
+  readers: readonly BriefReader[],
+  now: Date,
+  n?: number,
+): Promise<{ step: StepRow; steps: number; brief: Pick<BriefRow, 'expiresAt' | 'generationId' | 'passagesIndex'>; reader: BriefReader } | null> {
+  if (readers.length === 0) return null;
+  const owned = or(...readers.map((r) => and(eq(briefs.readOwner, r.hash), eq(briefs.readOwnerKind, r.kind))));
+  const count = sql<number>`(select count(*)::int from ${briefSteps} s where s.brief_id = ${briefId}::uuid)`;
+  const q = db
+    .select({
+      row: STEP_COLUMNS,
+      steps: count,
+      expiresAt: briefs.expiresAt,
+      generationId: briefs.generationId,
+      passagesIndex: briefs.passagesIndex,
+      readOwner: briefs.readOwner,
+      readOwnerKind: briefs.readOwnerKind,
+    })
+    .from(briefSteps)
+    .innerJoin(briefs, eq(briefs.id, briefSteps.briefId));
+  const live = and(eq(briefs.id, briefId), gt(briefs.expiresAt, now), owned);
+  const [r] =
+    n === undefined ? await q.where(live).orderBy(desc(briefSteps.n)).limit(1) : await q.where(and(live, eq(briefSteps.n, n)));
+  if (!r) return null;
+  return {
+    step: toStep(r.row),
+    steps: Number(r.steps),
+    brief: { expiresAt: r.expiresAt, generationId: r.generationId, passagesIndex: r.passagesIndex },
+    reader: { hash: r.readOwner, kind: r.readOwnerKind as PrincipalKind },
+  };
+}
+
+/** A step with its brief's read owner and expiry, read together (one snapshot), or null. */
+export async function readStepAndOwner(
+  db: DbOrTx,
+  stepId: string,
+): Promise<{ step: StepRow; readOwner: string; readOwnerKind: PrincipalKind; expiresAt: Date } | null> {
+  const [r] = await db
+    .select({ row: STEP_COLUMNS, readOwner: briefs.readOwner, readOwnerKind: briefs.readOwnerKind, expiresAt: briefs.expiresAt })
+    .from(briefSteps)
+    .innerJoin(briefs, eq(briefs.id, briefSteps.briefId))
+    .where(eq(briefSteps.id, stepId));
+  return r ? { step: toStep(r.row), readOwner: r.readOwner, readOwnerKind: r.readOwnerKind as PrincipalKind, expiresAt: r.expiresAt } : null;
+}
+
+/**
+ * Lock a brief for a change (a refinement's step, a cancel) until the transaction ends,
+ * and return its read owner and expiry as of the lock (`lock_brief()`, migration 0018).
+ * The handover's compare-and-set and account deletion wait for the lock, so the owner
+ * checked against this cannot change before the change commits. Null when there is no
+ * such brief. The caller checks the expiry with its own clock.
+ */
+export async function lockBrief(
+  tx: DbOrTx,
+  briefId: string,
+): Promise<{ readOwner: string; readOwnerKind: PrincipalKind; expiresAt: Date } | null> {
+  const res = await tx.execute(sql`
+    SELECT read_owner, read_owner_kind, (extract(epoch FROM expires_at) * 1000)::bigint AS expires_ms FROM lock_brief(${briefId}::uuid)`);
+  const row = res.rows[0] as { read_owner: string; read_owner_kind: string; expires_ms: string } | undefined;
+  return row ? { readOwner: row.read_owner, readOwnerKind: row.read_owner_kind as PrincipalKind, expiresAt: new Date(Number(row.expires_ms)) } : null;
+}
+
 /**
  * A step still `running` this long after it started has lost its process (the deadline
  * is 100 s and settlement follows at once): it reads as failed, it no longer blocks a
@@ -261,8 +341,14 @@ export function isLiveStep(step: { status: BriefStepStatus; createdAt: Date }, n
  * charged): still `running` after `STALE_STEP_MS`, with a reservation that is no longer
  * open (lease expiry charged it in full, or it was settled before the step's last write
  * was lost). Run by the periodic control maintenance as aviation_app.
+ *
+ * A step another transaction holds is skipped, and a later pass finds it if it is still
+ * orphaned: the pass runs this after retention has taken anti-abuse records, and an
+ * account deletion locks the account's steps before its anti-abuse record, so waiting
+ * here could close a cycle (server/auth/lifecycle.ts, the lock order).
  */
 export async function failOrphanedSteps(db: DbOrTx, now: Date = new Date()): Promise<number> {
+  const stale = new Date(now.getTime() - STALE_STEP_MS);
   const res = await db.execute(sql`
     UPDATE brief_steps s
     SET stage = 'failed', status = 'failed',
@@ -270,8 +356,11 @@ export async function failOrphanedSteps(db: DbOrTx, now: Date = new Date()): Pro
       meta = s.meta || '{"failure":{"stage":"pipeline","category":"orphaned"}}'::jsonb,
       cost_usd = r.charged_usd, updated_at = ${now}, finished_at = ${now}
     FROM reservations r
-    WHERE s.status = 'running' AND r.id = s.reservation_id AND r.status <> 'open'
-      AND s.created_at < ${new Date(now.getTime() - STALE_STEP_MS)}`);
+    WHERE s.id IN (
+        SELECT o.id FROM brief_steps o JOIN reservations ro ON ro.id = o.reservation_id
+        WHERE o.status = 'running' AND ro.status <> 'open' AND o.created_at < ${stale}
+        FOR UPDATE OF o SKIP LOCKED)
+      AND s.status = 'running' AND r.id = s.reservation_id AND r.status <> 'open'`);
   return res.rowCount ?? 0;
 }
 
@@ -359,7 +448,7 @@ export async function readStepDiagnostics(
 }
 
 /** Mark a running step for cancellation; false when it is not running. */
-export async function requestCancel(db: Db, stepId: string, now: Date): Promise<boolean> {
+export async function requestCancel(db: DbOrTx, stepId: string, now: Date): Promise<boolean> {
   const rows = await db
     .update(briefSteps)
     .set({ cancelRequestedAt: now, updatedAt: now })

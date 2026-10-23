@@ -1,3 +1,8 @@
 # esbuild ships prebuilt platform binaries; its install script is not needed.
 allowBuilds:
   esbuild: false
+# Better Auth's own transitive dependencies held at releases at least two weeks old
+# when it was added (2026-10-23): the newest ones in its ranges were days old.
+overrides:
+  jose: 6.2.12
+  kysely: 0.29.6

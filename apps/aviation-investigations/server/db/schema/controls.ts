@@ -55,9 +55,18 @@ const tsz = (name: string) => timestamp(name, { withTimezone: true, mode: 'date'
 const usd = (name: string) => numeric(name, { precision: 12, scale: 6 });
 
 /**
+ * When a signed-in AI request needs a Turnstile check (DESIGN §8, server/identity/step-up.ts):
+ * `suspicious`, only on the documented signals; `always`, every signed-in request (an
+ * operator's emergency setting).
+ */
+export const ACCOUNT_CHECK_MODES = ['suspicious', 'always'] as const;
+export type AccountCheckMode = (typeof ACCOUNT_CHECK_MODES)[number];
+
+/**
  * The AI kill switch: exactly one row (id 1), seeded enabled. A missing row means paused.
  * `anonymous_enabled` off is the login-required emergency mode (DESIGN §7): anonymous
- * trials are refused while signed-in AI continues (migration 0013).
+ * trials are refused while signed-in AI continues (migration 0013). `account_check` is
+ * when signed-in requests take a Turnstile check (migration 0018).
  */
 export const aiSwitch = pgTable(
   'ai_switch',
@@ -65,6 +74,7 @@ export const aiSwitch = pgTable(
     id: smallint('id').primaryKey(),
     enabled: boolean('enabled').notNull(),
     anonymousEnabled: boolean('anonymous_enabled').notNull().default(true),
+    accountCheck: text('account_check', { enum: ACCOUNT_CHECK_MODES }).notNull().default('suspicious'),
     /** Operator note; never shown to users. */
     note: text('note'),
     updatedAt: tsz('updated_at').notNull().defaultNow(),
@@ -72,6 +82,7 @@ export const aiSwitch = pgTable(
   (t) => [
     check('ai_switch_single_row_check', sql`${t.id} = 1`),
     check('ai_switch_note_check', sql`${t.note} is null or length(${t.note}) <= 200`),
+    check('ai_switch_account_check_check', sql`${t.accountCheck} in (${inList(ACCOUNT_CHECK_MODES)})`),
   ],
 );
 

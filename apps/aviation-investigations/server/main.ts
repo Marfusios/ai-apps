@@ -16,6 +16,10 @@
  * AVIATION_RETRIEVAL_VERSION names (server/search/retrieval-config.ts; logged at start).
  * The dataset resolver checks the active passages index against the same model and
  * dimensions; without the key AI briefs stay off.
+ *
+ * Google sign-in (server/auth/better-auth.ts) runs when GOOGLE_CLIENT_ID,
+ * GOOGLE_CLIENT_SECRET, BETTER_AUTH_SECRET and the identity HMAC key are set; otherwise
+ * it is off (`googleEnabled: false`) and the log says which setting is missing.
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -24,6 +28,7 @@ import type { Client } from '@elastic/elasticsearch';
 import { loadConfig, type AppConfig } from '../shared/config.js';
 import { createOpenAIQueryEmbedder } from './ai/embeddings.js';
 import { createAiRuntime } from './ai/runtime.js';
+import { createAuthService, type AuthLog } from './auth/better-auth.js';
 import { buildApp } from './app.js';
 import { createHybridRetriever } from './briefs/retriever.js';
 import { createBriefServices, type BriefServices } from './briefs/services.js';
@@ -83,17 +88,33 @@ async function main(): Promise<void> {
   const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api', connectTimeoutMs: DB_CONNECT_TIMEOUT_MS });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 10_000, maxRetries: 1 });
   const evidence = briefServices(config, db, es);
+  const ai = createAiRuntime(config, { db });
+  // Better Auth logs through the server's logger, which exists once the app does.
+  let authLog: AuthLog | null = null;
+  const signIn = createAuthService(config, {
+    db,
+    policy: ai.policy,
+    trials: ai.trials,
+    log: {
+      info: (obj, msg) => authLog?.info(obj, msg),
+      warn: (obj, msg) => authLog?.warn(obj, msg),
+      error: (obj, msg) => authLog?.error(obj, msg),
+    },
+  });
   const app = buildApp({
     config,
     db,
     es,
-    ai: createAiRuntime(config, { db }),
+    ai,
+    auth: signIn.service,
     briefs: evidence.services,
     embedding: { model: config.ai.openai.embeddingModel, dims: config.ai.openai.embeddingDimensions },
     webRoot: resolve(APP_DIR, 'dist/web'),
     logger: { level: config.nodeEnv === 'production' ? 'info' : 'debug' },
   });
 
+  authLog = app.log;
+  if (signIn.problem) app.log.warn({ problem: signIn.problem }, 'Google sign-in off');
   if (evidence.problem) app.log.warn({ problem: evidence.problem }, 'AI feature off');
   else app.log.info({ retrievalVersion: config.retrieval.version }, 'AI retrieval configuration');
 

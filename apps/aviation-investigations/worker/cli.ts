@@ -3,11 +3,12 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createAnthropicClient, createAnthropicProvider, type AnthropicMessagesClient } from '../server/ai/anthropic.js';
 import { WORKER_DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from '../server/db/client.js';
+import { BACKUP_EXCLUDED_DATA, emptyExcludedTables, restoreCheck } from '../server/db/backup.js';
 import { listGenerations, pruneGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
 import { pruneControls } from '../server/quota/retention.js';
 import { expireLeases } from '../server/quota/settle.js';
-import { readAiSwitch, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
+import { readAiSwitch, setAccountCheck, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
 import { formatPreflight, runAiPreflight } from './ai-preflight.js';
 import { diagnoseBrief, validDiagnoseArgs } from './brief-diagnose.js';
@@ -49,8 +50,9 @@ const USAGE = [
   '  worker index delete-unused --older-than <hours> [--alias <alias>] [--yes]',
   '  worker index cleanup-builds --older-than <hours>',
   '  worker publish --generation <id> --cases-index <name> [--passages-index <name>]',
-  '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]]',
+  '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]] [--account-check suspicious | always]',
   '  worker migrate',
+  '  worker restore-check [--empty]',
   '  worker ai-preflight',
   '  worker brief-diagnose <brief-id> [--step <n>] [--include-expired]',
 ].join('\n');
@@ -566,14 +568,18 @@ async function main(argv: string[]): Promise<number> {
         note: { type: 'string' },
         // The login-required emergency mode: `--anonymous off` refuses anonymous trials.
         anonymous: { type: 'string' },
+        // When signed-in AI requests take a Turnstile check: `always` checks every one.
+        'account-check': { type: 'string' },
       },
       strict: true,
     });
     const anonymous = values.anonymous;
+    const accountCheck = values['account-check'];
     const noteAllowed = values.off === true || anonymous === 'off';
     if (
       (values.on && values.off) ||
       (anonymous !== undefined && anonymous !== 'on' && anonymous !== 'off') ||
+      (accountCheck !== undefined && accountCheck !== 'suspicious' && accountCheck !== 'always') ||
       (values.note !== undefined && !noteAllowed)
     ) {
       console.error(USAGE);
@@ -588,12 +594,14 @@ async function main(argv: string[]): Promise<number> {
         const note = anonymous === 'off' ? (values.off ? undefined : values.note) : paused ? undefined : null;
         await setAnonymousAi(db, anonymous === 'on', note);
       }
+      if (accountCheck === 'suspicious' || accountCheck === 'always') await setAccountCheck(db, accountCheck);
       return readAiSwitch(db);
     });
     const note = state.note ? ` (${state.note})` : '';
     const free = state.anonymousEnabled ? 'anonymous trials allowed' : 'LOGIN REQUIRED (anonymous trials refused)';
+    const checked = state.accountCheck === 'always' ? 'EVERY signed-in request checked' : 'signed-in requests checked when suspicious';
     console.log(
-      `interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}; ${free}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`,
+      `interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}; ${free}; ${checked}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`,
     );
     return 0;
   }
@@ -700,6 +708,31 @@ async function main(argv: string[]): Promise<number> {
       await closeDb(db);
     }
     return 0;
+  }
+  if (command === 'restore-check') {
+    // After a restore, before the service opens (RUNBOOK, "Backups"): the tables a backup never
+    // holds must be empty. As aviation_migrator (DATABASE_MIGRATOR_URL), the only role that reads
+    // them all; `--empty` truncates them. The URL is never printed.
+    const { values } = parseArgs({ args: rest, options: { empty: { type: 'boolean' } }, strict: true });
+    const url = workerConfig().databaseMigratorUrl;
+    if (!url) {
+      console.error('DATABASE_MIGRATOR_URL is not set');
+      return 2;
+    }
+    const db = createDb(url, { max: 1, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
+    try {
+      if (values.empty) await emptyExcludedTables(db);
+      const found = await restoreCheck(db);
+      if (found.length === 0) {
+        console.log(`restore check passed: ${BACKUP_EXCLUDED_DATA.join(', ')} are empty`);
+        return 0;
+      }
+      for (const { table, rows } of found) console.error(`${table}: ${rows} rows (a backup must not hold them)`);
+      console.error('restore check FAILED: empty them with pnpm worker restore-check --empty before starting the app');
+      return 1;
+    } finally {
+      await closeDb(db);
+    }
   }
   if (command === 'migrate') {
     // Schema migrations as aviation_migrator (DATABASE_MIGRATOR_URL); the URL is never printed.

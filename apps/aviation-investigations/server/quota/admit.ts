@@ -1,6 +1,10 @@
 /**
  * Interactive admission (DESIGN §7–§8). One short transaction:
  *
+ * 0. The caller's precondition, if any, first (for a signed-in account: its lifecycle lock
+ *    and a check that its session still exists, server/auth/lifecycle.ts), before any lock
+ *    other accounts share: waiting for one account's lock never stalls another account's
+ *    admission. A failure rolls everything back (`signed_out`).
  * 1. Kill switch, and the login-required emergency mode for trial principals.
  * 2. Lock the principal, network and global buckets in key order.
  * 3. Idempotency, scoped to the principal: the same key and request hash replays the
@@ -15,6 +19,9 @@
  *    in-flight limits (two in total, one anonymous).
  * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
  *    (90 s) with a fencing token. Commit before any provider call.
+ *
+ * Lock order: the account's lock (step 0), the bucket rows in key order, the spend lock.
+ * Nothing takes buckets or the spend lock and then an account's lock.
  *
  * Lock waits are bounded (2 s); a timeout rolls back and returns `busy`.
  *
@@ -61,6 +68,8 @@ export type RejectionReason =
   | 'idempotency_conflict'
   /** The login-required emergency mode refuses trial principals (403); nothing is counted. */
   | 'login_required'
+  /** The caller's `precondition` failed (a signed-in account's session ended): nothing is kept (403). */
+  | 'signed_out'
   /** A lock wait timed out; nothing was admitted (fail closed, 503). */
   | 'busy';
 
@@ -81,6 +90,20 @@ export interface AdmissionInput {
   /** Content-free id copied to the ledger lines. */
   requestId?: string;
   now?: Date;
+  /**
+   * Checked first in the admission's transaction, before any lock that other accounts
+   * share (bucket rows, the spend lock). False refuses the request (`signed_out`) and
+   * rolls the transaction back. For an account, the route passes its lifecycle lock and
+   * session check (server/auth/lifecycle.ts): the lock is held to the commit, so a
+   * request whose account was deleted before reserves nothing, and a deletion waits for an
+   * admission under way (bounded by its lock wait).
+   */
+  precondition?: (tx: DbOrTx) => Promise<boolean>;
+}
+
+/** Thrown inside the admission's transaction when its precondition fails: rolls everything back. */
+class PreconditionFailed extends Error {
+  override readonly name = 'PreconditionFailed';
 }
 
 /** A fresh admission. Keep the fencing token server-side; it settles or releases the request. */
@@ -123,7 +146,7 @@ export type AdmissionResult = Admission | ReplayedAdmission | Rejection;
  */
 export function rejectionStatus(r: Rejection): 403 | 409 | 429 | 503 {
   if (r.reason === 'idempotency_conflict') return 409;
-  if (r.reason === 'login_required') return 403;
+  if (r.reason === 'login_required' || r.reason === 'signed_out') return 403;
   if (r.reason === 'global_paused' || r.reason === 'busy') return 503;
   return 429;
 }
@@ -295,6 +318,8 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
   try {
     return await db.transaction(async (tx): Promise<AdmissionResult> => {
       await setLockTimeout(tx);
+      // The account's own lock before anything shared (see the module comment).
+      if (a.precondition && !(await a.precondition(tx))) throw new PreconditionFailed('admission precondition failed');
       const aiSwitch = await readAiSwitch(tx);
       if (!aiSwitch.enabled) return { ok: false, reason: 'global_paused', pause: 'maintenance' };
       if (principal.kind === 'trial' && !aiSwitch.anonymousEnabled) return { ok: false, reason: 'login_required' };
@@ -398,6 +423,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
       };
     });
   } catch (err) {
+    if (err instanceof PreconditionFailed) return { ok: false, reason: 'signed_out' };
     if (isLockTimeout(err)) return { ok: false, reason: 'busy' };
     throw err;
   }

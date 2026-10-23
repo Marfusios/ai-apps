@@ -3,6 +3,7 @@ import type { Client } from '@elastic/elasticsearch';
 import type { FastifyBaseLogger } from 'fastify';
 import type { FacetKey } from '../../shared/contracts/search.js';
 import type { AiRuntime } from '../ai/runtime.js';
+import type { AuthService } from '../auth/better-auth.js';
 import type { BriefServices } from '../briefs/services.js';
 import type { EvidenceDataset } from '../briefs/evidence.js';
 import type { DatasetResolver } from '../dataset.js';
@@ -15,6 +16,8 @@ export interface ApiContext {
   log: FastifyBaseLogger;
   /** AI startup check, quota policy, trial identities, the anonymous gate and the provider; null: AI is off. */
   ai: AiRuntime | null;
+  /** Google sign-in (server/auth/better-auth.ts); null: sign-in is off (`googleEnabled: false`). */
+  auth: AuthService | null;
   /** Evidence retrieval and the brief runs; null without a query embedder: AI briefs are off. */
   briefs: BriefServices | null;
   /**

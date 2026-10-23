@@ -237,7 +237,7 @@ test('trial used up: the button and counter change, and a click explains', async
     await page.getByRole('link', { name: 'Aviation Casebook' }).click();
     await expect(page).toHaveURL(/\/$/);
   }
-  await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in to keep asking' })).toBeVisible();
+  await expect(page.getByRole('banner').getByRole('button', { name: 'Sign in to keep asking' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
   await page.getByRole('button', { name: 'Ask AI · sign in' }).click();
   await expect(page.getByText('That was your third free AI search.')).toBeVisible();

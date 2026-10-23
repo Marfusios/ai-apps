@@ -1118,9 +1118,10 @@ describe('admission order', () => {
     const h = harness(answering());
     const first = await askAndWait(h);
     const expires = (await rows<{ ms: string }>(sql`SELECT (extract(epoch FROM expires_at) * 1000)::bigint AS ms FROM trial_identities`))[0]!;
-    // Every clock read moves 1 ms: the token is issued at expiry − 2 ms, the gate finds the
-    // trial live at expiry − 1 ms, and admission reads the clock at expiry or later.
-    clock = new Date(Number(expires.ms) - 2);
+    // Every clock read moves 1 ms: the token is issued at expiry − 3 ms, the retry check
+    // reads the trial at expiry − 2 ms, the gate finds it live at expiry − 1 ms, and
+    // admission reads the clock at expiry or later.
+    clock = new Date(Number(expires.ms) - 3);
     tick = 1;
     const r = await ask(h, 'Engine power loss shortly after maintenance', { cookie: first.cookie });
     tick = 0;

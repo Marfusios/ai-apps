@@ -182,6 +182,78 @@ end" and "ordinal-evidence-v2 end to end"), and the step keeps only its key, rul
 content-free problem codes (`meta.staticRules`). The new page and drawer copy for removals
 (UI_DESIGN §4.3) is fixed templates and counts, never model text.
 
+**Google sign-in, accounts and the brief handover** (Task 20). Better Auth 1.7.7 behind
+an allowlisted `/api/auth` route (README, "Google sign-in and accounts"). A Claude
+security review and the gate review of the first implementation found handover and
+deletion races, private context left in the page's cache after sign-out, restores that
+would bring deleted accounts back, deletion with any session, no check of suspicious
+signed-in activity, and loose ID-token claim checks; the fixes below are not yet
+re-reviewed. The implementation review must cover in particular:
+
+- the OAuth flow: the state (encrypted and authenticated in this browser's HttpOnly cookie,
+  so starting a sign-in writes nothing to the database, and claimed once, atomically, by
+  the first callback that gets through Google's code exchange and the ID-token checks,
+  before any user, session or handover), PKCE, the nonce this app adds through Better
+  Auth hooks (its Google provider sends none in the redirect flow), and the ID-token
+  checks: an RS256 header with a
+  signature part, this client as the only audience, `azp`, finite `exp` and `iat`, the
+  issuer, `sub`, a verified email and the nonce. The signature itself is not verified,
+  which OIDC Core 3.1.3.7 step 6 allows only because the token comes straight from
+  Google's token endpoint over TLS in exchange for the flow's code, verifier and client
+  secret: ID-token sign-in is off and no other route takes a token. That precondition is
+  configuration (`disableIdTokenSignIn`, the endpoint allowlist); a change that routed
+  another token source to `getUserInfo` must add JWKS verification;
+- that only sign-in, Google's callback and sign-out are reachable, the request the route
+  rebuilds for Better Auth (the `APP_URL` origin, the header allowlist, the network
+  identity for its rate limiter), return paths without dot segments or encoded
+  separators (visible ASCII without `"`, `#` or a backslash, at most 384 bytes, so the
+  state cookie stays under 4 KB whatever a client sends), and that a deletion's
+  re-authentication, its start and Google's callback to the signed-in browser, is counted
+  per account (5 an hour each) and exempt from the per-network limit, so no flood of
+  other sign-ins can hold it up;
+- the handover's compare-and-set at the callback and at signed-in refinements and
+  retries (the latter beyond UI_DESIGN §5's wording, pending the owner's sign-off), the
+  403 `moved` answer to the old trial, that billing principals and charges never move,
+  that reads check the owner in the statement that reads the content, and that a
+  refinement or a cancel locks the brief (`lock_brief()`) and checks its owner first;
+- the account lifecycle lock (`server/auth/lifecycle.ts`): deletion, an account's
+  admission (where it is taken first, before anything accounts share), its step
+  transactions, takeovers and the callback's handover serialize on it and recheck the
+  session, so nothing is created or moved for a deleted account and an admission is given
+  back without a model call; and the lock order after it (brief, steps, idempotency,
+  anti-abuse record, then sessions before their deletion confirmations and the user),
+  which the maintenance pass follows too (migration 0019 for retention; its orphaned-step
+  update skips locked rows), as does issuing a confirmation;
+- account deletion: a recent Google sign-in first (5 minutes; otherwise Google again for
+  the same account, which confirms that session once for 5 minutes and ends the old
+  session; Google offers no `max_age` or `prompt=login`, so a person signed in to Google
+  passes its account chooser without a password, and a session cookie stolen within 5
+  minutes of its sign-in can still delete), what one transaction removes (content through
+  `delete_account_content()`, which locks the briefs first and returns running steps),
+  the end of every session, and the anti-abuse record kept through the quota window plus
+  7 days;
+- signed-in AI checks (`server/identity/step-up.ts`): the signals and thresholds, the
+  operator's `always` mode, that ordinary use takes no check, and that the anonymous
+  retry check spends nothing;
+- the page forgetting the previous visitor on sign-out and deletion, in every open tab
+  (a `BroadcastChannel` and a random marker in local storage, also checked when a tab
+  starts listening and when a page returns from the back/forward cache, which forgets
+  anyway when it cannot read local storage; every private
+  query, late answers dropped, the questions and retry keys; an AI request
+  under way is discarded, its open Turnstile check cancelled, and it never restores a
+  question, a retry key or a navigation);
+- storage and backups: no provider tokens, scopes, picture, IP address or user agent
+  (database hooks clear them, CHECK constraints refuse them), the app role's grants on
+  the auth tables (no UPDATE; no DELETE of an account link on its own), backups without
+  the sign-in, brief and idempotency rows, and the restore check before a restored
+  service opens.
+
+Accepted for the beta (owner to confirm): the session cookie lifetime of 7 days without a
+device binding; the HMAC of the Google identity under IDENTITY_HMAC_SECRET (shared with
+trials, separated by prefix) and its rotation still detaching usage (DESIGN §7, deferred
+from Task 15); Better Auth's per-instance rate-limit store; and that a restore makes
+everyone sign in again, with re-created accounts on the new-account allowance.
+
 ## Required implementation review before launch
 
 Review a fixed code commit and deployment configuration with Claude Fable or Opus,

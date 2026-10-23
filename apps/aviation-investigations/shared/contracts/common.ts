@@ -81,6 +81,15 @@ export type Dataset = z.infer<typeof DatasetSchema>;
  * - `in_flight` (429): this visitor already has an AI request running.
  * - `conflict` (409): the idempotency key was used with another request.
  * - `refinement_limit` (409): the brief has used its three refinements.
+ *
+ * Accounts (shared/contracts/account.ts) add, all 403:
+ * - `moved`: a retry, from the anonymous trial that asked, of a request whose brief has
+ *   since moved to the account that signed in from it (UI_DESIGN §5, "Signing in
+ *   mid-brief"): sign in to view it. Nothing is replayed and nothing runs.
+ * - `signed_out`: a signed-in AI request whose session ended (signed out, or the account
+ *   deleted) before it could start. Nothing was kept or spent.
+ * - `reauth_required`: deleting the account needs a recent Google sign-in first
+ *   (`POST /api/account/delete/start`).
  */
 export const ErrorResponseSchema = z.strictObject({
   error: z.enum([
@@ -100,6 +109,9 @@ export const ErrorResponseSchema = z.strictObject({
     'in_flight',
     'conflict',
     'refinement_limit',
+    'moved',
+    'signed_out',
+    'reauth_required',
   ]),
   message: z.string().max(500),
   /** For `bad_request`: which parameters failed. */

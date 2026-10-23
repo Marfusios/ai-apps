@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiStatusResponse } from '../../../../shared/contracts/ai';
 import { ApiError, aiStatusQuery } from '../../api';
+import { VisitorChangedError, forgetVisitor, visitorGeneration } from '../auth/visitor';
 import { askAvailability } from './status';
 import { AiCheckError, useAiCheck, type AiCheckFailure } from './TurnstileGate';
 
@@ -17,6 +18,8 @@ export type AiNotice =
   | { kind: 'paused'; status: Extract<AiStatusResponse, { state: 'paused' }> | null }
   | { kind: 'trial_used' }
   | { kind: 'free_paused'; loginRequired: boolean }
+  /** The request's brief moved to the account that signed in from it: sign in to view it. */
+  | { kind: 'moved' }
   | { kind: 'rate'; seconds: number }
   | { kind: 'failure'; spent: SpentKnowledge }
   /** `unknownBefore`: an earlier send of this request has an unknown outcome (it may have counted). */
@@ -26,8 +29,12 @@ export type AiNotice =
 
 export type AiPhase = 'idle' | 'checking' | 'sending';
 
-/** The outcome of one `run`: the response, or nothing with whether the server may have acted. */
-export type RunResult<T> = { ok: true; value: T } | { ok: false; outcomeUnknown: boolean; busy?: true };
+/**
+ * The outcome of one `run`: the response, or nothing with whether the server may have
+ * acted. `discarded`: the visitor changed (signed out, the account deleted, here or in
+ * another tab) while it ran, so nothing of it may be kept or shown.
+ */
+export type RunResult<T> = { ok: true; value: T } | { ok: false; outcomeUnknown: boolean; busy?: true; discarded?: true };
 
 export interface RunOptions {
   /**
@@ -41,6 +48,11 @@ export interface RunOptions {
    * key first, which settles the old one.
    */
   onConflict?: () => void;
+  /**
+   * The visitor generation (web/src/features/auth/visitor.ts) the user's action started
+   * under, read before any of its asynchronous work; default: when `run` is called.
+   */
+  visitor?: number;
 }
 
 /** A fresh idempotency key for one logical AI request (kept across its retries). */
@@ -72,6 +84,10 @@ export function noticeFor(err: unknown): AiNotice {
       return { kind: 'free_paused', loginRequired: false };
     case 'sign_in_required':
       return { kind: 'free_paused', loginRequired: true };
+    case 'moved':
+      return { kind: 'moved' };
+    case 'signed_out':
+      return { kind: 'message', text: err.body?.message ?? '' };
     case 'rate_limited':
       return { kind: 'rate', seconds: err.retryAfter ?? 30 };
     case 'challenge_required':
@@ -89,11 +105,18 @@ export function noticeFor(err: unknown): AiNotice {
 
 /**
  * Runs one paid AI request (Ask AI, Refine, a reading, Re-run): checks the AI status,
- * gets a fresh Turnstile token for anonymous visitors (the first-check panel once per
- * trial identity, otherwise invisibly with "Checking…"; a second control waits its turn),
- * sends, and on a refused token takes one more, visible check. Each request releases its
- * check session at the end, refusals included, and the AI status is re-read so the
- * counters stay true.
+ * gets a fresh Turnstile token for anonymous visitors, and for a signed-in visitor the
+ * server asks to check (the first-check panel once per trial identity, otherwise
+ * invisibly with "Checking…"; a second control waits its turn), sends, and on a refused or
+ * missing token takes one more, visible check ("Quick check before this AI search"). Each
+ * request releases its check session at the end, refusals included, and the AI status is
+ * re-read so the counters stay true. A request refused because the session ended
+ * (`signed_out`) forgets the previous visitor's data, as signing out does. A request whose
+ * visitor changed while it ran (signed out or deleted, here or in another tab) sends
+ * nothing more and is discarded: its answer, success or failure, is neither applied nor
+ * shown (`discarded`). `send` may wait before it sends (the brief client loads with the
+ * first request): its POST carries the visitor generation and is refused right before the
+ * network call when that visitor is gone (`VisitorChangedError`, web/src/api.ts `postJson`).
  */
 export function useAiRequest() {
   const check = useAiCheck();
@@ -126,7 +149,13 @@ export function useAiRequest() {
         }
         return value;
       };
+      // The visitor this request is for: after a change it is the previous visitor's.
+      const at = options.visitor ?? visitorGeneration();
+      const changed = (): boolean => visitorGeneration() !== at;
+      const discarded = { ok: false, outcomeUnknown: false, discarded: true } as const;
+      if (changed()) return finish(discarded);
       const current = status.data ?? (await queryClient.fetchQuery(aiStatusQuery()).catch(() => undefined));
+      if (changed()) return finish(discarded);
       const availability = askAvailability(current, current === undefined);
       const refused = { ok: false, outcomeUnknown: false } as const;
       if (availability.kind === 'paused') return finish(refused, { kind: 'paused', status: availability.status });
@@ -136,7 +165,7 @@ export function useAiRequest() {
       if (availability.kind === 'loading') return finish(refused, { kind: 'paused', status: null });
 
       const session = check.session();
-      let needToken = availability.anonymous;
+      let needToken = availability.check;
       let visible = false;
       let challengeRetried = false;
       let conflictRetried = false;
@@ -157,16 +186,23 @@ export function useAiRequest() {
             try {
               token = await session.token({ first: availability.firstCheck && attempt === 0, visible });
             } catch (err) {
+              if (changed()) return finish(discarded);
               const reason = err instanceof AiCheckError ? err.reason : 'unavailable';
               // Cancelled: back to where the reader was (an unknown outcome stays said).
               if (reason === 'cancelled') return finish(refused, uncertainBefore ? { kind: 'failure', spent: 'unknown' } : null);
               return finish(refused, keepUnknown({ kind: 'check', reason }));
             }
           }
+          // Never send for a visitor who is gone.
+          if (changed()) return finish(discarded);
           setPhase('sending');
           try {
-            return finish({ ok: true, value: await send(token) });
+            const value = await send(token);
+            // An answer for the previous visitor: nothing of it is applied.
+            return finish(changed() ? discarded : { ok: true as const, value });
           } catch (err) {
+            // Gone meanwhile, or refused before sending because the visitor changed during a wait in `send`.
+            if (changed() || err instanceof VisitorChangedError) return finish(discarded);
             const code = err instanceof ApiError ? err.body?.error : undefined;
             if (!challengeRetried && code !== undefined && CHALLENGE.has(code)) {
               // A refused or missing token: one more check, shown in the panel.
@@ -184,6 +220,7 @@ export function useAiRequest() {
               visible = false;
               continue;
             }
+            if (code === 'signed_out') void forgetVisitor(queryClient);
             return finish({ ok: false, outcomeUnknown: outcomeUnknown(err) }, keepUnknown(noticeFor(err)));
           } finally {
             void queryClient.invalidateQueries({ queryKey: ['ai-status'] });

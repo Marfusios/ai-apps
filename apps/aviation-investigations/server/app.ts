@@ -5,6 +5,9 @@
  *   `/api/dashboard`, each pinned to the active dataset manifest (server/dataset.ts),
  *   and `GET /api/ai/status` (server/routes/ai-status.ts). AI routes get the anonymous
  *   gate (server/identity/gate.ts) from `ApiContext.ai`.
+ * - Google sign-in under `/api/auth` and the account under `/api/account`
+ *   (server/routes/account.ts) when `AppDeps.auth` is set (server/auth/better-auth.ts);
+ *   AI routes read the signed-in account from it too.
  * - AI briefs under `/api/briefs` (server/routes/briefs.ts) when `AppDeps.briefs` binds
  *   an evidence retriever and the dataset reports its passages index servable. Polling
  *   a brief (`GET /api/briefs/:id`, about once a second while a step runs) has its own
@@ -48,6 +51,7 @@ import Fastify, { LogController, type FastifyInstance, type FastifyReply, type F
 import type { AppConfig } from '../shared/config.js';
 import type { FacetKey } from '../shared/contracts/search.js';
 import type { AiRuntime } from './ai/runtime.js';
+import { AuthUnavailableError, type AuthService } from './auth/better-auth.js';
 import type { EvidenceDataset } from './briefs/evidence.js';
 import { servableEvidence, type BriefServices } from './briefs/services.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
@@ -59,6 +63,7 @@ import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
 import { contentSecurityPolicy, isHttpsUrl, securityHeaders } from './http/security-headers.js';
 import { SearchTimedOutError } from './search/timeout.js';
+import { accountRoutes } from './routes/account.js';
 import { aiStatusRoutes } from './routes/ai-status.js';
 import { briefRoutes } from './routes/briefs.js';
 import { caseRoutes } from './routes/cases.js';
@@ -85,6 +90,8 @@ export interface AppDeps {
   es: Client;
   /** AI runtime (server/ai/runtime.ts); absent: AI is reported unavailable. */
   ai?: AiRuntime | null;
+  /** Google sign-in (`createAuthService`, server/auth/better-auth.ts); absent: sign-in is off. */
+  auth?: AuthService | null;
   /** Evidence retrieval for AI briefs (`createBriefServices`, server/briefs/services.ts); absent: AI briefs are unavailable. */
   briefs?: BriefServices | null;
   /**
@@ -161,15 +168,16 @@ const isApiPath = (path: string): boolean => path === '/api' || path.startsWith(
 /**
  * The service, not the request, is at fault: Elasticsearch transport failures, an
  * index that is missing or overloaded, a search that timed out, PostgreSQL connection
- * failures, or no servable dataset.
+ * failures, a bounded lock wait that timed out or a deadlock (fail closed), or no
+ * servable dataset.
  */
 function isUnavailable(err: unknown): boolean {
-  if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError) return true;
+  if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError || err instanceof AuthUnavailableError) return true;
   const e = err as { name?: string; code?: string; meta?: { statusCode?: number } };
   if (['ConnectionError', 'TimeoutError', 'NoLivingConnectionsError'].includes(e.name ?? '')) return true;
   if (e.name === 'ResponseError' && [404, 429, 502, 503, 504].includes(e.meta?.statusCode ?? 0)) return true;
   const code = e.code ?? (err as { cause?: { code?: string } }).cause?.code ?? '';
-  return ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03', '53300'].includes(code) || code.startsWith('08');
+  return ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03', '53300', '55P03', '40P01'].includes(code) || code.startsWith('08');
 }
 
 /** Fastify's own request errors (body too large, unsupported media type, ...). */
@@ -246,6 +254,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     datasets,
     log: app.log,
     ai: deps.ai ?? null,
+    auth: deps.auth ?? null,
     briefs,
     aiEvidence: deps.aiEvidence ?? (() => servableEvidence(briefs, () => datasets.current())),
     onUnknownFacetValue: (facet: FacetKey, value: string) =>
@@ -366,6 +375,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   dashboardRoutes(app, ctx);
   aiStatusRoutes(app, ctx);
   briefRoutes(app, ctx, { appUrl: deps.config.appUrl });
+  accountRoutes(app, ctx, { appUrl: deps.config.appUrl });
   for (const problem of deps.ai?.problems ?? ['AI is not configured']) app.log.warn({ problem }, 'AI feature off');
   if (deps.ai?.gate?.testKeys) app.log.warn('Turnstile test keys in use: every challenge passes (development only)');
 

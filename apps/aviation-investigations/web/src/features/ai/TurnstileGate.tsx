@@ -2,14 +2,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { TURNSTILE_ACTION } from '../../../../shared/contracts/ai';
 import { configQuery } from '../../api';
+import { onVisitorChange } from '../auth/visitor';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
 import { useTheme } from '../../theme';
 
 /**
- * Cloudflare Turnstile for anonymous AI requests (UI_DESIGN §5, DESIGN §8). Every
- * anonymous AI request, refinements and retries included, needs a fresh single-use
- * token, so each check renders a new widget and removes it as soon as its token is taken:
+ * Cloudflare Turnstile for AI requests (UI_DESIGN §5, DESIGN §8). Every anonymous AI
+ * request, refinements and retries included, needs a fresh single-use token, and so does a
+ * signed-in one the server asks to check (its AI status says `check: true`, or it refuses
+ * with `challenge_required`: "Extra check, signed in"). Each check renders a new widget and
+ * removes it as soon as its token is taken:
  *
  * - The first request of a trial identity (AI status `started: false`) opens the panel
  *   "Quick check before your first AI search" with the explanation and a visible widget.
@@ -293,6 +296,10 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
   }, [mode]);
 
   useEffect(() => () => removeWidget(null), [removeWidget]);
+
+  // A check still open when the visitor changes (signed out or deleted, here or in another
+  // tab) was for the previous visitor: it is cancelled, and its request sends nothing.
+  useEffect(() => onVisitorChange(cancelCurrent), [cancelCurrent]);
 
   const value = useMemo<AiCheck>(() => ({ session }), [session]);
   const open = mode !== null;
