@@ -1,0 +1,47 @@
+{
+  "protocol": "checker-cal-protocol-v3.1",
+  "candidate": "haiku-think-v9-medium",
+  "model": "claude-haiku-5-5",
+  "thinking": "adaptive",
+  "effort": "medium",
+  "prompt": {
+    "version": "check.v9",
+    "systemSha256": "4ad9e6509962e8109a196a73378a9958649ab41f0818b8d31197025935c5b956"
+  },
+  "outputSchema": {
+    "version": "check-output-v2",
+    "sha256": "390156050c874dd4b41951e426b3459fe7304f161495355f43591b48ff574fe4"
+  },
+  "caps": {
+    "input": 40000,
+    "output": 24500
+  },
+  "timeoutMs": 45000,
+  "maxClaims": 60,
+  "rules": {
+    "quoteMatch": "quote-ws-v2",
+    "excerptContext": "excerpt-context-v1",
+    "ordinalEvidence": "ordinal-evidence-v2",
+    "chronology": "chronology-rules-v3",
+    "display": "display-deps-v2",
+    "judgement": "check-judgement-v2",
+    "metrics": "checker-metrics-v3",
+    "labels": "checker-labels-v3",
+    "errata": "checker-errata-v1",
+    "dataset": "checker-cal-v3"
+  },
+  "dataset": {
+    "fileSha256": "15ef1c1d256145d611a5b9f2dcf3934119544d67ecb4570cc89de2489101d353",
+    "devLabelsSha256": "3a3b6767b5d7198ef0ab63a545487f0a56f1d67c9840f7e285ea7f341892f98f",
+    "holdoutLabelsSha256": "c079a152016238854797d78105644d69f81d935253bab4533fe2341ce45978c6"
+  },
+  "devManifest": "73a13914bb994e5c15c96ecccfa8d09723af11b48cb5b6179db4ea644a9f3a75",
+  "latency": {
+    "calls": 179,
+    "p50": 19917,
+    "p95": 38153,
+    "max": 51030
+  },
+  "frozenAt": "2026-10-23T09:40:44.769Z",
+  "reason": "no candidate eligible (2 development runs); by the fallback order: haiku-think-v9-medium, critical 69/69, M4 0.0%, highest-family M3 1.3%, M2 88.9%, M1 84.9%; missing M1 ≥ 90%, M2 ≥ 90%"
+}

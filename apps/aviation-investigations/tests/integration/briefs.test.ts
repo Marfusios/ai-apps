@@ -46,6 +46,8 @@ import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, ty
 import { CACHED_PREFIX_MAX, RESERVATIONS, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { createCaseCatalog } from '../../server/briefs/catalog.js';
+import { READING_NOT_SHOWN_LINE } from '../../server/briefs/context.js';
+import { excerptProblems, passageSentences } from '../../server/briefs/excerpts.js';
 import {
   RetrievalFailure,
   type CaseCatalog,
@@ -634,13 +636,14 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(started.status).toBe(202);
     expect(started.json).toEqual({ kind: 'started', briefId, step: 1, stage: 'retrieve' });
     expect(step).toMatchObject({ step: 1, steps: 1, refinementsLeft: 3, stage: 'done', origin: { kind: 'question' } });
-    // No blanket "passed" (Task 16d): each statement shown was checked, and the result says what was removed.
+    // No blanket "passed" (Task 16d): each statement shown was checked, and the result says how many were removed (Task 16e).
     expect(step.checklist).toEqual({
       question: 'in_scope',
       interpretation: DEFAULT_INTERPRETATION,
       searched: { cases: 4, passages: 8 },
       written: true,
       verified: 'partially_checked',
+      removedStatements: 0,
     });
     const result = step.result!;
     if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
@@ -697,14 +700,14 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v7', check: PRODUCTION_CHECK_PROMPT.version },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v8', check: PRODUCTION_CHECK_PROMPT.version },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
-      criteriaRules: 'chronology-rules-v2',
+      criteriaRules: 'chronology-rules-v3',
       check: { supported: true, claims: check.claims.length, counts: { supported: check.claims.length, contradicted: 0, not_established: 0 }, codes: [], problems: [], chronologyMissed: [] },
-      display: { rules: 'display-deps-v1', mode: 'whole', shown: true, withheld: [], claimsShown: check.claims.length, removed: {}, removedKeys: [], suppressed: [] },
+      display: { rules: 'display-deps-v2', mode: 'whole', shown: true, withheld: [], claimsShown: check.claims.length, removed: {}, removedKeys: [], suppressed: [] },
     });
     expect(result.check).toEqual({
-      rules: 'display-deps-v1',
+      rules: 'display-deps-v2',
       status: 'partially_checked',
       shown: check.claims.length,
       removed: { summary: 0, why: 0, classification: 0, maintenance: 0, symptom: 0, timing: 0, attribution: 0, criterion: 0, gap: 0 },
@@ -1944,7 +1947,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(await reportOf(briefId)).toContain('chronology_missed: DFW08TA066 timing_window');
   });
 
-  it('G6 regression (b): a stated later flight fails first-flight-only; left out, the unknown decision fails the check', async () => {
+  it('G6 regression (b), under ordinal-evidence-v2: a flight ordinal the passages do not state decides nothing; the unknown decision fails the check, stated or left out', async () => {
     const checks: CheckInput[] = [];
     /** NYC08LA106 after its fuel pump: 12 hours since installation, and it departed again. */
     const nycLater = (c: ComposeOutput, input: ComposeInput, withFlight: boolean) => {
@@ -1968,20 +1971,26 @@ describe('gate G6: evidence semantics through the routes', () => {
         },
       }),
     );
+    // "He … decided to depart again" says a flight came before, not that the accident flight was the second: the
+    // stated ordinal has no explicit evidence (16d verdict, finding 2), so it decides nothing and is never shown.
     const first = await askAndWait(h);
-    expect(first.step.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
+    expect(first.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
     expect((await stepRow(first.briefId)).meta).toMatchObject({
-      criteria: expect.arrayContaining([{ ntsbNo: 'NYC08LA106', criterion: 'first_flight_only', decision: 'does_not_match', rules: ['FF-O'] }]),
+      criteria: expect.arrayContaining([{ ntsbNo: 'NYC08LA106', criterion: 'first_flight_only', decision: 'unknown', rules: [], reason: 'ordinal_unverified' }]),
+      staticRules: { abstained: expect.arrayContaining([{ key: 'case.NYC08LA106.timing.1', rule: 'ordinal_evidence' }]) },
     });
-    expect(checks).toHaveLength(0);
+    expect(checks).toHaveLength(1);
     advance(MIN);
     const second = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
     expect(second.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
-    const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'NYC08LA106')!;
-    expect(claim.text).toBe(
-      'Under the timing rules, the supplied passages of this case do not settle whether the event happened on the first flight after the relevant maintenance (the fuel pump installation).',
-    );
-    expect(claim.passageIds).toEqual(checks[0]!.passages.filter((p) => p.ntsbNo === 'NYC08LA106').map((p) => p.passageId));
+    for (const input of checks) {
+      const claim = input.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'NYC08LA106')!;
+      expect(claim.text).toBe(
+        'Under the timing rules, the supplied passages of this case do not settle whether the event happened on the first flight after the relevant maintenance (the fuel pump installation).',
+      );
+      expect(claim.passageIds).toEqual(input.passages.filter((p) => p.ntsbNo === 'NYC08LA106').map((p) => p.passageId));
+    }
+    const claim = checks[1]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'NYC08LA106')!;
     expect((await stepRow(second.briefId)).meta).toMatchObject({
       check: { problems: expect.arrayContaining([{ claim: claim.id, claimIndex: expect.any(Number), kind: 'criterion', code: 'contradicted' }]) },
     });
@@ -2088,7 +2097,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(reading('NYC08LA106').timing).toEqual([]);
     expect(reading('NYC08LA106').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
     expect((await stepRow(briefId)).meta).toMatchObject({
-      criteriaRules: 'chronology-rules-v2',
+      criteriaRules: 'chronology-rules-v3',
       criteria: expect.arrayContaining([
         { ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'matches', rules: ['TW-I'] },
         { ntsbNo: 'NYC08LA106', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'other_anchor' },
@@ -2537,7 +2546,7 @@ describe('diagnosable withholding and model-call telemetry', () => {
     expect(report).toContain(`: ${JSON.stringify(quoted)}`);
   });
 
-  it('deterministic completeness: a missing, repeated or unknown verdict, or support from an uncited passage, withholds', async () => {
+  it('deterministic completeness: a missing, repeated or unknown verdict, or a supported verdict without passages, withholds; support from an uncited passage rejects that claim (check-judgement-v2)', async () => {
     const outcomes: [string, (input: CheckInput) => FakeResult<CheckOutput>][] = [
       ['check_missing_verdict', (input) => {
         const r = verdicts(input) as { output: CheckOutput };
@@ -2554,8 +2563,11 @@ describe('diagnosable withholding and model-call telemetry', () => {
         r.output.verdicts.push({ claim: `C${input.claims.length + 1}`, verdict: 'supported', passages: [] });
         return r;
       }],
-      // A correct statement whose citation does not establish it: support from another passage is not support.
-      ['check_invalid_evidence', (input) =>
+      // A supported verdict that names no passage for a claim that is not an absence: structurally unusable.
+      ['check_invalid_evidence', (input) => verdicts(input, (claim) => (claim.kind === 'why' ? { verdict: 'supported', passages: [] } : 'supported'))],
+      // A correct statement whose citation does not establish it: support from another passage is not support. Since
+      // check-judgement-v2 (Task 16e) only that claim is rejected (as not established), not the whole output.
+      ['supported_outside_citations', (input) =>
         verdicts(input, (claim) => {
           const uncited = input.passages.find((p) => p.ntsbNo === claim.ntsbNo && !claim.passageIds.includes(p.passageId));
           return claim.kind === 'why' && uncited ? { verdict: 'supported', passages: [uncited.passageId] } : 'supported';
@@ -2570,7 +2582,8 @@ describe('diagnosable withholding and model-call telemetry', () => {
       expect((await stepRow(briefId)).meta.check, code).toMatchObject({ supported: false, codes: [code] });
       // A structurally unusable output withholds everything (`check_structural`); a rejected claim, in whole mode, the summary.
       expect(finishedLine(h), code).toMatchObject({ withheld: { reason: 'evidence_check', codes: expect.arrayContaining([code, code.startsWith('check_') ? 'check_structural' : 'display_whole_brief']) } });
-      advance(MIN);
+      // Six asks from one network: spread them over the hourly attempt window.
+      advance(15 * MIN);
     }
     // Each was one check call; nothing was retried or repaired.
     expect(h.llm.calls.filter((c) => c.stage === 'check')).toHaveLength(outcomes.length);
@@ -2962,7 +2975,7 @@ describe('admission: the paced daily budget and other checks before spend', () =
   });
 });
 
-describe('claim-level display (Task 16d, display-deps-v1): one projection for every surface', () => {
+describe('claim-level display (Tasks 16d, 16e; display-deps-v2): one projection for every surface', () => {
   /** Distinctive texts the checker will reject, so their absence can be searched for. */
   const REJECTED = {
     sentence: 'Rejected sentence about the defect case',
@@ -3010,7 +3023,8 @@ describe('claim-level display (Task 16d, display-deps-v1): one projection for ev
       expect(ctx.status, n).toBe(200);
       absent(ctx.json);
       const parsed = CaseContextResponseSchema.parse(ctx.json);
-      if (n === 'MIA08LA156') expect(parsed).toMatchObject({ reading: null, lines: [] });
+      // The drawer says the reading was not shown (Task 16e), and holds no line of it.
+      if (n === 'MIA08LA156') expect(parsed).toMatchObject({ reading: null, lines: [{ label: 'READING', text: READING_NOT_SHOWN_LINE, passageIds: [] }] });
     }
     // The stored step (result, evidence, meta) holds none of it; the diagnostics column keeps the raw for developers.
     const row = await rows<{ result: unknown; evidence: unknown; meta: Record<string, unknown>; diagnostics: StepDiagnostics | null }>(
@@ -3018,7 +3032,7 @@ describe('claim-level display (Task 16d, display-deps-v1): one projection for ev
     );
     absent({ result: row[0]!.result, evidence: row[0]!.evidence, meta: row[0]!.meta });
     expect(row[0]!.meta).toMatchObject({
-      display: { rules: 'display-deps-v1', mode: 'claims', shown: true, removedKeys: expect.arrayContaining([{ key: 'summary.2', cause: 'not_established' }, { key: 'case.MIA08LA156.why', cause: 'not_established' }]) },
+      display: { rules: 'display-deps-v2', mode: 'claims', shown: true, removedKeys: expect.arrayContaining([{ key: 'summary.2', cause: 'not_established' }, { key: 'case.MIA08LA156.why', cause: 'not_established' }]) },
     });
     expect(row[0]!.diagnostics).toMatchObject({ reason: 'partial_display' });
     expect(JSON.stringify(row[0]!.diagnostics)).toContain(REJECTED.why);
@@ -3034,7 +3048,7 @@ describe('claim-level display (Task 16d, display-deps-v1): one projection for ev
     for (const call of later) absent(call.input);
   });
 
-  it('decisions never promote: 2 days and 40 days against 30 days stays unconfirmed when the 40-day fact is removed; a removed fact downgrades a match', async () => {
+  it('decisions never promote: 2 days and 40 days against 30 days stays unconfirmed when the 40-day fact is removed, and the 2 days go with it; a removed fact downgrades a match', async () => {
     const probe = (input: ComposeInput) =>
       composition(input, (c) => {
         const dfw = input.cases.find((k) => k.ntsbNo === 'DFW08TA066')!;
@@ -3065,7 +3079,8 @@ describe('claim-level display (Task 16d, display-deps-v1): one projection for ev
     // Neither becomes a match once its fact is gone: both are shown unconfirmed and not verified.
     expect(reading('DFW08TA066').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed', notVerified: true }]);
     expect(reading('NYC08LA106').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed', notVerified: true }]);
-    expect(reading('DFW08TA066').timing.map((t) => t.label)).toEqual(['2 DAYS']);
+    // Conflicting facts are shown together or not at all (display-deps-v2): the 2 days are not shown without the 40.
+    expect(reading('DFW08TA066').timing.map((t) => t.label)).toEqual([]);
     // The summary flags them UNCONFIRMED from the projection.
     for (const s of result.summary) if (s.kind === 'case' && (s.ntsbNo === 'DFW08TA066' || s.ntsbNo === 'NYC08LA106')) expect(s.unconfirmed).toBe(true);
     const ctx = CaseContextResponseSchema.parse((await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/NYC08LA106`, { cookie })).json);
@@ -3074,12 +3089,117 @@ describe('claim-level display (Task 16d, display-deps-v1): one projection for ev
     expect(JSON.stringify(step)).not.toContain('PREVIOUS DAY');
   });
 
+  it('excerpt-context-v1 end to end: an excerpt that points outside itself is checked but never shown; the card and the drawer say a quote was left out, and whole mode withholds', async () => {
+    let picked: { ntsbNo: string; passageId: string; quote: string } | null = null;
+    // A seed sentence the policy omits, added as a case's second quote.
+    const compose = (input: ComposeInput) =>
+      composition(input, (c) => {
+        for (const k of input.cases) {
+          for (const p of k.passages) {
+            for (const span of passageSentences(p.text)) {
+              const quote = p.text.slice(span.start, span.end).trim();
+              if (picked || quote.length > 400 || quote.split(' ').length < 5) continue;
+              if (excerptProblems({ passage: p.text, span: { start: p.text.indexOf(quote), end: p.text.indexOf(quote) + quote.length }, speaker: 'investigators', multiAircraft: false }).length > 0) {
+                picked = { ntsbNo: k.ntsbNo, passageId: p.passageId, quote };
+              }
+            }
+          }
+        }
+        if (!picked) throw new Error('no seed sentence the excerpt policy omits');
+        const target = picked;
+        c.cases.find((x) => x.ntsbNo === target.ntsbNo)!.quotes.push({ passageId: target.passageId, quote: target.quote, speaker: 'investigators' });
+      });
+    const checks: CheckInput[] = [];
+    const h = harness(answering({ compose, check: (input) => (checks.push(input), SUPPORTED(input)) }), { displayMode: 'claims' });
+    const { briefId, cookie, step } = await askAndWait(h);
+    const target = picked!;
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    // Checked like every claim, never shown.
+    expect(checks[0]!.claims.some((c) => c.kind === 'attribution' && c.text.includes(target.quote))).toBe(true);
+    const card = result.cases.find((c) => c.case.ntsbNo === target.ntsbNo)!;
+    expect(card.quotesOmitted).toBe(1);
+    expect(card.reading!.quotes.map((q) => q.text)).not.toContain(target.quote);
+    expect(result.check).toMatchObject({ omitted: { excerpts: 1, ordinals: 0 } });
+    expect((await stepRow(briefId)).meta).toMatchObject({
+      staticRules: { excerpts: 'excerpt-context-v1', abstained: [{ key: `case.${target.ntsbNo}.quote.1`, rule: 'excerpt_context', problems: expect.any(Array) }] },
+    });
+    const ctx = CaseContextResponseSchema.parse((await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/${target.ntsbNo}`, { cookie })).json);
+    expect(ctx.lines).toContainEqual({ label: 'QUOTES', text: 'One quote left out: it needs the report’s surrounding text to keep its meaning', passageIds: [] });
+    // Whole mode (the default until G6): a statement the rules leave out withholds the summary.
+    const whole = harness(answering({ compose, check: SUPPORTED }));
+    const w = await askAndWait(whole);
+    expect(w.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    expect(JSON.stringify(w.step)).not.toContain(target.quote);
+  });
+
+  it('ordinal-evidence-v2 end to end: a summary sentence naming a flight no passage states is checked but never shown', async () => {
+    const THIRD = 'The engine lost power on the third flight after maintenance';
+    const compose = (input: ComposeInput) =>
+      composition(input, (c) => {
+        c.summary = c.cases.map((k) => (k.ntsbNo === 'DFW08TA066' ? `${THIRD} [[case:DFW08TA066]].` : `Power was lost after maintenance [[case:${k.ntsbNo}]].`)).join(' ');
+      });
+    const checks: CheckInput[] = [];
+    const h = harness(answering({ compose, check: (input) => (checks.push(input), SUPPORTED(input)) }), { displayMode: 'claims' });
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    expect(checks[0]!.claims.some((c) => c.kind === 'summary' && c.text.startsWith(THIRD))).toBe(true);
+    expect(JSON.stringify(step)).not.toContain(THIRD);
+    expect(result.summary.filter((s) => s.kind === 'removed')).toEqual([{ kind: 'removed', count: 1 }]);
+    expect(result.check).toMatchObject({ omitted: { excerpts: 0, ordinals: 1 } });
+    expect((await stepRow(briefId)).meta).toMatchObject({ staticRules: { ordinals: 'ordinal-evidence-v2', abstained: [{ key: 'summary.0', rule: 'ordinal_evidence' }] } });
+    for (const n of SEEDS) expect(JSON.stringify((await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/${n}`, { cookie })).json), n).not.toContain(THIRD);
+  });
+
+  it('multi-aircraft conflict (16d review m1, chronology-rules-v3): event-level facts of a two-airplane event take part in the conflict test, and conflicting facts are never shown alone', async () => {
+    // The fixture's two-airplane SEA08LA057 has event-level passages only; the aircraft-and-event case (2 days on one
+    // airplane, 40 days on the event) is the unit test's (tests/unit/ordinals.test.ts).
+    const facts = (input: ComposeInput, values: number[]) =>
+      composition(input, (c) => {
+        const sea = input.cases.find((k) => k.ntsbNo === 'SEA08LA057')!;
+        const [analysis, cause] = [sea.passages[0]!, sea.passages[1] ?? sea.passages[0]!];
+        expect([analysis.scope, cause.scope]).toEqual(['event', 'event']);
+        c.cases.find((k) => k.ntsbNo === 'SEA08LA057')!.chronology = {
+          maintenance: 'the annual inspection',
+          facts: values.map((value, i) => ({ anchor: 'relevant_maintenance' as const, relation: 'calendar_days' as const, value, bound: 'exact' as const, passageIds: [(i === 0 ? analysis : cause).passageId] })),
+        };
+      });
+    const check = (input: CheckInput) => verdicts(input, (claim) => (claim.kind === 'timing' && claim.text.includes('40 calendar days') ? 'not_established' : 'supported'));
+    const h = harness(answering({ compose: [(input) => facts(input, [2, 40]), (input) => facts(input, [2])], check }), {
+      displayMode: 'claims',
+      retriever: { cases: [...SEEDS, 'SEA08LA057'] },
+      trialRequests: 4,
+    });
+    const both = await askAndWait(h);
+    const result = both.step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    // Event-level facts of a two-airplane event decide nothing (they do not say which airplane), and since v3 they take
+    // part in the conflict test: the 2 and 40 days are grouped as conflicting for the display.
+    expect((await stepRow(both.briefId)).meta).toMatchObject({
+      criteriaRules: 'chronology-rules-v3',
+      criteria: expect.arrayContaining([{ ntsbNo: 'SEA08LA057', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'ambiguous_attribution' }]),
+    });
+    // The 40 days are removed, and the 2 days go with them: conflicting facts are shown together or not at all.
+    expect(result.cases.find((c) => c.case.ntsbNo === 'SEA08LA057')!.reading?.timing ?? []).toEqual([]);
+    expect(JSON.stringify(both.step)).not.toMatch(/\b40 DAYS\b|\b2 DAYS\b/);
+    // One event-level fact alone still decides nothing in a two-airplane event: it does not say which airplane.
+    advance(MIN);
+    const one = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect((await stepRow(one.briefId)).meta).toMatchObject({
+      criteria: expect.arrayContaining([{ ntsbNo: 'SEA08LA057', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'ambiguous_attribution' }]),
+    });
+  });
+
   it('whole mode (the default until G6) withholds the same brief, and two contradictions withhold it in claims mode too', async () => {
     const whole = harness(answering({ compose: (input) => partial(input), check: rejecting }));
     const w = await askAndWait(whole);
     expect(w.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
     expect(w.step.checklist.verified).toBe('withheld');
     absent(w.step);
+    // Every surface in whole mode too: the step read again and each case context.
+    absent((await read(whole, w.briefId, w.cookie, 1)).json);
+    for (const n of SEEDS) absent((await inject<unknown>(whole, 'GET', `/api/briefs/${w.briefId}/steps/1/cases/${n}`, { cookie: w.cookie })).json);
     expect(finishedLine(whole)).toMatchObject({ withheld: { codes: expect.arrayContaining(['not_established', 'display_whole_brief']) } });
     const twice = harness(
       answering({

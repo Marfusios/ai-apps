@@ -1,35 +1,45 @@
 /**
- * The display projection (Task 16d, gate G6; rules `display-deps-v1`): one pure function
- * that turns a judged check into what may be shown. The brief pipeline renders every
- * response surface from its outcome (server/briefs/render.ts `answerResult`,
+ * The display projection (Tasks 16d and 16e, gate G6; rules `display-deps-v2`): one pure
+ * function that turns a judged check into what may be shown. The brief pipeline renders
+ * every response surface from its outcome (server/briefs/render.ts `answerResult`,
  * `storedDimensions`; the case context reads only what the step stored), and the checker
- * calibration computes its display metrics through it (evals/checker/metrics.ts), so what
- * is measured is what production shows.
+ * calibration computes its display metrics through it (evals/checker/metrics.ts), so the
+ * metrics measure what the server projects. (What the browser renders from it is the web
+ * client's job: tests/web cover every state the projection can produce.)
  *
  * **Whole-output failures.** A failed check call (timeout, refusal, truncation, invalid
  * output), a check input that could not hold every claim, and a structurally unusable
  * verdict set (`STRUCTURAL_CHECK_CODES`: a missing, repeated or unknown verdict id,
- * evidence outside a claim's cases or citations, an invalid quote) withhold everything
- * generated.
+ * evidence outside a claim's cases, an invalid quote) withhold everything generated.
  *
  * **Claims.** A claim is shown only with exactly one valid `supported` verdict
- * (`confirmed`) and only while everything it depends on is shown. Dependencies are
- * explicit and derived by the server from the composition's structure (`displayPlan`),
- * never from the model. Whole sentences only: nothing is spliced, reworded or replaced.
+ * (`confirmed`), only when no deterministic rule abstains from it, and only while
+ * everything it depends on is shown. Dependencies are explicit and derived by the server
+ * from the composition's structure (`displayPlan`), never from the model. Whole sentences
+ * only: nothing is spliced, reworded or replaced.
  *
- * **Dependency rules (`display-deps-v1`).** For each presented case X:
+ * **Static abstentions** (Task 16e; `abstain` in the plan): claims the deterministic rules
+ * never show, whatever the checker says: an excerpt that needs its context
+ * (`excerpt_context`, `excerpt-context-v1`, server/briefs/excerpts.ts) and a flight ordinal
+ * without explicit evidence in its cited passages (`ordinal_evidence`,
+ * `ordinal-evidence-v2`, server/briefs/ordinals.ts). They are checked like every claim (a
+ * contradiction still counts), removed with cause `static`, and cascade like any removal.
+ *
+ * **Dependency rules (`display-deps-v2`).** For each presented case X:
  * - *reading*: X's AI reading is shown only with its minimum content, a confirmed `why`
- *   line and at least one confirmed quote, and never after a contradicted criterion claim
- *   of X (a contradicted decision has no direction: the case may be outside the reader's
- *   criteria, so it is not presented as a match; review §10). Every other statement of X
- *   depends on the reading.
- * - *basis*: X's summary sentences and group placement depend on X having no
- *   contradicted essential claim (`ESSENTIAL_KINDS`: its why line, classification,
+ *   line and at least one confirmed quote that no rule abstains from, and never after a
+ *   contradicted criterion claim of X (a contradicted decision has no direction: the case
+ *   may be outside the reader's criteria, so it is not presented as a match). Every other
+ *   statement of X depends on the reading.
+ * - *basis*: X's summary sentences, classification and group placement depend on X having
+ *   no contradicted essential claim (`ESSENTIAL_KINDS`: its why line, classification,
  *   maintenance, timing facts, criterion decisions and quote attributions, and any summary
- *   sentence that cites it). One contradiction there suppresses X's summary sentences and
- *   every comparison citing X, whatever the thresholds (the gate's override for an
- *   essential attribution, maintenance anchor or causal premise). The symptom and gap
- *   notes are not essential.
+ *   sentence that cites it). One contradiction there suppresses X's summary sentences,
+ *   its classification and every comparison citing X, whatever the thresholds (the gate's
+ *   override for an essential attribution, maintenance anchor or causal premise). The
+ *   symptom and gap notes are not essential. (v2: the classification is removed with the
+ *   group placement it carries, so a suppressed case's classification is counted as
+ *   removed, 16d review m4.)
  * - *group*: X keeps its group (glyph and group membership) only with its reading, its
  *   basis and, for mechanical grouping, its confirmed classification; otherwise it is shown
  *   unclassified, never in another group.
@@ -39,15 +49,22 @@
  *   `notVerified`. Decisions are never recomputed, so a removal can only downgrade one
  *   (the gate's probe: 2 days and 40 days against 30 days stays unconfirmed when the 40-day
  *   fact is removed).
+ * - *conflicts* (v2, 16d review m3): timing facts whose values cannot all hold
+ *   (`together`, `conflictingFacts` in server/briefs/criteria.ts) are shown together or not
+ *   at all, so a lone survivor never reads as settled.
  * - *summary sentences*: a sentence depends on the reading and basis of every presented
- *   case it cites, and on every earlier sentence when it refers outside itself
- *   (`BACK_REFERENCE`, `REFERENCE_START`). A case's own sentences (citing only that case)
- *   stand or fall together, whichever comes first: a later one may need an earlier one's
- *   antecedent, an earlier one a later one's qualification. A sentence citing two or more
- *   cases (a comparison or a count) also depends on every statement and the group placement
- *   of each case it cites, on each of their own sentences and on every other comparison
- *   sharing a case with it; a comparison's removal never takes a case's own sentences with
- *   it.
+ *   case it cites. A case's own sentences (citing only that case) stand or fall together,
+ *   whichever comes first. A sentence citing two or more cases (a comparison or a count)
+ *   also depends on every statement and the group placement of each case it cites, on
+ *   each of their own sentences and on every other comparison sharing a case with it; a
+ *   comparison's removal never takes a case's own sentences with it. v2 (16d review I1):
+ *   a sentence that refers outside itself anywhere (`refersOutside`: pointers, pronouns
+ *   and connectives as in v1, plus comparisons and repetitions such as "similar",
+ *   "comparable", "again", "too", "also", "another", "earlier", "previous", "remaining",
+ *   "both", "the second case") depends on every other summary sentence, and one that
+ *   counts or ranges over cases (`countsCases`: "three of the four cases", "in all
+ *   cases", "the other cases") also depends on the reading, basis and group placement of
+ *   every presented case: when in doubt, the sentence goes with its antecedent.
  * - Gap notes depend on nothing else.
  *
  * **Whole-summary rules** (pre-registered experimental usability defaults, not safety
@@ -59,35 +76,59 @@
  *
  * **Modes.** `claims` is claim-level display. `whole` (the production default until gate
  * G6 clears partial display, `AI_PARTIAL_DISPLAY`) shows the output only when nothing at
- * all was removed: 16c's rule, computed by the same projection.
+ * all was removed, statically or otherwise: 16c's rule, computed by the same projection.
  */
 import type { CardStatementKind, Criterion } from '../../shared/contracts/briefs.js';
 import type { ClaimKind } from '../ai/provider.js';
 import type { Decision } from './criteria.js';
 import type { CheckJudgement, StructuralCheckCode } from './verdicts.js';
 
-export const DISPLAY_RULES_VERSION = 'display-deps-v1';
+export const DISPLAY_RULES_VERSION = 'display-deps-v2';
 
 /** Claim kinds whose contradiction suppresses their case's summary sentences and group placement. */
 export const ESSENTIAL_KINDS: ReadonlySet<ClaimKind> = new Set(['summary', 'why', 'classification', 'maintenance', 'timing', 'criterion', 'attribution']);
 
+/** The deterministic rules that abstain from a claim whatever its verdict (Task 16e). */
+export const STATIC_RULES = ['excerpt_context', 'ordinal_evidence'] as const;
+export type StaticAbstention = (typeof STATIC_RULES)[number];
+
 /**
- * A summary sentence that refers outside itself depends on every earlier sentence
- * (`display-deps-v1`). The lexicon is conservative and cannot establish independence on
- * its own; it adds to the case rules, which do. Matched as whole words after the case
- * markers are removed. Words anywhere in the sentence:
+ * Words anywhere in a summary sentence that refer outside it (`display-deps-v2`; v1's
+ * lexicon and the 16d review's misses), matched as whole words after the case markers are
+ * removed. Conservative by design: a false match only makes the sentence depend on the
+ * others, which can remove it, never show anything.
  */
-export const BACK_REFERENCE =
-  /\b(?:this|these|those|such|both|either|neither|other|others|another|also|similarly|likewise|however|whereas|unlike|respectively|aforementioned)\b|\b(?:in contrast|as in|like the|as well|the same|the former|the latter)\b/i;
+export const SENTENCE_REFERENCE = new RegExp(
+  [
+    String.raw`\b(?:this|these|those|such|both|either|neither|other|others|another|also|too|again|similar|similarly|comparable|compared|comparison|likewise|same|different|differently|unlike|whereas|however|respectively|aforementioned|former|latter|remaining|rest|earlier|later|previous|previously|prior|preceding|next|following|additional|additionally|further|furthermore|moreover|instead|otherwise|alike)\b`,
+    String.raw`\b(?:in\s+contrast|as\s+in|like\s+the|as\s+well|the\s+(?:first|second|third|fourth|fifth|sixth|last|final)\s+(?:case|one|investigation|accident|event|airplane|aircraft))\b`,
+  ].join('|'),
+  'i',
+);
 /** …and words that refer back when they open the sentence. */
-export const REFERENCE_START = /^\s*(?:it|its|they|their|them|he|his|she|her|that|then|thus|therefore|hence|consequently|meanwhile|instead|still|yet|but|and|or|so|here)\b/i;
+export const REFERENCE_START = /^\s*(?:it|its|they|their|them|he|his|she|her|that|then|thus|therefore|hence|consequently|meanwhile|instead|still|yet|but|and|or|so|here|there|ultimately|eventually|finally)\b/i;
+/** Counts and ranges over cases: "three of the four cases", "in all cases", "the other cases", "each case". */
+export const CASE_SET = new RegExp(
+  [
+    String.raw`(?<![\w-])(?:all|both|each|every|none|neither|either|most|many|several|some|few|two|three|four|five|six|\d+)\s+(?:of\s+)?(?:the\s+|these\s+|those\s+)?(?:other\s+|remaining\s+)?(?:cases?|investigations?|accidents?|events?|incidents?|airplanes?|aircraft|helicopters?|examples?|records?)\b`,
+    String.raw`\bof\s+the\s+(?:two|three|four|five|six|\d+)(?![\w-])`,
+    String.raw`\b(?:the|these|those|other|remaining)\s+(?:cases|investigations|accidents|events|incidents|examples)\b`,
+    String.raw`\banother\s+(?:case|investigation|accident|event|incident|example)\b`,
+  ].join('|'),
+  'i',
+);
 
 const MARKERS = /\[\[case:[A-Za-z0-9]+\]\]/g;
 
-/** True when a summary sentence refers outside itself under the `display-deps-v1` lexicon. */
-export function refersBack(sentence: string): boolean {
+/** True when a summary sentence refers outside itself under `display-deps-v2`. */
+export function refersOutside(sentence: string): boolean {
   const text = sentence.replace(MARKERS, ' ');
-  return BACK_REFERENCE.test(text) || REFERENCE_START.test(text);
+  return SENTENCE_REFERENCE.test(text) || REFERENCE_START.test(text) || CASE_SET.test(text);
+}
+
+/** True when a summary sentence counts or ranges over cases (it may cover cases it does not cite). */
+export function countsCases(sentence: string): boolean {
+  return CASE_SET.test(sentence.replace(MARKERS, ' '));
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +143,8 @@ export interface PlanClaim {
   /** A criterion claim's criterion and server decision. */
   criterion?: Criterion;
   decision?: Decision;
+  /** A deterministic rule never shows it, whatever its verdict (Task 16e). */
+  abstain?: StaticAbstention;
 }
 
 export interface PlanCase {
@@ -112,8 +155,10 @@ export interface PlanCase {
 
 export interface PlanSentence {
   cases: string[];
-  /** Refers outside itself (`refersBack`). */
-  backReference: boolean;
+  /** Refers outside itself (`refersOutside`): depends on every other summary sentence. */
+  reference: boolean;
+  /** Counts or ranges over cases (`countsCases`): depends on every presented case too. */
+  set: boolean;
 }
 
 /**
@@ -133,6 +178,8 @@ export interface DisplayPlan {
   sentences: PlanSentence[];
   /** In check order: claim `C<i+1>` is `claims[i]`. */
   claims: PlanClaim[];
+  /** Claim keys shown together or not at all (conflicting timing facts of a case). */
+  together: string[][];
 }
 
 export type DisplayMode = 'claims' | 'whole';
@@ -150,8 +197,8 @@ export const DISPLAY_WITHHELD_CODES = [
 ] as const;
 export type DisplayWithheldCode = (typeof DISPLAY_WITHHELD_CODES)[number];
 
-/** Why a claim is not shown: its own verdict, a dependency, or the whole output withheld. */
-export type RemovalCause = 'contradicted' | 'not_established' | 'dependency' | 'withheld';
+/** Why a claim is not shown: its own verdict, a deterministic rule, a dependency, or the whole output withheld. */
+export type RemovalCause = 'contradicted' | 'not_established' | 'static' | 'dependency' | 'withheld';
 
 export interface CaseDisplay {
   ntsbNo: string;
@@ -163,8 +210,10 @@ export interface CaseDisplay {
   suppressed: boolean;
   /** Each criterion decision as shown (none without a reading). */
   decisions: { criterion: Criterion; decision: 'matches' | 'unconfirmed'; notVerified: boolean }[];
-  /** Kinds of its statements not shown. */
+  /** Kinds of its statements not shown (an excerpt omitted by the excerpt rule is counted apart). */
   removed: CardStatementKind[];
+  /** Its quotes omitted because they need their surrounding text (`excerpt_context`). */
+  excerptsOmitted: number;
 }
 
 export interface DisplayOutcome {
@@ -184,8 +233,8 @@ export interface DisplayOutcome {
   contradictions: number;
   /** Summary sentences removed after the cascade (before any whole-output rule). */
   removedSentences: number;
-  /** Shown claims, and removed ones by kind. */
-  counts: { shown: number; removed: Record<ClaimKind, number> };
+  /** Shown claims, removed ones by kind (every cause), and the claims each deterministic rule abstained from. */
+  counts: { shown: number; removed: Record<ClaimKind, number>; abstained: Record<StaticAbstention, number> };
 }
 
 const KINDS: readonly ClaimKind[] = ['summary', 'why', 'classification', 'maintenance', 'symptom', 'timing', 'attribution', 'criterion', 'gap'];
@@ -204,12 +253,15 @@ const groupKey = (n: string) => `case.${n}#group`;
 /**
  * The dependency graph of a plan: every claim (by key) and the virtual nodes of each
  * presented case, with each node's explicit dependencies. `confirmed` and `contradicted`
- * are per claim index. Exported for the M5 dependency test.
+ * are per claim index; a claim a rule abstains from has a false base. Exported for the M5
+ * dependency test.
  */
 export function dependencyGraph(plan: DisplayPlan, confirmed: readonly boolean[], contradicted: readonly boolean[]): Map<string, Node> {
   const nodes = new Map<string, Node>();
+  const shownable = plan.claims.map((c, i) => confirmed[i] === true && c.abstain === undefined);
   const claimsOf = (n: string) => plan.claims.map((c, i) => ({ c, i })).filter(({ c }) => c.kind !== 'summary' && c.kind !== 'gap' && c.cases.length === 1 && c.cases[0] === n);
-  const presented = new Set(plan.cases.map((c) => c.ntsbNo));
+  const presented = plan.cases.map((c) => c.ntsbNo);
+  const presentedSet = new Set(presented);
   const standalone = plan.shape === 'claims';
 
   for (const pc of standalone ? [] : plan.cases) {
@@ -219,7 +271,7 @@ export function dependencyGraph(plan: DisplayPlan, confirmed: readonly boolean[]
     const quotes = own.filter(({ c }) => c.kind === 'attribution');
     const criterionContradicted = own.some(({ c, i }) => c.kind === 'criterion' && contradicted[i]);
     nodes.set(readingKey(n), {
-      base: why.length > 0 && why.every(({ i }) => confirmed[i]) && quotes.some(({ i }) => confirmed[i]) && !criterionContradicted,
+      base: why.length > 0 && why.every(({ i }) => shownable[i]) && quotes.some(({ i }) => shownable[i]) && !criterionContradicted,
       deps: [],
     });
     const essential =
@@ -230,40 +282,49 @@ export function dependencyGraph(plan: DisplayPlan, confirmed: readonly boolean[]
     nodes.set(groupKey(n), { base: !(pc.classified && classification.length === 0), deps: [readingKey(n), basisKey(n), ...(pc.classified ? classification : [])] });
   }
 
+  const sentenceKeys = plan.claims.filter((c) => c.kind === 'summary').map((c) => c.key);
+  const together = new Map<string, string[]>();
+  for (const group of plan.together) for (const key of group) together.set(key, [...(together.get(key) ?? []), ...group.filter((k) => k !== key)]);
+
   plan.claims.forEach((c, i) => {
     const deps: string[] = [];
     if (!standalone) {
       if (c.kind === 'summary') {
         const s = Number(c.key.slice('summary.'.length));
-        const cited = c.cases.filter((n) => presented.has(n));
+        const sentence = plan.sentences[s];
+        const cited = c.cases.filter((n) => presentedSet.has(n));
         const comparison = c.cases.length >= 2;
         for (const n of cited) deps.push(readingKey(n), basisKey(n));
         plan.claims.forEach((o, j) => {
           if (j === i || o.kind !== 'summary') return;
-          const t = Number(o.key.slice('summary.'.length));
           const shares = o.cases.some((n) => c.cases.includes(n));
           const other = o.cases.length >= 2;
           // A case's own sentences stand together; a comparison also rests on its cases' own sentences and on comparisons sharing a case.
           if (shares && (comparison || !other)) deps.push(o.key);
-          if (plan.sentences[s]?.backReference && t < s) deps.push(o.key);
         });
+        // v2: a sentence that refers outside itself goes with every other sentence; one that counts cases, with every case too.
+        if (sentence?.reference || sentence?.set) deps.push(...sentenceKeys.filter((k) => k !== c.key));
+        if (sentence?.set) for (const n of presented) deps.push(readingKey(n), basisKey(n), groupKey(n));
         if (comparison) {
           for (const n of cited) {
             for (const { c: o } of claimsOf(n)) deps.push(o.key);
             deps.push(groupKey(n));
           }
         }
-      } else if (c.kind !== 'gap' && c.cases.length === 1 && presented.has(c.cases[0]!)) {
+      } else if (c.kind !== 'gap' && c.cases.length === 1 && presentedSet.has(c.cases[0]!)) {
         const n = c.cases[0]!;
         deps.push(readingKey(n));
+        // v2 (16d review m4): the classification goes with the group placement it carries.
+        if (c.kind === 'classification') deps.push(basisKey(n));
         if (c.kind === 'criterion') {
           const own = claimsOf(n).map(({ c: o }) => o);
           if (c.criterion === 'failure_type') deps.push(...own.filter((o) => o.kind === 'symptom').map((o) => o.key));
           else deps.push(...own.filter((o) => o.kind === 'timing').map((o) => o.key));
         }
+        deps.push(...(together.get(c.key) ?? []));
       }
     }
-    nodes.set(c.key, { base: confirmed[i]!, deps: [...new Set(deps)] });
+    nodes.set(c.key, { base: shownable[i]!, deps: [...new Set(deps)] });
   });
   return nodes;
 }
@@ -284,16 +345,23 @@ export function resolveGraph(nodes: ReadonlyMap<string, Node>): Map<string, bool
   return shown;
 }
 
-/** Shown nodes that depend on a node not shown (the M5 invariant: always empty). */
+/**
+ * Shown nodes that depend on a node not shown (M5: always empty). It proves the projection
+ * consistent with the dependencies the plan encodes, not that those dependencies are
+ * complete (the gate's 16d finding 3).
+ */
 export function dependencyViolations(nodes: ReadonlyMap<string, Node>, shown: ReadonlyMap<string, boolean>): string[] {
   return [...nodes].filter(([k, n]) => shown.get(k) && n.deps.some((d) => shown.get(d) === false)).map(([k]) => k);
 }
 
 const emptyCounts = (): Record<ClaimKind, number> => Object.fromEntries(KINDS.map((k) => [k, 0])) as Record<ClaimKind, number>;
+const emptyAbstained = (): Record<StaticAbstention, number> => Object.fromEntries(STATIC_RULES.map((r) => [r, 0])) as Record<StaticAbstention, number>;
 
 /** Project a judged check onto what may be shown (see the module comment). */
 export function projectDisplay(plan: DisplayPlan, input: DisplayInput, mode: DisplayMode): DisplayOutcome {
   const n = plan.claims.length;
+  const abstained = emptyAbstained();
+  for (const c of plan.claims) if (c.abstain) abstained[c.abstain] += 1;
   const withheldAll = (codes: DisplayWithheldCode[], contradictions = 0, removedSentences = 0, removal?: (RemovalCause | null)[]): DisplayOutcome => {
     const counts = emptyCounts();
     for (const c of plan.claims) counts[c.kind] += 1;
@@ -305,10 +373,10 @@ export function projectDisplay(plan: DisplayPlan, input: DisplayInput, mode: Dis
       displayed: plan.claims.map(() => false),
       removal: removal ?? plan.claims.map(() => 'withheld'),
       sentences: plan.sentences.map(() => false),
-      cases: plan.cases.map((c) => ({ ntsbNo: c.ntsbNo, reading: false, grouped: false, suppressed: false, decisions: [], removed: [] })),
+      cases: plan.cases.map((c) => ({ ntsbNo: c.ntsbNo, reading: false, grouped: false, suppressed: false, decisions: [], removed: [], excerptsOmitted: 0 })),
       contradictions,
       removedSentences,
-      counts: { shown: 0, removed: counts },
+      counts: { shown: 0, removed: counts, abstained },
     };
   };
   if (input.kind === 'failed') return withheldAll(['check_failed']);
@@ -321,7 +389,7 @@ export function projectDisplay(plan: DisplayPlan, input: DisplayInput, mode: Dis
   const shown = resolveGraph(nodes);
   const displayed = plan.claims.map((c) => shown.get(c.key) === true);
   const removal: (RemovalCause | null)[] = plan.claims.map((c, i) =>
-    displayed[i] ? null : !confirmed[i] ? (j.claims[i]!.verdict === 'contradicted' ? 'contradicted' : 'not_established') : 'dependency',
+    displayed[i] ? null : c.abstain ? 'static' : !confirmed[i] ? (j.claims[i]!.verdict === 'contradicted' ? 'contradicted' : 'not_established') : 'dependency',
   );
   const sentenceShown = plan.sentences.map((_, s) => plan.claims.some((c, i) => c.key === `summary.${s}` && displayed[i]));
   const contradictions = contradicted.filter(Boolean).length;
@@ -339,7 +407,15 @@ export function projectDisplay(plan: DisplayPlan, input: DisplayInput, mode: Dis
             notVerified: !displayed[i],
           }))
       : [];
-    const removed = [...new Set(own.filter(({ i }) => !displayed[i]).map(({ c }) => c.kind).filter((k): k is CardStatementKind => CARD_KINDS.has(k)))];
+    const excerpt = ({ c }: { c: PlanClaim }) => c.kind === 'attribution' && c.abstain === 'excerpt_context';
+    const removed = [
+      ...new Set(
+        own
+          .filter((x) => !displayed[x.i] && !excerpt(x))
+          .map(({ c }) => c.kind)
+          .filter((k): k is CardStatementKind => CARD_KINDS.has(k)),
+      ),
+    ];
     return {
       ntsbNo: pc.ntsbNo,
       reading,
@@ -347,6 +423,7 @@ export function projectDisplay(plan: DisplayPlan, input: DisplayInput, mode: Dis
       suppressed: shown.get(basisKey(pc.ntsbNo)) === false && shown.get(readingKey(pc.ntsbNo)) === true,
       decisions,
       removed,
+      excerptsOmitted: own.filter(excerpt).length,
     };
   });
 
@@ -382,8 +459,17 @@ export function projectDisplay(plan: DisplayPlan, input: DisplayInput, mode: Dis
     cases,
     contradictions,
     removedSentences,
-    counts: { shown: displayed.filter(Boolean).length, removed: removedCounts },
+    counts: { shown: displayed.filter(Boolean).length, removed: removedCounts, abstained },
   };
+}
+
+/**
+ * The projection of a plan under a checker that confirms every claim (an oracle): what the
+ * deterministic rules and their cascade leave, whatever the checker says. Answer retention
+ * (M1, M2) is measured against it, apart from the static abstentions (evals/checker/metrics.ts).
+ */
+export function oracleDisplay(plan: DisplayPlan, mode: DisplayMode): DisplayOutcome {
+  return projectDisplay(plan, { kind: 'judged', judgement: { structural: [], claims: plan.claims.map(() => ({ verdict: 'supported', confirmed: true })) } }, mode);
 }
 
 /** The structural codes of a judgement (for the step's meta when `check_structural` withholds). */

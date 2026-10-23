@@ -1,0 +1,471 @@
+{
+  "version": "checker-run-manifest-v1",
+  "protocol": "checker-cal-protocol-v3.1",
+  "candidate": "haiku-think-v9-medium",
+  "split": "holdout",
+  "model": "claude-haiku-5-5",
+  "thinking": "adaptive",
+  "effort": "medium",
+  "prompt": {
+    "version": "check.v9",
+    "systemSha256": "4ad9e6509962e8109a196a73378a9958649ab41f0818b8d31197025935c5b956"
+  },
+  "outputSchema": {
+    "version": "check-output-v2",
+    "sha256": "390156050c874dd4b41951e426b3459fe7304f161495355f43591b48ff574fe4"
+  },
+  "caps": {
+    "input": 40000,
+    "output": 24500
+  },
+  "timeoutMs": 45000,
+  "maxClaims": 60,
+  "dataset": {
+    "version": "checker-cal-v3",
+    "fileSha256": "15ef1c1d256145d611a5b9f2dcf3934119544d67ecb4570cc89de2489101d353",
+    "evidenceSha256": "8ff424e0d4996cc96f1f34d74831d2fefb90cda887cc5860ddec5c5b30788639",
+    "evidenceV2Sha256": "024ad0e8376321f2be17d76607a37c1fb496ef2d5d5223b91b2e355b58564597",
+    "evidenceV3Sha256": "8bf19490d1288ad8b0377ebd4451c9ba086a9a04cd16befe11b92ee33540a6c2",
+    "labelsSha256": "c079a152016238854797d78105644d69f81d935253bab4533fe2341ce45978c6"
+  },
+  "inputsSha256": "11330a88ddfed009edca4e13a62eee094cf95ece9a049816eb076c1ae5c92cbc",
+  "slots": [
+    {
+      "batch": "holdout16e.turbocharger",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.crankshaft",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.fuel-cap",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.fuel-cap-first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap-first",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.injection",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.injection-first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection-first",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.induction",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.gascolator",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.gascolator-day",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator-day",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.main-rotor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.fuel-quantity",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.fuel-quantity-day",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity-day",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16e.turbocharger.months",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger.closed",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger.loosened",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger.removed",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger.mix-months-speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger.mix-closed-loosened",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft.fh115",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft.actor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft.rod4",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft.renitride",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft.bearings",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft.mix-actor-rod4",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft.mix-fh115-renitride",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.swap",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.before",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.zero",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.witness",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.working",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.advice",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.mix-swap-advice",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap.mix-witness-working",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.zero",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.fh",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.partial",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.certified",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.likely",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.mix-zero-pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection.mix-fh-partial",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction.fh13",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction.pilotrags",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction.total",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction.mechanic",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction.mix-fh13-speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction.mix-total-mechanic",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.hours24",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.zero",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.fh60",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.mechanic",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.rewired",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.cracked",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.mix-hours24-mechanic",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator.mix-zero-cracked",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.ten",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.shop",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.witness",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.source",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.annual",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.mix-first-witness",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor.mix-shop-source",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.zero",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.before",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.mechanic",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.partial",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.found",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.mix-zero-partial",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine.mix-before-mechanic",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.hours24",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.before",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.pilotfuel",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.vacuum",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.damaged",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.mix-hours24-speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity.mix-pilotfuel-vacuum",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.turbocharger-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.crankshaft-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-cap-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.injection-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.induction-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.gascolator-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.main-rotor-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.homebuilt-engine-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16e.fuel-quantity-claims",
+      "sample": 1
+    }
+  ],
+  "measureTimeoutMs": 90000,
+  "allocation": "checker-16e-2026-10",
+  "rules": {
+    "quoteMatch": "quote-ws-v2",
+    "excerptContext": "excerpt-context-v1",
+    "ordinalEvidence": "ordinal-evidence-v2",
+    "chronology": "chronology-rules-v3",
+    "display": "display-deps-v2",
+    "judgement": "check-judgement-v2",
+    "metrics": "checker-metrics-v3",
+    "labels": "checker-labels-v3",
+    "errata": "checker-errata-v1",
+    "dataset": "checker-cal-v3"
+  },
+  "protocolSha256": "bbac2ec2ead5cb027efc9dc29e849861bc5f992b1ca3456bc9e9508ec0e2c124",
+  "id": "a188312b54a25d29a363127c159ecd4fc540a5e00eb05eac75b44bbbf5ffa9b7",
+  "createdAt": "2026-10-23T09:41:54.410Z"
+}

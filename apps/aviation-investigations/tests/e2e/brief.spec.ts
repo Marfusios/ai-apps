@@ -266,3 +266,29 @@ test('cancelling the first check gives the button back', async ({ page }) => {
   await expect(ask).toBeFocused();
   await expect(page).toHaveURL(/\/$/);
 });
+
+test('partial display: removed statements are markers, unclassified cases stay on the sheet, the drawer and print say what was not shown', async ({ page }) => {
+  await ask(page, 'Engine power loss shortly after maintenance, partial display');
+  await expect(summaryLabel(page)).toBeVisible({ timeout: 15_000 });
+  // Factual copy from the count, never a blanket "partly checked" (Task 16e).
+  await expect(page.getByText('Evidence check completed · 13 statements removed')).toBeVisible();
+  await expect(page.getByText(/partly checked/i)).toHaveCount(0);
+  await expect(page.getByText('[one statement not shown: the check could not confirm it]')).toBeVisible();
+  // Every counted case is a card; the ones without a confirmed classification are listed apart.
+  const ungrouped = page.locator('[data-ungrouped]');
+  await expect(ungrouped).toContainText('The evidence check could not confirm a classification for these cases.');
+  await expect(ungrouped.locator('article[data-card]')).toHaveCount(2);
+  await expect(page.locator('article[data-card="DEN08LA103"]')).toContainText('AI reading not shown');
+  await expect(page.locator('article[data-card="DFW08TA066"]')).toContainText('Not verified');
+  // Print keeps the markers and the unclassified cases.
+  await page.emulateMedia({ media: 'print' });
+  await expect(ungrouped).toBeVisible();
+  await expect(page.locator('[data-check-status]').first()).toBeVisible();
+  await page.emulateMedia({ media: 'screen' });
+  // The drawer of a case without its reading says so, and shows no AI line of it.
+  await page.locator('article[data-card="DEN08LA103"]').getByRole('link', { name: 'DEN08LA103' }).first().click();
+  const dialog = page.getByRole('dialog', { name: /^DEN08LA103: / });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('AI reading not shown: the check could not confirm it against the cited passages')).toBeVisible();
+  await expect(dialog.getByText(/Why it matched/i)).toHaveCount(0);
+});

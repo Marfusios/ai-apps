@@ -9,8 +9,8 @@ import { createAnthropicProvider, STAGE_THINKING, thinkingParam } from '../../se
 import { PHASE_GROUPS } from '../../shared/codes.js';
 import { createFakeProvider, DEFAULT_FAKE_USAGE } from '../../server/ai/fake.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v8.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v7.js';
+import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v9.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v8.js';
 import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
   CheckOutputSchema,
@@ -252,10 +252,12 @@ describe('Anthropic adapter requests', () => {
     const scope = provider(jsonResponse(200, messageJson(JSON.stringify(scopeOutput))));
     await scope.p.scope({ question: 'Engine power loss shortly after maintenance' }, ctx('scope'));
     expect(scope.bodies[0]!.thinking).toEqual({ type: 'disabled' });
-    // The checker calibration's frozen configuration (evals/checker/selection.json).
+    // The checker calibration's frozen configuration (evals/checker/selection.v3.json).
     const haiku = provider(jsonResponse(200, messageJson(JSON.stringify(checkOutput))));
     await haiku.p.check(checkInput, ctx('check'));
     expect(haiku.bodies[0]!.thinking).toEqual({ type: 'adaptive' });
+    // At the effort the 16e calibration froze (selection.v3.json): medium.
+    expect((haiku.bodies[0]!.output_config as Body).effort).toBe('medium');
 
     const opus = provider(jsonResponse(200, messageJson(JSON.stringify(composeOutput))));
     await opus.p.compose(composeInput, ctx('compose'));
@@ -360,7 +362,7 @@ describe('Anthropic adapter results', () => {
     const result = await p.compose(composeInput, ctx('compose'));
     expect(result.output).toEqual(composeOutput);
     expect(result.model).toBe(OPUS);
-    expect(result.promptVersion).toBe('compose.v7');
+    expect(result.promptVersion).toBe('compose.v8');
   });
 
   it('keeps the reported thinking tokens as calibration data; output_tokens stays the billed total', async () => {

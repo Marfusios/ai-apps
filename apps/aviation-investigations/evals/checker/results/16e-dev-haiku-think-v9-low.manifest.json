@@ -1,0 +1,767 @@
+{
+  "version": "checker-run-manifest-v1",
+  "protocol": "checker-cal-protocol-v3.1",
+  "candidate": "haiku-think-v9-low",
+  "split": "dev",
+  "model": "claude-haiku-5-5",
+  "thinking": "adaptive",
+  "effort": "low",
+  "prompt": {
+    "version": "check.v9",
+    "systemSha256": "4ad9e6509962e8109a196a73378a9958649ab41f0818b8d31197025935c5b956"
+  },
+  "outputSchema": {
+    "version": "check-output-v2",
+    "sha256": "390156050c874dd4b41951e426b3459fe7304f161495355f43591b48ff574fe4"
+  },
+  "caps": {
+    "input": 40000,
+    "output": 24500
+  },
+  "timeoutMs": 45000,
+  "maxClaims": 60,
+  "dataset": {
+    "version": "checker-cal-v3",
+    "fileSha256": "15ef1c1d256145d611a5b9f2dcf3934119544d67ecb4570cc89de2489101d353",
+    "evidenceSha256": "8ff424e0d4996cc96f1f34d74831d2fefb90cda887cc5860ddec5c5b30788639",
+    "evidenceV2Sha256": "024ad0e8376321f2be17d76607a37c1fb496ef2d5d5223b91b2e355b58564597",
+    "evidenceV3Sha256": "8bf19490d1288ad8b0377ebd4451c9ba086a9a04cd16befe11b92ee33540a6c2",
+    "labelsSha256": "3a3b6767b5d7198ef0ab63a545487f0a56f1d67c9840f7e285ea7f341892f98f"
+  },
+  "inputsSha256": "d6b390a51da249521b142f3bcddfc2df39adbeab2a7a75e7359e8ecd1a2e0989",
+  "slots": [
+    {
+      "batch": "dev.paid",
+      "sample": 1
+    },
+    {
+      "batch": "dev.ff",
+      "sample": 1
+    },
+    {
+      "batch": "dev.day",
+      "sample": 1
+    },
+    {
+      "batch": "dev.midair",
+      "sample": 1
+    },
+    {
+      "batch": "dev.midair2",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.oil",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.engine",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.fuel",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.midair",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.context-power",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.context-fuel",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.context-first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle-claims",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls-claims",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1.anchor",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1.led-to",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1.symptom",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b1-hours",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b2.anchor",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2.negation",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2.excerpt",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b2.unit",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b3.24h",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3.part",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3.actor",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3.missed",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3-week",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b3-week",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b4",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b4.swap",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4.negation",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4-abstain",
+      "sample": 1
+    },
+    {
+      "batch": "dev.b4-abstain",
+      "sample": 2
+    },
+    {
+      "batch": "dev.b4-abstain.gap",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b5.unit",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5.certainty",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5.negation",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5-week",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b5-week",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b6",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.anchor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.negation",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.actor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6.torque",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b6-first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b7.words",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7.value",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7.excerpt",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7-first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b7-first",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b8",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b8",
+      "sample": 2
+    },
+    {
+      "batch": "holdout.b8.one",
+      "sample": 1
+    },
+    {
+      "batch": "holdout.b8.gap",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.magneto.actor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto.hobbs",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto.total",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto.annual",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto.subject",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto.mix-actor-hobbs",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.magneto.mix-total-subject",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.carburetor.days",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor.before",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor.negation",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor.missed",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor.mix-days-negation",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor.mix-speaker-missed",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor-any",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.carburetor-any",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.propeller",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.propeller.hours",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller.after",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller.actor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller.thrice",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller.missed",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller.mix-hours-actor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.propeller.mix-after-missed",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.day-after.hours24",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.first",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.previous",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.witness",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.still",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.cylinders",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.undated",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.mix-hours24-still",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after.mix-first-cylinders",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after-hours",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.day-after-hours",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.helicopter",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.helicopter.zero",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.second",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.exact",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.context",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.secured",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.flagged",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.mix-zero-pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter.mix-second-secured",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter-days",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.helicopter-days",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.selector",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.selector.thirteen",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.flight-hours",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.second",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.owner",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.excerpt",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.leak",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.drilled",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.mix-owner-second",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector.mix-hours-leak",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector-hours",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.selector-hours",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.rotor",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.rotor.flight-hours",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.one-month",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.after",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.earlier",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.fod",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.pitting",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.mix-hours-pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.rotor.mix-after-pitting",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.unit",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.before",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.undated",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.speaker",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.tight",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.annual",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.mix-before-pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.throttle.mix-unit-tight",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls",
+      "sample": 2
+    },
+    {
+      "batch": "holdout16d.controls.zero",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls.second",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls.pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls.context",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls.verified",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls.himself",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls.mix-zero-pilot",
+      "sample": 1
+    },
+    {
+      "batch": "holdout16d.controls.mix-context-verified",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-power",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-power",
+      "sample": 2
+    },
+    {
+      "batch": "dev16d.max-first",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-first",
+      "sample": 2
+    },
+    {
+      "batch": "dev16d.max-oil",
+      "sample": 1
+    },
+    {
+      "batch": "dev16d.max-oil",
+      "sample": 2
+    }
+  ],
+  "measureTimeoutMs": 90000,
+  "allocation": "checker-16e-2026-10",
+  "rules": {
+    "quoteMatch": "quote-ws-v2",
+    "excerptContext": "excerpt-context-v1",
+    "ordinalEvidence": "ordinal-evidence-v2",
+    "chronology": "chronology-rules-v3",
+    "display": "display-deps-v2",
+    "judgement": "check-judgement-v2",
+    "metrics": "checker-metrics-v3",
+    "labels": "checker-labels-v3",
+    "errata": "checker-errata-v1",
+    "dataset": "checker-cal-v3"
+  },
+  "protocolSha256": "bbac2ec2ead5cb027efc9dc29e849861bc5f992b1ca3456bc9e9508ec0e2c124",
+  "id": "efe087e3b15220b91390fb8ded96e6da0a765cd38ee0afaad088023c2d6923af",
+  "createdAt": "2026-10-23T09:03:54.397Z"
+}

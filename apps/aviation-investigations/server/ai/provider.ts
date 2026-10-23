@@ -386,9 +386,10 @@ export type ComposeInput = z.infer<typeof ComposeInputSchema>;
 export const CheckInputSchema = z
   .strictObject({
     /**
-     * Server data from the NTSB record (Task 16d review M5): each case's header line (its
-     * aircraft, event, place and date from coded fields, `caseHeader`), the line the answer
-     * model saw, so a claim may name a case by it. Never model text.
+     * Server data from the NTSB record (Task 16d review M5): each case's check header
+     * (`checkHeader`: its aircraft, place and date from coded fields, without the defining
+     * event or phase the answer model's header names, which a claim must take from the
+     * passages), so a claim may name a case by it. Never model text.
      */
     cases: z
       .array(z.strictObject({ ntsbNo: CaseNumber, header: z.string().min(1).max(400) }))

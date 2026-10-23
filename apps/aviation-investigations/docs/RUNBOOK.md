@@ -550,10 +550,39 @@ composition; the command prints the failure and the stop reason instead.
 The same command reads an answer that was shown with claims removed (Task 16d's
 claim-level display, `meta.display`; its diagnostics have the reason `partial_display`):
 it prints the display projection (rules, mode, what was removed and why, by claim key)
-beside the raw verdicts. Claim-level display stays off in production until gate G6 clears
-it: with `AI_PARTIAL_DISPLAY` unset the projection runs in `whole` mode, and any claim
-the check did not confirm withholds the summary as before (code `display_whole_brief`).
-Do not set `AI_PARTIAL_DISPLAY` on a shared or public environment without that decision.
+beside the raw verdicts, with the claims the deterministic rules abstained from
+(`meta.staticRules`: `excerpt_context` or `ordinal_evidence`, by claim key). Claim-level
+display stays off in production until gate G6 clears it: with `AI_PARTIAL_DISPLAY` unset
+the projection runs in `whole` mode, and any claim the check did not confirm, or a rule
+abstained from, withholds the summary as before (code `display_whole_brief`). Do not set
+`AI_PARTIAL_DISPLAY` on a shared or public environment without that decision.
+
+### Enabling partial display
+
+`AI_PARTIAL_DISPLAY=true` makes the projection run in `claims` mode: confirmed statements
+are shown and the rest are removed with markers (DESIGN §3; the copy in UI_DESIGN §4.3).
+Enabling it on an environment requires, in this order:
+
+1. **Gate G6's written clearance** of claim-level display, from the reviewer's reading of
+   the latest calibration results (Task 16e: README "Task 16e result", DESIGN §12 and
+   `evals/checker/results/16e-*.json`); the held-out run is a pilot and never a pass by
+   itself.
+2. **Production equal to the frozen checker selection**: `selection.v3.json` names the
+   candidate (model, thinking, effort, `check.v9`, schema, caps, maximum claims) and the
+   check timeout derived from its measured latency, and the unit test "production runs
+   the frozen selection" passes on the commit being deployed.
+3. **The same commit for server and web**: the web client must render the projection's
+   states (unclassified cases, cards without a reading, removal markers, the factual
+   checklist count, the drawer's READING and QUOTES lines, Compare's markers); an older
+   client would drop or mislabel them.
+4. **The setting** in the environment's settings file, then a restart of the app
+   container; `AI_PARTIAL_DISPLAY` is read at start.
+5. **A smoke check**: one brief on the environment, then `pnpm worker brief-diagnose
+   <brief-id>` shows `display.mode: claims`, and the page shows "Evidence check completed ·
+   N statements removed".
+
+To turn it off, unset the variable and restart: briefs are projected again in `whole`
+mode (stored results keep the projection they were shown with until they expire).
 
 ## Costs of the opt-in commands
 
@@ -566,8 +595,8 @@ and each needs an explicit flag or key:
 | `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
 | `pnpm eval:retrieval --track coded --confirm-cost` (README, "Coded-reference track") | embeddings of the 43 coded-reference questions | about $0.00002 |
 | `pnpm eval:retrieval:experiments ... --confirm-cost` (README, "Retrieval experiments") | query embeddings, and three scope-stage samples per question (each attempt reserved at the stage's worst case) | about $0.03 for the dev questions; refused above the registered phase limit ($0.50) |
-| `pnpm eval:checker retrieve [--questions 16d] --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9; 17 with `--questions 16d`) | about $0.000005 |
-| `pnpm eval:checker run --candidate <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input of a split (84 development or 123 held-out calls, Task 16d) | $0.20 (`check.v7`) and $0.22 (`check.v8`) a development pass, $0.35 the held-out pilot; `inventory` (free) prints the expected and worst-case cost first; stops before a call that would take the logged 16d total above $1.50 |
+| `pnpm eval:checker retrieve [--questions 16d\|16e] --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9; 17 with `16d`; 16 with `16e`) | about $0.000005 |
+| `pnpm eval:checker run --candidate <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input of a split (Task 16e: 179 development or 105 held-out calls) | $0.46 a development pass at effort `low`, $0.62 at `medium`, $0.39 the held-out pilot at `medium`; `inventory` (free) prints the expected and worst-case cost first; charged to the allocation `checker-16e-2026-10` and stopped before a call that would take it over $2.50 or the ledger's evaluation allowance below the $12 protected for another track |
 | AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
 | `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |

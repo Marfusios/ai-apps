@@ -28,7 +28,7 @@
  *    timing rules, the supplied passages of this case do not settle whether..."), so a fact
  *    the composition left out settles nothing. The checker returns one verdict per
  *    server-issued claim id, judged in code (server/briefs/verdicts.ts), and the display
- *    projection decides what may be shown (server/briefs/display.ts, `display-deps-v1`):
+ *    projection decides what may be shown (server/briefs/display.ts, `display-deps-v2`):
  *    in `claims` mode a claim is shown only with a valid `supported` verdict and while
  *    everything it depends on is shown, under the whole-summary rules; in `whole` mode (the
  *    default until gate G6 clears partial display, `AI_PARTIAL_DISPLAY`) anything removed
@@ -70,7 +70,7 @@
 import { BriefResultSchema, type BriefResult, type Checklist, type ComposeOutput, type ScopeReply, type WithheldReason } from '../../shared/contracts/briefs.js';
 import type { Db } from '../db/client.js';
 import { stageCostUsd, STAGE_CAPS } from '../ai/pricing.js';
-import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v7.js';
+import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v8.js';
 import {
   StageError,
   stageCtx,
@@ -94,6 +94,8 @@ import { CHRONOLOGY_RULES_VERSION, evaluateCase, type CriterionCheck } from './c
 import { projectDisplay, type DisplayMode, type DisplayOutcome } from './display.js';
 import { RetrievalFailure, type CaseCatalog, type EvidenceBundle, type EvidenceRetriever, type RetrievedEvidence } from './evidence.js';
 import { resolveIntent, retrievalText, scopeInput, type StepIntent, type StepRequest } from './intent.js';
+import { EXCERPT_CONTEXT_VERSION } from './excerpts.js';
+import { ORDINAL_EVIDENCE_VERSION } from './ordinals.js';
 import {
   answerResult,
   caseEvidence,
@@ -104,6 +106,7 @@ import {
   displayPlan,
   noMatchResult,
   plainCard,
+  staticAbstentions,
   storedDimensions,
   storedEvidence,
   type ClaimMeta,
@@ -280,7 +283,15 @@ interface Meta {
     suppressed: string[];
     contradictions: number;
     removedSentences: number;
+    /** The claims each deterministic rule abstained from (Task 16e), counts. */
+    abstained?: Record<string, number>;
   };
+  /**
+   * The deterministic rules (Task 16e; content-free): the excerpt-context and
+   * ordinal-evidence versions, and each claim a rule abstained from, by key, with the
+   * excerpt policy's problem codes for a quote.
+   */
+  staticRules?: { excerpts: string; ordinals: string; abstained: { key: string; rule: string; problems?: string[] }[] };
   settlement?: { status: string; uncertain?: boolean };
 }
 
@@ -533,6 +544,7 @@ class Run {
       suppressed: d.cases.filter((c) => c.suppressed).map((c) => c.ntsbNo),
       contradictions: d.contradictions,
       removedSentences: d.removedSentences,
+      ...(Object.values(d.counts.abstained).some((n) => n > 0) ? { abstained: Object.fromEntries(Object.entries(d.counts.abstained).filter(([, n]) => n > 0)) } : {}),
     };
   }
 
@@ -762,6 +774,7 @@ class Run {
       mechanicalCause: intent.mechanicalCause,
       // What the reader wrote may name an alias-shaped token ("P3 air line") the model can repeat.
       readerText: [req.question, ...(req.refinement ? [req.refinement] : [])].join('\n'),
+      multiAircraftCases: new Set(cases.filter((c) => c.summary.row.aircraft.length > 1).map((c) => c.ntsbNo)),
     });
     const reasons = checked.ok ? [] : checked.reasons;
     this.meta.validation = {
@@ -814,7 +827,19 @@ class Run {
       mechanicalCause: intent.mechanicalCause,
       criterionChecks,
     });
-    const plan = displayPlan(composition, claims, intent.mechanicalCause);
+    // The deterministic rules (Task 16e): what they never show, whatever the checker says.
+    const abstain = staticAbstentions(composition, validated.citations, byCase, input, claims);
+    this.meta.staticRules = {
+      excerpts: EXCERPT_CONTEXT_VERSION,
+      ordinals: ORDINAL_EVIDENCE_VERSION,
+      abstained: claims.flatMap((m) => {
+        const rule = abstain.get(m.key);
+        if (!rule) return [];
+        const problems = m.ref.kind === 'attribution' ? validated.citations[m.ref.citation]?.excerpt.problems : undefined;
+        return [{ key: m.key, rule, ...(problems && problems.length > 0 ? { problems: [...problems] } : {}) }];
+      }),
+    };
+    const plan = displayPlan(composition, claims, intent.mechanicalCause, { abstain, cases: byCase });
     const mode: DisplayMode = this.deps.displayMode ?? 'whole';
     // The check input as the checker reads it (passage aliases); its claims, by id, are a withheld step's diagnostics.
     const forModel = checkForModel(input, aliases);
@@ -873,7 +898,13 @@ class Run {
     }
     if (this.stopped) return this.stoppedEnd();
 
-    this.checklist = { question: 'in_scope', searched: searched(), written: true, verified: 'partially_checked' };
+    // The checklist's factual last row: how many statements the check removed, or nothing to check (Task 16e).
+    this.checklist = {
+      question: 'in_scope',
+      searched: searched(),
+      written: true,
+      ...(display ? { verified: 'partially_checked' as const, removedStatements: Object.values(display.counts.removed).reduce((a, b) => a + b, 0) } : { verified: 'nothing_to_check' as const }),
+    };
     const projected = display ? { claims, display } : undefined;
     if (composition.outcome === 'no_supported_match') {
       this.evidence = storedEvidence(cases, QUOTE_MATCH_RULE_VERSION);

@@ -1,8 +1,9 @@
 /**
  * Anthropic adapter for the language-model stages (DESIGN §6 and §9 "Anthropic call
- * settings"): structured outputs through `messages.parse`, effort `low`, thinking
- * off wherever the model allows it, a cached frozen system prompt, no retries,
- * prefill, sampling parameters, server tools or refusal fallbacks.
+ * settings"): structured outputs through `messages.parse`, each stage's effort
+ * (`STAGE_EFFORT`: `low`, `medium` for the check), thinking off wherever the model allows
+ * it (adaptive for the check), a cached frozen system prompt, no retries, prefill, sampling
+ * parameters, server tools or refusal fallbacks.
  */
 import Anthropic, {
   APIConnectionError,
@@ -20,8 +21,8 @@ import Anthropic, {
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { llmPrice } from './pricing.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v8.js';
-import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v7.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v9.js';
+import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v8.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
 import {
   CheckInputSchema,
@@ -84,6 +85,22 @@ export const STAGE_THINKING: Readonly<Record<LlmStage, ThinkingMode>> = {
   check: 'adaptive',
 };
 
+/** A stage's effort (`output_config.effort`). */
+export type Effort = 'low' | 'medium';
+
+/**
+ * Each stage's effort. `low` for scope and compose; `medium` for the check, the checker
+ * calibration's frozen selection (evals/checker/selection.v3.json, protocol v3.1: chosen by
+ * the pre-registered fallback order over `low`; a unit test holds production to it). A
+ * change needs the calibration, the caps and the timeouts re-measured. Haiku 5.5's default
+ * effort is `medium`, so effort is always sent.
+ */
+export const STAGE_EFFORT: Readonly<Record<LlmStage, Effort>> = {
+  scope: 'low',
+  compose: 'low',
+  check: 'medium',
+};
+
 /** The request's `thinking` parameter for a model and mode, or undefined to omit it. */
 export function thinkingParam(model: string, mode: ThinkingMode): ThinkingParam | undefined {
   const settings = ANTHROPIC_MODEL_SETTINGS[model];
@@ -108,6 +125,8 @@ export interface AnthropicProviderConfig {
   client?: AnthropicMessagesClient;
   /** Overrides of `STAGE_THINKING` (the checker calibration compares modes; production uses the defaults). */
   thinking?: Partial<Record<LlmStage, ThinkingMode>>;
+  /** Overrides of `STAGE_EFFORT` (the checker calibration's frozen candidates; production uses the defaults). */
+  effort?: Partial<Record<LlmStage, Effort>>;
 }
 
 interface StageSpec<I, O> {
@@ -301,6 +320,7 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     const role = STAGE_ROLE[spec.stage];
     const model = cfg.models[role];
     const thinking = thinkingParam(model, cfg.thinking?.[spec.stage] ?? STAGE_THINKING[spec.stage]);
+    const effort = cfg.effort?.[spec.stage] ?? STAGE_EFFORT[spec.stage];
     const meta: Meta = { stage: spec.stage, provider: 'anthropic', model, promptVersion: spec.promptVersion };
     const fail = (category: StageError['category'], billing: StageErrorInfo['billing'], extra?: Partial<Meta>) =>
       new StageError(category, { ...meta, ...extra, billing });
@@ -311,7 +331,7 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
       model,
       system,
       messages: [{ role: 'user' as const, content: spec.render(input) }],
-      output_config: { format, effort: 'low' as const },
+      output_config: { format, effort },
       ...(thinking ? { thinking } : {}),
     });
 

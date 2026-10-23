@@ -230,7 +230,8 @@ export function BriefSections({ ai, ntsbNo, aircraft, mode }: BriefSectionsProps
   const { context } = ai;
   const passages = shownPassages(context);
   const reading = context.reading;
-  const hasWhy = reading !== null || context.gaps.length > 0;
+  // A reading the check removed still has lines that say so (Task 16e), never an empty section.
+  const hasWhy = reading !== null || context.gaps.length > 0 || context.lines.length > 0;
   const sectionHref = (kind: SectionKind) => {
     const id = kind === 'probable_cause' ? 'probable-cause' : kind;
     return mode === 'page'

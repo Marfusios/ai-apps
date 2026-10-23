@@ -5,7 +5,9 @@
  * version and the sha256 of the JSON schema the adapter sends, the caps, the call timeout
  * and the maximum claim count, the dataset (its file and evidence hashes and the split's
  * label hash) and the sha256 of every planned trial input, with the planned trial slots.
- * Its id is the sha256 of all of that (the creation time aside).
+ * Its id is the sha256 of all of that (the creation time aside). Protocol v3 (Task 16e)
+ * adds the run's transport timeout (`measureTimeoutMs`), the allocation it is charged to,
+ * the frozen rule versions and the protocol file's sha256.
  *
  * Every trial row carries its manifest id. `--resume` needs an existing manifest file and
  * its trials file, rebuilds the manifest from the code and data as they are now, refuses
@@ -16,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ThinkingMode } from '../../server/ai/anthropic.js';
+import type { Effort, ThinkingMode } from '../../server/ai/anthropic.js';
 import type { CalibrationBatch, CalibrationDataset } from './build.js';
 import type { Trial } from './metrics.js';
 
@@ -43,13 +45,22 @@ export interface RunIdentity {
   split: 'dev' | 'holdout';
   model: string;
   thinking: ThinkingMode;
-  effort: 'low';
+  effort: Effort;
   prompt: { version: string; systemSha256: string };
   outputSchema: { version: string; sha256: string };
   caps: { input: number; output: number };
+  /** The production check timeout (protocol v3: the figures are censored at it). */
   timeoutMs: number;
   maxClaims: number;
-  dataset: { version: string; fileSha256: string; evidenceSha256: string; evidenceV2Sha256: string | null; labelsSha256: string };
+  dataset: { version: string; fileSha256: string; evidenceSha256: string; evidenceV2Sha256: string | null; evidenceV3Sha256?: string | null; labelsSha256: string };
+  /** Protocol v3: the run's transport timeout, which measures latency past `timeoutMs`. */
+  measureTimeoutMs?: number;
+  /** Protocol v3: the allocation the run is charged to. */
+  allocation?: string;
+  /** Protocol v3: the rule versions the run measured (`FROZEN_RULES`). */
+  rules?: Record<string, string>;
+  /** Protocol v3: the protocol file's sha256. */
+  protocolSha256?: string;
   /** sha256 of every planned slot's input, in slot order. */
   inputsSha256: string;
   slots: { batch: string; sample: number }[];
@@ -78,7 +89,14 @@ export function newManifest(identity: RunIdentity, now = new Date()): RunManifes
 /** The dataset part of an identity, for one split. */
 export function datasetIdentity(dataset: CalibrationDataset, fileText: string, split: 'dev' | 'holdout'): RunIdentity['dataset'] {
   const labels = dataset.labels.splits?.[split]?.sha256 ?? dataset.labels.sha256;
-  return { version: dataset.version, fileSha256: sha(fileText), evidenceSha256: dataset.evidenceSha256, evidenceV2Sha256: dataset.evidenceV2Sha256 ?? null, labelsSha256: labels };
+  return {
+    version: dataset.version,
+    fileSha256: sha(fileText),
+    evidenceSha256: dataset.evidenceSha256,
+    evidenceV2Sha256: dataset.evidenceV2Sha256 ?? null,
+    ...(dataset.evidenceV3Sha256 !== undefined ? { evidenceV3Sha256: dataset.evidenceV3Sha256 } : {}),
+    labelsSha256: labels,
+  };
 }
 
 /** Where a manifest and its trials live. */

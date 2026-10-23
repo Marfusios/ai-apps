@@ -29,8 +29,8 @@ import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOu
 import { PHASE_GROUPS } from '../shared/codes.js';
 import { MAX_QUERY_INPUT_TOKENS } from '../server/ai/embeddings.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../server/ai/pricing.js';
-import { renderCheckUser } from '../server/ai/prompts/check.v8.js';
-import { renderComposeUser } from '../server/ai/prompts/compose.v7.js';
+import { renderCheckUser } from '../server/ai/prompts/check.v9.js';
+import { renderComposeUser } from '../server/ai/prompts/compose.v8.js';
 import { renderScopeUser } from '../server/ai/prompts/scope.v2.js';
 import {
   AIRCRAFT_CATEGORY_CODES,
@@ -54,6 +54,7 @@ import { checkForModel, composeForModel, passageAliases } from '../server/briefs
 import { evaluateCase } from '../server/briefs/criteria.js';
 import { caseEvidence, checkInput, type VerifiedCase } from '../server/briefs/render.js';
 import type { ResolvedCitation } from '../server/briefs/validate.js';
+import { EXCERPT_CONTEXT_VERSION } from '../server/briefs/excerpts.js';
 import { RETRIEVAL_DEFAULTS } from '../server/search/hybrid.js';
 import { DEFAULT_CHUNK_OPTIONS } from './index/chunk.js';
 
@@ -276,6 +277,8 @@ export function preflightRequests(): PreflightRequests {
       sectionSpan: { start: 0, end: q.quote.length },
       matches: 1,
       occurrence: 'first' as const,
+      // The excerpt rule changes what is shown, never the check input's size.
+      excerpt: { rules: EXCERPT_CONTEXT_VERSION, problems: [] },
     })),
   );
   // The checker's worst case: every fact a timing claim from the relevant maintenance (the

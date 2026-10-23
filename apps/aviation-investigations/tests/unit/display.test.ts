@@ -6,15 +6,29 @@ import type { ReadingState } from '../../server/briefs/clarify.js';
 import { NOT_VERIFIED_LINE, readingLines } from '../../server/briefs/context.js';
 import { evaluateCase, type CriterionCheck } from '../../server/briefs/criteria.js';
 import {
+  countsCases,
   dependencyGraph,
   dependencyViolations,
+  oracleDisplay,
   projectDisplay,
-  refersBack,
+  refersOutside,
   resolveGraph,
   type DisplayMode,
   type DisplayPlan,
 } from '../../server/briefs/display.js';
-import { answerResult, caseEvidence, checkInput, displayPlan, noMatchResult, storedDimensions, summarySentences, type ClaimMeta, type VerifiedCase } from '../../server/briefs/render.js';
+import { EXCERPT_CONTEXT_VERSION, type ExcerptProblem } from '../../server/briefs/excerpts.js';
+import {
+  answerResult,
+  caseEvidence,
+  checkInput,
+  displayPlan,
+  noMatchResult,
+  staticAbstentions,
+  storedDimensions,
+  summarySentences,
+  type ClaimMeta,
+  type VerifiedCase,
+} from '../../server/briefs/render.js';
 import type { ResolvedCitation } from '../../server/briefs/validate.js';
 
 // ---------------------------------------------------------------------------
@@ -108,7 +122,8 @@ function composition(over: Partial<ComposeOutput> = {}): ComposeOutput {
   };
 }
 
-const citationsOf = (c: ComposeOutput): ResolvedCitation[] =>
+/** The citations of a composition; `omit` (by `case.<n>.quote.<q>` key): the excerpt rule's problems for that quote. */
+const citationsOf = (c: ComposeOutput, omit: Readonly<Record<string, ExcerptProblem[]>> = {}): ResolvedCitation[] =>
   c.cases.flatMap((k, ci) =>
     k.quotes.map((q, qi) => ({
       ntsbNo: k.ntsbNo,
@@ -123,16 +138,18 @@ const citationsOf = (c: ComposeOutput): ResolvedCitation[] =>
       sectionSpan: { start: 0, end: q.quote.length },
       matches: 1,
       occurrence: 'first' as const,
+      excerpt: { rules: EXCERPT_CONTEXT_VERSION, problems: omit[`case.${k.ntsbNo}.quote.${qi}`] ?? [] },
     })),
   );
 
 const READINGS: ReadingState = { timingWindow: { value: { days: 30, flightHours: null }, pinned: false }, failureType: { value: 'partial_power_loss', pinned: false } };
 
-function built(c: ComposeOutput = composition(), readings: ReadingState = READINGS, mechanical = true) {
+function built(c: ComposeOutput = composition(), readings: ReadingState = READINGS, mechanical = true, omit: Readonly<Record<string, ExcerptProblem[]>> = {}) {
   const criterionChecks = new Map<string, CriterionCheck[]>(c.cases.map((k) => [k.ntsbNo, evaluateCase(readings, k, mechanical, caseEvidence(cases.get(k.ntsbNo)))]));
-  const citations = citationsOf(c);
+  const citations = citationsOf(c, omit);
   const { input, claims } = checkInput(c, citations, cases, { mechanicalCause: mechanical, criterionChecks });
-  return { c, citations, criterionChecks, input, claims, plan: displayPlan(c, claims, mechanical) };
+  const abstain = staticAbstentions(c, citations, cases, input, claims);
+  return { c, citations, criterionChecks, input, claims, abstain, plan: displayPlan(c, claims, mechanical, { abstain, cases }) };
 }
 
 type Verdicts = Partial<Record<string, CheckVerdict>>;
@@ -164,7 +181,7 @@ function render(b: ReturnType<typeof built>, d: ReturnType<typeof project>) {
   });
 }
 
-describe('display projection (display-deps-v1)', () => {
+describe('display projection (display-deps-v2)', () => {
   it('the probe brief: the criteria are decided once, before the check, from every fact', () => {
     const b = built();
     const decisions = Object.fromEntries([...b.criterionChecks].map(([n, cs]) => [n, cs.map((c) => `${c.criterion}:${c.decision}`)]));
@@ -176,7 +193,7 @@ describe('display projection (display-deps-v1)', () => {
 /** The same brief read only with a timing window (B's total loss is not a partial loss). */
 const WINDOW: ReadingState = { timingWindow: { value: { days: 30, flightHours: null }, pinned: false } };
 
-describe('display projection (display-deps-v1): claims, dependencies and whole-output rules', () => {
+describe('display projection (display-deps-v2): claims, dependencies and whole-output rules', () => {
   it('every claim confirmed: everything is shown, partially checked with nothing removed', () => {
     const b = built(composition(), WINDOW);
     const d = project(b);
@@ -295,11 +312,11 @@ describe('display projection (display-deps-v1): claims, dependencies and whole-o
       'In the Grumman case, fuel contamination caused a partial loss of engine power [[case:CEN15FA269]].',
       'In the Grumman case, the mechanic missed it during the annual inspection [[case:CEN15FA269]].',
       'In the Vans case, an unsecured cable swage caused a total loss of engine power [[case:WPR18LA021]].',
-      'In the Vans case, the engine quit on the third flight [[case:WPR18LA021]].',
+      'In the Vans case, the engine quit in cruise [[case:WPR18LA021]].',
       'The Vans airplane also landed off airport [[case:WPR18LA021]].',
     ].join(' ');
     const b = built(composition({ summary }), WINDOW);
-    expect(b.plan.sentences.map((s) => s.backReference)).toEqual([false, false, false, false, true]);
+    expect(b.plan.sentences.map((s) => s.reference)).toEqual([false, false, false, false, true]);
     // 0 goes, 1 with it (A's own sentences stand together), 4 refers back to it, and B's own sentences 2 and 3 go with 4.
     const d = project(b, { 'summary.0': 'not_established' });
     expect(d).toMatchObject({ shown: false, removedSentences: 5 });
@@ -309,7 +326,7 @@ describe('display projection (display-deps-v1): claims, dependencies and whole-o
     expect(e).toMatchObject({ shown: false, removedSentences: 3, sentences: [false, false, false, false, false] });
     // Without the back-reference, removing B's sentence leaves A's: 3 of 5 still more than a third.
     const plain = built(composition({ summary: summary.replace('The Vans airplane also landed off airport', 'In the Vans case, the airplane landed off airport') }), WINDOW);
-    expect(plain.plan.sentences.every((x) => !x.backReference)).toBe(true);
+    expect(plain.plan.sentences.every((x) => !x.reference)).toBe(true);
     expect(project(plain, { 'summary.0': 'not_established' })).toMatchObject({ removedSentences: 2, shown: false, withheld: ['display_removed_share'] });
     expect(project(plain, { 'summary.4': 'not_established' })).toMatchObject({ removedSentences: 3, shown: false });
   });
@@ -404,12 +421,13 @@ describe('display projection (display-deps-v1): claims, dependencies and whole-o
     const d = project(b, { [`case.${A}.timing.1`]: 'not_established', [`case.${A}.maintenance`]: 'not_established' });
     const dims = storedDimensions(b.c, true, b.criterionChecks, { claims: b.claims, display: d });
     const a = dims.find((x) => x.ntsbNo === A)!;
-    expect(a.timing).toEqual([{ basis: 'calendar_days', passageIds: [hex(1)] }]);
+    // The 40-day fact goes, and the 2-day fact it conflicts with goes with it (display-deps-v2).
+    expect(a.timing).toEqual([]);
     expect(a.maintenance).toBeUndefined();
     expect(a.criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed', passageIds: [hex(1), hex(2)] }]);
     const card = render(b, d).cases.find((c) => c.case.ntsbNo === A)!;
     expect(CaseReadingSchema.safeParse(card.reading).success).toBe(true);
-    expect(card.reading!.timing.map((t) => t.label)).toEqual(['2 DAYS']);
+    expect(card.reading!.timing).toEqual([]);
     expect(card.notVerified).toEqual(['maintenance', 'timing', 'criterion']);
     const lines = readingLines(card.reading!, a, card.notVerified);
     expect(lines.filter((l) => l.text === NOT_VERIFIED_LINE).map((l) => l.label)).toEqual(['CRITERIA', 'MAINTENANCE', 'TIMING']);
@@ -429,9 +447,10 @@ describe('display projection (display-deps-v1): claims, dependencies and whole-o
   });
 });
 
-describe('back-references (display-deps-v1 lexicon)', () => {
-  it('flags sentences that point outside themselves, by word or by their opening', () => {
+describe('references (display-deps-v2 lexicon, 16d review I1)', () => {
+  it('flags sentences that point outside themselves anywhere, by word or by their opening', () => {
     for (const s of [
+      // display-deps-v1's lexicon
       'This failure caused the loss of power [[case:A1B2C3]].',
       'In the other three cases, both pilots failed to see and avoid [[case:A1B2C3]].',
       'Similarly, the Cessna lost power [[case:A1B2C3]].',
@@ -439,15 +458,143 @@ describe('back-references (display-deps-v1 lexicon)', () => {
       'It lost power on takeoff [[case:A1B2C3]].',
       'The Piper also lost power [[case:A1B2C3]].',
       'Unlike the Grumman, the Piper had an annual [[case:A1B2C3]].',
+      // the 16d review's misses (refersBack was false for each)
+      'In the Vans case, a similar contamination caused a total loss of power [[case:WPR18LA021]].',
+      'In the Vans case, the engine failed again [[case:WPR18LA021]].',
+      'In the Piper case, a comparable error led to a fuel leak [[case:A1B2C3]].',
+      'In the Piper case, the engine lost power too [[case:A1B2C3]].',
+      'In the second case, the mechanic missed the crack [[case:A1B2C3]].',
+      'In the Piper case, a different cause was found [[case:A1B2C3]].',
+      'In the Piper case, the earlier inspection missed the crack [[case:A1B2C3]].',
+      'In the remaining case, the cause was not determined [[case:A1B2C3]].',
+      'In the Piper case, another loose fitting was found [[case:A1B2C3]].',
     ]) {
-      expect(refersBack(s), s).toBe(true);
+      expect(refersOutside(s), s).toBe(true);
     }
     for (const s of [
       'In the Grumman AA-5 case, the mechanic did not inspect the fuel system [[case:CEN15FA269]].',
       'In the Piper case, the engine lost all power after takeoff [[case:A1B2C3]].',
     ]) {
-      expect(refersBack(s), s).toBe(false);
+      expect(refersOutside(s), s).toBe(false);
     }
+  });
+
+  it('flags sentences that count or range over cases, which may cover cases they do not cite', () => {
+    for (const s of [
+      'In three of the four cases, maintenance came first [[case:A1B2C3]] [[case:D4E5F6]].',
+      'In all cases, the engine lost power [[case:A1B2C3]].',
+      'The other cases involved fuel lines [[case:A1B2C3]].',
+      'Both cases followed an annual inspection [[case:A1B2C3]] [[case:D4E5F6]].',
+      'In each of the six investigations, the fitting was loose [[case:A1B2C3]].',
+    ]) {
+      expect(countsCases(s), s).toBe(true);
+    }
+    expect(countsCases('In the Piper case, the engine lost all power after takeoff [[case:A1B2C3]].')).toBe(false);
+  });
+});
+
+describe('display projection (display-deps-v2): the 16d review\'s probes and fixes', () => {
+  /** The review's probe: two Grumman sentences, two Vans sentences, one of which compares with the Grumman's contamination. */
+  const PROBE = [
+    'In the Grumman case, water and debris contaminated the fuel system [[case:CEN15FA269]].',
+    'In the Grumman case, the contamination caused a partial loss of engine power [[case:CEN15FA269]].',
+    'In the Vans case, an unsecured alternator ground cable swage caused a total loss of engine power [[case:WPR18LA021]].',
+    'In the Vans case, a similar contamination caused a total loss of power [[case:WPR18LA021]].',
+    'In the Grumman case, the mechanic had completed the annual inspection [[case:CEN15FA269]].',
+    'In the Vans case, the pilot had installed new engine systems [[case:WPR18LA021]].',
+  ].join(' ');
+
+  it('the Vans/Grumman probe: rejecting a Grumman sentence also removes the Vans sentence that compares with it', () => {
+    const b = built(composition({ summary: PROBE }), WINDOW);
+    expect(b.plan.sentences.map((x) => x.reference)).toEqual([false, false, false, true, false, false]);
+    // v1 kept sentence 3 ("a similar contamination") after the Grumman sentences went; v2 removes it, and the Vans case's own sentences with it.
+    const d = project(b, { 'summary.0': 'not_established' });
+    expect(d.sentences).toEqual([false, false, false, false, false, false]);
+    expect(d).toMatchObject({ shown: false, removedSentences: 6, withheld: ['display_removed_share', 'display_minimum_content'] });
+    // Any sentence it could refer to is enough: a later one too.
+    expect(project(b, { 'summary.4': 'not_established' }).removedSentences).toBe(6);
+  });
+
+  it('a count sentence depends on every presented case, cited or not', () => {
+    const summary = [SENTENCES.a, SENTENCES.b, 'In three of the four cases, maintenance came first [[case:CEN15FA269]].'].join(' ');
+    const b = built(composition({ summary }), WINDOW);
+    expect(b.plan.sentences.map((x) => [x.reference, x.set])).toEqual([
+      [false, false],
+      [false, false],
+      [true, true],
+    ]);
+    // B's reading goes (its why line): the count sentence, which cites only A, goes too.
+    const d = project(b, { [`case.${B}.why`]: 'not_established' });
+    expect(d.sentences[2]).toBe(false);
+  });
+
+  it('conflicting timing facts are shown together or not at all (16d review m3)', () => {
+    const b = built(composition(), WINDOW);
+    // A's 2 days and 40 days conflict: one group of two chips.
+    expect(b.plan.together).toEqual([[`case.${A}.timing.0`, `case.${A}.timing.1`]]);
+    const d = project(b, { [`case.${A}.timing.1`]: 'not_established' });
+    expect(removedKeys(b, d)).toEqual(expect.arrayContaining([`case.${A}.timing.0`, `case.${A}.timing.1`]));
+    expect(render(b, d).cases.find((c) => c.case.ntsbNo === A)!.reading!.timing).toEqual([]);
+    // Without the conflict, removing one fact leaves the other.
+    const one = built(
+      composition({
+        cases: composition().cases.map((k) =>
+          k.ntsbNo === A ? { ...k, chronology: { maintenance: 'the annual inspection', facts: [fact('calendar_days', { value: 2, bound: 'exact', passageIds: [hex(1)] }), fact('flight_hours', { value: 1.5, bound: 'exact', passageIds: [hex(2)] })] } } : k,
+        ),
+      }),
+      WINDOW,
+    );
+    expect(one.plan.together).toEqual([]);
+  });
+
+  it('a suppressed case\'s classification is removed with its group placement and counted (16d review m4)', () => {
+    const b = built(composition({ summary: [SENTENCES.a, SENTENCES.b, 'In the Vans case, the airplane landed in a field [[case:WPR18LA021]].'].join(' ') }), WINDOW);
+    const d = project(b, { [`case.${A}.quote.1`]: 'contradicted' });
+    expect(d.cases.find((c) => c.ntsbNo === A)).toMatchObject({ reading: true, grouped: false, suppressed: true });
+    expect(removedKeys(b, d)).toContain(`case.${A}.classification`);
+    expect(d.counts.removed.classification).toBe(1);
+    expect(render(b, d).cases.find((c) => c.case.ntsbNo === A)!.notVerified).toContain('classification');
+  });
+});
+
+describe('display projection (display-deps-v2): static abstentions (Task 16e)', () => {
+  it('an excerpt that needs its context is never shown, even when the checker confirms it; the case keeps its other quote', () => {
+    const b = built(composition(), WINDOW, true, { [`case.${A}.quote.1`]: ['demonstrative'] });
+    expect(b.plan.claims.find((c) => c.key === `case.${A}.quote.1`)!.abstain).toBe('excerpt_context');
+    const d = project(b);
+    expect(d.shown).toBe(true);
+    expect(d.removal[b.claims.findIndex((m) => m.key === `case.${A}.quote.1`)]).toBe('static');
+    expect(d.counts.abstained).toEqual({ excerpt_context: 1, ordinal_evidence: 0 });
+    expect(d.cases.find((c) => c.ntsbNo === A)).toMatchObject({ reading: true, excerptsOmitted: 1, removed: [] });
+    const r = render(b, d);
+    const card = r.cases.find((c) => c.case.ntsbNo === A)!;
+    expect(card.reading!.quotes.map((q) => q.text)).toEqual(['Passage one quote']);
+    expect(card.quotesOmitted).toBe(1);
+    expect(card.notVerified).toBeUndefined();
+    expect(r.check).toMatchObject({ rules: 'display-deps-v2', omitted: { excerpts: 1, ordinals: 0 }, removed: { attribution: 1 } });
+    expect(JSON.stringify(r)).not.toContain('Passage two quote');
+  });
+
+  it('a case whose every excerpt needs its context has no reading; in whole mode any abstention withholds', () => {
+    const summary = [SENTENCES.b, 'In the Vans case, the pilot landed in a field [[case:WPR18LA021]].', SENTENCES.a].join(' ');
+    const b = built(composition({ summary }), WINDOW, true, { [`case.${A}.quote.0`]: ['leading_reference'], [`case.${A}.quote.1`]: ['relative_time'] });
+    const d = project(b);
+    expect(d).toMatchObject({ shown: true, sentences: [true, true, false] });
+    expect(d.cases.find((c) => c.ntsbNo === A)).toMatchObject({ reading: false, excerptsOmitted: 2 });
+    expect(render(b, d).cases.find((c) => c.case.ntsbNo === A)).toMatchObject({ reading: null, quotesOmitted: 2 });
+    expect(project(b, {}, 'whole')).toMatchObject({ shown: false, withheld: ['display_whole_brief'] });
+    // The oracle (every claim confirmed) keeps the abstention: it is the static floor of what can be shown.
+    expect(oracleDisplay(b.plan, 'claims').cases.find((c) => c.ntsbNo === A)!.reading).toBe(false);
+  });
+
+  it('a summary sentence stating a flight ordinal without explicit evidence in its passages is never shown (ordinal-evidence-v2)', () => {
+    const summary = [SENTENCES.a, SENTENCES.b, 'In the Vans case, the engine quit on the third flight after the installation [[case:WPR18LA021]].'].join(' ');
+    const b = built(composition({ summary }), WINDOW);
+    expect(b.plan.claims.find((c) => c.key === 'summary.2')!.abstain).toBe('ordinal_evidence');
+    const d = project(b);
+    // B's own sentences stand together: sentence 1 goes with it; 2 of 3 removed withholds.
+    expect(d).toMatchObject({ shown: false, removedSentences: 2 });
+    expect(oracleDisplay(b.plan, 'claims').shown).toBe(false);
   });
 });
 
