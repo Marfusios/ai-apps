@@ -1,9 +1,9 @@
 /**
  * Anthropic adapter for the language-model stages (DESIGN §6 and §9 "Anthropic call
  * settings"): structured outputs through `messages.parse`, each stage's effort
- * (`STAGE_EFFORT`: `low` everywhere), thinking off wherever the model allows it, a cached
- * frozen system prompt, no retries, prefill, sampling parameters, server tools or refusal
- * fallbacks.
+ * (`STAGE_EFFORT`: `low`, `medium` for the check), thinking off wherever the model allows
+ * it (adaptive for the check), a cached frozen system prompt, no retries, prefill, sampling
+ * parameters, server tools or refusal fallbacks.
  */
 import Anthropic, {
   APIConnectionError,

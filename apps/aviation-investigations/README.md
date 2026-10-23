@@ -762,15 +762,17 @@ that selection. The 16d runner (`run.ts`, protocol v2) stays as the record.
   (`AVIATION_RETRIEVAL_VERSION`) and records it in `source.retrievalVersion`; both
   committed evidence files predate retrieval versions and were retrieved under
   `retrieval.v1`.
-- **Figures** (`metrics.ts`). Verdicts: semantic detection per family (failed calls
-  apart, as blocked output, never as detections), false flags by claim kind, critical
-  regressions, `chronology_missed`. Display, through the production projection
-  (`display-deps-v1`, `claims` mode, and `whole` for comparison): M1 supported claims
-  shown, M2 wholly supported briefs shown with minimum useful content, M3 error claims
-  shown per family, M4 error briefs showing an error, M5 dependency violations, and the
-  exposure figures. Intervals are clustered by source bundle. Latency and output size
-  are reported by claim count and for the maximum-size inputs. Run summaries are in
-  `evals/checker/results/`.
+- **Figures** (`metrics.ts`, `checker-metrics-v3` since Task 16e). Verdicts: semantic
+  detection per family (failed calls and missing verdicts apart, as blocked output, never
+  as detections), false flags by claim kind, critical regressions, `chronology_missed`.
+  Display, through the production projection (`display-deps-v2`, `claims` mode, and
+  `whole` for comparison): M1 supported claims shown and M2 wholly supported briefs shown
+  with minimum useful content, both as answer retention against the static floor (what
+  the deterministic rules allow; their abstentions are reported apart) and as displayed
+  retention; M3 error claims shown per family, M4 error briefs showing an error, M5
+  dependency violations, and the exposure figures. Intervals are clustered by source
+  bundle. Latency and output size are reported by claim count and for the maximum-size
+  inputs. Run summaries are in `evals/checker/results/`.
 
 **Task 16c result** (2026-10-23, $1.98 of its $3 limit): no configuration met every target.
 Eight development runs (Haiku 5.5 without thinking, with adaptive thinking, and Sonnet 5.5
@@ -794,6 +796,26 @@ pilot (nine new bundles, 123 calls, run once) is inconclusive by design and is n
 75 error briefs showing an error, 2 unsupported claims among 1,961 shown; p50 15.7 s, p95 23.3 s.
 Production keeps whole-brief display (`AI_PARTIAL_DISPLAY` off) until gate G6 reviews these
 results (DESIGN §12).
+
+**Task 16e result** (2026-10-23, $1.47 of its $2.50 allocation; summaries in
+`evals/checker/results/16e-*.json`): two deterministic rules now decide, whatever the checker
+says, what is never shown (`excerpt-context-v1`, `ordinal-evidence-v2`; DESIGN §3). On a blind
+sample drawn from the 16e evidence after the excerpt rule was frozen, it left out 7 of 166
+sentences that stand alone (4.2%; 95% interval 2.1–8.4%) and caught 18 of 34 that need their
+context. Neither development candidate (`check.v9` at effort `low`, then `medium`; 179 calls
+each over every 16c and 16d item, labels v3) met every target, and the pre-registered fallback
+froze `haiku-think-v9-medium`, which production runs: in development it kept 84.9% of the
+supported claims the rules allow (target 90%) and 32 of 36 supported-brief trials (target
+90%), and showed 3 of 396 errors (at most 1.3% in a family), no critical regression (69
+items), no error in 108 error briefs and no unsupported claim among 1,993 shown. The held-out
+pilot (nine new `retrieval.v2` bundles, 105 calls, run once) is inconclusive by design and is
+not a pass: it showed none of 158 errors (every one of 44 critical items withheld) and no
+unsupported claim, but kept only 183 of 770 supported claims (23.8%) and 7 of 26
+supported-brief trials; eleven claims carry most of its false flags, and a reading after the
+run found several of them mislabelled (DESIGN §12). The pilot's checks took 23.3 s at p50 and
+31.7 s at p95; the 60-claim development checks took 39 to 51 s, one over the 45 s check
+timeout. Production keeps whole-brief display (`AI_PARTIAL_DISPLAY` off) until gate G6
+reviews these results.
 
 ### Web client
 
@@ -1079,8 +1101,9 @@ passages as delimited untrusted data in the user turn, and returns a Zod-validat
 object with normalized usage (input, output including thinking, cache write, cache
 read), provider, model and prompt version. The OpenAI adapter is not built yet.
 
-Anthropic calls use `messages.parse` with structured outputs, effort `low`, no
-retries, a cached system prompt, and no prefill, sampling parameters or refusal
+Anthropic calls use `messages.parse` with structured outputs, an effort per stage
+(`STAGE_EFFORT`: `low` for scope and compose, `medium` for the check since Task 16e's
+selection), no retries, a cached system prompt, and no prefill, sampling parameters or refusal
 fallbacks. Thinking is a stage's setting (`STAGE_THINKING`): off for scope and
 compose, adaptive for the check (the checker calibration's choice). Off is `disabled`
 on Haiku 5.5 and `between_tools` on Sonnet 5.5; Opus 5.5 cannot turn it off. Thinking
@@ -1327,8 +1350,8 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    never be shown (DESIGN §3): `excerpt-context-v1` omits a quote whose words depend on
    text outside it, and `ordinal-evidence-v2` keeps a flight ordinal only on explicit
    evidence; what they abstain from is still checked. The check stage (`check.v9`, 45 s, at most 60 claims;
-   Haiku 5.5 with adaptive thinking, the configuration the checker calibration froze,
-   below) reads a server-built header per case (aircraft, place, date) and gives every
+   Haiku 5.5 with adaptive thinking at effort `medium`, the configuration the checker
+   calibration froze, below) reads a server-built header per case (aircraft, place, date) and gives every
    claim, by its server-issued id, exactly one verdict (`supported`, `contradicted` or
    `not_established`) against every verified passage of each case. Code judges it
    (`verdicts.ts`): a claim is confirmed only by a valid `supported` verdict naming

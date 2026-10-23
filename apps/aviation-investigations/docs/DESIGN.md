@@ -741,7 +741,9 @@ gets its full timeout after slow earlier stages; Task 16c's 90 seconds were less
 sum), per-stage timeouts within it (each cut to what is left), and a longer lease TTL
 (120 seconds; a running step is stale after 150). A call that runs out of time settles
 uncertain and is charged its whole reservation, because the provider may still bill it.
-The check timeout is the one the calibration ran with (Task 16d gate condition 4).
+The check timeout is the one the calibration ran with (Task 16d gate condition 4); since
+Task 16e it is derived from the measured latency (1.25 times the slowest development call,
+within 30 to 45 seconds), which kept 45 seconds (§12).
 Settlements/releases require the current ownership token. A retry
 finding running/expired work returns its state/result, never silently starts a
 second pipeline. Expiry can free a local execution slot but not reserved money.
@@ -801,7 +803,7 @@ implementing.
 | --- | --- | --- |
 | Scope/plan | `claude-haiku-5-5`, thinking disabled, effort `low` | $0.10 / $0.50 (prompts ≤100K tokens) |
 | Evidence comparison | `claude-opus-5-5`, effort `low` (thinking cannot be disabled) | $4 / $20 |
-| Output check | `claude-haiku-5-5`, adaptive thinking, effort `low` (the calibrated configuration, below) | $0.10 / $0.50 |
+| Output check | `claude-haiku-5-5`, adaptive thinking, effort `medium` (the calibrated configuration, §12; `low` until Task 16e) | $0.10 / $0.50 |
 | Cheaper answer candidates | `claude-sonnet-5-5` / `claude-haiku-5-5` | $2 / $10 and $0.10 / $0.50 |
 | Embeddings | OpenAI `text-embedding-3-small` | $0.02 input |
 
@@ -831,7 +833,7 @@ estimated from those sizes and, for the check, from the calibration's settled us
 | --- | --- | --- |
 | Scope | 3,250 / 150 | $0.0004 |
 | Answer | 13,000 / 2,600, including about 800 thinking tokens | $0.104 on Opus 5.5 |
-| Check | 10,400 (4,500 of it the cached prefix) / 3,900, including about 3,100 thinking tokens | $0.0026 |
+| Check | 11,700 (4,500 of it the cached prefix) / 5,400, including about 4,600 thinking tokens at effort `medium` (Task 16e's selection; about 3,600 and 2,700 at `low`) | $0.0035 |
 | Embedding | — | ~$0 |
 
 Total per request:
@@ -853,7 +855,7 @@ synthetic worst cases of `pnpm worker ai-preflight`):
 | --- | --- | --- | --- |
 | Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
 | Answer | 28,000 | 11,000, including thinking | fixed 5,673 (`compose.v8`); a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 23,213 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,600, and the measured stress cases fit without re-packing; output at its schema bounds (six cases, each with four chronology facts naming their anchors) 8,000 plus 1,500 for thinking |
-| Check | 40,000 | 24,500, including thinking | fixed 4,684 (`check.v9`); a full bundle's complete evidence with 60 claims (`MAX_CHECK_CLAIMS`) 26,969; the visible output at its schema bounds (a verdict for each of 60 claims, each naming 12 passages, and eight 1,000-character quotes) 6,461, plus a 15,000-token thinking allowance (the most measured at effort `low`: 9,180 thinking tokens on a 60-claim check in the Task 16e development round, against 8,178 in 16d's and 4,915 and 5,545 on 16c's development and held-out checks) |
+| Check | 40,000 | 24,500, including thinking | fixed 4,684 (`check.v9`); a full bundle's complete evidence with 60 claims (`MAX_CHECK_CLAIMS`) 26,969; the visible output at its schema bounds (a verdict for each of 60 claims, each naming 12 passages, and eight 1,000-character quotes) 6,461, plus a 15,000-token thinking allowance (the most measured: 11,408 thinking tokens and 13,405 output tokens on a 60-claim check at effort `medium` in the Task 16e development round, 9,180 at effort `low`, against 8,178 in 16d's and 4,915 and 5,545 on 16c's development and held-out checks) |
 | Embedding | 1,000 | — | — |
 
 The models read passage ids as short aliases (`P1`..`P12`): a 64-character id costs
@@ -953,9 +955,9 @@ from measured request sizes; the paid runs' settled usage replaces them.
 **Capacity trade-off** (the owner's decision after the paid run): the Opus answer
 model's $0.36 reservation is mostly its output cap (11,000 tokens, including room for
 thinking), so it admits about 21 briefs and 3 to 4 anonymous searches a day. The
-calibrated checker (Haiku with adaptive thinking, `check.v9` since Task 16e) adds about
-$0.003 to a typical brief, and its 15,000-token thinking allowance about $0.0075 to the worst
-case. Sonnet roughly
+calibrated checker (Haiku with adaptive thinking at effort `medium`, `check.v9` since Task
+16e) adds about $0.0035 to a typical brief, and its 15,000-token thinking allowance about
+$0.0075 to the worst case. Sonnet roughly
 doubles both at half the cost per brief; a lower answer output cap or a larger anonymous
 share would also raise them, at the cost of truncated answers or of signed-in capacity.
 The anonymous share and daily caps stay as they are. Opus 5.5 stays the default answer
@@ -1243,6 +1245,79 @@ retrieval version, but `retrieval.v2` bundles can hold cases the cases-index cha
 which the calibration has not seen. Production keeps whole-brief display until gate G6 reviews
 these results.
 
+**Deterministic rules and re-calibration** (Task 16e, gate G6's 16d verdict;
+`evals/checker/protocol.v3.ts`, protocol v3.1: committed before any paid 16e call and before
+the 16e held-out set existed, and amended once, before any paid call, to ordinal rule v2).
+The check now runs behind §3's deterministic rules (`excerpt-context-v1`,
+`ordinal-evidence-v2`), with `check-judgement-v2` (a `supported` verdict naming a passage
+outside the claim's citations does not confirm it), `display-deps-v2`, `check.v9` and
+`compose.v8`. The targets are 16d's, with M4 now part of the eligibility. M1 and M2 are answer
+retention (`checker-metrics-v3`): the supported claims and wholly supported briefs the
+projection shows, over those its static floor (the projection under a checker that confirms
+everything) shows; the rules' own abstentions are reported apart, with the displayed retention
+beside them. Without an eligible candidate the order is critical regressions, M4, the highest
+family's M3, M2, M1, then the lower effort. Every 16c and 16d item is development now (labels
+v3: the errata overlay `checker-errata-v1`, each correction with its source and reason).
+
+Offline, before any paid call, the 16d recordings of `haiku-think-v8` went through the 16e
+projection with labels v3 (`results/16e-simulation.json`). Development: 1 of 227 errors shown,
+no error brief showing an error (36), all 11 critical items withheld, M1 323 of 396 (81.6%), M2
+15 of 18. The 16d held-out pilot: 0 of 183 errors shown (16d showed two context-losing
+excerpts), 0 of 78 error briefs, all 58 critical items withheld, M1 797 of 1,056 (75.5%), M2 29
+of 36. The rules alone removed 53 of 227 and 32 of 183 errors, and 0 of 396 and 6 of 1,062
+supported claims.
+
+| Development run (179 calls; 36 supported-brief trials, 396 errors, 69 critical) | M1 | M2 | M3 shown: timing; attribution; contradiction; addition | Critical never shown | M4 | E1; E2 | Semantic detection; false flags | p50 / p95 / max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Haiku 5.5, adaptive thinking, `check.v9`, effort `low` | 722 of 968 (74.6%) | 29 of 36 | 4 of 154; 0 of 97; 0 of 86; 2 of 59 | 68 of 69 | 0 of 108 | 0 of 1,824; 0 of 74 | 375 of 396; 449 of 4,468 (10.0%) | 14.1 / 27.3 / 42.4 s |
+| **Haiku 5.5, adaptive thinking, `check.v9`, effort `medium`** (frozen) | 822 of 968 (84.9%) | 32 of 36 | 2 of 154; 0 of 97; 1 of 86; 0 of 59 | 69 of 69 | 0 of 108 | 0 of 1,993; 0 of 80 | 384 of 396; 138 of 4,468 (3.1%) | 19.9 / 38.2 / 51.0 s |
+
+In both rounds the rules abstained from 41 excerpts and 39 ordinal statements, which removed
+71 of the 396 errors and 4 of the 972 supported claims. Under whole-brief display the same
+trials show 19 and 15 of the 36 supported briefs. At effort `medium` the checker thought on
+every call (31 calls at `low` did not) and flagged about a third as many supported claims (138
+against 449), so it kept more; neither round reached M1 or M2. The fallback order froze `haiku-think-v9-medium`
+(`selection.v3.json`: critical 69 of 69, M4 0%, the highest family's M3 1.3%, M2 88.9%, M1
+84.9%), and production checks at effort `medium` since. The derived check timeout, 1.25 times
+the slowest development call (51.0 s), is above the 45 s ceiling, so it stays 45 s: the six
+60-claim checks took 39.5 to 51.0 s at `medium` (one over, counted as a failed call in every
+figure; in production it withholds the summary), with at most 11,408 thinking tokens.
+
+**Held-out pilot** (run once with `haiku-think-v9-medium`;
+`results/16e-holdout-haiku-think-v9-medium.json`): the first nine `retrieval.v2` bundles of the
+16e questions with at least four cases and no case of an earlier split, each with a brief as
+`compose.v8` would write it, its one-error, mixed-error and reading variants and a claim batch
+(92 batches, 105 calls, 158 error claims, 44 critical items), labels frozen before any 16e
+checker output. With nine bundles it is inconclusive by design, and nothing in it is a pass.
+
+| Held-out pilot (26 supported-brief trials, 158 errors, 44 critical, 9 bundles) | Result | Clustered 95% |
+| --- | --- | --- |
+| M1 supported claims shown (the static floor removed none) | 183 of 770 (23.8%) | 6–55% |
+| M2 supported briefs shown (whole-brief rule: 2 of 26) | 7 of 26 (26.9%) | 6–55% |
+| M3 errors shown: timing; attribution; contradiction; addition | 0 of 67; 0 of 29; 0 of 44; 0 of 18 | upper bound 30% each |
+| Critical regressions never shown | 44 of 44 | |
+| M4 error briefs showing an error | 0 of 70 | 0–30% |
+| E1 unsupported among shown claims; E2 shown briefs carrying one | 0 of 544; 0 of 22 | 0–39% each |
+| Semantic detection; false flags | 155 of 158 (two of the other three in blocked output); 128 of 2,860 (4.5%) | |
+| p50 / p95 / max | 23.3 / 31.7 / 37.5 s, none over 45 s | |
+
+The pilot showed no error, and withheld 19 of the 26 supported-brief trials (17 for the share
+of removed sentences, 4 for two contradicted claims, 3 below the minimum content, 1 for a
+structurally unusable output; a trial can have several reasons). Eleven claims, repeated
+across their bundles' variants, carry 106 of the 128 false flags. A reading of those claims
+after the run, outside the pre-registered figures (which stand), found errors in the held-out
+labels as authored: two `why` lines stating a fact from a passage they do not cite ("after he
+replaced the main fuel tank lines", "during the initial climb"), a quote "The pilot reported
+that …" labelled as the investigators' own words, a timing claim saying a passage does not
+call the interval flight hours where it says "1 hour of flight", and a gap note a preflight
+inspection passage contradicts; the others are readings a reviewer could take either way
+(whether investigators established a fault as the cause or a defect as not causal, whether
+maintenance contributed). Read as `unknown` (a sensitivity reading, not a result), they leave
+22 false flags of 2,724 and only 4 wholly supported brief trials, too few to say anything about
+M2. These are the first calibration bundles retrieved under `retrieval.v2`, the production
+default; the development split stays `retrieval.v1`. Production keeps whole-brief display until
+gate G6 reviews these results.
+
 Network-independent tests run in CI. Prepared-dataset ("offline") evaluations can
 call real models: run them only as explicit, budgeted jobs, recording dataset,
 corpus, prompt, model, evaluator, and code versions. Missing/failed required scores
@@ -1251,8 +1326,9 @@ indexing/evaluation allocation and shared paid-call gate; Langfuse cost charts d
 not enforce the app's spending limit. Aim for
 subsecond cached browsing and roughly ten-second AI responses, then measure on
 the target host; these are targets, not observed benchmarks. The calibrated checker alone
-takes about 15 to 30 seconds (p50 to p95 in the Task 16d runs), so a brief takes longer than
-that today.
+takes about 20 to 38 seconds (p50 to p95 at effort `medium` in the Task 16e development round;
+up to 51 seconds for a 60-claim check, over its 45-second timeout), so a brief takes longer
+than that today.
 
 ## 13. Delivery plan
 
