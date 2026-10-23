@@ -30,6 +30,20 @@ export function PrintHeader({ title, cases, snapshotDate }: { title: string; cas
 }
 
 /**
+ * The element id a link's hash names (`#probable-cause`), or null. A hash with a malformed
+ * percent-escape (`#%`, `#analysis%E`) names nothing: it never breaks the page (Task 22
+ * review W-1).
+ */
+export function hashTarget(hash: string): string | null {
+  if (hash.length < 2) return null;
+  try {
+    return decodeURIComponent(hash.slice(1));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `brief` and `step` of a case or compare link opened from a brief, or null. A link with
  * a malformed reference reads as a brief that is gone (`invalid`).
  */
@@ -73,8 +87,9 @@ export function CasePage() {
   const inCompare = compare.selected.includes(ntsbNo);
 
   useEffect(() => {
-    if (!query.data || !location.hash) return;
-    document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+    if (!query.data) return;
+    const target = hashTarget(location.hash);
+    if (target) document.getElementById(target)?.scrollIntoView?.();
   }, [query.data, location.hash]);
 
   const toggle = (): void => {
