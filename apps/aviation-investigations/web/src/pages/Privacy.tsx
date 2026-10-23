@@ -16,7 +16,9 @@ export function Privacy() {
       <p>
         If you choose Day or Night, that choice is kept in your browser’s local storage on this device only. If an AI
         search gets no reply, this tab’s session storage keeps a one-way hash of the request and a random retry key, so
-        trying again within 24 hours isn’t counted twice.
+        trying again within 24 hours isn’t counted twice. Your first AI search also sets a cookie that holds a random ID
+        for 30 days; the site uses it only to count and limit your free searches and to show each AI answer to you alone,
+        and scripts on the page cannot read it.
       </p>
       <h2>On our servers</h2>
       <p>
