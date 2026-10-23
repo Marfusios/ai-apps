@@ -4,9 +4,9 @@
  *
  *   build         [--generation <id>] [--out <file>] [--dry-run | --check]   the question set (PostgreSQL, read-only)
  *   calibration   --generation <id> [--out <file>] [--check]                 the calibration sets, labels frozen
- *   plan          [--samples 1|3]                                            the free dry run: preflight, inventory, cost
+ *   plan          [--samples 1|3] [--allocation-usd <usd>]                   the free dry run: preflight, inventory, cost, the month's sequence
  *   pools         [--samples 1|3] [--confirm-cost --allocation <name>]       paid: scope samples and query embeddings; builds the pools
- *   judge         --set calibration --split dev|holdout [--confirm-cost --allocation <name>]
+ *   judge         --set calibration --split dev|holdout [--max-pairs <n>] [--confirm-cost --allocation <name>]
  *   judge         --set relevance --pools <file> [--stage 1|2] [--confirm-cost --allocation <name>]
  *   answerability --pools <file> [--confirm-cost --allocation <name>]
  *   report        [--pools <file>] --judgments <a,b,...>                     free: metrics and diagnostics
@@ -31,9 +31,9 @@ import { judgeCommand, planCommand, poolsCommand, reportCommand } from './comman
 export const USAGE = [
   'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]',
   '       pnpm eval:retrieval:narrative calibration [--env-files <a,b>] --generation <id> [--out <file>] [--check]',
-  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--out-dir <dir>]',
+  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--allocation-usd <usd>] [--out-dir <dir>]',
   '       pnpm eval:retrieval:narrative pools [--samples 1|3] [--max-usd <usd>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
-  '       pnpm eval:retrieval:narrative judge --set calibration --split dev|holdout [--max-usd <usd>] [--concurrency <n>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
+  '       pnpm eval:retrieval:narrative judge --set calibration --split dev|holdout [--max-pairs <n>] [--max-usd <usd>] [--concurrency <n>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
   '       pnpm eval:retrieval:narrative judge --set relevance --pools <file> [--stage 1|2] [--max-usd <usd>] [--concurrency <n>] [--max-escalation-share <share>] [--confirm-cost --allocation <name>] ...',
   '       pnpm eval:retrieval:narrative answerability --pools <file> [--confirm-cost --allocation <name>] ...',
   '       pnpm eval:retrieval:narrative report [--pools <file>] --judgments <a,b,...> [--out-dir <dir>]',
@@ -72,6 +72,7 @@ export async function main(argv: string[]): Promise<number> {
       stage: { type: 'string' },
       allocation: { type: 'string' },
       'allocation-usd': { type: 'string' },
+      'max-pairs': { type: 'string' },
     },
     allowPositionals: true,
     strict: true,
@@ -128,8 +129,8 @@ export async function main(argv: string[]): Promise<number> {
   const config = experimentAppConfig(values['env-files'], values['keys-file']);
   const base = { config, outDir, confirm: values['confirm-cost'] === true, log };
   const maxUsd = positiveNumber(values['max-usd'], '--max-usd');
-  if (command === 'plan') return planCommand({ ...base, confirm: false, samples, broadSample: { bm25: 30, lure: 5, random: 5 } });
   const allocationUsd = positiveNumber(values['allocation-usd'], '--allocation-usd');
+  if (command === 'plan') return planCommand({ ...base, confirm: false, samples, broadSample: { bm25: 30, lure: 5, random: 5 }, ...(allocationUsd !== undefined ? { allocationUsd } : {}) });
   const allocation = { ...(values.allocation ? { allocation: values.allocation } : {}), ...(allocationUsd !== undefined ? { allocationUsd } : {}) };
   if (command === 'pools') return poolsCommand({ ...base, samples, ...(maxUsd !== undefined ? { maxUsd } : {}), ...allocation });
   const set = command === 'answerability' ? 'answerability' : values.set;
@@ -138,6 +139,7 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const concurrency = positiveNumber(values.concurrency, '--concurrency');
+  const maxPairs = positiveNumber(values['max-pairs'], '--max-pairs');
   const share = positiveNumber(values['max-escalation-share'], '--max-escalation-share');
   return judgeCommand({
     ...base,
@@ -148,6 +150,7 @@ export async function main(argv: string[]): Promise<number> {
     ...(values.pools ? { pools: values.pools } : {}),
     ...(maxUsd !== undefined ? { maxUsd } : {}),
     ...(concurrency !== undefined ? { concurrency: Math.floor(concurrency) } : {}),
+    ...(maxPairs !== undefined ? { maxPairs: Math.floor(maxPairs) } : {}),
     ...(share !== undefined ? { maxEscalationShare: share } : {}),
   });
 }

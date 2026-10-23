@@ -14,7 +14,7 @@ import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from '../../evals/retr
 import { llmPrice } from '../../server/ai/pricing.js';
 import { NarrativeDatasetSchema, type NarrativeItem } from '../../evals/retrieval/narrative/dataset.js';
 import type { PairRecord } from '../../evals/retrieval/narrative/judging.js';
-import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, caseCost, poolEstimates, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
+import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, caseCost, outputsFor, poolEstimates, protocolArithmetic, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
 import { POOL_RULE, assemblePool, bundlePairs, casePriority, poolFileVersion, verifyPoolFile, withFingerprints, type PoolFile, type PoolRun } from '../../evals/retrieval/narrative/pool.js';
 import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import {
@@ -415,6 +415,20 @@ describe('the dry run arithmetic', () => {
     const broad = e.find((x) => x.type === 'broad' && x.members === 1) as (typeof e)[number];
     expect(broad.mean).toBe(Math.round(PHASE_A_UNION[3].mean + POOL_RULE.hardNegatives + POOL_RULE.tail.near + POOL_RULE.tail.far + (d.questions.find((q) => q.id === broad.family)?.relatedPositives.length ?? 0) / 2));
     expect(poolEstimates(d, 1).reduce((n, x) => n + x.mean, 0)).toBeLessThan(e.reduce((n, x) => n + x.mean, 0));
+  });
+
+  it("splits each family's pairs into the schedule's stage 1 and the rest, and reproduces the protocol's own estimate", () => {
+    const d = dataset();
+    for (const e of poolEstimates(d, 3)) {
+      if (e.type === 'bounded-cohort') expect(e.stage1).toEqual({ mean: e.mean, max: e.max });
+      else {
+        expect(e.stage1.mean).toBeGreaterThan(0);
+        expect(e.stage1.mean).toBeLessThan(e.mean);
+      }
+    }
+    // Section 7 of the protocol: 2,500 pairs, 2,000 input and 200 output tokens, 15% to one Sonnet call: about $4.60.
+    expect(protocolArithmetic().usd.total).toBeCloseTo(4.6, 6);
+    expect(outputsFor('input')).toMatchObject({ a: 0, b: 0 });
   });
 
   it('prices calls with the cached prefix at the repository rates, with no override', () => {

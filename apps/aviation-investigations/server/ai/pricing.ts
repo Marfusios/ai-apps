@@ -10,7 +10,10 @@ import type { StageModels, StageUsage } from './provider.js';
 export interface TokenRates {
   readonly input: number;
   readonly output: number;
-  /** 5-minute cache write, the only TTL the adapters use. */
+  /**
+   * The cache write at the TTL the provider's adapter uses: Anthropic's 5-minute write;
+   * OpenAI's 30-minute write (its default lifetime), which the Track N evaluation judge uses.
+   */
   readonly cacheWrite: number;
   readonly cacheRead: number;
 }

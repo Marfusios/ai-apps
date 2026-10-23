@@ -70,6 +70,8 @@ import {
   type Measured,
   type RunCost,
   type Samples,
+  outputsFor,
+  protocolArithmetic,
 } from './plan.js';
 import { POOL_RULE, SCHEDULE, buildPools, bundlePairs, casePriority, indexCohort, poolFileVersion, tierOf, verifyPoolFile, withFingerprints, type FamilyPool, type PoolFile, type Stage } from './pool.js';
 import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
@@ -222,7 +224,7 @@ async function remainingAllowance(ctx: NarrativeContext): Promise<number | null>
 /** The members (questions) of the dataset as scope-stage items. */
 const scopeItems = (d: NarrativeDataset) => d.questions.map((q) => ({ id: q.id, question: q.question }));
 
-export async function planCommand(opts: CommandOptions & { samples: Samples; broadSample: { bm25: number; lure: number; random: number } }): Promise<number> {
+export async function planCommand(opts: CommandOptions & { samples: Samples; broadSample: { bm25: number; lure: number; random: number }; allocationUsd?: number }): Promise<number> {
   const { log } = opts;
   const ctx = await openContext(opts.config, log);
   try {
@@ -273,12 +275,15 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     await Promise.all(Array.from({ length: 4 }, worker));
     // Calibration items.
     const calMeasured: Measured[] = [];
+    const calSplit = new Map<Measured, 'dev' | 'holdout'>();
     for (const item of ctx.calibration.items) {
       const record = ctx.calibration.records[item.case.ntsbNo];
       const e = item.case.source === 'synthetic' ? (record ? controlEvidence(resolveRecord(record, ctx.calibration.fillers)) : undefined) : loaded.evidence.get(item.case.ntsbNo);
       const q = ctx.calibration.questions[item.question];
       if (!e || !q) continue;
-      calMeasured.push(item.kind === 'answerability' ? await measureBundle(haiku, item.question, q, e, itemPassages(e, item.bundle as ControlBundle)) : await measureCase(haiku, item.question, q, e));
+      const m = item.kind === 'answerability' ? await measureBundle(haiku, item.question, q, e, itemPassages(e, item.bundle as ControlBundle)) : await measureCase(haiku, item.question, q, e);
+      calMeasured.push(m);
+      calSplit.set(m, item.split);
     }
     // Sonnet counts like Haiku? A subset.
     const check = measured.filter((m) => m.chunks === 1).slice(0, 25);
@@ -323,6 +328,42 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     const poolBuilding = scope.upperUsd + (emb.inputTokens * emb.usdPerMillionTokens) / 1e6;
     const pooled = relevance.usd.total + answerability.usd.total + poolBuilding;
     const pooledBound = relevance.totalAtBoundUsd + answerability.totalAtBoundUsd + poolBuilding;
+    // The frozen schedule's stages (pool.ts SCHEDULE): stage 1, and what stage 2 adds.
+    const stageRuns = (part: 'stage1' | 'rest', escalation: number): RunCost =>
+      addRuns(estimates[opts.samples].map((e) => scaleRun(measured.filter((m) => m.family === e.family && !m.uncovered).map(costOf), part === 'stage1' ? e.stage1.mean : e.mean - e.stage1.mean, escalation)));
+    const stage1 = stageRuns('stage1', ASSUMPTIONS.escalationExpected);
+    const stage2 = stageRuns('rest', ASSUMPTIONS.escalationExpected);
+    // Calibration by split: dev first, then the holdout once (criteria.ts).
+    const calibrationOf = (split: 'dev' | 'holdout') => {
+      const mine = calMeasured.filter((m) => calSplit.get(m) === split);
+      return scaleRun(mine.map((m) => caseCost(m, defaultPrefix, block)), mine.length, ASSUMPTIONS.calibrationDisagreement, 1);
+    };
+    const calibrationDev = calibrationOf('dev');
+    const calibrationHoldout = calibrationOf('holdout');
+    // Where the relevance money goes, and the protocol's own estimate at the same prices (review M14).
+    const relevanceWith = (part: 'input' | 'visible' | 'full') =>
+      addRuns(estimates[opts.samples].map((e) => scaleRun(measured.filter((m) => m.family === e.family && !m.uncovered).map((m) => caseCost(m, prefixes.get(m.family) ?? defaultPrefix, block, outputsFor(part))), e.mean, ASSUMPTIONS.escalationExpected)));
+    const inputRun = relevanceWith('input');
+    const visibleRun = relevanceWith('visible');
+    const judges = (r: RunCost) => r.usd.judgeA + r.usd.judgeB;
+    const breakdown = {
+      judgesInputUsd: judges(inputRun),
+      judgesVisibleOutputUsd: judges(visibleRun) - judges(inputRun),
+      judgesReasoningUsd: judges(relevance) - judges(visibleRun),
+      adjudicationUsd: relevance.usd.adjudicator,
+      totalUsd: relevance.usd.total,
+      protocol: protocolArithmetic(),
+    };
+    // The month's sequence (the gate's ruling): canary, dev calibration, holdout once, pools, relevance stage 1, answerability.
+    const sequence = [
+      { step: 'canary: one dev calibration pair (--max-pairs 1 --max-usd 0.05)', expectedUsd: Math.min(0.05, calibrationDev.usd.total / Math.max(1, calibrationDev.pairs)), boundUsd: 0.05 },
+      { step: 'calibration, dev split, one pair at a time (--concurrency 1)', expectedUsd: calibrationDev.usd.total, boundUsd: calibrationDev.totalAtBoundUsd },
+      { step: 'calibration, holdout split, once', expectedUsd: calibrationHoldout.usd.total, boundUsd: calibrationHoldout.totalAtBoundUsd },
+      { step: 'pools (scope samples and query embeddings)', expectedUsd: poolBuilding, boundUsd: scope.reserveUsd + emb.reserveUsd },
+      { step: 'relevance, stage 1 (bounded cohorts; broad delivered and first-20 cases)', expectedUsd: stage1.usd.total, boundUsd: stage1.totalAtBoundUsd },
+      { step: 'answerability (every delivered bundle)', expectedUsd: answerability.usd.total, boundUsd: answerability.totalAtBoundUsd },
+    ];
+    const sequenceTotal = { expectedUsd: sequence.reduce((n, x) => n + x.expectedUsd, 0), boundUsd: sequence.reduce((n, x) => n + x.boundUsd, 0) };
     // Sensitivity of the pooled run (relevance and answerability, the chosen samples): judges' thinking or reasoning tokens, escalation share, batch pricing.
     const pooledWith = (reasoning: number, escalation: number) =>
       addRuns([
@@ -370,8 +411,13 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
       chunked: { sampled: measured.length, chunked: chunked.length, uncovered: measured.filter((m) => m.uncovered).length, cases: chunked.map((m) => ({ ntsbNo: m.ntsbNo, family: m.family, caseTokens: m.caseTokens, chunks: m.chunks })) },
       perFamily,
       sensitivity,
+      stages: { schedule: SCHEDULE, stage1: { pairs: stage1.pairs, run: stage1 }, stage2: { pairs: stage2.pairs, run: stage2 } },
+      month: { allocationUsd: opts.allocationUsd ?? null, sequence, total: sequenceTotal, nextMonth: { step: 'relevance, stage 2 (the rest of the pools)', expectedUsd: stage2.usd.total, boundUsd: stage2.totalAtBoundUsd } },
+      breakdown,
       costs: {
         calibration,
+        calibrationDev,
+        calibrationHoldout,
         relevance,
         relevanceLargestPools: relevanceMax,
         answerability,
@@ -384,7 +430,11 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
           judgeB: { typical: attemptReserveUsd(JUDGE_B, tokens.relevanceOpenai.mean), largest: attemptReserveUsd(JUDGE_B, tokens.relevanceOpenai.max) },
           adjudicator: { typical: attemptReserveUsd(ADJUDICATOR, tokens.relevanceClaude.mean + block), largest: attemptReserveUsd(ADJUDICATOR, tokens.relevanceClaude.max + block) },
           scope: inventory.perCallReserveUsd,
-          concurrentLargestUsd: (DEFAULT_CONCURRENCY * (attemptReserveUsd(JUDGE_A, tokens.relevanceClaude.max) + attemptReserveUsd(JUDGE_B, tokens.relevanceOpenai.max))),
+          // In flight at the default concurrency, at the largest inputs: both judges of each pair while judging, one adjudicator attempt per pair while escalating (review M10).
+          concurrentLargestUsd: {
+            judging: DEFAULT_CONCURRENCY * (attemptReserveUsd(JUDGE_A, tokens.relevanceClaude.max) + attemptReserveUsd(JUDGE_B, tokens.relevanceOpenai.max)),
+            adjudicating: DEFAULT_CONCURRENCY * attemptReserveUsd(ADJUDICATOR, tokens.relevanceClaude.max + block),
+          },
         },
       },
       remainingAllowanceUsd: remaining,
@@ -398,12 +448,30 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
       log(`  ${name.padEnd(32)} ${n(r.pairs, 6)} pairs  A ${n(r.calls.judgeA, 6)} / B ${n(r.calls.judgeB, 6)} / adj ${n(r.calls.adjudicator, 5)} calls  expected ${usd(r.usd.total)} (A ${usd(r.usd.judgeA)}, B ${usd(r.usd.judgeB)}, adj ${usd(r.usd.adjudicator)}); ${bound} ${usd(r.totalAtBoundUsd)}; every call at its caps ${usd(r.worstCaseUsd)}`);
     log('costs:');
     line(`(a) calibration (${ctx.calibration.items.length} items)`, calibration, 'with every item adjudicated');
+    line('    of which the dev split', calibrationDev, 'with every item adjudicated');
+    line('    of which the holdout split', calibrationHoldout, 'with every item adjudicated');
     line(`(b) relevance, ${opts.samples} scope sample(s)`, relevance);
     line('    with the largest pools', relevanceMax);
     line('    answerability', answerability);
     log(`  pool building (scope samples and embeddings): ${usd(poolBuilding)}`);
     log(`  (b) full pooled run: expected ${usd(pooled)}; at the escalation bound ${usd(pooledBound)}`);
     log(`  with ${alternative} scope sample(s) instead: relevance ${usd(relevanceAlt.usd.total)}, answerability ${usd(answerabilityAlt.usd.total)}`);
+    line('    relevance stage 1', stage1);
+    line('    relevance stage 2 (the rest)', stage2);
+    log(
+      `where the relevance money goes: judges' input ${usd(breakdown.judgesInputUsd)}, judges' visible output ${usd(breakdown.judgesVisibleOutputUsd)}, judges' reasoning ${usd(breakdown.judgesReasoningUsd)}, adjudication ${usd(breakdown.adjudicationUsd)}; ` +
+        `the protocol's estimate at the same prices (${breakdown.protocol.pairs} pairs, ${breakdown.protocol.input} input and ${breakdown.protocol.output} output tokens, ${breakdown.protocol.escalation * 100}% to one Sonnet call) ${usd(breakdown.protocol.usd.total)}`,
+    );
+    log(`this month's sequence${opts.allocationUsd !== undefined ? ` against an allocation of $${opts.allocationUsd}` : ''}:`);
+    let running = 0;
+    let runningBound = 0;
+    for (const x of sequence) {
+      running += x.expectedUsd;
+      runningBound += x.boundUsd;
+      log(`  ${x.step.padEnd(76)} expected ${usd(x.expectedUsd).padStart(9)} (cumulative ${usd(running)}), bound ${usd(x.boundUsd).padStart(9)} (cumulative ${usd(runningBound)})`);
+    }
+    if (opts.allocationUsd !== undefined) log(`  the sequence ${sequenceTotal.expectedUsd <= opts.allocationUsd ? 'fits' : 'does not fit'} the allocation at the expected cost (${usd(sequenceTotal.expectedUsd)}); at its bounds ${usd(sequenceTotal.boundUsd)}`);
+    log(`  next month, from the cache: relevance stage 2 expected ${usd(stage2.usd.total)}, at the escalation bound ${usd(stage2.totalAtBoundUsd)}`);
     log('sensitivity of the full pooled run (judges\' thinking or reasoning tokens per call, escalation share; batch pricing halves every model call):');
     for (const x of sensitivity) log(`  reasoning ${String(x.reasoningTokens).padStart(5)}  escalation ${(x.escalation * 100).toFixed(0).padStart(2)}%  ${usd(x.totalUsd).padStart(9)}  with batch APIs ${usd(x.withBatchApisUsd)}`);
     log(`remaining evaluation allowance: ${remaining === null ? 'not readable with the app role' : usd(remaining)}`);
@@ -771,6 +839,8 @@ export async function judgeCommand(
     maxEscalationShare?: number;
     allocation?: string;
     allocationUsd?: number;
+    /** Judge only the first `maxPairs` pairs of the schedule (the canary). */
+    maxPairs?: number;
   },
 ): Promise<number> {
   const { log } = opts;
@@ -799,6 +869,7 @@ export async function judgeCommand(
         items = r.items;
       }
     }
+    if (opts.maxPairs !== undefined) items = [...items].sort(byPriority).slice(0, opts.maxPairs);
     const experiment = experimentIdentity(opts.set, experimentData(opts.set, ctx.dataset, ctx.calibration, pools) as ExperimentData);
     if (opts.set === 'calibration' && opts.split !== 'dev' && opts.confirm) guardHoldout(opts.outDir, ctx.calibration.labels.sha256, experiment);
     const share = opts.maxEscalationShare ?? (opts.set === 'calibration' ? 1 : ASSUMPTIONS.escalationBound);

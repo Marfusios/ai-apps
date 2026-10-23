@@ -48,6 +48,13 @@ export const PHASE_A_UNION = Object.freeze({ 1: { mean: 111.5, max: 133 }, 3: { 
 export const PHASE_A_PARAPHRASE_ADDS = Object.freeze({ 1: { mean: 27.5, max: 51 }, 3: { mean: 32.3, max: 73 } });
 /** Distinct delivered (case, passages) pairs per question over the three methods and the samples. */
 export const PHASE_A_BUNDLE_PAIRS = Object.freeze({ 1: { mean: 8.7, max: 11 }, 3: { mean: 11.5, max: 18 } });
+/** The same runs' union of their first 20 unique cases (stage 1 of a broad question: its delivered and first-20 cases). */
+export const PHASE_A_TOP20 = Object.freeze({ 1: { mean: 26.2, max: 33 }, 3: { mean: 30, max: 41 } });
+/** A paraphrase's addition to the first-20 union: the depth-100 addition scaled by the unions' ratio (an estimate). */
+export const PHASE_A_PARAPHRASE_ADDS_TOP20 = Object.freeze({
+  1: { mean: (27.5 * 26.2) / 111.5, max: (51 * 33) / 133 },
+  3: { mean: (32.3 * 30) / 126.3, max: (73 * 41) / 163 },
+});
 
 export const ASSUMPTIONS = Object.freeze({
   escalationExpected: 0.15,
@@ -67,6 +74,8 @@ export interface FamilyPoolEstimate {
   /** Relevance pairs; exact for a bounded cohort. */
   mean: number;
   max: number;
+  /** Stage 1 of the schedule (pool.ts `SCHEDULE`): every bounded-cohort case, or a broad question's delivered and first-20 cases. */
+  stage1: { mean: number; max: number };
   answerabilityPairs: { mean: number; max: number };
 }
 
@@ -76,7 +85,7 @@ export function poolEstimates(d: NarrativeDataset, samples: Samples): FamilyPool
     const members = membersOf(d, f.id);
     const paraphrases = members.length - 1;
     const pairs = { mean: PHASE_A_BUNDLE_PAIRS[samples].mean * members.length, max: PHASE_A_BUNDLE_PAIRS[samples].max * members.length };
-    if (f.type === 'bounded-cohort') return { family: f.id, type: f.type, members: members.length, mean: f.cohort.size, max: f.cohort.size, answerabilityPairs: pairs };
+    if (f.type === 'bounded-cohort') return { family: f.id, type: f.type, members: members.length, mean: f.cohort.size, max: f.cohort.size, stage1: { mean: f.cohort.size, max: f.cohort.size }, answerabilityPairs: pairs };
     const extra = POOL_RULE.hardNegatives + POOL_RULE.tail.near + POOL_RULE.tail.far;
     const capped = (x: number) => Math.min(f.cohort.size, Math.round(x));
     return {
@@ -85,6 +94,10 @@ export function poolEstimates(d: NarrativeDataset, samples: Samples): FamilyPool
       members: members.length,
       mean: capped(PHASE_A_UNION[samples].mean + paraphrases * PHASE_A_PARAPHRASE_ADDS[samples].mean + f.relatedPositives.length / 2 + extra),
       max: capped(PHASE_A_UNION[samples].max + paraphrases * PHASE_A_PARAPHRASE_ADDS[samples].max + f.relatedPositives.length + extra),
+      stage1: {
+        mean: capped(PHASE_A_TOP20[samples].mean + paraphrases * PHASE_A_PARAPHRASE_ADDS_TOP20[samples].mean),
+        max: capped(PHASE_A_TOP20[samples].max + paraphrases * PHASE_A_PARAPHRASE_ADDS_TOP20[samples].max),
+      },
       answerabilityPairs: pairs,
     };
   });
@@ -201,6 +214,31 @@ export function caseCost(m: Measured, prefix: { claude: number; openai: number }
     calls: { judgeA: m.claude.length, judgeB: m.openai.length, adjudication: m.claude.length + 1 },
   };
 }
+
+/**
+ * The protocol's own estimate (section 7: 2,500 pairs, 2,000 input and 200 output tokens per
+ * judgment, 15% escalated to one Sonnet call, no retries) at the repository prices: the
+ * reference the plan's figures are reconciled with (review M14).
+ */
+export function protocolArithmetic(): { pairs: number; input: number; output: number; escalation: number; usd: { judgeA: number; judgeB: number; adjudicator: number; total: number } } {
+  const pairs = 2_500;
+  const input = 2_000;
+  const output = 200;
+  const escalation = 0.15;
+  const one = (model: string) => input * rates(model).input + output * rates(model).output;
+  const judgeA = pairs * one(JUDGE_A.model);
+  const judgeB = pairs * one(JUDGE_B.model);
+  const adjudicator = pairs * escalation * one(ADJUDICATOR.model);
+  return { pairs, input, output, escalation, usd: { judgeA, judgeB, adjudicator, total: judgeA + judgeB + adjudicator } };
+}
+
+/** Outputs for a cost breakdown: none, visible verdicts only, or visible verdicts with the judges' reasoning. */
+export const outputsFor = (part: 'input' | 'visible' | 'full') => {
+  const full = expectedOutputs();
+  if (part === 'full') return full;
+  if (part === 'visible') return { a: EXPECTED_OUTPUT['judge-a'].visible, b: EXPECTED_OUTPUT['judge-b'].visible, adj: full.adj };
+  return { a: 0, b: 0, adj: full.adj };
+};
 
 export interface RunCost {
   /** Expected pairs and calls, unrounded (so per-family runs add up); round when printing. */
