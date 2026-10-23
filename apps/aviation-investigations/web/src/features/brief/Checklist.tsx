@@ -67,7 +67,9 @@ export interface ChecklistProps {
  * While the AI works (UI_DESIGN §4.4): a challenge-and-response checklist card. Each
  * row fills in its real result as the stage completes, with a magenta ✓; the current
  * row has a faint magenta wash. Completions are announced politely, once each; the
- * timer is not announced. The server sends stage status and counts only.
+ * timer is not announced. The server sends stage status and counts, plus, once the scope
+ * stage is done, its readings and filters as server templates (`interpretation`: the
+ * chips above this card show them, the rows here do not); never partial answer text.
  */
 export function Checklist({ checklist, stage, startedAt, cohort, onCancel, cancelling }: ChecklistProps) {
   const [now, setNow] = useState(() => Date.now());
