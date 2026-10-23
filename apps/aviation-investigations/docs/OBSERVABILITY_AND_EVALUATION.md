@@ -392,9 +392,11 @@ miss, recorded beside `contradicted`), and the completeness codes
 passage of the claim's case that the claim does not cite is `supported_outside_citations`:
 that claim is not established, the rest stays judged; and
 the display projection's codes (`DISPLAY_WITHHELD_CODES`, server/briefs/display.ts):
-`check_failed`, `check_structural`, `display_removed_share`, `display_contradictions`,
+`check_structural`, `display_removed_share`, `display_contradictions`,
 `display_minimum_content` and `display_whole_brief` (the `whole` mode, production's
-default until gate G6 clears partial display). The `brief step finished` log line has
+default until gate G6 clears partial display). A failed check call (or a check input over
+its limits) is withheld with no code: the step records `meta.failure` (stage `check`)
+instead; the projection's `check_failed` code appears only in the calibration's figures. The `brief step finished` log line has
 `withheld: {reason, codes}` with every code. Neither holds text.
 
 The step's `meta.display` records the projection: `rules` (`display-deps-v2`), `mode`,

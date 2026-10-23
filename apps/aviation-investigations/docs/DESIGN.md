@@ -143,7 +143,11 @@ flights):
 
 - **Anchor and aircraft.** Only a fact from the relevant maintenance to the event flight
   decides anything; a bound worked out from a time measured from something else decides
-  nothing. In an event with more than one aircraft, only a fact cited from one aircraft's
+  nothing. The server cannot tell such a derived bound from a stated one: `compose.v8`
+  encodes it with its own anchor and `check.v9` asks the checker to hold every time to what
+  it is measured from, and nothing else enforces it (the residual case is a composition that
+  anchors a derived bound on the maintenance anyway, as 16d's development brief `holdout.b5`
+  did; labels v3 mark that fact `unknown`; 16d review m2). In an event with more than one aircraft, only a fact cited from one aircraft's
   passages counts, facts about different aircraft are never compared or combined, and
   facts naming more than one aircraft decide nothing. Since version 3 a fact about the
   whole event still takes part in the conflict test with one aircraft's fact: "2 days" for
