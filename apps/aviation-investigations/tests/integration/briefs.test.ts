@@ -171,6 +171,8 @@ interface HarnessOptions {
   /** The configured embedding the dataset resolver checks the passages index against (default `FIXTURE_EMBEDDING`; null: none). */
   embedding?: { model: string; dims: number } | null;
   timeouts?: Partial<{ scope: number; retrieve: number; compose: number; check: number; total: number }>;
+  /** The display projection's mode (default: the services' default, `whole`). */
+  displayMode?: 'claims' | 'whole';
   trialRequests?: number;
   /** Which evidence index a new brief pins (default: the dataset resolver's servable index). */
   aiEvidence?: () => Promise<{ generationId: number; passagesIndex: string } | null>;
@@ -198,6 +200,7 @@ function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
   const svc = createBriefServices(appDb, {
     retriever: opts.evidence ?? retriever,
     ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
+    ...(opts.displayMode ? { displayMode: opts.displayMode } : {}),
     ...(opts.catalog ? { catalog: opts.catalog(createCaseCatalog(appDb)) } : {}),
   });
   const embedding = opts.embedding === undefined ? FIXTURE_EMBEDDING : opts.embedding;
@@ -270,7 +273,7 @@ type Claim = CheckInput['claims'][number];
 type Judged = CheckVerdict | { verdict: CheckVerdict; passages?: string[]; quote?: { passage: string; text: string } };
 
 /**
- * The checker's answer as check.v5 returns it: one verdict per claim id, from `judge`
+ * The checker's answer as check.v7 returns it: one verdict per claim id, from `judge`
  * (default `supported`). A supported claim names its first cited passages (an absence
  * claim none), a contradicted one its first cited passage unless `judge` names others.
  */
@@ -617,7 +620,8 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(started.status).toBe(202);
     expect(started.json).toEqual({ kind: 'started', briefId, step: 1, stage: 'retrieve' });
     expect(step).toMatchObject({ step: 1, steps: 1, refinementsLeft: 3, stage: 'done', origin: { kind: 'question' } });
-    expect(step.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 }, written: true, verified: 'passed' });
+    // No blanket "passed" (Task 16d): each statement shown was checked, and the result says what was removed.
+    expect(step.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 }, written: true, verified: 'partially_checked' });
     const result = step.result!;
     if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
     expect(result.grouping).toBe('mechanical');
@@ -675,10 +679,18 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v6', check: 'check.v5' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v7', check: 'check.v7' },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
-      criteriaRules: 'chronology-rules-v1',
+      criteriaRules: 'chronology-rules-v2',
       check: { supported: true, claims: check.claims.length, counts: { supported: check.claims.length, contradicted: 0, not_established: 0 }, codes: [], problems: [], chronologyMissed: [] },
+      display: { rules: 'display-deps-v1', mode: 'whole', shown: true, withheld: [], claimsShown: check.claims.length, removed: {}, removedKeys: [], suppressed: [] },
+    });
+    expect(result.check).toEqual({
+      rules: 'display-deps-v1',
+      status: 'partially_checked',
+      shown: check.claims.length,
+      removed: { summary: 0, why: 0, classification: 0, maintenance: 0, symptom: 0, timing: 0, attribution: 0, criterion: 0, gap: 0 },
+      unclassified: [],
     });
 
     // The case context: the cited passage with its highlight, and template lines.
@@ -1246,7 +1258,7 @@ describe('hybrid retrieval behind the port', () => {
       expect(c.reading?.quotes.length).toBeGreaterThan(0);
       for (const q of c.reading!.quotes) expect(q.span.end).toBeGreaterThan(q.span.start);
     }
-    expect(step.checklist).toMatchObject({ verified: 'passed', searched: { cases: 5 } });
+    expect(step.checklist).toMatchObject({ verified: 'partially_checked', searched: { cases: 5 } });
 
     // The dense channel embedded the question once; BM25 searched the scope stage's keyword text.
     expect(embedder.calls).toEqual([[queryEmbeddingInput(SEED_QUESTION)]]);
@@ -1668,7 +1680,9 @@ describe('gate G6: evidence semantics through the routes', () => {
       passageIds: dfw.map((p) => p.passageId),
       absence: true,
     });
-    expect(checks[0]!.criteria).toEqual(['Timing: the event happened within 1 flight hour after the relevant maintenance.']);
+    // No criteria lines in the check input (Task 16d): the criterion claim states its own; each case has its server header.
+    expect(checks[0]!).not.toHaveProperty('criteria');
+    expect(checks[0]!.cases.map((c) => c.ntsbNo)).toContain('DFW08TA066');
     const meta = (await stepRow(briefId)).meta;
     expect(meta).toMatchObject({
       criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'unstated' }]),
@@ -1682,7 +1696,8 @@ describe('gate G6: evidence semantics through the routes', () => {
     });
     // Diagnostic only: still withheld, and no repair call was made.
     expect(h.llm.calls.map((c) => c.stage)).toEqual(['scope', 'compose', 'check']);
-    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted', 'chronology_missed'] } });
+    // In whole mode (the default until G6) anything removed withholds the summary.
+    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: expect.arrayContaining(['contradicted', 'chronology_missed', 'display_whole_brief']) } });
     expect(await reportOf(briefId)).toContain('chronology_missed: DFW08TA066 timing_window');
   });
 
@@ -1830,7 +1845,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(reading('NYC08LA106').timing).toEqual([]);
     expect(reading('NYC08LA106').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
     expect((await stepRow(briefId)).meta).toMatchObject({
-      criteriaRules: 'chronology-rules-v1',
+      criteriaRules: 'chronology-rules-v2',
       criteria: expect.arrayContaining([
         { ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'matches', rules: ['TW-I'] },
         { ntsbNo: 'NYC08LA106', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'other_anchor' },
@@ -2271,7 +2286,7 @@ describe('diagnosable withholding and model-call telemetry', () => {
     expect(d.claims![1]).toMatchObject({ id: 'C2', kind: 'summary', text: expect.stringContaining('Power was lost after maintenance') });
     expect(d.verdicts!.verdicts).toHaveLength(input.claims.length);
     expect(d.verdicts!.quotes).toEqual([{ claim: 'C2', passage: input.claims[1]!.passageIds[0], text: quoted }]);
-    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted'] } });
+    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: expect.arrayContaining(['contradicted', 'display_whole_brief']) } });
     const report = await reportOf(briefId);
     expect(report).toContain('contradicted at C2 (summary');
     expect(report).toContain(`claim: ${JSON.stringify(d.claims![1]!.text)}`);
@@ -2309,7 +2324,8 @@ describe('diagnosable withholding and model-call telemetry', () => {
       const { briefId, step } = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
       expect(step.result, code).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
       expect((await stepRow(briefId)).meta.check, code).toMatchObject({ supported: false, codes: [code] });
-      expect(finishedLine(h), code).toMatchObject({ withheld: { reason: 'evidence_check', codes: [code] } });
+      // A structurally unusable output withholds everything (`check_structural`); a rejected claim, in whole mode, the summary.
+      expect(finishedLine(h), code).toMatchObject({ withheld: { reason: 'evidence_check', codes: expect.arrayContaining([code, code.startsWith('check_') ? 'check_structural' : 'display_whole_brief']) } });
       advance(MIN);
     }
     // Each was one check call; nothing was retried or repaired.
@@ -2699,6 +2715,138 @@ describe('admission: the paced daily budget and other checks before spend', () =
     const r = await refine(h, first.briefId, first.cookie, { kind: 'text', text: 'Only airplanes' });
     expect([r.status, (r.json as unknown as { error: string }).error]).toEqual([503, 'unavailable']);
     expect(h.sv.calls.length).toBe(calls);
+  });
+});
+
+describe('claim-level display (Task 16d, display-deps-v1): one projection for every surface', () => {
+  /** Distinctive texts the checker will reject, so their absence can be searched for. */
+  const REJECTED = {
+    sentence: 'Rejected sentence about the defect case',
+    why: 'Rejected why line about the defect case',
+    gap: 'Rejected gap note about the defect case',
+  };
+  /** MIA08LA156's summary sentence and why line, rejected by the checker; DEN08LA103 gets a gap note it rejects too. */
+  const partial = (input: ComposeInput) =>
+    composition(input, (c) => {
+      c.summary = c.cases
+        .map((k) => (k.ntsbNo === 'MIA08LA156' ? `${REJECTED.sentence} [[case:MIA08LA156]].` : `Power was lost after maintenance [[case:${k.ntsbNo}]].`))
+        .join(' ');
+      const mia = c.cases.find((k) => k.ntsbNo === 'MIA08LA156')!;
+      mia.why = `${REJECTED.why}.`;
+      const den = input.cases.find((k) => k.ntsbNo === 'DEN08LA103')!;
+      c.gaps = [{ ntsbNo: 'DEN08LA103', note: `${REJECTED.gap}.`, passageIds: [den.passages[0]!.passageId] }];
+    });
+  const rejecting = (input: CheckInput) =>
+    verdicts(input, (claim) => (Object.values(REJECTED).some((t) => claim.text.includes(t)) ? 'not_established' : 'supported'));
+  const absent = (json: unknown) => {
+    const text = JSON.stringify(json);
+    for (const t of Object.values(REJECTED)) expect(text).not.toContain(t);
+  };
+
+  it('removed statements are absent from the step response, the case contexts, the stored step and any later prompt; the raw stays in the diagnostics', async () => {
+    const h = harness(answering({ compose: (input) => partial(input), check: rejecting }), { displayMode: 'claims' });
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    // GET /api/briefs/:id: the removed sentence is a marker, the defect case a plain card that says what was not verified.
+    absent(step);
+    expect(step.checklist.verified).toBe('partially_checked');
+    expect(result.summary.filter((s) => s.kind === 'removed')).toEqual([{ kind: 'removed', count: 1 }]);
+    const mia = result.cases.find((c) => c.case.ntsbNo === 'MIA08LA156')!;
+    expect(mia.reading).toBeNull();
+    expect(mia.notVerified).toEqual(expect.arrayContaining(['why']));
+    expect(result.groups.flatMap((g) => g.caseNumbers)).not.toContain('MIA08LA156');
+    expect(result.gaps).toEqual([]);
+    expect(result.check).toMatchObject({ status: 'partially_checked', removed: { summary: 1, why: 1, gap: 1 } });
+    expect(result.cases.filter((c) => c.reading !== null).map((c) => c.case.ntsbNo)).toEqual(['DFW08TA066', 'DEN08LA103', 'NYC08LA106']);
+    // Every step read (the latest and by number), every case context: nothing rejected.
+    absent((await read(h, briefId, cookie, 1)).json);
+    for (const n of SEEDS) {
+      const ctx = await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/${n}`, { cookie });
+      expect(ctx.status, n).toBe(200);
+      absent(ctx.json);
+      const parsed = CaseContextResponseSchema.parse(ctx.json);
+      if (n === 'MIA08LA156') expect(parsed).toMatchObject({ reading: null, lines: [] });
+    }
+    // The stored step (result, evidence, meta) holds none of it; the diagnostics column keeps the raw for developers.
+    const row = await rows<{ result: unknown; evidence: unknown; meta: Record<string, unknown>; diagnostics: StepDiagnostics | null }>(
+      sql`SELECT result, evidence, meta, diagnostics FROM brief_steps WHERE brief_id = ${briefId}::uuid`,
+    );
+    absent({ result: row[0]!.result, evidence: row[0]!.evidence, meta: row[0]!.meta });
+    expect(row[0]!.meta).toMatchObject({
+      display: { rules: 'display-deps-v1', mode: 'claims', shown: true, removedKeys: expect.arrayContaining([{ key: 'summary.2', cause: 'not_established' }, { key: 'case.MIA08LA156.why', cause: 'not_established' }]) },
+    });
+    expect(row[0]!.diagnostics).toMatchObject({ reason: 'partial_display' });
+    expect(JSON.stringify(row[0]!.diagnostics)).toContain(REJECTED.why);
+    expect(await reportOf(briefId)).toContain('removed case.MIA08LA156.why: not_established');
+    // A refinement reads the brief's request and intent, never an answer: the scope and compose inputs it builds from the
+    // earlier step hold nothing rejected (its own new composition is checked and projected again).
+    const before = h.llm.calls.length;
+    const refined = await refine(h, briefId, cookie, { kind: 'text', text: 'Only the defect cases' });
+    expect(refined.status).toBeLessThan(300);
+    await h.svc.settled();
+    const later = h.llm.calls.slice(before).filter((c) => c.stage === 'scope' || c.stage === 'compose');
+    expect(later.map((c) => c.stage)).toEqual(['scope', 'compose']);
+    for (const call of later) absent(call.input);
+  });
+
+  it('decisions never promote: 2 days and 40 days against 30 days stays unconfirmed when the 40-day fact is removed; a removed fact downgrades a match', async () => {
+    const probe = (input: ComposeInput) =>
+      composition(input, (c) => {
+        const dfw = input.cases.find((k) => k.ntsbNo === 'DFW08TA066')!;
+        const nyc = input.cases.find((k) => k.ntsbNo === 'NYC08LA106')!;
+        c.cases.find((k) => k.ntsbNo === 'DFW08TA066')!.chronology = {
+          maintenance: 'the engine replacement',
+          facts: [
+            { anchor: 'relevant_maintenance', relation: 'calendar_days', value: 2, bound: 'exact', passageIds: [dfw.passages[0]!.passageId] },
+            { anchor: 'relevant_maintenance', relation: 'calendar_days', value: 40, bound: 'exact', passageIds: [dfw.passages[0]!.passageId] },
+          ],
+        };
+        c.cases.find((k) => k.ntsbNo === 'NYC08LA106')!.chronology = chronologyOf('the fuel pump installation', nyc.passages[0]!.passageId, { relation: 'previous_day' });
+      });
+    const check = (input: CheckInput) =>
+      verdicts(input, (claim) => (claim.kind === 'timing' && (claim.text.includes('40 calendar days') || claim.text.includes('the fuel pump installation')) ? 'not_established' : 'supported'));
+    const h = harness(answering({ compose: (input) => probe(input), check }), { displayMode: 'claims' });
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    // Decided once, before the check: DFW's conflict is unknown, NYC's previous day matches.
+    expect((await stepRow(briefId)).meta).toMatchObject({
+      criteria: expect.arrayContaining([
+        { ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'conflict' },
+        { ntsbNo: 'NYC08LA106', criterion: 'timing_window', decision: 'matches', rules: ['TW-C'] },
+      ]),
+    });
+    const reading = (n: string) => result.cases.find((c) => c.case.ntsbNo === n)!.reading!;
+    // Neither becomes a match once its fact is gone: both are shown unconfirmed and not verified.
+    expect(reading('DFW08TA066').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed', notVerified: true }]);
+    expect(reading('NYC08LA106').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed', notVerified: true }]);
+    expect(reading('DFW08TA066').timing.map((t) => t.label)).toEqual(['2 DAYS']);
+    // The summary flags them UNCONFIRMED from the projection.
+    for (const s of result.summary) if (s.kind === 'case' && (s.ntsbNo === 'DFW08TA066' || s.ntsbNo === 'NYC08LA106')) expect(s.unconfirmed).toBe(true);
+    const ctx = CaseContextResponseSchema.parse((await inject<unknown>(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/NYC08LA106`, { cookie })).json);
+    expect(ctx.lines.filter((l) => l.label === 'CRITERIA')).toEqual([{ label: 'CRITERIA', text: 'Not verified: the check could not confirm this against the cited passages', passageIds: [] }]);
+    expect(ctx.lines).toContainEqual({ label: 'TIMING', text: 'Not verified: the check could not confirm this against the cited passages', passageIds: [] });
+    expect(JSON.stringify(step)).not.toContain('PREVIOUS DAY');
+  });
+
+  it('whole mode (the default until G6) withholds the same brief, and two contradictions withhold it in claims mode too', async () => {
+    const whole = harness(answering({ compose: (input) => partial(input), check: rejecting }));
+    const w = await askAndWait(whole);
+    expect(w.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    expect(w.step.checklist.verified).toBe('withheld');
+    absent(w.step);
+    expect(finishedLine(whole)).toMatchObject({ withheld: { codes: expect.arrayContaining(['not_established', 'display_whole_brief']) } });
+    const twice = harness(
+      answering({
+        check: (input) => verdicts(input, (claim) => (claim.kind === 'symptom' && (claim.ntsbNo === 'DFW08TA066' || claim.ntsbNo === 'DEN08LA103') ? 'contradicted' : 'supported')),
+      }),
+      { displayMode: 'claims' },
+    );
+    const t = await askAndWait(twice);
+    expect(t.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    expect(finishedLine(twice)).toMatchObject({ withheld: { codes: expect.arrayContaining(['contradicted', 'display_contradictions']) } });
+    expect((await stepRow(t.briefId)).meta).toMatchObject({ display: { mode: 'claims', shown: false, withheld: ['display_contradictions'], contradictions: 2 } });
   });
 });
 

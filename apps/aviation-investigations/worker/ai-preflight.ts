@@ -29,8 +29,8 @@ import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOu
 import { PHASE_GROUPS } from '../shared/codes.js';
 import { MAX_QUERY_INPUT_TOKENS } from '../server/ai/embeddings.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../server/ai/pricing.js';
-import { renderCheckUser } from '../server/ai/prompts/check.v5.js';
-import { renderComposeUser } from '../server/ai/prompts/compose.v6.js';
+import { renderCheckUser } from '../server/ai/prompts/check.v7.js';
+import { renderComposeUser } from '../server/ai/prompts/compose.v7.js';
 import { renderScopeUser } from '../server/ai/prompts/scope.v2.js';
 import {
   AIRCRAFT_CATEGORY_CODES,
@@ -51,7 +51,7 @@ import {
 } from '../server/ai/provider.js';
 import { countTokens } from '../server/ai/tokens.js';
 import { checkForModel, composeForModel, passageAliases } from '../server/briefs/aliases.js';
-import { criteriaLines, evaluateCase } from '../server/briefs/criteria.js';
+import { evaluateCase } from '../server/briefs/criteria.js';
 import { caseEvidence, checkInput, type VerifiedCase } from '../server/briefs/render.js';
 import type { ResolvedCitation } from '../server/briefs/validate.js';
 import { RETRIEVAL_DEFAULTS } from '../server/search/hybrid.js';
@@ -65,11 +65,12 @@ import { DEFAULT_CHUNK_OPTIONS } from './index/chunk.js';
 export const THINKING_ALLOWANCE = 1_500;
 
 /**
- * Output tokens left for thinking under the check stage's output cap, for the check
- * configuration the calibration froze (Task 16c, evals/checker: Haiku 5.5, adaptive
- * thinking at effort `low`). Measured on the development split (126 calls, 1 to 42
- * claims): at most 4,915 thinking tokens, at most about 140 a claim on the larger checks;
- * the 100-claim bound at that rate is 14,000 → 15,000.
+ * Output tokens left for thinking under the check stage's output cap, for the checker
+ * configuration (Haiku 5.5, adaptive thinking at effort `low`). Measured in Task 16c (163
+ * calls of 1 to 44 claims): at most 5,545 thinking tokens (held out; 4,915 in development),
+ * at most about 146 a claim on checks of 30 claims or more and 222 on a 17-claim batch; at
+ * the 60-claim bound (`MAX_CHECK_CLAIMS`) that is at most 13,320 → 15,000. Task 16d
+ * re-measures it with the production caps.
  */
 export const CHECK_THINKING_ALLOWANCE = 15_000;
 
@@ -163,8 +164,10 @@ export function preflightRequests(): PreflightRequests {
   const verified = cases.map((c, ci) => ({
     ntsbNo: c.ntsbNo,
     rank: ci + 1,
-    // Only the fields `checkInput` reads: the aircraft label of aircraft-scoped passages.
+    // Only the fields `checkInput` reads: the aircraft label of aircraft-scoped passages, and the header.
     summary: { row: { aircraft: [{ aircraftKey: 1, make: aircraft, model: null }] }, report: {}, aircraftNumbers: [] },
+    header,
+    checkHeader: header,
     passages: c.passages.map((p, pi) => ({
       passageId: p.passageId,
       role: pi === 0 ? 'retrieved' : 'probable_cause',
@@ -298,7 +301,7 @@ export function preflightRequests(): PreflightRequests {
       evaluateCase(readings, { ...k, chronology: k.chronology && { maintenance: k.chronology.maintenance, facts: [] } }, false, caseEvidence(byCase.get(k.ntsbNo))),
     ]),
   );
-  const built = checkInput(checked, citations, byCase, { mechanicalCause: true, criteria: criteriaLines(readings), criterionChecks });
+  const built = checkInput(checked, citations, byCase, { mechanicalCause: true, criterionChecks });
   const check = checkForModel(built.input, aliases);
 
   // Scope: the longest refinement step, in English and in dense text at the query-embedding cap.
@@ -369,7 +372,7 @@ export function preflightRequests(): PreflightRequests {
       scope: { question: 'Engine power loss' },
       compose: { question: 'Engine power loss', mechanicalCause: true, interpretations: [], cases: [{ ntsbNo: caseNo(0), header: 'Airplane', passages: [minimalPassage] }] },
       check: {
-        criteria: [],
+        cases: [{ ntsbNo: caseNo(0), header: 'Airplane' }],
         passages: [{ ...minimalPassage, ntsbNo: caseNo(0) }],
         claims: [{ id: 'C1', kind: 'why', ntsbNo: caseNo(0), text: 'Engine power was lost.', passageIds: ['P1'], absence: false }],
       },

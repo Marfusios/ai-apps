@@ -20,8 +20,8 @@ import Anthropic, {
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { llmPrice } from './pricing.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v5.js';
-import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v6.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v7.js';
+import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v7.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
 import {
   CheckInputSchema,
@@ -72,11 +72,11 @@ export type ThinkingMode = 'off' | 'adaptive';
 /**
  * Each stage's thinking. The answer stage runs on Opus, which cannot turn thinking off:
  * it thinks at effort `low` within the answer output cap's thinking allowance. The check
- * stage thinks adaptively: the configuration the checker calibration froze (Task 16c,
- * evals/checker/selection.json: Haiku 5.5, adaptive thinking at effort `low`, check.v5).
- * Without thinking, Haiku withheld 20 of 21 wholly supported development briefs and
- * passed 6 of 8 critical regressions. A change needs the calibration and the check output
- * cap's thinking allowance re-measured.
+ * stage thinks adaptively: Haiku 5.5, adaptive thinking at effort `low`, the configuration
+ * the 16c calibration froze and the only one Task 16d calibrates (evals/checker,
+ * `protocol.v2.ts` candidates). Without thinking, Haiku withheld 20 of 21 wholly supported
+ * development briefs and passed 6 of 8 critical regressions in 16c. A change needs the
+ * calibration and the check output cap's thinking allowance re-measured.
  */
 export const STAGE_THINKING: Readonly<Record<LlmStage, ThinkingMode>> = {
   scope: 'off',

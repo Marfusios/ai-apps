@@ -66,6 +66,14 @@ const envSchema = z.object({
     .enum(['true', 'false', '1', '0'])
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
+  /**
+   * Claim-level display of AI briefs (Task 16d, server/briefs/display.ts): off until gate G6
+   * clears it. Off, a brief's summary is shown only when the check confirmed every claim.
+   */
+  AI_PARTIAL_DISPLAY: z
+    .enum(['true', 'false', '1', '0'])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
   LANGFUSE_BASE_URL: str(),
   LANGFUSE_PUBLIC_KEY: str(),
   LANGFUSE_SECRET_KEY: str(),
@@ -125,6 +133,8 @@ export interface AppConfig {
   };
   ai: {
     llmProvider: Env['AI_LLM_PROVIDER'];
+    /** Show the statements the evidence check confirmed and remove the rest (`AI_PARTIAL_DISPLAY`; off until gate G6). */
+    partialDisplay: boolean;
     anthropic: { apiKey?: string; scopeModel: string; answerModel: string; checkModel: string };
     openai: {
       apiKey?: string;
@@ -228,6 +238,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     },
     ai: {
       llmProvider: e.AI_LLM_PROVIDER,
+      partialDisplay: e.AI_PARTIAL_DISPLAY,
       anthropic: {
         apiKey: e.ANTHROPIC_API_KEY,
         scopeModel: e.ANTHROPIC_SCOPE_MODEL,

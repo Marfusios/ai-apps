@@ -236,20 +236,45 @@ export type ScopeOutput = z.infer<typeof ScopeOutputSchema>;
 /** Failure-type readings the planner may offer (`ambiguity.type = failure_type`). */
 export const FAILURE_TYPE_VALUES = FAILURE_TYPES;
 
-/** Claims one check takes at most, and the server-issued claim id (`C1`..`C100`, in claim order). */
-export const MAX_CHECK_CLAIMS = 100;
+/**
+ * Claims one check takes at most, and the server-issued claim id (`C1`..`C60`, in claim
+ * order). Task 16d lowered it from 100 so the check stage's timeout covers the largest check
+ * (16c review M7): the frozen checker took about 0.47 s a claim with up to 11 s more on its
+ * slowest calls (16c, up to 44 claims), so 60 claims fit 45 s; Task 16d measures it at 60. A
+ * composition with more claims withholds the summary (`claims_overflow`).
+ */
+export const MAX_CHECK_CLAIMS = 60;
 export const ClaimIdSchema = z.string().regex(/^C[1-9][0-9]{0,2}$/);
-/** Passages one verdict may rest on. */
-export const MAX_VERDICT_PASSAGES = 4;
-/** Contradiction quotes one check may return, and the longest. */
-export const MAX_CHECK_QUOTES = 8;
-export const CHECK_QUOTE_MAX = 200;
 
 /**
- * The check stage's output (check.v4): exactly one verdict for every claim id it was
- * given, each with the passages it rests on, and optionally the words that contradict a
- * claim, copied from one of those passages. The schema bounds the shape only; the server
- * decides completeness, references, quotes and the outcome (server/briefs/verdicts.ts).
+ * The check output's bounds (`check-output-v2`, Task 16d). The provider passes `maxItems`,
+ * `maxLength` and `pattern` to the model as descriptions only, so these are the parser's
+ * bounds: output over any of them fails the call as `invalid_output` (the whole output is
+ * withheld). Version 1 (Task 16c) allowed 4 passages a verdict and 200-character quotes;
+ * the development runs lost 8 of 336 calls to over-bound output.
+ * - A verdict names at most `MAX_VERDICT_PASSAGES` passages: every supplied passage of a
+ *   case (a bundle holds at most 12).
+ * - At most `MAX_CHECK_QUOTES` contradiction quotes, one per contradicted claim, for the
+ *   first contradicted claims in claim order (check.v7 says so); a contradiction without
+ *   a quote is still a contradiction. Two contradictions withhold the summary anyway
+ *   (server/briefs/display.ts), so quotes past the eighth would never change an outcome.
+ * - A quote is at most `CHECK_QUOTE_MAX` characters as written; the passage text it
+ *   resolves to is bounded by the checker's own quote rule (`checker-quote-v1`,
+ *   server/briefs/verdicts.ts), never by the public citation rule.
+ */
+export const CHECK_OUTPUT_SCHEMA_VERSION = 'check-output-v2';
+/** Passages one verdict may rest on. */
+export const MAX_VERDICT_PASSAGES = MAX_PASSAGES;
+/** Contradiction quotes one check may return, and the longest as written. */
+export const MAX_CHECK_QUOTES = 8;
+export const CHECK_QUOTE_MAX = 1_000;
+
+/**
+ * The check stage's output (check.v4 and later): exactly one verdict for every claim id
+ * it was given, each with the passages it rests on, and optionally the words that
+ * contradict a claim, copied from one of those passages. The schema bounds the shape
+ * only (`CHECK_OUTPUT_SCHEMA_VERSION`); the server decides completeness, references,
+ * quotes and what is displayed (server/briefs/verdicts.ts, server/briefs/display.ts).
  */
 export const CheckOutputSchema = z.strictObject({
   verdicts: z
@@ -349,15 +374,26 @@ export const ComposeInputSchema = z
 export type ComposeInput = z.infer<typeof ComposeInputSchema>;
 
 /**
- * Bounded claim/citation pairs, every verified passage of every case the claims are
- * about, and the reader's criteria as server templates; never the question, the
- * planner output or earlier answers. Each claim has a server-issued id (`C1`.., in
- * order) that its verdict must name. An `absence` claim says something is not in the
+ * Bounded claim/citation pairs and every verified passage of every case the claims are
+ * about; never the question, the reader's criteria, the planner output or earlier
+ * answers. The criteria left the check input in Task 16d (check.v7): a criterion claim
+ * states its own criterion, and the server enforces the criteria in its decisions and
+ * the display dependencies (16c's held-out "first flight only" briefs had unrelated
+ * claims judged against the criteria lines). Each claim has a server-issued id (`C1`..,
+ * in order) that its verdict must name. An `absence` claim says something is not in the
  * supplied passages of its case: it cites every one of them, so its scope is explicit.
  */
 export const CheckInputSchema = z
   .strictObject({
-    criteria: z.array(z.string().min(1).max(200)).max(4),
+    /**
+     * Server data from the NTSB record (Task 16d review M5): each case's header line (its
+     * aircraft, event, place and date from coded fields, `caseHeader`), the line the answer
+     * model saw, so a claim may name a case by it. Never model text.
+     */
+    cases: z
+      .array(z.strictObject({ ntsbNo: CaseNumber, header: z.string().min(1).max(400) }))
+      .min(1)
+      .max(MAX_CASES),
     passages: z
       .array(EvidencePassage.extend({ ntsbNo: CaseNumber }))
       .min(1)
@@ -379,6 +415,9 @@ export const CheckInputSchema = z
   .superRefine((input, ctx) => {
     const ids = new Set(input.passages.map((p) => p.passageId));
     if (ids.size !== input.passages.length) ctx.addIssue({ code: 'custom', message: 'duplicate passage id' });
+    const cases = new Set(input.cases.map((c) => c.ntsbNo));
+    if (cases.size !== input.cases.length) ctx.addIssue({ code: 'custom', message: 'duplicate case' });
+    if (input.passages.some((p) => !cases.has(p.ntsbNo))) ctx.addIssue({ code: 'custom', message: 'a passage of a case without a header' });
     for (const claim of input.claims) {
       if (claim.passageIds.some((id) => !ids.has(id))) {
         ctx.addIssue({ code: 'custom', message: 'claim cites a passage that is not provided' });

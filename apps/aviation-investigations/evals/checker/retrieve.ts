@@ -1,5 +1,6 @@
 /**
- * `pnpm eval:checker retrieve`: the calibration's real retrieval bundles (Task 16c).
+ * `pnpm eval:checker retrieve`: the calibration's real retrieval bundles (Tasks 16c, 16d),
+ * and `pnpm eval:checker headers`: the case headers of every calibration case (Task 16d).
  *
  * Read-only against the target: the active manifest (PostgreSQL as `aviation_app`), the
  * passages index (Elasticsearch with the read key), the canonical passages and case
@@ -9,14 +10,18 @@
  *
  * Each question is retrieved exactly as a brief retrieves (`createHybridRetriever`, the
  * production defaults, no filters), the bundle is checked fail closed like the pipeline's
- * (`verifyBundle`), and the result is written to `evidence.json` (or `--out`).
+ * (`verifyBundle`), and the result is written to `evidence.json` (`--questions v1`, Task
+ * 16c, frozen) or into `evidence-16d.json` (`--questions 16d`: the bundles, with each case's
+ * header line from `caseHeader`). A 16d bundle with a case of a 16c split is reported: the
+ * held-out set must not use it.
  */
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { queryEmbeddingInput } from '../../server/ai/embeddings.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { createCaseCatalog } from '../../server/briefs/catalog.js';
 import { verifyBundle } from '../../server/briefs/pipeline.js';
+import { checkHeader } from '../../server/briefs/render.js';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
 import { closeDb, createDb } from '../../server/db/client.js';
 import { getActiveManifest } from '../../server/db/generations.js';
@@ -26,16 +31,66 @@ import { APP_DIR } from '../../worker/config.js';
 import { batchByLimits, createOpenAIEmbedder, embeddingUsdPerMillion, reservationUsd } from '../../worker/index/embed.js';
 import { createLedgerSpendGate } from '../../worker/index/spend-gate.js';
 import { precomputedEmbedder } from '../retrieval/run.js';
-import { EvidenceFileSchema, sha256, type EvidenceFile } from './evidence.js';
-import { QUESTIONS, type CalibrationQuestion } from './questions.js';
+import { EvidenceFileSchema, EvidenceV2FileSchema, sha256, type EvidenceFile, type EvidenceV2File } from './evidence.js';
+import { QUESTIONS, QUESTIONS_16D, type CalibrationQuestion } from './questions.js';
 
-export const DEFAULT_EVIDENCE = resolve(APP_DIR, 'evals/checker/evidence.json');
+export const DEFAULT_EVIDENCE = {
+  v1: resolve(APP_DIR, 'evals/checker/evidence.json'),
+  '16d': resolve(APP_DIR, 'evals/checker/evidence-16d.json'),
+} as const;
+
+/** The 16d evidence file, or an empty one. */
+function readV2(path: string, source: EvidenceV2File['source']): EvidenceV2File {
+  if (!existsSync(path)) return { version: 'checker-evidence-v2', source, headers: {}, bundles: [] };
+  return EvidenceV2FileSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+}
+
+/** Write the 16d evidence file with sorted headers. */
+function writeV2(path: string, file: EvidenceV2File): void {
+  const headers = Object.fromEntries(Object.entries(file.headers).sort(([a], [b]) => a.localeCompare(b)));
+  writeFileSync(path, `${JSON.stringify(EvidenceV2FileSchema.parse({ ...file, headers }), null, 2)}\n`);
+}
+
+/**
+ * `headers`: the check header (`checkHeader`: aircraft, place and date) of every case of the calibration evidence (the
+ * 16c bundles and the 16d ones), from the canonical case summaries of the evidence's
+ * generation, read-only, into `evidence-16d.json`.
+ */
+export async function headersCommand(config: AppConfig, opts: { out?: string; log: (m: string) => void }): Promise<number> {
+  if (!config.databaseUrl) throw new Error('DATABASE_URL is not set (the canonical case summaries)');
+  const v1 = EvidenceFileSchema.parse(JSON.parse(readFileSync(DEFAULT_EVIDENCE.v1, 'utf8')));
+  const out = opts.out ?? DEFAULT_EVIDENCE['16d'];
+  const v2 = readV2(out, { ...v1.source, retrievedAt: new Date().toISOString(), note: 'Case headers (caseHeader of the canonical case summaries) and the Task 16d bundles.' });
+  const app = createDb(config.databaseUrl, { max: 2, applicationName: 'aviation-eval-checker' });
+  try {
+    const catalog = createCaseCatalog(app);
+    const headers: Record<string, string> = { ...v2.headers };
+    for (const [generation, numbers] of [
+      [v1.source.generationId, v1.bundles.flatMap((b) => b.cases.map((c) => c.ntsbNo))],
+      [v2.source.generationId, v2.bundles.flatMap((b) => b.cases.map((c) => c.ntsbNo))],
+    ] as const) {
+      if (numbers.length === 0) continue;
+      const summaries = await catalog.summaries(generation, numbers);
+      for (const n of numbers) {
+        const s = summaries.get(n);
+        if (!s) throw new Error(`no case summary for ${n} in generation ${generation}`);
+        headers[n] = checkHeader(s);
+      }
+    }
+    writeV2(out, { ...v2, headers });
+    opts.log(`${Object.keys(headers).length} case headers in ${out}`);
+    return 0;
+  } finally {
+    await closeDb(app);
+  }
+}
 
 export async function retrieveEvidence(
   config: AppConfig,
-  opts: { confirmCost: boolean; out: string; questions?: readonly CalibrationQuestion[]; log: (m: string) => void },
+  opts: { confirmCost: boolean; set?: 'v1' | '16d'; out: string; questions?: readonly CalibrationQuestion[]; log: (m: string) => void },
 ): Promise<number> {
-  const questions = opts.questions ?? QUESTIONS;
+  const set = opts.set ?? 'v1';
+  const questions = opts.questions ?? (set === 'v1' ? QUESTIONS : QUESTIONS_16D);
   const { embeddingModel: model, embeddingDimensions: dims } = config.ai.openai;
   const price = embeddingUsdPerMillion(model);
   const inputs = [...new Set(questions.map((q) => queryEmbeddingInput(q.question)))];
@@ -66,6 +121,10 @@ export async function retrieveEvidence(
     const retriever = createHybridRetriever({ es, embedder: precomputedEmbedder({ model, dims, usdPerMillionTokens: price }, vectors) });
     const catalog = createCaseCatalog(app);
     const bundles: EvidenceFile['bundles'] = [];
+    const headers: Record<string, string> = {};
+    const v1Cases = new Set(
+      EvidenceFileSchema.parse(JSON.parse(readFileSync(DEFAULT_EVIDENCE.v1, 'utf8'))).bundles.flatMap((b) => b.cases.map((c) => c.ntsbNo)),
+    );
     let chunkerVersion = '';
     for (const q of questions) {
       const got = await retriever.retrieve(
@@ -102,7 +161,16 @@ export async function retrieveEvidence(
         })),
       });
       if (!byId.size) throw new Error(`question ${q.id}: an empty bundle`);
-      opts.log(`${q.id}: ${verified.map((c) => `${c.ntsbNo}(${c.passages.length})`).join(' ')}`);
+      for (const vc of verified) headers[vc.ntsbNo] = vc.checkHeader;
+      const seen = verified.filter((vc) => v1Cases.has(vc.ntsbNo)).map((vc) => vc.ntsbNo);
+      opts.log(`${q.id}: ${verified.map((c) => `${c.ntsbNo}(${c.passages.length})`).join(' ')}${set === '16d' && seen.length ? `; in a 16c split: ${seen.join(' ')}` : ''}`);
+    }
+    if (set === '16d') {
+      const source = { generationId: dataset.generationId, passagesIndex: dataset.passagesIndex, chunkerVersion, retrievedAt: new Date().toISOString(), note: 'Case headers (caseHeader of the canonical case summaries) and the Task 16d bundles: public NTSB passages of real hybrid-retrieval bundles, checked like the brief pipeline checks them (verifyBundle).' };
+      const prior = readV2(opts.out, source);
+      writeV2(opts.out, { ...prior, source, headers: { ...prior.headers, ...headers }, bundles });
+      opts.log(`wrote ${bundles.length} bundles into ${opts.out}`);
+      return 0;
     }
     const file: EvidenceFile = EvidenceFileSchema.parse({
       version: 'checker-evidence-v1',

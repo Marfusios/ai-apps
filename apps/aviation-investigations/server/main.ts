@@ -44,7 +44,10 @@ function briefServices(config: AppConfig, db: Db, es: Client): { services: Brief
   if (!apiKey) return { services: null, problem: 'OPENAI_API_KEY is not set: AI briefs have no query embeddings' };
   try {
     const embedder = createOpenAIQueryEmbedder({ apiKey, model, dims });
-    return { services: createBriefServices(db, { retriever: createHybridRetriever({ es, embedder }) }), problem: null };
+    return {
+      services: createBriefServices(db, { retriever: createHybridRetriever({ es, embedder }), displayMode: config.ai.partialDisplay ? 'claims' : 'whole' }),
+      problem: null,
+    };
   } catch {
     return { services: null, problem: 'OPENAI_EMBEDDING_MODEL has no known price: AI briefs have no query embeddings' };
   }

@@ -1,21 +1,23 @@
 /**
- * `pnpm eval:checker <command>`: the evidence checker's calibration (Task 16c; gate G6).
+ * `pnpm eval:checker <command>`: the evidence checker's calibration (Tasks 16c and 16d; gate G6).
  *
- *   retrieve  [--confirm-cost] [--out <file>]       real retrieval bundles → evidence.json
- *   build     [--check]                             evidence.json + items → dataset.json
- *   inventory --config <name>[,<name>] [--split dev|holdout]   free: token counts, prices
- *   run       --config <name> --split dev|holdout [--samples <n>] [--confirm-cost] [--resume <trials.jsonl>]
- *   select    <dev summary.json>...                  the selection rule → selection.json
+ *   retrieve  [--confirm-cost] [--questions v1|16d] [--out <file>]   real retrieval bundles (and case headers)
+ *   headers   [--out <file>]                         free: case headers of every calibration case (read-only)
+ *   build     [--check]                              evidence + items → dataset.v2.json (dataset.json stays frozen)
+ *   simulate  [--dir <dir>] [--write]                free: the 16c recordings through the display projection
+ *   inventory --candidate <name> --split dev|holdout free: token counts, expected and worst-case cost
+ *   run       --candidate <name> --split dev|holdout [--confirm-cost] [--resume <manifest>]
+ *   select    <dev summary.json>...                   the frozen selection rule → selection.v2.json
  *
  * Common options: `--env-files a,b` (as the evaluations': the dev connection files),
  * `--keys-file <file>` (only `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are read from it,
  * never over a nonempty process value; values are never printed).
  *
  * Paid calls only with `--confirm-cost`, each attempt reserved and settled on the
- * evaluation ledger (`DATABASE_INGEST_URL`); every paid step is appended to
- * `data/work/checker/spend.jsonl`, and a step whose reservations would take the logged
- * total above `CALIBRATION_LIMIT_USD` refuses before anything is sent. The held-out split
- * runs once, for the configuration frozen in `selection.json`.
+ * evaluation ledger (`DATABASE_INGEST_URL`); every paid 16d step is appended to
+ * `data/work/checker/spend-16d.jsonl`, and a step whose reservation would take the logged
+ * total above `BUDGET_V2_USD` refuses before anything is sent. The held-out split runs
+ * once, for the candidate frozen in `selection.v2.json`.
  */
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -23,14 +25,14 @@ import { loadConfig, type AppConfig } from '../../shared/config.js';
 import { readDotenvAllowlisted } from '../../shared/env-files.js';
 import { APP_DIR, workerConfig } from '../../worker/config.js';
 import { describeWorkerError } from '../../worker/errors.js';
-import { SUPPORTED_SAMPLES } from './protocol.js';
-import { DEFAULT_EVIDENCE, retrieveEvidence } from './retrieve.js';
 
 const USAGE = [
-  'usage: pnpm eval:checker retrieve [--confirm-cost] [--out <file>]',
+  'usage: pnpm eval:checker retrieve [--confirm-cost] [--questions v1|16d] [--out <file>]',
+  '       pnpm eval:checker headers [--out <file>]',
   '       pnpm eval:checker build [--check]',
-  '       pnpm eval:checker inventory --config <name>[,<name>] [--split dev|holdout]',
-  '       pnpm eval:checker run --config <name> --split dev|holdout [--samples <n>] [--confirm-cost] [--resume <trials.jsonl>]',
+  '       pnpm eval:checker simulate [--dir <dir>] [--write]',
+  '       pnpm eval:checker inventory --candidate <name> --split dev|holdout',
+  '       pnpm eval:checker run --candidate <name> --split dev|holdout [--confirm-cost] [--resume <manifest>]',
   '       pnpm eval:checker select <dev summary.json>...',
   'common: [--env-files <a,b>] [--keys-file <file>]',
 ].join('\n');
@@ -65,45 +67,50 @@ async function main(argv: string[]): Promise<number> {
       'confirm-cost': { type: 'boolean' },
       out: { type: 'string' },
       check: { type: 'boolean' },
-      config: { type: 'string' },
+      candidate: { type: 'string' },
       split: { type: 'string' },
-      samples: { type: 'string' },
       resume: { type: 'string' },
+      dir: { type: 'string' },
+      write: { type: 'boolean' },
+      questions: { type: 'string' },
     },
     strict: true,
   });
   const log = (m: string) => console.log(m);
   if (command === 'retrieve') {
+    const { DEFAULT_EVIDENCE, retrieveEvidence } = await import('./retrieve.js');
     const config = checkerConfig(values['env-files'], values['keys-file']);
-    return retrieveEvidence(config, { confirmCost: values['confirm-cost'] === true, out: values.out ? resolve(values.out) : DEFAULT_EVIDENCE, log });
+    const set = values.questions ?? 'v1';
+    if (set !== 'v1' && set !== '16d') {
+      console.error(USAGE);
+      return 2;
+    }
+    return retrieveEvidence(config, { confirmCost: values['confirm-cost'] === true, set, out: values.out ? resolve(values.out) : DEFAULT_EVIDENCE[set], log });
+  }
+  if (command === 'headers') {
+    const { headersCommand } = await import('./retrieve.js');
+    const config = checkerConfig(values['env-files'], values['keys-file']);
+    return headersCommand(config, { ...(values.out ? { out: resolve(values.out) } : {}), log });
   }
   if (command === 'build') {
     const { buildDataset } = await import('./build.js');
     return buildDataset({ check: values.check === true, log });
   }
+  if (command === 'simulate') {
+    const { DEFAULT_RECORDINGS, simulateCommand } = await import('./simulate.js');
+    return simulateCommand({ dir: values.dir ? resolve(values.dir) : DEFAULT_RECORDINGS, write: values.write === true, log });
+  }
   if (command === 'inventory' || command === 'run') {
     const { inventoryCommand, runCommand } = await import('./run.js');
     const config = checkerConfig(values['env-files'], values['keys-file']);
-    const names = (values.config ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const candidate = values.candidate ?? '';
     const split = values.split ?? 'dev';
-    if (names.length === 0 || (split !== 'dev' && split !== 'holdout')) {
+    if (!candidate || (split !== 'dev' && split !== 'holdout')) {
       console.error(USAGE);
       return 2;
     }
-    if (command === 'inventory') return inventoryCommand(config, { configs: names, split, log });
-    const samples = values.samples === undefined ? SUPPORTED_SAMPLES : Number(values.samples);
-    if (names.length !== 1 || !Number.isInteger(samples) || samples < 1 || samples > SUPPORTED_SAMPLES) {
-      console.error(USAGE);
-      return 2;
-    }
-    return runCommand(config, {
-      config: names[0]!,
-      split,
-      samples,
-      confirmCost: values['confirm-cost'] === true,
-      ...(values.resume ? { resume: values.resume } : {}),
-      log,
-    });
+    if (command === 'inventory') return inventoryCommand(config, { candidate, split, log });
+    return runCommand(config, { candidate, split, confirmCost: values['confirm-cost'] === true, ...(values.resume ? { resume: values.resume } : {}), log });
   }
   console.error(USAGE);
   return 2;

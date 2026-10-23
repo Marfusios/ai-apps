@@ -9,8 +9,8 @@ import { createAnthropicProvider, STAGE_THINKING, thinkingParam } from '../../se
 import { PHASE_GROUPS } from '../../shared/codes.js';
 import { createFakeProvider, DEFAULT_FAKE_USAGE } from '../../server/ai/fake.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v5.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v6.js';
+import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v7.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v7.js';
 import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
   CheckOutputSchema,
@@ -55,7 +55,7 @@ const composeInput: ComposeInput = {
 };
 
 const checkInput: CheckInput = {
-  criteria: ['Timing: the event happened within 30 calendar days or 10 flight hours after the relevant maintenance.'],
+  cases: [{ ntsbNo: 'DFW08TA066', header: 'Hughes OH-6A · helicopter · maneuvering' }],
   passages: [
     {
       passageId: 'p-dfw-1',
@@ -360,7 +360,7 @@ describe('Anthropic adapter results', () => {
     const result = await p.compose(composeInput, ctx('compose'));
     expect(result.output).toEqual(composeOutput);
     expect(result.model).toBe(OPUS);
-    expect(result.promptVersion).toBe('compose.v6');
+    expect(result.promptVersion).toBe('compose.v7');
   });
 
   it('keeps the reported thinking tokens as calibration data; output_tokens stays the billed total', async () => {
