@@ -192,6 +192,29 @@ describe('validateComposition', () => {
     expect(r.citations[0]).toMatchObject({ sectionId: 'DFW08TA066:analysis/aircraft-1', sectionSha: sha('section of DFW08TA066') });
   });
 
+  it('every resolved quote carries the excerpt-context verdict; an excerpt that needs its context does not fail the composition', () => {
+    const r = validateComposition(composition(), allow(), { mechanicalCause: true });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // The first quote stops before "by a contract maintenance facility": not the whole sentence.
+    expect(r.citations.map((c) => c.excerpt)).toEqual([
+      { rules: 'excerpt-context-v1', problems: ['partial_sentence'] },
+      { rules: 'excerpt-context-v1', problems: [] },
+    ]);
+    const whole = composition();
+    whole.cases[0]!.quotes[0]!.quote = 'The engine had been replaced 5.1 hours prior to the accident by a contract maintenance facility.';
+    const w = validateComposition(whole, allow(), { mechanicalCause: true });
+    expect(w.ok && w.citations[0]!.excerpt.problems).toEqual([]);
+    // "The pilot stated, …" quoted without its lead-in: as the pilot's account it keeps its source; as the investigators' words it does not.
+    const account = composition();
+    account.cases[1]!.quotes[0] = { passageId: 'p-den', quote: 'I am now sure the engine was trying to seize up and I was again forced to land.', speaker: 'pilot' };
+    const a = validateComposition(account, allow(), { mechanicalCause: true });
+    expect(a.ok && a.citations[1]!.excerpt.problems).toEqual([]);
+    account.cases[1]!.quotes[0]!.speaker = 'investigators';
+    const b = validateComposition(account, allow(), { mechanicalCause: true });
+    expect(b.ok && b.citations[1]!.excerpt.problems).toEqual(['partial_sentence', 'pronoun']);
+  });
+
   it('quote not in passage is refused', () => {
     const out = composition();
     out.cases[0]!.quotes[0]!.quote = 'The engine had been replaced 5 hours prior to the accident';

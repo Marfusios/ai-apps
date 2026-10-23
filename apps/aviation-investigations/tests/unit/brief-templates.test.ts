@@ -71,11 +71,15 @@ const fact = (relation: ChronologyFact['relation'], over: Partial<ChronologyFact
   ...over,
 });
 const chrono = (maintenance: string, facts: ChronologyFact[]): ComposeChronology => ({ maintenance, facts });
-/** A single-aircraft case whose passages are all aircraft-scoped to aircraft 1. */
-const evidence = (ids: string[]): CaseEvidence => ({
+/** Passage text that gives explicit ordinal evidence (rule O-1) for the ordinal and count facts these tests use. */
+const ORDINAL_TEXT =
+  'It was the first flight, the second flight, the third flight or the fourth flight after the work; the airplane had not flown since the work; no other flights were made since the work; one flight, two flights or three flights since the work.';
+/** A single-aircraft case whose passages are all aircraft-scoped to aircraft 1 (texts: `ORDINAL_TEXT` unless given). */
+const evidence = (ids: string[], text = ORDINAL_TEXT): CaseEvidence => ({
   passageIds: ids,
   scopes: new Map(ids.map((id) => [id, { scope: 'aircraft' as const, aircraftKey: 1 }])),
   multiAircraft: false,
+  texts: new Map(ids.map((id) => [id, text])),
 });
 
 const scope = (over: Partial<ScopeOutput> = {}): ScopeOutput =>
@@ -301,7 +305,7 @@ describe('rendering', () => {
       checkHeader: 'Hughes OH-6, near Valentine, Texas · 2008-02-08',
       passages: [
         passage('p1', 'The pilot said the engine quit. A nut was loose.'),
-        passage('p2', 'The engine was changed the day before.'),
+        passage('p2', 'The engine was changed the day before; the accident flight was its first flight after the change.'),
         passage('p3', "The contract mechanic's failure to secure the nut.", 'probable_cause'),
       ],
     } as unknown as VerifiedCase;
@@ -325,6 +329,7 @@ describe('rendering', () => {
     const citation: ResolvedCitation = {
       ntsbNo: 'DFW08TA066', caseIndex: 0, quoteIndex: 0, passageId: 'p1', sectionId: 'x', revisionId: 'y', sectionSha: 'z',
       text: 'A nut was loose.', passageSpan: { start: 31, end: 47 }, sectionSpan: { start: 31, end: 47 }, matches: 1, occurrence: 'first',
+      excerpt: { rules: 'excerpt-context-v1', problems: [] },
     };
     const cases = new Map([['DFW08TA066', vc], ['DEN08LA103', other]]);
     const readings = {
@@ -678,7 +683,7 @@ describe('the reader’s criteria under the timing rules (server-owned, decided 
     expect(claims[0]).toContain('within 1 flight hour after the relevant maintenance (the overhaul)');
     expect(claims[1]).toContain('the first flight after the relevant maintenance (the overhaul)');
     expect(claims[2]).toContain('a total loss of engine power');
-    expect(CHRONOLOGY_RULES_VERSION).toBe('chronology-rules-v2');
+    expect(CHRONOLOGY_RULES_VERSION).toBe('chronology-rules-v3');
   });
 
   it('G6 #3: the semantic failure-type line links the passage set its claim was checked on', () => {

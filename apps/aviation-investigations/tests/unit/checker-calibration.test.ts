@@ -5,17 +5,23 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { CheckInputSchema, CheckOutputSchema, type CheckOutput } from '../../server/ai/provider.js';
 import {
   V1_LABELS_SHA256,
-  buildCalibrationV2,
+  V2_FILE_SHA256,
+  buildCalibrationV3,
   labelsHash,
   readDataset,
   readDatasetV2,
+  readDatasetV3,
+  readEvidenceV3,
   v1LabelsV2,
   v1Plans,
+  v2LabelsV3,
+  v2Plans,
   type CalibrationBatch,
   type CalibrationDataset,
 } from '../../evals/checker/build.js';
-import { EvidenceFileSchema, EvidenceV2FileSchema } from '../../evals/checker/evidence.js';
+import { EvidenceFileSchema, EvidenceV2FileSchema, sha256 } from '../../evals/checker/evidence.js';
 import { BRIEF_LABELS_V2, CLAIM_LABELS_V2 } from '../../evals/checker/labels.v2.js';
+import { BRIEF_ERRATA, CLAIM_ERRATA, DISPUTED } from '../../evals/checker/labels.v3.js';
 import { identityDifferences, inputsSha256, manifestId, newManifest, readManifest, resumeState, type RunIdentity } from '../../evals/checker/manifest.js';
 import { clusteredRate, displayReport, gateOf, rate, rawReport, type Trial } from '../../evals/checker/metrics.js';
 import { CANDIDATES_V2, HELDOUT_V2, PROTOCOL_V2, candidateMismatch, selectV2, type DevRunV2 } from '../../evals/checker/protocol.v2.js';
@@ -29,6 +35,10 @@ const evidenceText = readFileSync(resolve(DIR, 'evidence.json'), 'utf8');
 const v2Text = readFileSync(resolve(DIR, 'evidence-16d.json'), 'utf8');
 const v1 = readDataset();
 const v2 = readDatasetV2();
+const v3 = readDatasetV3();
+/** The v2 batches' plans as the production code builds them now (display-deps-v2, the static rules); the frozen file keeps 16d's. */
+const v2plans = v2Plans(v2).plans;
+const withPlans = (bs: readonly CalibrationBatch[]) => bs.map((b) => ({ ...b, plan: v2plans.get(b.id)! }));
 
 /** A checker that answers every claim as its label says (supported for unknown labels); `flip` inverts it. */
 function oracle(b: CalibrationBatch, flip = false): CheckOutput {
@@ -60,11 +70,51 @@ describe('the checker calibration sets (evals/checker)', () => {
     for (const b of v1.batches) expect(plans.get(b.id)!.claims.length, b.id).toBe(b.input.claims.length);
   });
 
-  it('v2 is the deterministic build of the evidence and the items, labels hashed per split', () => {
-    const built = buildCalibrationV2(EvidenceFileSchema.parse(JSON.parse(evidenceText)), evidenceText, EvidenceV2FileSchema.parse(JSON.parse(v2Text)), v2Text);
-    expect(`${JSON.stringify(built, null, 2)}\n`).toBe(readFileSync(resolve(DIR, 'dataset.v2.json'), 'utf8'));
-    expect(built.labels.version).toBe('checker-labels-v2');
+  it('v2 (16d) stays frozen, and the production code still renders exactly its claims', () => {
+    expect(sha256(readFileSync(resolve(DIR, 'dataset.v2.json'), 'utf8'))).toBe(V2_FILE_SHA256);
+    expect(labelsHash(v2.batches)).toBe(v2.labels.sha256);
+    const { plans, textChanged } = v2Plans(v2);
+    expect(textChanged).toEqual([]);
+    expect(plans.size).toBe(v2.batches.length);
+    for (const b of v2.batches) expect(plans.get(b.id)!.claims.length, b.id).toBe(b.input.claims.length);
+  });
+
+  it('v3 is the deterministic build of the evidence and the items: every earlier item is development, labels v3 hashed per split', () => {
+    const built = buildCalibrationV3(EvidenceFileSchema.parse(JSON.parse(evidenceText)), evidenceText, EvidenceV2FileSchema.parse(JSON.parse(v2Text)), v2Text, readEvidenceV3());
+    expect(`${JSON.stringify(built, null, 2)}\n`).toBe(readFileSync(resolve(DIR, 'dataset.v3.json'), 'utf8'));
+    expect(built.labels).toMatchObject({ version: 'checker-labels-v3', errata: 'checker-errata-v1' });
     for (const s of ['dev', 'holdout'] as const) expect(built.labels.splits![s].sha256).toBe(labelsHash(built.batches.filter((b) => b.split === s)));
+    // Every v2 batch, the 16d held-out pilot included, is development with the same inputs.
+    for (const b of v2.batches) {
+      const x = built.batches.find((y) => y.id === b.id)!;
+      expect(x.split, b.id).toBe('dev');
+      expect(x.input, b.id).toEqual(b.input);
+    }
+    expect(built).toMatchObject({ displayRules: 'display-deps-v2', excerptRules: 'excerpt-context-v1', ordinalRules: 'ordinal-evidence-v1', chronologyRules: 'chronology-rules-v3' });
+  });
+
+  it('labels v3: the errata overlay changes exactly its claims, each with a source and a reason; disputed labels stay, flagged', () => {
+    for (const e of [...CLAIM_ERRATA, ...BRIEF_ERRATA]) {
+      expect(e.reason.length).toBeGreaterThan(60);
+      expect(e.source.length).toBeGreaterThan(5);
+    }
+    const changed = v3.batches.flatMap((b) => {
+      const old = v2.batches.find((x) => x.id === b.id)!;
+      return b.labels.flatMap((l, i) => (l.label !== old.labels[i]!.label ? [`${b.id}/${l.item}:${old.labels[i]!.label}>${l.label}`] : []));
+    });
+    // 5 claim-batch items, 3 "third flight" claims in dev.b1, its error variants and its reading variant, the b5 timing claim in
+    // holdout.b5, its variants and holdout.b5-week, the throttle excerpt in each throttle variant, and the copies in the maximum-size inputs.
+    expect(changed.length).toBe(43);
+    expect(changed).toContain('dev.paid/c01:supported>not_supported');
+    expect(changed).toContain('dev.b1-hours/dev.b1-hours.C13:supported>not_supported');
+    expect(changed).toContain('holdout.b5-week/holdout.b5-week.C8:supported>unknown');
+    expect(changed).toContain('holdout16d.throttle/holdout16d.throttle.C35:supported>not_supported');
+    expect(v3.batches.find((b) => b.id === 'holdout16d.throttle')!.brief).toBe('one_error');
+    // The frozen results' labels do not change on disk: the overlay reaches the 16d inputs only through v2LabelsV3.
+    expect(v2.batches.find((b) => b.id === 'dev.paid')!.labels[1]!.label).toBe('supported');
+    expect(v2LabelsV3(v2).batches.find((b) => b.id === 'dev.paid')!.labels[1]!.label).toBe('not_supported');
+    expect(v3.labels.disputed).toBe(v3.batches.flatMap((b) => b.labels).filter((l) => l.disputed).length);
+    expect(new Set(v3.batches.flatMap((b) => b.labels.filter((l) => l.disputed).map((l) => l.key)))).toEqual(new Set(DISPUTED.map((d) => d.key)));
   });
 
   it('gives the checker production inputs (case headers, no criteria) and every batch a display plan', () => {
@@ -115,8 +165,9 @@ describe('the checker calibration sets (evals/checker)', () => {
     expect(v1.batches.find((b) => b.id === 'holdout.b6')!.labels.every((l) => l.label === 'supported')).toBe(true);
   });
 
-  it('a perfect checker displays every supported claim and no error', () => {
-    const d = displayReport(v2.batches.filter((b) => b.split === 'dev'), trialsOf(v2, 'dev', (b) => oracle(b)));
+  it('a perfect checker displays every supported claim the static rules allow, and no error', () => {
+    const d = displayReport(v3.batches.filter((b) => b.split === 'dev'), trialsOf(v3, 'dev', (b) => oracle(b)));
+    // Answer retention: everything the deterministic rules leave is shown.
     expect(d.m1.rate).toBe(1);
     expect(d.m2.rate).toBe(1);
     expect(d.m3.all.k).toBe(0);
@@ -124,22 +175,23 @@ describe('the checker calibration sets (evals/checker)', () => {
     expect(d.m5.violations).toBe(0);
     expect(d.e1.k).toBe(0);
     expect(d.critical.neverDisplayed).toBe(d.critical.items);
-    const r = rawReport(v2.batches.filter((b) => b.split === 'dev'), trialsOf(v2, 'dev', (b) => oracle(b)), 45_000);
+    const r = rawReport(v3.batches.filter((b) => b.split === 'dev'), trialsOf(v3, 'dev', (b) => oracle(b)), 45_000);
     expect(r.semanticDetection.all.rate).toBe(1);
     expect(r.falseFlags.k).toBe(0);
   });
 
   it('failed calls block output but never count as detected errors (16c review I2)', () => {
-    const batches = v2.batches.filter((b) => b.split === 'dev');
-    const failed = trialsOf(v2, 'dev', () => null);
+    const batches = v3.batches.filter((b) => b.split === 'dev');
+    const failed = trialsOf(v3, 'dev', () => null);
     const r = rawReport(batches, failed, 45_000);
     // Nothing answered: no detection at all, and the error claims of failed calls are counted apart.
     expect(r.semanticDetection.all).toMatchObject({ k: 0, n: 0, rate: null });
     const errorsIn = (t: Trial) => batches.find((b) => b.id === t.batch)!.labels.filter((l) => l.label === 'not_supported').length;
     expect(r.failedErrorClaims).toBe(failed.reduce((n, t) => n + errorsIn(t), 0));
     expect(r.failedCalls).toEqual({ timeout: failed.length });
-    // Production-faithful withholding is a separate figure.
-    expect(r.errorWithholding.all.rate).toBe(1);
+    // Production withholding is a separate figure, from the projection.
+    expect(r.productionWithholding.whole.all.rate).toBe(1);
+    expect(r.productionWithholding.claims.all.rate).toBe(1);
     const d = displayReport(batches, failed);
     expect(d.m2.k).toBe(0);
     expect(d.m3.all.k).toBe(0);
@@ -147,16 +199,35 @@ describe('the checker calibration sets (evals/checker)', () => {
     expect(d.withheld.rules).toEqual({});
   });
 
-  it('an inverted checker: no answer shown (an abstention stays, without its gap notes), every error claim flagged by verdict', () => {
-    const batches = v2.batches.filter((b) => b.split === 'dev');
-    const inverted = trialsOf(v2, 'dev', (b) => oracle(b, true));
-    const abstentions = batches.filter((b) => b.brief === 'supported' && b.plan?.shape === 'abstention').length;
-    expect(displayReport(batches, inverted).m2.k).toBe(abstentions * 3);
+  it('an inverted checker: no answer shown (an abstention without its gap notes is not a shown brief: 16d review m5), no error detected', () => {
+    const batches = v3.batches.filter((b) => b.split === 'dev');
+    const inverted = trialsOf(v3, 'dev', (b) => oracle(b, true));
+    const abstentions = batches.filter((b) => b.brief === 'supported' && b.plan?.shape === 'abstention');
+    expect(abstentions.length).toBeGreaterThan(0);
+    expect(displayReport(batches, inverted).m2.k).toBe(0);
     expect(rawReport(batches, inverted, 45_000).semanticDetection.all.k).toBe(0);
   });
 
+  it('the gate\'s probe (16d finding 4): a missing verdict is blocked output, never a detection or a flagged critical regression', () => {
+    const b = v3.batches.find((x) => x.id === 'holdout16d.helicopter.context')!;
+    const critical = b.labels.find((l) => l.critical && l.label === 'not_supported')!;
+    const out = oracle(b);
+    out.verdicts = out.verdicts.filter((v) => v.claim !== critical.claim);
+    const t: Trial[] = [{ batch: b.id, sample: 1, output: out, latencyMs: 1, costUsd: 0 }];
+    const r = rawReport([b], t, 45_000);
+    expect(r.semanticDetection.all).toMatchObject({ k: 0, n: 1 });
+    expect(r.blockedErrorClaims.all).toBe(1);
+    expect(r.critical).toMatchObject({ items: 1, flaggedEveryTrial: 0, failures: [], blocked: [{ item: critical.item, batch: b.id, sample: 1 }] });
+    // Production withheld everything: the display figures, from the projection, say so.
+    const d = displayReport([b], t);
+    expect(d.m3.all.k).toBe(0);
+    expect(r.productionWithholding.whole.all).toMatchObject({ k: 1, n: 1 });
+    // The same probe with the verdict present: an actual detection.
+    expect(rawReport([b], [{ ...t[0]!, output: oracle(b) }], 45_000).critical.flaggedEveryTrial).toBe(1);
+  });
+
   it('a missing verdict makes the output structurally unusable: the whole brief is withheld', () => {
-    const b = v2.batches.find((x) => x.brief === 'supported' && x.split === 'dev')!;
+    const b = v3.batches.find((x) => x.brief === 'supported' && x.split === 'dev')!;
     const out = oracle(b);
     out.verdicts.pop();
     const t: Trial[] = [{ batch: b.id, sample: 1, output: out, latencyMs: 1, costUsd: 0 }];
@@ -277,7 +348,7 @@ describe('run manifests (16d reply §6 High 2)', () => {
   });
 
   it('keeps the maximum-size inputs out of the accuracy figures (their claims are their sources\' claims)', () => {
-    const batches = v2.batches.filter((b) => b.split === 'dev');
+    const batches = withPlans(v2.batches.filter((b) => b.split === 'dev'));
     const f = runFigures(batches, trialsOf(v2, 'dev', (b) => oracle(b)), 45_000);
     expect(f.maxSize.calls).toBe(6);
     expect(f.display.trials.claims).toBe(batches.filter((b) => b.kind === 'claims' && !b.maxSize).length);
@@ -287,8 +358,8 @@ describe('run manifests (16d reply §6 High 2)', () => {
 
 describe('protocol v2: frozen candidates, selection and production', () => {
   const run = (candidate: string, m1: number, m2: number, family: number, criticalOk: boolean): DevRunV2 => {
-    const d = displayReport(v2.batches.filter((b) => b.split === 'dev'), trialsOf(v2, 'dev', (b) => oracle(b)));
-    const r = rawReport(v2.batches.filter((b) => b.split === 'dev'), trialsOf(v2, 'dev', (b) => oracle(b)), 45_000);
+    const d = displayReport(v3.batches.filter((b) => b.split === 'dev'), trialsOf(v3, 'dev', (b) => oracle(b)));
+    const r = rawReport(v3.batches.filter((b) => b.split === 'dev'), trialsOf(v3, 'dev', (b) => oracle(b)), 45_000);
     return {
       protocol: PROTOCOL_V2,
       candidate,
@@ -320,22 +391,21 @@ describe('protocol v2: frozen candidates, selection and production', () => {
     expect(() => selectV2([run('sonnet', 1, 1, 0, true)])).toThrow(/no complete/);
   });
 
-  it('the candidate set is complete configurations, and production is a frozen candidate', () => {
+  it('the 16d candidate set stays the record: complete configurations, none of them production since check.v9', () => {
     for (const c of Object.values(CANDIDATES_V2)) {
       expect(c).toMatchObject({ model: 'claude-haiku-5-5', thinking: 'adaptive', effort: 'low', caps: { input: 40_000, output: 24_500 }, timeoutMs: 45_000, maxClaims: 60 });
       expect(c.outputSchema.version).toBe('check-output-v2');
     }
-    const current = Object.keys(CANDIDATES_V2).filter((name) => candidateMismatch(name).length === 0);
-    expect(current.length).toBe(1);
+    // Task 16e moved production to check.v9 (protocol v3); the 16d candidates are the record.
+    expect(Object.keys(CANDIDATES_V2).filter((name) => candidateMismatch(name).length === 0)).toEqual([]);
     expect(STAGE_THINKING.check).toBe('adaptive');
     expect(loadConfig({ env: {}, files: [] }).ai.anthropic.checkModel).toBe('claude-haiku-5-5');
   });
 
-  it('production equals the frozen selection once there is one (gate condition 4)', () => {
+  it('the 16d selection stays the record', () => {
     if (!existsSync(SELECTION_V2_PATH)) return;
     const sel = JSON.parse(readFileSync(SELECTION_V2_PATH, 'utf8')) as SelectionV2;
-    expect(candidateMismatch(sel.candidate)).toEqual([]);
-    expect(sel.protocol).toBe(PROTOCOL_V2);
+    expect(sel).toMatchObject({ protocol: PROTOCOL_V2, candidate: 'haiku-think-v8' });
   });
 
   it('keeps the 16c selection code as the record (applied across prompt versions after the runs: a procedural deviation)', () => {

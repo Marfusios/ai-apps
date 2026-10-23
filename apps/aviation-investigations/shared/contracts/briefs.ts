@@ -412,11 +412,17 @@ export const ChecklistSchema = z.strictObject({
   /**
    * Check every statement → `partially_checked` (Task 16d: each statement shown was
    * confirmed against its cited passages; anything the check could not confirm was
-   * removed, with the counts in the result's `check`), or `withheld` (nothing generated is
-   * shown). `passed` is the blanket status of steps written before Task 16d; the server no
-   * longer writes it.
+   * removed, with the counts in the result's `check`), `withheld` (nothing generated is
+   * shown) or `nothing_to_check` (Task 16e: an abstention with no statement of its own).
+   * `passed` is the blanket status of steps written before Task 16d; the server no longer
+   * writes it.
    */
-  verified: z.enum(['passed', 'withheld', 'partially_checked']).optional(),
+  verified: z.enum(['passed', 'withheld', 'partially_checked', 'nothing_to_check']).optional(),
+  /**
+   * Task 16e: with `partially_checked`, how many statements were removed (any cause; 0 when
+   * none), for the factual row "COMPLETED · 2 STATEMENTS REMOVED" instead of a blanket status.
+   */
+  removedStatements: z.number().int().min(0).max(100).optional(),
 });
 export type Checklist = z.infer<typeof ChecklistSchema>;
 
@@ -538,6 +544,11 @@ export const CaseCardSchema = z.strictObject({
    * a whole did not keep its minimum content (a confirmed `why` and quote).
    */
   notVerified: z.array(z.enum(CARD_STATEMENT_KINDS)).min(1).max(CARD_STATEMENT_KINDS.length).optional(),
+  /**
+   * Task 16e: how many of this case's quotes were left out because they need the report's
+   * surrounding text to keep their meaning (`excerpt-context-v1`); never their text.
+   */
+  quotesOmitted: z.number().int().min(1).max(3).optional(),
 });
 export type CaseCard = z.infer<typeof CaseCardSchema>;
 
@@ -552,7 +563,8 @@ export const EvidenceGroupSchema = z.strictObject({
  * criteria (or the check could not confirm its decision), so the citation carries the
  * UNCONFIRMED label wherever the summary cites it. `removed` (Task 16d): `count` whole
  * sentences were removed at this position because the check could not confirm them, or a
- * statement they depend on (server copy `removedStatementsLine`); no text replaces them.
+ * statement they depend on; no text replaces them (the web renders a count marker,
+ * web/src/features/brief/BriefingSheet.tsx).
  */
 export const SummarySegmentSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('text'), text: z.string().min(1).max(1_500) }),
@@ -600,17 +612,22 @@ const resultContext = {
 const RemovedCount = z.number().int().min(0).max(100);
 
 /**
- * What the display projection did (Task 16d, `display-deps-v1`, server/briefs/display.ts):
- * the result is partially checked. `shown`: statements shown, each confirmed by the
- * evidence check against its cited passages; `removed`: statements not shown, by kind,
- * because the check could not confirm them or a statement they depend on (counts only,
- * never text); `unclassified`: presented cases shown without a group because their group
- * placement was removed. Copy: `partialCheckLine` (server/briefs/static-replies.ts).
+ * What the display projection did (Tasks 16d and 16e; `display-deps-v1`, then
+ * `display-deps-v2`, server/briefs/display.ts): the result is partially checked. `shown`:
+ * statements shown, each confirmed by the evidence check against its cited passages;
+ * `removed`: statements not shown, by kind, because the check could not confirm them, a
+ * deterministic rule left them out, or a statement they depend on went (counts only, never
+ * text); `omitted` (v2): the rule-based part of those, quotes that need their surrounding
+ * text (`excerpts`) and flight ordinals without explicit evidence (`ordinals`);
+ * `unclassified`: presented cases shown without a group because their group placement was
+ * removed. The web copy says what happened from these counts ("Evidence check completed ·
+ * 2 statements removed").
  */
 export const BriefCheckSchema = z.strictObject({
-  rules: z.literal('display-deps-v1'),
+  rules: z.enum(['display-deps-v1', 'display-deps-v2']),
   status: z.literal('partially_checked'),
   shown: z.number().int().min(0).max(100),
+  omitted: z.strictObject({ excerpts: RemovedCount, ordinals: RemovedCount }).optional(),
   removed: z.strictObject({
     summary: RemovedCount,
     why: RemovedCount,
@@ -724,7 +741,8 @@ export const ContextPassageSchema = z.strictObject({
  * statement about what the supplied passages lack.
  */
 export const ContextLineSchema = z.strictObject({
-  label: z.enum(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'CRITERIA', 'ACCOUNT']),
+  /** `READING` and `QUOTES` (Task 16e): a reading or quotes the check removed or a rule left out (server copy only). */
+  label: z.enum(['EVIDENCE', 'MAINTENANCE', 'SYMPTOM', 'TIMING', 'CRITERIA', 'ACCOUNT', 'READING', 'QUOTES']),
   text: z.string().min(1).max(200),
   passageIds: z.array(z.string().min(1).max(80)).max(MAX_BRIEF_PASSAGES),
 });

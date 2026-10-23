@@ -16,10 +16,10 @@
  * investigation has no timing"). A decision is made once, here, before the check; the
  * display projection only ever downgrades it (it never recomputes one after a removal).
  *
- * **Timing rules, `chronology-rules-v2`** (Task 16d; the check prompt states the same
- * rules, so the checker judges the criterion claims by them). A chronology fact (compose
- * v6 and later) is stored as its anchor, relation, evidence and attribution, and read as a
- * constraint on one **quantity**: the calendar-date difference from the maintenance to the
+ * **Timing rules, `chronology-rules-v3`** (Task 16e; v2 was Task 16d's; the check prompt
+ * states the same rules, so the checker judges the criterion claims by them). A chronology
+ * fact (compose v6 and later) is stored as its anchor, relation, evidence and attribution,
+ * and read as a constraint on one **quantity**: the calendar-date difference from the maintenance to the
  * event (`days`: calendar days, the same day 0, the day before 1, immediately before the
  * event flight 0 or 1), flight hours (`flight_hours`), hours a passage counts without
  * calling them flight hours (`operating_hours`), or completed flights between the
@@ -36,7 +36,16 @@
  *   passages' verified scope (never from the model). In an event with more than one
  *   aircraft, a fact not cited entirely from passages scoped to one aircraft decides
  *   nothing, and facts about different aircraft are never compared or combined: when the
- *   attributable facts name more than one aircraft, nothing is decided (review M2).
+ *   attributable facts name more than one aircraft, nothing is decided (review M2). A fact
+ *   about the whole event still takes part in the conflict test (v3, 16d review m1): "2
+ *   days" for the aircraft and "40 days" for the event conflict, as they would in a
+ *   single-aircraft event, so neither settles a 30-day window.
+ * - **O-1 ordinal evidence** (v3, `ordinal-evidence-v1`, server/briefs/ordinals.ts). A
+ *   `flight_ordinal` or `intervening_flights` fact decides only when the passages it cites
+ *   give that ordinal for a flight ("the third flight") or an explicitly complete count
+ *   ("had not flown since", "no flights between"); a narrated sequence may leave flights
+ *   out. Without that evidence the fact takes part in the conflict test only, and a
+ *   criterion it alone would settle stays unknown (`ordinal_unverified`).
  * - **C-1 conflicts, before any decision.** All the facts on one quantity (one anchor, one
  *   aircraft, one unit) must be able to hold together: their ranges must overlap. If they do
  *   not, the quantity is in conflict and decides nothing, whatever the window: "exact 20
@@ -96,9 +105,10 @@ import type {
   TimingWindow,
 } from '../../shared/contracts/briefs.js';
 import type { ReadingState } from './clarify.js';
+import { factOrdinalVerified } from './ordinals.js';
 
 /** The version of the timing rules below; the check prompt states the same rules. */
-export const CHRONOLOGY_RULES_VERSION = 'chronology-rules-v2';
+export const CHRONOLOGY_RULES_VERSION = 'chronology-rules-v3';
 
 const FAILURE_PHRASE: Readonly<Record<FailureType, string>> = {
   total_power_loss: 'a total loss of engine power',
@@ -115,8 +125,9 @@ export type Decision = 'matches' | 'does_not_match' | 'unknown';
  * attributable to one aircraft of a multi-aircraft event, or naming more than one
  * (`ambiguous_attribution`), approximate values only (`approximate`), bounds that do not
  * settle the limit (`insufficient_bound`), facts that do not bear on this criterion
- * (`not_settling`), hours not stated as flight hours (`operating_hours`), or facts that
- * cannot hold together (`conflict`).
+ * (`not_settling`), hours not stated as flight hours (`operating_hours`), facts that
+ * cannot hold together (`conflict`), or a flight ordinal or count without explicit
+ * evidence in its passages (`ordinal_unverified`, rule O-1).
  */
 export const UNKNOWN_REASONS = [
   'unstated',
@@ -127,6 +138,7 @@ export const UNKNOWN_REASONS = [
   'not_settling',
   'operating_hours',
   'conflict',
+  'ordinal_unverified',
 ] as const;
 export type UnknownReason = (typeof UNKNOWN_REASONS)[number];
 
@@ -137,7 +149,7 @@ export type ChronologyRule = (typeof CHRONOLOGY_RULES)[number];
 type Chronology = ComposeChronology;
 type Fact = Chronology['facts'][number];
 
-/** What the server knows about a presented case's supplied passages, for attribution (rule A-2). */
+/** What the server knows about a presented case's supplied passages, for attribution (rule A-2) and ordinal evidence (rule O-1). */
 export interface CaseEvidence {
   /** Every supplied passage of the case, in bundle order. */
   passageIds: readonly string[];
@@ -145,6 +157,8 @@ export interface CaseEvidence {
   scopes: ReadonlyMap<string, { scope: 'aircraft' | 'event'; aircraftKey: number | null }>;
   /** The event involved more than one aircraft. */
   multiAircraft: boolean;
+  /** The canonical text of each supplied passage (rule O-1 reads a fact's own passages). */
+  texts: ReadonlyMap<string, string>;
 }
 
 export type FactAttribution = { scope: 'aircraft'; aircraftKey: number } | { scope: 'event'; multiAircraft: boolean };
@@ -165,20 +179,34 @@ export interface DecidingFact {
   fact: Fact;
 }
 
+/** Whether a fact meets rule O-1 (ordinal evidence in the passages it cites). */
+export function ordinalVerified(f: Fact, ev: CaseEvidence): boolean {
+  return factOrdinalVerified(f, f.passageIds.flatMap((id) => (ev.texts.has(id) ? [ev.texts.get(id)!] : [])));
+}
+
 /**
- * Facts that may decide a criterion (rules A-1 and A-2), with their indices in the
- * chronology, or why there are none. In a multi-aircraft event every one must be
- * attributable to the same aircraft.
+ * Facts that may decide a criterion (rules A-1, A-2 and O-1), with their indices in the
+ * chronology, or why there are none; and the facts that may only block one (`blocking`):
+ * in a multi-aircraft event the facts about the whole event (v3), and anywhere a flight
+ * ordinal or count without its evidence. In a multi-aircraft event every deciding fact must
+ * be attributable to the same aircraft. A blocking fact takes part in the conflict test
+ * (C-1) and decides nothing.
  */
-export function decidingFacts(c: Chronology | undefined, ev: CaseEvidence): { facts: DecidingFact[]; reason?: UnknownReason } {
+export function decidingFacts(c: Chronology | undefined, ev: CaseEvidence): { facts: DecidingFact[]; blocking: DecidingFact[]; reason?: UnknownReason } {
   const relevant = (c?.facts ?? []).flatMap((fact, index) => (fact.anchor === 'relevant_maintenance' ? [{ index, fact }] : []));
-  if (relevant.length === 0) return { facts: [], reason: (c?.facts.length ?? 0) > 0 ? 'other_anchor' : 'unstated' };
-  if (!ev.multiAircraft) return { facts: relevant };
-  const attributed = relevant.map((d) => ({ d, a: factAttribution(d.fact, ev) }));
+  if (relevant.length === 0) return { facts: [], blocking: [], reason: (c?.facts.length ?? 0) > 0 ? 'other_anchor' : 'unstated' };
+  const verified = relevant.filter((d) => ordinalVerified(d.fact, ev));
+  const unverified = relevant.filter((d) => !ordinalVerified(d.fact, ev));
+  if (!ev.multiAircraft) return { facts: verified, blocking: unverified, ...(verified.length === 0 ? { reason: 'ordinal_unverified' as const } : {}) };
+  const attributed = verified.map((d) => ({ d, a: factAttribution(d.fact, ev) }));
   const aircraft = attributed.flatMap(({ d, a }) => (a.scope === 'aircraft' ? [{ d, key: a.aircraftKey }] : []));
+  const event = attributed.flatMap(({ d, a }) => (a.scope === 'event' ? [d] : []));
+  const blocking = [...event, ...unverified];
   // Facts about different aircraft are never combined (review M2).
-  if (aircraft.length === 0 || new Set(aircraft.map((x) => x.key)).size > 1) return { facts: [], reason: 'ambiguous_attribution' };
-  return { facts: aircraft.map((x) => x.d) };
+  if (aircraft.length === 0 || new Set(aircraft.map((x) => x.key)).size > 1) {
+    return { facts: [], blocking, reason: verified.length === 0 ? 'ordinal_unverified' : 'ambiguous_attribution' };
+  }
+  return { facts: aircraft.map((x) => x.d), blocking };
 }
 
 /** A decision with the passages it rests on (the deciding facts' passages, or none), the facts and rules used and, when unknown, why. */
@@ -311,15 +339,18 @@ function undecided(open: readonly Settled[], extra?: UnknownReason): UnknownReas
 
 const NOTHING = (reason: UnknownReason): Decided => ({ decision: 'unknown', passageIds: [], facts: [], rules: [], reason });
 
-/** The timing window ("within D calendar days or H flight hours") under rules C-1, AP-1, TW-N, TW-C, TW-I, TW-H. */
+/** The timing window ("within D calendar days or H flight hours") under rules C-1, AP-1, TW-N, TW-C, TW-I, TW-H, O-1. */
 export function timingDecision(window: TimingWindow, c: Chronology | undefined, ev: CaseEvidence): Decided {
-  const { facts, reason } = decidingFacts(c, ev);
+  const { facts, blocking, reason } = decidingFacts(c, ev);
   if (facts.length === 0) return NOTHING(reason ?? 'unstated');
   const q = quantities(facts);
+  const all = quantities([...facts, ...blocking]);
   const read: [Quantity, number][] = [
     ...(window.days !== null ? ([['days', window.days]] as [Quantity, number][]) : []),
     ...(window.flightHours !== null ? ([['flight_hours', window.flightHours]] as [Quantity, number][]) : []),
   ];
+  // Conflicts first, with the blocking facts too (C-1; v3: event-level facts, unverified ordinals).
+  if (read.some(([quantity]) => settleQuantity(all.get(quantity) ?? []).conflict)) return NOTHING('conflict');
   const settled = read.map(([quantity, limit]) => ({ limit, s: settleQuantity(q.get(quantity) ?? []), present: (q.get(quantity) ?? []).length > 0 }));
   if (settled.some((x) => x.s.conflict)) return NOTHING('conflict');
   const states = settled.map((x) => ({ ...x, state: x.s.range ? againstRange(x.s.range, x.limit) : ('unknown' as Limit) }));
@@ -344,16 +375,35 @@ export function timingDecision(window: TimingWindow, c: Chronology | undefined, 
   return NOTHING(undecided(states.filter((x) => x.state === 'unknown').map((x) => x.s), hoursOnlyOperating ? 'operating_hours' : undefined));
 }
 
-/** First flight only, under rules C-1, AP-1, FF-O, FF-Z, FF-I. */
+/** First flight only, under rules C-1, AP-1, FF-O, FF-Z, FF-I, O-1. */
 export function firstFlightDecision(c: Chronology | undefined, ev: CaseEvidence): Decided {
-  const { facts, reason } = decidingFacts(c, ev);
+  const { facts, blocking, reason } = decidingFacts(c, ev);
   if (facts.length === 0) return NOTHING(reason ?? 'unstated');
   const constraints = quantities(facts).get('flights') ?? [];
+  const blocked = quantities(blocking).get('flights') ?? [];
+  if (settleQuantity([...constraints, ...blocked]).conflict) return NOTHING('conflict');
   const s = settleQuantity(constraints);
   if (s.conflict) return NOTHING('conflict');
   if (s.range && s.range.hi === 0) return { decision: 'matches', passageIds: s.passageIds, facts: s.facts, rules: s.rules };
   if (s.range && s.range.lo >= 1) return { decision: 'does_not_match', passageIds: s.passageIds, facts: s.facts, rules: s.rules };
+  // Only an ordinal or count without its evidence spoke to which flight it was (O-1).
+  if (constraints.length === 0 && blocked.length > 0 && blocking.some((d) => !ordinalVerified(d.fact, ev))) return NOTHING('ordinal_unverified');
   return NOTHING(undecided([s]));
+}
+
+/**
+ * The relevant facts of a case whose constraints on one quantity cannot all hold (C-1),
+ * deciding and blocking facts together, as groups of fact indices (one group per quantity
+ * in conflict). The display shows such facts only together (`display-deps-v2`): a lone
+ * survivor of a conflict would read as settled (16d review m3).
+ */
+export function conflictingFacts(c: Chronology | undefined, ev: CaseEvidence): number[][] {
+  const { facts, blocking } = decidingFacts(c, ev);
+  const out: number[][] = [];
+  for (const [, constraints] of quantities([...facts, ...blocking])) {
+    if (constraints.length > 1 && settleQuantity(constraints).conflict) out.push(unique(constraints.map((x) => x.fact)));
+  }
+  return out;
 }
 
 /** One criterion's decision for one case, with its checker claim and the passages that claim cites. */

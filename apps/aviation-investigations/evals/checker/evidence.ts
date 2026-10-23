@@ -11,7 +11,9 @@
  *   Task 16d), for the 16c cases and the new ones, and the new held-out bundles.
  *
  * Both files were retrieved before retrieval versions existed (task 10e), so they carry no
- * `source.retrievalVersion`: they are `retrieval.v1` bundles.
+ * `source.retrievalVersion`: they are `retrieval.v1` bundles. `evidence-16e.json`
+ * (`checker-evidence-v3`, Task 16e) holds the 16e held-out bundles, retrieved under
+ * `retrieval.v2` with each case's channel provenance.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -87,6 +89,38 @@ export const EvidenceV2FileSchema = z.strictObject({
   bundles: z.array(EvidenceBundleSchema),
 });
 export type EvidenceV2File = z.infer<typeof EvidenceV2FileSchema>;
+
+/**
+ * `evidence-16e.json` (`checker-evidence-v3`, Task 16e): the 16e held-out bundles, retrieved
+ * under `retrieval.v2` (the production default since task 10e), with each case's header and
+ * where retrieval found it: its rank in each channel's window (keyword, vector, and the
+ * cases-index channel; null when that channel did not return it) and whether it reached the
+ * bundle only through the cases channel, mapped to its own passages (`mapped`). The cases
+ * index is recorded by its `_meta` version only.
+ */
+export const EvidenceV3CaseSchema = EvidenceCaseSchema.extend({
+  channels: z.strictObject({
+    keyword: z.number().int().positive().nullable(),
+    vector: z.number().int().positive().nullable(),
+    cases: z.number().int().positive().nullable(),
+  }),
+  mapped: z.boolean(),
+});
+export const EvidenceV3FileSchema = z.strictObject({
+  version: z.literal('checker-evidence-v3'),
+  source: z.strictObject({
+    generationId: z.number().int().positive(),
+    passagesIndex: z.string().min(1),
+    chunkerVersion: z.string().min(1),
+    retrievalVersion: z.literal('retrieval.v2'),
+    casesIndexVersion: z.string().min(1),
+    retrievedAt: z.iso.datetime(),
+    note: z.string(),
+  }),
+  headers: z.record(z.string().regex(/^[A-Z0-9]{6,16}$/), z.string().min(1).max(400)),
+  bundles: z.array(EvidenceBundleSchema.extend({ cases: z.array(EvidenceV3CaseSchema).min(1).max(6) })),
+});
+export type EvidenceV3File = z.infer<typeof EvidenceV3FileSchema>;
 
 export const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 

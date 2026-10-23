@@ -182,3 +182,109 @@ export const QUESTIONS_16D: readonly CalibrationQuestion[] = [
     keywordText: 'replaced the day before the accident engine part installed run-up',
   },
 ];
+
+/**
+ * Task 16e's held-out questions: maintenance topics no earlier question asked, retrieved
+ * under `retrieval.v2` (the production default, with its cases-index channel) with
+ * `retrieve --questions 16e`. A bundle that holds a case of any earlier split (16c, 16d) is
+ * not used, as the protocol (`protocol.v3.ts`, `HELDOUT_V3`) pre-registers: the first nine
+ * usable bundles in this order, and more only to cover a critical timing mutation.
+ */
+export const QUESTIONS_16E: readonly CalibrationQuestion[] = [
+  {
+    id: 'q16e-turbocharger',
+    split: 'holdout',
+    question: 'Engine power loss after turbocharger or wastegate maintenance',
+    keywordText: 'turbocharger wastegate exhaust bypass maintenance replaced power loss',
+  },
+  {
+    id: 'q16e-crankshaft',
+    split: 'holdout',
+    question: 'Crankshaft or connecting rod failures after an engine overhaul',
+    keywordText: 'crankshaft connecting rod failure overhaul rebuilt engine bearing',
+  },
+  {
+    id: 'q16e-fuel-cap',
+    split: 'holdout',
+    question: 'Fuel caps or fuel tank vents left open or blocked after servicing',
+    keywordText: 'fuel cap missing fuel tank vent blocked servicing fuel siphoned',
+  },
+  {
+    id: 'q16e-valve',
+    split: 'holdout',
+    question: 'Engine valve or valve train failures after cylinder work',
+    keywordText: 'exhaust valve stuck valve guide rocker arm pushrod cylinder maintenance',
+  },
+  {
+    id: 'q16e-injection',
+    split: 'holdout',
+    question: 'Fuel injection servo or nozzle problems after maintenance',
+    keywordText: 'fuel injection servo nozzle flow divider maintenance power loss',
+  },
+  {
+    id: 'q16e-induction',
+    split: 'holdout',
+    question: 'Air filter or induction system blockage after maintenance',
+    keywordText: 'air filter induction intake blocked maintenance engine power',
+  },
+  {
+    id: 'q16e-gascolator',
+    split: 'holdout',
+    question: 'Gascolator or fuel strainer left loose after maintenance',
+    keywordText: 'gascolator fuel strainer bowl loose leak maintenance',
+  },
+  {
+    id: 'q16e-primer',
+    split: 'holdout',
+    question: 'Engine primer left unlocked or primer line leaking after maintenance',
+    keywordText: 'primer unlocked primer line leak rich mixture maintenance',
+  },
+  {
+    id: 'q16e-p-lead',
+    split: 'holdout',
+    question: 'Magneto ground wire or ignition switch problems after maintenance',
+    keywordText: 'p-lead magneto ground wire ignition switch maintenance engine quit',
+  },
+  {
+    id: 'q16e-main-rotor',
+    split: 'holdout',
+    question: 'Helicopter main rotor or swashplate problems after maintenance',
+    keywordText: 'main rotor swashplate pitch link bolt helicopter maintenance',
+  },
+  {
+    id: 'q16e-trim',
+    split: 'holdout',
+    question: 'Trim tab or trim system problems after maintenance',
+    keywordText: 'trim tab trim cable actuator reversed maintenance control',
+  },
+  {
+    id: 'q16e-homebuilt-engine',
+    split: 'holdout',
+    question: 'Power loss on an amateur-built airplane after its engine installation',
+    keywordText: 'experimental amateur built engine installation first flight power loss',
+  },
+  {
+    id: 'q16e-oil-cap',
+    split: 'holdout',
+    question: 'Oil cap or dipstick not secured after an inspection',
+    keywordText: 'oil cap dipstick not secured oil loss inspection',
+  },
+  {
+    id: 'q16e-fuel-quantity',
+    split: 'holdout',
+    question: 'Fuel quantity gauges wrong after maintenance and the engine ran out of fuel',
+    keywordText: 'fuel quantity gauge indication inaccurate maintenance fuel exhaustion',
+  },
+  {
+    id: 'q16e-mount',
+    split: 'holdout',
+    question: 'Engine mount or engine baffle problems found after maintenance',
+    keywordText: 'engine mount bolt cracked baffle maintenance vibration',
+  },
+  {
+    id: 'q16e-seaplane',
+    split: 'holdout',
+    question: 'Seaplane or float problems after maintenance',
+    keywordText: 'float seaplane water rudder leak maintenance',
+  },
+];

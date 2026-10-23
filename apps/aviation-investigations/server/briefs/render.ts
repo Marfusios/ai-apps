@@ -47,8 +47,9 @@ import {
 } from '../../shared/contracts/briefs.js';
 import { SECTION_LABEL } from '../../shared/contracts/search.js';
 import { MAX_CHECK_CLAIMS, type CheckInput, type ClaimKind, type ComposeInput } from '../ai/provider.js';
-import { maintenanceWords, type CaseEvidence, type CriterionCheck, type Decision } from './criteria.js';
-import { DISPLAY_RULES_VERSION, refersBack, type DisplayOutcome, type DisplayPlan } from './display.js';
+import { conflictingFacts, maintenanceWords, ordinalVerified, type CaseEvidence, type CriterionCheck, type Decision } from './criteria.js';
+import { DISPLAY_RULES_VERSION, countsCases, refersOutside, type DisplayOutcome, type DisplayPlan, type StaticAbstention } from './display.js';
+import { textOrdinalsVerified } from './ordinals.js';
 import type { CaseSummary, EvidencePassage } from './evidence.js';
 import { splitSentences } from './sentences.js';
 import { NO_MATCH_LINES } from './static-replies.js';
@@ -79,9 +80,10 @@ export interface VerifiedCase {
 }
 
 /**
- * A verified case's supplied passages as the criteria read them: their ids and verified
- * scopes, and whether the event involved more than one aircraft (timing rule A-2: a
- * fact's attribution comes from the verified scope of the passages it cites).
+ * A verified case's supplied passages as the criteria read them: their ids, verified
+ * scopes and canonical texts, and whether the event involved more than one aircraft
+ * (timing rule A-2: a fact's attribution comes from the verified scope of the passages it
+ * cites; rule O-1: a flight ordinal needs its evidence in those passages' text).
  */
 export function caseEvidence(vc: Pick<VerifiedCase, 'passages' | 'summary'> | undefined): CaseEvidence {
   const passages = vc?.passages ?? [];
@@ -89,6 +91,7 @@ export function caseEvidence(vc: Pick<VerifiedCase, 'passages' | 'summary'> | un
     passageIds: passages.map((p) => p.passageId),
     scopes: new Map(passages.map((p) => [p.passageId, { scope: p.allowed.scope, aircraftKey: p.allowed.aircraftKey }])),
     multiAircraft: (vc?.summary.row.aircraft.length ?? 0) > 1,
+    texts: new Map(passages.map((p) => [p.passageId, p.allowed.text])),
   };
 }
 
@@ -564,14 +567,64 @@ export function checkPassages(cases: Iterable<VerifiedCase>, about: ReadonlySet<
 }
 
 /**
+ * The claims of a validated composition that a deterministic rule never shows, whatever
+ * the checker says (Task 16e; server/briefs/display.ts "Static abstentions"), by stable key:
+ * - `excerpt_context`: a quote the excerpt-context policy found to need its surrounding
+ *   text (`ResolvedCitation.excerpt`, `excerpt-context-v1`);
+ * - `ordinal_evidence` (`ordinal-evidence-v1`): a timing fact stating which flight it was,
+ *   or how many flights came in between, without explicit evidence in the passages it
+ *   cites; and a summary sentence, `why` line or gap note stating a flight ordinal without
+ *   explicit evidence in the passages it cites (the check input's citations: canonical ids).
+ * `input` and `claims` are `checkInput`'s, in canonical passage ids.
+ */
+export function staticAbstentions(
+  c: ComposeOutput,
+  citations: readonly ResolvedCitation[],
+  cases: ReadonlyMap<string, VerifiedCase>,
+  input: Pick<CheckInput, 'claims'>,
+  claims: readonly ClaimMeta[],
+): Map<string, StaticAbstention> {
+  const texts = new Map([...cases.values()].flatMap((vc) => vc.passages.map((p): [string, string] => [p.passageId, p.allowed.text])));
+  const out = new Map<string, StaticAbstention>();
+  claims.forEach((m, i) => {
+    const claim = input.claims[i]!;
+    const ref = m.ref;
+    if (ref.kind === 'attribution') {
+      if ((citations[ref.citation]?.excerpt.problems.length ?? 0) > 0) out.set(m.key, 'excerpt_context');
+    } else if (ref.kind === 'timing') {
+      const k = c.cases[ref.case];
+      const f = k?.chronology?.facts[ref.fact];
+      if (k && f && !ordinalVerified(f, caseEvidence(cases.get(k.ntsbNo)))) out.set(m.key, 'ordinal_evidence');
+    } else if (ref.kind === 'summary' || ref.kind === 'why' || ref.kind === 'gap') {
+      const cited = claim.passageIds.flatMap((id) => (texts.has(id) ? [texts.get(id)!] : []));
+      if (!textOrdinalsVerified(claim.text, cited)) out.set(m.key, 'ordinal_evidence');
+    }
+  });
+  return out;
+}
+
+/**
  * The display plan of a validated composition and the claims `checkInput` rendered from
  * it (server/briefs/display.ts): every claim's stable key, kind and cases, each criterion
- * claim's decision, the presented cases and whether a classification claim carries their
- * group, and each summary sentence's cases and back-reference flag (`refersBack`).
+ * claim's decision, the static abstentions (`staticAbstentions`), the presented cases and
+ * whether a classification claim carries their group, each summary sentence's cases and
+ * reference flags (`refersOutside`, `countsCases`), and each case's conflicting timing
+ * facts, which are shown together or not at all (`conflictingFacts`).
  */
-export function displayPlan(c: ComposeOutput, claims: readonly ClaimMeta[], mechanicalCause: boolean): DisplayPlan {
+export function displayPlan(
+  c: ComposeOutput,
+  claims: readonly ClaimMeta[],
+  mechanicalCause: boolean,
+  opts: { abstain?: ReadonlyMap<string, StaticAbstention>; cases?: ReadonlyMap<string, VerifiedCase> } = {},
+): DisplayPlan {
   const groupOf = new Map<string, GroupKind>();
   for (const g of c.groups) for (const n of g.caseNumbers) groupOf.set(n, g.kind);
+  const keys = new Set(claims.map((m) => m.key));
+  const together = c.cases.flatMap((k) =>
+    conflictingFacts(k.chronology, caseEvidence(opts.cases?.get(k.ntsbNo)))
+      .map((facts) => facts.map((f) => `case.${k.ntsbNo}.timing.${f}`).filter((key) => keys.has(key)))
+      .filter((g) => g.length > 1),
+  );
   return {
     rules: DISPLAY_RULES_VERSION,
     shape: c.outcome === 'answer' ? 'answer' : 'abstention',
@@ -580,14 +633,16 @@ export function displayPlan(c: ComposeOutput, claims: readonly ClaimMeta[], mech
       const g = groupOf.get(k.ntsbNo);
       return { ntsbNo: k.ntsbNo, classified: mechanicalCause && g !== undefined && g !== 'examples' };
     }),
-    sentences: summarySentences(c.summary).map((s) => ({ cases: sentenceCases(s), backReference: refersBack(s) })),
+    sentences: summarySentences(c.summary).map((s) => ({ cases: sentenceCases(s), reference: refersOutside(s), set: countsCases(s) })),
     claims: claims.map((m) => ({
       key: m.key,
       kind: m.kind,
       cases: [...m.cases],
       ...(m.criterion ? { criterion: m.criterion } : {}),
       ...(m.decision ? { decision: m.decision } : {}),
+      ...(opts.abstain?.has(m.key) ? { abstain: opts.abstain.get(m.key)! } : {}),
     })),
+    together,
   };
 }
 
@@ -682,10 +737,12 @@ export interface AnswerInput {
 /** The result's partial-check record (counts only). */
 function checkRecord(d: DisplayOutcome): BriefCheck {
   const r = d.counts.removed;
+  const omitted = { excerpts: d.counts.abstained.excerpt_context, ordinals: d.counts.abstained.ordinal_evidence };
   return {
     rules: DISPLAY_RULES_VERSION,
     status: 'partially_checked',
     shown: d.counts.shown,
+    ...(omitted.excerpts + omitted.ordinals > 0 ? { omitted } : {}),
     removed: {
       summary: r.summary,
       why: r.why,
@@ -765,7 +822,8 @@ export function answerResult(a: AnswerInput): Extract<BriefResult, { kind: 'answ
     const vc = a.cases.get(k.ntsbNo)!;
     const d = byCase.get(k.ntsbNo)!;
     const notVerified = d.removed.length > 0 ? { notVerified: [...d.removed] } : {};
-    return { ...plainCard(vc), reading: d.reading ? reading(k, ci, a, vc, groupOf.get(k.ntsbNo), shown) : null, ...notVerified };
+    const omitted = d.excerptsOmitted > 0 ? { quotesOmitted: d.excerptsOmitted } : {};
+    return { ...plainCard(vc), reading: d.reading ? reading(k, ci, a, vc, groupOf.get(k.ntsbNo), shown) : null, ...notVerified, ...omitted };
   });
   const grouped = (n: string) => byCase.get(n)?.grouped === true;
   const groups = a.mechanicalCause

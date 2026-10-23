@@ -11,11 +11,20 @@
  * **References.** Every passage a verdict names must be a supplied passage of a case the
  * claim is about (`check_invalid_evidence`). A `supported` verdict rests on passages the
  * claim cites (support found only elsewhere is not support for that citation); an absence
- * claim (it cites every supplied passage of its case) may name none. A `contradicted`
- * verdict names the passages that conflict. A quote must belong to a `contradicted`
- * verdict, come from one of its passages and be found there word for word under the
- * checker's quote rule (`checker-quote-v1`), once per claim (`check_invalid_quote`). A
- * verified quote shows the words exist, not that they entail anything.
+ * claim (it cites every supplied passage of its case) may name none, and any other
+ * `supported` verdict must name at least one. A `contradicted` verdict names the passages
+ * that conflict. A quote must belong to a `contradicted` verdict, come from one of its
+ * passages and be found there word for word under the checker's quote rule
+ * (`checker-quote-v1`), once per claim (`check_invalid_quote`). A verified quote shows the
+ * words exist, not that they entail anything.
+ *
+ * **Support outside the citations** (`check-judgement-v2`, Task 16e; 16d concern 5). A
+ * `supported` verdict that names, besides or instead of the claim's own citations, another
+ * supplied passage of the claim's case says the claim's own citations did not establish it
+ * all: that claim is not confirmed (`supported_outside_citations`, judged like
+ * `not_established`), and the rest of the verdict set stays judged. Version 1 made it a
+ * structural code that withheld the whole output. A verdict naming a passage outside the
+ * claim's cases, or a `supported` verdict naming none, is still structural.
  *
  * **Structural codes** (`STRUCTURAL_CHECK_CODES`: incomplete, repeated or unknown verdict
  * ids, invalid references, invalid quotes) mean the output is not a usable verdict set:
@@ -44,6 +53,8 @@ import type { ClaimMeta } from './render.js';
 import { matchQuote, type QuoteMatch } from './validate.js';
 
 export const CHECKER_QUOTE_RULE_VERSION = 'checker-quote-v1';
+/** The judging rules (`judgeCheck`): v1 is Task 16d's, v2 adds `supported_outside_citations` (module comment). */
+export const CHECK_JUDGEMENT_VERSION = 'check-judgement-v2';
 /** The passage text a checker quote may resolve to, in UTF-16 code units. */
 export const CHECK_QUOTE_MAX_SOURCE = CHECK_QUOTE_MAX;
 
@@ -56,6 +67,7 @@ export function matchCheckerQuote(passage: string, quote: string): QuoteMatch {
 export const CHECK_CODES = [
   'contradicted',
   'not_established',
+  'supported_outside_citations',
   'chronology_missed',
   'check_missing_verdict',
   'check_duplicate_verdict',
@@ -121,9 +133,12 @@ export function judgeCheck(input: CheckInput, output: CheckOutput, meta: readonl
   const index = new Map(input.claims.map((c, i) => [c.id, i]));
   const claims: ClaimVerdict[] = input.claims.map(() => ({ verdict: null, confirmed: false }));
   const invalid = new Set<number>();
+  const outside = new Set<number>();
   const problem = (claim: string, i: number, code: CheckCode) => {
     problems.push({ claim, index: i, kind: i >= 0 ? input.claims[i]!.kind : 'unknown', code });
-    if (i >= 0 && code !== 'contradicted' && code !== 'not_established' && code !== 'chronology_missed') invalid.add(i);
+    if (i >= 0 && code !== 'contradicted' && code !== 'not_established' && code !== 'chronology_missed' && code !== 'supported_outside_citations') invalid.add(i);
+    // Not confirmed, but not structural: the rest of the verdict set stays judged.
+    if (i >= 0 && code === 'supported_outside_citations') outside.add(i);
   };
 
   /** Every supplied passage of the cases a claim is about. */
@@ -151,9 +166,11 @@ export function judgeCheck(input: CheckInput, output: CheckOutput, meta: readonl
     const cited = new Set(claim.passageIds);
     const named = [...new Set(v.passages)];
     let valid = named.every((id) => scope.has(id));
-    if (v.verdict === 'supported' && !claim.absence) valid &&= named.length > 0 && named.every((id) => cited.has(id));
+    if (v.verdict === 'supported' && !claim.absence) valid &&= named.length > 0;
     if (v.verdict === 'contradicted') valid &&= named.length > 0;
     if (!valid) problem(v.claim, i, 'check_invalid_evidence');
+    // A supported verdict resting on a passage the claim does not cite (v2: that claim only).
+    else if (v.verdict === 'supported' && !claim.absence && named.some((id) => !cited.has(id))) problem(v.claim, i, 'supported_outside_citations');
     if (v.verdict === 'contradicted') {
       problem(v.claim, i, 'contradicted');
       const m = meta[i];
@@ -186,7 +203,7 @@ export function judgeCheck(input: CheckInput, output: CheckOutput, meta: readonl
   }
 
   claims.forEach((c, i) => {
-    c.confirmed = c.verdict === 'supported' && !invalid.has(i);
+    c.confirmed = c.verdict === 'supported' && !invalid.has(i) && !outside.has(i);
   });
   const codes = [...new Set(problems.map((p) => p.code))].sort((a, b) => ORDER.get(a)! - ORDER.get(b)!);
   const structural = codes.filter((c): c is StructuralCheckCode => STRUCTURAL.has(c));

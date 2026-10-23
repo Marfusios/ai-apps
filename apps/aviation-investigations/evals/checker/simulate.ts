@@ -1,87 +1,126 @@
 /**
- * `pnpm eval:checker simulate [--dir <dir>]` (Task 16d, free and offline): the 16c check
- * recordings re-read through the production display projection.
+ * `pnpm eval:checker simulate [--write]` (Tasks 16d and 16e; free and offline): the recorded
+ * check outputs of the 16c and 16d calibration runs re-read through the production code as it
+ * is now: judged by `judgeCheck` (`check-judgement-v2`: a `supported` verdict resting on an
+ * uncited passage removes that claim, no longer the whole output), projected by
+ * `projectDisplay` (`display-deps-v2`, with the static abstentions of `excerpt-context-v1`
+ * and `ordinal-evidence-v1`) over display plans the production code rebuilds for the frozen
+ * inputs (`v1Plans`, `v2Plans`, which first prove they render exactly the frozen claims), and
+ * counted by `checker-metrics-v3`. Every figure is a **server-projection metric**.
  *
- * Every 16c run (the `*.summary.json` and `*.jsonl` pairs in `--dir`, the 16c work
- * directory's files) is judged by the production `judgeCheck` and projected by the
- * production `projectDisplay` over display plans the production code rebuilds for the 16c
- * briefs (`v1Plans`, which first proves it renders exactly the frozen claims). For each run:
- * - the corrected interpretation of its 16c figures (`rawReport`: semantic detection with
- *   failed calls apart, beside production-faithful withholding), with the v1 labels and with
- *   labels v2;
- * - the claim-level display figures M1–M5 and the exposure (`displayReport`, `claims`
- *   mode), with both label sets;
- * - the same projection in `whole` mode (16c's rule), as a cross-check of the 16c figures.
- * Held-out runs are diagnostics only (that split has been seen). The committed result
- * (`results/16d-simulation.json`) holds counts only; the 16c results stay as they are.
+ * For each recorded run, with each label set (the frozen labels, labels v2 for the 16c
+ * inputs, labels v3 with the errata overlay, and labels v3 with the disputed labels read as
+ * `unknown`):
+ * - the verdict figures (`rawReport`: semantic detection from actual verdicts only, blocked
+ *   output apart, production withholding from the projection);
+ * - the display figures (`displayReport`, `claims` mode: answer retention against the static
+ *   floor, displayed retention, the static rules' abstentions, M3–M5 and the exposure);
+ * - the same projection in `whole` mode (the production default).
+ * The 16c held-out recordings and the 16d held-out pilot are diagnostics of development
+ * material now (the 16d pilot became development material with the 16d verdict). The
+ * committed result (`results/16e-simulation.json`) holds counts only.
  */
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
 import { APP_DIR } from '../../worker/config.js';
-import { readDataset, v1LabelsV2, v1Plans, type CalibrationDataset } from './build.js';
-import { displayLines, displayReport, rawLines, rawReport, type Trial } from './metrics.js';
+import { readDataset, readDatasetV2, v1LabelsV2, v1LabelsV3, v1Plans, v2LabelsV3, v2Plans, type CalibrationDataset } from './build.js';
+import { displayLines, displayReport, disputedAsUnknown, rawLines, rawReport, type Trial } from './metrics.js';
 
-export const SIMULATION_PATH = resolve(APP_DIR, 'evals/checker/results/16d-simulation.json');
-export const DEFAULT_RECORDINGS = resolve(APP_DIR, 'data/work/checker16c');
+export const SIMULATION_PATH = resolve(APP_DIR, 'evals/checker/results/16e-simulation.json');
+export const DEFAULT_RECORDINGS = { '16c': resolve(APP_DIR, 'data/work/checker16c'), '16d': resolve(APP_DIR, 'data/work/checker16d') } as const;
 
 interface RunFile {
   name: string;
-  config: string;
-  checkPrompt: string;
+  task: '16c' | '16d';
   split: 'dev' | 'holdout';
   trials: Trial[];
 }
 
+const trialsOf = (path: string) =>
+  readFileSync(path, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as Trial);
+
 /** The 16c runs recorded in `dir`: each summary with its trials file. */
-export function recordedRuns(dir: string): RunFile[] {
-  if (!existsSync(dir)) throw new Error(`no recordings in ${dir}`);
+export function recorded16c(dir: string): RunFile[] {
+  if (!existsSync(dir)) throw new Error(`no 16c recordings in ${dir}`);
   return readdirSync(dir)
     .filter((f) => f.endsWith('.summary.json'))
     .sort()
     .map((f) => {
       const s = JSON.parse(readFileSync(resolve(dir, f), 'utf8')) as { config: string; checkPrompt: string; split: 'dev' | 'holdout' };
-      const trialsFile = resolve(dir, f.replace(/\.summary\.json$/, '.jsonl'));
-      const trials = readFileSync(trialsFile, 'utf8')
-        .split('\n')
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as Trial);
-      return { name: `${s.config}-${s.split}-${s.checkPrompt}`, config: s.config, checkPrompt: s.checkPrompt, split: s.split, trials };
+      return { name: `16c ${s.config}-${s.split}-${s.checkPrompt}`, task: '16c' as const, split: s.split, trials: trialsOf(resolve(dir, f.replace(/\.summary\.json$/, '.jsonl'))) };
     });
 }
 
-export function simulate(dir: string) {
-  const v1 = readDataset();
-  const { plans, textChanged } = v1Plans(v1);
-  const v2: CalibrationDataset = v1LabelsV2(v1);
-  const split = (d: CalibrationDataset, s: 'dev' | 'holdout') => d.batches.filter((b) => b.split === s);
-  const runs = recordedRuns(dir).map((r) => {
-    const forLabels = (d: CalibrationDataset) => ({
-      raw: rawReport(split(d, r.split), r.trials, STAGE_TIMEOUTS.check),
-      display: displayReport(split(d, r.split), r.trials, { mode: 'claims', plans }),
-      whole: displayReport(split(d, r.split), r.trials, { mode: 'whole', plans }),
+/** The 16d runs recorded in `dir`: each manifest's summary with its trials file. */
+export function recorded16d(dir: string): RunFile[] {
+  if (!existsSync(dir)) throw new Error(`no 16d recordings in ${dir}`);
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.summary.json'))
+    .sort()
+    .map((f) => {
+      const s = JSON.parse(readFileSync(resolve(dir, f), 'utf8')) as { candidate: string; split: 'dev' | 'holdout'; manifest: string };
+      return { name: `16d ${s.candidate}-${s.split}`, task: '16d' as const, split: s.split, trials: trialsOf(resolve(dir, f.replace(/\.summary\.json$/, '.jsonl'))) };
     });
-    return { name: r.name, config: r.config, checkPrompt: r.checkPrompt, split: r.split, role: r.split === 'dev' ? 'development' : 'diagnostic (seen held-out split)', calls: r.trials.length, v1Labels: forLabels(v1), v2Labels: forLabels(v2) };
+}
+
+export function simulate(dirs: { '16c': string; '16d': string } = DEFAULT_RECORDINGS) {
+  const v1 = readDataset();
+  const v1p = v1Plans(v1);
+  const v2 = readDatasetV2();
+  const v2p = v2Plans(v2);
+  const sets16c: [string, CalibrationDataset][] = [
+    ['labels v1', v1],
+    ['labels v2', v1LabelsV2(v1)],
+    ['labels v3', v1LabelsV3(v1)],
+  ];
+  const v3of2 = v2LabelsV3(v2);
+  const sets16d: [string, CalibrationDataset][] = [
+    ['labels v2', v2],
+    ['labels v3', v3of2],
+    ['labels v3, disputed as unknown', { ...v3of2, batches: disputedAsUnknown(v3of2.batches) }],
+  ];
+  const runs = [...recorded16c(dirs['16c']), ...recorded16d(dirs['16d'])].map((r) => {
+    const plans = r.task === '16c' ? v1p.plans : v2p.plans;
+    // Maximum-size inputs (16d) are latency and structure inputs, outside the accuracy figures, as pre-registered.
+    const forLabels = (d: CalibrationDataset) => {
+      const batches = d.batches.filter((b) => b.split === r.split && !b.maxSize);
+      const ids = new Set(batches.map((b) => b.id));
+      const trials = r.trials.filter((t) => ids.has(t.batch));
+      return {
+        raw: rawReport(batches, trials, STAGE_TIMEOUTS.check, { plans }),
+        display: displayReport(batches, trials, { mode: 'claims', plans }),
+        whole: displayReport(batches, trials, { mode: 'whole', plans }),
+      };
+    };
+    const sets = r.task === '16c' ? sets16c : sets16d;
+    return {
+      name: r.name,
+      task: r.task,
+      split: r.split,
+      role: r.task === '16c' && r.split === 'holdout' ? 'diagnostic (the 16c held-out split had been seen)' : r.split === 'holdout' ? 'development material (the 16d held-out pilot)' : 'development',
+      calls: r.trials.length,
+      labels: Object.fromEntries(sets.map(([name, d]) => [name, forLabels(d)])),
+    };
   });
   return {
-    note: 'Task 16d offline simulation: the 16c check recordings judged by judgeCheck and projected by projectDisplay (display-deps-v1) over display plans rebuilt by the production code. Counts only. Held-out runs are diagnostics.',
+    note: 'Task 16e offline simulation: the 16c and 16d check recordings judged by judgeCheck (check-judgement-v2) and projected by projectDisplay (display-deps-v2, static abstentions of excerpt-context-v1 and ordinal-evidence-v1) over display plans the production code rebuilt for the frozen inputs, counted by checker-metrics-v3. Server-projection metrics. Counts only.',
     timeoutMs: STAGE_TIMEOUTS.check,
-    labels: { v1: v1.labels, v2: v2.labels },
-    criterionTextsChanged: textChanged,
+    criterionTextsChanged: { '16c': v1p.textChanged, '16d': v2p.textChanged },
     runs,
   };
 }
 
-export function simulateCommand(opts: { dir: string; write: boolean; log: (m: string) => void }): number {
-  const result = simulate(opts.dir);
+export function simulateCommand(opts: { dirs?: { '16c': string; '16d': string }; write: boolean; log: (m: string) => void }): number {
+  const result = simulate(opts.dirs);
   for (const r of result.runs) {
     opts.log(`######## ${r.name} (${r.role}, ${r.calls} calls)`);
-    for (const [labels, x] of [
-      ['labels v1', r.v1Labels],
-      ['labels v2', r.v2Labels],
-    ] as const) {
+    for (const [labels, x] of Object.entries(r.labels)) {
       for (const line of [...rawLines(`${r.name} ${labels}`, x.raw), ...displayLines(`${r.name} ${labels}`, x.display)]) opts.log(line);
-      opts.log(`whole mode (16c rule) through the projection: shown ${x.whole.m2.k}/${x.whole.m2.n} wholly supported trials`);
+      opts.log(`whole mode (production default) through the projection: shown ${x.whole.m2Displayed.k}/${x.whole.m2Displayed.n} wholly supported trials`);
     }
   }
   if (opts.write) {

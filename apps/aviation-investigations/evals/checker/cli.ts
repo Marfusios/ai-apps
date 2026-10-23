@@ -4,7 +4,8 @@
  *   retrieve  [--confirm-cost] [--questions v1|16d] [--out <file>]   real retrieval bundles (and case headers)
  *   headers   [--out <file>]                         free: case headers of every calibration case (read-only)
  *   build     [--check]                              evidence + items → dataset.v2.json (dataset.json stays frozen)
- *   simulate  [--dir <dir>] [--write]                free: the 16c recordings through the display projection
+ *   simulate  [--dir16c <dir>] [--dir16d <dir>] [--write]  free: the 16c and 16d recordings through the display projection
+ *   excerpts  [--write]                              free: the excerpt-context policy on its labelled corpora
  *   inventory --candidate <name> --split dev|holdout free: token counts, expected and worst-case cost
  *   run       --candidate <name> --split dev|holdout [--confirm-cost] [--resume <manifest>]
  *   select    <dev summary.json>...                   the frozen selection rule → selection.v2.json
@@ -30,7 +31,8 @@ const USAGE = [
   'usage: pnpm eval:checker retrieve [--confirm-cost] [--questions v1|16d] [--out <file>]',
   '       pnpm eval:checker headers [--out <file>]',
   '       pnpm eval:checker build [--check]',
-  '       pnpm eval:checker simulate [--dir <dir>] [--write]',
+  '       pnpm eval:checker simulate [--dir16c <dir>] [--dir16d <dir>] [--write]',
+  '       pnpm eval:checker excerpts [--write]',
   '       pnpm eval:checker inventory --candidate <name> --split dev|holdout',
   '       pnpm eval:checker run --candidate <name> --split dev|holdout [--confirm-cost] [--resume <manifest>]',
   '       pnpm eval:checker select <dev summary.json>...',
@@ -70,7 +72,8 @@ async function main(argv: string[]): Promise<number> {
       candidate: { type: 'string' },
       split: { type: 'string' },
       resume: { type: 'string' },
-      dir: { type: 'string' },
+      dir16c: { type: 'string' },
+      dir16d: { type: 'string' },
       write: { type: 'boolean' },
       questions: { type: 'string' },
     },
@@ -98,7 +101,15 @@ async function main(argv: string[]): Promise<number> {
   }
   if (command === 'simulate') {
     const { DEFAULT_RECORDINGS, simulateCommand } = await import('./simulate.js');
-    return simulateCommand({ dir: values.dir ? resolve(values.dir) : DEFAULT_RECORDINGS, write: values.write === true, log });
+    const dirs = {
+      '16c': values.dir16c ? resolve(values.dir16c) : DEFAULT_RECORDINGS['16c'],
+      '16d': values.dir16d ? resolve(values.dir16d) : DEFAULT_RECORDINGS['16d'],
+    };
+    return simulateCommand({ dirs, write: values.write === true, log });
+  }
+  if (command === 'excerpts') {
+    const { excerptsCommand } = await import('./excerpts.js');
+    return excerptsCommand({ write: values.write === true, log });
   }
   if (command === 'inventory' || command === 'run') {
     const { inventoryCommand, runCommand } = await import('./run.js');

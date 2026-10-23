@@ -74,12 +74,26 @@ export const CRITERION_LINE: Readonly<Record<CriterionDecision['criterion'], Rec
  */
 export const NOT_VERIFIED_LINE = 'Not verified: the check could not confirm this against the cited passages';
 
+/**
+ * A case of an answer shown without its reading (Task 16e): the check could not confirm
+ * its minimum content (a why line and a quote), or a rule left its quotes out.
+ */
+export const READING_NOT_SHOWN_LINE = 'AI reading not shown: the check could not confirm it against the cited passages';
+
+/** Quotes the excerpt-context rule left out (Task 16e; `quotesOmitted`), by count. */
+export function quotesOmittedLine(n: number): string {
+  return n === 1
+    ? 'One quote left out: it needs the report’s surrounding text to keep its meaning'
+    : `${n} quotes left out: they need the report’s surrounding text to keep their meaning`;
+}
+
 /** The context line of each kind of removed card statement that has one (`notVerified`). */
 const NOT_VERIFIED_LABEL: Partial<Record<CardStatementKind, CaseContextResponse['lines'][number]['label']>> = {
   classification: 'EVIDENCE',
   maintenance: 'MAINTENANCE',
   symptom: 'SYMPTOM',
   timing: 'TIMING',
+  attribution: 'QUOTES',
 };
 
 /** "the maintenance (the annual inspection)": the relevant maintenance a TIMING line is about. */
@@ -123,7 +137,12 @@ export function timingLine(t: TimingChip, maintenance?: string): string {
  * its claim was checked on (empty for a statement about what the passages lack), then a
  * "not verified" line for each kind of statement the projection removed (`notVerified`).
  */
-export function readingLines(reading: CaseReading, dims: StoredDimensions | undefined, notVerified: readonly CardStatementKind[] = []): CaseContextResponse['lines'] {
+export function readingLines(
+  reading: CaseReading,
+  dims: StoredDimensions | undefined,
+  notVerified: readonly CardStatementKind[] = [],
+  quotesOmitted = 0,
+): CaseContextResponse['lines'] {
   const lines: CaseContextResponse['lines'] = [];
   if (reading.glyph) lines.push({ label: 'EVIDENCE', text: EVIDENCE_LINE[reading.glyph], passageIds: dims?.evidencePassageIds ?? [] });
   if (dims?.maintenance && dims.maintenance.relation !== 'unknown') {
@@ -154,7 +173,16 @@ export function readingLines(reading: CaseReading, dims: StoredDimensions | unde
     const label = NOT_VERIFIED_LABEL[kind];
     if (label) lines.push({ label, text: NOT_VERIFIED_LINE, passageIds: [] });
   }
+  if (quotesOmitted > 0) lines.push({ label: 'QUOTES', text: quotesOmittedLine(quotesOmitted), passageIds: [] });
   return lines.slice(0, 12);
+}
+
+/** The lines of a case an answer shows without its reading (Task 16e): what was not shown, never what the record lacks. */
+export function readingRemovedLines(quotesOmitted = 0): CaseContextResponse['lines'] {
+  return [
+    { label: 'READING', text: READING_NOT_SHOWN_LINE, passageIds: [] },
+    ...(quotesOmitted > 0 ? [{ label: 'QUOTES' as const, text: quotesOmittedLine(quotesOmitted), passageIds: [] }] : []),
+  ];
 }
 
 /** The context of `ntsbNo` in a finished step, or null when the step has no such case. */
@@ -181,6 +209,11 @@ export function caseContext(step: StepRow, ntsbNo: string): CaseContextResponse 
       highlights: (reading?.quotes ?? []).filter((q) => q.passageId === p.passageId).map((q) => q.span),
     }));
   if (passages.length === 0) return null;
-  const lines = reading ? readingLines(reading, evidence.dimensions?.find((d) => d.ntsbNo === ntsbNo), card?.notVerified ?? []) : [];
+  const removed = result.kind === 'answer' && card !== undefined && reading === null && (card.notVerified !== undefined || card.quotesOmitted !== undefined);
+  const lines = reading
+    ? readingLines(reading, evidence.dimensions?.find((d) => d.ntsbNo === ntsbNo), card?.notVerified ?? [], card?.quotesOmitted ?? 0)
+    : removed
+      ? readingRemovedLines(card.quotesOmitted ?? 0)
+      : [];
   return { briefId: step.briefId, step: step.n, ntsbNo, reading, lines, gaps, passages };
 }

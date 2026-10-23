@@ -697,7 +697,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v7', check: PRODUCTION_CHECK_PROMPT.version },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v8', check: PRODUCTION_CHECK_PROMPT.version },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
       criteriaRules: 'chronology-rules-v2',
       check: { supported: true, claims: check.claims.length, counts: { supported: check.claims.length, contradicted: 0, not_established: 0 }, codes: [], problems: [], chronologyMissed: [] },

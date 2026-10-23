@@ -24,6 +24,14 @@
  * canonical passage offsets), never with the copy rendered into the prompt, where
  * untrusted text had tag-like `<` replaced (server/ai/prompts/untrusted.ts).
  *
+ * **Excerpt context** (`excerpt-context-v1`, Task 16e, server/briefs/excerpts.ts). Every
+ * resolved quote also gets the excerpt-context policy's verdict (`ResolvedCitation.excerpt`):
+ * an excerpt whose meaning depends on text outside it (not whole sentences, an opening
+ * pointer, a pronoun, demonstrative, relative time or sequence, or a comparison with
+ * nothing to compare with) is never displayed. It does not fail the composition: the
+ * excerpt is omitted from the display (a static abstention, server/briefs/display.ts), and
+ * the case keeps its other quotes.
+ *
  * **Provenance chain** (A4; G6 #2, #4): case → aircraft/scope → section id + revision
  * hash → passage → quote. `resolvePassage` checks a retrieved passage against its
  * canonical `passages` row (identity, derivation, section kind, scope, aircraft,
@@ -52,6 +60,7 @@
  */
 import { createHash } from 'node:crypto';
 import { BOUNDED_RELATIONS, ComposeOutputSchema, NUMBERED_RELATIONS, type ComposeOutput, type GlyphKind } from '../../shared/contracts/briefs.js';
+import { excerptVerdict, type ExcerptVerdict } from './excerpts.js';
 import { ambiguousBoundary, citationPlacement, splitSentences, summaryFormatProblem } from './sentences.js';
 
 export const QUOTE_MATCH_RULE_VERSION = 'quote-ws-v2';
@@ -96,6 +105,8 @@ export interface ValidateOptions {
    * alias-shaped token in it is the reader's word, not a leaked passage alias.
    */
   readerText?: string;
+  /** Cases whose event involved more than one aircraft (the excerpt-context policy reads it). */
+  multiAircraftCases?: ReadonlySet<string>;
 }
 
 export interface Span {
@@ -119,6 +130,8 @@ export interface ResolvedCitation {
   /** Occurrences of the normalized quote in the normalized passage; the first is used. */
   matches: number;
   occurrence: 'first';
+  /** The excerpt-context policy's verdict: the quote is displayed only without problems. */
+  excerpt: ExcerptVerdict;
 }
 
 /** Why a composition fails validation (content-free codes; also a span attribute and log field). */
@@ -519,6 +532,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
       if (p.ntsbNo !== k.ntsbNo) return void fail('foreign_passage', `${path}.passageId`);
       const m = matchQuote(p.text, q.quote);
       if (!m.ok) return void fail(m.code, `${path}.quote`);
+      const excerpt = excerptVerdict({ passage: p.text, span: m.span, speaker: q.speaker, multiAircraft: opts.multiAircraftCases?.has(k.ntsbNo) ?? false });
       citations.push({
         ntsbNo: k.ntsbNo,
         caseIndex: ci,
@@ -532,6 +546,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
         sectionSpan: { start: p.sectionStart + m.span.start, end: p.sectionStart + m.span.end },
         matches: m.matches,
         occurrence: 'first',
+        excerpt,
       });
     });
     support(k.evidencePassageIds, k.ntsbNo, `cases.${ci}.evidencePassageIds`, CITED_GROUPS.has(groupOf.get(k.ntsbNo) ?? '') ? 1 : 0);
