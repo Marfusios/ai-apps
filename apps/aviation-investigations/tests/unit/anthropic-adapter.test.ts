@@ -9,7 +9,7 @@ import { createAnthropicProvider, STAGE_THINKING, thinkingParam } from '../../se
 import { PHASE_GROUPS } from '../../shared/codes.js';
 import { createFakeProvider, DEFAULT_FAKE_USAGE } from '../../server/ai/fake.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v4.js';
+import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v5.js';
 import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v6.js';
 import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {

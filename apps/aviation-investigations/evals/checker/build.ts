@@ -18,7 +18,6 @@ import type { ReadingState } from '../../server/briefs/clarify.js';
 import { CHRONOLOGY_RULES_VERSION, criteriaLines, evaluateCase, type CriterionCheck } from '../../server/briefs/criteria.js';
 import { caseEvidence, checkInput, checkPassages, type ClaimMeta, type VerifiedCase } from '../../server/briefs/render.js';
 import { validateComposition, type AllowedPassage, type Allowlist } from '../../server/briefs/validate.js';
-import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v4.js';
 import { APP_DIR } from '../../worker/config.js';
 import type { ComposeOutput } from '../../shared/contracts/briefs.js';
 import { EvidenceFileSchema, evidenceProblems, sha256, verifiedCases, type EvidenceFile } from './evidence.js';
@@ -64,7 +63,6 @@ export interface CalibrationBatch {
 export interface CalibrationDataset {
   version: 'checker-cal-v1';
   note: string;
-  checkPrompt: string;
   chronologyRules: string;
   evidenceSha256: string;
   labels: { sha256: string; claims: number; supported: number; notSupported: number; unknown: number };
@@ -285,7 +283,6 @@ export function buildCalibration(evidence: EvidenceFile, evidenceText: string): 
     version: 'checker-cal-v1',
     note:
       'Checker calibration set (Task 16c). No label is expert ground truth: each is constructed (by how the claim was built, checked against the complete supplied evidence) or model-reviewed; unresolved labels are unknown. Built by evals/checker/build.ts from evidence.json and items/; labels frozen by labels.sha256 before any checker comparison.',
-    checkPrompt: CHECK_PROMPT_VERSION,
     chronologyRules: CHRONOLOGY_RULES_VERSION,
     evidenceSha256: sha256(evidenceText),
     labels: {

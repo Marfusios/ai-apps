@@ -1,5 +1,5 @@
 /**
- * The evidence checker's verdicts, judged in code (check.v4; gate G6 conditions 3 and 5).
+ * The evidence checker's verdicts, judged in code (check.v4 and later; gate G6 conditions 3 and 5).
  * The model's output is never trusted to be complete or consistent:
  *
  * **Completeness, deterministic.** Exactly one verdict for every claim id the server

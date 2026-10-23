@@ -1,7 +1,6 @@
 {
   "version": "checker-cal-v1",
   "note": "Checker calibration set (Task 16c). No label is expert ground truth: each is constructed (by how the claim was built, checked against the complete supplied evidence) or model-reviewed; unresolved labels are unknown. Built by evals/checker/build.ts from evidence.json and items/; labels frozen by labels.sha256 before any checker comparison.",
-  "checkPrompt": "check.v4",
   "chronologyRules": "chronology-rules-v1",
   "evidenceSha256": "8ff424e0d4996cc96f1f34d74831d2fefb90cda887cc5860ddec5c5b30788639",
   "labels": {

@@ -6,7 +6,7 @@
  * worst-case cost per configuration). Nothing is generated.
  *
  * `run` sends the check stage exactly as production does (the Anthropic adapter, the
- * `check.v4` prompt and schema, effort `low`, the configuration's model and thinking),
+ * current check prompt and schema, effort `low`, the configuration's model and thinking),
  * only with `--confirm-cost`. Every attempt reserves its worst case on the evaluation
  * ledger (`DATABASE_INGEST_URL`, category `evaluation`) and settles with the actual cost;
  * every paid step is appended to `data/work/checker/spend.jsonl`, and a call whose
@@ -20,7 +20,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { resolve } from 'node:path';
 import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { CACHED_PREFIX_MAX, llmPrice, stageCostUsd } from '../../server/ai/pricing.js';
-import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v4.js';
+import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v5.js';
 import { StageError, stageCtx, type LlmProvider, type StageUsage } from '../../server/ai/provider.js';
 import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
 import { closeDb, createDb } from '../../server/db/client.js';
