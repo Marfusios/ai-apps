@@ -53,7 +53,7 @@ export const PRICE_TABLE: Readonly<Record<string, PriceRow>> = {
   // not implemented); the Track N evaluation judge does (evals/retrieval/narrative).
   // gpt-5.6-luna checked on 2026-10-23 against OpenAI's published standard-tier prices:
   // input $0.20, cached input $0.02, cache write $0.25 (30-minute lifetime, the default:
-  // 1.25 times the input rate), output $1.20 (reasoning tokens are output tokens); above
+  // 1.25 times the input rate), output $1.20 (reported output tokens include reasoning); above
   // 272K input tokens $0.40 / $0.04 / $0.50 / $1.80. gpt-5.4-mini's cache rates are not
   // verified for this dated snapshot, so they stay at the full input rate (an upper bound).
   'gpt-5.6-luna': {

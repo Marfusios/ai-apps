@@ -155,6 +155,8 @@ export interface RunMoney {
 /** Sends attempts with their reservations (module comment). */
 export class AttemptSender {
   private spent: number;
+  /** Reservations of attempts in flight (concurrent attempts count against the limit before they settle). */
+  private inFlight = 0;
   constructor(
     private readonly money: RunMoney,
     private readonly timeoutMs: number,
@@ -183,9 +185,28 @@ export class AttemptSender {
       }
     }
     const reserve = attemptReserveUsd(c, counted);
-    if (this.spent + reserve > this.money.limitUsd + 1e-12) {
-      throw new BudgetStop(`the next attempt's reservation ($${reserve.toFixed(6)}) would take this run's logged spend ($${this.spent.toFixed(6)}) above its limit of $${this.money.limitUsd}`);
+    if (this.spent + this.inFlight + reserve > this.money.limitUsd + 1e-12) {
+      throw new BudgetStop(
+        `the next attempt's reservation ($${reserve.toFixed(6)}) would take this run's logged spend ($${this.spent.toFixed(6)}) and open reservations ($${this.inFlight.toFixed(6)}) above its limit of $${this.money.limitUsd}`,
+      );
     }
+    // Claimed in the same synchronous turn as the check, so a concurrent attempt sees it;
+    // released only after the attempt's charge is added to `spent`.
+    this.inFlight += reserve;
+    try {
+      return await this.sendReserved(caller, req, counted, reserve);
+    } finally {
+      this.inFlight -= reserve;
+    }
+  }
+
+  private async sendReserved(
+    caller: JudgeCaller,
+    req: JudgeRequest,
+    counted: number,
+    reserve: number,
+  ): Promise<{ output: unknown; record: AttemptRecord } | { error: JudgeCallError; record: AttemptRecord }> {
+    const c = caller.config;
     const gate = typeof this.money.gate === 'function' ? this.money.gate(c) : this.money.gate;
     const remaining = await gate.remainingUsd('evaluation');
     if (reserve > remaining + 1e-12) {

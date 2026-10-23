@@ -433,3 +433,31 @@ describe('the paid judging step', () => {
     expect((JSON.parse(readFileSync(join(dir, file), 'utf8')) as { stopped: string }).stopped).toMatch(/above its limit/);
   });
 });
+
+describe('the attempt sender', () => {
+  it('counts reservations in flight against the run limit, so concurrent attempts cannot overshoot it', async () => {
+    const gate = createMemorySpendGate(20);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const slow = createFakeJudge(HAIKU, () => VERDICT.relevant);
+    const caller = { ...slow, call: async (req: JudgeRequest, t: number) => {
+      await held;
+      return slow.call(req, t);
+    } };
+    const req = relevanceRequest(q, evidence());
+    const one = attemptReserveUsd(HAIKU, await caller.inputTokens(req, 5_000));
+    const sender = new AttemptSender({ gate, limitUsd: one * 1.5, spendLog: null, run: 't' }, 5_000, async () => undefined);
+    // Both start in the same turn: the second must see the first's open reservation.
+    const first = sender.send(caller, req);
+    const second = sender.send(caller, req);
+    await expect(second).rejects.toBeInstanceOf(BudgetStop);
+    release();
+    await first;
+    expect(gate.records).toHaveLength(1);
+    // Settled, the first's charge (below its reservation) leaves room under the limit again.
+    expect(sender.spentUsd).toBeLessThanOrEqual(one);
+    await expect(sender.send(caller, req)).resolves.toMatchObject({ record: { status: 'ok' } });
+  });
+});

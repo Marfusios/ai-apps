@@ -90,7 +90,7 @@ export interface JudgeModelConfig {
 
 /** The judge's identity in the cache key: provider, model and every frozen setting. */
 export const judgeIdentity = (c: JudgeModelConfig): string =>
-  `${c.provider}:${c.model}:${canonicalJson({ settings: c.settings, maxOutputTokens: c.maxOutputTokens })}`;
+  `${c.provider}:${c.model}:${canonicalJson({ settings: c.settings, maxOutputTokens: c.maxOutputTokens, maxInputTokens: c.maxInputTokens })}`;
 
 export interface JudgeUsage {
   /** Ordinary (uncached) input tokens. */
