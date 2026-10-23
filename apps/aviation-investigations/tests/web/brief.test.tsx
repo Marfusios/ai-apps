@@ -49,11 +49,28 @@ const server = setupMockApi({ briefPolls: 1 });
 interface FakeTurnstile {
   renders: { sitekey: string; action: string; appearance: string }[];
   removed: number;
+  /** Gives the widgets held by `hold` their tokens now; widgets rendered later answer after the delay. */
+  release(): void;
 }
 
-/** A stand-in for Cloudflare's widget: answers with the test keys' dummy token after `delay` ms. */
-function installTurnstile(delay = 20): FakeTurnstile {
-  const state: FakeTurnstile = { renders: [], removed: 0 };
+/**
+ * A stand-in for Cloudflare's widget: answers with the test keys' dummy token after `delay` ms.
+ * With `hold`, the widgets rendered before `release()` give no token until then, so a test can
+ * read what the reader sees while a check is open without racing the delay.
+ */
+function installTurnstile(delay = 20, { hold = false }: { hold?: boolean } = {}): FakeTurnstile {
+  let holding = hold;
+  const held: (() => void)[] = [];
+  const state: FakeTurnstile = {
+    renders: [],
+    removed: 0,
+    release() {
+      holding = false;
+      act(() => {
+        for (const answer of held.splice(0)) answer();
+      });
+    },
+  };
   const widgets = new Map<string, HTMLElement>();
   let n = 0;
   const api: TurnstileApi = {
@@ -65,9 +82,11 @@ function installTurnstile(delay = 20): FakeTurnstile {
       box.textContent = 'Verifying…';
       host.appendChild(box);
       widgets.set(id, box);
-      setTimeout(() => {
+      const answer = (): void => {
         if (widgets.has(id)) params.callback('XXXX.DUMMY.TOKEN.XXXX');
-      }, delay);
+      };
+      if (holding) held.push(answer);
+      else setTimeout(answer, delay);
       return id;
     },
     remove(id) {
@@ -269,12 +288,15 @@ describe('Cited passages', () => {
 describe('Ask AI end to end over the mock API', { timeout: 20_000 }, () => {
   it('first check once per trial identity, checklist then briefing sheet; the widget is reset after each request', async () => {
     freshApi();
-    const turnstile = installTurnstile();
+    // The first widget holds its token until the panel has been read: once the token is taken
+    // the panel closes and its text changes, so a timer could win the race on a slow run.
+    const turnstile = installTurnstile(20, { hold: true });
     const { router } = renderApp('/');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
     const panel = await screen.findByRole('dialog', { name: FIRST_CHECK_TITLE });
     expect(panel.textContent).toContain(FIRST_CHECK_TEXT);
+    turnstile.release();
     await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
     expect(await screen.findByRole('region', { name: /answer checklist/i })).toBeTruthy();
     expect(await screen.findByRole('heading', { name: /AI summary · check the cited passages/i }, SLOW)).toBeTruthy();
