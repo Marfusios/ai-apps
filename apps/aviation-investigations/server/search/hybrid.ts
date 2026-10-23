@@ -140,6 +140,10 @@ export const numCandidates = (p: Pick<RetrievalParams, 'perChannel' | 'numCandid
 // ---------------------------------------------------------------------------
 // Errors
 
+/**
+ * `no_passages_index`: the dataset publishes none; `index_mismatch`: an index breaks its
+ * contract (passages, or cases: generation, servable version).
+ */
 export type RetrievalUnavailableReason = 'no_passages_index' | 'index_mismatch';
 
 /** Retrieval cannot serve evidence for this dataset; AI answers must stay off (no keyword fallback). */
@@ -153,10 +157,10 @@ export class RetrievalUnavailableError extends Error {
   }
 }
 
-/** A search answered for part of the index only: timed out, failed shards or missing shards. */
+/** A search answered for part of the index only: timed out, failed shards or missing shards (or, for the cases channel and mapping, a malformed answer). */
 export class IncompleteSearchError extends Error {
   constructor(
-    readonly request: 'keyword' | 'vector' | 'fetch',
+    readonly request: 'keyword' | 'vector' | 'fetch' | 'cases' | 'mapping',
     reason: string,
   ) {
     super(`the ${request} search was incomplete: ${reason}`);
@@ -359,6 +363,11 @@ export interface RetrievalDataset {
 /** Indexes that passed the contract, per generation, embedding and accepted contracts (bounded), with their version's contract. */
 const verified = new Map<string, PassagesContract>();
 
+/** Forget every remembered pass, so the next check reads the index again (evaluation: a cold start). */
+export function forgetPassagesIndexChecks(): void {
+  verified.clear();
+}
+
 export interface IndexCheckOptions {
   /** The accepted contracts (tests and future versions); default `PASSAGES_CONTRACTS`. */
   contracts?: PassagesContracts;
@@ -473,14 +482,15 @@ export interface CandidateResult {
   timingsMs: { embed: number; channels: number };
 }
 
-const transport = (p: RetrievalParams, signal?: AbortSignal) => ({ requestTimeout: p.timeoutMs, ...(signal ? { signal } : {}) });
+/** Transport options of one retrieval request: the per-request timeout and the request's signal. */
+export const transport = (p: Pick<RetrievalParams, 'timeoutMs'>, signal?: AbortSignal) => ({ requestTimeout: p.timeoutMs, ...(signal ? { signal } : {}) });
 
 /**
  * Embed the query and report its usage through `onUsage` as soon as the embedder
  * returns, before the vector is checked: a paid embedding is reported even when its
  * vector turns out unusable.
  */
-async function embedQuery(
+export async function embedQuery(
   embedder: Embedder | QueryEmbedder,
   text: string,
   signal: AbortSignal | undefined,
