@@ -1746,7 +1746,11 @@ lock order in migration 0019.
   dialog again, saying so). A callback is accepted once: the first to get through the
   code exchange and the ID-token checks claims its state atomically, and a second one,
   even arriving at the same time, is refused before a user or session is made.
-  `POST /api/auth/sign-out` ends the session. No other Better Auth endpoint is served.
+  `POST /api/auth/sign-out` ends the session, and says so only once it is gone: when the
+  database cannot end it, the answer is 503 `unavailable` (`Retry-After: 5`), the browser
+  is signed out all the same, and the sign-out is kept for a retry in a sealed, HttpOnly
+  `__Secure-aviation_signout` cookie under `/api` (never a session) that the browser's next
+  sign-out or account read finishes. No other Better Auth endpoint is served.
 - **What is accepted and kept.** An ID token from Google's token endpoint (the only
   source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
   this client and no other audience, with finite `exp` (not passed) and `iat` (not in

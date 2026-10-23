@@ -6,7 +6,7 @@
  * | --- | --- | --- |
  * | `POST /api/auth/sign-in/social` | `SignInRequest` | `SignInResponse`: the Google authorization URL to open |
  * | `GET /api/auth/callback/google` | Google's redirect (`code`, `state`) | 302 to the page sign-in started from |
- * | `POST /api/auth/sign-out` | `{}` | `{ success: true }`, the session cookie expired |
+ * | `POST /api/auth/sign-out` | `{}` | `{ success: true }`, the session cookie expired and the session ended; 503 `unavailable` when the database could not end it (the cookie expired all the same, the sign-out kept for a retry) |
  * | `GET /api/account` | — | `AccountResponse` |
  * | `POST /api/account/delete/start` | `{}` | `DeleteStartResponse`: confirmed for 5 minutes, or sign in with Google again first |
  * | `POST /api/account/delete` | `DeleteAccountRequest` | `DeleteAccountResponse`, the session cookie expired; 403 `reauth_required` without a confirmation |

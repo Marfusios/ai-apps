@@ -25,10 +25,14 @@
  * metadata, content type), the JSON body as parsed, and the validated network identity
  * as `AUTH_IP_HEADER` for its rate limiter. Nothing else the client sent reaches it: no
  * Host, no forwarding headers, no client copy of that header. Its answer is passed back
- * as it is (status, headers, every `Set-Cookie`, body).
+ * as it is (status, headers, every `Set-Cookie`, body), except a sign-out's success: that
+ * stands only once the session is gone (`finishSignOut`); otherwise the answer is 503
+ * `unavailable` (`Retry-After: 5`) with this browser signed out all the same and the
+ * sign-out kept for a retry (server/auth/better-auth.ts, "Signing out").
  *
  * `GET /api/account` says who is signed in (and whether this session may delete the
- * account now). Deleting needs a recent Google sign-in (server/auth/deletion.ts):
+ * account now). It first finishes a sign-out this browser has pending, if the database
+ * now allows it (never the session the browser holds). Deleting needs a recent Google sign-in (server/auth/deletion.ts):
  * `POST /api/account/delete/start` confirms a session that signed in within the last 5
  * minutes, or answers that the page must sign in with Google again first;
  * `POST /api/account/delete` then deletes the signed-in account with that single-use
@@ -45,7 +49,7 @@ import {
   DeleteStartResponseSchema,
   SignInRequestSchema,
 } from '../../shared/contracts/account.js';
-import { AUTH_ERROR_PATH, AUTH_IP_HEADER, AUTH_REAUTH_HEADER, authClientIp } from '../auth/better-auth.js';
+import { AUTH_ERROR_PATH, AUTH_IP_HEADER, AUTH_REAUTH_HEADER, SIGN_OUT_RETRY_SECONDS, authClientIp } from '../auth/better-auth.js';
 import { deleteAccount, deletionConfirmedUntil, issueDeletionConfirmation, reauthCallbackAllowed, reauthStartAllowed } from '../auth/deletion.js';
 import { retryAfterSeconds } from '../identity/gate.js';
 import { crossSite, isJsonRequest } from '../http/origin.js';
@@ -128,20 +132,31 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
         ...(request.method === 'POST' ? { body: JSON.stringify(request.body ?? {}) } : {}),
       }),
     );
+    const cookies = response.headers.getSetCookie();
     // The browser is back from Google: an unexpected failure (such as its account being deleted
     // while this sign-in completes) lands on the sign-in error page, as Better Auth's own
     // failures do, not on a bare 500.
     if (path === '/api/auth/callback/google' && response.status >= 500) {
       request.log.warn({ authCallback: response.status }, 'sign-in callback failed');
-      const cookies = response.headers.getSetCookie();
       if (cookies.length > 0) reply.header('set-cookie', cookies);
       return reply.redirect(`${AUTH_ERROR_PATH}&error=internal_server_error`, 302);
+    }
+    // Better Auth's sign-out answers success even when it could not delete the session (it
+    // logs the failure and expires the cookie): success only once the session is gone.
+    if (path === '/api/auth/sign-out' && response.ok) {
+      if (!(await auth.finishSignOut(request.headers.cookie, { session: true }))) {
+        // This browser is signed out all the same (Better Auth's cookies), and keeps the
+        // sign-out for a retry: its next sign-out or account read.
+        reply.header('set-cookie', [...cookies, auth.pendingSignOutCookie(request.headers.cookie)]);
+        reply.header('retry-after', String(SIGN_OUT_RETRY_SECONDS));
+        return sendError(reply, 503, 'unavailable', { retryAfter: SIGN_OUT_RETRY_SECONDS });
+      }
+      if (auth.hasPendingSignOut(request.headers.cookie)) cookies.push(auth.donePendingSignOutCookie());
     }
     reply.code(response.status);
     response.headers.forEach((value, name) => {
       if (!FRAMING_HEADERS.has(name)) reply.header(name, value);
     });
-    const cookies = response.headers.getSetCookie();
     if (cookies.length > 0) reply.header('set-cookie', cookies);
     const body = await response.text();
     return reply.send(body.length > 0 ? body : undefined);
@@ -149,6 +164,11 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
   app.route({ method: ['GET', 'POST'], url: '/api/auth/*', handler: betterAuth });
 
   app.get('/api/account', async (request, reply) => {
+    // A sign-out the database could not confirm earlier: this browser's next account read
+    // finishes it (never the session the browser holds now).
+    if (ctx.auth?.hasPendingSignOut(request.headers.cookie) && (await ctx.auth.finishSignOut(request.headers.cookie, { session: false }))) {
+      reply.header('set-cookie', ctx.auth.donePendingSignOutCookie());
+    }
     const signedIn = ctx.auth ? await ctx.auth.signedIn(request.headers.cookie) : null;
     const until = signedIn ? await deletionConfirmedUntil(ctx.db, signedIn.sessionId) : null;
     const body = AccountResponseSchema.parse(

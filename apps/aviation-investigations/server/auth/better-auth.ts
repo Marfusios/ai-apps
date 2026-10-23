@@ -54,6 +54,22 @@
  * cache, so sign-out, deletion and expiry take effect on the next request. Sessions keep
  * no IP address or user agent.
  *
+ * **Signing out** is reported done only once the session is gone (gate 22 finding 1).
+ * Better Auth's sign-out logs a failed session deletion and answers success all the same,
+ * so after it the route ends the session itself (`finishSignOut`: one `DELETE` by the
+ * token of the signed session cookie, checked against BETTER_AUTH_SECRET without the
+ * database) and answers success only when that statement succeeds. When it fails, the
+ * answer is 503 `unavailable` with `Retry-After: 5`, and this browser is signed out all
+ * the same: the session cookie is expired, and the sign-out is kept for a retry in
+ * `__Secure-aviation_signout` (`aviation_signout` over plain http): the session cookie
+ * values, at most the newest three, sealed with AES-256-GCM under a key derived from
+ * BETTER_AUTH_SECRET, so only this server can open it, the page cannot read a token out of
+ * it and it never works as a session cookie; HttpOnly, SameSite=Strict, Path=/api, for
+ * the 7 days a session can live. The browser's next sign-out, or its next account read
+ * (`GET /api/account`, on every page load), ends those sessions and drops the cookie; an
+ * account read never ends the session the browser holds now. Until then a copy of the old
+ * cookie still works, which is why the sign-out was not reported done.
+ *
  * **Deleting the account needs a recent sign-in** (server/auth/deletion.ts). A sign-in
  * that returns to `DELETE_REAUTH_PATH` from a signed-in browser carries the deletion intent
  * (the user and session it started from) in the state's server context and asks Google for
@@ -88,7 +104,7 @@
  * the console; at Google's callback the route sends the browser to the sign-in error page
  * instead (`AUTH_ERROR_PATH`). Telemetry is off.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, addOAuthServerContext, createAuthMiddleware, getOAuthState, isAPIError } from 'better-auth/api';
@@ -99,7 +115,7 @@ import { PRIVACY_NOTICE } from '../../shared/privacy.js';
 import type { Db } from '../db/client.js';
 import { AUTH_PROVIDER, AUTH_SCHEMA } from '../db/schema/auth.js';
 import { isHttpsUrl } from '../http/security-headers.js';
-import type { TrialIdentities } from '../identity/trial.js';
+import { cookieValues, type TrialIdentities } from '../identity/trial.js';
 import { MIN_SECRET_LENGTH, principalHash, type Principal, type QuotaPolicy } from '../quota/policy.js';
 import { endSession, issueDeletionConfirmation } from './deletion.js';
 import type { AccountSession } from './lifecycle.js';
@@ -131,6 +147,20 @@ export const REAUTH_CONTEXT_KEY = 'aviationReauth';
 export const AUTH_REAUTH_HEADER = 'x-aviation-reauth';
 /** Allowed difference between our clock and Google's. */
 const CLOCK_SKEW_MS = 60_000;
+
+/**
+ * A sign-out the database could not confirm is kept in this cookie for a retry (see the
+ * module comment, "Signing out"): `__Secure-aviation_signout` over https, sent only under
+ * `/api` (the sign-out request and the account read).
+ */
+export function pendingSignOutCookieName(secure: boolean): string {
+  return `${secure ? '__Secure-' : ''}aviation_signout`;
+}
+const PENDING_SIGN_OUT_PATH = '/api';
+/** At most this many sign-outs wait in it (the newest). */
+const PENDING_SIGN_OUTS_MAX = 3;
+/** What a sign-out the database could not confirm asks the browser to wait before trying again. */
+export const SIGN_OUT_RETRY_SECONDS = 5;
 
 /** Better Auth's limits: requests per network identity and minute, by endpoint. */
 export interface AuthRateLimits {
@@ -270,6 +300,67 @@ export function verifiedGoogleUser(
 }
 
 // ---------------------------------------------------------------------------
+// Signing out
+
+/**
+ * The session token in a session cookie's value as the browser sends it, when its
+ * signature is Better Auth's (better-call's signed cookie: the token, a dot and the
+ * base64 HMAC-SHA256 of the token under BETTER_AUTH_SECRET, URL-encoded); null otherwise.
+ * Needs no database, so a sign-out can name its session while the database is failing.
+ */
+export function signedSessionToken(cookieValue: string, secret: string): string | null {
+  let value: string;
+  try {
+    value = decodeURIComponent(cookieValue);
+  } catch {
+    return null;
+  }
+  const at = value.lastIndexOf('.');
+  if (at < 1 || value.length > 512) return null;
+  const token = value.slice(0, at);
+  const signature = value.slice(at + 1);
+  if (signature.length !== 44 || !signature.endsWith('=')) return null;
+  const expected = createHmac('sha256', secret).update(token, 'utf8').digest();
+  const given = Buffer.from(signature, 'base64');
+  return given.length === expected.length && timingSafeEqual(given, expected) ? token : null;
+}
+
+/**
+ * Seals the session cookies of pending sign-outs (AES-256-GCM under a key derived from
+ * BETTER_AUTH_SECRET): the cookie that keeps them can only be opened by this server, so it
+ * never works as a session cookie, and the page cannot read a token out of it.
+ */
+function pendingSignOutSeal(secret: string) {
+  const key = Buffer.from(hkdfSync('sha256', secret, 'aviation-casebook', 'pending sign-out v1', 32));
+  return {
+    seal(values: readonly string[]): string {
+      const iv = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', key, iv);
+      const sealed = Buffer.concat([cipher.update(JSON.stringify(values), 'utf8'), cipher.final()]);
+      return `v1.${Buffer.concat([iv, sealed, cipher.getAuthTag()]).toString('base64url')}`;
+    },
+    /** The sealed values, or [] for anything this server did not seal. */
+    open(cookieValue: string): string[] {
+      const m = /^v1\.([A-Za-z0-9_-]{40,4000})$/.exec(cookieValue);
+      if (!m) return [];
+      const raw = Buffer.from(m[1]!, 'base64url');
+      if (raw.length < 12 + 16 + 2) return [];
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
+        decipher.setAuthTag(raw.subarray(raw.length - 16));
+        const text = Buffer.concat([decipher.update(raw.subarray(12, raw.length - 16)), decipher.final()]).toString('utf8');
+        const values = JSON.parse(text) as unknown;
+        return Array.isArray(values) && values.length <= PENDING_SIGN_OUTS_MAX && values.every((v) => typeof v === 'string' && v.length <= 512)
+          ? (values as string[])
+          : [];
+      } catch {
+        return [];
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The service
 
 export interface AuthLog {
@@ -320,6 +411,19 @@ export interface AuthService {
   signedIn(cookieHeader: string | undefined): Promise<SignedIn | null>;
   /** `Set-Cookie` values that end this browser's session cookies. */
   expiredSessionCookies(): string[];
+  /**
+   * End the sessions a sign-out names and confirm they are gone (module comment, "Signing
+   * out"): with `session`, the session of this `Cookie` header's session cookie; always,
+   * every sign-out this browser has pending. True once none of them is left (or there was
+   * nothing to end); false when the database could not confirm it. Never throws.
+   */
+  finishSignOut(cookieHeader: string | undefined, opts: { session: boolean }): Promise<boolean>;
+  /** Whether this `Cookie` header carries a pending sign-out. */
+  hasPendingSignOut(cookieHeader: string | undefined): boolean;
+  /** The `Set-Cookie` value that keeps this request's sign-out, with those already pending, for a retry. */
+  pendingSignOutCookie(cookieHeader: string | undefined): string;
+  /** The `Set-Cookie` value that drops this browser's pending sign-outs (all confirmed). */
+  donePendingSignOutCookie(): string;
   /** Better Auth's runtime check of the tables it writes against the Drizzle schema (tests). */
   checkSchema(): Promise<void>;
 }
@@ -534,6 +638,16 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
 
   const expire = (name: string) => `${name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 
+  // Signing out (module comment): a sign-out names its sessions by their signed cookies.
+  const secret = config.auth.secret!;
+  const pendingName = pendingSignOutCookieName(secure);
+  const sealer = pendingSignOutSeal(secret);
+  const pendingCookie = (value: string, maxAge: number) =>
+    `${pendingName}=${value}; Max-Age=${maxAge}; Path=${PENDING_SIGN_OUT_PATH}; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`;
+  /** The session cookie values (as sent) of this browser's pending sign-outs. */
+  const pendingOf = (cookieHeader: string | undefined): string[] => cookieValues(cookieHeader, pendingName).flatMap((v) => sealer.open(v));
+  const sessionCookieOf = (cookieHeader: string | undefined): string[] => cookieValues(cookieHeader, names.session_token).slice(0, 1);
+
   /**
    * Claim the callback's OAuth state for this callback (see the module comment): true for
    * the first claim of a state, false for any later one or a state without its value or
@@ -578,6 +692,25 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
       };
     },
     expiredSessionCookies: () => [expire(names.session_token), expire(names.session_data), expire(names.dont_remember)],
+    async finishSignOut(cookieHeader, opts) {
+      const values = [...(opts.session ? sessionCookieOf(cookieHeader) : []), ...pendingOf(cookieHeader)];
+      const tokens = [...new Set(values.map((v) => signedSessionToken(v, secret)).filter((t): t is string => t !== null))];
+      if (tokens.length === 0) return true;
+      try {
+        // Better Auth's own sign-out may have deleted it already; this one's outcome is the answer.
+        await deps.db.execute(sql`DELETE FROM auth_sessions WHERE token = ANY(${sql.param(tokens)}::text[])`);
+        return true;
+      } catch (err) {
+        log.warn({ signOut: 'unconfirmed', err: { name: (err as Error)?.name } }, 'sign-out: the session could not be ended');
+        return false;
+      }
+    },
+    hasPendingSignOut: (cookieHeader) => cookieValues(cookieHeader, pendingName).length > 0,
+    pendingSignOutCookie(cookieHeader) {
+      const values = [...new Set([...pendingOf(cookieHeader), ...sessionCookieOf(cookieHeader)])].slice(-PENDING_SIGN_OUTS_MAX);
+      return pendingCookie(sealer.seal(values), SESSION_TTL_SECONDS);
+    },
+    donePendingSignOutCookie: () => pendingCookie('', 0),
     async checkSchema() {
       const context = (await auth.$context) as { checkSchema?: () => Promise<void> | undefined };
       await context.checkSchema?.();
