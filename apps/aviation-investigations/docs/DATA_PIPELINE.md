@@ -720,6 +720,19 @@ coded precision. `pnpm eval:retrieval --track coded` runs it with the silver run
 checks, plus a check that the dataset was built from the committed specs. Its splits
 are frozen: rebuilds keep every committed question in its split.
 
+The narrative-relevance set (`evals/retrieval/narrative/`, Track N) has 25 development
+questions in 21 families over negation, maintenance chronology, causal uncertainty,
+pilot-versus-investigator attribution, paraphrases, multi-aircraft events and aircraft
+filters, operational and mechanical concepts, each with a written rubric. Six are bounded
+cohorts (83 to 107 answer-eligible cases each, 570 in all) judged completely; the others
+are judged on pools. Cohorts are derived from PostgreSQL with the passages-v2 semantics
+(every aircraft of a multi-aircraft event must meet the aircraft filters) and checked
+against the passages index before any paid step. Labels are model-judged: two judges
+from different providers grade each case on its complete record, and an adjudicator
+settles disagreements; unresolved pairs stay unknown. Two calibration sets with
+constructed labels (code-reading items and synthetic narrative controls) are frozen by
+hash.
+
 Both runs verify their labels on the target before anything is embedded. Each dataset
 records its generation's id and identity (archive sha256 and the completion mapping,
 field normalization and citation text versions; ids are per-database sequences), and

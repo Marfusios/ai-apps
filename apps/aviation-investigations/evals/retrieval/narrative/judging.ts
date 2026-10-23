@@ -144,7 +144,8 @@ export function loggedSpendUsd(path: string | null): number {
 }
 
 export interface RunMoney {
-  gate: SpendGate;
+  /** The evaluation ledger's gate for a judge (its provider, model and stage label the reservations). */
+  gate: SpendGate | ((judge: JudgeCaller['config']) => SpendGate);
   /** This run's limit (USD) over its spend log. */
   limitUsd: number;
   spendLog: string | null;
@@ -185,13 +186,14 @@ export class AttemptSender {
     if (this.spent + reserve > this.money.limitUsd + 1e-12) {
       throw new BudgetStop(`the next attempt's reservation ($${reserve.toFixed(6)}) would take this run's logged spend ($${this.spent.toFixed(6)}) above its limit of $${this.money.limitUsd}`);
     }
-    const remaining = await this.money.gate.remainingUsd('evaluation');
+    const gate = typeof this.money.gate === 'function' ? this.money.gate(c) : this.money.gate;
+    const remaining = await gate.remainingUsd('evaluation');
     if (reserve > remaining + 1e-12) {
       throw new BudgetStop(`the next attempt's reservation ($${reserve.toFixed(6)}) is more than what remains of the evaluation allowance ($${remaining.toFixed(6)})`);
     }
     let reservation;
     try {
-      reservation = await this.money.gate.reserve({ category: 'evaluation', usd: reserve, purpose: `${this.money.run}-${req.purpose}-${c.role}`.slice(0, 200) });
+      reservation = await gate.reserve({ category: 'evaluation', usd: reserve, purpose: `${this.money.run}-${req.purpose}-${c.role}`.slice(0, 200) });
     } catch (err) {
       if (err instanceof SpendRefusedError) throw new BudgetStop(err.message);
       throw err;
@@ -202,20 +204,20 @@ export class AttemptSender {
     try {
       const r = await caller.call(req, this.timeoutMs, caller.countsWithProvider ? counted : undefined);
       const cost = judgeCostUsd(c.model, r.usage);
-      await this.money.gate.settle(reservation, { usd: cost, tokens: r.usage.inputTokens + r.usage.cacheWriteTokens + r.usage.cacheReadTokens + r.usage.outputTokens });
+      await gate.settle(reservation, { usd: cost, tokens: r.usage.inputTokens + r.usage.cacheWriteTokens + r.usage.cacheReadTokens + r.usage.outputTokens });
       out = { output: r.output, record: { ...base, status: 'ok', category: null, billing: 'usage', chargedUsd: cost, usage: r.usage, latencyMs: Math.round(performance.now() - t0) } };
     } catch (err) {
       const e = err instanceof JudgeCallError ? err : new JudgeCallError('unexpected', { kind: 'uncertain' });
       let charged: number;
       if (e.billing.kind === 'usage') {
         charged = judgeCostUsd(c.model, e.billing.usage);
-        await this.money.gate.settle(reservation, { usd: charged });
+        await gate.settle(reservation, { usd: charged });
       } else if (e.billing.kind === 'none') {
         charged = 0;
-        await this.money.gate.settle(reservation, { usd: 0 });
+        await gate.settle(reservation, { usd: 0 });
       } else {
         charged = reserve;
-        await this.money.gate.settle(reservation, 'uncertain');
+        await gate.settle(reservation, 'uncertain');
       }
       out = {
         error: e,
@@ -307,6 +309,8 @@ export interface Subject {
   ntsbNo: string;
   /** The complete-input fingerprint (relevance) or the bundle fingerprint (answerability). */
   fingerprint: string;
+  /** Answerability: the delivered passages' ids and text hashes, in delivered order (how runs find their judgment). */
+  bundleKey?: string;
   judge(sender: AttemptSender, caller: JudgeCaller, opts: { cacheCase: boolean }): Promise<JudgeOutcome>;
   adjudicate(sender: AttemptSender, caller: JudgeCaller, initial: Extract<JudgeOutcome, { status: 'valid' }>, shown: readonly [ShownVerdict | null, ShownVerdict | null]): Promise<StepOutcome<ValidatedVerdict>>;
 }
@@ -365,6 +369,9 @@ export function relevanceSubject(ref: FamilyRef, evidence: CaseEvidence, plan: C
 }
 
 /** Bundle answerability on the passages a bundle delivered for the case. */
+/** The key a run uses to find a delivered case's answerability judgment. */
+export const bundleKeyOf = (passages: readonly { passageId: string; textSha256: string }[]): string => passages.map((p) => `${p.passageId}:${p.textSha256}`).join(',');
+
 export function answerabilitySubject(ref: FamilyRef, header: Pick<CaseEvidence, 'ntsbNo' | 'event' | 'aircraft'>, passages: readonly DeliveredPassage[], fingerprint: string): Subject {
   const q = { question: ref.question, rubric: ref.rubric };
   const block = renderBundleCase(header, passages);
@@ -374,6 +381,7 @@ export function answerabilitySubject(ref: FamilyRef, header: Pick<CaseEvidence, 
     ref,
     ntsbNo: header.ntsbNo,
     fingerprint,
+    bundleKey: bundleKeyOf(passages.map((p) => ({ passageId: p.passageId, textSha256: sha256(p.text) }))),
     async judge(sender, caller, opts) {
       const r = await step(sender, caller, (f) => withFeedback(answerabilityRequest(q, block, { cacheCase: opts.cacheCase }), f), (o) =>
         validateAnswerability(o as Answerability, { sources, allowAbstain: false, allowAbsence: true }),
@@ -467,6 +475,8 @@ export interface PairRecord {
   kind: Subject['kind'];
   family: string;
   ntsbNo: string;
+  /** Answerability: the delivered passages' key (`bundleKeyOf`); null for relevance. */
+  bundleKey: string | null;
   questionVersion: string;
   rubricVersion: string;
   fingerprint: string;
@@ -563,6 +573,7 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
       kind: s.kind,
       family: s.ref.family,
       ntsbNo: s.ntsbNo,
+      bundleKey: s.bundleKey ?? null,
       questionVersion: s.ref.questionVersion,
       rubricVersion: s.ref.rubricVersion,
       fingerprint: s.fingerprint,

@@ -7,6 +7,9 @@
  * escalation bound, per-attempt ledger reservations, budget stops and the cache.
  * No request leaves the process.
  */
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
@@ -36,6 +39,7 @@ import {
   type FamilyRef,
   type PairPlanItem,
 } from '../../evals/retrieval/narrative/judging.js';
+import { runJudging } from '../../evals/retrieval/narrative/commands.js';
 import { relevanceRequest, type JudgeRequest } from '../../evals/retrieval/narrative/prompts.js';
 import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
 import { questionVersion, rubricVersion } from '../../evals/retrieval/narrative/spec.js';
@@ -383,5 +387,49 @@ describe('judging pairs', () => {
     const third = make();
     await judgePairs([{ subject: subject({ rubricVersion: 'r-0000000000000000' }), priority: 0 }], { judges: third, adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant, VERDICT.relevant])), sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
     expect(third[0].calls).toHaveLength(1);
+  });
+});
+
+describe('the paid judging step', () => {
+  const tmp = () => mkdtempSync(join(tmpdir(), 'narrative-judging-'));
+  const items = (): PairPlanItem[] => [{ subject: subject(), priority: 0 }];
+  const fakes = () => ({ judges: [createFakeJudge(HAIKU, reply([VERDICT.relevant])), createFakeJudge(LUNA, reply([VERDICT.relevant]))] as const, adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])) });
+  const opts = (outDir: string, over: Partial<Parameters<typeof runJudging>[1]> = {}) => ({ set: 'calibration' as const, confirm: false, limitUsd: 1, maxEscalationShare: 1, concurrency: 1, outDir, reference: 'model-judged', log: () => undefined, ...over });
+
+  it('creates no client and no ledger connection without --confirm-cost', async () => {
+    const touched: string[] = [];
+    const code = await runJudging(items(), opts(tmp()), {
+      callers: () => {
+        touched.push('callers');
+        return fakes();
+      },
+      ledger: () => {
+        touched.push('ledger');
+        return { gate: createMemorySpendGate(20), close: async () => undefined };
+      },
+    });
+    expect(code).toBe(0);
+    expect(touched).toEqual([]);
+  });
+
+  it('judges with per-attempt reservations, logs the spend and writes the records', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const code = await runJudging(items(), opts(dir, { confirm: true }), { callers: fakes, ledger: () => ({ gate, close: async () => undefined }) });
+    expect(code).toBe(0);
+    const file = readdirSync(dir).find((f) => f.startsWith('narrative-judgments-calibration-')) as string;
+    const body = JSON.parse(readFileSync(join(dir, file), 'utf8')) as { records: { status: string }[]; stopped: string | null; reference: string };
+    expect(body).toMatchObject({ stopped: null, reference: 'model-judged' });
+    expect(body.records.map((r) => r.status)).toEqual(['agreed']);
+    expect(gate.records).toHaveLength(2);
+    expect(readFileSync(join(dir, 'spend.jsonl'), 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
+  it('stops before the run limit and keeps what it has', async () => {
+    const dir = tmp();
+    const code = await runJudging(items(), opts(dir, { confirm: true, limitUsd: 0.000001 }), { callers: fakes, ledger: () => ({ gate: createMemorySpendGate(20), close: async () => undefined }) });
+    expect(code).toBe(1);
+    const file = readdirSync(dir).find((f) => f.startsWith('narrative-judgments-')) as string;
+    expect((JSON.parse(readFileSync(join(dir, file), 'utf8')) as { stopped: string }).stopped).toMatch(/above its limit/);
   });
 });

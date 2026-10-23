@@ -161,6 +161,16 @@ intervals; a failed call counts as a withheld brief. It is metered on the evalua
 ledger and logs every paid call. Results and the frozen choice: DESIGN §12; commands:
 README "Checker calibration".
 
+**Retrieval relevance without an expert** (task 10c protocol). Track C scores retrieval
+of coded facts exactly (`coded-reference`); Track N (`evals/retrieval/narrative`) scores
+narrative relevance and bundle answerability with two model judges from different
+providers and an adjudicator (`model-judged`). Neither is presented as expert-adjudicated
+accuracy. Track N's judges read the complete case record, cite quotes checked against the
+stored text, and are calibrated on frozen constructed labels (code-reading items and
+synthetic controls); agreement figures are diagnostics with investigation thresholds
+(kappa 0.7, agreement 0.8), never validation. Unknown judgments keep their ranks and stay
+in every denominator, with metric-specific bounds.
+
 ## Production feedback and evaluations
 
 Retain deterministic validation outcomes and sampled operational traces. Start

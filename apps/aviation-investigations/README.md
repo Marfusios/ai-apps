@@ -582,6 +582,63 @@ pnpm eval:retrieval:experiments holdout --dev-results <file> --confirm-cost     
 `--keys-file <file>` reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from a dotenv
 file and never replaces a nonempty process value.
 
+**Narrative-relevance track** (Track N of the task 10c protocol, `evals/retrieval/narrative/`).
+It measures what the codes cannot express: negation, maintenance chronology, causal
+uncertainty, pilot-versus-investigator attribution, paraphrases, multi-aircraft events
+and aircraft filters. Its scores are **model-judged**: two judges from different providers
+grade each case against the question's written rubric, and an adjudicator settles their
+disagreements. Nothing is expert-adjudicated, and no label waits for a person.
+
+- **Questions** (`questions.ts`, built into `dataset.json` by `build`): 25 development
+  questions in 21 families, each with filters, a type, a lure for hard negatives and a
+  rubric that defines grade 2 (relevant), 1 (partially relevant) and 0 with edge cases.
+  Six are **bounded cohorts** (their filters reach 83 to 107 answer-eligible cases), judged
+  completely so Recall@20 is defined; paraphrases keep their family's rubric and
+  judgments. Questions were written from general knowledge, with filters chosen from
+  aggregate cohort counts only.
+- **Judge input** (`evidence.ts`): the case's complete record from PostgreSQL (every
+  narrative section and variant with its revision and scope, the coded findings and
+  occurrences by row identity), checked against the stored hashes and fingerprinted by
+  content. Cases above 12,000 `cl100k` tokens are judged part by part with carried notes
+  and a consolidation step; nothing is truncated, and an uncovered case is `unknown`.
+  Bundle answerability reads only the passages a retrieval bundle delivered.
+- **Judges** (`config.ts`, `clients.ts`, `judging.ts`): `claude-haiku-5-5` (adaptive
+  thinking) and `gpt-5.6-luna` (reasoning effort low) grade independently, blind to method
+  and rank; `claude-sonnet-5-5` adjudicates a disagreement after recording its own blind
+  grade, and may abstain. Quotes are checked with the brief validator's quote rule
+  (`quote-ws-v2`) against the stored text; an invalid output gets one retry, then is
+  unjudgeable. Unresolved pairs stay `unknown` in every denominator. The OpenAI client is
+  evaluation-only, outside the production provider path.
+- **Calibration** (`calibration.json`, labels frozen by hash): code-reading items (Track
+  C questions with the codes visible) and synthetic narrative controls (negation,
+  chronology, pilot versus investigator, cross-aircraft attribution); every label is
+  `constructed`.
+- **Pools** (`pool.ts`): per family, the union of the first 100 unique cases of
+  `p50-kt`, `c200+n-kt` and `c200+nf-kt` (the experiment harness, cached scope outputs),
+  every bounded-cohort case, related-code positives, lure hard negatives and a seeded tail
+  sample, versioned by content. **Metrics** (`score.ts`): Recall@20 on exhaustive bounded
+  cohorts only, strict P@6 and nDCG@6 with bounds over unknowns, supported P@6 (relevant and
+  answerable in the delivered passages), group bootstrap, judge agreement (kappa with
+  intervals, confusion matrices per tag and grade) and candidate code-narrative
+  discrepancies.
+
+```sh
+pnpm eval:retrieval:narrative build --generation 1 --check        # the question set (DATABASE_URL, read-only)
+pnpm eval:retrieval:narrative calibration --generation 1 --check  # the calibration sets; refuses changed labels
+pnpm eval:retrieval:narrative plan --keys-file <file>             # free dry run: preflight, inventory, token counts and cost
+pnpm eval:retrieval:narrative pools --confirm-cost                # scope samples and query embeddings, then the pools
+pnpm eval:retrieval:narrative judge --set calibration --confirm-cost
+pnpm eval:retrieval:narrative judge --set relevance --pools <file> --confirm-cost
+pnpm eval:retrieval:narrative answerability --pools <file> --confirm-cost
+pnpm eval:retrieval:narrative report --pools <file> --judgments <a,b>   # free
+```
+
+Paid commands print their plan and send nothing without `--confirm-cost`. Each attempt
+reserves its worst case on the evaluation ledger (`DATABASE_INGEST_URL`) and settles; a
+command stops before a reservation would exceed its limit or what remains of the monthly
+indexing and evaluation allowance. Outputs, the spend log and the judgment cache go to
+`--out-dir` (default `data/work/narrative`).
+
 ### Checker calibration
 
 `evals/checker/` calibrates the evidence checker (Task 16c, gate G6): which model,
