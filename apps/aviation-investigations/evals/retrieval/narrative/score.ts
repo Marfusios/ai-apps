@@ -131,8 +131,12 @@ export interface QuestionValue {
   recallGate: number | null;
   recallDiagnostic: number | null;
   p6: Bounds;
-  /** Null when the question abstains under every assignment. */
+  /** Null when the question abstains under every assignment (in any sample). */
   ndcg6: Bounds | null;
+  /** In some sample an assignment of the unknowns leaves no relevant case: "no-positive reference possible", inconclusive for an nDCG gate unless resolved. */
+  noPositivePossible: boolean;
+  /** In some sample the ideal DCG is 0 under every assignment: out of the nDCG means, listed in the abstention table. */
+  abstention: boolean;
   supported: Bounds;
 }
 
@@ -157,6 +161,8 @@ export function questionValues(pool: FamilyPool, runs: readonly RunScore[]): Que
         recallDiagnostic: recalls.every((r) => r.value !== null) ? meanOf(recalls.map((r) => r.value as number)) : null,
         p6: meanBounds(mine.map((r) => r.protocol.precision.strict)),
         ndcg6: ndcgs.every((b): b is Bounds => b !== null) ? meanBounds(ndcgs as Bounds[]) : null,
+        noPositivePossible: mine.some((r) => r.protocol.ndcg.noPositivePossible),
+        abstention: mine.some((r) => r.protocol.ndcg.abstention),
         supported: meanBounds(mine.map((r) => r.supported)),
       });
     }

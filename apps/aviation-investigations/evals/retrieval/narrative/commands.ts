@@ -381,10 +381,10 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     log(`token counts (Claude, provider counter): relevance request mean ${tokens.relevanceClaude.mean}, p90 ${tokens.relevanceClaude.p90}, max ${tokens.relevanceClaude.max}; OpenAI estimate mean ${tokens.relevanceOpenai.mean}, max ${tokens.relevanceOpenai.max}; family prefix about ${tokens.prefixClaude.mean} (Claude)`);
     log(`long cases: ${chunked.length} of ${measured.length} sampled cases above ${CASE_TOKEN_BUDGET.toLocaleString('en-US')} cl100k tokens (chunked), ${report.chunked.uncovered} uncovered; Sonnet/Haiku count ratio ${tokens.sonnetOverHaiku.mean}`);
     const n = (x: number, w: number) => String(Math.round(x)).padStart(w);
-    const line = (name: string, r: RunCost) =>
-      log(`  ${name.padEnd(32)} ${n(r.pairs, 6)} pairs  A ${n(r.calls.judgeA, 6)} / B ${n(r.calls.judgeB, 6)} / adj ${n(r.calls.adjudicator, 5)} calls  expected ${usd(r.usd.total)} (A ${usd(r.usd.judgeA)}, B ${usd(r.usd.judgeB)}, adj ${usd(r.usd.adjudicator)}); at the 25% escalation bound ${usd(r.totalAtBoundUsd)}; every call at its caps ${usd(r.worstCaseUsd)}`);
+    const line = (name: string, r: RunCost, bound = `at the ${ASSUMPTIONS.escalationBound * 100}% escalation bound`) =>
+      log(`  ${name.padEnd(32)} ${n(r.pairs, 6)} pairs  A ${n(r.calls.judgeA, 6)} / B ${n(r.calls.judgeB, 6)} / adj ${n(r.calls.adjudicator, 5)} calls  expected ${usd(r.usd.total)} (A ${usd(r.usd.judgeA)}, B ${usd(r.usd.judgeB)}, adj ${usd(r.usd.adjudicator)}); ${bound} ${usd(r.totalAtBoundUsd)}; every call at its caps ${usd(r.worstCaseUsd)}`);
     log('costs:');
-    line(`(a) calibration (${ctx.calibration.items.length} items)`, calibration);
+    line(`(a) calibration (${ctx.calibration.items.length} items)`, calibration, 'with every item adjudicated');
     line(`(b) relevance, ${opts.samples} scope sample(s)`, relevance);
     line('    with the largest pools', relevanceMax);
     line('    answerability', answerability);
@@ -759,7 +759,8 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
         comparisons[`${b} vs ${a}`] = Object.fromEntries((['recallGate', 'p6', 'ndcg6', 'supported'] as const).map((m) => [m, compareMethods(values, (member) => groups.get(member) ?? member, a, b, m, boot)]));
       }
     }
-    out.relevance = { poolVersion: pools.version, values, comparisons, diagnostics, agreement: agreementReport(rel, tagsOf), discrepancies: discrepancies(d, rel), audit: auditSamples(rel, tagsOf) };
+    const flagged = (k: 'noPositivePossible' | 'abstention') => values.filter((v) => v[k]).map((v) => ({ member: v.member, method: v.method }));
+    out.relevance = { poolVersion: pools.version, values, comparisons, noPositivePossible: flagged('noPositivePossible'), abstentions: flagged('abstention'), diagnostics, agreement: agreementReport(rel, tagsOf), discrepancies: discrepancies(d, rel), audit: auditSamples(rel, tagsOf) };
     log(`relevance: ${rel.length} pair records over ${pools.families.length} families`);
   }
   const ans = records('answerability');

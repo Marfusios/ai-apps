@@ -151,6 +151,13 @@ describe('references and run scores', () => {
     const [v] = questionValues(pool, scores);
     expect(v?.recallGate).toBe(1);
     expect(v?.p6.lower).toBeCloseTo((2 / 6 + 0) / 2, 10);
+    expect(v).toMatchObject({ noPositivePossible: false, abstention: false });
+    // All unknown: some assignment leaves no relevant case (flagged), and none abstains under every assignment.
+    const unknown = scoreRuns(pool, familyReference({ ...pool, cohort }, new Map()), new Map());
+    expect(questionValues(pool, unknown)[0]).toMatchObject({ noPositivePossible: true, abstention: false, recallGate: null });
+    // All judged 0: the ideal DCG is 0 under every assignment, so nDCG@6 abstains.
+    const none = scoreRuns(pool, familyReference({ ...pool, cohort }, new Map(cohort.map((n) => [n, 0 as const]))), new Map());
+    expect(questionValues(pool, none)[0]).toMatchObject({ noPositivePossible: true, abstention: true, ndcg6: null });
   });
 });
 
