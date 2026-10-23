@@ -527,6 +527,28 @@ describe('the registered selection rule', () => {
     const knobs = applyRule([evaluation('two', 0.2, { changedKnobs: 2 }), evaluation('one', 0.2, { changedKnobs: 1 })], RULE);
     expect(knobs.selected).toBe('one');
   });
+
+  it('ranks each variant by its own declared target metric first', () => {
+    // A reranker declared on broad nDCG@6: +15 pp there, narrow Recall@20 unchanged.
+    const reranker = evaluation('reranker', 0, { target: 'broadNdcg6', ndcg: 0.15, lower: 0 });
+    reranker.metrics.broadNdcg6 = boot(0.15, 0.04);
+    const recall = evaluation('recall', 0.08);
+    const out = applyRule([recall, reranker], RULE);
+    expect(out.verdicts.every((v) => v.qualifies)).toBe(true);
+    // Before the fix the narrow Recall@20 improvement decided (+8 against 0) whatever the target.
+    expect(out.order).toEqual(['reranker', 'recall']);
+    expect(out.selected).toBe('reranker');
+    // Its target must still qualify on its own: +1.5 pp of nDCG@6 is not enough, whatever the recall.
+    const weak = evaluation('weak-reranker', 0.3, { target: 'broadNdcg6' });
+    weak.metrics.broadNdcg6 = boot(0.015, 0.01);
+    expect(applyRule([weak], RULE).verdicts[0]?.reasons.join('; ')).toMatch(/target broadNdcg6 improves 1\.5 pp/);
+    // The tie window is measured on the target improvements: within 1 pp, broad nDCG@6 decides.
+    const near = applyRule([evaluation('narrow-target', 0.15, { ndcg: 0 }), { ...reranker, id: 'ndcg-target', metrics: { ...reranker.metrics, broadNdcg6: boot(0.145, 0.04) } }], RULE);
+    expect(near.order).toEqual(['ndcg-target', 'narrow-target']);
+    // Every phase A variant declared narrow Recall@20: the ranking is the narrow one, as registered.
+    const phaseA = [evaluation('a', 0.258), evaluation('b', 0.248), evaluation('c', 0.147, { ndcg: 0.12 })];
+    expect(applyRule(phaseA, RULE).order).toEqual(['a', 'b', 'c']);
+  });
 });
 
 describe('E3 scope samples', () => {

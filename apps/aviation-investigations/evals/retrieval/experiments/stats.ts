@@ -19,9 +19,15 @@
  * bootstrap's one-sided 95% lower bound of that improvement is above zero; no other gate
  * metric falls by more than `regressionTolerancePp` (point estimates); its p95 added and
  * total latency are within the limits; it adds no paid call per request; and none of its
- * runs failed. Among qualifying variants the largest narrow Recall@20 improvement wins;
- * variants within `tieWindowPp` of it are ordered by broad nDCG@6 improvement, then
- * lower p95 added latency, then fewer changed knobs, then id.
+ * runs failed. Among qualifying variants the largest improvement on each variant's own
+ * declared target metric wins, so a reranker declared on broad nDCG@6 can win through
+ * it while narrow Recall@20 stays unchanged; variants within `tieWindowPp` of the best
+ * target improvement are ordered by broad nDCG@6 improvement, then lower p95 added
+ * latency, then fewer changed knobs, then id.
+ *
+ * Task 10d phase A ranked every qualifier by narrow Recall@20 whatever its target (fixed
+ * in task 10e). All 37 of its variants declared narrow Recall@20, so that selection is
+ * the same under both readings.
  */
 
 /** mulberry32: a small deterministic PRNG returning floats in [0, 1). */
@@ -160,6 +166,9 @@ export interface RuleOutcome {
 
 const pp = (x: number) => (x * 100).toFixed(1);
 
+/** A variant's paired improvement on its own declared target metric. */
+export const targetDelta = (e: Pick<VariantEvaluation, 'target' | 'metrics'>): number => e.metrics[e.target].delta;
+
 /** The registered selection rule (module comment). */
 export function applyRule(evals: readonly VariantEvaluation[], t: RuleThresholds): RuleOutcome {
   const verdicts: RuleVerdict[] = evals.map((e) => {
@@ -179,13 +188,14 @@ export function applyRule(evals: readonly VariantEvaluation[], t: RuleThresholds
   });
   const qualifying = evals.filter((e) => verdicts.find((v) => v.id === e.id)?.qualifies);
   if (qualifying.length === 0) return { verdicts, order: [], selected: null };
-  const best = Math.max(...qualifying.map((e) => e.metrics.narrowRecall20.delta));
-  const inWindow = (e: VariantEvaluation) => (best - e.metrics.narrowRecall20.delta) * 100 <= t.tieWindowPp + 1e-9;
+  // The declared target first: each variant is ranked by the improvement it was registered to make.
+  const best = Math.max(...qualifying.map(targetDelta));
+  const inWindow = (e: VariantEvaluation) => (best - targetDelta(e)) * 100 <= t.tieWindowPp + 1e-9;
   const order = [...qualifying]
     .sort(
       (a, b) =>
         Number(inWindow(b)) - Number(inWindow(a)) ||
-        (inWindow(a) && inWindow(b) ? 0 : b.metrics.narrowRecall20.delta - a.metrics.narrowRecall20.delta) ||
+        (inWindow(a) && inWindow(b) ? 0 : targetDelta(b) - targetDelta(a)) ||
         b.metrics.broadNdcg6.delta - a.metrics.broadNdcg6.delta ||
         a.latency.p95AddedMs - b.latency.p95AddedMs ||
         a.changedKnobs - b.changedKnobs ||
