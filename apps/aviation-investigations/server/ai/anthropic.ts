@@ -89,15 +89,16 @@ export const STAGE_THINKING: Readonly<Record<LlmStage, ThinkingMode>> = {
 export type Effort = 'low' | 'medium';
 
 /**
- * Each stage's effort. `low` everywhere: the check stage's effort is part of the
- * calibrated checker configuration (evals/checker, protocol v3 compares `low` with a
- * separately frozen `medium` candidate); a change needs the calibration, the caps and the
- * timeouts re-measured. Haiku 5.5's default effort is `medium`, so effort is always sent.
+ * Each stage's effort. `low` for scope and compose; `medium` for the check, the checker
+ * calibration's frozen selection (evals/checker/selection.v3.json, protocol v3.1: chosen by
+ * the pre-registered fallback order over `low`; a unit test holds production to it). A
+ * change needs the calibration, the caps and the timeouts re-measured. Haiku 5.5's default
+ * effort is `medium`, so effort is always sent.
  */
 export const STAGE_EFFORT: Readonly<Record<LlmStage, Effort>> = {
   scope: 'low',
   compose: 'low',
-  check: 'low',
+  check: 'medium',
 };
 
 /** The request's `thinking` parameter for a model and mode, or undefined to omit it. */

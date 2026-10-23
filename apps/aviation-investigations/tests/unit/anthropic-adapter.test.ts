@@ -252,10 +252,12 @@ describe('Anthropic adapter requests', () => {
     const scope = provider(jsonResponse(200, messageJson(JSON.stringify(scopeOutput))));
     await scope.p.scope({ question: 'Engine power loss shortly after maintenance' }, ctx('scope'));
     expect(scope.bodies[0]!.thinking).toEqual({ type: 'disabled' });
-    // The checker calibration's frozen configuration (evals/checker/selection.json).
+    // The checker calibration's frozen configuration (evals/checker/selection.v3.json).
     const haiku = provider(jsonResponse(200, messageJson(JSON.stringify(checkOutput))));
     await haiku.p.check(checkInput, ctx('check'));
     expect(haiku.bodies[0]!.thinking).toEqual({ type: 'adaptive' });
+    // At the effort the 16e calibration froze (selection.v3.json): medium.
+    expect((haiku.bodies[0]!.output_config as Body).effort).toBe('medium');
 
     const opus = provider(jsonResponse(200, messageJson(JSON.stringify(composeOutput))));
     await opus.p.compose(composeInput, ctx('compose'));
