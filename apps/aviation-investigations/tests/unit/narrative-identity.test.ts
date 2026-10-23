@@ -12,7 +12,7 @@ import { families, guardHoldout, readCalibration, readDataset, recordCheck } fro
 import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import type { FamilyPool, PoolFile } from '../../evals/retrieval/narrative/pool.js';
 import { itemKey } from '../../evals/retrieval/narrative/calibration.js';
-import { JUDGE_INPUT_VERSION } from '../../evals/retrieval/narrative/evidence.js';
+import { JUDGE_INPUT_VERSION, VOCABULARY_SHA256 } from '../../evals/retrieval/narrative/evidence.js';
 import {
   REQUEST_FORMAT_SHA256,
   SCHEMAS_SHA256,
@@ -32,7 +32,11 @@ const APP_DIR = resolve(import.meta.dirname, '../..');
  * version string and update the pin here in the same change (identity.ts).
  */
 const REQUEST_PINS: Record<string, string> = {
-  'track-n-judge.v2|track-n-adjudicate.v2|track-n-answerability.v2|judge-input-v2': '337ca796479e7e183e3f52aa14e873834e694cbaa0c4a6c3791cabed1664386f',
+  'track-n-judge.v3|track-n-adjudicate.v2|track-n-answerability.v3|judge-input-v3': '705e188c6248bfb57ce1e2aa68d39fa5c872851d8ac32c09b77642fc139c9908',
+};
+/** The facet vocabularies the header renders (review N10): part of every fingerprint and of the request-format hash above. */
+const VOCABULARY_PINS: Record<string, string> = {
+  'judge-input-v3': 'a1109e135e336bf4b4048a5fd2e856020cbba9e6993cd7bdbba6da24b168cd8b',
 };
 const SCHEMA_PINS: Record<string, string> = {
   'track-n-validate.v1+quote-ws-v2': '8f2c3ad326bbb8def6d1155addac0e379f88f07d06fd9783ba3fee51ea045e85',
@@ -45,6 +49,11 @@ describe('pinned prompts, formats, schemas and validator', () => {
   it('ties every request format to its version strings (bump the versions when a prompt or a format changes)', () => {
     const versions = [JUDGE_PROMPTS_VERSION, ADJUDICATOR_PROMPTS_VERSION, ANSWERABILITY_PROMPTS_VERSION, JUDGE_INPUT_VERSION].join('|');
     expect({ versions, sha256: REQUEST_FORMAT_SHA256 }).toEqual({ versions, sha256: REQUEST_PINS[versions] });
+  });
+
+  it('ties the facet vocabularies to the input version: an edited vocabulary changes every fingerprint and the request hash', () => {
+    expect({ version: JUDGE_INPUT_VERSION, sha256: VOCABULARY_SHA256 }).toEqual({ version: JUDGE_INPUT_VERSION, sha256: VOCABULARY_PINS[JUDGE_INPUT_VERSION] });
+    expect((experimentIdentity('calibration', {}) as { input: { vocabularySha256: string } }).input.vocabularySha256).toBe(VOCABULARY_SHA256);
   });
 
   it('ties the output schemas and limits, and the validator source, to the validator version', () => {

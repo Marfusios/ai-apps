@@ -157,6 +157,25 @@ describe('prompts and output schemas', () => {
     expect(answerabilityRequest(q, 'case').system).toBe(ANSWERABILITY_SYSTEM);
   });
 
+  it('settles what is stated first, and decides a stated contrary before a partial match (review N1)', () => {
+    const order = (text: string, marks: string[]) => marks.map((m) => text.indexOf(m));
+    for (const system of [JUDGE_SYSTEM, CHUNK_SYSTEM, CONSOLIDATE_SYSTEM]) {
+      expect(system).toContain('a condition the record states and then contradicts is not stated');
+      expect(system).toContain('the later finding stands');
+      const at = order(system, ['a. What is stated', 'b. Grade 2 when', 'c. Otherwise grade 0 when the record states the contrary', 'unless the rubric\'s grade-1 description names that situation', 'd. Otherwise grade 1']);
+      expect(at.every((x) => x >= 0)).toBe(true);
+      expect([...at].sort((x, y) => x - y)).toEqual(at);
+    }
+    expect(CHUNK_SYSTEM).toContain('a later part may state a missing condition or contradict one stated so far');
+    // Answerability: the header identifies the case but is not evidence; the contrary comes before partial.
+    expect(ANSWERABILITY_SYSTEM).toContain('it is not part of what the search delivered');
+    expect(ANSWERABILITY_SYSTEM).toContain('A rubric condition counts as shown only when a passage states it');
+    expect(ANSWERABILITY_SYSTEM).toContain('a condition one shown passage states and another contradicts is not stated');
+    const at = order(ANSWERABILITY_SYSTEM, ['1. relevant:', '2. not_relevant: the passages state the contrary', '3. partial:', '4. not_relevant: otherwise']);
+    expect(at.every((x) => x >= 0)).toBe(true);
+    expect([...at].sort((x, y) => x - y)).toEqual(at);
+  });
+
   it('gives OpenAI a strict schema: closed objects, every property required, no length keywords', () => {
     for (const schema of [VerdictSchema, ChunkVerdictSchema, AnswerabilitySchema]) {
       const json = JSON.stringify(strictJsonSchema(schema));

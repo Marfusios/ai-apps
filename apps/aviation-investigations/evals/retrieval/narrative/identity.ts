@@ -5,7 +5,8 @@
  * **Pinned texts.** `REQUEST_FORMAT_SHA256` hashes every request a judge or the
  * adjudicator can receive, rendered from one fixed synthetic case: the system prompts,
  * the task lines, the adjudication instructions, the retry feedback and the rendering
- * of the question, the rubric, the case, its parts and the delivered passages.
+ * of the question, the rubric, the case, its parts and the delivered passages, with the
+ * facet vocabularies the header renders codes with (`VOCABULARY_SHA256`).
  * `SCHEMAS_SHA256` hashes the strict output schemas and the output limits. Both are in
  * every judgment's cache key, so an edited prompt or format re-judges even when its
  * version string was not bumped; a unit test pins each hash to its version strings so
@@ -31,7 +32,7 @@
  */
 import { judgeIdentity } from './clients.js';
 import { ADJUDICATOR, JUDGES_VERSION, JUDGE_A, JUDGE_B } from './config.js';
-import { CASE_TOKEN_BUDGET, JUDGE_INPUT_VERSION, renderBundleCase, type CaseEvidence, type DeliveredPassage, type SectionPiece } from './evidence.js';
+import { CASE_TOKEN_BUDGET, JUDGE_INPUT_VERSION, VOCABULARY_SHA256, renderBundleCase, type CaseEvidence, type DeliveredPassage, type SectionPiece } from './evidence.js';
 import type { PairRecord } from './judging.js';
 import { VALIDATOR_VERSION, retryFeedback } from './judgment.js';
 import {
@@ -121,9 +122,12 @@ export function sampleRequests(): JudgeRequest[] {
   ];
 }
 
-/** The hash of every request format (module comment). */
+/** The hash of every request format (module comment), with the facet vocabularies the header renders (the sample shows only some codes). */
 export const REQUEST_FORMAT_SHA256 = sha256(
-  canonicalJson(sampleRequests().map((r) => ({ purpose: r.purpose, system: r.system, output: r.output, blocks: r.blocks.map((b) => ({ text: b.text, cache: b.cache === true })) }))),
+  canonicalJson({
+    requests: sampleRequests().map((r) => ({ purpose: r.purpose, system: r.system, output: r.output, blocks: r.blocks.map((b) => ({ text: b.text, cache: b.cache === true })) })),
+    vocabulary: VOCABULARY_SHA256,
+  }),
 );
 
 /** The hash of the strict output schemas and the output limits. */
@@ -155,7 +159,7 @@ export function experimentIdentity(set: JudgmentSet, data: ExperimentData): Reco
     prompts: { judge: JUDGE_PROMPTS_VERSION, adjudicate: ADJUDICATOR_PROMPTS_VERSION, answerability: ANSWERABILITY_PROMPTS_VERSION, requestsSha256: REQUEST_FORMAT_SHA256 },
     schemasSha256: SCHEMAS_SHA256,
     validator: VALIDATOR_VERSION,
-    input: { version: JUDGE_INPUT_VERSION, caseTokenBudget: CASE_TOKEN_BUDGET },
+    input: { version: JUDGE_INPUT_VERSION, vocabularySha256: VOCABULARY_SHA256, caseTokenBudget: CASE_TOKEN_BUDGET },
     data,
   };
 }

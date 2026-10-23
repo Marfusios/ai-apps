@@ -12,9 +12,11 @@
  * `<case>/<aircraft>/occurrence/<n>`). Each section's text is checked against its
  * recorded sha256 before it is used.
  *
- * **Fingerprint.** `fingerprint` is sha256 over the input version and the canonical
+ * **Fingerprint.** `fingerprint` is sha256 over the input version, the facet
+ * vocabularies the header renders codes with (`VOCABULARY_SHA256`) and the canonical
  * content (section revision ids and hashes, rows, event and aircraft fields), so the
- * same content keeps its judgments across generations and any change re-judges.
+ * same content keeps its judgments across generations and any change, a vocabulary edit
+ * included, re-judges.
  *
  * **Long cases** (`planChunks`). A case whose rendered evidence is above
  * `CASE_TOKEN_BUDGET` (`cl100k_base` tokens) is split by section into ordered chunks:
@@ -28,9 +30,11 @@
  * `unknown`.
  *
  * **Bundle answerability** reads only what a retrieval bundle delivered for the case:
- * the header (as the answer model's case header does) and the delivered passages P1..,
- * with their provenance. Its fingerprint covers the passage ids and texts, so the
- * judgment is keyed by the actual supplied bundle.
+ * the delivered passages P1.., with their provenance, under the case header, which
+ * identifies the case and its aircraft but is not evidence (the prompt says only a
+ * passage can establish a condition). Its fingerprint covers the vocabularies, the header
+ * facts and the passage ids and texts, so the judgment is keyed by the actual supplied
+ * bundle.
  *
  * Untrusted text (sections, descriptions, passages) is placed inside delimiter tags with
  * the `<` of anything shaped like one of them replaced (`untrustedText`); quotes are
@@ -44,8 +48,8 @@ import { AIRCRAFT_CATEGORY, DAMAGE, ENGINE_TYPE, FAR_PART, FLIGHT_PURPOSE } from
 import { normalizeFindingDescription } from '../coded/coded.js';
 import { canonicalJson, sha256 } from './spec.js';
 
-/** v2: header facets as descriptions with their codes (for example `light Night, dark (NDRK)`). */
-export const JUDGE_INPUT_VERSION = 'judge-input-v2';
+/** v3 (fix round 2): the fingerprints cover the facet vocabularies (review N10); v2: header facets as descriptions with their codes (`light Night, dark (NDRK)`). */
+export const JUDGE_INPUT_VERSION = 'judge-input-v3';
 /** The per-judgment budget for a case's rendered evidence (`cl100k_base` tokens); above it the case is chunked. */
 export const CASE_TOKEN_BUDGET = 12_000;
 
@@ -313,11 +317,31 @@ export async function loadCaseEvidence(client: pg.ClientBase, generationId: numb
 // ---------------------------------------------------------------------------
 // Identities
 
+/**
+ * The vocabularies the header renders facet codes with (descriptions with their codes):
+ * part of every fingerprint and of the pinned request-format hash, so editing one
+ * re-judges every case whose input it changes (review N10).
+ */
+export const VOCABULARY_SHA256 = sha256(
+  canonicalJson({
+    category: AIRCRAFT_CATEGORY,
+    farPart: FAR_PART,
+    purpose: FLIGHT_PURPOSE,
+    damage: DAMAGE,
+    engine: ENGINE_TYPE,
+    phase: PHASE_LABEL,
+    injury: DEFAULT_CODE_LABELS.ev_highest_injury,
+    light: DEFAULT_CODE_LABELS.light_cond,
+    weather: DEFAULT_CODE_LABELS.wx_cond_basic,
+  }),
+);
+
 /** The complete-input fingerprint (module comment). */
 export function fingerprint(e: CaseEvidence): string {
   return sha256(
     canonicalJson({
       version: JUDGE_INPUT_VERSION,
+      vocabulary: VOCABULARY_SHA256,
       ntsbNo: e.ntsbNo,
       event: e.event,
       aircraft: e.aircraft,
@@ -342,11 +366,12 @@ export interface DeliveredPassage {
   text: string;
 }
 
-/** The bundle fingerprint: the input version, the case and its delivered passages (ids and texts), in delivered order. */
+/** The bundle fingerprint: the input version, the vocabularies, the case and its delivered passages (ids and texts), in delivered order. */
 export function bundleFingerprint(ntsbNo: string, event: CaseEvidence['event'], aircraft: readonly EvidenceAircraft[], passages: readonly DeliveredPassage[]): string {
   return sha256(
     canonicalJson({
       version: JUDGE_INPUT_VERSION,
+      vocabulary: VOCABULARY_SHA256,
       ntsbNo,
       event,
       aircraft,
