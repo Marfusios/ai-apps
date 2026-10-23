@@ -1,99 +1,126 @@
 /**
  * Neutral report paragraphs for the synthetic narrative controls (Track N calibration):
- * the weather observations, airport, site, wreckage layout, emergency response, survival
- * and organizational details that make a record read like a real NTSB report and give
- * the judge something to read past. None of them states anything a Track N rubric turns
- * on: no engine, power, examination, malfunction or failure statement, no maintenance or
- * inspection, no pilot certificate, instruction or student, no tower or radio frequency,
- * no fire, no recorded flight data, no landing gear and no propeller. Deterministic for
- * a seed (`mulberry32`), so a record built from them keeps its fingerprint.
+ * the airport, the land around it, its history, the notification of the investigation and
+ * general Federal Aviation Administration guidance, which make a record read like a real
+ * NTSB report and give the judge something to read past.
  *
- * Long records (`longFiller`) reach past the 12,000-token chunk budget with hourly
- * weather observations, site and wreckage-layout details and generic background, so the
- * decisive sentences of a long control land in different parts of the record.
+ * **Neutral** (fix round 2, review M7 and N5): a paragraph says nothing about the
+ * accident, so it cannot contradict any record. It never describes the accident site,
+ * the wreckage or any damage, the occupants or injuries, the time of day or the light,
+ * the aircraft or any of its parts, and it never states anything a Track N rubric turns
+ * on: no engine, power, examination, malfunction or failure, no maintenance, inspection
+ * or clock, no pilot certificate, instruction or student, no tower, radio or traffic
+ * pattern, no fire, no recorded data, no landing gear, propeller or rotor, no wires or
+ * loads, no cause or certainty (`FILLER_FORBIDDEN`, checked by a test on every paragraph).
+ * Guidance names the handbook of the record's kind of aircraft (`Vehicle`).
+ *
+ * Long records (`longFiller`) reach past the 12,000-token chunk budget with automated
+ * weather observations at the airport (visual conditions; the only paragraphs with
+ * weather words, `WEATHER_WORDS`) between the same neutral paragraphs, so the decisive
+ * sentences of a long control land in different parts of the record. Deterministic for a
+ * seed (`mulberry32`), so a record built from them keeps its fingerprint.
  */
 import { mulberry32 } from '../../experiments/stats.js';
 import { sha256 } from '../spec.js';
 
 export interface FillerPlace {
-  /** The airport or nearest town the paragraphs name, and the weather station's identifier. */
+  /** The airport the paragraphs describe, and its weather station's identifier. */
   airport: string;
   station: string;
   /** Field elevation in feet. */
   elevation: number;
-  /** Temperatures for the weather observations (°C); the dew point is kept 9 to 14 °C below. */
+  /** Temperatures for the weather observations of long records (°C); the dew point is kept 9 to 14 °C below. */
   temperature: number;
+  /** The land around the airport (never the accident site). */
+  area: string;
 }
+
+/** The kind of aircraft a record is about: guidance names its handbook (`aircraft` when an event involves both kinds). */
+export type Vehicle = 'airplane' | 'helicopter' | 'aircraft';
+
+/** The record's kind of aircraft from its aircraft categories. */
+export const vehicleOf = (categories: readonly string[]): Vehicle =>
+  categories.every((c) => c === 'HELI') ? 'helicopter' : categories.every((c) => c === 'AIR') ? 'airplane' : 'aircraft';
 
 const pick = <T>(rand: () => number, xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T;
 const int = (rand: () => number, lo: number, hi: number): number => lo + Math.floor(rand() * (hi - lo + 1));
 const rng = (seed: string): (() => number) => mulberry32(parseInt(sha256(seed).slice(0, 8), 16));
 
-const DIRECTIONS = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
-const SURFACES = ['asphalt', 'concrete', 'asphalt and concrete'];
-const TERRAIN = ['a harvested hayfield', 'a pasture bordered by a drainage ditch', 'gently rolling farmland', 'a gravel road and the field beside it', 'a soybean field', 'an open field with tall grass', 'a fallow field crossed by a dirt track'];
+const SIDES = ['north', 'east', 'south', 'west'];
+const HANDBOOKS: Readonly<Record<Vehicle, readonly string[]>> = {
+  airplane: ['the Airplane Flying Handbook', "the Pilot's Handbook of Aeronautical Knowledge"],
+  helicopter: ['the Helicopter Flying Handbook', "the Pilot's Handbook of Aeronautical Knowledge"],
+  aircraft: ["the Pilot's Handbook of Aeronautical Knowledge"],
+};
+const GUIDANCE_TOPICS: Readonly<Record<Vehicle, readonly string[]>> = {
+  airplane: ['how to use checklists', 'how to read airport signs and markings', 'how to manage workload', 'how to plan an arrival at an unfamiliar airport'],
+  helicopter: ['how to use checklists', 'how to manage workload', 'how to plan an arrival at an unfamiliar landing area', 'how to read airport signs and markings'],
+  aircraft: ['how to use checklists', 'how to read airport signs and markings', 'how to manage workload'],
+};
+const GUIDANCE_ADVICE = ['review the airport diagram before each departure', 'use a written checklist', 'plan an alternate course of action before departure', 'set aside time to study the local procedures of an unfamiliar airport'];
 
-/** One hourly weather observation sentence (no ceiling, no reduced visibility: visual conditions). */
+/** One automated weather observation sentence (visual conditions; long records only). */
 function observation(rand: () => number, place: FillerPlace, hour: number): string {
   const t = place.temperature + int(rand, -2, 2);
   const dew = t - int(rand, 9, 14);
   const wind = int(rand, 0, 35) * 10;
   const speed = int(rand, 3, 12);
   return (
-    `At ${String(hour).padStart(2, '0')}${pick(rand, ['53', '55', '56'])}, the automated weather observation at ${place.station} recorded wind from ${String(wind).padStart(3, '0')}° at ${speed} knots, ` +
+    `At ${String(hour).padStart(2, '0')}${pick(rand, ['53', '55', '56'])}, the automated weather observation at ${place.station} included wind from ${String(wind).padStart(3, '0')}° at ${speed} knots, ` +
     `visibility 10 statute miles, ${pick(rand, ['clear sky', 'a few clouds at 6,500 ft above ground level', 'scattered clouds at 8,000 ft above ground level'])}, temperature ${t}°C, dew point ${dew}°C, and an altimeter setting of ${(29.85 + rand() * 0.3).toFixed(2)} inches of mercury.`
   );
 }
 
-/** A paragraph of a given topic. */
-function paragraph(rand: () => number, place: FillerPlace, topic: number): string {
-  switch (topic % 9) {
+/** A neutral paragraph of a given topic (module comment). */
+function paragraph(rand: () => number, place: FillerPlace, vehicle: Vehicle, topic: number): string {
+  switch (topic % 5) {
     case 0:
-      return `${place.airport} is at an elevation of ${place.elevation.toLocaleString('en-US')} ft. It has ${pick(rand, ['one runway', 'two runways'])}; runway ${String(int(rand, 1, 18)).padStart(2, '0')}/${String(int(rand, 19, 36))} is ${(int(rand, 3, 6) * 1_000 + int(rand, 0, 9) * 100).toLocaleString('en-US')} ft long and ${int(rand, 6, 15) * 10} ft wide, with an ${pick(rand, SURFACES)} surface. The runway is equipped with medium-intensity edge lights, and a segmented circle and wind cone are located ${pick(rand, ['near midfield', 'west of the runway', 'beside the ramp'])}.`;
+      return `${place.airport} is a public-use airport at an elevation of ${place.elevation.toLocaleString('en-US')} ft, owned by ${pick(rand, ['the city', 'the county', 'an airport authority'])}. Its runways have ${pick(rand, ['asphalt', 'concrete', 'asphalt and concrete'])} surfaces, and its ${pick(rand, ['administration building', 'terminal building'])} stands on the ${pick(rand, SIDES)} side of the airport.`;
     case 1:
-      return `The accident site was located in ${pick(rand, TERRAIN)} about ${(rand() * 3 + 0.4).toFixed(1)} miles ${pick(rand, DIRECTIONS)} of ${place.airport}, at an elevation of about ${place.elevation + int(rand, -60, 60)} ft. The first ground mark was a ${int(rand, 8, 40)}-ft-long furrow on a magnetic heading of about ${String(int(rand, 1, 36) * 10).padStart(3, '0')}°, and the main wreckage came to rest ${int(rand, 40, 220)} ft beyond it.`;
+      return `The land around ${place.airport} is ${place.area}. The nearest ${pick(rand, ['state highway', 'county road', 'interstate highway'])} passes about ${(rand() * 2 + 0.5).toFixed(1)} miles to the ${pick(rand, SIDES)}.`;
     case 2:
-      return `The left wing remained attached to the fuselage; its leading edge was crushed aft along the outboard ${int(rand, 3, 9)} ft. The right wing was ${pick(rand, ['bent upward near midspan', 'separated at the wing root and found 25 ft from the fuselage', 'wrinkled along its upper skin'])}. The empennage was intact, and the horizontal stabilizer and elevator showed ${pick(rand, ['minor impact damage', 'no damage', 'a dent near the right tip'])}.`;
+      return `The airport opened in ${int(rand, 1938, 1975)} and is home to about ${int(rand, 4, 22) * 10} based aircraft. Its ${pick(rand, ['administration building', 'terminal building'])} was built in ${int(rand, 1962, 2015)}, and a ${pick(rand, ['restaurant', 'museum', 'pilot shop'])} at the airport is open ${pick(rand, ['on weekends', 'every day', 'from spring to fall'])}.`;
     case 3:
-      return `First responders from the ${pick(rand, ['county sheriff\'s office', 'local volunteer rescue squad', 'state highway patrol'])} arrived about ${int(rand, 9, 30)} minutes after the accident. ${pick(rand, ['The occupants had exited the airplane on their own.', 'A passerby had helped the occupants away from the wreckage.', 'The occupants were assisted out of the cabin by responders.'])} The occupants were taken to a hospital in ${pick(rand, ['a nearby city', 'the county seat', 'a regional medical center'])} for evaluation.`;
-    case 4:
-      return `The seats and their attachments remained in place, and the ${pick(rand, ['lap belts and shoulder harnesses', 'four-point restraints', 'lap belts'])} were found unlatched by rescue personnel. The cabin structure was ${pick(rand, ['largely intact', 'deformed around the forward doorpost', 'compressed at the lower forward fuselage'])}, and the occupiable space was ${pick(rand, ['maintained', 'mostly maintained', 'reduced on the left side'])}.`;
-    case 5:
-      return `The operator ${pick(rand, ['had been in business for 14 years', 'was a family-owned company founded in 2003', 'had moved its base of operations to the airport two years before the accident'])} and ${pick(rand, ['employed six pilots', 'operated three airplanes', 'flew mostly during the summer months'])}. Its owner stated that the company's pilots completed a written company procedures review each spring and that flights were dispatched by telephone.`;
-    case 6:
-      return `The sunrise on the day of the accident was at ${int(rand, 5, 6)}:${String(int(rand, 10, 59)).padStart(2, '0')}, and the sunset was at ${int(rand, 19, 20)}:${String(int(rand, 10, 59)).padStart(2, '0')}. The moon was ${pick(rand, ['a waxing crescent', 'a waning gibbous', 'full', 'a first-quarter moon'])}, and its illumination was ${int(rand, 10, 99)} percent.`;
-    case 7:
-      return `The airplane was recovered to a secure storage facility in ${pick(rand, ['a nearby town', 'the county', 'the region'])}, where it was ${pick(rand, ['laid out by section', 'placed on a flatbed trailer', 'stored indoors'])} for the investigation. Photographs taken at the site documented the position of the cabin doors, the wing flap ${pick(rand, ['handle', 'indicator'])} and the cockpit switches.`;
+      return `The National Transportation Safety Board was notified of the accident by the Federal Aviation Administration ${pick(rand, ['the same day', 'within a day'])}${pick(rand, ['', ', and the Federal Aviation Administration was a party to the investigation'])}.`;
     default:
-      return `Federal Aviation Administration guidance published in ${pick(rand, ['the Pilot\'s Handbook of Aeronautical Knowledge', 'the Airplane Flying Handbook', 'Advisory Circular 91-79'])} describes ${pick(rand, ['the hazards of low-altitude maneuvering', 'how to plan an approach to an unfamiliar field', 'the effect of wind on groundspeed during turns', 'how to brief passengers before departure'])} and recommends that pilots ${pick(rand, ['plan for an alternate course of action before every flight', 'review the airport diagram before each departure', 'maintain situational awareness of nearby terrain', 'brief passengers on seatbelt use and exits'])}.`;
+      return `Federal Aviation Administration guidance in ${pick(rand, HANDBOOKS[vehicle])} describes ${pick(rand, GUIDANCE_TOPICS[vehicle])} and recommends that pilots ${pick(rand, GUIDANCE_ADVICE)}.`;
   }
 }
 
 /** `count` neutral paragraphs for a record of realistic length (module comment). */
-export function fillerParagraphs(seed: string, place: FillerPlace, count: number): string[] {
+export function fillerParagraphs(seed: string, place: FillerPlace, count: number, vehicle: Vehicle = 'airplane'): string[] {
   const rand = rng(seed);
-  const start = int(rand, 0, 8);
-  return Array.from({ length: count }, (_, i) => paragraph(rand, place, start + i));
+  const start = int(rand, 0, 4);
+  return Array.from({ length: count }, (_, i) => paragraph(rand, place, vehicle, start + i));
 }
 
 /**
  * A long run of neutral text for a long record (module comment): about `paragraphs`
- * paragraphs, each of several observations or details, joined by blank lines.
+ * paragraphs, every third one five weather observations, the others two neutral
+ * paragraphs each, joined by blank lines.
  */
-export function longFiller(seed: string, place: FillerPlace, paragraphs: number): string {
+export function longFiller(seed: string, place: FillerPlace, paragraphs: number, vehicle: Vehicle = 'airplane'): string {
   const rand = rng(`${seed}|long`);
   const out: string[] = [];
   let hour = 0;
   for (let i = 0; i < paragraphs; i += 1) {
     if (i % 3 === 0) {
-      const lines = Array.from({ length: 5 }, () => observation(rand, place, (hour++ % 24)));
+      const lines = Array.from({ length: 5 }, () => observation(rand, place, hour++ % 24));
       out.push(lines.join(' '));
     } else {
-      out.push([paragraph(rand, place, int(rand, 0, 8)), paragraph(rand, place, int(rand, 0, 8))].join(' '));
+      out.push([paragraph(rand, place, vehicle, int(rand, 0, 4)), paragraph(rand, place, vehicle, int(rand, 0, 4))].join(' '));
     }
   }
   return out.join('\n\n');
 }
 
-/** Words the filler never uses (a test checks every generated paragraph). */
-export const FILLER_FORBIDDEN = /\b(engine|power|examin|anomal|malfunction|fail|maintenance|inspect|overhaul|certificat|student|instruct|tower|frequency|ctaf|fire|smoke|data|gps|ads-b|radar|gear|propeller|rotor|brake|annual|hobbs|tachometer|carburetor|icing|fuel)\w*/i;
+/**
+ * Words no neutral paragraph uses (a test checks every generated paragraph): what the
+ * rubrics turn on, the accident and its aftermath, the aircraft and its parts, the time of
+ * day, causes and certainty, and speakers.
+ */
+export const FILLER_FORBIDDEN =
+  /\b(engine|power|examin|anomal|malfunction|fail|maintenance|inspect|overhaul|repair|replac|install|adjust|rigg|hour|hobbs|tachometer|clock|annual|first|second|certificat|student|instruct|tower|towered|frequency|ctaf|radio|pattern|control|clearance|fire|smoke|data|gps|ads-b|radar|record|video|camera|photo|gear|propeller|rotor|brake|fuel|carburetor|icing|wing|elevator|stabiliz|aileron|rudder|flap|fuselage|empennage|cabin|seat|restraint|occupant|passenger|injur|fatal|hospital|damage|destroy|wreck|impact|crash|site|terrain|field|collid|collision|struck|strik|contact|taxi|park|ramp|hangar|wire|line|cable|pole|load|sling|hook|race|show|aerobatic|night|dark|moon|sunset|sunrise|dusk|dawn|light|flight|determin|likely|probab|possib|cause|reason|unknown|stated|reported|said|told|according)\w*/i;
+
+/** Weather words: only the observation sentences of long records use them. */
+export const WEATHER_WORDS = /\b(wind|visibility|cloud|temperature|dew|altimeter|weather)\w*/i;

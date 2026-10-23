@@ -11,10 +11,10 @@
 import type { Control, ControlRecord } from './controls.js';
 import { fillerParagraphs, type FillerPlace } from './filler.js';
 
-const LODI: FillerPlace = { airport: 'Lodi Airport', station: 'KLOD', elevation: 60, temperature: 32 };
-const KALAMAZOO: FillerPlace = { airport: 'Kalamazoo/Battle Creek International Airport', station: 'KAZO', elevation: 874, temperature: 19 };
-const NAPLES: FillerPlace = { airport: 'Naples Municipal Airport', station: 'KAPF', elevation: 8, temperature: 29 };
-const HUTCHINSON: FillerPlace = { airport: 'Hutchinson Regional Airport', station: 'KHUT', elevation: 1543, temperature: 26 };
+const LODI: FillerPlace = { airport: 'Lodi Airport', station: 'KLOD', elevation: 60, temperature: 32, area: 'vineyards and farmland' };
+const KALAMAZOO: FillerPlace = { airport: 'Kalamazoo/Battle Creek International Airport', station: 'KAZO', elevation: 874, temperature: 19, area: 'the city and farmland to the south' };
+const NAPLES: FillerPlace = { airport: 'Naples Municipal Airport', station: 'KAPF', elevation: 8, temperature: 29, area: 'neighborhoods, golf courses and wetlands' };
+const HUTCHINSON: FillerPlace = { airport: 'Hutchinson Regional Airport', station: 'KHUT', elevation: 1543, temperature: 26, area: 'farmland and the city to the south' };
 
 /** A group's controls: its relevance item and its answerability items, sharing one record. */
 function group(
@@ -62,12 +62,15 @@ const SKYD_RECORD: ControlRecord = {
   date: '2020-09-05',
   city: 'Lodi',
   state: 'CA',
-  aircraft: [{ make: 'Cessna', model: '182Q', category: 'AIR', farPart: '091', purpose: 'SKYD', phase: 'initial_climb', engine: 'REC' }],
+  aircraft: [{ make: 'Cessna', model: '182Q', category: 'AIR', farPart: '091', purpose: 'SKYD', phase: 'en_route', engine: 'REC' }],
   factual: [SKYD_LOSS, ...skydContext, 'The pilot made a forced landing in a vineyard, and the airplane came to rest upright with damage to both wings.', SKYD_EXAM].join('\n\n'),
   analysis: 'The reason for the loss of engine power could not be determined.',
   probableCause: SKYD_PC,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '341', phase: 'initial_climb', description: 'Initial climb Loss of engine power (total)', defining: true }],
+  occurrences: [
+    { aircraft: 1, code: '341', phase: 'en_route', description: 'Enroute-climb to cruise Loss of engine power (total)', defining: true },
+    { aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: false },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -83,11 +86,14 @@ const LATE_RECORD: ControlRecord = {
   city: 'Lodi',
   state: 'CA',
   aircraft: [{ make: 'Cessna', model: '182Q', category: 'AIR', farPart: '091', purpose: 'SKYD', phase: 'initial_climb', engine: 'REC' }],
-  factual: [LATE_LOSS, LATE_FIRST, ...fillerParagraphs('WPR20LA912', LODI, 2), 'The pilot landed in an orchard short of the runway, and the airplane nosed over.'].join('\n\n'),
+  factual: [LATE_LOSS, 'The pilot landed in an orchard short of the runway, and the airplane nosed over.', ...fillerParagraphs('WPR20LA912', LODI, 2), LATE_FIRST].join('\n\n'),
   analysis: LATE_TEARDOWN,
   probableCause: 'A loss of engine power due to an exhaust valve that stuck open because of a worn valve guide.',
   findings: [],
-  occurrences: [{ aircraft: 1, code: '342', phase: 'initial_climb', description: 'Initial climb Loss of engine power (partial)', defining: true }],
+  occurrences: [
+    { aircraft: 1, code: '342', phase: 'initial_climb', description: 'Initial climb Loss of engine power (partial)', defining: true },
+    { aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: false },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -102,6 +108,7 @@ const TAXI_RECORD: ControlRecord = {
   date: '2022-06-04',
   city: 'Kalamazoo',
   state: 'MI',
+  event: { highestInjury: 'NONE' },
   aircraft: [
     { make: 'Piper', model: 'PA-28-140', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'taxi', engine: 'REC' },
     { make: 'Cessna', model: '172N', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'standing', engine: 'REC' },
@@ -136,7 +143,7 @@ const PV_RECORD: ControlRecord = {
   analysis: 'The pilot did not maintain directional control during the landing roll in a gusting crosswind.',
   probableCause: PV_PC,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '220', phase: 'landing', description: 'Landing-landing roll Loss of control on ground', defining: true }],
+  occurrences: [{ aircraft: 1, code: '230', phase: 'landing', description: 'Landing-landing roll Loss of control on ground', defining: true }],
 };
 
 // ---------------------------------------------------------------------------
@@ -156,7 +163,7 @@ const GEAR_RECORD: ControlRecord = {
   analysis: GEAR_LAB,
   probableCause: 'The fatigue failure of the nose landing gear retraction link, which resulted in the collapse of the nose landing gear.',
   findings: [],
-  occurrences: [{ aircraft: 1, code: '090', phase: 'landing', description: 'Landing Abnormal runway contact', defining: true }],
+  occurrences: [{ aircraft: 1, code: '094', phase: 'landing', description: 'Landing-landing roll Landing gear collapse', defining: true }],
 };
 
 export const ANSWERABILITY_CONTROLS: readonly Control[] = [

@@ -11,11 +11,11 @@
 import type { Control, ControlRecord } from './controls.js';
 import { longFiller, type FillerPlace } from './filler.js';
 
-/** The neutral text of each long group, about 13,000 `cl100k` tokens. */
-const PARAGRAPHS = 78;
-const PERRIS: FillerPlace = { airport: 'Perris Valley Airport', station: 'KRIV', elevation: 1413, temperature: 33 };
-const GAINESVILLE: FillerPlace = { airport: 'Gainesville Regional Airport', station: 'KGNV', elevation: 152, temperature: 27 };
-const SPRINGFIELD: FillerPlace = { airport: 'Springfield-Branson National Airport', station: 'KSGF', elevation: 1268, temperature: 22 };
+/** The neutral text of each long group, about 13,800 `cl100k` tokens (the record is chunked into two parts). */
+const PARAGRAPHS = 90;
+const PERRIS: FillerPlace = { airport: 'Perris Valley Airport', station: 'KRIV', elevation: 1413, temperature: 33, area: 'farmland, the city and hills to the east' };
+const GAINESVILLE: FillerPlace = { airport: 'Gainesville Regional Airport', station: 'KGNV', elevation: 152, temperature: 27, area: 'pine forest, farmland and the city to the west' };
+const SPRINGFIELD: FillerPlace = { airport: 'Springfield-Branson National Airport', station: 'KSGF', elevation: 1268, temperature: 22, area: 'farmland and the city to the east' };
 
 export const LONG_FILLERS: Readonly<Record<string, string>> = Object.freeze({
   'long-skyd': longFiller('long-skyd', PERRIS, PARAGRAPHS),
@@ -27,18 +27,28 @@ const fill = (key: string): string => `{{fill:${key}}}`;
 // ---------------------------------------------------------------------------
 // long-skyd (dev): ng-skydiving-power-loss-no-anomaly
 
-const CARAVAN = { make: 'Cessna', model: '208B', category: 'AIR', farPart: '091', purpose: 'SKYD', phase: 'initial_climb', engine: 'TP' };
-const skydLong = (id: string, early: string, late: string, analysis: string, probable: string): ControlRecord => ({
+const CARAVAN = { make: 'Cessna', model: '208B', category: 'AIR', farPart: '091', purpose: 'SKYD', phase: 'en_route', engine: 'TP' };
+/** The coded rows of a record whose power loss is stated early: the loss in the climb and the forced landing. */
+const LOSS_CODED: ControlRecord['occurrences'] = [
+  { aircraft: 1, code: '341', phase: 'en_route', description: 'Enroute-climb to cruise Loss of engine power (total)', defining: true },
+  { aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: false },
+];
+/**
+ * The coded rows of a record whose power loss is stated only in the last part (review N7): the forced landing alone,
+ * so no row repeated in every part gives the late condition away.
+ */
+const LANDING_CODED: ControlRecord['occurrences'] = [{ aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: true }];
+const skydLong = (id: string, early: string, late: string, analysis: string, probable: string, occurrences: ControlRecord['occurrences'] = LOSS_CODED): ControlRecord => ({
   ntsbNo: id,
   date: '2023-08-12',
   city: 'Perris',
   state: 'CA',
-  aircraft: [CARAVAN],
+  aircraft: [{ ...CARAVAN, phase: occurrences.find((o) => o.defining)?.phase ?? CARAVAN.phase }],
   factual: [early, fill('long-skyd'), late].filter((x) => x !== '').join('\n\n'),
   analysis,
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '341', phase: 'initial_climb', description: 'Initial climb Loss of engine power (total)', defining: true }],
+  occurrences: occurrences.map((o) => ({ ...o })),
 });
 const SKYD_LOSS = 'The commercial pilot was flying the airplane on a skydiving flight with 12 parachutists on board. The pilot reported that, during the climb through about 6,000 ft mean sea level, the engine lost power.';
 const SKYD_INITIAL = 'An initial examination of the engine at the accident site revealed no mechanical anomalies.';
@@ -52,17 +62,18 @@ const SKYD_NOT_EXAMINED = 'The engine was damaged by the postimpact fire, and th
 // ---------------------------------------------------------------------------
 // long-pv (holdout): pv-pilot-reported-failure-not-confirmed
 
-const pvLong = (id: string, early: string, late: string, probable: string): ControlRecord => ({
+const POSTIMPACT_FIRE = { aircraft: 1, code: '170', phase: 'post_impact', description: 'Post-impact Fire/smoke (post-impact)', defining: false };
+const pvLong = (id: string, early: string, late: string, probable: string, fire = false): ControlRecord => ({
   ntsbNo: id,
   date: '2023-05-20',
   city: 'Gainesville',
   state: 'FL',
-  aircraft: [{ make: 'Piper', model: 'PA-32R-300', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'maneuvering', engine: 'REC' }],
+  aircraft: [{ make: 'Piper', model: 'PA-32R-300', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'maneuvering', engine: 'REC', ...(fire ? { damage: 'DEST' } : {}) }],
   factual: [early, fill('long-pv')].join('\n\n'),
   analysis: late,
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '240', phase: 'maneuvering', description: 'Maneuvering Loss of control in flight', defining: true }],
+  occurrences: [{ aircraft: 1, code: '240', phase: 'maneuvering', description: 'Maneuvering Loss of control in flight', defining: true }, ...(fire ? [{ ...POSTIMPACT_FIRE }] : [])],
 });
 const PV_CLAIM = 'The pilot reported that, while maneuvering at low altitude, "the elevator jammed" and he could not raise the nose before the airplane struck trees.';
 const PV_WORKING = 'Examination of the elevator control system found it continuous and free to move through its full range of travel, with no binding.';
@@ -73,14 +84,14 @@ const PV_WITNESS = 'A witness stated that the elevator "looked stuck" as the air
 // ---------------------------------------------------------------------------
 // long-mx (holdout): ma-airplane-collision-student-pilot
 
-const mxLong = (id: string, early: string, cessna: string): ControlRecord => ({
+const mxLong = (id: string, early: string, cessna: string, cessnaPurpose: 'INST' | 'PERS' = 'INST'): ControlRecord => ({
   ntsbNo: id,
   date: '2023-04-29',
   city: 'Springfield',
   state: 'MO',
   aircraft: [
     { make: 'Piper', model: 'PA-28-181', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'landing', engine: 'REC' },
-    { make: 'Cessna', model: '172S', category: 'AIR', farPart: '091', purpose: 'INST', phase: 'landing', engine: 'REC' },
+    { make: 'Cessna', model: '172S', category: 'AIR', farPart: '091', purpose: cessnaPurpose, phase: 'landing', engine: 'REC' },
   ],
   factual: [early, fill('long-mx')].join('\n\n'),
   aircraftSections: [
@@ -130,10 +141,10 @@ export const LONG_CONTROLS: readonly Control[] = [
     question: 'ng-skydiving-power-loss-no-anomaly',
     label: 2,
     reading: 'novel',
-    record: skydLong('WPR23LA903', `${SKYD_NO_LOSS_EARLY} ${SKYD_EXAM_EARLY}`, '', SKYD_LOSS_LATE, 'A loss of engine power during the climb for reasons that could not be determined.'),
+    record: skydLong('WPR23LA903', `${SKYD_NO_LOSS_EARLY} ${SKYD_EXAM_EARLY}`, '', SKYD_LOSS_LATE, 'A loss of engine power during the climb for reasons that could not be determined.', LANDING_CODED),
     anchors: [SKYD_EXAM_EARLY, SKYD_LOSS_LATE],
     anchorParts: [1, 2],
-    note: 'The clean examination in the first part, the power loss only in the last: grade 2.',
+    note: 'The clean examination in the first part, the power loss only in the last: grade 2. Fix round 2: the coded rows (repeated in every part) record only the forced landing, so the power loss is in the last part alone (review N7).',
   },
   {
     id: 'long-skyd-not-examined',
@@ -142,7 +153,10 @@ export const LONG_CONTROLS: readonly Control[] = [
     question: 'ng-skydiving-power-loss-no-anomaly',
     label: 1,
     reading: 'novel',
-    record: skydLong('WPR23LA904', SKYD_LOSS, '', SKYD_NOT_EXAMINED, 'A loss of engine power during the climb for reasons that could not be determined because the engine could not be examined.'),
+    record: skydLong('WPR23LA904', SKYD_LOSS, '', SKYD_NOT_EXAMINED, 'A loss of engine power during the climb for reasons that could not be determined because the engine could not be examined.', [
+      ...LOSS_CODED,
+      { aircraft: 1, code: '170', phase: 'post_impact', description: 'Post-impact Fire/smoke (post-impact)', defining: false },
+    ]),
     anchors: [SKYD_LOSS, 'the investigation could not examine its internal components'],
     anchorParts: [1, 2],
     note: 'The power loss in the first part; the last part says the engine could not be examined: partial.',
@@ -178,7 +192,7 @@ export const LONG_CONTROLS: readonly Control[] = [
     question: 'pv-pilot-reported-failure-not-confirmed',
     label: 1,
     reading: 'novel',
-    record: pvLong('ERA23LA903', PV_CLAIM, PV_BURNED, 'A loss of airplane control while maneuvering at low altitude for reasons that could not be determined.'),
+    record: pvLong('ERA23LA903', PV_CLAIM, PV_BURNED, 'A loss of airplane control while maneuvering at low altitude for reasons that could not be determined.', true),
     anchors: [PV_CLAIM, PV_BURNED],
     anchorParts: [1, 2],
     note: 'The claim could not be settled (the last part): partial.',
@@ -214,7 +228,7 @@ export const LONG_CONTROLS: readonly Control[] = [
     question: 'ma-airplane-collision-student-pilot',
     label: 0,
     reading: 'novel',
-    record: mxLong('CEN23MA902', MX_EVENT, "A student pilot rode in the Cessna's right seat as a passenger; the Cessna was flown by its owner, who held a private pilot certificate."),
+    record: mxLong('CEN23MA902', MX_EVENT, "A student pilot rode in the Cessna's right seat as a passenger; the Cessna was flown by its owner, who held a private pilot certificate.", 'PERS'),
     anchors: [MX_EVENT, "A student pilot rode in the Cessna's right seat as a passenger"],
     anchorParts: [1, 2],
     note: 'The student was a passenger (the last part): grade 0.',

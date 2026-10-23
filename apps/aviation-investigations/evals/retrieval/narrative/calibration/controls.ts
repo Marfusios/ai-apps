@@ -26,9 +26,15 @@
  * unambiguous, the occurrence rows match the narratives, every control family has at
  * least 8 holdout items in groups of their own, and causal uncertainty, aircraft-scoped
  * attribution, answerability and long records have controls.
+ *
+ * Fix round 2 (the gate's item 5, the review's M7, N2 to N7): the filler is neutral and
+ * names the record's kind of aircraft; every record was read again against its own coded
+ * rows (codes, phases, defining events), analysis and probable cause; the hour-window
+ * questions have boundary controls (exactly at the limit, just past it, clocks that
+ * disagree, the first flight after the work with and without its flight time).
  */
 import type { Grade } from '../spec.js';
-import { fillerParagraphs, type FillerPlace } from './filler.js';
+import { fillerParagraphs, vehicleOf, type FillerPlace, type Vehicle } from './filler.js';
 
 export const CONTROL_FAMILIES = ['negation', 'chronology', 'pilot_vs_investigator', 'cross_aircraft', 'causal_uncertainty', 'answerability', 'long_record'] as const;
 export type ControlFamily = (typeof CONTROL_FAMILIES)[number];
@@ -41,6 +47,8 @@ export interface ControlAircraft {
   purpose: string;
   phase: string;
   engine: string;
+  /** The aircraft's damage when not substantial (`DEST` for a record that says it was destroyed, or one of a fatal impact). */
+  damage?: string;
 }
 
 export interface ControlRecord {
@@ -83,23 +91,23 @@ export interface Control {
   note: string;
 }
 
-/** Realistic-length context: neutral paragraphs around the deciding sentences (filler.ts). */
-export const context = (seed: string, place: FillerPlace, count: number): string => fillerParagraphs(seed, place, count).join('\n\n');
+/** Realistic-length context: neutral paragraphs around the deciding sentences (filler.ts), naming the record's kind of aircraft. */
+export const context = (seed: string, place: FillerPlace, count: number, vehicle: Vehicle = 'airplane'): string => fillerParagraphs(seed, place, count, vehicle).join('\n\n');
 
 const C182 = (purpose: string, phase = 'initial_climb'): ControlAircraft => ({ make: 'Cessna', model: '182P', category: 'AIR', farPart: '091', purpose, phase, engine: 'REC' });
 
 // ---------------------------------------------------------------------------
 // Negation (dev: neg-skyd, neg-carb; holdout: neg-gear and controls-reading's neg-jump)
 
-const HOLLISTER: FillerPlace = { airport: 'Hollister Municipal Airport', station: 'KCVH', elevation: 230, temperature: 27 };
+const HOLLISTER: FillerPlace = { airport: 'Hollister Municipal Airport', station: 'KCVH', elevation: 230, temperature: 27, area: 'farmland and orchards, with hills to the east' };
 const SKYD_START =
-  'The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 1,500 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.';
-const skydivingRecord = (id: string, exam: string, analysis: string, probable: string, findings: ControlRecord['findings'] = []): ControlRecord => ({
+  'The commercial pilot was flying the airplane on a skydiving flight with four parachutists on board. The pilot reported that, during the climb through about 800 ft above ground level, the engine lost total power. He turned back toward the airport and landed in a plowed field short of the runway, where the airplane nosed over.';
+const skydivingRecord = (id: string, exam: string, analysis: string, probable: string, findings: ControlRecord['findings'] = [], fire = false): ControlRecord => ({
   ntsbNo: id,
   date: '2021-07-17',
   city: 'Hollister',
   state: 'CA',
-  aircraft: [C182('SKYD')],
+  aircraft: [{ ...C182('SKYD'), ...(fire ? { damage: 'DEST' } : {}) }],
   factual: `${SKYD_START}\n\n${context(id, HOLLISTER, 2)}\n\n${exam}`,
   analysis,
   probableCause: probable,
@@ -107,12 +115,13 @@ const skydivingRecord = (id: string, exam: string, analysis: string, probable: s
   occurrences: [
     { aircraft: 1, code: '341', phase: 'initial_climb', description: 'Initial climb Loss of engine power (total)', defining: true },
     { aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: false },
+    ...(fire ? [{ aircraft: 1, code: '170', phase: 'post_impact', description: 'Post-impact Fire/smoke (post-impact)', defining: false }] : []),
   ],
 });
 
-const CYLINDER_FATIGUE = { aircraft: 1, code: '0105853006', description: 'Aircraft-Aircraft power plant-Engine (reciprocating)-Recip eng cylinder section-Fatigue/wear/corrosion', inProbableCause: true };
+const CYLINDER_FATIGUE = { aircraft: 1, code: '0105853006', description: 'Aircraft-Aircraft power plant-Engine (reciprocating)-Recip eng cyl section-Fatigue/wear/corrosion', inProbableCause: true };
 
-const OTTUMWA: FillerPlace = { airport: 'Ottumwa Regional Airport', station: 'KOTM', elevation: 846, temperature: 12 };
+const OTTUMWA: FillerPlace = { airport: 'Ottumwa Regional Airport', station: 'KOTM', elevation: 846, temperature: 12, area: 'farmland crossed by county roads, with the city to the west' };
 const carbRecord = (
   id: string,
   phaseSentence: string,
@@ -132,7 +141,7 @@ const carbRecord = (
   occurrences: [{ aircraft: 1, code: '342', phase: over.phase ?? 'en_route', description: over.occurrence ?? 'Enroute-cruise Loss of engine power (partial)', defining: true }],
 });
 
-const KERRVILLE: FillerPlace = { airport: 'Kerrville Municipal Airport', station: 'KERV', elevation: 1617, temperature: 31 };
+const KERRVILLE: FillerPlace = { airport: 'Kerrville Municipal Airport', station: 'KERV', elevation: 1617, temperature: 31, area: 'hilly ranch land with scattered houses' };
 const gearRecord = (id: string, exam: string, probable: string, report = ''): ControlRecord => ({
   ntsbNo: id,
   date: '2016-08-21',
@@ -143,7 +152,10 @@ const gearRecord = (id: string, exam: string, probable: string, report = ''): Co
   analysis: 'The pilot did not maintain the proper landing attitude during the touchdown, which resulted in a hard landing.',
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '090', phase: 'landing', description: 'Landing Abnormal runway contact', defining: true }],
+  occurrences: [
+    { aircraft: 1, code: '090', phase: 'landing', description: 'Landing-flare/touchdown Abnormal runway contact', defining: true },
+    { aircraft: 1, code: '094', phase: 'landing', description: 'Landing-landing roll Landing gear collapse', defining: false },
+  ],
 });
 
 export const NEGATION_CONTROLS: readonly Control[] = [
@@ -192,6 +204,8 @@ export const NEGATION_CONTROLS: readonly Control[] = [
       'A postimpact fire consumed most of the engine compartment, and the engine could not be examined in detail. No fuel was recovered from the wreckage.',
       'The pilot reported a total loss of engine power during the climb. Because of the fire damage, the engine could not be examined, and the reason for the loss of power could not be determined.',
       'A total loss of engine power during the initial climb for reasons that could not be determined because the engine was destroyed by the postimpact fire.',
+      [],
+      true,
     ),
     anchors: ['the engine could not be examined in detail'],
     note: 'Power loss with the examination result unknown: partial.',
@@ -321,12 +335,28 @@ export const NEGATION_CONTROLS: readonly Control[] = [
     record: carbRecord(
       'CEN19LA914',
       'While in cruise flight at 4,500 ft, the engine began to run rough and lost partial power.',
-      "The airplane's engine was equipped with a fuel injection system and did not have a carburetor; carburetor icing therefore could not have occurred. The weather conditions at the time are not otherwise discussed, and the reason for the partial loss of power could not be determined.",
+      "The airplane's engine was equipped with a fuel injection system and did not have a carburetor; carburetor icing therefore could not have occurred, and the investigation did not evaluate the temperature and dew point for it. The reason for the partial loss of power could not be determined.",
       'A partial loss of engine power during cruise flight for reasons that could not be determined.',
       { model: 'PA-28R-201' },
     ),
     anchors: ['carburetor icing therefore could not have occurred'],
     note: 'Icing ruled out by the fuel system, not by the weather: partial. Fix round 1: a fuel-injected model (review M7).',
+  },
+  {
+    id: 'neg-carb-glide-stated-cruise-loss',
+    family: 'negation',
+    mutation: 'other_power_setting',
+    question: 'ng-carb-icing-not-conducive',
+    label: 1,
+    reading: 'edge-case',
+    record: carbRecord(
+      'CEN19LA915',
+      'While in cruise flight at 4,500 ft with the engine at cruise power, the engine began to run rough and lost partial power.',
+      'The temperature and dew point recorded near the time of the accident were conducive to serious carburetor icing at glide power. The reason for the partial loss of engine power could not be determined.',
+      'A partial loss of engine power during cruise flight for reasons that could not be determined.',
+    ),
+    anchors: ['were conducive to serious carburetor icing at glide power'],
+    note: 'Conducive at glide power, the loss in cruise, nothing said about cruise power: the conditions are given only for another power setting, partial (fix round 2, review N6).',
   },
   {
     id: 'neg-gear-no-preimpact',
@@ -393,7 +423,7 @@ export const NEGATION_CONTROLS: readonly Control[] = [
 // ---------------------------------------------------------------------------
 // Chronology (dev: chr-ag, chr-annual; holdout: chr-heli and controls-reading's chr-thrush, chr-cub)
 
-const STUTTGART: FillerPlace = { airport: 'Stuttgart Municipal Airport', station: 'KSGT', elevation: 224, temperature: 29 };
+const STUTTGART: FillerPlace = { airport: 'Stuttgart Municipal Airport', station: 'KSGT', elevation: 224, temperature: 29, area: 'flat farmland where rice and soybeans are grown' };
 const AG = (phase = 'maneuvering'): ControlAircraft => ({ make: 'Air Tractor', model: 'AT-402B', category: 'AIR', farPart: '137', purpose: 'AAPL', phase, engine: 'TP' });
 const agRecord = (id: string, maintenance: string, extraAnalysis = ''): ControlRecord => ({
   ntsbNo: id,
@@ -408,28 +438,37 @@ const agRecord = (id: string, maintenance: string, extraAnalysis = ''): ControlR
   occurrences: [{ aircraft: 1, code: '341', phase: 'maneuvering', description: 'Maneuvering-low-alt flying Loss of engine power (total)', defining: true }],
 });
 
-const BEND: FillerPlace = { airport: 'Bend Municipal Airport', station: 'KBDN', elevation: 3460, temperature: 18 };
-const annualRecord = (id: string, timing: string): ControlRecord => ({
+const BEND: FillerPlace = { airport: 'Bend Municipal Airport', station: 'KBDN', elevation: 3460, temperature: 18, area: 'high desert covered with juniper and sagebrush, with the city to the west' };
+/** Why the pitot line was found disconnected: left off by whoever worked on it, or a fitting that loosened on its own. */
+const PITOT = {
+  inspection: { analysis: 'The mechanic had not reconnected the pitot line after replacing the airspeed indicator during the inspection, which resulted in the loss of airspeed indication.', cause: "The mechanic's failure to reconnect the pitot line" },
+  shop: { analysis: 'The avionics shop had not reconnected the pitot line after replacing the airspeed indicator, which resulted in the loss of airspeed indication.', cause: "The avionics shop's failure to reconnect the pitot line" },
+  loosened: { analysis: 'The pitot line fitting behind the instrument panel had loosened and separated, which resulted in the loss of airspeed indication.', cause: 'The separation of a loosened pitot line fitting' },
+} as const;
+const annualRecord = (id: string, timing: string, pitot: keyof typeof PITOT): ControlRecord => ({
   ntsbNo: id,
   date: '2018-10-02',
   city: 'Bend',
   state: 'OR',
-  aircraft: [{ make: 'Mooney', model: 'M20J', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'initial_climb', engine: 'REC' }],
+  aircraft: [{ make: 'Mooney', model: 'M20J', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'landing', engine: 'REC' }],
   factual: `The private pilot departed for a local flight. Shortly after takeoff the airplane's airspeed indicator showed no indication, and the pilot returned to land with a tailwind; the airplane overran the end of the runway and struck a fence.\n\n${context(id, BEND, 1)}\n\n${timing}\n\nExamination of the pitot system revealed that the pitot line was disconnected at a fitting behind the instrument panel.`,
-  analysis: 'The pitot line had not been reconnected after it was disconnected, which resulted in the loss of airspeed indication.',
-  probableCause: "The disconnected pitot line, which resulted in a loss of airspeed indication, and the pilot's decision to land with a tailwind, which resulted in a runway overrun.",
+  analysis: PITOT[pitot].analysis,
+  probableCause: `${PITOT[pitot].cause}, which resulted in a loss of airspeed indication, and the pilot's decision to land with a tailwind, which resulted in a runway overrun.`,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '490', phase: 'landing', description: 'Landing Collision during takeoff/land', defining: true }],
+  occurrences: [
+    { aircraft: 1, code: '334', phase: 'initial_climb', description: 'Initial climb Flight instrument malfunction', defining: false },
+    { aircraft: 1, code: '300', phase: 'landing', description: 'Landing-landing roll Runway excursion', defining: true },
+  ],
 });
 
-const KAHULUI: FillerPlace = { airport: 'Kahului Airport', station: 'PHOG', elevation: 54, temperature: 26 };
+const KAHULUI: FillerPlace = { airport: 'Kahului Airport', station: 'PHOG', elevation: 54, temperature: 26, area: 'open farmland, the town of Kahului and the ocean to the north' };
 const heliRecord = (id: string, maintenance: string): ControlRecord => ({
   ntsbNo: id,
   date: '2017-04-26',
   city: 'Kahului',
   state: 'HI',
   aircraft: [{ make: 'Robinson', model: 'R44 II', category: 'HELI', farPart: '091', purpose: 'PERS', phase: 'maneuvering', engine: 'REC' }],
-  factual: `The pilot reported that, while maneuvering at low altitude, the helicopter began a slow yaw to the right that he could not stop with the pedals. He entered an autorotation and landed hard in a field.\n\n${context(id, KAHULUI, 1)}\n\n${maintenance}\n\nExamination of the tail rotor system found the tail rotor drive and flight controls continuous; no anomalies were found.`,
+  factual: `The pilot reported that, while maneuvering at low altitude, the helicopter began a slow yaw to the right that he could not stop with the pedals. He entered an autorotation and landed hard in a field.\n\n${context(id, KAHULUI, 1, 'helicopter')}\n\n${maintenance}\n\nExamination of the tail rotor system found the tail rotor drive and flight controls continuous; no anomalies were found.`,
   analysis: 'The pilot likely did not apply sufficient pedal input in the left crosswind, which resulted in a loss of tail rotor effectiveness.',
   probableCause: "The pilot's inadequate pedal input in a crosswind, which resulted in a loss of tail rotor effectiveness.",
   findings: [],
@@ -507,6 +546,65 @@ export const CHRONOLOGY_CONTROLS: readonly Control[] = [
     anchors: ['the engine had last been overhauled 1,310 hours before the accident', 'no engine maintenance had been performed since its last 100-hour inspection 90 hours before the accident'],
     note: "The 8 hours are measured from the pilot's flight review, not from engine maintenance (90 hours before): grade 0, an anchor trap.",
   },
+  // Boundary controls (fix round 2, the gate's item 5): exactly at the limit, just past it, clocks that disagree, the first flight with and without its flight time.
+  {
+    id: 'chr-ag-tach-exact',
+    family: 'chronology',
+    mutation: 'boundary_inside',
+    question: 'mc-ag-arkansas-engine-after-maintenance',
+    label: 2,
+    reading: 'novel',
+    record: agRecord('CEN20LA937', "According to the maintenance records, the engine-driven fuel pump was replaced at a tachometer time of 4,107.6 hours. The airplane's tachometer read 4,132.6 hours at the accident site."),
+    anchors: ['the engine-driven fuel pump was replaced at a tachometer time of 4,107.6 hours', "The airplane's tachometer read 4,132.6 hours at the accident site."],
+    note: 'Two readings of one clock, exactly 25.0 hours apart: "25 hours or less" holds, grade 2.',
+  },
+  {
+    id: 'chr-ag-tach-just-over',
+    family: 'chronology',
+    mutation: 'boundary_outside',
+    question: 'mc-ag-arkansas-engine-after-maintenance',
+    label: 0,
+    reading: 'novel',
+    record: agRecord('CEN20LA938', "According to the maintenance records, the engine-driven fuel pump was replaced at a tachometer time of 4,107.6 hours. The airplane's tachometer read 4,133.1 hours at the accident site."),
+    anchors: ['the engine-driven fuel pump was replaced at a tachometer time of 4,107.6 hours', "The airplane's tachometer read 4,133.1 hours at the accident site."],
+    note: 'Two exact readings of one clock, 25.5 hours apart, and no other clock: every clock beyond the limit, grade 0.',
+  },
+  {
+    id: 'chr-ag-clocks-disagree',
+    family: 'chronology',
+    mutation: 'clocks_disagree',
+    question: 'mc-ag-arkansas-engine-after-maintenance',
+    label: 1,
+    reading: 'edge-case',
+    record: agRecord(
+      'CEN20LA939',
+      "According to the maintenance records, the fuel control unit was replaced when the airplane's tachometer read 4,107.6 hours and its Hobbs meter read 2,311.0 hours. At the accident the tachometer read 4,129.3 hours and the Hobbs meter read 2,338.4 hours.",
+    ),
+    anchors: ["the fuel control unit was replaced when the airplane's tachometer read 4,107.6 hours and its Hobbs meter read 2,311.0 hours", 'At the accident the tachometer read 4,129.3 hours and the Hobbs meter read 2,338.4 hours.'],
+    note: 'The tachometer gives 21.7 hours and the Hobbs meter 27.4: the clocks disagree, partial (the rubric names it).',
+  },
+  {
+    id: 'chr-ag-first-flight-timed',
+    family: 'chronology',
+    mutation: 'first_flight_timed',
+    question: 'mc-ag-arkansas-engine-after-maintenance',
+    label: 2,
+    reading: 'edge-case',
+    record: agRecord('CEN20LA940', 'The fuel control unit had been replaced the day before the accident, and the accident flight was the first flight after the replacement; the engine lost power about 35 minutes after takeoff.'),
+    anchors: ['the accident flight was the first flight after the replacement; the engine lost power about 35 minutes after takeoff'],
+    note: "The first flight after the work, with its flight time stated (about 35 minutes): inside the window, grade 2.",
+  },
+  {
+    id: 'chr-ag-first-flight-untimed',
+    family: 'chronology',
+    mutation: 'first_flight_untimed',
+    question: 'mc-ag-arkansas-engine-after-maintenance',
+    label: 1,
+    reading: 'edge-case',
+    record: agRecord('CEN20LA941', 'The fuel control unit had been replaced the day before the accident, and the accident flight was the first flight after the replacement; the time of the takeoff was not recorded.'),
+    anchors: ['the accident flight was the first flight after the replacement; the time of the takeoff was not recorded'],
+    note: 'The first flight after the work without its flight time: the interval is not stated, partial.',
+  },
   {
     id: 'chr-annual-first-flight',
     family: 'chronology',
@@ -514,7 +612,7 @@ export const CHRONOLOGY_CONTROLS: readonly Control[] = [
     question: 'mc-first-flight-after-annual',
     label: 2,
     reading: 'edge-case',
-    record: annualRecord('WPR18LA941', "The airplane's annual inspection was signed off by the mechanic on the morning of the accident, and the accident flight was the first flight after the inspection. During the inspection the mechanic had disconnected the pitot line to replace the airspeed indicator."),
+    record: annualRecord('WPR18LA941', "The airplane's annual inspection was signed off by the mechanic on the morning of the accident, and the accident flight was the first flight after the inspection. During the inspection the mechanic had disconnected the pitot line to replace the airspeed indicator.", 'inspection'),
     anchors: ['the accident flight was the first flight after the inspection'],
     note: 'First flight after the annual: grade 2.',
   },
@@ -525,7 +623,7 @@ export const CHRONOLOGY_CONTROLS: readonly Control[] = [
     question: 'mc-first-flight-after-annual',
     label: 1,
     reading: 'edge-case',
-    record: annualRecord('WPR18LA942', "The airplane's annual inspection was completed 2 days before the accident. The airplane had been flown 0.3 hours since the inspection, on a test flight by the mechanic the day before the accident."),
+    record: annualRecord('WPR18LA942', "The airplane's annual inspection was completed 2 days before the accident. The airplane had been flown 0.3 hours since the inspection, on a test flight by the mechanic the day before the accident.", 'loosened'),
     anchors: ['The airplane had been flown 0.3 hours since the inspection, on a test flight by the mechanic the day before the accident.'],
     note: 'Exactly one earlier flight after the annual is stated (the test flight): the accident flight was the second, partial.',
   },
@@ -536,7 +634,7 @@ export const CHRONOLOGY_CONTROLS: readonly Control[] = [
     question: 'mc-first-flight-after-annual',
     label: 0,
     reading: 'novel',
-    record: annualRecord('WPR18LA943', "The airplane's last annual inspection was completed 2 months before the accident, and the owner had flown it on several local flights since then, about 15 hours in all."),
+    record: annualRecord('WPR18LA943', "The airplane's last annual inspection was completed 2 months before the accident, and the owner had flown it on several local flights since then, about 15 hours in all.", 'loosened'),
     anchors: ['the owner had flown it on several local flights since then'],
     note: 'Several flights since the annual are stated (the hours are not used to infer them): grade 0. Fix round 1: the flights are stated, not inferred from hours (gate item 1).',
   },
@@ -547,7 +645,7 @@ export const CHRONOLOGY_CONTROLS: readonly Control[] = [
     question: 'mc-first-flight-after-annual',
     label: 0,
     reading: 'edge-case',
-    record: annualRecord('WPR18LA944', "The accident flight was the first flight after an avionics shop replaced the airspeed indicator; the airplane's last annual inspection had been completed 8 months before the accident."),
+    record: annualRecord('WPR18LA944', "The accident flight was the first flight after an avionics shop replaced the airspeed indicator; the airplane's last annual inspection had been completed 8 months before the accident.", 'shop'),
     anchors: ['The accident flight was the first flight after an avionics shop replaced the airspeed indicator'],
     note: 'First flight after other maintenance, the annual long before: grade 0.',
   },
@@ -589,35 +687,38 @@ export const CHRONOLOGY_CONTROLS: readonly Control[] = [
 // ---------------------------------------------------------------------------
 // Pilot statement against investigator finding (dev: att-brake, att-tail; holdout: att-data and controls-reading's att-engine, att-yaw)
 
-const LAKELAND: FillerPlace = { airport: 'Lakeland Linder International Airport', station: 'KLAL', elevation: 142, temperature: 30 };
-const brakeRecord = (id: string, report: string, exam: string, probable: string): ControlRecord => ({
+const LAKELAND: FillerPlace = { airport: 'Lakeland Linder International Airport', station: 'KLAL', elevation: 142, temperature: 30, area: 'flat land with lakes, warehouses and housing developments' };
+const brakeRecord = (id: string, report: string, exam: string, probable: string, analysis = 'The pilot did not maintain directional control during the landing roll.'): ControlRecord => ({
   ntsbNo: id,
   date: '2015-05-30',
   city: 'Lakeland',
   state: 'FL',
   aircraft: [{ make: 'Cirrus', model: 'SR22', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'landing', engine: 'REC' }],
   factual: `${report} The airplane departed the left side of the runway and struck a taxiway sign.\n\n${context(id, LAKELAND, 1)}\n\n${exam}`,
-  analysis: 'The pilot did not maintain directional control during the landing roll.',
+  analysis,
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '220', phase: 'landing', description: 'Landing-landing roll Loss of control on ground', defining: true }],
+  occurrences: [{ aircraft: 1, code: '230', phase: 'landing', description: 'Landing-landing roll Loss of control on ground', defining: true }],
 });
 
-const SCOTTSDALE: FillerPlace = { airport: 'Scottsdale Airport', station: 'KSDL', elevation: 1510, temperature: 24 };
-const tailRotorRecord = (id: string, exam: string, probable: string, claim = 'The pilot reported that, during the approach to a helipad, "the tail rotor failed" and the helicopter began to spin to the right.'): ControlRecord => ({
+const SCOTTSDALE: FillerPlace = { airport: 'Scottsdale Airport', station: 'KSDL', elevation: 1510, temperature: 24, area: 'office buildings and neighborhoods, with desert to the north' };
+const tailRotorRecord = (id: string, exam: string, probable: string, claim = 'The pilot reported that, during the approach to a helipad, "the tail rotor failed" and the helicopter began to spin to the right.', fire = false): ControlRecord => ({
   ntsbNo: id,
   date: '2014-11-08',
   city: 'Scottsdale',
   state: 'AZ',
-  aircraft: [{ make: 'Bell', model: '206B', category: 'HELI', farPart: '091', purpose: 'PERS', phase: 'approach', engine: 'TS' }],
-  factual: `${claim} The helicopter descended in the spin and impacted terrain.\n\n${context(id, SCOTTSDALE, 1)}\n\n${exam}`,
+  aircraft: [{ make: 'Bell', model: '206B', category: 'HELI', farPart: '091', purpose: 'PERS', phase: 'approach', engine: 'TS', ...(fire ? { damage: 'DEST' } : {}) }],
+  factual: `${claim} The helicopter descended in the spin and impacted terrain.\n\n${context(id, SCOTTSDALE, 1, 'helicopter')}\n\n${exam}`,
   analysis: 'The approach was made with a left quartering tailwind of about 12 knots.',
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '240', phase: 'approach', description: 'Approach Loss of control in flight', defining: true }],
+  occurrences: [
+    { aircraft: 1, code: '240', phase: 'approach', description: 'Approach Loss of control in flight', defining: true },
+    ...(fire ? [{ aircraft: 1, code: '170', phase: 'post_impact', description: 'Post-impact Fire/smoke (post-impact)', defining: false }] : []),
+  ],
 });
 
-const PRESCOTT: FillerPlace = { airport: 'Prescott Regional Airport', station: 'KPRC', elevation: 5045, temperature: 9 };
+const PRESCOTT: FillerPlace = { airport: 'Prescott Regional Airport', station: 'KPRC', elevation: 5045, temperature: 9, area: 'high desert grassland with low hills' };
 const dataRecord = (id: string, data: string): ControlRecord => ({
   ntsbNo: id,
   date: '2022-01-15',
@@ -660,6 +761,7 @@ export const ATTRIBUTION_CONTROLS: readonly Control[] = [
       'The pilot reported that, during the landing roll, the left brake failed and the airplane veered to the left.',
       'Examination of the brake system found that the left brake hydraulic line had chafed through against the landing gear leg, and all brake fluid had been lost from the left brake.',
       'The loss of left brake effectiveness due to a chafed brake hydraulic line, which resulted in a loss of directional control.',
+      'The left brake hydraulic line had chafed through and the left brake had lost its fluid, which resulted in a loss of directional control during the landing roll.',
     ),
     anchors: ['the left brake hydraulic line had chafed through against the landing gear leg'],
     note: 'The investigators confirmed the reported failure: grade 0.',
@@ -692,6 +794,7 @@ export const ATTRIBUTION_CONTROLS: readonly Control[] = [
       'The pilot reported that, during the landing roll, the left brake failed and the airplane veered to the left.',
       'The airplane was repaired by the owner before it could be examined, and the brake system was not examined by the investigation.',
       "The pilot's failure to maintain directional control during the landing roll for reasons that could not be determined.",
+      'The brake system was not examined, and the reason for the loss of directional control could not be determined.',
     ),
     anchors: ['the brake system was not examined by the investigation'],
     note: 'Reported problem left unresolved: partial.',
@@ -753,6 +856,8 @@ export const ATTRIBUTION_CONTROLS: readonly Control[] = [
       'WPR14LA973',
       'The tail boom separated and was destroyed in the impact and the postimpact fire, and continuity of the tail rotor drive system could not be established.',
       'A loss of yaw control during the approach for reasons that could not be determined.',
+      undefined,
+      true,
     ),
     anchors: ['continuity of the tail rotor drive system could not be established'],
     note: 'The claim could not be settled: partial.',
@@ -813,7 +918,7 @@ export const ATTRIBUTION_CONTROLS: readonly Control[] = [
 
 const PA28 = (purpose: string, phase: string): ControlAircraft => ({ make: 'Piper', model: 'PA-28-181', category: 'AIR', farPart: '091', purpose, phase, engine: 'REC' });
 const C172 = (purpose: string, phase: string): ControlAircraft => ({ make: 'Cessna', model: '172S', category: 'AIR', farPart: '091', purpose, phase, engine: 'REC' });
-const FREDERICK: FillerPlace = { airport: 'Frederick Municipal Airport', station: 'KFDK', elevation: 306, temperature: 23 };
+const FREDERICK: FillerPlace = { airport: 'Frederick Municipal Airport', station: 'KFDK', elevation: 306, temperature: 23, area: 'farmland, a river and the edge of the city' };
 
 const MIDAIR_ANALYSIS = 'Both pilots were responsible for seeing and avoiding the other airplane.';
 const leg = (name: string): ControlRecord['occurrences'] => [
@@ -833,7 +938,7 @@ const collisionRecord = (
   state: 'MD',
   aircraft,
   ...(over.event ? { event: over.event } : {}),
-  factual: `${factual}\n\n${context(id, FREDERICK, 1)}`,
+  factual: `${factual}\n\n${context(id, FREDERICK, 1, vehicleOf(aircraft.map((a) => a.category)))}`,
   analysis: over.analysis ?? MIDAIR_ANALYSIS,
   probableCause: probable,
   findings: [],
@@ -918,6 +1023,7 @@ export const CROSS_AIRCRAFT_CONTROLS: readonly Control[] = [
       "While taxiing the airplane to the fuel pumps, the pilot did not see the parked and unoccupied helicopter, and the airplane's propeller struck the helicopter's tail boom.",
       "The airplane pilot's failure to maintain clearance from a parked helicopter while taxiing.",
       {
+        event: { highestInjury: 'NONE' },
         analysis: 'The airplane pilot did not maintain adequate clearance from the parked helicopter while taxiing.',
         occurrences: [
           { aircraft: 1, code: '200', phase: 'taxi', description: 'Taxi Ground collision', defining: true },
@@ -941,6 +1047,7 @@ export const CROSS_AIRCRAFT_CONTROLS: readonly Control[] = [
       'During the landing roll, the Piper drifted left of the centerline and its left wing struck the Cessna, which was holding short of the runway on the taxiway with its engine running.',
       "The Piper pilot's failure to maintain directional control during the landing roll.",
       {
+        event: { highestInjury: 'NONE' },
         analysis: 'The Piper pilot did not maintain directional control during the landing roll.',
         occurrences: [
           { aircraft: 1, code: '200', phase: 'landing', description: 'Landing-landing roll Ground collision', defining: true },
@@ -964,6 +1071,7 @@ export const CROSS_AIRCRAFT_CONTROLS: readonly Control[] = [
       'The Piper and the Cessna were both taxiing on the parallel taxiway in opposite directions when their wingtips touched.',
       'The failure of both pilots to maintain clearance from the other airplane while taxiing.',
       {
+        event: { highestInjury: 'NONE' },
         analysis: 'Both pilots were responsible for maintaining clearance from the other airplane while taxiing.',
         occurrences: [
           { aircraft: 1, code: '200', phase: 'taxi', description: 'Taxi Ground collision', defining: true },
@@ -987,6 +1095,7 @@ export const CROSS_AIRCRAFT_CONTROLS: readonly Control[] = [
       city: 'Frederick',
       state: 'MD',
       aircraft: [C172('PERS', 'taxi')],
+      event: { highestInjury: 'NONE' },
       factual: `While taxiing to the hangar, the pilot misjudged the clearance and the airplane's right wing struck the hangar door frame.\n\n${context('ERA23LA998', FREDERICK, 1)}`,
       analysis: 'The pilot did not maintain clearance from the hangar while taxiing.',
       probableCause: "The pilot's failure to maintain clearance from a hangar while taxiing.",

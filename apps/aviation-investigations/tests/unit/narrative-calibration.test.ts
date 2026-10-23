@@ -30,7 +30,8 @@ import {
   type CalibrationDataset,
 } from '../../evals/retrieval/narrative/calibration.js';
 import { CONTROL_FAMILIES } from '../../evals/retrieval/narrative/calibration/controls.js';
-import { FILLER_FORBIDDEN, fillerParagraphs, longFiller } from '../../evals/retrieval/narrative/calibration/filler.js';
+import { FILLER_FORBIDDEN, WEATHER_WORDS, fillerParagraphs, longFiller } from '../../evals/retrieval/narrative/calibration/filler.js';
+import { EVENT_CODE } from '../../shared/vocab.js';
 import { CALIBRATION_CRITERIA } from '../../evals/retrieval/narrative/criteria.js';
 import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import type { CohortCase } from '../../evals/retrieval/narrative/dataset.js';
@@ -164,13 +165,66 @@ describe('the narrative controls', () => {
     expect(renderCase(sc)).toContain('<section id="S3" kind="factual information" scope="aircraft" aircraft="2">');
   });
 
-  it('use neutral filler that never states anything a rubric turns on', () => {
-    const place = { airport: 'Test Field', station: 'KTST', elevation: 500, temperature: 20 };
+  it("use neutral filler that never states anything a rubric turns on, and names the record's kind of aircraft (review M7, N5)", () => {
+    const place = { airport: 'Test Airport', station: 'KTST', elevation: 500, temperature: 20, area: 'farmland' };
     for (const seed of ['a', 'b', 'c', 'd']) {
-      for (const p of fillerParagraphs(seed, place, 9)) expect(FILLER_FORBIDDEN.test(p)).toBe(false);
-      expect(FILLER_FORBIDDEN.test(longFiller(seed, place, 30))).toBe(false);
+      for (const vehicle of ['airplane', 'helicopter', 'aircraft'] as const) {
+        for (const p of fillerParagraphs(seed, place, 15, vehicle)) {
+          expect(FILLER_FORBIDDEN.test(p)).toBe(false);
+          expect(WEATHER_WORDS.test(p)).toBe(false);
+        }
+        // Long records: only the observation paragraphs carry weather words.
+        for (const p of longFiller(seed, place, 30, vehicle).split('\n\n')) {
+          expect(FILLER_FORBIDDEN.test(p)).toBe(false);
+          if (!p.startsWith('At ')) expect(WEATHER_WORDS.test(p)).toBe(false);
+        }
+      }
     }
     expect(fillerParagraphs('a', place, 3)).toEqual(fillerParagraphs('a', place, 3));
+    // In the committed records: every place's surroundings are neutral, and guidance names the right handbook.
+    const d = committed();
+    for (const r of Object.values(d.records)) {
+      const text = [r.factual, ...(r.aircraftSections ?? []).map((x) => x.text)].join('\n\n');
+      if (r.aircraft.every((a) => a.category === 'HELI')) expect(text).not.toContain('Airplane Flying Handbook');
+      if (r.aircraft.every((a) => a.category === 'AIR')) expect(text).not.toContain('Helicopter Flying Handbook');
+      for (const m of text.matchAll(/The land around [^.]* is ([^.]*)\./g)) expect(FILLER_FORBIDDEN.test(m[1] as string)).toBe(false);
+    }
+  });
+
+  it('code every occurrence with the event its description names, and the defining event in the header phase (review M7)', () => {
+    for (const c of NARRATIVE_CONTROLS) {
+      for (const o of c.record.occurrences) {
+        const label = EVENT_CODE[o.code];
+        expect(label, `${c.id} ${o.code}`).toBeDefined();
+        const named = [label as string, (label as string).replace('terrain/object', 'terr/obj')];
+        expect(named.some((x) => o.description.endsWith(x)), `${c.id}: ${o.code} is ${label}, not "${o.description}"`).toBe(true);
+      }
+      c.record.aircraft.forEach((a, k) => {
+        const defining = c.record.occurrences.filter((o) => o.aircraft === k + 1 && o.defining);
+        expect(defining.length, c.id).toBe(1);
+        expect(defining[0]?.phase, c.id).toBe(a.phase);
+      });
+    }
+  });
+
+  it('bound both hour windows: exactly at the limit, just past it, clocks that disagree, the first flight with and without its flight time (the gate\'s item 5)', () => {
+    for (const q of ['mc-ag-arkansas-engine-after-maintenance', 'mc-helicopter-control-rotor-maintenance-10h']) {
+      const byMutation = new Map(NARRATIVE_CONTROLS.filter((c) => c.question === q).map((c) => [c.mutation, c.label]));
+      expect({ q, inside: byMutation.get('boundary_inside'), outside: byMutation.get('boundary_outside'), disagree: byMutation.get('clocks_disagree'), timed: byMutation.get('first_flight_timed'), untimed: byMutation.get('first_flight_untimed') }).toEqual({
+        q,
+        inside: 2,
+        outside: 0,
+        disagree: 1,
+        timed: 2,
+        untimed: 1,
+      });
+    }
+  });
+
+  it("keep a long record's late condition out of the coded rows every part repeats (review N7)", () => {
+    const late = NARRATIVE_CONTROLS.find((c) => c.id === 'long-skyd-loss-late');
+    expect(late?.record.occurrences.map((o) => o.description).join(' ')).not.toMatch(/loss of engine power/i);
+    expect(late?.record.factual).not.toMatch(/lost power|loss of (engine )?power/i);
   });
 
   it('judge long records in parts, with the deciding sentences in the parts they were placed in', () => {
@@ -238,7 +292,7 @@ describe('assembly and frozen labels', () => {
     const d = committed();
     expect(d.version).toBe(CALIBRATION_VERSION);
     expect(calibrationProblems(d)).toEqual([]);
-    expect(d.labels.sha256).toBe('9266af5a2923e847947b48eaeade3a8b1f086bb341eb28c048aeccc8ac4ae896');
+    expect(d.labels.sha256).toBe('f8b8e3f12b35670dab29dabe5dab8424eb2f721542c03e5891cac9ec7d86a425');
     expect(d.items.every((i) => i.provenance === 'constructed')).toBe(true);
     for (const q of Object.values(d.questions)) expect(q.rubricVersion).toBe(rubricVersion(q.rubric));
     const sets = new Set(d.items.map((i) => `${i.set}/${i.split}`));

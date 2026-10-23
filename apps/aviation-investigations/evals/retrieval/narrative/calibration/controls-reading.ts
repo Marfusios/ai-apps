@@ -12,21 +12,34 @@ import type { FillerPlace } from './filler.js';
 // ---------------------------------------------------------------------------
 // Negation: neg-jump (holdout), a turbine skydiving airplane
 
-const DELAND: FillerPlace = { airport: 'DeLand Municipal Airport', station: 'KDED', elevation: 79, temperature: 31 };
-const jumpRecord = (id: string, exam: string, analysis: string, probable: string): ControlRecord => ({
+const DELAND: FillerPlace = { airport: 'DeLand Municipal Airport', station: 'KDED', elevation: 79, temperature: 31, area: 'pine forest and housing developments' };
+/** The jump flight's landing as the investigators tell it, and its coded rows: a forced landing after a power loss, or (power loss doubted) a descent to land. */
+const JUMP_LANDING = {
+  forced: {
+    sentence: 'The parachutists exited the airplane, and the pilot glided to a forced landing on a closed runway, during which the airplane overran into a drainage ditch.',
+    phase: 'en_route',
+    occurrences: [
+      { aircraft: 1, code: '341', phase: 'en_route', description: 'Enroute-climb to cruise Loss of engine power (total)', defining: true },
+      { aircraft: 1, code: '300', phase: 'landing', description: 'Landing-landing roll Runway excursion', defining: false },
+    ],
+  },
+  doubted: {
+    sentence: 'The parachutists exited the airplane, and the pilot descended to land on a closed runway, where the airplane overran into a drainage ditch.',
+    phase: 'landing',
+    occurrences: [{ aircraft: 1, code: '300', phase: 'landing', description: 'Landing-landing roll Runway excursion', defining: true }],
+  },
+} as const;
+const jumpRecord = (id: string, exam: string, analysis: string, probable: string, landing: keyof typeof JUMP_LANDING = 'forced'): ControlRecord => ({
   ntsbNo: id,
   date: '2022-05-14',
   city: 'DeLand',
   state: 'FL',
-  aircraft: [{ make: 'Cessna', model: '208B', category: 'AIR', farPart: '091', purpose: 'SKYD', phase: 'initial_climb', engine: 'TP' }],
-  factual: `The commercial pilot was flying the turbine-powered airplane on a skydiving flight with 14 parachutists on board. The pilot reported that, during the climb through about 9,000 ft mean sea level, the engine lost power and the propeller began to windmill. The parachutists exited the airplane, and the pilot glided to a forced landing on a closed runway, during which the airplane overran into a drainage ditch.\n\n${context(id, DELAND, 2)}\n\n${exam}`,
+  aircraft: [{ make: 'Cessna', model: '208B', category: 'AIR', farPart: '091', purpose: 'SKYD', phase: JUMP_LANDING[landing].phase, engine: 'TP' }],
+  factual: `The commercial pilot was flying the turbine-powered airplane on a skydiving flight with 14 parachutists on board. The pilot reported that, during the climb through about 9,000 ft mean sea level, the engine lost power and the propeller began to windmill. ${JUMP_LANDING[landing].sentence}\n\n${context(id, DELAND, 2)}\n\n${exam}`,
   analysis,
   probableCause: probable,
   findings: [],
-  occurrences: [
-    { aircraft: 1, code: '341', phase: 'initial_climb', description: 'Initial climb Loss of engine power (total)', defining: true },
-    { aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: false },
-  ],
+  occurrences: JUMP_LANDING[landing].occurrences.map((o) => ({ ...o })),
 });
 
 export const NEGATION_READING: readonly Control[] = [
@@ -71,12 +84,12 @@ export const NEGATION_READING: readonly Control[] = [
     reading: 'novel',
     record: jumpRecord(
       'ERA22LA903',
-      'The airplane came to rest partially submerged in the ditch. The engine was examined externally only; no external damage or fluid leaks were noted, and the engine was not disassembled.',
-      'Because the engine was examined only externally, the reason for the loss of engine power could not be determined.',
+      'The airplane came to rest partially submerged in the ditch, and the engine could be examined only externally: no external damage or fluid leaks were noted, but the engine was not disassembled, and its internal components were not examined.',
+      'Because the internal components of the engine were not examined, the investigation could not determine whether a mechanical malfunction contributed to the loss of engine power.',
       'A loss of engine power during the climb for reasons that could not be determined.',
     ),
-    anchors: ['The engine was examined externally only', 'the engine was not disassembled'],
-    note: 'Only an external look at the engine: an examination in part, partial.',
+    anchors: ['the engine could be examined only externally', 'its internal components were not examined'],
+    note: 'Only an external look at the engine, its internal condition not determined: an examination in part, partial. Fix round 2: the record now says what was not examined (review N3).',
   },
   {
     id: 'neg-jump-power-loss-doubted',
@@ -90,16 +103,17 @@ export const NEGATION_READING: readonly Control[] = [
       "The engine was shipped to the manufacturer's facility, where it was disassembled under the supervision of an NTSB investigator. The teardown found no evidence of a preimpact failure or malfunction of the engine.",
       "Engine trend data stored by the airplane's engine monitoring unit showed torque and turbine temperature values consistent with normal engine operation until the airplane was below 1,000 ft above the ground, and the investigation could not confirm that the engine lost power as the pilot reported.",
       'The pilot\'s improper glide planning during a precautionary descent, which resulted in a runway overrun.',
+      'doubted',
     ),
     anchors: ['the investigation could not confirm that the engine lost power as the pilot reported'],
-    note: 'The investigators found nothing wrong but doubt the reported power loss: partial (a clause of the rubric applied to a record that never uses its words).',
+    note: 'The investigators found nothing wrong but doubt the reported power loss: partial (a clause of the rubric applied to a record that never uses its words). Fix round 2: no coded row or investigators\' sentence asserts the power loss any more (review N2).',
   },
 ];
 
 // ---------------------------------------------------------------------------
-// Chronology: chr-thrush and chr-cub (holdout)
+// Chronology: chr-thrush, chr-cub and chr-rotor (holdout)
 
-const WALNUT_RIDGE: FillerPlace = { airport: 'Walnut Ridge Regional Airport', station: 'KARG', elevation: 279, temperature: 30 };
+const WALNUT_RIDGE: FillerPlace = { airport: 'Walnut Ridge Regional Airport', station: 'KARG', elevation: 279, temperature: 30, area: 'flat farmland and the town to the north' };
 const thrushRecord = (id: string, maintenance: string): ControlRecord => ({
   ntsbNo: id,
   date: '2021-07-08',
@@ -113,7 +127,7 @@ const thrushRecord = (id: string, maintenance: string): ControlRecord => ({
   occurrences: [{ aircraft: 1, code: '341', phase: 'maneuvering', description: 'Maneuvering-low-alt flying Loss of engine power (total)', defining: true }],
 });
 
-const BOISE: FillerPlace = { airport: 'Caldwell Executive Airport', station: 'KEUL', elevation: 2432, temperature: 21 };
+const BOISE: FillerPlace = { airport: 'Caldwell Executive Airport', station: 'KEUL', elevation: 2432, temperature: 21, area: 'farmland and the city to the north' };
 const cubRecord = (id: string, timing: string, aircraft: ControlAircraft = { make: 'Piper', model: 'PA-18-150', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'landing', engine: 'REC' }): ControlRecord => ({
   ntsbNo: id,
   date: '2019-06-22',
@@ -124,7 +138,25 @@ const cubRecord = (id: string, timing: string, aircraft: ControlAircraft = { mak
   analysis: 'The pilot did not maintain directional control during the landing roll in gusting crosswind conditions.',
   probableCause: "The pilot's failure to maintain directional control during the landing roll in gusting crosswind conditions, which resulted in a ground loop.",
   findings: [],
-  occurrences: [{ aircraft: 1, code: '220', phase: 'landing', description: 'Landing-landing roll Loss of control on ground', defining: true }],
+  occurrences: [{ aircraft: 1, code: '230', phase: 'landing', description: 'Landing-landing roll Loss of control on ground', defining: true }],
+});
+
+const BILLINGS: FillerPlace = { airport: 'Billings Logan International Airport', station: 'KBIL', elevation: 3652, temperature: 24, area: 'sandstone bluffs above the city of Billings' };
+/** A helicopter's precautionary landing after a control vibration (fix round 2, the gate's item 5: the 10-hour window's boundaries). */
+const rotorRecord = (id: string, maintenance: string): ControlRecord => ({
+  ntsbNo: id,
+  date: '2022-08-06',
+  city: 'Billings',
+  state: 'MT',
+  aircraft: [{ make: 'Bell', model: '206L-4', category: 'HELI', farPart: '091', purpose: 'BUS', phase: 'landing', engine: 'TS' }],
+  factual: `The commercial pilot was flying the helicopter to a ranch north of the city. He reported that, during the approach to the ranch's landing area, he felt a vibration in the cyclic and decided to land at once; during the landing in a pasture, the left skid caught a fence and the helicopter rolled onto its side.\n\n${context(id, BILLINGS, 2, 'helicopter')}\n\n${maintenance}\n\nExamination of the flight controls and the main and tail rotor systems found no anomalies that would have caused a vibration.`,
+  analysis: 'The reason for the vibration the pilot reported could not be determined. The pilot did not maintain clearance from the fence during the precautionary landing.',
+  probableCause: "The pilot's failure to maintain clearance from a fence during a precautionary landing.",
+  findings: [],
+  occurrences: [
+    { aircraft: 1, code: '470', phase: 'landing', description: 'Landing Collision with terr/obj (non-CFIT)', defining: true },
+    { aircraft: 1, code: '097', phase: 'landing', description: 'Landing Roll over', defining: false },
+  ],
 });
 
 export const CHRONOLOGY_READING: readonly Control[] = [
@@ -209,33 +241,128 @@ export const CHRONOLOGY_READING: readonly Control[] = [
     anchors: ["The amateur-built airplane's condition inspection was completed 2 days before the accident.", 'no flight records were found'],
     note: 'A condition inspection (the annual of an amateur-built airplane) 2 days before, the flight count unknown: partial.',
   },
+  {
+    id: 'chr-rotor-hobbs-exact',
+    family: 'chronology',
+    mutation: 'boundary_inside',
+    question: 'mc-helicopter-control-rotor-maintenance-10h',
+    label: 2,
+    reading: 'novel',
+    record: rotorRecord('WPR22LA921', "According to the maintenance records, the main rotor blades were replaced at a Hobbs reading of 1,862.4 hours. The helicopter's Hobbs meter read 1,872.4 hours at the accident site."),
+    anchors: ['the main rotor blades were replaced at a Hobbs reading of 1,862.4 hours', "The helicopter's Hobbs meter read 1,872.4 hours at the accident site."],
+    note: 'Two readings of one clock, exactly 10.0 hours apart: "10 hours or less" holds, grade 2.',
+  },
+  {
+    id: 'chr-rotor-hobbs-just-over',
+    family: 'chronology',
+    mutation: 'boundary_outside',
+    question: 'mc-helicopter-control-rotor-maintenance-10h',
+    label: 0,
+    reading: 'novel',
+    record: rotorRecord('WPR22LA922', "According to the maintenance records, the main rotor blades were replaced at a Hobbs reading of 1,862.4 hours. The helicopter's Hobbs meter read 1,872.9 hours at the accident site."),
+    anchors: ['the main rotor blades were replaced at a Hobbs reading of 1,862.4 hours', "The helicopter's Hobbs meter read 1,872.9 hours at the accident site."],
+    note: 'Two exact readings of one clock, 10.5 hours apart, and no other clock: every clock beyond the limit, grade 0.',
+  },
+  {
+    id: 'chr-rotor-clocks-disagree',
+    family: 'chronology',
+    mutation: 'clocks_disagree',
+    question: 'mc-helicopter-control-rotor-maintenance-10h',
+    label: 1,
+    reading: 'edge-case',
+    record: rotorRecord(
+      'WPR22LA923',
+      "According to the maintenance records, the tail rotor pitch links were replaced when the helicopter's hour meter read 902.5 hours and its Hobbs meter read 1,866.0 hours. At the accident the hour meter read 911.8 hours and the Hobbs meter read 1,877.2 hours.",
+    ),
+    anchors: ["the tail rotor pitch links were replaced when the helicopter's hour meter read 902.5 hours and its Hobbs meter read 1,866.0 hours", 'At the accident the hour meter read 911.8 hours and the Hobbs meter read 1,877.2 hours.'],
+    note: 'The hour meter gives 9.3 hours and the Hobbs meter 11.2: the clocks disagree, partial (the rubric names it).',
+  },
+  {
+    id: 'chr-rotor-first-flight-timed',
+    family: 'chronology',
+    mutation: 'first_flight_timed',
+    question: 'mc-helicopter-control-rotor-maintenance-10h',
+    label: 2,
+    reading: 'edge-case',
+    record: rotorRecord('WPR22LA924', 'The swashplate had been replaced the day before the accident, and the accident flight was the first flight after the replacement; the accident happened about 25 minutes after takeoff.'),
+    anchors: ['the accident flight was the first flight after the replacement; the accident happened about 25 minutes after takeoff'],
+    note: 'The first flight after the work, with its flight time stated (about 25 minutes): inside the window, grade 2.',
+  },
+  {
+    id: 'chr-rotor-first-flight-untimed',
+    family: 'chronology',
+    mutation: 'first_flight_untimed',
+    question: 'mc-helicopter-control-rotor-maintenance-10h',
+    label: 1,
+    reading: 'edge-case',
+    record: rotorRecord('WPR22LA925', 'The swashplate had been replaced the day before the accident, and the accident flight was the first flight after the replacement; the time of the takeoff was not recorded.'),
+    anchors: ['the accident flight was the first flight after the replacement; the time of the takeoff was not recorded'],
+    note: 'The first flight after the work without its flight time: the interval is not stated, partial.',
+  },
+  {
+    id: 'chr-rotor-split-ends',
+    family: 'chronology',
+    mutation: 'mixed_clocks',
+    question: 'mc-helicopter-control-rotor-maintenance-10h',
+    label: 1,
+    reading: 'edge-case',
+    record: rotorRecord('WPR22LA926', "According to the maintenance records, a cyclic servo was replaced when the helicopter's Hobbs meter read 1,866.0 hours. At the accident the hour meter read 911.8 hours; the Hobbs reading at the accident was not recorded."),
+    anchors: ["a cyclic servo was replaced when the helicopter's Hobbs meter read 1,866.0 hours", 'the Hobbs reading at the accident was not recorded'],
+    note: 'One end on the Hobbs meter, the other on the hour meter: no clock gives the interval, partial.',
+  },
 ];
 
 // ---------------------------------------------------------------------------
 // Pilot statement against investigator finding: att-engine and att-yaw (holdout)
 
-const BOZEMAN: FillerPlace = { airport: 'Bozeman Yellowstone International Airport', station: 'KBZN', elevation: 4473, temperature: 16 };
-const engineClaimRecord = (id: string, claim: string, exam: string, probable: string): ControlRecord => ({
+const BOZEMAN: FillerPlace = { airport: 'Bozeman Yellowstone International Airport', station: 'KBZN', elevation: 4473, temperature: 16, area: 'farmland and the town of Belgrade, with mountains to the south' };
+/** How a claim record's flight ended, as the investigators tell it, with its phase and coded rows (fix round 2, review N2 and N4: each variant is coherent on its own). */
+interface ClaimEnding {
+  narrative: string;
+  analysis: string;
+  phase: string;
+  occurrences: ControlRecord['occurrences'];
+  damage?: string;
+}
+/** The pilot's reported power loss and forced landing; the coded rows record the landing only, since the investigators did not find a power loss. */
+const FORCED_LANDING: ClaimEnding = {
+  narrative: 'The pilot made a forced landing in a hayfield, where the airplane struck an irrigation pivot.',
+  analysis: 'The pilot made a forced landing in a hayfield after he reported that the engine had quit.',
+  phase: 'emergency_descent',
+  occurrences: [{ aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: true }],
+};
+/** The same landing after a fuel starvation the investigators found. */
+const STARVATION_LANDING: ClaimEnding = {
+  ...FORCED_LANDING,
+  analysis: 'The pilot made a forced landing in a hayfield after the engine lost power from fuel starvation.',
+  phase: 'en_route',
+  occurrences: [
+    { aircraft: 1, code: '191', phase: 'en_route', description: 'Enroute-cruise Fuel starvation', defining: false },
+    { aircraft: 1, code: '341', phase: 'en_route', description: 'Enroute-cruise Loss of engine power (total)', defining: true },
+    { aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: false },
+  ],
+};
+const engineClaimRecord = (id: string, claim: string, exam: string, probable: string, ending: ClaimEnding = FORCED_LANDING): ControlRecord => ({
   ntsbNo: id,
   date: '2020-08-29',
   city: 'Belgrade',
   state: 'MT',
-  aircraft: [{ make: 'Beech', model: 'A36', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'en_route', engine: 'REC' }],
-  factual: `${claim} The pilot made a forced landing in a hayfield, where the airplane struck an irrigation pivot.\n\n${context(id, BOZEMAN, 2)}\n\n${exam}`,
-  analysis: 'The pilot made a forced landing in a field after his report of a problem with the airplane.',
+  aircraft: [{ make: 'Beech', model: 'A36', category: 'AIR', farPart: '091', purpose: 'PERS', phase: ending.phase, engine: 'REC', ...(ending.damage ? { damage: ending.damage } : {}) }],
+  factual: `${claim} ${ending.narrative}\n\n${context(id, BOZEMAN, 2)}\n\n${exam}`,
+  analysis: ending.analysis,
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: true }],
+  occurrences: ending.occurrences,
 });
 
-const FREDERICKSBURG: FillerPlace = { airport: 'Gillespie County Airport', station: 'KT82', elevation: 1695, temperature: 33 };
+const FREDERICKSBURG: FillerPlace = { airport: 'Gillespie County Airport', station: 'KT82', elevation: 1695, temperature: 33, area: 'rolling ranch land and vineyards' };
 const yawRecord = (id: string, claim: string, exam: string, analysis: string, probable: string): ControlRecord => ({
   ntsbNo: id,
   date: '2021-09-11',
   city: 'Fredericksburg',
   state: 'TX',
   aircraft: [{ make: 'Robinson', model: 'R66', category: 'HELI', farPart: '091', purpose: 'PERS', phase: 'maneuvering', engine: 'TS' }],
-  factual: `${claim} The helicopter rotated several times before it struck the ground on its right side.\n\n${context(id, FREDERICKSBURG, 2)}\n\n${exam}`,
+  factual: `${claim} The helicopter rotated several times before it struck the ground on its right side.\n\n${context(id, FREDERICKSBURG, 2, 'helicopter')}\n\n${exam}`,
   analysis,
   probableCause: probable,
   findings: [],
@@ -271,6 +398,7 @@ export const ATTRIBUTION_READING: readonly Control[] = [
       'The pilot reported that, about 15 minutes after takeoff, "the engine quit" and would not restart.',
       "Examination of the fuel system found that the detent of the fuel selector valve was worn, which allowed the valve to rest between tank positions and block the fuel flow to the engine.",
       'A total loss of engine power due to fuel starvation, which resulted from a worn fuel selector valve detent.',
+      STARVATION_LANDING,
     ),
     anchors: ['the detent of the fuel selector valve was worn, which allowed the valve to rest between tank positions and block the fuel flow to the engine'],
     note: 'The examination found a mechanical cause of the reported power loss: the reported problem was confirmed, grade 0.',
@@ -287,9 +415,19 @@ export const ATTRIBUTION_READING: readonly Control[] = [
       'The pilot reported that, during the landing roll at the destination, the left brake "locked" and the airplane veered off the runway.',
       'The airplane was destroyed by a postimpact fire, and the brake system could not be examined.',
       'A loss of directional control during the landing roll for reasons that could not be determined.',
+      {
+        narrative: 'The airplane departed the left side of the runway, struck a drainage culvert and came to rest inverted, and a fire started.',
+        analysis: 'Because the fire destroyed the brake system, the investigation could not determine why the airplane veered off the runway.',
+        phase: 'landing',
+        damage: 'DEST',
+        occurrences: [
+          { aircraft: 1, code: '230', phase: 'landing', description: 'Landing-landing roll Loss of control on ground', defining: true },
+          { aircraft: 1, code: '170', phase: 'post_impact', description: 'Post-impact Fire/smoke (post-impact)', defining: false },
+        ],
+      },
     ),
     anchors: ['the left brake "locked"', 'the brake system could not be examined'],
-    note: 'A reported failure the fire made impossible to examine: partial.',
+    note: 'A reported failure the fire made impossible to examine: partial. Fix round 2: a landing-roll record throughout, no forced landing (review N4).',
   },
   {
     id: 'att-engine-passenger-claim',
@@ -300,12 +438,21 @@ export const ATTRIBUTION_READING: readonly Control[] = [
     reading: 'novel',
     record: engineClaimRecord(
       'WPR20LA904',
-      'A passenger reported that the engine "stopped running" during the descent. The pilot stated that the engine operated normally throughout the flight and that he had misjudged the approach to the field.',
+      'The pilot was landing at a private grass airstrip on a ranch. A passenger reported that the engine "stopped running" during the descent. The pilot stated that the engine operated normally throughout the flight and that he had misjudged the approach to the airstrip.',
       'Examination of the engine revealed no anomalies.',
-      "The pilot's misjudgment of the approach to a field, which resulted in a collision with an irrigation pivot.",
+      "The pilot's misjudgment of the approach to a private airstrip, which resulted in a collision with an irrigation pivot.",
+      {
+        narrative: 'The airplane touched down short of the airstrip, in a hayfield, where it struck an irrigation pivot.',
+        analysis: 'The pilot misjudged the approach to the private airstrip, and the airplane touched down short of it.',
+        phase: 'approach',
+        occurrences: [
+          { aircraft: 1, code: '370', phase: 'approach', description: 'Approach-VFR pattern final Landing area undershoot', defining: true },
+          { aircraft: 1, code: '470', phase: 'landing', description: 'Landing Collision with terr/obj (non-CFIT)', defining: false },
+        ],
+      },
     ),
     anchors: ['The pilot stated that the engine operated normally throughout the flight'],
-    note: 'Only a passenger reported a problem; the pilot reported none: grade 0, a speaker trap the rubric does not spell out for passengers.',
+    note: 'Only a passenger reported a problem; the pilot reported none: grade 0, a speaker trap the rubric does not spell out for passengers. Fix round 2: no sentence of the investigators says the pilot reported a problem (review N2).',
   },
   {
     id: 'att-yaw-lost-control',
@@ -363,7 +510,7 @@ export const ATTRIBUTION_READING: readonly Control[] = [
 // ---------------------------------------------------------------------------
 // Cross-aircraft attribution with aircraft-scoped sections: mx-scoped and mx-ramp (holdout)
 
-const VERO: FillerPlace = { airport: 'Vero Beach Regional Airport', station: 'KVRB', elevation: 24, temperature: 28 };
+const VERO: FillerPlace = { airport: 'Vero Beach Regional Airport', station: 'KVRB', elevation: 24, temperature: 28, area: 'citrus groves, neighborhoods and the city to the east' };
 const scopedRecord = (id: string, piperPurpose: string, piper: string, cessna: string): ControlRecord => ({
   ntsbNo: id,
   date: '2022-03-19',
@@ -387,12 +534,13 @@ const scopedRecord = (id: string, piperPurpose: string, piper: string, cessna: s
   ],
 });
 
-const PEACHTREE: FillerPlace = { airport: 'Peachtree City Airport', station: 'KFFC', elevation: 808, temperature: 25 };
+const PEACHTREE: FillerPlace = { airport: 'Peachtree City Airport', station: 'KFFC', elevation: 808, temperature: 25, area: 'wooded neighborhoods connected by golf cart paths' };
 const rampRecord = (id: string, cessna: string, beech: string, cessnaPhase = 'taxi', beechPhase = 'standing'): ControlRecord => ({
   ntsbNo: id,
   date: '2021-10-16',
   city: 'Peachtree City',
   state: 'GA',
+  event: { highestInjury: 'NONE' },
   aircraft: [
     { make: 'Cessna', model: '182T', category: 'AIR', farPart: '091', purpose: 'PERS', phase: cessnaPhase, engine: 'REC' },
     { make: 'Beech', model: '58', category: 'AIR', farPart: '091', purpose: 'BUS', phase: beechPhase, engine: 'REC' },
@@ -531,29 +679,30 @@ export const CROSS_AIRCRAFT_READING: readonly Control[] = [
 // ---------------------------------------------------------------------------
 // Causal uncertainty: cu-show and cu-compete (dev), cu-fire and cu-show2 (holdout)
 
-const OSHKOSH: FillerPlace = { airport: 'Wittman Regional Airport', station: 'KOSH', elevation: 808, temperature: 27 };
-const showRecord = (id: string, exam: string, analysis: string, probable: string): ControlRecord => ({
+const OSHKOSH: FillerPlace = { airport: 'Wittman Regional Airport', station: 'KOSH', elevation: 808, temperature: 27, area: 'farmland, the city and Lake Winnebago to the east' };
+const SHOW_LOSS_OF_CONTROL = { aircraft: 1, code: '240', phase: 'maneuvering', description: 'Maneuvering-aerobatics Loss of control in flight', defining: true };
+const showRecord = (id: string, exam: string, analysis: string, probable: string, occurrence: ControlRecord['occurrences'][number] = SHOW_LOSS_OF_CONTROL): ControlRecord => ({
   ntsbNo: id,
   date: '2019-07-27',
   city: 'Oshkosh',
   state: 'WI',
-  aircraft: [{ make: 'Extra', model: 'EA 330SC', category: 'AIR', farPart: '091', purpose: 'ASHO', phase: 'maneuvering', engine: 'REC' }],
+  aircraft: [{ make: 'Extra', model: 'EA 330SC', category: 'AIR', farPart: '091', purpose: 'ASHO', phase: 'maneuvering', engine: 'REC', damage: 'DEST' }],
   factual: `The pilot was performing an aerobatic routine at an air show. Spectator video showed the airplane complete a hammerhead turn and enter a vertical downline at about 1,500 ft above ground level; the airplane did not recover and struck the ground in a nose-low attitude.\n\n${context(id, OSHKOSH, 2)}\n\n${exam}`,
   analysis,
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '240', phase: 'maneuvering', description: 'Maneuvering-aerobatics Loss of control in flight', defining: true }],
+  occurrences: [occurrence],
   event: { highestInjury: 'FATL' },
 });
 const SHOW_EXAM = 'Examination of the airframe and the engine revealed no preimpact anomalies, and flight control continuity was established.';
 
-const DURANGO: FillerPlace = { airport: 'Durango-La Plata County Airport', station: 'KDRO', elevation: 6685, temperature: 4 };
+const DURANGO: FillerPlace = { airport: 'Durango-La Plata County Airport', station: 'KDRO', elevation: 6685, temperature: 4, area: 'mesas and ranch land, with mountains to the north' };
 const competeRecord = (id: string, analysis: string, probable: string): ControlRecord => ({
   ntsbNo: id,
   date: '2018-12-02',
   city: 'Durango',
   state: 'CO',
-  aircraft: [{ make: 'Beech', model: 'V35B', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'en_route', engine: 'REC' }],
+  aircraft: [{ make: 'Beech', model: 'V35B', category: 'AIR', farPart: '091', purpose: 'PERS', phase: 'en_route', engine: 'REC', damage: 'DEST' }],
   factual: `The instrument-rated private pilot was on a cross-country flight under an instrument flight rules clearance. About 20 minutes after takeoff, while in instrument meteorological conditions, the airplane entered a descending right turn that steepened until it broke up in flight; the wreckage was scattered over about half a mile of wooded terrain.\n\n${context(id, DURANGO, 2)}`,
   analysis,
   probableCause: probable,
@@ -562,35 +711,35 @@ const competeRecord = (id: string, analysis: string, probable: string): ControlR
   event: { highestInjury: 'FATL', weather: 'IMC' },
 });
 
-const KNOXVILLE: FillerPlace = { airport: 'McGhee Tyson Airport', station: 'KTYS', elevation: 981, temperature: 22 };
-const IN_FLIGHT_FIRE = { code: '320', phase: 'en_route', description: 'Enroute-cruise Fire/smoke (non-impact)' };
-const fireRecord = (id: string, report: string, exam: string, analysis: string, probable: string, defining: { code: string; phase: string; description: string } = IN_FLIGHT_FIRE): ControlRecord => ({
+const KNOXVILLE: FillerPlace = { airport: 'McGhee Tyson Airport', station: 'KTYS', elevation: 981, temperature: 22, area: 'the city of Alcoa and wooded hills, with mountains to the east' };
+const IN_FLIGHT_FIRE: ControlRecord['occurrences'] = [{ aircraft: 1, code: '150', phase: 'en_route', description: 'Enroute-cruise Fire/smoke (non-impact)', defining: true }];
+const fireRecord = (id: string, report: string, exam: string, analysis: string, probable: string, occurrences: ControlRecord['occurrences'] = IN_FLIGHT_FIRE, damage?: string): ControlRecord => ({
   ntsbNo: id,
   date: '2020-04-18',
   city: 'Alcoa',
   state: 'TN',
-  aircraft: [{ make: 'Cessna', model: '340A', category: 'AIR', farPart: '091', purpose: 'BUS', phase: 'en_route', engine: 'REC' }],
+  aircraft: [{ make: 'Cessna', model: '340A', category: 'AIR', farPart: '091', purpose: 'BUS', phase: 'en_route', engine: 'REC', ...(damage ? { damage } : {}) }],
   factual: `${report}\n\n${context(id, KNOXVILLE, 2)}\n\n${exam}`,
   analysis,
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, ...defining, defining: true }],
+  occurrences: occurrences.map((o) => ({ ...o })),
 });
 const SMOKE_REPORT =
   'The pilot reported that, during cruise flight at 9,000 ft, he smelled smoke and saw smoke coming from behind the instrument panel. He declared an emergency, diverted to a nearby airport and landed; the occupants evacuated as smoke filled the cabin.';
 
-const RENO: FillerPlace = { airport: 'Reno Stead Airport', station: 'KRTS', elevation: 5050, temperature: 29 };
-const raceRecord = (id: string, factual: string, analysis: string, probable: string): ControlRecord => ({
+const RENO: FillerPlace = { airport: 'Reno Stead Airport', station: 'KRTS', elevation: 5050, temperature: 29, area: 'high desert with sagebrush and low hills' };
+const raceRecord = (id: string, factual: string, analysis: string, probable: string, occurrence: ControlRecord['occurrences'][number] = { aircraft: 1, code: '240', phase: 'maneuvering', description: 'Maneuvering Loss of control in flight', defining: true }): ControlRecord => ({
   ntsbNo: id,
   date: '2017-09-16',
   city: 'Reno',
   state: 'NV',
-  aircraft: [{ make: 'Cassutt', model: 'IIIM', category: 'AIR', farPart: '091', purpose: 'ASHO', phase: 'maneuvering', engine: 'REC' }],
+  aircraft: [{ make: 'Cassutt', model: 'IIIM', category: 'AIR', farPart: '091', purpose: 'ASHO', phase: 'maneuvering', engine: 'REC', damage: 'DEST' }],
   factual: `${factual}\n\n${context(id, RENO, 2)}`,
   analysis,
   probableCause: probable,
   findings: [],
-  occurrences: [{ aircraft: 1, code: '240', phase: 'maneuvering', description: 'Maneuvering Loss of control in flight', defining: true }],
+  occurrences: [occurrence],
   event: { highestInjury: 'FATL' },
 });
 
@@ -639,6 +788,7 @@ export const CAUSAL_READING: readonly Control[] = [
       SHOW_EXAM,
       'Video and recorded data showed that the pilot began the pull-out about 400 ft lower than his routine called for, and the airplane did not have enough altitude to recover.',
       "The pilot's delayed initiation of the pull-out from a vertical downline, which resulted in a collision with terrain.",
+      { aircraft: 1, code: '470', phase: 'maneuvering', description: 'Maneuvering-aerobatics Collision with terr/obj (non-CFIT)', defining: true },
     ),
     anchors: ['the pilot began the pull-out about 400 ft lower than his routine called for'],
     note: 'An established reason: grade 0.',
@@ -669,7 +819,7 @@ export const CAUSAL_READING: readonly Control[] = [
     record: showRecord(
       'CEN19FA905',
       SHOW_EXAM,
-      "The investigation considered a jam of the elevator controls and an incapacitation of the pilot; the evidence available did not allow either one to be established or ruled out, and neither was considered more likely than the other.",
+      "The investigation considered a jam of the elevator controls by a loose object in the cockpit and an incapacitation of the pilot; the evidence available did not allow either one to be established or ruled out, and neither was considered more likely than the other.",
       "The airplane's failure to recover from a vertical downline for reasons that could not be determined.",
     ),
     anchors: ['the evidence available did not allow either one to be established or ruled out'],
@@ -833,7 +983,12 @@ export const CAUSAL_READING: readonly Control[] = [
       'A fire started at the ruptured right wing fuel tank after the airplane struck the trees; the investigation found no evidence of fire before the impact.',
       'The postimpact fire began at the ruptured right wing fuel tank.',
       'A loss of power on the right engine for reasons that could not be determined, which resulted in a forced landing.',
-      { code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing' },
+      [
+        { aircraft: 1, code: '342', phase: 'en_route', description: 'Enroute-cruise Loss of engine power (partial)', defining: true },
+        { aircraft: 1, code: '440', phase: 'emergency_descent', description: 'Emergency descent Off-field or emergency landing', defining: false },
+        { aircraft: 1, code: '170', phase: 'post_impact', description: 'Post-impact Fire/smoke (post-impact)', defining: false },
+      ],
+      'DEST',
     ),
     anchors: ['the investigation found no evidence of fire before the impact'],
     note: 'Only a postimpact fire: grade 0.',
@@ -850,6 +1005,7 @@ export const CAUSAL_READING: readonly Control[] = [
       'During a high-G turn around a race pylon in the Formula One class, the left wing separated from the airplane, which descended into the desert floor.',
       "Examination found that the left wing's main spar had been weakened by corrosion under the spar cap that had not been detected; the spar fractured in overload at the weakened section.",
       'The in-flight separation of the left wing due to corrosion of the main spar.',
+      { aircraft: 1, code: '337', phase: 'maneuvering', description: 'Maneuvering Aircraft structural failure', defining: true },
     ),
     anchors: ["the left wing's main spar had been weakened by corrosion under the spar cap"],
     note: 'An established reason (a structural failure) for an air race accident: grade 0.',
@@ -879,11 +1035,29 @@ export const CAUSAL_READING: readonly Control[] = [
     reading: 'edge-case',
     record: raceRecord(
       'WPR17FA903',
-      'During a low pass in front of the crowd after the race, the airplane struck the ground.',
+      'During the planned low pass in front of the crowd that ended the race, the airplane struck the ground.',
       'The pilot was flying a planned low pass at the end of the race.',
       "The airplane's collision with terrain during a low pass.",
+      { aircraft: 1, code: '470', phase: 'maneuvering', description: 'Maneuvering-low-alt flying Collision with terr/obj (non-CFIT)', defining: true },
     ),
     anchors: ['The pilot was flying a planned low pass at the end of the race.'],
     note: 'No reason stated, and the record does not say the reason was undetermined: partial.',
+  },
+  {
+    id: 'cu-show2-clearance-undetermined',
+    family: 'causal_uncertainty',
+    mutation: 'what_known_why_not',
+    question: 'cu-air-show-undetermined',
+    label: 2,
+    reading: 'edge-case',
+    record: raceRecord(
+      'WPR17FA904',
+      'During the final lap of the race, the airplane descended while rounding the last pylon and struck the ground.',
+      "Examination of the airframe, the flight controls and the engine revealed no anomalies, and the pilot's toxicology tests were negative. The investigation could not determine why the pilot allowed the airplane to descend into the ground.",
+      "The pilot's failure to maintain clearance from the ground while rounding a race pylon for reasons that could not be determined.",
+      { aircraft: 1, code: '120', phase: 'maneuvering', description: 'Maneuvering-low-alt flying Controlled flight into terr/obj (CFIT)', defining: true },
+    ),
+    anchors: ["The pilot's failure to maintain clearance from the ground while rounding a race pylon for reasons that could not be determined."],
+    note: 'What the pilot did is established, why is stated as undetermined, and no likely reason is named: grade 2 (fix round 2, review N6).',
   },
 ];

@@ -45,8 +45,13 @@ import { LONG_CONTROLS, LONG_FILLERS } from './calibration/controls-long.js';
 import { ATTRIBUTION_READING, CAUSAL_READING, CHRONOLOGY_READING, CROSS_AIRCRAFT_READING, NEGATION_READING } from './calibration/controls-reading.js';
 import { CaseNoSchema, RubricSchema, canonicalJson, questionVersion, rubricVersion, sha256, type Grade, type NarrativeQuestionSpec, type Rubric } from './spec.js';
 
-/** v2 (fix round 1): new rubrics, realistic case numbers, reading controls, answerability items and long records; at least 8 holdout items per family. */
-export const CALIBRATION_VERSION = 'track-n-calibration-v2';
+/**
+ * v3 (fix round 2): the hour-window rubrics and their boundary controls, neutral and
+ * aircraft-appropriate filler, coherent records and coded rows, the N6 edge cases;
+ * v2 (fix round 1): new rubrics, realistic case numbers, reading controls, answerability
+ * items and long records; at least 8 holdout items per family.
+ */
+export const CALIBRATION_VERSION = 'track-n-calibration-v3';
 
 /** Every narrative control, in family order. */
 export const NARRATIVE_CONTROLS: readonly Control[] = [
@@ -85,6 +90,7 @@ export const CONTROL_HOLDOUT_GROUPS: readonly string[] = [
   'chr-heli',
   'chr-thrush',
   'chr-cub',
+  'chr-rotor',
   'att-data',
   'att-engine',
   'att-yaw',
@@ -155,7 +161,7 @@ const ControlRecordSchema = z.strictObject({
   date: z.string(),
   city: z.string(),
   state: z.string(),
-  aircraft: z.array(z.strictObject({ make: z.string(), model: z.string(), category: z.string(), farPart: z.string(), purpose: z.string(), phase: z.string(), engine: z.string() })).min(1),
+  aircraft: z.array(z.strictObject({ make: z.string(), model: z.string(), category: z.string(), farPart: z.string(), purpose: z.string(), phase: z.string(), engine: z.string(), damage: z.string().optional() })).min(1),
   factual: z.string(),
   analysis: z.string(),
   probableCause: z.string(),
@@ -254,7 +260,7 @@ export function controlEvidence(r: ControlRecord): CaseEvidence {
       category: a.category,
       farPart: a.farPart,
       purpose: a.purpose,
-      damage: 'SUBS',
+      damage: a.damage ?? 'SUBS',
       definingPhaseGroup: a.phase,
       engines: [a.engine],
     })),
