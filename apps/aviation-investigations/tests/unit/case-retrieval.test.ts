@@ -17,11 +17,11 @@ import { casesChannelFilter } from '../../server/search/cases-channel.js';
 import { compileFilters } from '../../server/search/filters.js';
 import { IncompleteSearchError, RetrievalUnavailableError, fetchAndPack, retrievalParams, type QueryEmbeddingUsage } from '../../server/search/hybrid.js';
 import { PASSAGES_V2_CONTRACT } from '../../server/search/passages-contract.js';
-import { RETRIEVAL_V1, RETRIEVAL_V2, RETRIEVAL_V2_NF } from '../../server/search/retrieval-config.js';
+import { MAX_MAPPED_PASSAGES, RETRIEVAL_V1, RETRIEVAL_V2, RETRIEVAL_V2_NF } from '../../server/search/retrieval-config.js';
 import { BoundedReadTimeoutError } from '../../server/db/bounded-read.js';
 import { CASES_INDEX_VERSION, casesIndexFingerprint } from '../../worker/index/cases-index.js';
 import { createFakeEmbedder, fakeVector } from '../../worker/index/embed.js';
-import { casePassages, createFakeEs, passage, type FakeEsOptions, type FakePassage } from '../support/fake-es.js';
+import { caseTermOf, casePassages, createFakeEs, passage, type FakeEsOptions, type FakePassage } from '../support/fake-es.js';
 
 const MODEL = 'text-embedding-3-small';
 const DIMS = 1536;
@@ -125,18 +125,19 @@ describe('case-level stage 1: requests, fusion and mapping', () => {
 
     // D, L and Z have no passage from a passage channel: mapped (D, L) or reported unmapped (Z), each by itself.
     expect(r.mapping).toEqual([
-      { ntsbNo: n('D'), status: 'mapped', reason: null, passagesUnderFilter: 5, returned: 3 },
-      { ntsbNo: n('L'), status: 'mapped', reason: null, passagesUnderFilter: 42, returned: 3 },
+      { ntsbNo: n('D'), status: 'mapped', reason: null, passagesUnderFilter: 5, returned: 5 },
+      { ntsbNo: n('L'), status: 'mapped', reason: null, passagesUnderFilter: 42, returned: 42 },
       { ntsbNo: 'Z00FA001', status: 'unmapped', reason: 'no_passages', passagesUnderFilter: 0, returned: 0 },
-      { ntsbNo: n('E'), status: 'mapped', reason: null, passagesUnderFilter: 5, returned: 3 },
+      { ntsbNo: n('E'), status: 'mapped', reason: null, passagesUnderFilter: 5, returned: 5 },
     ]);
     const mappingKnn = byKind('mapping').map((b) => b.knn as estypes.KnnSearch);
-    // Per case, every passage of the case considered (num_candidates = its count), k bounded.
+    // Per case, every passage of the case scored exactly (k = num_candidates = its count), then the best 3 kept.
     expect(mappingKnn.map((k) => [k.k, k.num_candidates])).toEqual([
-      [3, 5],
-      [3, 42],
-      [3, 5],
+      [5, 5],
+      [42, 42],
+      [5, 5],
     ]);
+    for (const c of r.cases.filter((x) => [n('D'), n('L'), n('E')].includes(x.ntsbNo))) expect(c.passages).toHaveLength(3);
     // The same in-memory vector; no second embedding anywhere.
     for (const k of mappingKnn) expect(k.query_vector).toEqual(knn.query_vector);
     expect(embedder.calls).toHaveLength(1);
@@ -180,44 +181,87 @@ describe('case-level stage 1: requests, fusion and mapping', () => {
     const f = fake({ corpus: [...CORPUS, ...corpus], keyword: [`${n('A')}:analysis:1`], vector: [`${n('A')}:analysis:2`], cases: ['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T'].map((c) => `${c}00FA001`) });
     const r = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
     // Nine candidates, eight of them only from the cases channel: all among the leading 12, all mapped.
-    expect(r.mapping.map((m) => [m.ntsbNo, m.status, m.returned])).toEqual(['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T'].map((c) => [`${c}00FA001`, 'mapped', 3]));
+    expect(r.mapping.map((m) => [m.ntsbNo, m.status, m.returned === m.passagesUnderFilter])).toEqual(['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T'].map((c) => [`${c}00FA001`, 'mapped', true]));
+    for (const c of r.cases.filter((x) => x.ntsbNo !== n('A'))) expect(c.passages).toHaveLength(3);
     expect(r.mapping.filter((m) => m.passagesUnderFilter > 60).length).toBe(4);
     const packed = await fetchAndPack(f.es, r.index, r.filter, r.cases, r.params);
     expect(packed.cases.map((c) => c.ntsbNo)).toEqual(r.cases.slice(0, 6).map((c) => c.ntsbNo));
     expect(packed.passages).toBeLessThanOrEqual(12);
   });
 
-  it('reports a case unmapped when the kNN does not return what its count requires, and never packs it', async () => {
-    let dropped = false;
-    const f = fake({
-      tamper: {
-        mapping: (res) => {
-          if (dropped) return;
-          dropped = true;
-          res.hits.hits.pop();
-        },
-      },
-    });
-    const r = await retrieveCandidatesWith(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
-    expect(r.mapping).toEqual({ mapped: 2, unmapped: 2 });
-    const detail = r.detail.level === 'case' ? r.detail.result : null;
-    expect(detail?.mapping.find((m) => m.ntsbNo === n('D'))).toEqual({ ntsbNo: n('D'), status: 'unmapped', reason: 'incomplete', passagesUnderFilter: 5, returned: 2 });
-    const packed = await fetchAndPack(f.es, r.index, r.filter, r.cases, r.params);
-    expect(packed.cases.map((c) => c.ntsbNo)).not.toContain(n('D'));
+  it('fails the whole retrieval when a mapping answer does not hold exactly the counted passages of its case', async () => {
+    const once = (change: (res: estypes.SearchResponse<Record<string, unknown>>) => void) => {
+      let done = false;
+      return (res: estypes.SearchResponse<Record<string, unknown>>) => {
+        if (done) return;
+        done = true;
+        change(res);
+      };
+    };
+    const other = { _index: PASSAGES, _id: `${n('A')}:analysis:1`, _score: 1, _source: (() => { const { text: _t, ...m } = CORPUS.find((p) => p.passage_id === `${n('A')}:analysis:1`)!; return m; })() };
+    const cases: [string, (res: estypes.SearchResponse<Record<string, unknown>>) => void, RegExp][] = [
+      ['a short answer', (res) => void res.hits.hits.pop(), /4 of the 5 passages/],
+      ['a long answer', (res) => void res.hits.hits.push(res.hits.hits[0]!), /6 of the 5 passages/],
+      ['a repeated id', (res) => void (res.hits.hits[1] = { ...res.hits.hits[0]! }), /returned twice/],
+      ['a passage of another case', (res) => void (res.hits.hits[1] = other), /another case/],
+      ['a passage without a score', (res) => void (res.hits.hits[1] = { ...res.hits.hits[1]!, _score: null }), /without a score/],
+    ];
+    for (const [what, change, message] of cases) {
+      const f = fake({ tamper: { mapping: once(change) } });
+      const err = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query()).catch((e: unknown) => e);
+      expect(err, what).toBeInstanceOf(IncompleteSearchError);
+      expect(err, what).toMatchObject({ request: 'mapping', message: expect.stringMatching(message) });
+      // Through the binding: a failed step, the embedding settled exactly once, no bundle.
+      const g = fake({ tamper: { mapping: once(change) } });
+      const seen: EmbeddingUsage[] = [];
+      const failure = await createHybridRetriever({ es: g.es, embedder: createFakeEmbedder(DIMS, MODEL), retrieval: RETRIEVAL_V2, casesIndexOf: async () => CASES })
+        .retrieve(evidenceQuery(), live(), (u) => seen.push(u))
+        .catch((e: unknown) => e);
+      expect(failure, what).toMatchObject({ kind: 'failed', embedding: 'none', reason: 'incomplete_search' });
+      expect(seen, what).toHaveLength(1);
+      expect(g.kinds(), what).not.toContain('fetch');
+    }
   });
 
-  it('bounds the mapping: the leading cases only, no case twice, and no kNN beyond an exact search', async () => {
+  it('a failed mapping request aborts every sibling mapping request', async () => {
+    // D's count fails at once; L's count hangs until it is aborted.
+    const f = fake({
+      failIf: (kind, body) => (kind === 'count' && caseTermOf(body) === n('D') ? new Error('SENTINEL count failed') : undefined),
+      hangIf: (kind, body) => kind === 'count' && caseTermOf(body) === n('L'),
+    });
+    await expect(retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query())).rejects.toThrow('SENTINEL count failed');
+    const hanging = f.calls.find((c) => c.kind === 'count' && caseTermOf(c.body) === n('L'));
+    expect(hanging?.signal?.aborted).toBe(true);
+    // The kNN wave never started.
+    expect(f.kinds()).not.toContain('mapping');
+  });
+
+  it('keeps each mapped case’s best passages by score, then passage id, whatever the order of the answer', async () => {
+    // D's five passages: analysis 1 and 2 and the factual one tie for the best score.
+    const tied = (p: FakePassage) => (p.ntsb_no === n('D') ? (p.section_kind === 'probable_cause' ? 0 : p.section_kind === 'analysis' && p.part === 3 ? 0.5 : 1) : 0);
+    for (const order of ['as-is', 'reversed'] as const) {
+      const f = fake({ similarity: tied, tamper: order === 'reversed' ? { mapping: (res) => void res.hits.hits.reverse() } : {} });
+      const r = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
+      expect(r.cases.find((c) => c.ntsbNo === n('D'))!.passages.map((p) => p.id), order).toEqual([`${n('D')}:analysis:1`, `${n('D')}:analysis:2`, `${n('D')}:factual:1`]);
+    }
+  });
+
+  it('bounds the mapping: the leading cases only, no case twice, and a documented mapping-size limit', async () => {
     const f = fake();
     const vector = Array.from(fakeVector('q', DIMS));
     const filter = compileFilters({}, { eventAircraftQualification: true }).bool.filter;
-    await expect(mapCasesToPassages(f.es, PASSAGES, filter, vector, [n('D'), n('D')], { timeoutMs: 1000 }, { passagesPerCase: 3, maxCases: 12 })).rejects.toThrow(/twice/);
+    const opts = { passagesPerCase: 3, maxPassagesPerCase: MAX_MAPPED_PASSAGES, maxCases: 12 };
+    await expect(mapCasesToPassages(f.es, PASSAGES, filter, vector, [n('D'), n('D')], { timeoutMs: 1000 }, opts)).rejects.toThrow(/twice/);
     await expect(
-      mapCasesToPassages(f.es, PASSAGES, filter, vector, Array.from({ length: 13 }, (_, i) => `X${i}00FA001`), { timeoutMs: 1000 }, { passagesPerCase: 3, maxCases: 12 }),
+      mapCasesToPassages(f.es, PASSAGES, filter, vector, Array.from({ length: 13 }, (_, i) => `X${i}00FA001`), { timeoutMs: 1000 }, opts),
     ).rejects.toThrow(/at most 12/);
-    const huge = fake({ tamper: { count: (res) => void ((res.hits.total as { value: number }).value = MAX_EXACT_CANDIDATES + 1) } });
-    const m = await mapCasesToPassages(huge.es, PASSAGES, filter, vector, [n('D')], { timeoutMs: 1000 }, { passagesPerCase: 3, maxCases: 12 });
-    expect(m.cases).toEqual([{ ntsbNo: n('D'), status: 'unmapped', reason: 'incomplete', passagesUnderFilter: MAX_EXACT_CANDIDATES + 1, returned: 0 }]);
+    await expect(mapCasesToPassages(f.es, PASSAGES, filter, vector, [n('D')], { timeoutMs: 1000 }, { ...opts, maxPassagesPerCase: MAX_EXACT_CANDIDATES + 1 })).rejects.toThrow(/mapping-size limit/);
+    // Over the limit: reported, no kNN sent, never packed; not an integrity failure.
+    const huge = fake({ tamper: { count: (res) => void ((res.hits.total as { value: number }).value = MAX_MAPPED_PASSAGES + 1) } });
+    const m = await mapCasesToPassages(huge.es, PASSAGES, filter, vector, [n('D')], { timeoutMs: 1000 }, opts);
+    expect(m.cases).toEqual([{ ntsbNo: n('D'), status: 'unmapped', reason: 'too_many_passages', passagesUnderFilter: MAX_MAPPED_PASSAGES + 1, returned: 0 }]);
     expect(huge.kinds()).toEqual(['count']);
+    expect(RETRIEVAL_V2.mapping?.maxPassagesPerCase).toBe(MAX_MAPPED_PASSAGES);
     // Only the leading packCandidates cases are ever mapped.
     const many = Array.from({ length: 20 }, (_, i) => `W${String(i).padStart(2, '0')}FA001`);
     const wide = fake({ corpus: [...CORPUS, ...many.flatMap((c) => casePassages(c, 1))], keyword: [`${n('A')}:analysis:1`], vector: [`${n('A')}:analysis:1`], cases: many });

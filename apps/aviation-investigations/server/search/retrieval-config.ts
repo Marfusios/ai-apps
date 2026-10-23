@@ -57,8 +57,14 @@ export interface MappingConfig {
   readonly cases: 'leading-without-passages';
   /** Passages each mapped case gets: its best by the request's own query vector, under the passages filter. */
   readonly passagesPerCase: number;
-  /** Each mapped case's passage count under the filter is read with it, so every case is verified mapped or reported unmapped. */
-  readonly verify: 'per-case-count';
+  /**
+   * The count of the case's passages under the filter, then an exact kNN over all of
+   * them (`k` = `num_candidates` = the count; the response must hold exactly that many),
+   * then the best `passagesPerCase` by score, then passage id.
+   */
+  readonly selection: 'count-then-exact-all-then-score-then-id';
+  /** The documented mapping-size limit: a case with more passages under the filter is `too_many_passages`, never packed. */
+  readonly maxPassagesPerCase: number;
 }
 
 export interface RetrievalConfig {
@@ -95,6 +101,11 @@ function deepFreeze<T>(o: T): T {
 }
 
 const V1_PARAMS = retrievalParams({ ...RETRIEVAL_DEFAULTS });
+/**
+ * The mapping-size limit: every passage of a mapped case is returned and scored, so a case
+ * may hold at most this many under the filter (the largest dev case holds 63).
+ */
+export const MAX_MAPPED_PASSAGES = 1_000;
 const V2_PARAMS = retrievalParams({ ...RETRIEVAL_DEFAULTS, perChannel: 200 });
 
 const passageChannels = (p: RetrievalParams) =>
@@ -131,7 +142,12 @@ const v2 = (version: 'retrieval.v2' | 'retrieval.v2-nf', content: CasesChannelCo
     lexicalQuery: LEXICAL_QUERY,
     channels: { ...passageChannels(V2_PARAMS), cases: { index: 'cases', content, fields: [...CASES_CHANNEL_FIELDS[content]], size: 200 } },
     fusion: { level: 'case', k: V2_PARAMS.rrfK, weights: { keyword: 1, vector: 1, cases: 1 }, ranking: CASE_RANKING },
-    mapping: { cases: 'leading-without-passages', passagesPerCase: V2_PARAMS.maxPassagesPerCase, verify: 'per-case-count' },
+    mapping: {
+      cases: 'leading-without-passages',
+      passagesPerCase: V2_PARAMS.maxPassagesPerCase,
+      selection: 'count-then-exact-all-then-score-then-id',
+      maxPassagesPerCase: MAX_MAPPED_PASSAGES,
+    },
   } as RetrievalConfig);
 
 export const RETRIEVAL_V2: RetrievalConfig = v2('retrieval.v2', 'narratives');

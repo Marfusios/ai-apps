@@ -45,7 +45,7 @@ describe('the frozen retrieval configurations', () => {
     // Scope keyword text for both lexical channels; the original effective question for the embedding.
     expect(RETRIEVAL_V2.text).toEqual({ lexical: 'keyword-text', vector: 'question' });
     expect(RETRIEVAL_V2.lexicalQuery).toEqual({ type: 'best_fields', operator: 'or' });
-    expect(RETRIEVAL_V2.mapping).toEqual({ cases: 'leading-without-passages', passagesPerCase: 3, verify: 'per-case-count' });
+    expect(RETRIEVAL_V2.mapping).toEqual({ cases: 'leading-without-passages', passagesPerCase: 3, selection: 'count-then-exact-all-then-score-then-id', maxPassagesPerCase: 1_000 });
     // Packing is unchanged: 6 cases, 12 passages, the token budget, 12 leading candidates.
     const { perChannel: _p, ...packing } = RETRIEVAL_V2.params;
     const { perChannel: _q, ...before } = RETRIEVAL_DEFAULTS;

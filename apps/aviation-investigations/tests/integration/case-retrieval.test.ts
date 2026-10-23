@@ -36,7 +36,7 @@ import { retrieveCaseCandidates } from '../../server/search/case-retrieval.js';
 import { casesChannelFilter } from '../../server/search/cases-channel.js';
 import { RetrievalFiltersSchema, aircraftSelectionOf, compileFilters, filterClauses, type AircraftSelection, type Query, type RetrievalFilters } from '../../server/search/filters.js';
 import { fetchAndPack, retrievalParams } from '../../server/search/hybrid.js';
-import { RETRIEVAL_V2, type RetrievalConfig } from '../../server/search/retrieval-config.js';
+import { MAX_MAPPED_PASSAGES, RETRIEVAL_V2, type RetrievalConfig } from '../../server/search/retrieval-config.js';
 import { BLANK } from '../../shared/contracts/search.js';
 import { CHUNKER_VERSION } from '../../worker/index/chunk.js';
 import { rebuildCasesIndex } from '../../worker/index/cases-index.js';
@@ -344,7 +344,9 @@ describe('case-level retrieval on real Elasticsearch', () => {
       const record = records.find((x) => x.ntsbNo === m.ntsbNo)!;
       const own = buildCasePassages(record).passages;
       expect(m.passagesUnderFilter).toBe(own.length);
-      expect(m.returned).toBe(Math.min(3, own.length));
+      // Every passage of the case came back and was verified; the best 3 were kept.
+      expect(m.returned).toBe(own.length);
+      expect(r.cases.find((c) => c.ntsbNo === m.ntsbNo)!.passages).toHaveLength(Math.min(3, own.length));
       const scores = new Map(own.map((p) => [p.passageId, cos(fakeVector(p.input, DIMS))]));
       const returned = r.cases.find((c) => c.ntsbNo === m.ntsbNo)!.passages.map((p) => p.id);
       const worstReturned = Math.min(...returned.map((id) => scores.get(id) as number));
@@ -368,7 +370,8 @@ describe('case-level retrieval on real Elasticsearch', () => {
   it('mapping reports a case with no passage under the filter, and considers every passage of a long case', async () => {
     const filter = compileFilters(HELI, { eventAircraftQualification: true }).bool.filter;
     const vector = Array.from(fakeVector('anything', DIMS));
-    const m = await mapCasesToPassages(reader, passagesV2, filter, vector, ['CEN24FA064', 'DCA25MA108', 'WPR15FA010', GHOST], retrievalParams(), { passagesPerCase: 3, maxCases: 12 });
+    const opts = { passagesPerCase: 3, maxPassagesPerCase: MAX_MAPPED_PASSAGES, maxCases: 12 };
+    const m = await mapCasesToPassages(reader, passagesV2, filter, vector, ['CEN24FA064', 'DCA25MA108', 'WPR15FA010', GHOST], retrievalParams(), opts);
     expect(m.cases.map((c) => [c.ntsbNo, c.status, c.reason])).toEqual([
       ['CEN24FA064', 'unmapped', 'no_passages'],
       ['DCA25MA108', 'unmapped', 'no_passages'],
@@ -377,11 +380,13 @@ describe('case-level retrieval on real Elasticsearch', () => {
     ]);
     // The long case: every one of its passages considered, its best three by exact cosine returned.
     const all = compileFilters({}, { eventAircraftQualification: true }).bool.filter;
-    const long = await mapCasesToPassages(reader, passagesV2, all, vector, ['CEN24FA064'], retrievalParams(), { passagesPerCase: 3, maxCases: 12 });
+    const long = await mapCasesToPassages(reader, passagesV2, all, vector, ['CEN24FA064'], retrievalParams(), opts);
     const knn = long.requests.find((b) => b.knn)?.knn as estypes.KnnSearch;
     const own = buildCasePassages(records.find((x) => x.ntsbNo === 'CEN24FA064')!).passages;
-    expect(long.cases[0]).toMatchObject({ status: 'mapped', passagesUnderFilter: own.length, returned: 3 });
+    expect(long.cases[0]).toMatchObject({ status: 'mapped', passagesUnderFilter: own.length, returned: own.length });
+    expect(long.passages.get('CEN24FA064')).toHaveLength(3);
     expect(knn.num_candidates).toBe(own.length);
+    expect(knn.k).toBe(own.length);
     expect(own.length).toBeGreaterThan(6);
     expect(knn.num_candidates).toBeLessThanOrEqual(MAX_EXACT_CANDIDATES);
     const q = Float32Array.from(vector);

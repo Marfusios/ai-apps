@@ -24,8 +24,10 @@
  *    then id), collapsed to unique cases, fused with exact reciprocal rank fusion and a
  *    total tie order; each case's passages in exact passage-level fusion order.
  * 4. **Mapping** (server/search/case-mapping.ts): the leading `packCandidates` cases
- *    that no passage channel returned get their passages from the same in-memory vector,
- *    each case verified mapped or reported unmapped.
+ *    that no passage channel returned get their passages from the same in-memory vector:
+ *    every passage of the case scored exactly, the best kept by score then id; a case
+ *    with none, or over the mapping-size limit, is reported unmapped; an inconsistent
+ *    answer fails retrieval.
  *
  * Every search refuses partial results and is checked for completeness; no channel's
  * failure is ever replaced by a bundle from the others.
@@ -186,6 +188,7 @@ export async function retrieveCaseCandidates(es: Client, embedder: Embedder | Qu
     .filter((n) => !byCase.has(n));
   const mapping = await mapCasesToPassages(es, index, filter, vector, toMap, params, {
     passagesPerCase: mappingConfig.passagesPerCase,
+    maxPassagesPerCase: mappingConfig.maxPassagesPerCase,
     maxCases: params.packCandidates,
     ...(q.signal ? { signal: q.signal } : {}),
   });

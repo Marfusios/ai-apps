@@ -191,7 +191,7 @@ async function oneRequest(ctx: LoadContext, config: RetrievalConfig, req: LoadRe
     const stage = await retrieveCandidatesWith(ctx.es, embedder, config, { dataset: ctx.dataset, casesIndex: ctx.casesIndex, text: req.question, keywordText: req.keywordText, filters: req.filters });
     const leading = stage.cases.slice(0, stage.params.packCandidates).map((c) => c.ntsbNo);
     const t0 = performance.now();
-    const m = await mapCasesToPassages(ctx.es, stage.index, stage.filter, vector, leading, stage.params, { passagesPerCase: config.mapping.passagesPerCase, maxCases: stage.params.packCandidates });
+    const m = await mapCasesToPassages(ctx.es, stage.index, stage.filter, vector, leading, stage.params, { passagesPerCase: config.mapping.passagesPerCase, maxPassagesPerCase: config.mapping.maxPassagesPerCase, maxCases: stage.params.packCandidates });
     const mapped = m.cases.filter((c) => c.status === 'mapped').length;
     out.push({ ...base, kind: 'mapping-bound', ms: performance.now() - t0, afterAbortMs: null, outcome: 'ok', reason: null, settlements: 0, mapped, unmapped: m.cases.length - mapped });
   }

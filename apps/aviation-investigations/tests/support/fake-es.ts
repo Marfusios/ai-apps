@@ -92,6 +92,10 @@ export interface FakeEsOptions {
   tamper?: Partial<Record<Kind, (res: estypes.SearchResponse<Record<string, unknown>>) => void>>;
   /** Kinds whose answer waits until `release(kind)`. */
   hold?: Kind[];
+  /** Per request: fail it (return the error), when the function says so. */
+  failIf?: (kind: Kind, body: estypes.SearchRequest) => Error | undefined;
+  /** Per request: hold it until its signal aborts, when the function says so. */
+  hangIf?: (kind: Kind, body: estypes.SearchRequest) => boolean;
 }
 
 export interface FakeEs {
@@ -104,7 +108,8 @@ export interface FakeEs {
   arrived(kind: Kind): Promise<void>;
 }
 
-const CASE_TERM = (body: estypes.SearchRequest): string | null => {
+/** The case a mapping request is restricted to (its `term` on `ntsb_no`), or null. */
+export const caseTermOf = (body: estypes.SearchRequest): string | null => {
   const filters = ((body.knn as estypes.KnnSearch | undefined)?.filter as { bool?: { filter?: Query[] } } | undefined)?.bool?.filter ?? (body.query?.bool?.filter as Query[] | undefined) ?? [];
   for (const f of filters) {
     const t = (f as { term?: { ntsb_no?: string } }).term;
@@ -115,7 +120,7 @@ const CASE_TERM = (body: estypes.SearchRequest): string | null => {
 
 export function kindOf(body: estypes.SearchRequest, casesIndex: string): Kind {
   if (body.index === casesIndex) return 'cases';
-  if (body.knn) return CASE_TERM(body) ? 'mapping' : 'vector';
+  if (body.knn) return caseTermOf(body) ? 'mapping' : 'vector';
   if (body.size === 0) return 'count';
   return body.query?.bool?.must ? 'keyword' : 'fetch';
 }
@@ -186,9 +191,19 @@ export function createFakeEs(o: FakeEsOptions): FakeEs {
           void h.promise.then(resolve);
         });
       }
+      if (o.hangIf?.(kind, body)) {
+        await new Promise<void>((_, reject) => {
+          const s = transport.signal;
+          const abort = () => reject(Object.assign(new Error('Request aborted'), { name: 'RequestAbortedError' }));
+          if (s?.aborted) abort();
+          else s?.addEventListener('abort', abort, { once: true });
+        });
+      }
       if (transport.signal?.aborted) throw Object.assign(new Error('Request aborted'), { name: 'RequestAbortedError' });
       const fail = o.fail?.[kind];
       if (fail) throw fail();
+      const failure = o.failIf?.(kind, body);
+      if (failure) throw failure;
       let res: estypes.SearchResponse<Record<string, unknown>>;
       const filter = (body.query?.bool?.filter ?? ((body.knn as estypes.KnnSearch | undefined)?.filter as { bool: { filter: Query[] } } | undefined)?.bool.filter ?? []) as Query[];
       switch (kind) {
@@ -202,13 +217,13 @@ export function createFakeEs(o: FakeEsOptions): FakeEs {
           res = reply(o.cases.slice(0, body.size ?? 10).map((n, i) => ({ _index: o.casesIndex, _id: n, _score: 50 - i * 0.5, _source: { ntsb_no: n } })));
           break;
         case 'count': {
-          const n = CASE_TERM(body);
+          const n = caseTermOf(body);
           res = reply([], o.corpus.filter((p) => p.ntsb_no === n && under(p, filter)).length);
           break;
         }
         case 'mapping': {
           const knn = body.knn as estypes.KnnSearch;
-          const n = CASE_TERM(body);
+          const n = caseTermOf(body);
           const own = o.corpus.filter((p) => p.ntsb_no === n && under(p, filter));
           // An exact search considers every candidate only when num_candidates covers them.
           const considered = own.slice(0, knn.num_candidates ?? 0);
