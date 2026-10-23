@@ -168,7 +168,9 @@ providers and an adjudicator (`model-judged`). Neither is presented as expert-ad
 accuracy. Track N's judges read the complete case record, cite quotes checked against the
 stored text, and are calibrated on frozen constructed labels (code-reading items and
 synthetic controls) against frozen pass criteria on a holdout that runs once per
-configuration; agreement figures are diagnostics with investigation thresholds (kappa
+configuration (a committed lock keyed on the holdout's own items refuses another
+configuration or a relabelled holdout); agreement figures are diagnostics with
+investigation thresholds (kappa
 0.7, agreement 0.8), never validation. Unknown judgments keep their ranks and stay in
 every denominator, with metric-specific bounds; reports refuse judgments made under
 another experiment identity and compare methods only by bounds on the improvement.

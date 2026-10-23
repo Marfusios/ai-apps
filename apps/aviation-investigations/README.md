@@ -592,10 +592,16 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
 - **Questions** (`questions.ts`, built into `dataset.json` by `build`): 25 development
   questions in 21 families, each with filters, a type, a lure for hard negatives and a
   rubric that defines grade 2 (relevant), 1 (partially relevant) and 0 with edge cases.
-  Rubrics decide in order (grade 2 when every condition is stated, otherwise grade 1 when
-  its description fits, otherwise 0), so their branches never overlap; intervals keep
-  their clock (flight, Hobbs, tachometer or engine hours, never converted or worked out
-  from days or flight counts). Six are **bounded cohorts** (their filters reach 82 to 107
+  Rubrics and prompts decide in a fixed order: first what is stated (a condition the
+  record states and then contradicts is not stated; the later or more specific finding
+  stands), then grade 2 when every condition is stated, then grade 0 when the record
+  states the contrary the rubric's grade 0 names (unless its grade 1 names that
+  situation), then grade 1 when its description fits, otherwise 0. Intervals keep their
+  clock (flight, Hobbs, tachometer or engine hours, never converted or worked out from
+  days or flight counts): an hour window holds when one clock gives the interval inside
+  the limit (or the first flight after the work has a stated flight time inside it) and
+  no clock gives more; clocks that disagree, or that give no interval, are partial. Six
+  are **bounded cohorts** (their filters reach 82 to 107
   answer-eligible cases, 581 in all), judged completely so Recall@20 is defined;
   paraphrases keep their family's rubric and judgments. Questions were written from
   general knowledge, with filters chosen from aggregate cohort counts only.
@@ -604,28 +610,36 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
   occurrences by row identity, header facets as descriptions with their codes), checked
   against the stored hashes and fingerprinted by content. Cases above 12,000 `cl100k`
   tokens are judged part by part with carried notes and a consolidation step; nothing is
-  truncated, and an uncovered case is `unknown`. Bundle answerability reads only the
-  passages a retrieval bundle delivered.
+  truncated, and an uncovered case is `unknown`. Bundle answerability reads the passages
+  a retrieval bundle delivered under the case header, which identifies the case and its
+  aircraft but is not evidence: only a delivered passage, quoted, establishes a condition.
 - **Judges** (`config.ts`, `clients.ts`, `judging.ts`): `claude-haiku-5-5` (adaptive
   thinking) and `gpt-5.6-luna` (reasoning effort low) grade independently, blind to method
   and rank; `claude-sonnet-5-5` adjudicates a disagreement after recording its own blind
   grade (cached on its own, so a budget stop never makes a later run buy it again), and
   may abstain. Quotes are checked with the brief validator's quote rule (`quote-ws-v2`)
   against the stored text; an invalid output gets one retry, then is unjudgeable.
-  Unresolved pairs stay `unknown` in every denominator. Every request format and output
-  schema is hashed into each cache key, and a test pins the hashes to their version
-  strings (`identity.ts`). The OpenAI client is evaluation-only, outside the production
-  provider path.
+  Unresolved pairs stay `unknown` in every denominator. Every request format, the output
+  schemas and the facet vocabularies the header renders are hashed into each cache key
+  (the vocabularies into every fingerprint too), and a test pins the hashes to their
+  version strings (`identity.ts`). The OpenAI client is evaluation-only, outside the
+  production provider path.
 - **Calibration** (`calibration.json`, labels frozen by hash; `criteria.ts`): 60
-  code-reading items (Track C questions with the codes visible) and 129 synthetic
-  narrative controls for negation, chronology, pilot versus investigator, cross-aircraft
-  attribution (with aircraft-scoped sections), causal uncertainty, answerability (bundles
-  that support less or more than the complete record) and long records judged in parts,
-  most of them needing reading rather than a lookup of a rubric edge case. Every family
-  has at least 8 holdout items; every label is `constructed`. Configurations are chosen on
-  the dev split; the holdout runs once for a frozen configuration (a second configuration
-  on the same holdout is refused) and passes only when complete and when the frozen
-  criteria hold (accuracy as correct over expected, unknown and missing counted wrong).
+  code-reading items (Track C questions with the codes visible) and 142 synthetic
+  narrative controls for negation, chronology (both hour windows at and just past the
+  limit, clocks that disagree, first flights with and without their flight time),
+  pilot versus investigator, cross-aircraft attribution (with aircraft-scoped sections),
+  causal uncertainty, answerability (bundles that support less or more than the complete
+  record) and long records judged in parts, most of them needing reading rather than a
+  lookup of a rubric edge case. The records' filler never describes the accident, and
+  their coded rows, analyses and probable causes agree with their narratives. Every
+  family has at least 8 holdout items; every label is `constructed`. Configurations are
+  chosen on the dev split; the holdout runs once for a frozen configuration and passes
+  only when complete and when the frozen criteria hold (accuracy as correct over
+  expected, unknown and missing counted wrong). A holdout run records its items, labels
+  and configuration in `holdout-runs.jsonl` next to the calibration file (commit it after
+  the run), whatever `--out-dir` is used; another configuration on any case already held
+  out, or a changed label of an item already run, is refused.
 - **Pools** (`pool.ts`): per family, the union of the first 100 unique cases of
   `p50-kt`, `c200+n-kt` and `c200+nf-kt` (the experiment harness, cached scope outputs),
   every bounded-cohort case, related-code positives, lure hard negatives and a seeded tail
@@ -651,9 +665,10 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
 pnpm eval:retrieval:narrative build --generation 1 --check        # the question set (DATABASE_URL, read-only)
 pnpm eval:retrieval:narrative calibration --generation 1 --check  # the calibration sets; refuses changed labels
 pnpm eval:retrieval:narrative plan --keys-file <file> --allocation-usd <usd>   # free dry run: inventory, cost, the month's sequence
-pnpm eval:retrieval:narrative judge --set calibration --split dev --max-pairs 1 --max-usd 0.05 --concurrency 1 --confirm-cost --allocation <name> --allocation-usd <usd>   # the canary
+pnpm eval:retrieval:narrative plan --keys-file <file> --allocation-usd <usd> --measured <dev judgments>   # re-plan from measured output tokens and disagreement
+pnpm eval:retrieval:narrative judge --set calibration --split dev --max-pairs 1 --max-usd 0.11 --concurrency 1 --confirm-cost --allocation <name> --allocation-usd <usd>   # the canary
 pnpm eval:retrieval:narrative judge --set calibration --split dev --concurrency 1 --confirm-cost --allocation <name>
-pnpm eval:retrieval:narrative judge --set calibration --split holdout --confirm-cost --allocation <name>   # once
+pnpm eval:retrieval:narrative judge --set calibration --split holdout --confirm-cost --allocation <name>   # once; commit holdout-runs.jsonl
 pnpm eval:retrieval:narrative pools --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative judge --set relevance --pools <file> --stage 1 --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative answerability --pools <file> --confirm-cost --allocation <name>
@@ -664,13 +679,17 @@ Paid commands print their plan and send nothing without `--confirm-cost`. Each a
 reserves its worst case on the evaluation ledger (`DATABASE_INGEST_URL`) and settles; a
 run stops before a reservation would take its own spend above its limit (`--max-usd`),
 its allocation above the cap fixed when the allocation was created (`--allocation`,
-shared by the runs of one phase or month), or the ledger below what remains of the
-monthly indexing and evaluation allowance. A budget stop keeps the run's records, and
+shared by the runs of one phase or month, one run at a time: a run holds the
+allocation's lock until it ends), or the ledger below what remains of the monthly
+indexing and evaluation allowance. A budget stop keeps the run's records, and
 the judgment cache, shared by every run and allocation, lets the next run (or month)
 continue without paying again. A rejected request stops the run: its own attempt is not
 billed, but the other judge's concurrent attempts are, so the canary runs one pair with
-`--concurrency 1`. Outputs, spend logs, allocations and the cache go to `--out-dir`
-(default `data/work/narrative`).
+`--concurrency 1`. The canary is the first dev item in the judge's order; `plan` prints
+its cost and the limit that lets one full escalation finish (both judges, the
+adjudicator's blind step and decision, each at its caps): about $0.11 on generation 1.
+It reaches the adjudicator only if its judges disagree. Outputs, spend logs, allocations
+and the cache go to `--out-dir` (default `data/work/narrative`).
 
 ### Checker calibration
 

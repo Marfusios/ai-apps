@@ -56,7 +56,7 @@ export const DEFAULT_CONCURRENCY = 6;
  * Run limits (USD) per paid run, over that run's own spend, enforced before each
  * reservation on top of the allocation's cap and the ledger's remaining evaluation
  * allowance. The calibration limit covers one split with every item adjudicated
- * (about $2.72 for the holdout), so a holdout run is not cut short by its own limit.
+ * (about $2.95 for the 103 holdout items), so a holdout run is not cut short by its own limit.
  */
 export const RUN_LIMITS_USD = Object.freeze({ pools: 0.25, calibration: 3, relevance: 15, answerability: 2.5 });
 
