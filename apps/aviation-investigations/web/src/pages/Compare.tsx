@@ -108,7 +108,7 @@ function AiCells({ ai, detail }: { ai: StripAi; detail: CaseDetail }) {
             {timingLine && <span className="block text-magenta">{timingLine}</span>}
           </>
         ) : (
-          <span className="block text-magenta">No time stated in the passages</span>
+          <span className="block text-magenta">Timing not established by this analysis</span>
         )}
         {unconfirmed && <UnconfirmedTag className="mt-1" />}
       </Cell>
