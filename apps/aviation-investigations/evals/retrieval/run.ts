@@ -57,7 +57,7 @@ import { runCodedEvaluation } from './coded/run.js';
 import { evalConfig } from './config.js';
 import { MODES, evaluateRetrieval, type EvaluationResult } from './evaluate.js';
 import { targetProblems } from './generation.js';
-import { checkTarget, describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, stamp } from './harness.js';
+import { checkTarget, describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, retrievalReport, stamp } from './harness.js';
 import { DatasetSchema, datasetProblems, needsEventAircraftQualification, type Dataset } from './silver.js';
 
 export { precomputedEmbedder } from './harness.js';
@@ -229,7 +229,7 @@ async function runSilverEvaluation(opts: RunOptions): Promise<number> {
     for (const q of dataset.questions) groups.set(q.group, (groups.get(q.group) ?? 0) + 1);
     const report = {
       kind: 'eval-retrieval',
-      version: 3,
+      version: 4,
       gating,
       nonGatingReasons: gating ? [] : reasons,
       startedAt: started.toISOString(),
@@ -251,6 +251,7 @@ async function runSilverEvaluation(opts: RunOptions): Promise<number> {
         target: { source: verified.source, questionsRederived: verified.labels.size, ms: verified.ms },
       },
       index: indexReport(run),
+      retrieval: retrievalReport(config),
       embedder: { kind: fake ? 'fake' : 'openai', model, dims, inputs: plan.inputs.length, countedTokens: plan.inputTokens, billed },
       params: {
         live: { ...RETRIEVAL_DEFAULTS, numCandidates: numCandidates(RETRIEVAL_DEFAULTS) },

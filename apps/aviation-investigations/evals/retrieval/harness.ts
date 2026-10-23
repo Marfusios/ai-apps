@@ -13,6 +13,7 @@ import { countTokens } from '../../server/ai/tokens.js';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
 import { getActiveManifest } from '../../server/db/generations.js';
 import type { RetrievalDataset } from '../../server/search/hybrid.js';
+import { RETRIEVAL_V1, retrievalConfig, retrievalIdentity } from '../../server/search/retrieval-config.js';
 import { IndexMetaError, readIndexMeta, type IndexMeta } from '../../server/search/index-meta.js';
 import { PassagesIndexIncompatibleError, checkPassagesIndex, type PassagesContract } from '../../server/search/passages-contract.js';
 import { batchByLimits, createFakeEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion, reservationUsd } from '../../worker/index/embed.js';
@@ -211,5 +212,18 @@ export function indexReport(t: RunTarget): Record<string, unknown> {
     inputTemplateVersion: t.meta.inputTemplateVersion,
     embeddingModel: t.meta.embeddingModel,
     embeddingDims: t.meta.embeddingDims,
+  };
+}
+
+/**
+ * What a report records about retrieval (task 10e): the keyword, vector and hybrid modes
+ * of these evaluations are `retrieval.v1`'s passage channels and passage-level fusion with
+ * BM25 on the question text (not the scope stage's keyword text), whatever the server
+ * runs; `configured` is the version the settings select (`AVIATION_RETRIEVAL_VERSION`).
+ */
+export function retrievalReport(config: AppConfig): Record<string, unknown> {
+  return {
+    measured: { ...retrievalIdentity(RETRIEVAL_V1), stage: 'passage channels and passage-level fusion', keywordText: 'question' },
+    configured: retrievalIdentity(retrievalConfig(config.retrieval.version)),
   };
 }
