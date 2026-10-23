@@ -197,7 +197,10 @@ describe('retrieval evaluation', () => {
       index: { passagesIndex: index, generationId, embeddingModel: 'text-embedding-3-small', chunkerVersion: 'chunk-v2', inputTemplateVersion: 'input-v1' },
       embedder: { kind: 'fake', inputs: 2 },
       // What was measured (retrieval.v1's passage stage, BM25 on the question), whatever the server runs.
-      retrieval: { measured: { version: 'retrieval.v1', keywordText: 'question', sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }, configured: { version: expect.stringMatching(/^retrieval\./) } },
+      retrieval: {
+        measured: { basedOn: { version: 'retrieval.v1', sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }, keywordText: 'question', passagesPerChannel: 'params.sizes' },
+        configured: { version: expect.stringMatching(/^retrieval\./) },
+      },
     });
     expect(report.nonGatingReasons).toEqual(expect.arrayContaining(['--exploratory', '--fake-embedder']));
     expect(report.nonGatingReasons.some((r) => r.startsWith('dataset: '))).toBe(true);
@@ -373,7 +376,7 @@ describe('coded-reference track', () => {
       dataset: { questions: 4, narrow: 4, broad: 0, split: 'all', notRunWithoutEventAircraftQualification: [] },
       index: { passagesIndex: index, generationId, indexVersion: 'passages-v2', eventAircraftQualification: true },
       embedder: { kind: 'fake', inputs: 4 },
-      retrieval: { measured: { version: 'retrieval.v1', keywordText: 'question' }, configured: { version: expect.stringMatching(/^retrieval\./) } },
+      retrieval: { measured: { basedOn: { version: 'retrieval.v1' }, keywordText: 'question' }, configured: { version: expect.stringMatching(/^retrieval\./) } },
     });
     expect(report.nonGatingReasons).toEqual(expect.arrayContaining(['--exploratory', '--fake-embedder']));
     expect(report.nonGatingReasons.some((r) => r.startsWith('dataset: '))).toBe(true);

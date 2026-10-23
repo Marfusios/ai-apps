@@ -217,13 +217,20 @@ export function indexReport(t: RunTarget): Record<string, unknown> {
 
 /**
  * What a report records about retrieval (task 10e): the keyword, vector and hybrid modes
- * of these evaluations are `retrieval.v1`'s passage channels and passage-level fusion with
- * BM25 on the question text (not the scope stage's keyword text), whatever the server
- * runs; `configured` is the version the settings select (`AVIATION_RETRIEVAL_VERSION`).
+ * of these evaluations are built on `retrieval.v1`'s passage channels and passage-level
+ * fusion, but with BM25 on the question text (not the scope stage's keyword text) and the
+ * passages per channel in `params.sizes`, so they are not that frozen configuration and
+ * carry no sha256 of their own: `measured.basedOn` names the version they derive from.
+ * `configured` is the version the settings select (`AVIATION_RETRIEVAL_VERSION`).
  */
 export function retrievalReport(config: AppConfig): Record<string, unknown> {
   return {
-    measured: { ...retrievalIdentity(RETRIEVAL_V1), stage: 'passage channels and passage-level fusion', keywordText: 'question' },
+    measured: {
+      basedOn: retrievalIdentity(RETRIEVAL_V1),
+      stage: 'passage channels and passage-level fusion',
+      keywordText: 'question',
+      passagesPerChannel: 'params.sizes',
+    },
     configured: retrievalIdentity(retrievalConfig(config.retrieval.version)),
   };
 }
