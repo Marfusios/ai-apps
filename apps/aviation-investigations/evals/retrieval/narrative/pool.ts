@@ -108,6 +108,8 @@ export interface PoolFile {
   methods: { id: string; config: ExperimentConfig }[];
   families: FamilyPool[];
   version: string;
+  /** The code that built it (provenance only, outside the version). */
+  git?: { commit: string | null; dirty: boolean | null };
 }
 
 /** Pure: one family's pool from its runs, cohort and lure list (module comment). */

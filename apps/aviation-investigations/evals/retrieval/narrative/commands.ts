@@ -35,7 +35,7 @@ import { createLedgerSpendGate, type SpendGate } from '../../../worker/index/spe
 import { readGenerationSource, type GenerationSource } from '../generation.js';
 import { describePlan, embedPlan, indexReport, planQueryEmbeddings, resolveRunTarget, stamp, type RunTarget } from '../harness.js';
 import { BASELINE_CONFIG, experimentConfig } from '../experiments/config.js';
-import { DEFAULT_GRID, filterConsistency } from '../experiments/cli.js';
+import { DEFAULT_GRID, filterConsistency, gitState } from '../experiments/cli.js';
 import { loadGrid } from '../experiments/grid.js';
 import { providerScopeCaller, runScopeSamples, scopeInventory, type ScopeRun } from '../experiments/scope.js';
 import { DEFAULT_CALIBRATION, DEFAULT_NARRATIVE_DATASET } from './build.js';
@@ -345,7 +345,7 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
       kind: 'track-n-plan',
       reference: d.reference,
       createdAt: new Date().toISOString(),
-      git: null,
+      git: gitState(),
       problems: ctx.problems,
       preflight: ctx.preflight,
       judges: { judgeA: JUDGE_A, judgeB: JUDGE_B, adjudicator: ADJUDICATOR },
@@ -489,7 +489,7 @@ export async function poolsCommand(opts: CommandOptions & { samples: Samples; ma
       methods,
       families: pools,
     };
-    const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, { ...body, version: poolFileVersion(body) });
+    const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, { ...body, version: poolFileVersion(body), git: gitState() });
     log(`pools: ${pools.reduce((n, p) => n + p.cases.length, 0)} cases in ${pools.length} families; ${file}`);
     return 0;
   } finally {
@@ -640,7 +640,7 @@ export async function runJudging(
       if (!(err instanceof BudgetStop)) throw err;
       stopped = err.message;
     }
-    const file = writeJson(opts.outDir, `narrative-judgments-${opts.set}-${stamp(new Date())}.json`, { kind: 'track-n-judgments', set: opts.set, reference: opts.reference, run: runId, stopped, records });
+    const file = writeJson(opts.outDir, `narrative-judgments-${opts.set}-${stamp(new Date())}.json`, { kind: 'track-n-judgments', set: opts.set, reference: opts.reference, run: runId, git: gitState(), stopped, records });
     log(`${records.length} pair records; spend ${usd(sender.spentUsd)}; ${stopped ? `stopped: ${stopped}; ` : ''}${file}`);
     return stopped ? 1 : 0;
   } finally {
@@ -725,7 +725,7 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
   const files = opts.judgments.map(readJudgments);
   const records = (set: JudgmentFile['set']) => files.filter((f) => f.set === set).flatMap((f) => f.records);
   const tagsOf = (family: string) => d.questions.find((q) => q.id === family)?.tags ?? [];
-  const out: Record<string, unknown> = { kind: 'track-n-report', reference: d.reference, caveat: d.caveat, createdAt: new Date().toISOString() };
+  const out: Record<string, unknown> = { kind: 'track-n-report', reference: d.reference, caveat: d.caveat, createdAt: new Date().toISOString(), git: gitState() };
   const cal = records('calibration');
   if (cal.length > 0) {
     const c = readCalibration();
