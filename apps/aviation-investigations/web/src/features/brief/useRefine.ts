@@ -15,7 +15,8 @@ import { refineBrief } from './api';
  * change on the same brief after an unknown outcome reuses its idempotency key (the server
  * replays it) until a 2xx settles it; a 409 `conflict` to that replay sends it once more
  * under a new key. A refinement whose visitor signs out or deletes the account before it
- * ends keeps nothing (no retry key) and moves nowhere.
+ * ends sends nothing more (refineBrief checks the visitor right before it sends), keeps
+ * nothing (no retry key) and moves nowhere.
  */
 export function useRefine(briefId: string) {
   const request = useAiRequest();
@@ -36,7 +37,7 @@ export function useRefine(briefId: string) {
       const earlier = unsettledKey(id);
       let idempotencyKey = earlier ?? newIdempotencyKey();
       const result = await run(
-        (turnstileToken) => refineBrief(briefId, { ...change, turnstileToken, idempotencyKey }),
+        (turnstileToken) => refineBrief(briefId, { ...change, turnstileToken, idempotencyKey }, visitor),
         earlier
           ? {
               visitor,
@@ -58,6 +59,8 @@ export function useRefine(briefId: string) {
       }
       forgetUnsettled(id);
       await queryClient.invalidateQueries({ queryKey: ['brief', briefId] });
+      // The visitor changed while the brief was read again: the page goes nowhere for them.
+      if (gone()) return false;
       const next = new URLSearchParams();
       if (cases) next.set(CASES_PARAM, cases);
       navigate(`/briefs/${briefId}${next.size > 0 ? `?${next.toString()}` : ''}`);

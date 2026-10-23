@@ -14,10 +14,10 @@
  * - **Late answers.** Every private read runs through `privateRead`, which drops an answer
  *   that arrives after the visitor changed: a poll or a context read sent before the
  *   change cannot fill the cache again. AI requests (web/src/features/ai/useAiRequest.ts)
- *   carry the generation they started under: after a change they send nothing more, and
- *   their answer, success or failure, is discarded without restoring a question, a retry
- *   key or a navigation. A Turnstile check still open for them is cancelled
- *   (`onVisitorChange`).
+ *   carry the generation they started under: after a change they send nothing more (their
+ *   POST checks it right before the network call, after every wait), and their answer,
+ *   success or failure, is discarded without restoring a question, a retry key or a
+ *   navigation. A Turnstile check still open for them is cancelled (`onVisitorChange`).
  * - **Memory and this tab's storage:** the questions this page asked (for "Ask again") and
  *   the retry keys of AI requests whose answer never came are forgotten too.
  * - **Other tabs.** The change is announced on a `BroadcastChannel`
@@ -68,7 +68,7 @@ export function onVisitorChange(listener: () => void): () => void {
   return () => void listeners.delete(listener);
 }
 
-/** A private read's answer arrived after the visitor changed: it is dropped. */
+/** The visitor changed: a private read's late answer is dropped, and a send for the previous visitor is not made. */
 export class VisitorChangedError extends Error {
   override readonly name = 'VisitorChangedError';
 }

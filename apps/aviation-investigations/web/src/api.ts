@@ -11,7 +11,7 @@ import { ErrorResponseSchema, type ErrorResponse } from '../../shared/contracts/
 import { ConfigResponseSchema } from '../../shared/contracts/config';
 import { DashboardResponseSchema, type DashboardRequest } from '../../shared/contracts/dashboard';
 import { SearchResponseSchema, searchRequestToParams, type SearchRequest } from '../../shared/contracts/search';
-import { privateRead } from './features/auth/visitor';
+import { VisitorChangedError, privateRead, visitorGeneration } from './features/auth/visitor';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -55,8 +55,14 @@ export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: Ab
   return schema.parse(await response.json());
 }
 
-/** POSTs JSON; `schema` null for an empty (204) answer. */
-export async function postJson<T>(path: string, body: unknown, schema: z.ZodType<T> | null): Promise<T | null> {
+/**
+ * POSTs JSON; `schema` null for an empty (204) answer. With `visitor`, the visitor
+ * generation the request belongs to (web/src/features/auth/visitor.ts), nothing is sent
+ * once the visitor changed (`VisitorChangedError`): the check runs right before the send,
+ * with nothing awaited between them, however long the caller waited before calling.
+ */
+export async function postJson<T>(path: string, body: unknown, schema: z.ZodType<T> | null, visitor?: number): Promise<T | null> {
+  if (visitor !== undefined && visitor !== visitorGeneration()) throw new VisitorChangedError('the visitor changed before this was sent');
   const response = await fetch(new URL(path, window.location.origin), {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },

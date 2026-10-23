@@ -330,6 +330,57 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     expect(unsettledKey(await unsettledId({ kind: 'refine', briefId, change: { kind: 'text', text: 'only helicopters' } }))).toBeNull();
   }, 20_000);
 
+  it('a refinement whose brief is still being read again when the visitor changes moves nowhere', async () => {
+    signedInApi();
+    const app = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    // Once the refinement is answered, the brief is read again: those reads wait.
+    let reads = 0;
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    server.use(
+      http.get('*/api/briefs/:id', async () => {
+        reads += 1;
+        await released;
+        return undefined;
+      }),
+    );
+    const at = app.router.state.location.key;
+    fireEvent.change(screen.getByRole('textbox', { name: /^refine$/i }), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(reads).toBe(1));
+    // Another tab signs out meanwhile.
+    await fetch(new URL('/api/auth/sign-out', window.location.href), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    await otherTabChangesVisitor();
+    release();
+    await act(() => sleep(150));
+    expect(app.router.state.location.key).toBe(at);
+  }, 20_000);
+
+  it('a second check, asked for after a refused token and still open when the visitor changes, is cancelled and nothing more is sent', async () => {
+    signedInApi();
+    const turnstile = installTurnstile({ hold: true });
+    let posts = 0;
+    server.use(
+      http.post('*/api/briefs', () => {
+        posts += 1;
+        return HttpResponse.json({ error: 'challenge_required', message: 'A quick check is needed before this AI search.' }, { status: 403 });
+      }),
+    );
+    const app = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+    await waitFor(() => expect(turnstile.appearances).toEqual(['always']));
+    await otherTabChangesVisitor();
+    turnstile.release();
+    await act(() => sleep(150));
+    expect(posts).toBe(1);
+    expect(currentUrl(app.router)).toBe('/');
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  });
+
   it('a check still open when the visitor changes is cancelled, and nothing is sent', async () => {
     signedInApi({ accountCheck: true });
     const turnstile = installTurnstile({ hold: true });

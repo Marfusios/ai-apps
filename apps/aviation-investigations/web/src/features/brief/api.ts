@@ -99,12 +99,17 @@ export const caseContextQuery = (id: string, step: number, ntsbNo: string) =>
     retry,
   });
 
-export async function createBrief(request: CreateBriefRequest): Promise<StartBriefResponse> {
-  return (await postJson('/api/briefs', request, StartBriefResponseSchema)) as StartBriefResponse;
+/**
+ * `POST /api/briefs` for the visitor generation `visitor` the ask started under: never
+ * sent once that visitor signed out or deleted the account (`VisitorChangedError`).
+ */
+export async function createBrief(request: CreateBriefRequest, visitor: number): Promise<StartBriefResponse> {
+  return (await postJson('/api/briefs', request, StartBriefResponseSchema, visitor)) as StartBriefResponse;
 }
 
-export async function refineBrief(id: string, request: RefinementRequest): Promise<StartBriefResponse> {
-  return (await postJson(`/api/briefs/${encodeURIComponent(id)}/refine`, request, StartBriefResponseSchema)) as StartBriefResponse;
+/** `POST /api/briefs/:id/refine`, likewise only for the visitor generation `visitor`. */
+export async function refineBrief(id: string, request: RefinementRequest, visitor: number): Promise<StartBriefResponse> {
+  return (await postJson(`/api/briefs/${encodeURIComponent(id)}/refine`, request, StartBriefResponseSchema, visitor)) as StartBriefResponse;
 }
 
 /** Cancels the running step `step` (it still counts as a search). */

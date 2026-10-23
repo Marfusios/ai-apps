@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiStatusResponse } from '../../../../shared/contracts/ai';
 import { ApiError, aiStatusQuery } from '../../api';
-import { forgetVisitor, visitorGeneration } from '../auth/visitor';
+import { VisitorChangedError, forgetVisitor, visitorGeneration } from '../auth/visitor';
 import { askAvailability } from './status';
 import { AiCheckError, useAiCheck, type AiCheckFailure } from './TurnstileGate';
 
@@ -114,7 +114,9 @@ export function noticeFor(err: unknown): AiNotice {
  * (`signed_out`) forgets the previous visitor's data, as signing out does. A request whose
  * visitor changed while it ran (signed out or deleted, here or in another tab) sends
  * nothing more and is discarded: its answer, success or failure, is neither applied nor
- * shown (`discarded`).
+ * shown (`discarded`). `send` may wait before it sends (the brief client loads with the
+ * first request): its POST carries the visitor generation and is refused right before the
+ * network call when that visitor is gone (`VisitorChangedError`, web/src/api.ts `postJson`).
  */
 export function useAiRequest() {
   const check = useAiCheck();
@@ -199,7 +201,8 @@ export function useAiRequest() {
             // An answer for the previous visitor: nothing of it is applied.
             return finish(changed() ? discarded : { ok: true as const, value });
           } catch (err) {
-            if (changed()) return finish(discarded);
+            // Gone meanwhile, or refused before sending because the visitor changed during a wait in `send`.
+            if (changed() || err instanceof VisitorChangedError) return finish(discarded);
             const code = err instanceof ApiError ? err.body?.error : undefined;
             if (!challengeRetried && code !== undefined && CHALLENGE.has(code)) {
               // A refused or missing token: one more check, shown in the panel.

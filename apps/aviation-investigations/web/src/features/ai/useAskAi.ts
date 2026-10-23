@@ -20,8 +20,10 @@ import { newIdempotencyKey, useAiRequest } from './useAiRequest';
  * not remembered, so the next ask uses a new key.
  *
  * An ask belongs to the visitor it started under: if that visitor signs out or deletes the
- * account (here or in another tab) before it ends, nothing of it is kept (no question in
- * memory, no retry key) and the page does not open its brief.
+ * account (here or in another tab) before it ends, nothing more of it is sent (the check
+ * runs right before each send, after every wait, the brief client's first load included),
+ * nothing of it is kept (no question in memory, no retry key) and the page does not open
+ * its brief.
  */
 export function useAskAi() {
   const request = useAiRequest();
@@ -45,9 +47,11 @@ export function useAskAi() {
       let idempotencyKey = earlier ?? newIdempotencyKey();
       const result = await run(
         async (turnstileToken) => {
-          // The brief client and its contracts load with the first AI request, not with the home page.
+          // The brief client and its contracts load with the first AI request, not with the home
+          // page. However long that takes, createBrief checks the visitor again right before it
+          // sends: a visitor gone meanwhile sends nothing.
           const { createBrief } = await import('../brief/api');
-          return createBrief({ question: q, ...(filters ? { filters } : {}), turnstileToken, idempotencyKey });
+          return createBrief({ question: q, ...(filters ? { filters } : {}), turnstileToken, idempotencyKey }, visitor);
         },
         earlier
           ? {
