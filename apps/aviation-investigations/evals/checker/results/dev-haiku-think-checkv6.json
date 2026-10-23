@@ -1,0 +1,409 @@
+{
+  "protocol": "checker-cal-protocol-v1",
+  "config": "haiku-think",
+  "model": "claude-haiku-5-5",
+  "thinking": "adaptive",
+  "note": "Haiku 5.5, adaptive thinking at effort low; the thinking allowance is the room the check output cap leaves above the visible output.",
+  "split": "dev",
+  "checkPrompt": "check.v6",
+  "labelsSha256": "9608ceac09ef823949d3a9f0db88987db584db9f4bf2bd104f3939ed6586ca6d",
+  "dataset": "evals/checker/dataset.json",
+  "trials": "data/work/checker/haiku-think-dev-2026-10-23T02-07-43-228Z.jsonl",
+  "complete": true,
+  "report": {
+    "calls": 42,
+    "failedCalls": {},
+    "wholeBriefFalseWithholding": {
+      "k": 6,
+      "n": 21,
+      "rate": 0.2857142857142857,
+      "low": 0.1381386287176154,
+      "high": 0.4995638088483033
+    },
+    "supportedBriefs": [
+      {
+        "id": "dev.b1",
+        "trials": 3,
+        "withheld": 1,
+        "codes": {
+          "not_established": 1
+        }
+      },
+      {
+        "id": "dev.b1-hours",
+        "trials": 3,
+        "withheld": 3,
+        "codes": {
+          "contradicted": 11,
+          "not_established": 10
+        }
+      },
+      {
+        "id": "dev.b2",
+        "trials": 3,
+        "withheld": 2,
+        "codes": {
+          "not_established": 2
+        }
+      },
+      {
+        "id": "dev.b3",
+        "trials": 3,
+        "withheld": 0,
+        "codes": {}
+      },
+      {
+        "id": "dev.b3-week",
+        "trials": 3,
+        "withheld": 0,
+        "codes": {}
+      },
+      {
+        "id": "dev.b4",
+        "trials": 3,
+        "withheld": 0,
+        "codes": {}
+      },
+      {
+        "id": "dev.b4-abstain",
+        "trials": 3,
+        "withheld": 0,
+        "codes": {}
+      }
+    ],
+    "errorBriefs": {
+      "withheld": {
+        "k": 15,
+        "n": 16,
+        "rate": 0.9375,
+        "low": 0.716712622018518,
+        "high": 0.9888806553587528
+      },
+      "errorClaimWithheld": {
+        "k": 15,
+        "n": 16,
+        "rate": 0.9375,
+        "low": 0.716712622018518,
+        "high": 0.9888806553587528
+      }
+    },
+    "detection": {
+      "timing": {
+        "k": 20,
+        "n": 23,
+        "rate": 0.8695652173913043,
+        "low": 0.6787251755146014,
+        "high": 0.9546234094181704
+      },
+      "attribution": {
+        "k": 29,
+        "n": 29,
+        "rate": 1,
+        "low": 0.8830301998708162,
+        "high": 0.9999999999999999
+      },
+      "contradiction": {
+        "k": 23,
+        "n": 23,
+        "rate": 1,
+        "low": 0.8568833796149266,
+        "high": 1
+      },
+      "unsupported_addition": {
+        "k": 15,
+        "n": 17,
+        "rate": 0.8823529411764706,
+        "low": 0.6566364919396065,
+        "high": 0.9671202265340099
+      },
+      "all": {
+        "k": 87,
+        "n": 92,
+        "rate": 0.9456521739130435,
+        "low": 0.8790146945481954,
+        "high": 0.9765649361997122
+      }
+    },
+    "mutations": {
+      "attribution/misleading_excerpt": {
+        "k": 2,
+        "n": 2,
+        "rate": 1,
+        "low": 0.3423802239546494,
+        "high": 1
+      },
+      "attribution/quote_context_loss": {
+        "k": 4,
+        "n": 4,
+        "rate": 1,
+        "low": 0.5101091596030786,
+        "high": 0.9999999999999999
+      },
+      "attribution/wrong_actor": {
+        "k": 2,
+        "n": 2,
+        "rate": 1,
+        "low": 0.3423802239546494,
+        "high": 1
+      },
+      "attribution/wrong_aircraft": {
+        "k": 12,
+        "n": 12,
+        "rate": 1,
+        "low": 0.7575059904469021,
+        "high": 1
+      },
+      "attribution/wrong_speaker": {
+        "k": 9,
+        "n": 9,
+        "rate": 1,
+        "low": 0.700854948272956,
+        "high": 1
+      },
+      "contradiction/compound_contradiction": {
+        "k": 1,
+        "n": 1,
+        "rate": 1,
+        "low": 0.2065493117918027,
+        "high": 1
+      },
+      "contradiction/negation": {
+        "k": 9,
+        "n": 9,
+        "rate": 1,
+        "low": 0.700854948272956,
+        "high": 1
+      },
+      "contradiction/wrong_cause": {
+        "k": 5,
+        "n": 5,
+        "rate": 1,
+        "low": 0.5655175313406071,
+        "high": 1
+      },
+      "contradiction/wrong_value": {
+        "k": 8,
+        "n": 8,
+        "rate": 1,
+        "low": 0.6755924316585924,
+        "high": 1
+      },
+      "timing/approximate_exact": {
+        "k": 2,
+        "n": 2,
+        "rate": 1,
+        "low": 0.3423802239546494,
+        "high": 1
+      },
+      "timing/before_after": {
+        "k": 2,
+        "n": 2,
+        "rate": 1,
+        "low": 0.3423802239546494,
+        "high": 1
+      },
+      "timing/fabricated_interval": {
+        "k": 1,
+        "n": 1,
+        "rate": 1,
+        "low": 0.2065493117918027,
+        "high": 1
+      },
+      "timing/first_flight_window": {
+        "k": 1,
+        "n": 1,
+        "rate": 1,
+        "low": 0.2065493117918027,
+        "high": 1
+      },
+      "timing/previous_day_hours": {
+        "k": 2,
+        "n": 3,
+        "rate": 0.6666666666666666,
+        "low": 0.2076595988078242,
+        "high": 0.9385080559790691
+      },
+      "timing/settled_as_unknown": {
+        "k": 1,
+        "n": 1,
+        "rate": 1,
+        "low": 0.2065493117918027,
+        "high": 1
+      },
+      "timing/unit_swap": {
+        "k": 3,
+        "n": 3,
+        "rate": 1,
+        "low": 0.43850296436068037,
+        "high": 1
+      },
+      "timing/wrong_anchor": {
+        "k": 6,
+        "n": 8,
+        "rate": 0.75,
+        "low": 0.40927542792725174,
+        "high": 0.9285207879020445
+      },
+      "timing/wrong_window": {
+        "k": 2,
+        "n": 2,
+        "rate": 1,
+        "low": 0.3423802239546494,
+        "high": 1
+      },
+      "unsupported_addition/added_detail": {
+        "k": 4,
+        "n": 4,
+        "rate": 1,
+        "low": 0.5101091596030786,
+        "high": 0.9999999999999999
+      },
+      "unsupported_addition/causal_overstatement": {
+        "k": 3,
+        "n": 4,
+        "rate": 0.75,
+        "low": 0.3006418400969081,
+        "high": 0.954412739704631
+      },
+      "unsupported_addition/certainty_overstatement": {
+        "k": 1,
+        "n": 1,
+        "rate": 1,
+        "low": 0.2065493117918027,
+        "high": 1
+      },
+      "unsupported_addition/compound": {
+        "k": 4,
+        "n": 4,
+        "rate": 1,
+        "low": 0.5101091596030786,
+        "high": 0.9999999999999999
+      },
+      "unsupported_addition/wrong_citation": {
+        "k": 3,
+        "n": 4,
+        "rate": 0.75,
+        "low": 0.3006418400969081,
+        "high": 0.954412739704631
+      }
+    },
+    "critical": {
+      "items": 8,
+      "passedEveryTrial": 6,
+      "failures": [
+        {
+          "item": "c00",
+          "batch": "dev.paid",
+          "sample": 1,
+          "verdict": "supported"
+        },
+        {
+          "item": "c10",
+          "batch": "dev.paid",
+          "sample": 1,
+          "verdict": "supported"
+        }
+      ]
+    },
+    "falseFlags": {
+      "k": 40,
+      "n": 989,
+      "rate": 0.04044489383215369,
+      "low": 0.029840734994047064,
+      "high": 0.05460523382736582
+    },
+    "falseFlagsByKind": {
+      "attribution": {
+        "k": 4,
+        "n": 224,
+        "rate": 0.017857142857142856,
+        "low": 0.006965655161329184,
+        "high": 0.04500670728507408
+      },
+      "classification": {
+        "k": 5,
+        "n": 106,
+        "rate": 0.04716981132075472,
+        "low": 0.020314072833709368,
+        "high": 0.10569899201691552
+      },
+      "criterion": {
+        "k": 3,
+        "n": 114,
+        "rate": 0.02631578947368421,
+        "low": 0.008989561238739792,
+        "high": 0.07452484001463822
+      },
+      "gap": {
+        "k": 0,
+        "n": 21,
+        "rate": 0,
+        "low": 0,
+        "high": 0.15463902098714374
+      },
+      "maintenance": {
+        "k": 0,
+        "n": 97,
+        "rate": 0,
+        "low": 0,
+        "high": 0.038094043104016526
+      },
+      "summary": {
+        "k": 9,
+        "n": 118,
+        "rate": 0.07627118644067797,
+        "low": 0.04064320931960667,
+        "high": 0.13861809534496597
+      },
+      "symptom": {
+        "k": 4,
+        "n": 87,
+        "rate": 0.04597701149425287,
+        "low": 0.01802268834189505,
+        "high": 0.112330335785221
+      },
+      "timing": {
+        "k": 6,
+        "n": 83,
+        "rate": 0.07228915662650602,
+        "low": 0.033550295326774685,
+        "high": 0.14886786168449534
+      },
+      "why": {
+        "k": 9,
+        "n": 139,
+        "rate": 0.06474820143884892,
+        "low": 0.034435015192292674,
+        "high": 0.1184719843045878
+      }
+    },
+    "chronologyMissed": {
+      "trials": 2,
+      "claims": 2
+    },
+    "verdicts": {
+      "supported": 955,
+      "contradicted": 67,
+      "not_established": 62
+    },
+    "cost": {
+      "totalUsd": 0.085470675,
+      "perCallUsd": 0.002035016071428571,
+      "perBriefUsd": 0.0018493635135135135
+    },
+    "latencyMs": {
+      "p50": 13423,
+      "p95": 21288,
+      "max": 24216,
+      "overTimeout": 27,
+      "timeoutMs": 12000
+    },
+    "thinkingTokens": {
+      "total": 94043,
+      "max": 4726
+    },
+    "outputTokens": {
+      "max": 5770
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "protocol": "checker-cal-protocol-v1",
+  "config": "haiku-think",
+  "model": "claude-haiku-5-5",
+  "thinking": "adaptive",
+  "checkPrompt": "check.v5",
+  "labelsSha256": "9608ceac09ef823949d3a9f0db88987db584db9f4bf2bd104f3939ed6586ca6d",
+  "frozenAt": "2026-10-23T02:19:43.599Z",
+  "reason": "no run eligible (8 development runs); by the fallback order (critical regressions withheld in every trial, then the lowest family detection, then whole-brief false withholding): haiku-think with check.v5, critical 8/8, lowest family 100.0%, whole-brief false withholding 7/21; missing whole-brief false withholding ≤ 10%"
+}

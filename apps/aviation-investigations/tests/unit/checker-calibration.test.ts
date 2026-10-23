@@ -117,14 +117,14 @@ describe('the checker calibration set (evals/checker)', () => {
   });
 
   it('applies the frozen selection rule', () => {
-    const summary = (config: string, fw: number, family: number, critical: boolean, perBriefUsd: number) => {
+    const summary = (config: string, fw: number, family: number, critical: boolean, perBriefUsd: number, checkPrompt = 'check.v6') => {
       const r = report(dataset.batches, trialsOf('dev', (b) => oracle(b)), 12_000);
       return {
         config,
         model: 'm',
         thinking: 'off',
         split: 'dev',
-        checkPrompt: 'check.v6',
+        checkPrompt,
         labelsSha256: dataset.labels.sha256,
         complete: true,
         report: {
@@ -145,5 +145,8 @@ describe('the checker calibration set (evals/checker)', () => {
     const none = selectConfiguration([summary('a', 0.3, 0.9, true, 0.03), summary('b', 0, 0.8, true, 0.002)]);
     expect(none).toMatchObject({ config: 'a', eligible: [] });
     expect(none.reason).toContain('missing family detection');
+    // Runs of earlier prompt versions compete too: the choice is a configuration with its prompt.
+    const versions = selectConfiguration([summary('a', 0.3, 1, true, 0.002, 'check.v5'), summary('a', 0.2, 0.9, false, 0.002, 'check.v6')]);
+    expect(versions).toMatchObject({ config: 'a', checkPrompt: 'check.v5' });
   });
 });

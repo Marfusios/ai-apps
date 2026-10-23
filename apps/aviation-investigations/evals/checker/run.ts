@@ -20,7 +20,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { resolve } from 'node:path';
 import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { CACHED_PREFIX_MAX, llmPrice, stageCostUsd } from '../../server/ai/pricing.js';
-import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v6.js';
+import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v5.js';
 import { StageError, stageCtx, type LlmProvider, type StageUsage } from '../../server/ai/provider.js';
 import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
 import { closeDb, createDb } from '../../server/db/client.js';
@@ -255,12 +255,14 @@ interface DevSummary {
 }
 
 /**
- * Apply the selection rule (protocol.ts) to complete development runs, one per
- * configuration, all with the current prompt version and labels.
+ * Apply the selection rule (protocol.ts) to complete development runs: one per
+ * configuration and check prompt version (the tuning rounds' runs included), all on the
+ * frozen labels. The choice is a configuration with its prompt version.
  */
-export function selectConfiguration(runs: readonly DevSummary[]): { config: string; reason: string; eligible: string[] } {
+export function selectConfiguration(runs: readonly DevSummary[]): { config: string; checkPrompt: string; reason: string; eligible: string[] } {
   const ok = runs.filter((r) => r.split === 'dev' && r.complete);
   if (ok.length === 0) throw new Error('no complete development run');
+  const name = (r: DevSummary) => `${r.config} with ${r.checkPrompt}`;
   const families = (r: DevSummary) => (['timing', 'attribution', 'contradiction', 'unsupported_addition'] as const).map((f) => r.report.detection[f].rate ?? 0);
   const fw = (r: DevSummary) => r.report.wholeBriefFalseWithholding.rate ?? 1;
   const criticalOk = (r: DevSummary) => r.report.critical.passedEveryTrial === r.report.critical.items;
@@ -273,8 +275,9 @@ export function selectConfiguration(runs: readonly DevSummary[]): { config: stri
     const pick = near[0]!;
     return {
       config: pick.config,
-      eligible: eligible.map((r) => r.config),
-      reason: `eligible: ${eligible.map((r) => r.config).join(', ')}; lowest whole-brief false withholding ${(100 * best).toFixed(1)}%${near.length > 1 ? `; within one trial of it: ${near.map((r) => r.config).join(', ')}, the cheapest per brief` : ''}`,
+      checkPrompt: pick.checkPrompt,
+      eligible: eligible.map(name),
+      reason: `eligible: ${eligible.map(name).join(', ')}; lowest whole-brief false withholding ${(100 * best).toFixed(1)}%${near.length > 1 ? `; within one trial of it: ${near.map(name).join(', ')}, the cheapest per brief` : ''}`,
     };
   }
   const ranked = [...ok].sort(
@@ -289,16 +292,24 @@ export function selectConfiguration(runs: readonly DevSummary[]): { config: stri
     ...(Math.min(...families(pick)) >= 0.95 ? [] : ['family detection ≥ 95%']),
     ...(fw(pick) <= 0.1 ? [] : ['whole-brief false withholding ≤ 10%']),
   ];
-  return { config: pick.config, eligible: [], reason: `no configuration eligible; by the fallback order: ${pick.config}, missing ${missed.join(', ')}` };
+  const r = pick.report;
+  return {
+    config: pick.config,
+    checkPrompt: pick.checkPrompt,
+    eligible: [],
+    reason:
+      `no run eligible (${ok.length} development runs); by the fallback order (critical regressions withheld in every trial, then the lowest family detection, then whole-brief false withholding): ` +
+      `${name(pick)}, critical ${r.critical.passedEveryTrial}/${r.critical.items}, lowest family ${(100 * Math.min(...families(pick))).toFixed(1)}%, ` +
+      `whole-brief false withholding ${r.wholeBriefFalseWithholding.k}/${r.wholeBriefFalseWithholding.n}; missing ${missed.join(', ') || 'nothing'}`,
+  };
 }
 
 export function selectCommand(files: readonly string[], log: (m: string) => void): number {
   const dataset = readDataset();
   const runs = files.map((f) => JSON.parse(readFileSync(resolve(f), 'utf8')) as DevSummary);
-  for (const r of runs) {
-    if (r.checkPrompt !== CHECK_PROMPT_VERSION || r.labelsSha256 !== dataset.labels.sha256) throw new Error(`${r.config}: another prompt version or label set`);
-  }
-  if (new Set(runs.map((r) => r.config)).size !== runs.length) throw new Error('one development run per configuration');
+  for (const r of runs) if (r.labelsSha256 !== dataset.labels.sha256) throw new Error(`${r.config}: another label set`);
+  const keys = runs.map((r) => `${r.config}@${r.checkPrompt}`);
+  if (new Set(keys).size !== keys.length) throw new Error('one development run per configuration and prompt version');
   const choice = selectConfiguration(runs);
   const c = CONFIGS[choice.config]!;
   const selection: Selection = {
@@ -306,13 +317,14 @@ export function selectCommand(files: readonly string[], log: (m: string) => void
     config: choice.config,
     model: c.model,
     thinking: c.thinking,
-    checkPrompt: CHECK_PROMPT_VERSION,
+    checkPrompt: choice.checkPrompt,
     labelsSha256: dataset.labels.sha256,
     frozenAt: new Date().toISOString(),
     reason: choice.reason,
   };
   writeFileSync(SELECTION_PATH, `${JSON.stringify(selection, null, 2)}\n`);
-  log(`selected ${choice.config}: ${choice.reason}`);
+  log(`selected ${choice.config} with ${choice.checkPrompt}: ${choice.reason}`);
+  if (choice.checkPrompt !== CHECK_PROMPT_VERSION) log(`the production check prompt is ${CHECK_PROMPT_VERSION}: switch it to ${choice.checkPrompt} before the held-out run`);
   log(`wrote ${SELECTION_PATH}`);
   return 0;
 }
