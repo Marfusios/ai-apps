@@ -23,14 +23,18 @@
  *    (server/briefs/criteria.ts, under the versioned timing rules: a presented case
  *    outside the timing window, first-flight requirement or failure type withholds the
  *    summary); then the model checker over every claim, with every verified passage of
- *    each case and the criteria. Every criterion decision is a claim, an unconfirmed one
- *    included ("under the timing rules, the supplied passages of this case do not settle
- *    whether..."), so a fact the composition left out settles nothing. The checker returns
- *    one verdict per server-issued claim id, judged in code (server/briefs/verdicts.ts):
- *    the summary passes only when every claim has exactly one valid `supported` verdict.
- *    A contradicted "do not settle" claim is recorded as `chronology_missed` and
- *    withholds like any other. A check input over the checker's cap withholds the summary
- *    with the cap failure in the step's `meta`; the evidence is never cut to fit.
+ *    each case and each case's header line (not the criteria: each criterion claim states
+ *    its own). Every criterion decision is a claim, an unconfirmed one included ("under the
+ *    timing rules, the supplied passages of this case do not settle whether..."), so a fact
+ *    the composition left out settles nothing. The checker returns one verdict per
+ *    server-issued claim id, judged in code (server/briefs/verdicts.ts), and the display
+ *    projection decides what may be shown (server/briefs/display.ts, `display-deps-v1`):
+ *    in `claims` mode a claim is shown only with a valid `supported` verdict and while
+ *    everything it depends on is shown, under the whole-summary rules; in `whole` mode (the
+ *    default until gate G6 clears partial display, `AI_PARTIAL_DISPLAY`) anything removed
+ *    withholds the summary. A contradicted "do not settle" claim is recorded as
+ *    `chronology_missed`. A check input over the checker's cap withholds the summary with
+ *    the cap failure in the step's `meta`; the evidence is never cut to fit.
  * 5. **Settle**: itemized ledger lines per stage; any call without reliable usage makes
  *    the settlement uncertain, charging the full reservation (Task 15).
  *
@@ -41,11 +45,13 @@
  * cards; there is no repair loop. Results are written stage by stage and before the end
  * a read shows only stage status and counts, plus, once the scope stage is done, its
  * readings and filters as server templates (`checklistOf`, server/routes/briefs.ts,
- * from the stored intent; never the planner's own words). The whole step has a
- * 60-second deadline (each stage's timeout is cut to what is left). Cancel aborts the
- * running call and keeps the search counted (UI_DESIGN §4.4); a server shutdown aborts
- * it too and fails the step (a step started after shutdown began stops before its first
- * provider call, gives the search back and settles at zero).
+ * from the stored intent; never the planner's own words). The whole step has a deadline
+ * (`PIPELINE_DEADLINE_MS`) at least the sum of the stage timeouts, so the check always
+ * gets its full timeout after slow earlier stages (each stage's timeout is still cut to
+ * what is left). Cancel aborts the running call and keeps the search counted (UI_DESIGN
+ * §4.4); a server shutdown aborts it too and fails the step (a step started after
+ * shutdown began stops before its first provider call, gives the search back and settles
+ * at zero).
  *
  * Counting (UI_DESIGN §5): scope replies and empty results give the free search back,
  * as does a failure before anything was spent; withheld summaries, abstentions,
@@ -55,22 +61,16 @@
  * model, prompt version, token counts, cost, stop reason, outcome and counts, with the
  * GenAI usage and cost keys derived from them on model calls; a withheld step adds its
  * reason and codes. The step's `meta` records each validation reason with its path and
- * the summary's sentence count; a withheld step also keeps its rejected composition, with
- * what the validator and checker saw, in the server-side `diagnostics` column
- * (`StepDiagnostics`; read only by `pnpm worker brief-diagnose`).
+ * the summary's sentence count, and the projection's counts and removed claim keys; a
+ * withheld or partially shown step also keeps its composition, with what the validator
+ * and checker saw, in the server-side `diagnostics` column (`StepDiagnostics`; read only
+ * by `pnpm worker brief-diagnose`). Rejected text never reaches a response, a stored
+ * result or a later prompt.
  */
-import {
-  BriefResultSchema,
-  type BriefResult,
-  type Checklist,
-  type ComposeOutput,
-  type CriterionDecision,
-  type ScopeReply,
-  type WithheldReason,
-} from '../../shared/contracts/briefs.js';
+import { BriefResultSchema, type BriefResult, type Checklist, type ComposeOutput, type ScopeReply, type WithheldReason } from '../../shared/contracts/briefs.js';
 import type { Db } from '../db/client.js';
 import { stageCostUsd, STAGE_CAPS } from '../ai/pricing.js';
-import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v6.js';
+import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v7.js';
 import {
   StageError,
   stageCtx,
@@ -90,10 +90,25 @@ import { releaseQuota, type Admission } from '../quota/admit.js';
 import { settle, type SpendLine } from '../quota/settle.js';
 import { clarificationReadings, composeInterpretations, interpretationChips } from './clarify.js';
 import { checkForModel, citationsFromModel, composeForModel, compositionFromModel, passageAliases } from './aliases.js';
-import { CHRONOLOGY_RULES_VERSION, criteriaLines, evaluateCase, type CriterionCheck } from './criteria.js';
+import { CHRONOLOGY_RULES_VERSION, evaluateCase, type CriterionCheck } from './criteria.js';
+import { projectDisplay, type DisplayMode, type DisplayOutcome } from './display.js';
 import { RetrievalFailure, type CaseCatalog, type EvidenceBundle, type EvidenceRetriever, type RetrievedEvidence } from './evidence.js';
 import { resolveIntent, retrievalText, scopeInput, type StepIntent, type StepRequest } from './intent.js';
-import { answerResult, caseEvidence, checkInput, composeInput, noMatchResult, plainCard, storedDimensions, storedEvidence, type VerifiedCase } from './render.js';
+import {
+  answerResult,
+  caseEvidence,
+  caseHeader,
+  checkHeader,
+  checkInput,
+  composeInput,
+  displayPlan,
+  noMatchResult,
+  plainCard,
+  storedDimensions,
+  storedEvidence,
+  type ClaimMeta,
+  type VerifiedCase,
+} from './render.js';
 import { clarificationReply, comparisonReply, operationalReply, outOfScopeReply, statisticsReply } from './static-replies.js';
 import { finishStep, readBrief, readStepById, writeStage, type StepDiagnostics, type StoredEvidence } from './store.js';
 import { QUOTE_MATCH_RULE_VERSION, resolvePassage, validateComposition, type AllowedPassage, type Allowlist } from './validate.js';
@@ -109,10 +124,11 @@ export interface StageTimeouts {
 }
 
 /**
- * The check stage's 45 s is the calibrated checker's (Haiku 5.5 with adaptive thinking,
- * evals/checker): on development briefs of 15 to 42 claims it took 13 s at the median,
- * 21 s at the 95th percentile and 27 s at most, about 0.7 s a claim at the largest. A
- * check that runs out of time withholds the summary, like any failed check.
+ * The check stage's timeout is the calibrated checker's (Haiku 5.5 with adaptive thinking,
+ * evals/checker; Task 16d measures it at the maximum claim count, `MAX_CHECK_CLAIMS`). A
+ * check that runs out of time withholds the summary, like any failed check, and settles
+ * as `uncertain`: the whole reservation is charged. The stage timeouts add up to at most
+ * the step's deadline (`PIPELINE_DEADLINE_MS`).
  */
 export const STAGE_TIMEOUTS: Readonly<StageTimeouts> = Object.freeze({
   scope: 10_000,
@@ -148,6 +164,12 @@ export interface BriefDeps {
   timeouts?: Partial<StageTimeouts>;
   /** Salt of the brief hash in traces (never the raw brief id). */
   traceSalt?: string;
+  /**
+   * The display projection's mode (server/briefs/display.ts): `whole` (the default: the
+   * summary is shown only when nothing at all was removed) until gate G6 clears partial
+   * display; `claims` shows what the check confirmed (`AI_PARTIAL_DISPLAY`).
+   */
+  displayMode?: DisplayMode;
 }
 
 /** What the scope stage decided, for a caller waiting to answer the request. */
@@ -239,6 +261,25 @@ interface Meta {
     codes: string[];
     problems: { claim: string; claimIndex: number; kind: string; code: string }[];
     chronologyMissed: { claim: string; ntsbNo: string | null; criterion: string }[];
+  };
+  /**
+   * The display projection (content-free): its rules and mode, whether anything was shown
+   * and why not, the claims shown and removed by kind, the removed claims' stable keys
+   * (case numbers and field names, never text) with why each went, the cases whose summary
+   * an essential contradiction suppressed, the contradictions and the summary sentences
+   * removed.
+   */
+  display?: {
+    rules: string;
+    mode: DisplayMode;
+    shown: boolean;
+    withheld: string[];
+    claimsShown: number;
+    removed: Record<string, number>;
+    removedKeys: { key: string; cause: string }[];
+    suppressed: string[];
+    contradictions: number;
+    removedSentences: number;
   };
   settlement?: { status: string; uncertain?: boolean };
 }
@@ -479,9 +520,25 @@ class Run {
     return { status: 'failed', stage: 'failed', result: { kind: 'failed', countedAsSearch: this.spent }, release: !this.spent };
   }
 
+  /** Record the projection in the step's meta (content-free). */
+  private noteDisplay(claims: readonly ClaimMeta[], d: DisplayOutcome): void {
+    this.meta.display = {
+      rules: d.rules,
+      mode: d.mode,
+      shown: d.shown,
+      withheld: [...d.withheld],
+      claimsShown: d.counts.shown,
+      removed: Object.fromEntries(Object.entries(d.counts.removed).filter(([, n]) => n > 0)),
+      removedKeys: claims.flatMap((m, i) => (d.removal[i] && d.removal[i] !== 'withheld' ? [{ key: m.key, cause: d.removal[i]! }] : [])),
+      suppressed: d.cases.filter((c) => c.suppressed).map((c) => c.ntsbNo),
+      contradictions: d.contradictions,
+      removedSentences: d.removedSentences,
+    };
+  }
+
   /**
    * The end of a withheld summary. `codes`: its fixed codes (validation codes, failed
-   * criteria, check problem reasons) for the request span and the log line;
+   * criteria, check problem reasons, display rules) for the request span and the log line;
    * `diagnostics`: the rejected composition, kept server-side for developers.
    */
   private withheldEnd(
@@ -732,8 +789,8 @@ class Run {
     composition = compositionFromModel(written, aliases);
     const validated = { ...checked, citations: citationsFromModel(checked.citations, aliases) };
 
-    // Every criterion decision of every presented case, each a claim for the checker.
-    const decisions = new Map<string, CriterionDecision[]>();
+    // Every criterion decision of every presented case, each a claim for the checker. The
+    // decisions are made once, here; the display projection only ever downgrades them.
     const criterionChecks = new Map<string, CriterionCheck[]>();
     this.meta.criteria = [];
     this.meta.criteriaRules = CHRONOLOGY_RULES_VERSION;
@@ -744,10 +801,6 @@ class Run {
         this.meta.criteria.push({ ntsbNo: k.ntsbNo, criterion: d.criterion, decision: d.decision, rules: [...d.rules], ...(d.reason ? { reason: d.reason } : {}) });
         if (d.decision === 'does_not_match') outside = true;
       }
-      decisions.set(
-        k.ntsbNo,
-        checks.map((d) => ({ criterion: d.criterion, decision: d.decision === 'matches' ? 'matches' : 'unconfirmed' })),
-      );
       criterionChecks.set(k.ntsbNo, checks);
     }
     // A case outside the reader's criteria is never presented as a match.
@@ -759,9 +812,10 @@ class Run {
     const context = { interpretations: interpretationChips(intent.readings), filters: intent.filters };
     const { input, claims, overflow } = checkInput(composition, validated.citations, byCase, {
       mechanicalCause: intent.mechanicalCause,
-      criteria: criteriaLines(intent.readings),
       criterionChecks,
     });
+    const plan = displayPlan(composition, claims, intent.mechanicalCause);
+    const mode: DisplayMode = this.deps.displayMode ?? 'whole';
     // The check input as the checker reads it (passage aliases); its claims, by id, are a withheld step's diagnostics.
     const forModel = checkForModel(input, aliases);
     const checkDiagnostics = (verdicts?: StepDiagnostics['verdicts']) => diagnostics('evidence_check', forModel.claims, verdicts);
@@ -770,6 +824,7 @@ class Run {
       this.meta.failure = { stage: 'check', category: 'claims_overflow' };
       return this.withheldEnd('evidence_check', cases, intent, { diagnostics: checkDiagnostics() });
     }
+    let display: DisplayOutcome | null = null;
     if (input.claims.length > 0) {
       const t0 = performance.now();
       const { signal, budget } = this.stageSignal(this.t.check);
@@ -797,11 +852,14 @@ class Run {
           problems: j.problems.map((p) => ({ claim: p.claim, claimIndex: p.index, kind: p.kind, code: p.code })),
           chronologyMissed: j.chronologyMissed.map((c) => ({ claim: c.claim, ntsbNo: c.ntsbNo, criterion: c.criterion })),
         };
-        // Only every claim judged `supported`, completely and validly, lets the summary through.
-        if (!j.ok) {
-          const verdicts = { verdicts: out.r.output.verdicts.map((v) => ({ ...v, passages: [...v.passages] })), quotes: out.r.output.quotes.map((q) => ({ ...q })) };
-          return this.withheldEnd('evidence_check', cases, intent, { codes: j.codes, diagnostics: checkDiagnostics(verdicts) });
+        // The projection decides what may be shown; rejected text stays in the diagnostics.
+        display = projectDisplay(plan, { kind: 'judged', judgement: j }, mode);
+        this.noteDisplay(claims, display);
+        const verdicts = { verdicts: out.r.output.verdicts.map((v) => ({ ...v, passages: [...v.passages] })), quotes: out.r.output.quotes.map((q) => ({ ...q })) };
+        if (!display.shown) {
+          return this.withheldEnd('evidence_check', cases, intent, { codes: [...j.codes, ...display.withheld], diagnostics: checkDiagnostics(verdicts) });
         }
+        if (!j.ok) this.diagnostics = { ...checkDiagnostics(verdicts), reason: 'partial_display' };
       } catch (err) {
         // Over the checker's cap (counted, unbilled) or a failed call: withheld with the
         // failure recorded; the complete evidence is kept, never cut to fit (ruling 5).
@@ -815,12 +873,18 @@ class Run {
     }
     if (this.stopped) return this.stoppedEnd();
 
-    this.checklist = { question: 'in_scope', searched: searched(), written: true, verified: 'passed' };
+    this.checklist = { question: 'in_scope', searched: searched(), written: true, verified: 'partially_checked' };
+    const projected = display ? { claims, display } : undefined;
     if (composition.outcome === 'no_supported_match') {
       this.evidence = storedEvidence(cases, QUOTE_MATCH_RULE_VERSION);
-      return { status: 'no_match', stage: 'done', result: noMatchResult(composition, cases, context), release: false };
+      return { status: 'no_match', stage: 'done', result: noMatchResult(composition, cases, context, projected), release: false };
     }
-    this.evidence = storedEvidence(cases, QUOTE_MATCH_RULE_VERSION, storedDimensions(composition, intent.mechanicalCause, criterionChecks));
+    if (!projected) {
+      // An answer always has claims; nothing unchecked is ever shown.
+      this.meta.failure = { stage: 'check', category: 'claims_overflow' };
+      return this.withheldEnd('evidence_check', cases, intent, { diagnostics: checkDiagnostics() });
+    }
+    this.evidence = storedEvidence(cases, QUOTE_MATCH_RULE_VERSION, storedDimensions(composition, intent.mechanicalCause, criterionChecks, projected));
     return {
       status: 'answered',
       stage: 'done',
@@ -830,7 +894,8 @@ class Run {
         cases: byCase,
         mechanicalCause: intent.mechanicalCause,
         ...context,
-        criteria: decisions,
+        claims,
+        display: projected.display,
       }),
       release: false,
     };
@@ -916,6 +981,8 @@ class Run {
     if (end.result.kind === 'failed') end.result = { kind: 'failed', countedAsSearch: !released };
     const failure = this.meta.failure;
     const withheld = end.status === 'withheld' ? this.withheld : null;
+    // A withheld step keeps its rejected composition; a partially shown one keeps what was removed (server-side only).
+    const diagnostics = end.status === 'withheld' || end.status === 'answered' || end.status === 'no_match' ? this.diagnostics : null;
     this.span.setAttrs({
       outcome: end.status,
       ...(chargedUsd !== null ? { usd: chargedUsd } : {}),
@@ -933,7 +1000,7 @@ class Run {
       model: this.meta.models.compose ?? null,
       meta: { ...this.meta },
       costUsd: chargedUsd === null ? null : microsToNumeric(toMicros(chargedUsd)),
-      diagnostics: withheld ? this.diagnostics : null,
+      diagnostics,
       now: this.now(),
     }).catch((err: unknown) => {
       this.log.warn({ err: { name: (err as Error)?.name } }, 'brief step: the final state could not be written');
@@ -992,7 +1059,7 @@ export async function verifyBundle(catalog: CaseCatalog, generationId: number, b
     const required = causes.get(c.ntsbNo) ?? [];
     if (required.length === 0) throw new BundleIntegrityError('no_cause');
     if (required.some((id) => !held.has(id))) throw new BundleIntegrityError('missing_cause');
-    out.push({ ntsbNo: c.ntsbNo, rank: c.rank, summary, passages });
+    out.push({ ntsbNo: c.ntsbNo, rank: c.rank, summary, header: caseHeader(summary), checkHeader: checkHeader(summary), passages });
   }
   return out;
 }

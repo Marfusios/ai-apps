@@ -556,6 +556,13 @@ describe('sentence splitting', () => {
       'One \u2022 two [[case:A1B2C3]].',
       'One \u{1F525} two [[case:A1B2C3]].',
       'One&nbsp;two&#8203; [[case:A1B2C3]].',
+      // Numeric references fail with or without their semicolon (16c review M6).
+      'One&#46 two [[case:A1B2C3]].',
+      'One&#x2E two [[case:A1B2C3]].',
+      // Nothing is trimmed before the allow-list: a line break or invisible character at an edge fails too.
+      'Trailing newline [[case:A1B2C3]].\n',
+      '\u2028Leading line separator [[case:A1B2C3]].',
+      'Trailing byte order mark [[case:A1B2C3]].\uFEFF',
       // The allow-list: any space but U+0020, and every character not listed, fails.
       'Other spaces\u00A0and\u2003em spaces [[case:A1B2C3]].',
       'One\u0F0D two [[case:A1B2C3]].',
@@ -573,7 +580,9 @@ describe('sentence splitting', () => {
     for (const s of [
       'The pilot\u2019s \u201Cnut secured\u201D note and the \u2018tag\u2019 [[case:A1B2C3]].',
       'An A&P mechanic signed it on 10/22, at 1430, under \u00A7 43.9 (b) [[case:A1B2C3]].',
-      '  Leading and trailing whitespace is ignored [[case:A1B2C3]].\n',
+      '  Leading and trailing spaces are plain spaces [[case:A1B2C3]].  ',
+      // A named reference needs its semicolon to be one: "A&P" and "&nbsp" without it are text nothing decodes.
+      'An A&P mechanic and an R&D shop, &nbsp as text [[case:A1B2C3]].',
       'A clause; another: a dash \u2014 and a comma, [[case:A1B2C3]].',
       'Timing at 25\u00B0 \u00B1 2, a 2 \u00D7 4 board, \u00BD, \u00BC and \u00BE tanks \u2013 all allowed [[case:A1B2C3]].',
       'The airplane left Ca\u00F1on City for Espa\u00F1ola and Montr\u00E9al [[case:A1B2C3]].',

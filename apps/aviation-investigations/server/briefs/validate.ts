@@ -142,6 +142,7 @@ export const VALIDATION_CODES = [
   'malformed_quote',
   'quote_not_found',
   'timing_precision',
+  'zero_interval',
   'chronology_shape',
   'bad_marker',
   'marker_unknown_case',
@@ -210,8 +211,13 @@ export type QuoteMatch =
   | { ok: true; span: Span; matches: number }
   | { ok: false; code: 'empty_quote' | 'quote_too_short' | 'quote_too_long' | 'malformed_quote' | 'quote_not_found' };
 
-/** Locate `quote` in `passage` under `quote-ws-v2`; the span is in the original passage text. */
-export function matchQuote(passage: string, quote: string): QuoteMatch {
+/**
+ * Locate `quote` in `passage` under `quote-ws-v2`; the span is in the original passage
+ * text, at most `maxSource` code units long (the public citation rule's
+ * `QUOTE_MAX_SOURCE` unless a caller with its own versioned rule passes another bound:
+ * the checker's `checker-quote-v1`, server/briefs/verdicts.ts).
+ */
+export function matchQuote(passage: string, quote: string, maxSource: number = QUOTE_MAX_SOURCE): QuoteMatch {
   if (LONE_SURROGATE.test(quote)) return { ok: false, code: 'malformed_quote' };
   const q = collapseWhitespace(quote).text.trim();
   if (q === '') return { ok: false, code: 'empty_quote' };
@@ -224,7 +230,7 @@ export function matchQuote(passage: string, quote: string): QuoteMatch {
   // The trimmed quote starts and ends on non-whitespace, which maps to exactly one code unit.
   const start = p.map[at]!;
   const end = p.map[at + q.length - 1]! + 1;
-  if (end - start > QUOTE_MAX_SOURCE) return { ok: false, code: 'quote_too_long' };
+  if (end - start > maxSource) return { ok: false, code: 'quote_too_long' };
   return { ok: true, span: { start, end }, matches };
 }
 
@@ -407,15 +413,24 @@ function leakableAliases(allow: Allowlist, readerText: string): Set<string> {
 }
 
 /**
- * Allowed precision of chronology numbers: one decimal place for flight hours; whole
- * calendar days and completed flights; a flight's ordinal is a whole number from 1.
+ * Allowed precision of chronology numbers: one decimal place for flight hours and
+ * operating hours; whole calendar days and completed flights; a flight's ordinal is a
+ * whole number from 1.
  */
 export function timingValueAllowed(relation: string, value: number): boolean {
   if (relation === 'calendar_days' || relation === 'intervening_flights') return Number.isInteger(value);
   if (relation === 'flight_ordinal') return Number.isInteger(value) && value >= 1;
-  if (relation === 'flight_hours') return Number.isInteger(Math.round(value * 10)) && Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
+  if (relation === 'flight_hours' || relation === 'operating_hours') return Number.isInteger(Math.round(value * 10)) && Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
   return false;
 }
+
+/**
+ * Relations whose zero would be a fabricated interval (Task 16d review M1): no stated time
+ * from the maintenance to the event is zero days or zero hours. "The same day" is
+ * `same_day`, maintenance completed just before the flight is `immediately_before`, and
+ * zero completed flights in between stays `intervening_flights` 0 (a count, not a time).
+ */
+export const NONZERO_RELATIONS: ReadonlySet<string> = new Set(['flight_hours', 'operating_hours', 'calendar_days']);
 
 /** Group kinds whose classification must cite supporting passages. */
 const CITED_GROUPS: ReadonlySet<string> = new Set<GlyphKind>(['causal', 'defect_not_causal', 'no_fault']);
@@ -534,6 +549,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
       if (NUMBERED_RELATIONS.has(f.relation) !== (f.value !== undefined)) fail('chronology_shape', `${at}.value`);
       if (BOUNDED_RELATIONS.has(f.relation) !== (f.bound !== undefined)) fail('chronology_shape', `${at}.bound`);
       if (f.value !== undefined && NUMBERED_RELATIONS.has(f.relation) && !timingValueAllowed(f.relation, f.value)) fail('timing_precision', `${at}.value`);
+      if (f.value === 0 && NONZERO_RELATIONS.has(f.relation)) fail('zero_interval', `${at}.value`);
     });
   });
 

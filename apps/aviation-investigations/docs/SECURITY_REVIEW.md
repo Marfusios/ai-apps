@@ -115,10 +115,14 @@ validator does not see as its own could borrow another's citation past the deter
 check. The splitter and validator therefore withhold (server/briefs/sentences.ts):
 - a summary with any character outside an allow-list: printable ASCII except Markdown
   and decoration (`* _ ~ | [ ] { }`), the quotation marks `“ ” ‘ ’`, the dashes `– —`,
-  `° ± × ½ ¼ ¾ §`, and Latin-1 letters with diacritics; and HTML entities. What it
-  guarantees: the only characters left that can end a sentence are `.`, `!` and `?`, and
-  the only space is U+0020, so no other script's terminator, lookalike, line break,
-  invisible character or other space can hide a boundary;
+  `° ± × ½ ¼ ¾ §`, and Latin-1 letters with diacritics; and HTML character references (a
+  numeric one with or without its `;`, `&#46` included, and a named one with its `;`;
+  `&` and letters without one, as in "A&P mechanic", is text nothing decodes). Nothing
+  is trimmed before this check, so leading or trailing characters are judged too (Task
+  16d, 16c review M6). What it guarantees: the only characters left that can end a
+  sentence are `.`, `!` and `?`, and the only space is U+0020, so no other script's
+  terminator, lookalike, line break, invisible character or other space can hide a
+  boundary;
 - a sentence with any `.`, `!` or `?` inside it other than a decimal point or a declared
   abbreviation context;
 - a marker anywhere but at a sentence's end.
@@ -157,7 +161,21 @@ steps; until then the expired row still exists. Only `pnpm worker brief-diagnose
 by hand with the app role's credentials, prints it, to that operator's terminal, and it
 refuses an expired brief unless given `--include-expired`. Astra's G6 follow-up 2 accepted
 this storage under the existing request/result controls; the implementation review must
-still cover it.
+still cover it. Task 16d keeps the same record, under the same controls, for an answer
+shown with claims removed by the display projection (reason `partial_display`), so the
+raw verdicts behind a partial display can be read.
+
+**Claim-level display** (Task 16d, `display-deps-v1`; off in production until gate G6
+clears it, `AI_PARTIAL_DISPLAY`). A claim the evidence check did not confirm, and
+everything that depends on it, is removed by one pure function (server/briefs/display.ts)
+before any response is built: the step result, the stored dimensions the case context
+reads, and the inputs of a refinement are rendered from the projection's outcome, so
+removed text reaches no response, no later model call and no browser. Removal is of whole
+sentences and whole fields; nothing is spliced or reworded, and a removed summary sentence
+leaves only a count marker. A criterion decision is never recomputed after a removal, so
+it can only be downgraded to unconfirmed. The integration tests check every route surface
+for removed text (tests/integration/briefs.test.ts, "claim-level display"). Diagnostics
+keep the raw verdicts server-side only, as above.
 
 ## Required implementation review before launch
 

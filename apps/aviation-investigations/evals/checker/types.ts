@@ -35,6 +35,7 @@ export const MUTATIONS = {
     'wrong_window', // a window decision the stated dates or hours rule out
     'fabricated_interval', // a time no passage states
     'settled_as_unknown', // "the passages do not settle" a window or flight they settle
+    'operating_hours_as_flight_hours', // engine, tachometer or record hours presented as flight hours (labels v2, 16c review M4)
   ],
   attribution: [
     'wrong_aircraft', // in a multi-aircraft event, another aircraft's fact
@@ -95,12 +96,33 @@ export interface BriefError {
 }
 
 /**
+ * A brief claim labelled other than supported in the brief as authored (Task 16d; 16c
+ * review I4): `unknown` when review cannot settle it, or `not_supported` for an error the
+ * composition itself carries. Keyed by the claim's stable key (`ClaimMeta.key`, such as
+ * `case.CEN17LA292.timing.0` or `summary.2`); every variant of the brief inherits it.
+ */
+export interface BriefClaimLabel {
+  key: string;
+  label: 'not_supported' | 'unknown';
+  family?: Exclude<Family, 'control'>;
+  mutation?: string;
+  expect?: 'contradicted' | 'not_established';
+  critical?: boolean;
+  provenance?: Provenance;
+  /** Which inputs the label is for: the 16c inputs (no case headers), the 16d inputs (with them), or both (default). */
+  inputs?: 'v1' | 'v2' | 'both';
+  reason: string;
+}
+
+/**
  * A complete brief as the answer model would write it for a real retrieval bundle
  * (passage aliases, as the model sees them), rendered by the production code. Every
- * rendered claim of the supported brief is labelled supported (model-reviewed: a brief
- * with a claim review cannot settle is not authored as wholly supported); each error
- * variant edits one field so that exactly one rendered claim changes, and that claim is
- * the brief's one known error (constructed).
+ * rendered claim of the brief as authored is labelled supported (model-reviewed) unless
+ * `labels` says otherwise; a brief with an `unknown` claim never counts as wholly
+ * supported. Each error variant edits one field so that exactly one rendered claim
+ * changes, and that claim is the variant's known error (constructed). A mixed-error
+ * variant (Task 16d) applies several of the error edits at once; its errors are exactly
+ * their claims.
  */
 export interface BriefSpec {
   id: string;
@@ -110,4 +132,13 @@ export interface BriefSpec {
   composition: ComposeOutput;
   note: string;
   errors: (BriefError & { id: string; edit: (c: ComposeOutput) => void })[];
+  /** Mixed-error variants: ids of `errors` to apply together (two or more). */
+  mixed?: { id: string; errors: string[]; note: string }[];
+  /** Claims of the brief as authored that are not labelled supported. */
+  labels?: BriefClaimLabel[];
+  /** A brief built to the maximum claim count (Task 16d gate condition 4: latency and caps at the largest inputs). */
+  maxSize?: boolean;
 }
+
+/** How a brief stands: no error and nothing unresolved, unresolved claims only, one error, or several. */
+export type BriefCategory = 'supported' | 'unresolved' | 'one_error' | 'mixed_error';

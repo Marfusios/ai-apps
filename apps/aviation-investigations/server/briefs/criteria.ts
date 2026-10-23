@@ -8,59 +8,84 @@
  * out cannot settle anything: "under the timing rules, the supplied passages of this case
  * do not settle whether the event happened within 10 flight hours" is contradicted when a
  * passage states 5.1 hours since that maintenance. A contradicted "do not settle" claim
- * is recorded as `chronology_missed` (server/briefs/verdicts.ts) and still withholds the
- * summary: there is no repair call.
+ * is recorded as `chronology_missed` (server/briefs/verdicts.ts); the display projection
+ * removes the case's reading and never adopts the checker's reading (server/briefs/display.ts).
  *
  * Decisions are bound-aware: `matches`, `does_not_match` or `unknown` (shown as
  * unconfirmed: the analysis could not settle it from the supplied passages, never "the
- * investigation has no timing").
+ * investigation has no timing"). A decision is made once, here, before the check; the
+ * display projection only ever downgrades it (it never recomputes one after a removal).
  *
- * **Timing rules, `chronology-rules-v1`** (the check prompt states the same rules, so the
- * checker judges the criterion claims by them). A chronology fact (compose.v6) is stored
- * as its anchor, relation, evidence and attribution:
+ * **Timing rules, `chronology-rules-v2`** (Task 16d; the check prompt states the same
+ * rules, so the checker judges the criterion claims by them). A chronology fact (compose
+ * v6 and later) is stored as its anchor, relation, evidence and attribution, and read as a
+ * constraint on one **quantity**: the calendar-date difference from the maintenance to the
+ * event (`days`: calendar days, the same day 0, the day before 1, immediately before the
+ * event flight 0 or 1), flight hours (`flight_hours`), hours a passage counts without
+ * calling them flight hours (`operating_hours`), or completed flights between the
+ * maintenance and the event flight (`flights`: the n-th flight is n - 1, immediately
+ * before is 0, intervening flights their count). An exact value is a point, `at_most N`
+ * the range up to N, `at_least N` the range from N.
  * - **A-1 anchor.** Only a fact measured from the case's relevant maintenance
  *   (`anchor: relevant_maintenance`) to the event flight can decide a criterion. A fact
- *   measured from anything else (an earlier flight, other maintenance) keeps its own
- *   antecedent and decides nothing.
+ *   measured from anything else keeps its own antecedent and decides nothing, and so does a
+ *   bound derived from such a time ("eleven days before the accident the pilot noticed …
+ *   and had the part replaced" is a fact from that observation, not "at most 11 days after
+ *   the replacement"; compose.v7 encodes it with its own anchor).
  * - **A-2 attribution.** The server derives a fact's attribution from its cited
  *   passages' verified scope (never from the model). In an event with more than one
  *   aircraft, a fact not cited entirely from passages scoped to one aircraft decides
- *   nothing.
- * - **TW-N numbers.** Flight hours and calendar days are compared with the window on
- *   their own basis; days are never converted into hours. `exact` compares directly;
- *   `at_most v` can only match (v ≤ limit); `at_least v` can only fail (v > limit);
- *   `about v` decides nothing: an approximate value supplies no bound, so no tolerance is
- *   assumed. Calendar days counted from stated dates of the maintenance and the event are
- *   exact. Wording without a number (`words`: "shortly after", "a few days", "recent")
- *   decides nothing.
- * - **TW-C calendar dates.** `same_day` and `previous_day` put the calendar-date
- *   difference at 0 and 1: within any calendar-day window (every window is at least one
- *   day). They decide nothing about flight hours (one date boundary is not 24 hours).
+ *   nothing, and facts about different aircraft are never compared or combined: when the
+ *   attributable facts name more than one aircraft, nothing is decided (review M2).
+ * - **C-1 conflicts, before any decision.** All the facts on one quantity (one anchor, one
+ *   aircraft, one unit) must be able to hold together: their ranges must overlap. If they do
+ *   not, the quantity is in conflict and decides nothing, whatever the window: "exact 20
+ *   days" and "at least 40 days" conflict under a 50-day window as under a 30-day one
+ *   (review I3; the gate's 2 days and 40 days). Units are never mixed: days are never
+ *   hours, and operating hours are never flight hours.
+ * - **AP-1 approximation policy.** "About N" decides nothing, and for the conflict test it
+ *   counts as exactly N, with no tolerance in either direction: it is consistent only with
+ *   facts whose range holds N. So "exact 20 days" and "about 45 days" conflict, and so do
+ *   "the first flight" and "about 3 completed flights in between". This can only turn a
+ *   decision into `unknown`.
+ * - **TW-N numbers.** With the facts consistent, the non-approximate ones on a quantity
+ *   narrow it to one range (exact 5, or at most 11 and at least 3): within the limit when the
+ *   whole range is, outside when the whole range is beyond it, otherwise undecided
+ *   (`insufficient_bound`). Calendar days counted from stated dates are exact. Wording
+ *   without a number (`words`) decides nothing.
+ * - **TW-C calendar dates.** `same_day` and `previous_day` are a calendar-date difference
+ *   of 0 and 1: within any calendar-day window (every window is at least one day). They
+ *   decide nothing about flight hours (one date boundary is not 24 hours).
  * - **TW-I immediately before.** Maintenance completed immediately before the flight on
- *   which the event happened is within any calendar-day window: the event is on that
- *   flight, and no flight in this corpus lasts across two calendar-date boundaries. It is
- *   never a zero-day or zero-hour value and decides nothing about flight hours.
+ *   which the event happened is a calendar-date difference of 0 or 1 (no flight in this
+ *   corpus lasts across two calendar-date boundaries): within any calendar-day window. It
+ *   is never a zero-day or zero-hour value and decides nothing about flight hours.
+ * - **TW-H operating hours** (review M4). Engine, tachometer or Hobbs time, time in
+ *   service, or "hours" a passage does not call flight hours decide no flight-hour window
+ *   (`operating_hours` reason when nothing else decides it).
  * - **FF-O, FF-Z, FF-I which flight.** The first flight after the maintenance
- *   (`flight_ordinal` 1), zero completed flights in between (`intervening_flights`
- *   exactly 0, or at most 0) and maintenance completed immediately before the event
- *   flight establish the first flight; a later ordinal, or at least one completed flight
- *   in between, a later flight; an approximate or upper-bounded count decides nothing.
- *   Which flight never decides a calendar-day or flight-hour window, and calendar days or
- *   flight hours never decide which flight it was.
- * - **C-1 conflicts.** Facts that put one basis both within and outside, or the flight
- *   both first and later, decide nothing for it.
- * - The window is an OR: one basis within matches; it fails only when every basis the
- *   window sets is decided outside; otherwise unknown, with a content-free reason
- *   (`UNKNOWN_REASONS`).
+ *   (`flight_ordinal` 1), zero completed flights in between (exactly 0, or at most 0) and
+ *   maintenance completed immediately before the event flight establish the first flight;
+ *   a later ordinal, or at least one completed flight in between, a later flight; an
+ *   approximate or upper-bounded count decides nothing. Which flight never decides a
+ *   calendar-day or flight-hour window, and calendar days or flight hours never decide
+ *   which flight it was.
+ * - **Z-1 no zero intervals** (review M1). Validation refuses zero calendar days, flight
+ *   hours or operating hours (`zero_interval`).
+ * - The window is an OR: one quantity within matches; it fails only when every quantity
+ *   the window sets is decided outside; a conflict on any quantity it reads decides
+ *   nothing; otherwise unknown, with a content-free reason (`UNKNOWN_REASONS`).
  * - **First flight only**: a stated first flight matches, a stated later flight fails,
- *   anything else is unknown.
+ *   anything else (or a conflict) is unknown.
  * - **Failure type**: a structured symptom matches when equal and fails when it is
  *   another value; without one (or for a question that is not about a mechanical cause)
  *   the criterion is semantic: a `matches` claim the checker must confirm.
  *
  * A presented case that fails a criterion withholds the summary (the composition should
  * have abstained or noted the case as a gap). Unknown decisions are shown labelled
- * unconfirmed, never as a match.
+ * unconfirmed, never as a match. Version 1 (Task 16c) compared facts only after reducing
+ * each to within, outside or unknown, so an approximate or bounded fact that conflicted
+ * with the deciding one went unnoticed (review I3).
  */
 import type {
   ComposeCase,
@@ -73,7 +98,7 @@ import type {
 import type { ReadingState } from './clarify.js';
 
 /** The version of the timing rules below; the check prompt states the same rules. */
-export const CHRONOLOGY_RULES_VERSION = 'chronology-rules-v1';
+export const CHRONOLOGY_RULES_VERSION = 'chronology-rules-v2';
 
 const FAILURE_PHRASE: Readonly<Record<FailureType, string>> = {
   total_power_loss: 'a total loss of engine power',
@@ -87,10 +112,11 @@ export type Decision = 'matches' | 'does_not_match' | 'unknown';
 /**
  * Why a decision stays unknown (content-free; `meta.criteria`): no fact from the relevant
  * maintenance (`unstated`), facts only from other anchors (`other_anchor`), facts not
- * attributable to one aircraft of a multi-aircraft event (`ambiguous_attribution`),
- * approximate values only (`approximate`), bounds that do not settle the limit
- * (`insufficient_bound`), facts that do not bear on this criterion (`not_settling`), or
- * conflicting facts (`conflict`).
+ * attributable to one aircraft of a multi-aircraft event, or naming more than one
+ * (`ambiguous_attribution`), approximate values only (`approximate`), bounds that do not
+ * settle the limit (`insufficient_bound`), facts that do not bear on this criterion
+ * (`not_settling`), hours not stated as flight hours (`operating_hours`), or facts that
+ * cannot hold together (`conflict`).
  */
 export const UNKNOWN_REASONS = [
   'unstated',
@@ -99,6 +125,7 @@ export const UNKNOWN_REASONS = [
   'approximate',
   'insufficient_bound',
   'not_settling',
+  'operating_hours',
   'conflict',
 ] as const;
 export type UnknownReason = (typeof UNKNOWN_REASONS)[number];
@@ -109,22 +136,6 @@ export type ChronologyRule = (typeof CHRONOLOGY_RULES)[number];
 
 type Chronology = ComposeChronology;
 type Fact = Chronology['facts'][number];
-type Limit = 'within' | 'outside' | 'unknown';
-
-/** One stated amount against its limit. */
-export function againstLimit(a: { value: number; bound: TimingBound }, limit: number): Limit {
-  switch (a.bound) {
-    case 'exact':
-      return a.value <= limit ? 'within' : 'outside';
-    case 'at_most':
-      return a.value <= limit ? 'within' : 'unknown';
-    case 'at_least':
-      return a.value > limit ? 'outside' : 'unknown';
-    case 'about':
-      // No bound is stated: no tolerance is assumed for eligibility.
-      return 'unknown';
-  }
-}
 
 /** What the server knows about a presented case's supplied passages, for attribution (rule A-2). */
 export interface CaseEvidence {
@@ -148,119 +159,201 @@ export function factAttribution(f: Pick<Fact, 'passageIds'>, ev: CaseEvidence): 
   return { scope: 'event', multiAircraft: ev.multiAircraft };
 }
 
-/** Facts that may decide a criterion (rules A-1 and A-2), or why there are none. */
-export function decidingFacts(c: Chronology | undefined, ev: CaseEvidence): { facts: Fact[]; reason?: UnknownReason } {
-  const relevant = (c?.facts ?? []).filter((f) => f.anchor === 'relevant_maintenance');
-  if (relevant.length === 0) return { facts: [], reason: (c?.facts.length ?? 0) > 0 ? 'other_anchor' : 'unstated' };
-  const attributable = relevant.filter((f) => {
-    const a = factAttribution(f, ev);
-    return a.scope === 'aircraft' || !a.multiAircraft;
-  });
-  return attributable.length === 0 ? { facts: [], reason: 'ambiguous_attribution' } : { facts: attributable };
+/** A relevant fact that may decide a criterion, with its index in the chronology's facts. */
+export interface DecidingFact {
+  index: number;
+  fact: Fact;
 }
 
-/** A decision with the passages it rests on (the deciding facts' passages, or none), the rules used and, when unknown, why. */
+/**
+ * Facts that may decide a criterion (rules A-1 and A-2), with their indices in the
+ * chronology, or why there are none. In a multi-aircraft event every one must be
+ * attributable to the same aircraft.
+ */
+export function decidingFacts(c: Chronology | undefined, ev: CaseEvidence): { facts: DecidingFact[]; reason?: UnknownReason } {
+  const relevant = (c?.facts ?? []).flatMap((fact, index) => (fact.anchor === 'relevant_maintenance' ? [{ index, fact }] : []));
+  if (relevant.length === 0) return { facts: [], reason: (c?.facts.length ?? 0) > 0 ? 'other_anchor' : 'unstated' };
+  if (!ev.multiAircraft) return { facts: relevant };
+  const attributed = relevant.map((d) => ({ d, a: factAttribution(d.fact, ev) }));
+  const aircraft = attributed.flatMap(({ d, a }) => (a.scope === 'aircraft' ? [{ d, key: a.aircraftKey }] : []));
+  // Facts about different aircraft are never combined (review M2).
+  if (aircraft.length === 0 || new Set(aircraft.map((x) => x.key)).size > 1) return { facts: [], reason: 'ambiguous_attribution' };
+  return { facts: aircraft.map((x) => x.d) };
+}
+
+/** A decision with the passages it rests on (the deciding facts' passages, or none), the facts and rules used and, when unknown, why. */
 export interface Decided {
   decision: Decision;
   passageIds: string[];
+  /** Indices (in the chronology's facts) of the facts the decision rests on. */
+  facts: number[];
   rules: ChronologyRule[];
   reason?: UnknownReason;
 }
 
-interface BasisState {
-  state: Limit;
+// ---------------------------------------------------------------------------
+// Facts as constraints on quantities (rules C-1, AP-1)
+
+/** What a fact measures (one anchor, one aircraft, one unit; never compared across them). */
+export type Quantity = 'days' | 'flight_hours' | 'operating_hours' | 'flights';
+
+/** One fact's constraint on one quantity: the range it allows, and whether it is approximate (AP-1: a point for the conflict test, deciding nothing). */
+export interface Constraint {
+  quantity: Quantity;
+  lo: number;
+  hi: number;
+  approximate: boolean;
+  rule: ChronologyRule | null;
+  fact: number;
+  passageIds: readonly string[];
+}
+
+const ranged = (value: number, bound: TimingBound): { lo: number; hi: number; approximate: boolean } => {
+  switch (bound) {
+    case 'exact':
+      return { lo: value, hi: value, approximate: false };
+    case 'at_most':
+      return { lo: 0, hi: value, approximate: false };
+    case 'at_least':
+      return { lo: value, hi: Number.POSITIVE_INFINITY, approximate: false };
+    case 'about':
+      return { lo: value, hi: value, approximate: true };
+  }
+};
+
+/** A fact's constraints (an "immediately before" fact constrains days and flights). */
+export function constraintsOf(f: Fact, index: number): Constraint[] {
+  const at = (quantity: Quantity, r: { lo: number; hi: number; approximate: boolean }, rule: ChronologyRule | null): Constraint => ({
+    quantity,
+    ...r,
+    rule,
+    fact: index,
+    passageIds: f.passageIds,
+  });
+  const point = (v: number) => ({ lo: v, hi: v, approximate: false });
+  const v = f.value;
+  const b = f.bound;
+  switch (f.relation) {
+    case 'calendar_days':
+      return v !== undefined && b !== undefined ? [at('days', ranged(v, b), 'TW-N')] : [];
+    case 'flight_hours':
+      return v !== undefined && b !== undefined ? [at('flight_hours', ranged(v, b), 'TW-N')] : [];
+    case 'operating_hours':
+      return v !== undefined && b !== undefined ? [at('operating_hours', ranged(v, b), null)] : [];
+    case 'same_day':
+      return [at('days', point(0), 'TW-C')];
+    case 'previous_day':
+      return [at('days', point(1), 'TW-C')];
+    case 'immediately_before':
+      return [at('days', { lo: 0, hi: 1, approximate: false }, 'TW-I'), at('flights', point(0), 'FF-I')];
+    case 'flight_ordinal':
+      return v !== undefined && Number.isInteger(v) && v >= 1 ? [at('flights', point(v - 1), 'FF-O')] : [];
+    case 'intervening_flights':
+      return v !== undefined && b !== undefined ? [at('flights', ranged(v, b), 'FF-Z')] : [];
+    case 'words':
+      return [];
+  }
+}
+
+/** One quantity's facts: in conflict (C-1), or the range the non-approximate ones narrow it to (null: none), with the facts and rules behind it. */
+export interface Settled {
+  conflict: boolean;
+  range: { lo: number; hi: number } | null;
+  approximate: boolean;
+  facts: number[];
   passageIds: string[];
-  rule: ChronologyRule;
-  bound?: TimingBound;
+  rules: ChronologyRule[];
 }
 
 const unique = <T>(xs: readonly T[]) => [...new Set(xs)];
 
-/** One basis from its facts (rule C-1: within and outside together decide nothing). */
-function settle(states: readonly BasisState[]): { state: Limit | 'conflict'; passageIds: string[]; rules: ChronologyRule[] } {
-  const within = states.filter((s) => s.state === 'within');
-  const outside = states.filter((s) => s.state === 'outside');
-  if (within.length > 0 && outside.length > 0) return { state: 'conflict', passageIds: [], rules: [] };
-  const deciding = within.length > 0 ? within : outside;
-  if (deciding.length === 0) return { state: 'unknown', passageIds: [], rules: [] };
-  return { state: within.length > 0 ? 'within' : 'outside', passageIds: unique(deciding.flatMap((s) => s.passageIds)), rules: unique(deciding.map((s) => s.rule)) };
+/** Settle one quantity from its constraints: a conflict when they cannot all hold (C-1, AP-1). */
+export function settleQuantity(constraints: readonly Constraint[]): Settled {
+  const lo = Math.max(...constraints.map((c) => c.lo));
+  const hi = Math.min(...constraints.map((c) => c.hi));
+  const exact = constraints.filter((c) => !c.approximate);
+  const approximate = constraints.some((c) => c.approximate);
+  if (constraints.length > 0 && lo > hi) return { conflict: true, range: null, approximate, facts: [], passageIds: [], rules: [] };
+  if (exact.length === 0) return { conflict: false, range: null, approximate, facts: [], passageIds: [], rules: [] };
+  return {
+    conflict: false,
+    range: { lo: Math.max(...exact.map((c) => c.lo)), hi: Math.min(...exact.map((c) => c.hi)) },
+    approximate,
+    facts: unique(exact.map((c) => c.fact)),
+    passageIds: unique(exact.flatMap((c) => [...c.passageIds])),
+    rules: unique(exact.flatMap((c) => (c.rule ? [c.rule] : []))),
+  };
 }
 
-/** Why a set of undecided facts leaves a criterion unknown. */
-function undecidedReason(states: readonly BasisState[], conflict: boolean): UnknownReason {
-  if (conflict) return 'conflict';
-  if (states.some((s) => s.bound === 'about')) return 'approximate';
-  if (states.some((s) => s.bound === 'at_most' || s.bound === 'at_least')) return 'insufficient_bound';
-  return 'not_settling';
+/** The constraints of the deciding facts, by quantity. */
+function quantities(facts: readonly DecidingFact[]): Map<Quantity, Constraint[]> {
+  const out = new Map<Quantity, Constraint[]>();
+  for (const { fact, index } of facts) for (const c of constraintsOf(fact, index)) out.set(c.quantity, [...(out.get(c.quantity) ?? []), c]);
+  return out;
 }
 
-/** The timing window ("within D calendar days or H flight hours") under rules TW-N, TW-C, TW-I. */
+type Limit = 'within' | 'outside' | 'unknown';
+
+const againstRange = (r: { lo: number; hi: number }, limit: number): Limit => (r.hi <= limit ? 'within' : r.lo > limit ? 'outside' : 'unknown');
+
+/** One stated amount against its limit (rule TW-N for a single fact). */
+export function againstLimit(a: { value: number; bound: TimingBound }, limit: number): Limit {
+  if (a.bound === 'about') return 'unknown';
+  return againstRange(ranged(a.value, a.bound), limit);
+}
+
+/** Why a criterion stays unknown when nothing conflicted and nothing decided: from the quantities it reads that stayed undecided. */
+function undecided(open: readonly Settled[], extra?: UnknownReason): UnknownReason {
+  if (open.some((s) => s.range !== null)) return 'insufficient_bound';
+  if (open.some((s) => s.approximate)) return 'approximate';
+  return extra ?? 'not_settling';
+}
+
+const NOTHING = (reason: UnknownReason): Decided => ({ decision: 'unknown', passageIds: [], facts: [], rules: [], reason });
+
+/** The timing window ("within D calendar days or H flight hours") under rules C-1, AP-1, TW-N, TW-C, TW-I, TW-H. */
 export function timingDecision(window: TimingWindow, c: Chronology | undefined, ev: CaseEvidence): Decided {
   const { facts, reason } = decidingFacts(c, ev);
-  if (facts.length === 0) return { decision: 'unknown', passageIds: [], rules: [], reason: reason ?? 'unstated' };
-  const days: BasisState[] = [];
-  const hours: BasisState[] = [];
-  for (const f of facts) {
-    const ids = [...f.passageIds];
-    const numbered = f.value !== undefined && f.bound !== undefined ? { value: f.value, bound: f.bound } : null;
-    switch (f.relation) {
-      case 'calendar_days':
-        if (window.days !== null && numbered) days.push({ state: againstLimit(numbered, window.days), passageIds: ids, rule: 'TW-N', bound: numbered.bound });
-        break;
-      case 'flight_hours':
-        if (window.flightHours !== null && numbered) hours.push({ state: againstLimit(numbered, window.flightHours), passageIds: ids, rule: 'TW-N', bound: numbered.bound });
-        break;
-      case 'same_day':
-      case 'previous_day':
-        // A calendar-date difference of 0 or 1: within every window of at least one day.
-        if (window.days !== null) days.push({ state: 'within', passageIds: ids, rule: 'TW-C' });
-        break;
-      case 'immediately_before':
-        if (window.days !== null) days.push({ state: 'within', passageIds: ids, rule: 'TW-I' });
-        break;
-      default:
-        // Which flight, flights in between and other words decide no window.
-        break;
-    }
-  }
-  const bases = [...(window.days !== null ? [settle(days)] : []), ...(window.flightHours !== null ? [settle(hours)] : [])];
-  const within = bases.filter((b) => b.state === 'within');
-  if (within.length > 0) return { decision: 'matches', passageIds: unique(within.flatMap((b) => b.passageIds)), rules: unique(within.flatMap((b) => b.rules)) };
-  if (bases.length > 0 && bases.every((b) => b.state === 'outside')) {
-    return { decision: 'does_not_match', passageIds: unique(bases.flatMap((b) => b.passageIds)), rules: unique(bases.flatMap((b) => b.rules)) };
-  }
-  return { decision: 'unknown', passageIds: [], rules: [], reason: undecidedReason([...days, ...hours], bases.some((b) => b.state === 'conflict')) };
-}
-
-/** First flight only, under rules FF-O, FF-Z, FF-I. */
-export function firstFlightDecision(c: Chronology | undefined, ev: CaseEvidence): Decided {
-  const { facts, reason } = decidingFacts(c, ev);
-  if (facts.length === 0) return { decision: 'unknown', passageIds: [], rules: [], reason: reason ?? 'unstated' };
-  const first: BasisState[] = [];
-  const later: BasisState[] = [];
-  const undecided: BasisState[] = [];
-  for (const f of facts) {
-    const ids = [...f.passageIds];
-    if (f.relation === 'flight_ordinal' && f.value !== undefined) {
-      (f.value === 1 ? first : later).push({ state: 'within', passageIds: ids, rule: 'FF-O' });
-    } else if (f.relation === 'intervening_flights' && f.value !== undefined && f.bound !== undefined) {
-      if (f.value === 0 && (f.bound === 'exact' || f.bound === 'at_most')) first.push({ state: 'within', passageIds: ids, rule: 'FF-Z' });
-      else if (f.value >= 1 && (f.bound === 'exact' || f.bound === 'at_least')) later.push({ state: 'within', passageIds: ids, rule: 'FF-Z' });
-      else undecided.push({ state: 'unknown', passageIds: ids, rule: 'FF-Z', bound: f.bound });
-    } else if (f.relation === 'immediately_before') {
-      first.push({ state: 'within', passageIds: ids, rule: 'FF-I' });
-    }
-  }
-  if (first.length > 0 && later.length > 0) return { decision: 'unknown', passageIds: [], rules: [], reason: 'conflict' };
-  const deciding = first.length > 0 ? first : later;
-  if (deciding.length > 0) {
+  if (facts.length === 0) return NOTHING(reason ?? 'unstated');
+  const q = quantities(facts);
+  const read: [Quantity, number][] = [
+    ...(window.days !== null ? ([['days', window.days]] as [Quantity, number][]) : []),
+    ...(window.flightHours !== null ? ([['flight_hours', window.flightHours]] as [Quantity, number][]) : []),
+  ];
+  const settled = read.map(([quantity, limit]) => ({ limit, s: settleQuantity(q.get(quantity) ?? []), present: (q.get(quantity) ?? []).length > 0 }));
+  if (settled.some((x) => x.s.conflict)) return NOTHING('conflict');
+  const states = settled.map((x) => ({ ...x, state: x.s.range ? againstRange(x.s.range, x.limit) : ('unknown' as Limit) }));
+  const within = states.filter((x) => x.state === 'within');
+  if (within.length > 0) {
     return {
-      decision: first.length > 0 ? 'matches' : 'does_not_match',
-      passageIds: unique(deciding.flatMap((s) => s.passageIds)),
-      rules: unique(deciding.map((s) => s.rule)),
+      decision: 'matches',
+      passageIds: unique(within.flatMap((x) => x.s.passageIds)),
+      facts: unique(within.flatMap((x) => x.s.facts)),
+      rules: unique(within.flatMap((x) => x.s.rules)),
     };
   }
-  return { decision: 'unknown', passageIds: [], rules: [], reason: undecidedReason(undecided, false) };
+  if (states.length > 0 && states.every((x) => x.state === 'outside')) {
+    return {
+      decision: 'does_not_match',
+      passageIds: unique(states.flatMap((x) => x.s.passageIds)),
+      facts: unique(states.flatMap((x) => x.s.facts)),
+      rules: unique(states.flatMap((x) => x.s.rules)),
+    };
+  }
+  const hoursOnlyOperating = window.flightHours !== null && (q.get('operating_hours') ?? []).length > 0 && !settled.some((x) => x.present);
+  return NOTHING(undecided(states.filter((x) => x.state === 'unknown').map((x) => x.s), hoursOnlyOperating ? 'operating_hours' : undefined));
+}
+
+/** First flight only, under rules C-1, AP-1, FF-O, FF-Z, FF-I. */
+export function firstFlightDecision(c: Chronology | undefined, ev: CaseEvidence): Decided {
+  const { facts, reason } = decidingFacts(c, ev);
+  if (facts.length === 0) return NOTHING(reason ?? 'unstated');
+  const constraints = quantities(facts).get('flights') ?? [];
+  const s = settleQuantity(constraints);
+  if (s.conflict) return NOTHING('conflict');
+  if (s.range && s.range.hi === 0) return { decision: 'matches', passageIds: s.passageIds, facts: s.facts, rules: s.rules };
+  if (s.range && s.range.lo >= 1) return { decision: 'does_not_match', passageIds: s.passageIds, facts: s.facts, rules: s.rules };
+  return NOTHING(undecided([s]));
 }
 
 /** One criterion's decision for one case, with its checker claim and the passages that claim cites. */
@@ -279,17 +372,10 @@ export interface CriterionCheck {
   absence: boolean;
   /** The timing rules that decided it (empty for an unknown decision and for the failure type). */
   rules: ChronologyRule[];
+  /** Indices (in the case's chronology facts) of the facts the decision rests on (diagnostic; the display reads every timing fact of the case). */
+  facts: number[];
   /** Why an unknown decision stays unknown. */
   reason?: UnknownReason;
-}
-
-/** The criteria in effect for a brief, as the checker's `<criteria>` lines. */
-export function criteriaLines(r: ReadingState): string[] {
-  return [
-    ...(r.timingWindow ? [`Timing: the event happened within ${windowWords(r.timingWindow.value)} after the relevant maintenance.`] : []),
-    ...(r.firstFlightOnly?.value ? ['First flight: the event happened on the first flight after the relevant maintenance.'] : []),
-    ...(r.failureType ? [`Failure: the event involved ${FAILURE_PHRASE[r.failureType.value]}.`] : []),
-  ];
 }
 
 function windowWords(w: TimingWindow): string {
@@ -338,6 +424,7 @@ export function evaluateCase(r: ReadingState, k: ComposeCase, mechanicalCause: b
       passageIds: unknown ? all : d.passageIds,
       absence: d.decision === 'unknown',
       rules: d.rules,
+      facts: d.facts,
       ...(d.reason ? { reason: d.reason } : {}),
     };
   };
@@ -355,11 +442,11 @@ export function evaluateCase(r: ReadingState, k: ComposeCase, mechanicalCause: b
     const symptom = mechanicalCause ? k.symptom : undefined;
     if (!symptom) {
       // Semantic: the checker must confirm it on all of the case's passages, or the summary is withheld.
-      out.push({ criterion: 'failure_type', decision: 'matches', claim: CRITERION_CLAIMS.failure_type.matches(f), passageIds: all, absence: false, rules: [] });
+      out.push({ criterion: 'failure_type', decision: 'matches', claim: CRITERION_CLAIMS.failure_type.matches(f), passageIds: all, absence: false, rules: [], facts: [] });
     } else {
       const decision = symptom.value === f ? 'matches' : 'does_not_match';
       const ids = symptom.passageIds.length > 0 ? [...symptom.passageIds] : all;
-      out.push({ criterion: 'failure_type', decision, claim: CRITERION_CLAIMS.failure_type[decision](f), passageIds: ids, absence: false, rules: [] });
+      out.push({ criterion: 'failure_type', decision, claim: CRITERION_CLAIMS.failure_type[decision](f), passageIds: ids, absence: false, rules: [], facts: [] });
     }
   }
   return out;

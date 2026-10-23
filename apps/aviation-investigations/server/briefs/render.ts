@@ -6,18 +6,24 @@
  * - the check input (gate G6 #1, #5): every claim the reader would see as a claim with
  *   the passages it says it rests on (summary sentences, `why` lines, classifications,
  *   maintenance, symptom, each chronology fact, attribution, every criterion decision
- *   and gaps), every verified passage of each case those claims are about, and the
- *   reader's criteria as server templates; never the question, the planner's output or
- *   earlier answers;
- * - the briefing-sheet result (cards, groups, summary segments, chips, labels), with
- *   accepted quotes shown whole, timing values shown exactly as checked, and cases a
- *   criterion is unconfirmed for flagged on their card and their summary citations;
- * - the evidence a finished step keeps for the case context, with each structured
- *   claim's own passages and each criterion's checked passage set.
+ *   and gaps), every verified passage of each case those claims are about, and each of
+ *   those cases' header line (server data, Task 16d); never the question, the reader's
+ *   criteria, the planner's output or earlier answers;
+ * - each claim's back-reference to the element it stands for and its stable key
+ *   (`ClaimMeta.ref`, `ClaimMeta.key`), and the display plan the projection reads
+ *   (`displayPlan`, server/briefs/display.ts);
+ * - the briefing-sheet result (cards, groups, summary segments, chips, labels) rendered
+ *   from the display projection's outcome only: what it removed is absent, with removal
+ *   markers and counts; accepted quotes are shown whole, timing values exactly as
+ *   checked, and cases whose criterion is unconfirmed (or not verified) flagged on their
+ *   card and their summary citations;
+ * - the evidence a finished step keeps for the case context, with each shown structured
+ *   claim's own passages and each shown criterion's checked passage set.
  */
-import { buildHeadline, aircraftName } from '../../shared/case-view.js';
+import { buildHeadline, aircraftName, placePhrase } from '../../shared/case-view.js';
 import {
   GLYPH_KINDS,
+  type BriefCheck,
   type BriefFilters,
   type BriefResult,
   type CaseCard,
@@ -42,6 +48,7 @@ import {
 import { SECTION_LABEL } from '../../shared/contracts/search.js';
 import { MAX_CHECK_CLAIMS, type CheckInput, type ClaimKind, type ComposeInput } from '../ai/provider.js';
 import { maintenanceWords, type CaseEvidence, type CriterionCheck, type Decision } from './criteria.js';
+import { DISPLAY_RULES_VERSION, refersBack, type DisplayOutcome, type DisplayPlan } from './display.js';
 import type { CaseSummary, EvidencePassage } from './evidence.js';
 import { splitSentences } from './sentences.js';
 import { NO_MATCH_LINES } from './static-replies.js';
@@ -53,6 +60,13 @@ export interface VerifiedCase {
   ntsbNo: string;
   rank: number;
   summary: CaseSummary;
+  /** The case's header line from coded fields (`caseHeader`): server data for the compose stage. */
+  header: string;
+  /**
+   * The check stage's header (`checkHeader`): only the aircraft, place and date, so the
+   * checker can verify how a claim names the case and nothing else (16c review M5).
+   */
+  checkHeader: string;
   passages: {
     passageId: string;
     role: EvidencePassage['role'];
@@ -101,6 +115,20 @@ export function caseHeader(s: CaseSummary): string {
   return `${headline}${r.date ? ` · ${r.date}` : ''}${count}`.slice(0, 400);
 }
 
+/**
+ * "Cessna 150M and Lockheed-Martin F-16CM, near Moncks Corner, South Carolina · 2015-07-07 ·
+ * 2 aircraft": the check stage's server data about a case (Task 16d; 16c review M5): the
+ * aircraft, the place and the date from coded fields, without the defining event or phase
+ * the compose header names, which a claim must take from the passages.
+ */
+export function checkHeader(s: CaseSummary): string {
+  const r = s.row;
+  const names = r.aircraft.map((a) => aircraftName(a));
+  const place = placePhrase(r.city, r.state.code);
+  const count = r.aircraft.length > 1 ? ` · ${r.aircraft.length} aircraft` : '';
+  return `${names.join(' and ')}${place ? `, ${place}` : ''}${r.date ? ` · ${r.date}` : ''}${count}`.slice(0, 400);
+}
+
 function aircraftLabel(s: CaseSummary, key: number | null): string | undefined {
   if (key === null) return undefined;
   const a = s.row.aircraft.find((x) => x.aircraftKey === key);
@@ -128,7 +156,7 @@ export function composeInput(
     ...(opts.refinement ? { refinement: opts.refinement } : {}),
     mechanicalCause: opts.mechanicalCause,
     interpretations: opts.interpretations.slice(0, 4),
-    cases: cases.map((c) => ({ ntsbNo: c.ntsbNo, header: caseHeader(c.summary), passages: c.passages.map((p) => modelPassage(c, p)) })),
+    cases: cases.map((c) => ({ ntsbNo: c.ntsbNo, header: c.header, passages: c.passages.map((p) => modelPassage(c, p)) })),
   };
 }
 
@@ -161,11 +189,14 @@ export interface ChronologyFact {
   bound: TimingBound;
   claim: string;
   passageIds: string[];
+  /** Its index in the composition's `chronology.facts` (its identity; chips are reordered). */
+  fact: number;
 }
 
 /** Display order of the relations. */
 const RELATION_ORDER: readonly ChronologyRelation[] = [
   'flight_hours',
+  'operating_hours',
   'calendar_days',
   'same_day',
   'previous_day',
@@ -189,8 +220,12 @@ export function ordinalWord(n: number): string {
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** One relevant fact as its chip basis, value and checker claim; null when its parts are inconsistent (validation refuses those first). */
-function factView(f: ComposeChronologyFact, m: string): ChronologyFact | null {
+/**
+ * One relevant fact as its chip basis, value and checker claim; null when its parts are
+ * inconsistent (validation refuses those first). A template asserts flight hours only for
+ * `flight_hours`, the relation compose.v7 keeps for hours a passage calls flight hours.
+ */
+function factView(f: ComposeChronologyFact, m: string, fact: number): ChronologyFact | null {
   const ids = [...f.passageIds];
   const v = f.value;
   const b = f.bound ?? 'exact';
@@ -200,14 +235,25 @@ function factView(f: ComposeChronologyFact, m: string): ChronologyFact | null {
     case 'calendar_days': {
       if (v === undefined || f.bound === undefined) return null;
       const unit = f.relation === 'flight_hours' ? plural(v, 'flight hour', 'flight hours') : plural(v, 'calendar day', 'calendar days');
-      return { basis: f.relation, value: v, bound: b, claim: `The event happened ${BOUND_WORD[b]}${timingValueText(v)} ${unit} after ${m}.`, passageIds: ids };
+      return { basis: f.relation, value: v, bound: b, claim: `The event happened ${BOUND_WORD[b]}${timingValueText(v)} ${unit} after ${m}.`, passageIds: ids, fact };
+    }
+    case 'operating_hours': {
+      if (v === undefined || f.bound === undefined) return null;
+      return {
+        basis: 'operating_hours',
+        value: v,
+        bound: b,
+        claim: `A supplied passage puts the event ${BOUND_WORD[b]}${timingValueText(v)} ${plural(v, 'hour', 'hours')} after ${m}, without calling them flight hours.`,
+        passageIds: ids,
+        fact,
+      };
     }
     case 'same_day':
-      return { basis: 'same_day', value: null, bound: 'exact', claim: `${capital} was done on the same calendar day as the event.`, passageIds: ids };
+      return { basis: 'same_day', value: null, bound: 'exact', claim: `${capital} was done on the same calendar day as the event.`, passageIds: ids, fact };
     case 'previous_day':
-      return { basis: 'previous_day', value: null, bound: 'exact', claim: `${capital} was done on the calendar day before the event.`, passageIds: ids };
+      return { basis: 'previous_day', value: null, bound: 'exact', claim: `${capital} was done on the calendar day before the event.`, passageIds: ids, fact };
     case 'immediately_before':
-      return { basis: 'immediately_before', value: null, bound: 'exact', claim: `${capital} was completed immediately before the flight on which the event happened.`, passageIds: ids };
+      return { basis: 'immediately_before', value: null, bound: 'exact', claim: `${capital} was completed immediately before the flight on which the event happened.`, passageIds: ids, fact };
     case 'flight_ordinal':
       if (v === undefined || !Number.isInteger(v) || v < 1) return null;
       return {
@@ -216,14 +262,15 @@ function factView(f: ComposeChronologyFact, m: string): ChronologyFact | null {
         bound: 'exact',
         claim: `The event happened on the ${ordinalWord(v)} flight after ${m}.`,
         passageIds: ids,
+        fact,
       };
     case 'intervening_flights': {
       if (v === undefined || f.bound === undefined) return null;
       const count = v === 0 && b === 'exact' ? 'No completed flight' : `${capitalWord(BOUND_WORD[b])}${timingValueText(v)} completed ${plural(v, 'flight', 'flights')}`;
-      return { basis: 'flights_between', value: v, bound: b, claim: `${count} came between ${m} and the flight on which the event happened.`, passageIds: ids };
+      return { basis: 'flights_between', value: v, bound: b, claim: `${count} came between ${m} and the flight on which the event happened.`, passageIds: ids, fact };
     }
     case 'words':
-      return { basis: 'qualitative', value: null, bound: 'exact', claim: `A supplied passage describes the time between ${m} and the event in words, without a number.`, passageIds: ids };
+      return { basis: 'qualitative', value: null, bound: 'exact', claim: `A supplied passage describes the time between ${m} and the event in words, without a number.`, passageIds: ids, fact };
   }
 }
 
@@ -231,20 +278,22 @@ const capitalWord = (s: string) => (s ? `${s.charAt(0).toUpperCase()}${s.slice(1
 
 /**
  * The case's displayed chronology facts (from its relevant maintenance) in display order:
- * flight hours, calendar days, the same or the previous day, immediately before, which
- * flight, flights in between, words.
+ * flight hours, operating hours, calendar days, the same or the previous day, immediately
+ * before, which flight, flights in between, words. Each keeps its index in the
+ * composition's facts (`fact`).
  */
 export function chronologyFacts(c: Chronology | undefined): ChronologyFact[] {
   if (!c) return [];
   const m = maintenanceWords(c);
+  const indexed = c.facts.map((f, i) => ({ f, i }));
   return RELATION_ORDER.flatMap((relation) =>
-    c.facts.filter((f) => f.anchor === 'relevant_maintenance' && f.relation === relation).flatMap((f) => factView(f, m) ?? []),
+    indexed.filter(({ f }) => f.anchor === 'relevant_maintenance' && f.relation === relation).flatMap(({ f, i }) => factView(f, m, i) ?? []),
   );
 }
 
 const BOUND_PREFIX = { exact: '', about: '≈ ', at_most: '≤ ', at_least: '≥ ' } as const;
 
-/** "5.1 FH", "≤ 17 DAYS", "SAME DAY", "PREVIOUS DAY", "IMMEDIATELY BEFORE", "1ST FLIGHT", "3RD FLIGHT", "0 FLIGHTS BETWEEN", "IN WORDS". */
+/** "5.1 FH", "≈ 198 H", "≤ 17 DAYS", "SAME DAY", "PREVIOUS DAY", "IMMEDIATELY BEFORE", "1ST FLIGHT", "3RD FLIGHT", "0 FLIGHTS BETWEEN", "IN WORDS". */
 export function timingChip(f: Pick<ChronologyFact, 'basis' | 'value' | 'bound'>): TimingChip {
   const v = f.value ?? 0;
   const prefix = BOUND_PREFIX[f.bound];
@@ -252,6 +301,8 @@ export function timingChip(f: Pick<ChronologyFact, 'basis' | 'value' | 'bound'>)
     switch (f.basis) {
       case 'flight_hours':
         return `${prefix}${timingValueText(v)} FH`;
+      case 'operating_hours':
+        return `${prefix}${timingValueText(v)} H`;
       case 'calendar_days':
         return `${prefix}${timingValueText(v)} ${v === 1 ? 'DAY' : 'DAYS'}`;
       case 'same_day':
@@ -315,11 +366,53 @@ export function summarySentences(summary: string): string[] {
 
 const MARKER = /\[\[case:([A-Z0-9]+)\]\]/g;
 
+/** The cases a summary sentence cites, in order, once each. */
+export function sentenceCases(sentence: string): string[] {
+  return [...new Set([...sentence.matchAll(MARKER)].map((m) => m[1]!))];
+}
+
+/**
+ * The composition element a claim stands for (Task 16d; 16c review §10): a summary
+ * sentence, a field of a presented case (by its index in `composition.cases`), one timing
+ * fact (`fact`: its index in the case's `chronology.facts`; `chip`: its position among the
+ * chips), a criterion decision, one quote (`quote`: its index in the case's quotes;
+ * `citation`: its index in the resolved citations) or a gap note.
+ */
+export type ClaimRef =
+  | { kind: 'summary'; sentence: number }
+  | { kind: 'why' | 'classification' | 'maintenance' | 'symptom'; case: number }
+  | { kind: 'timing'; case: number; fact: number; chip: number }
+  | { kind: 'criterion'; case: number; criterion: Criterion }
+  | { kind: 'attribution'; case: number; quote: number; citation: number }
+  | { kind: 'gap'; gap: number };
+
+/**
+ * A claim's stable key (`display-deps-v1`): `summary.<i>`, `case.<ntsbNo>.why`,
+ * `.classification`, `.maintenance`, `.symptom`, `.timing.<fact>`, `.criterion.<criterion>`,
+ * `.quote.<quote>`, or `gap.<g>`. Content-free (case numbers are public).
+ */
+export function claimKey(ref: ClaimRef, ntsbNo: string | null): string {
+  switch (ref.kind) {
+    case 'summary':
+      return `summary.${ref.sentence}`;
+    case 'gap':
+      return `gap.${ref.gap}`;
+    case 'timing':
+      return `case.${ntsbNo}.timing.${ref.fact}`;
+    case 'criterion':
+      return `case.${ntsbNo}.criterion.${ref.criterion}`;
+    case 'attribution':
+      return `case.${ntsbNo}.quote.${ref.quote}`;
+    default:
+      return `case.${ntsbNo}.${ref.kind}`;
+  }
+}
+
 /**
  * What the pipeline keeps about each claim, by index (claim `C<i+1>`): its kind and case,
- * the passages of the cases it is about (its verdict's evidence must come from them), and
- * for a criterion claim the criterion and decision (a contradicted `unknown` decision is
- * `chronology_missed`).
+ * the passages of the cases it is about (its verdict's evidence must come from them), for
+ * a criterion claim the criterion and decision (a contradicted `unknown` decision is
+ * `chronology_missed`), and its back-reference and stable key for the display projection.
  */
 export interface ClaimMeta {
   kind: ClaimKind;
@@ -329,6 +422,12 @@ export interface ClaimMeta {
   scope: string[];
   criterion?: Criterion;
   decision?: Decision;
+  /** The element it stands for. */
+  ref: ClaimRef;
+  /** Stable display key (`claimKey`). */
+  key: string;
+  /** The cases it is about: a summary sentence's markers, otherwise its case. */
+  cases: string[];
 }
 
 /** The longest claim text the check stage takes (CheckInputSchema). */
@@ -336,8 +435,6 @@ const MAX_CLAIM_TEXT = 2_000;
 
 export interface CheckOptions {
   mechanicalCause: boolean;
-  /** The reader's criteria as server templates (server/briefs/criteria.ts `criteriaLines`). */
-  criteria: string[];
   /** Per presented case, every criterion decision as a claim with its cited passages (`evaluateCase`). */
   criterionChecks: ReadonlyMap<string, readonly CriterionCheck[]>;
 }
@@ -345,16 +442,18 @@ export interface CheckOptions {
 /**
  * The check stage's input for a validated composition. The passages are every verified
  * passage of each case a claim is about (a presented case, or a case a gap note is
- * about), so the checker can see contradicting evidence the composition did not quote.
- * Claims get server-issued ids `C1`.. in order. Each claim cites what it says it rests
- * on: a summary sentence the passages of the cases it marks; a `why` line its case's
- * quoted passages; a structured value its own passages; an attribution claim its quote's
- * passage; a criterion decision the facts that decided it. An **absence claim** (a
- * statement that something is not in the supplied passages: an insufficient
- * classification, no maintenance evidence, an unknown criterion decision, a gap note)
- * cites every supplied passage of its case, so its scope is explicit and complete; so
- * does a semantic criterion. `overflow`: some claim did not fit the input bounds; it
- * would go unchecked, so the caller must treat the check as inconclusive.
+ * about), so the checker can see contradicting evidence the composition did not quote,
+ * and each of those cases' header line is server data. Claims get server-issued ids
+ * `C1`.. in order. Each claim cites what it says it rests on: a summary sentence the
+ * passages of the cases it marks; a `why` line its case's quoted passages; a structured
+ * value its own passages; an attribution claim its quote's passage; a criterion decision
+ * the facts that decided it. An **absence claim** (a statement that something is not in
+ * the supplied passages: an insufficient classification, no maintenance evidence, an
+ * unknown criterion decision, a gap note) cites every supplied passage of its case, so its
+ * scope is explicit and complete; so does a semantic criterion. `overflow`: some claim did
+ * not fit the input bounds; it would go unchecked, so the caller must treat the check as
+ * inconclusive. The reader's criteria are not in the input: each criterion claim states
+ * its own (Task 16d).
  */
 export function checkInput(
   c: ComposeOutput,
@@ -374,6 +473,7 @@ export function checkInput(
   let overflow = false;
   const add = (
     kind: ClaimKind,
+    ref: ClaimRef,
     about: readonly string[],
     text: string,
     passageIds: readonly string[],
@@ -394,45 +494,63 @@ export function checkInput(
       scope: [...new Set(about.flatMap(all))],
       ...(extra.criterion ? { criterion: extra.criterion } : {}),
       ...(extra.decision ? { decision: extra.decision } : {}),
+      ref,
+      key: claimKey(ref, kind === 'summary' || kind === 'gap' ? null : ntsbNo),
+      cases: [...about],
     });
   };
   const own = (ids: readonly string[], n: string) => (ids.length > 0 ? ids : all(n));
 
-  for (const sentence of summarySentences(c.summary)) {
-    const marked = [...new Set([...sentence.matchAll(MARKER)].map((m) => m[1]!))];
-    add('summary', marked, sentence.replace(MARKER, (_, n: string) => `(${n})`), marked.flatMap(all));
-  }
+  summarySentences(c.summary).forEach((sentence, si) => {
+    const marked = sentenceCases(sentence);
+    add('summary', { kind: 'summary', sentence: si }, marked, sentence.replace(MARKER, (_, n: string) => `(${n})`), marked.flatMap(all));
+  });
   const groupOf = new Map<string, GroupKind>();
   for (const g of c.groups) for (const n of g.caseNumbers) groupOf.set(n, g.kind);
-  for (const k of c.cases) {
+  c.cases.forEach((k, ci) => {
     const n = k.ntsbNo;
-    add('why', [n], k.why, quoted.get(n) ?? all(n));
+    add('why', { kind: 'why', case: ci }, [n], k.why, quoted.get(n) ?? all(n));
     const group = groupOf.get(n);
     if (opts.mechanicalCause && group && group !== 'examples') {
       const absent = ABSENT_CLASSIFICATION.has(group);
-      add('classification', [n], CLASSIFICATION_CLAIM[group], absent ? all(n) : own(k.evidencePassageIds, n), { absence: absent });
+      add('classification', { kind: 'classification', case: ci }, [n], CLASSIFICATION_CLAIM[group], absent ? all(n) : own(k.evidencePassageIds, n), { absence: absent });
     }
     if (opts.mechanicalCause && k.maintenance && k.maintenance.relation !== 'unknown') {
       const absent = k.maintenance.relation === 'no_evidence';
-      add('maintenance', [n], MAINTENANCE_CLAIM[k.maintenance.relation], absent ? all(n) : own(k.maintenance.passageIds, n), { absence: absent });
+      add('maintenance', { kind: 'maintenance', case: ci }, [n], MAINTENANCE_CLAIM[k.maintenance.relation], absent ? all(n) : own(k.maintenance.passageIds, n), {
+        absence: absent,
+      });
     }
-    if (opts.mechanicalCause && k.symptom && k.symptom.value !== 'other') add('symptom', [n], SYMPTOM_CLAIM[k.symptom.value], own(k.symptom.passageIds, n));
-    for (const f of chronologyFacts(k.chronology)) add('timing', [n], f.claim, own(f.passageIds, n));
+    if (opts.mechanicalCause && k.symptom && k.symptom.value !== 'other') {
+      add('symptom', { kind: 'symptom', case: ci }, [n], SYMPTOM_CLAIM[k.symptom.value], own(k.symptom.passageIds, n));
+    }
+    chronologyFacts(k.chronology).forEach((f, chip) => add('timing', { kind: 'timing', case: ci, fact: f.fact, chip }, [n], f.claim, own(f.passageIds, n)));
     for (const d of opts.criterionChecks.get(n) ?? []) {
-      add('criterion', [n], d.claim, d.absence ? all(n) : own(d.passageIds, n), { absence: d.absence, criterion: d.criterion, decision: d.decision });
+      add('criterion', { kind: 'criterion', case: ci, criterion: d.criterion }, [n], d.claim, d.absence ? all(n) : own(d.passageIds, n), {
+        absence: d.absence,
+        criterion: d.criterion,
+        decision: d.decision,
+      });
     }
-  }
-  for (const cit of citations) {
+  });
+  citations.forEach((cit, ix) => {
     const speaker = c.cases[cit.caseIndex]?.quotes[cit.quoteIndex]?.speaker ?? 'investigators';
-    add('attribution', [cit.ntsbNo], `${SPEAKER_CLAIM[speaker]} “${cit.text}”`, [cit.passageId]);
-  }
+    add('attribution', { kind: 'attribution', case: cit.caseIndex, quote: cit.quoteIndex, citation: ix }, [cit.ntsbNo], `${SPEAKER_CLAIM[speaker]} “${cit.text}”`, [
+      cit.passageId,
+    ]);
+  });
   // A gap note says what the case's supplied passages do not show: it is judged on all of them.
-  for (const g of c.gaps) add('gap', [g.ntsbNo], g.note, all(g.ntsbNo).length > 0 ? all(g.ntsbNo) : g.passageIds, { absence: true });
+  c.gaps.forEach((g, gi) => add('gap', { kind: 'gap', gap: gi }, [g.ntsbNo], g.note, all(g.ntsbNo).length > 0 ? all(g.ntsbNo) : g.passageIds, { absence: true }));
 
-  // Every verified passage of every case a claim is about, in bundle order.
+  // Every verified passage of every case a claim is about, in bundle order, with its header.
   const about = new Set([...c.cases.map((k) => k.ntsbNo), ...c.gaps.map((g) => g.ntsbNo)]);
-  for (const sentence of summarySentences(c.summary)) for (const m of sentence.matchAll(MARKER)) about.add(m[1]!);
-  return { input: { criteria: opts.criteria.slice(0, 4), passages: checkPassages(cases.values(), about), claims }, claims: meta, overflow };
+  for (const sentence of summarySentences(c.summary)) for (const n of sentenceCases(sentence)) about.add(n);
+  return { input: { cases: checkCases(cases.values(), about), passages: checkPassages(cases.values(), about), claims }, claims: meta, overflow };
+}
+
+/** The header lines of the cases in `about`, in bundle order (server data for the check stage). */
+export function checkCases(cases: Iterable<VerifiedCase>, about: ReadonlySet<string>): CheckInput['cases'] {
+  return [...cases].filter((vc) => about.has(vc.ntsbNo)).map((vc) => ({ ntsbNo: vc.ntsbNo, header: vc.checkHeader }));
 }
 
 /** Every verified passage of the cases in `about`, in bundle order, as the check stage reads them (canonical ids). */
@@ -443,6 +561,34 @@ export function checkPassages(cases: Iterable<VerifiedCase>, about: ReadonlySet<
     for (const p of vc.passages) passages.push({ ...modelPassage(vc, p), ntsbNo: vc.ntsbNo });
   }
   return passages;
+}
+
+/**
+ * The display plan of a validated composition and the claims `checkInput` rendered from
+ * it (server/briefs/display.ts): every claim's stable key, kind and cases, each criterion
+ * claim's decision, the presented cases and whether a classification claim carries their
+ * group, and each summary sentence's cases and back-reference flag (`refersBack`).
+ */
+export function displayPlan(c: ComposeOutput, claims: readonly ClaimMeta[], mechanicalCause: boolean): DisplayPlan {
+  const groupOf = new Map<string, GroupKind>();
+  for (const g of c.groups) for (const n of g.caseNumbers) groupOf.set(n, g.kind);
+  return {
+    rules: DISPLAY_RULES_VERSION,
+    shape: c.outcome === 'answer' ? 'answer' : 'abstention',
+    grouping: c.outcome === 'answer' ? (mechanicalCause ? 'mechanical' : 'examples') : null,
+    cases: c.cases.map((k) => {
+      const g = groupOf.get(k.ntsbNo);
+      return { ntsbNo: k.ntsbNo, classified: mechanicalCause && g !== undefined && g !== 'examples' };
+    }),
+    sentences: summarySentences(c.summary).map((s) => ({ cases: sentenceCases(s), backReference: refersBack(s) })),
+    claims: claims.map((m) => ({
+      key: m.key,
+      kind: m.kind,
+      cases: [...m.cases],
+      ...(m.criterion ? { criterion: m.criterion } : {}),
+      ...(m.decision ? { decision: m.decision } : {}),
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +636,37 @@ export function summarySegments(summary: string, unconfirmed: ReadonlySet<string
   return out;
 }
 
+/**
+ * The shown summary: the sentences the projection kept, whole and in order, each run of
+ * removed sentences replaced by one `removed` marker with its count (no text replaces
+ * them).
+ */
+export function displayedSummary(sentences: readonly string[], shown: readonly boolean[], unconfirmed: ReadonlySet<string>): SummarySegment[] {
+  const out: SummarySegment[] = [];
+  let run: string[] = [];
+  let removed = 0;
+  const flushText = () => {
+    if (run.length > 0) out.push(...summarySegments(run.join(' '), unconfirmed));
+    run = [];
+  };
+  const flushRemoved = () => {
+    if (removed > 0) out.push({ kind: 'removed', count: removed });
+    removed = 0;
+  };
+  sentences.forEach((s, i) => {
+    if (shown[i]) {
+      flushRemoved();
+      run.push(s);
+    } else {
+      flushText();
+      removed += 1;
+    }
+  });
+  flushText();
+  flushRemoved();
+  return out;
+}
+
 export interface AnswerInput {
   composition: ComposeOutput;
   citations: readonly ResolvedCitation[];
@@ -497,18 +674,40 @@ export interface AnswerInput {
   mechanicalCause: boolean;
   interpretations: InterpretationChip[];
   filters: BriefFilters;
-  /** Per presented case, its criteria decisions (none fails: that withholds the summary). */
-  criteria: ReadonlyMap<string, CriterionDecision[]>;
+  /** The claims `checkInput` rendered (by check index) and what the projection shows of them. */
+  claims: readonly ClaimMeta[];
+  display: DisplayOutcome;
 }
 
-/** Cases with an unconfirmed criterion: labelled on their card and on every summary citation. */
-function unconfirmedCases(criteria: ReadonlyMap<string, CriterionDecision[]>): Set<string> {
-  return new Set([...criteria].filter(([, ds]) => ds.some((d) => d.decision === 'unconfirmed')).map(([n]) => n));
+/** The result's partial-check record (counts only). */
+function checkRecord(d: DisplayOutcome): BriefCheck {
+  const r = d.counts.removed;
+  return {
+    rules: DISPLAY_RULES_VERSION,
+    status: 'partially_checked',
+    shown: d.counts.shown,
+    removed: {
+      summary: r.summary,
+      why: r.why,
+      classification: r.classification,
+      maintenance: r.maintenance,
+      symptom: r.symptom,
+      timing: r.timing,
+      attribution: r.attribution,
+      criterion: r.criterion,
+      gap: r.gap,
+    },
+    unclassified: d.cases.filter((c) => c.reading && !c.grouped).map((c) => c.ntsbNo),
+  };
 }
 
-function reading(k: ComposeCase, ci: number, a: AnswerInput, vc: VerifiedCase, group: GroupKind | undefined): CaseReading {
+/** The shown keys of a projection. */
+const shownKeys = (claims: readonly ClaimMeta[], d: DisplayOutcome) => new Set(claims.flatMap((m, i) => (d.displayed[i] ? [m.key] : [])));
+
+function reading(k: ComposeCase, ci: number, a: AnswerInput, vc: VerifiedCase, group: GroupKind | undefined, shown: ReadonlySet<string>): CaseReading {
+  const d = a.display.cases.find((x) => x.ntsbNo === k.ntsbNo)!;
   const quotes = a.citations
-    .filter((x) => x.caseIndex === ci)
+    .filter((x) => x.caseIndex === ci && shown.has(`case.${k.ntsbNo}.quote.${x.quoteIndex}`))
     .map((cit) => {
       const p = vc.passages.find((x) => x.passageId === cit.passageId)!;
       return {
@@ -532,77 +731,121 @@ function reading(k: ComposeCase, ci: number, a: AnswerInput, vc: VerifiedCase, g
     first.scope === 'aircraft' && first.aircraftKey !== null && quotes.every((q) => q.scope === 'aircraft' && q.aircraftKey === first.aircraftKey)
       ? { scope: 'aircraft' as const, aircraftKey: first.aircraftKey }
       : { scope: 'event' as const, multiAircraft };
-  // Ambiguous attribution in a multi-aircraft event: no glyph (UI_DESIGN §4.3).
+  // Ambiguous attribution in a multi-aircraft event: no glyph (UI_DESIGN §4.3). A removed group placement: none either.
   const glyph =
-    a.mechanicalCause && group && group !== 'examples' && !(evidence.scope === 'event' && multiAircraft) ? (group as GlyphKind) : null;
+    a.mechanicalCause && d.grouped && group && group !== 'examples' && !(evidence.scope === 'event' && multiAircraft) ? (group as GlyphKind) : null;
   return {
     glyph,
     why: k.why,
-    timing: chronologyFacts(k.chronology).map(timingChip),
+    timing: chronologyFacts(k.chronology)
+      .filter((f) => shown.has(`case.${k.ntsbNo}.timing.${f.fact}`))
+      .map(timingChip),
     quotes,
     evidence,
-    criteria: a.criteria.get(k.ntsbNo) ?? [],
+    criteria: d.decisions.map((x) => ({ criterion: x.criterion, decision: x.decision, ...(x.notVerified ? { notVerified: true as const } : {}) })),
   };
 }
 
-const gapsOf = (c: ComposeOutput) => c.gaps.map((g) => ({ ntsbNo: g.ntsbNo, text: g.note, passageIds: [...g.passageIds] }));
+const gapsOf = (c: ComposeOutput, shown: ReadonlySet<string>) =>
+  c.gaps.flatMap((g, gi) => (shown.has(`gap.${gi}`) ? [{ ntsbNo: g.ntsbNo, text: g.note, passageIds: [...g.passageIds] }] : []));
 
+/**
+ * The answer as the projection shows it (it must be shown: `display.shown`). Cards,
+ * groups, summary citations, criteria labels and gap notes all come from the projection's
+ * outcome, never from the composition or the pre-check decisions alone.
+ */
 export function answerResult(a: AnswerInput): Extract<BriefResult, { kind: 'answer' }> {
+  if (!a.display.shown) throw new Error('answerResult needs a shown projection');
   const c = a.composition;
+  const shown = shownKeys(a.claims, a.display);
   const groupOf = new Map<string, GroupKind>();
   for (const g of c.groups) for (const n of g.caseNumbers) groupOf.set(n, g.kind);
+  const byCase = new Map(a.display.cases.map((d) => [d.ntsbNo, d]));
   const cards: CaseCard[] = c.cases.map((k, ci) => {
     const vc = a.cases.get(k.ntsbNo)!;
-    return { ...plainCard(vc), reading: reading(k, ci, a, vc, groupOf.get(k.ntsbNo)) };
+    const d = byCase.get(k.ntsbNo)!;
+    const notVerified = d.removed.length > 0 ? { notVerified: [...d.removed] } : {};
+    return { ...plainCard(vc), reading: d.reading ? reading(k, ci, a, vc, groupOf.get(k.ntsbNo), shown) : null, ...notVerified };
   });
+  const grouped = (n: string) => byCase.get(n)?.grouped === true;
   const groups = a.mechanicalCause
-    ? GLYPH_KINDS.map((kind) => ({ kind, caseNumbers: c.groups.find((g) => g.kind === kind)?.caseNumbers ?? [] }))
-    : [{ kind: 'examples' as const, caseNumbers: c.cases.map((k) => k.ntsbNo) }];
+    ? GLYPH_KINDS.map((kind) => ({ kind, caseNumbers: (c.groups.find((g) => g.kind === kind)?.caseNumbers ?? []).filter(grouped) }))
+    : [{ kind: 'examples' as const, caseNumbers: c.cases.map((k) => k.ntsbNo).filter(grouped) }];
+  // Cases flagged unconfirmed: any decision the projection shows as unconfirmed (never the pre-check state).
+  const unconfirmed = new Set(a.display.cases.filter((d) => d.decisions.some((x) => x.decision === 'unconfirmed')).map((d) => d.ntsbNo));
   return {
     kind: 'answer',
     interpretations: a.interpretations,
     filters: a.filters,
     grouping: a.mechanicalCause ? 'mechanical' : 'examples',
-    summary: summarySegments(c.summary, unconfirmedCases(a.criteria)),
+    summary: displayedSummary(summarySentences(c.summary), a.display.sentences, unconfirmed),
     groups,
     cases: cards,
-    gaps: gapsOf(c),
+    gaps: gapsOf(c, shown),
+    check: checkRecord(a.display),
   };
 }
 
-/** The explicit abstention: the cases the answer model was given, as plain cards, with its checked gap notes. */
+/**
+ * The explicit abstention: the cases the answer model was given, as plain cards, with its
+ * gap notes as the projection shows them (`display`; omitted for an abstention with
+ * nothing to check).
+ */
 export function noMatchResult(
   c: ComposeOutput,
   cases: readonly VerifiedCase[],
   context: { interpretations: InterpretationChip[]; filters: BriefFilters },
+  checked?: { claims: readonly ClaimMeta[]; display: DisplayOutcome },
 ): Extract<BriefResult, { kind: 'no_match' }> {
-  return { kind: 'no_match', ...context, lines: [...NO_MATCH_LINES], cases: cases.map(plainCard), gaps: gapsOf(c) };
+  const shown = checked ? shownKeys(checked.claims, checked.display) : new Set(c.gaps.map((_, gi) => `gap.${gi}`));
+  return {
+    kind: 'no_match',
+    ...context,
+    lines: [...NO_MATCH_LINES],
+    cases: cases.map(plainCard),
+    gaps: gapsOf(c, shown),
+    ...(checked ? { check: checkRecord(checked.display) } : {}),
+  };
 }
 
 /**
- * Each presented case's structured claims with their own passages, for the case
- * context: its chronology facts (in chip order) and each criterion decision with the
- * passage set its claim cited, kept apart from the symptom and timing support.
+ * Each presented case's shown structured claims with their own passages, for the case
+ * context: its shown chronology facts (in chip order, aligned with the reading's chips),
+ * maintenance and symptom when shown, the group's evidence passages when the group is
+ * shown, and each criterion decision as the projection shows it with the passage set its
+ * claim cited. A case without a shown reading keeps nothing.
  */
 export function storedDimensions(
   c: ComposeOutput,
   mechanicalCause: boolean,
   criterionChecks: ReadonlyMap<string, readonly CriterionCheck[]>,
+  checked: { claims: readonly ClaimMeta[]; display: DisplayOutcome },
 ): StoredDimensions[] {
-  return c.cases.map((k) => ({
-    ntsbNo: k.ntsbNo,
-    evidencePassageIds: [...k.evidencePassageIds],
-    ...(mechanicalCause && k.maintenance ? { maintenance: { relation: k.maintenance.relation, passageIds: [...k.maintenance.passageIds] } } : {}),
-    ...(mechanicalCause && k.symptom ? { symptom: { value: k.symptom.value, passageIds: [...k.symptom.passageIds] } } : {}),
-    // In chip order: `timing[i]` is the passages of the reading's `timing[i]`.
-    timing: chronologyFacts(k.chronology).map((f) => ({ basis: f.basis, passageIds: f.passageIds })),
-    ...(k.chronology ? { relevantMaintenance: k.chronology.maintenance } : {}),
-    criteria: (criterionChecks.get(k.ntsbNo) ?? []).map((x) => ({
-      criterion: x.criterion,
-      decision: x.decision === 'matches' ? ('matches' as const) : ('unconfirmed' as const),
-      passageIds: [...x.passageIds],
-    })),
-  }));
+  const shown = shownKeys(checked.claims, checked.display);
+  const byCase = new Map(checked.display.cases.map((d) => [d.ntsbNo, d]));
+  return c.cases.flatMap((k) => {
+    const d = byCase.get(k.ntsbNo);
+    if (!d?.reading) return [];
+    const has = (field: string) => shown.has(`case.${k.ntsbNo}.${field}`);
+    const timing = chronologyFacts(k.chronology).filter((f) => has(`timing.${f.fact}`));
+    const criteria = (criterionChecks.get(k.ntsbNo) ?? []).flatMap((x) => {
+      const shownDecision = d.decisions.find((y) => y.criterion === x.criterion);
+      return shownDecision ? [{ criterion: x.criterion, decision: shownDecision.decision, passageIds: [...x.passageIds] }] : [];
+    });
+    const anchored = timing.length > 0 || (criterionChecks.get(k.ntsbNo) ?? []).some((x) => x.criterion !== 'failure_type' && has(`criterion.${x.criterion}`));
+    return [
+      {
+        ntsbNo: k.ntsbNo,
+        evidencePassageIds: d.grouped ? [...k.evidencePassageIds] : [],
+        ...(mechanicalCause && k.maintenance && has('maintenance') ? { maintenance: { relation: k.maintenance.relation, passageIds: [...k.maintenance.passageIds] } } : {}),
+        ...(mechanicalCause && k.symptom && has('symptom') ? { symptom: { value: k.symptom.value, passageIds: [...k.symptom.passageIds] } } : {}),
+        // In chip order: `timing[i]` is the passages of the reading's `timing[i]`.
+        timing: timing.map((f) => ({ basis: f.basis, passageIds: f.passageIds })),
+        ...(k.chronology && anchored ? { relevantMaintenance: k.chronology.maintenance } : {}),
+        criteria,
+      },
+    ];
+  });
 }
 
 /** What a finished step keeps for the case context: every verified passage of the bundle. */

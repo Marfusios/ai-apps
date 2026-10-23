@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiStatusResponse } from '../../shared/contracts/ai';
-import { BRIEF_FILTER_FACETS, BriefStepResponseSchema, CRITERIA, type CaseReading } from '../../shared/contracts/briefs';
+import { BRIEF_FILTER_FACETS, BriefStepResponseSchema, CRITERIA, type CaseReading, type SummarySegment } from '../../shared/contracts/briefs';
 import { CRITERION_LINE } from '../../server/briefs/context';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
@@ -249,6 +249,13 @@ describe('Checklist (UI_DESIGN §4.4)', () => {
     expect(screen.getByText(/0:0\d/).getAttribute('aria-hidden')).toBe('true');
     expect(screen.getByText(new RegExp(CHECKLIST_NOTE.replace('.', '\\.')))).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+  });
+
+  it('says a partly checked answer is partly checked, never passed (Task 16d partial display)', () => {
+    render(<Checklist {...props} stage="validate" checklist={{ question: 'in_scope', searched: { cases: 6, passages: 12 }, written: true, verified: 'partially_checked' }} />);
+    const rows = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(rows[3]).toBe('Verify every quotePARTLY CHECKED✓ done');
+    expect(screen.queryByText('PASSED')).toBeNull();
   });
 });
 
@@ -668,6 +675,26 @@ describe('Two-aircraft events and adjacent citations', { timeout: 20_000 }, () =
     expect(citationJoiner([{ kind: 'text', text: 'the power loss' }, { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false }], 1)).toBe(' ');
     expect(citationJoiner([{ kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false }, { kind: 'text', text: 'Then' }], 1)).toBe(' ');
     expect(citationJoiner([{ kind: 'text', text: 'loss (' }, { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false }, { kind: 'text', text: ').' }], 2)).toBe('');
+  });
+
+  it('a removed-statements marker (Task 16d) stands apart between whole sentences and never shows their text', () => {
+    const segs: SummarySegment[] = [
+      { kind: 'text', text: 'In the first case the pump failed.' },
+      { kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: false },
+      { kind: 'removed', count: 2 },
+      { kind: 'text', text: 'In the last case the seal leaked.' },
+    ];
+    expect(citationJoiner(segs, 2)).toBe(' ');
+    expect(citationJoiner(segs, 3)).toBe(' ');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <BriefingSheet result={{ ...RESULT_SAMPLES.midair, summary: segs }} caseTo={(n) => `/briefs/x?case=${n}`} inCompare={() => false} onToggleCompare={() => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('[2 statements not shown: the check could not confirm them]')).toBeTruthy();
   });
 
   it('cards and the sheet say the evidence is the event narrative, never one aircraft', async () => {

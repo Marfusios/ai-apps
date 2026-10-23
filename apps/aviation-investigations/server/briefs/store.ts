@@ -92,14 +92,14 @@ export interface StepRow {
 }
 
 /**
- * What a withheld step keeps for developers (`diagnostics`, migration 0016;
- * `pnpm worker brief-diagnose`). It is model output about the public NTSB passages of
- * the step; no route reads it (`STEP_COLUMNS` leaves it out), and it is pruned with its
- * brief.
+ * What a withheld or partially shown step keeps for developers (`diagnostics`, migration
+ * 0016; `pnpm worker brief-diagnose`). It is model output about the public NTSB passages
+ * of the step, including statements the display projection removed; no route reads it
+ * (`STEP_COLUMNS` leaves it out), and it is pruned with its brief.
  */
 export interface StepDiagnostics {
-  /** Why the summary was withheld. */
-  reason: 'citation_check' | 'criteria_check' | 'evidence_check';
+  /** Why the summary was withheld, or `partial_display`: shown with statements removed (Task 16d). */
+  reason: 'citation_check' | 'criteria_check' | 'evidence_check' | 'partial_display';
   /** The composition the answer model returned, before any mapping (passage aliases as it saw them). */
   composition: unknown;
   /** Alias → canonical passage id of the bundle the model saw. */
@@ -247,7 +247,7 @@ export async function readStepWithCount(db: DbOrTx, briefId: string, n?: number)
 
 /**
  * A step still `running` this long after it started has lost its process (the deadline
- * is 90 s and settlement follows at once): it reads as failed, it no longer blocks a
+ * is 100 s and settlement follows at once): it reads as failed, it no longer blocks a
  * refinement, and maintenance marks it failed once its reservation is closed.
  */
 export const STALE_STEP_MS = 150_000;

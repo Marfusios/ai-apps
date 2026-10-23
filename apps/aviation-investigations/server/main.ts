@@ -56,7 +56,10 @@ function briefServices(config: AppConfig, db: Db, es: Client): { services: Brief
       // Bounded: a stalled pool or database ends the lookup (and the step) instead of holding it.
       casesIndexOf: (d, signal) => manifestCasesIndex(db, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }),
     });
-    return { services: createBriefServices(db, { retriever }), problem: null };
+    return {
+      services: createBriefServices(db, { retriever, displayMode: config.ai.partialDisplay ? 'claims' : 'whole' }),
+      problem: null,
+    };
   } catch {
     return { services: null, problem: 'OPENAI_EMBEDDING_MODEL has no known price: AI briefs have no query embeddings' };
   }

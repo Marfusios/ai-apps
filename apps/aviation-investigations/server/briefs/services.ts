@@ -16,6 +16,7 @@ import { DatasetUnavailableError, type PinnedDataset } from '../dataset.js';
 import type { Db } from '../db/client.js';
 import { createCaseCatalog } from './catalog.js';
 import type { CaseCatalog, EvidenceDataset, EvidenceRetriever } from './evidence.js';
+import type { DisplayMode } from './display.js';
 import { SHUTDOWN_REASON, type StageTimeouts, type StepOutcome } from './pipeline.js';
 
 export interface BriefServicesOptions {
@@ -23,6 +24,8 @@ export interface BriefServicesOptions {
   /** Default: the PostgreSQL catalog (server/briefs/catalog.ts). */
   catalog?: CaseCatalog;
   timeouts?: Partial<StageTimeouts>;
+  /** The display projection's mode (default `whole` until gate G6 clears partial display; `AI_PARTIAL_DISPLAY`). */
+  displayMode?: DisplayMode;
 }
 
 export interface RunningStep {
@@ -34,6 +37,7 @@ export interface BriefServices {
   retriever: EvidenceRetriever;
   catalog: CaseCatalog;
   timeouts: Partial<StageTimeouts>;
+  displayMode: DisplayMode;
   /** Steps running in this process, by step id. */
   runs: Map<string, RunningStep>;
   /** Aborted with `SHUTDOWN_REASON` once the server begins closing; every step runs under it. */
@@ -54,6 +58,7 @@ export function createBriefServices(db: Db, opts: BriefServicesOptions): BriefSe
     retriever: opts.retriever,
     catalog: opts.catalog ?? createCaseCatalog(db),
     timeouts: opts.timeouts ?? {},
+    displayMode: opts.displayMode ?? 'whole',
     runs,
     shutdown: shutdown.signal,
     beginShutdown() {

@@ -73,41 +73,45 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  * - scope input: fixed part (system prompt + structured-output schema) 3,204; worst
  *   refinement (prior question and refinement, every filter, readings, case numbers)
  *   5,074 → 6,500.
- * - answer input: fixed part 5,007 (`compose.v6`); a synthetic full bundle (12 passages at
+ * - answer input: fixed part 5,411 (`compose.v7`); a synthetic full bundle (12 passages at
  *   9,403 `cl100k` evidence tokens, 400-character headers, the longest question and
- *   refinement) 22,547; the 10,000-token evidence budget at 1.75 Claude tokens per
+ *   refinement) 22,951; the 10,000-token evidence budget at 1.75 Claude tokens per
  *   `cl100k` token bounds it near 25,600 → 28,000: the measured stress cases fit without
  *   re-packing.
- * - check input: fixed part 3,421 (`check.v5`); complete evidence of a full bundle with 91
- *   claims at their longest 30,987 → 40,000 (gate G6 ruling 5: the evidence is never cut
- *   to fit).
+ * - check input: fixed part 4,649 (`check.v8`, the preflight on 2026-10-23); complete
+ *   evidence of a full bundle with `MAX_CHECK_CLAIMS` 60 claims at their longest 26,934 →
+ *   40,000 (gate G6 ruling 5: the evidence is never cut to fit).
  * - outputs, counted as text at their schema bounds: scope 445 → 600; a composition at
  *   every bound (six cases, each with four chronology facts naming their anchors) 8,000
  *   plus 1,500 for thinking (Opus cannot turn it off) → 11,000 (the offline sizing, at
- *   1.8 tokens per `cl100k` token, puts it at 10,612); a check with a verdict for each of
- *   100 claims, each naming four passages, and eight 200-character quotes 4,320, plus the
- *   calibrated checker's thinking allowance (`CHECK_THINKING_ALLOWANCE` 15,000,
- *   worker/ai-preflight.ts; Haiku 5.5 thinks adaptively, Task 16c) → 21,500 (the offline
- *   sizing, at 1.8 tokens per `cl100k` token, puts it at 21,052).
+ *   1.8 tokens per `cl100k` token, puts it at 10,612); a check at the bounds of
+ *   `check-output-v2` (Task 16d: a verdict for each of `MAX_CHECK_CLAIMS` 60 claims, each
+ *   naming 12 passages, and eight 1,000-character quotes), 9,179 by the offline sizing and
+ *   6,461 by the provider's counter, plus the calibrated checker's thinking allowance
+ *   (`CHECK_THINKING_ALLOWANCE` 15,000, worker/ai-preflight.ts; Haiku 5.5 thinks
+ *   adaptively; the 16d development rounds measured at most 8,178 thinking tokens, on a
+ *   60-claim check) → 24,500. Task 16d calibrated the checker with exactly these caps
+ *   (evals/checker/protocol.v2.ts).
  */
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
   scope: { input: 6_500, output: 600 },
   answer: { input: 28_000, output: 11_000 },
-  check: { input: 40_000, output: 21_500 },
+  check: { input: 40_000, output: 24_500 },
   embed: { input: 1_000, output: 0 },
 };
 
 /**
  * Largest frozen prefix any stage caches (5-minute TTL): its system prompt with the
- * structured-output schema, measured at 4,883 tokens (`compose.v6`, the preflight).
+ * structured-output schema, measured at 5,287 tokens (`compose.v7`, the preflight).
  */
 export const CACHED_PREFIX_MAX = 6_500;
 
 /**
  * Per-request reservation in USD, keyed by the answer model: the worst case rounded up
  * (DESIGN §9), with the check model the calibration froze (`claude-haiku-5-5`, adaptive
- * thinking, evals/checker/selection.json). A check on Sonnet costs more: with it the
- * startup check refuses these reservations.
+ * thinking). Task 16d's larger check output cap (24,500) puts the worst cases at $0.356045
+ * (Opus), $0.186795 (Sonnet) and $0.0260075 (Haiku): the reservations hold. A check on
+ * Sonnet costs more: with it the startup check refuses these reservations.
  */
 export const RESERVATIONS: Readonly<Record<string, number>> = {
   'claude-opus-5-5': 0.36,

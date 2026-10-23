@@ -14,10 +14,14 @@
  *    other code point fails it (`summary_format`): every control, line break, invisible or
  *    format character, every space but U+0020, every sentence terminator but `.`, `!` and
  *    `?`, and every lookalike or symbol not listed (a Tibetan shad, a two-dot leader, a
- *    Lisu letter that renders as a period, a return symbol, a middle dot). HTML entities
- *    fail it too. What it guarantees: the only characters left that can end a sentence
- *    are `.`, `!` and `?`, and the only space is U+0020, so every sentence boundary is
- *    one the splitter sees.
+ *    Lisu letter that renders as a period, a return symbol, a middle dot), at the edges of
+ *    the summary too (nothing is trimmed before the check; Task 16d, 16c review M6). HTML
+ *    character references fail it too: a numeric one (`&#46`, `&#x2E`) with or without
+ *    its `;`, and a named one with its `;` (`&nbsp;`); `&` followed by letters without
+ *    `;` ("A&P mechanic", and so `&nbsp`) is ordinary text, which is safe because nothing
+ *    decodes a summary as HTML (the web client renders text). What it guarantees: the only
+ *    characters that can end a sentence are `.`, `!` and `?`, and the only space is U+0020,
+ *    so every sentence boundary is one the splitter sees.
  * 2. `splitSentences`: a sentence ends at a run of `.`, `!` or `?` ("..." and "?!" are
  *    one end), with any closing quotation marks or parenthesis after it (`"`, `'`, `”`,
  *    `’`, `)`), followed by whitespace or the end of the text, and after any `[[case:…]]`
@@ -77,15 +81,16 @@ export function summaryCharAllowed(c: string): boolean {
   return cp >= 0xc0 && cp <= 0xff && cp !== 0xd7 && cp !== 0xf7;
 }
 
-const HTML_ENTITY = /&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);/;
+/** A named character reference with its `;`, or a numeric one with or without it. */
+const HTML_ENTITY = /&(?:[A-Za-z][A-Za-z0-9]*;|#[0-9]+;?|#[xX][0-9A-Fa-f]+;?)/;
 
 /**
  * True when the summary is not plain one-line text: a character outside the allow-list
- * (`summaryCharAllowed`), or an HTML entity. Leading and trailing whitespace and case
- * markers aside.
+ * (`summaryCharAllowed`) anywhere, its edges included, or an HTML character reference
+ * (`HTML_ENTITY`). Case markers aside.
  */
 export function summaryFormatProblem(summary: string): boolean {
-  const text = summary.replace(MARKERS_G, ' ').trim();
+  const text = summary.replace(MARKERS_G, ' ');
   for (const c of text) if (!summaryCharAllowed(c)) return true;
   return HTML_ENTITY.test(text);
 }
