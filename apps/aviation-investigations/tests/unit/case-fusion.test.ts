@@ -124,14 +124,8 @@ describe('exact reciprocal rank fusion', () => {
           expect(best(a.ranks) <= best(b.ranks)).toBe(true);
         }
       }
-      // The phase A float comparator agrees except where float sums of equal fractions differ.
-      const phaseA = caseRrfFuse(lists, [1, 1, 1], K).map((f) => f.ntsbNo);
-      const exact = fused.map((f) => f.id);
-      const disagreements = exact.filter((n, i) => phaseA[i] !== n).length;
-      if (disagreements > 0) {
-        const tiedPairs = fused.some((f, i) => i > 0 && compareFractions(f.fraction, fused[i - 1]!.fraction) === 0);
-        expect(tiedPairs).toBe(true);
-      }
+      // The experiments harness fuses with this same comparator (task 10e fix round 1): identical order.
+      expect(caseRrfFuse(lists, [1, 1, 1], K).map((f) => f.ntsbNo)).toEqual(fused.map((f) => f.id));
     }
   });
 
