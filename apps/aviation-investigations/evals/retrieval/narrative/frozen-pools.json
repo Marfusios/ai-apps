@@ -1,0 +1,45 @@
+{
+  "kind": "track-n-frozen-pools",
+  "frozenAt": "2026-10-23T10:10:07.149Z",
+  "poolVersion": "e6d3f39d76d83c7c59aa065b003906e689ea903b211ecc75b7eafb2cb9583298",
+  "rule": "track-n-pool-v2",
+  "schedule": "track-n-schedule-v2",
+  "datasetSpecSha256": "3d5a487e61f92cbd039cd6bd12c11f3cf79d547306dd33370df98324125a283f",
+  "generationId": 1,
+  "inputsVersion": "da0d6fa4de56bb206fd4dbb1907865f7f870f39a5db33f8fc86c36897bc8a29e",
+  "retrieval": {
+    "retrieval.v1": "e1aa0f589c7b958ead6aa85ae08974a48a62ee03c74b26e01000055effa778e2",
+    "retrieval.v2": "a147b486c5f4fb6496a1743d6ceaf433a9070f8120494d5ca2bf172f64418029",
+    "retrieval.v2-nf": "df83bc51c526cc87ea10e2b734f9079f8a4505eba2fb5c5e420e61b8207237d9"
+  },
+  "families": {
+    "ng-skydiving-power-loss-no-anomaly": "d1af214c9de38eef45a77441c34e2cbd42e24ecb97117d74c6bb28995592538b",
+    "cu-air-show-undetermined": "9270a0d5eaa3431612284422942b33bc3394814af3554bd23a544cc0ae26d7e2",
+    "mc-ag-arkansas-engine-after-maintenance": "eef0f491e2f04660298b07c3a535c252e0d2e8fa9c18444f11cbeefb31d50c79",
+    "op-balloon-power-lines": "cedd873a0953eda7ebf0e3b58ee1fe9571a7e42ff4807d9c5a8d1a4f461b5f1d",
+    "op-external-load-line-strike": "fc1b5ef131ae02ca5cae91e7eb04309d1470a485a88b3141915b6dc2141da1f3",
+    "me-powered-parachute-propeller-strike": "92d8896166ad51ea18ddd332018acf2db6a63774cdbcec8fa9c93a5e4420c614",
+    "ng-carb-icing-not-conducive": "44d0fb69aa9f7f279f7163ae09ef263433ffc99192ba1a3bc5c6d4980bf5e952",
+    "ng-gear-collapse-no-defect": "687a67d73153f3db31be2ddbbfa72f0c6124ff31d2278df6c42f16fe6861c0ac",
+    "mc-first-flight-after-annual": "01f04c85920321bce9245f4d631512814b691a555dbd2e939d02c95819b82493",
+    "mc-helicopter-control-rotor-maintenance-10h": "362f69a2f09d4d0a52f0b84cb2d3ffc9508749f7ea0a37c5d5f1729f79fce905",
+    "cu-inflight-fire-origin-undetermined": "d67c748fcc5e5dd9e55fc41d5b1b0852d9e8c0815b309804fe600491dd61f6ec",
+    "cu-competing-explanations": "1e49c20b68afe4b38da0ba6cfdfc27a5b9043063bd8439c846698cbd74a6427f",
+    "pv-pilot-reported-failure-not-confirmed": "8d59c6f4bb1712b37959624e764dbf03364ed70a3200a055343c4526ac4fd5b9",
+    "pv-recorded-data-contradicts-pilot": "4d1c060494b287bed2f2708f04b608dd1114cef9cce09904ba57b6f310e275f2",
+    "pv-helicopter-tail-rotor-claim": "fad81e3909851b0d9e18774d10b5d59730d754332ffbbc3b95f211f25574f8dd",
+    "ma-airplane-collision-student-pilot": "5b152e0024c37b14f3e914129dec638b116f77d006393200c76fd579b3ef2b3e",
+    "ma-taxiing-strikes-stationary": "e434750dd72228477f3b5633e6150c38f480bc610b51406b5e2b06f83921c24b",
+    "ma-midair-pattern-nontowered": "8896006e92582e800b5cc502788913586542ae83d1ade46252d9b931342c80bd",
+    "op-night-vfr-into-clouds": "22dc7b9a99106fb71676b7c306a6c98eaeda6eb16a9819b267bc3dbfdb7f544d",
+    "me-gear-up-mechanical": "0373e72442e71894951052c131d6ecb4fea03848fd50e188cc845f23ac071858",
+    "me-helicopter-tail-rotor-drive-failure": "52f78a5bfbf0c4b59936c0db09791fb551240b7e15d4429d90c5a1eb249e1eb4",
+    "per-pilot-decision-cause-weight-shift": "556bbc51dcf338e290adcfd3875a3b841cdd4ae08b778746027ba8b5cb990dd4"
+  },
+  "counts": {
+    "cases": 4024,
+    "bundlePairs": 449,
+    "runs": 234,
+    "mappingDiagnosticBundles": 298
+  }
+}
