@@ -379,10 +379,11 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     log('');
     log(`token counts (Claude, provider counter): relevance request mean ${tokens.relevanceClaude.mean}, p90 ${tokens.relevanceClaude.p90}, max ${tokens.relevanceClaude.max}; OpenAI estimate mean ${tokens.relevanceOpenai.mean}, max ${tokens.relevanceOpenai.max}; family prefix about ${tokens.prefixClaude.mean} (Claude)`);
     log(`long cases: ${chunked.length} of ${measured.length} sampled cases above ${CASE_TOKEN_BUDGET.toLocaleString('en-US')} cl100k tokens (chunked), ${report.chunked.uncovered} uncovered; Sonnet/Haiku count ratio ${tokens.sonnetOverHaiku.mean}`);
+    const n = (x: number, w: number) => String(Math.round(x)).padStart(w);
     const line = (name: string, r: RunCost) =>
-      log(`  ${name.padEnd(32)} ${String(r.pairs).padStart(6)} pairs  A ${String(r.calls.judgeA).padStart(6)} / B ${String(r.calls.judgeB).padStart(6)} / adj ${String(r.calls.adjudicator).padStart(5)} calls  expected ${usd(r.usd.total)} (A ${usd(r.usd.judgeA)}, B ${usd(r.usd.judgeB)}, adj ${usd(r.usd.adjudicator)}); at the 25% escalation bound ${usd(r.totalAtBoundUsd)}; every call at its caps ${usd(r.worstCaseUsd)}`);
+      log(`  ${name.padEnd(32)} ${n(r.pairs, 6)} pairs  A ${n(r.calls.judgeA, 6)} / B ${n(r.calls.judgeB, 6)} / adj ${n(r.calls.adjudicator, 5)} calls  expected ${usd(r.usd.total)} (A ${usd(r.usd.judgeA)}, B ${usd(r.usd.judgeB)}, adj ${usd(r.usd.adjudicator)}); at the 25% escalation bound ${usd(r.totalAtBoundUsd)}; every call at its caps ${usd(r.worstCaseUsd)}`);
     log('costs:');
-    line('(a) calibration (109 items)', calibration);
+    line(`(a) calibration (${ctx.calibration.items.length} items)`, calibration);
     line(`(b) relevance, ${opts.samples} scope sample(s)`, relevance);
     line('    with the largest pools', relevanceMax);
     line('    answerability', answerability);

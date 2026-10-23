@@ -201,6 +201,7 @@ export function caseCost(m: Measured, prefix: { claude: number; openai: number }
 }
 
 export interface RunCost {
+  /** Expected pairs and calls, unrounded (so per-family runs add up); round when printing. */
   pairs: number;
   calls: { judgeA: number; judgeB: number; adjudicator: number };
   usd: { judgeA: number; judgeB: number; adjudicator: number; total: number };
@@ -220,11 +221,11 @@ export function scaleRun(costs: readonly CaseCost[], pairs: number, escalation: 
   const adj = pairs * escalation * retry * mean((c) => c.adjudication);
   const adjBound = pairs * Math.max(escalation, bound) * retry * mean((c) => c.adjudication);
   return {
-    pairs: Math.round(pairs),
+    pairs,
     calls: {
-      judgeA: Math.round(pairs * retry * mean((c) => c.calls.judgeA)),
-      judgeB: Math.round(pairs * retry * mean((c) => c.calls.judgeB)),
-      adjudicator: Math.round(pairs * escalation * retry * mean((c) => c.calls.adjudication)),
+      judgeA: pairs * retry * mean((c) => c.calls.judgeA),
+      judgeB: pairs * retry * mean((c) => c.calls.judgeB),
+      adjudicator: pairs * escalation * retry * mean((c) => c.calls.adjudication),
     },
     usd: { judgeA: a, judgeB: b, adjudicator: adj, total: a + b + adj },
     totalAtBoundUsd: a + b + adjBound,
