@@ -20,7 +20,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { resolve } from 'node:path';
 import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { CACHED_PREFIX_MAX, llmPrice, stageCostUsd } from '../../server/ai/pricing.js';
-import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v5.js';
+import { CHECK_PROMPT_VERSION } from '../../server/ai/prompts/check.v6.js';
 import { StageError, stageCtx, type LlmProvider, type StageUsage } from '../../server/ai/provider.js';
 import { STAGE_TIMEOUTS } from '../../server/briefs/pipeline.js';
 import { closeDb, createDb } from '../../server/db/client.js';
@@ -125,9 +125,21 @@ const usageOf = (u: StageUsage) => ({
   ...(u.thinkingTokens !== undefined ? { thinkingTokens: u.thinkingTokens } : {}),
 });
 
+/** The free input count, retried on a transient failure (it generates nothing). */
+async function countWithRetry(provider: LlmProvider, batch: CalibrationBatch): Promise<number> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await provider.countInputTokens('check', batch.input, ctx());
+    } catch (err) {
+      if (attempt >= 4) throw err;
+      await new Promise((r) => setTimeout(r, 2_000 * attempt));
+    }
+  }
+}
+
 export async function runCommand(
   config: AppConfig,
-  opts: { config: string; split: 'dev' | 'holdout'; samples: number; confirmCost: boolean; log: (m: string) => void },
+  opts: { config: string; split: 'dev' | 'holdout'; samples: number; confirmCost: boolean; resume?: string; log: (m: string) => void },
 ): Promise<number> {
   const dataset = readDataset();
   if (opts.split === 'holdout') {
@@ -136,7 +148,9 @@ export async function runCommand(
     if (sel.config !== opts.config || sel.checkPrompt !== CHECK_PROMPT_VERSION || sel.labelsSha256 !== dataset.labels.sha256) {
       throw new Error('selection.json names another configuration, prompt version or label set');
     }
-    if (existsSync(SPEND_LOG) && readFileSync(SPEND_LOG, 'utf8').includes('"split":"holdout"')) throw new Error('the held-out split has already run once');
+    if (!opts.resume && existsSync(SPEND_LOG) && readFileSync(SPEND_LOG, 'utf8').includes('"split":"holdout"')) {
+      throw new Error('the held-out split has already run once');
+    }
   }
   const trials = plannedTrials(dataset, opts.split).filter((t) => t.batch.brief !== 'supported' || t.sample <= opts.samples);
   if (!opts.confirmCost) {
@@ -149,12 +163,18 @@ export async function runCommand(
   const gate: SpendGate = createLedgerSpendGate(ingest, { budgets: config.ai.budgets, provider: 'anthropic', model, stage: 'check' });
   mkdirSync(WORK_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const out = resolve(WORK_DIR, `${opts.config}-${opts.split}-${stamp}.jsonl`);
-  const done: Trial[] = [];
+  // A run interrupted by a crash (not by the spend limit) continues in its own file: the
+  // trials it recorded stay, the missing ones run.
+  const out = opts.resume ? resolve(opts.resume) : resolve(WORK_DIR, `${opts.config}-${opts.split}-${stamp}.jsonl`);
+  if (opts.resume && !out.startsWith(`${WORK_DIR}/${opts.config}-${opts.split}-`)) throw new Error('--resume names a trials file of another configuration or split');
+  const done: Trial[] = opts.resume && existsSync(out) ? readFileSync(out, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Trial) : [];
+  const recorded = new Set(done.map((t) => `${t.batch}#${t.sample}`));
+  if (done.length > 0) opts.log(`resuming ${out}: ${done.length} trials recorded`);
   let stopped: string | null = null;
   try {
     for (const t of trials) {
-      const counted = await provider.countInputTokens('check', t.batch.input, ctx());
+      if (recorded.has(`${t.batch.id}#${t.sample}`)) continue;
+      const counted = await countWithRetry(provider, t.batch);
       const reserveUsd = worstUsd(model, counted);
       const spent = loggedSpendUsd();
       if (spent + reserveUsd > CALIBRATION_LIMIT_USD) {
@@ -211,7 +231,7 @@ export async function runCommand(
     labelsSha256: dataset.labels.sha256,
     dataset: DATASET_PATH.slice(APP_DIR.length + 1),
     trials: out.slice(APP_DIR.length + 1),
-    complete: stopped === null && done.length === trials.length,
+    complete: stopped === null && trials.every((t) => done.some((d) => d.batch === t.batch.id && d.sample === t.sample)),
     ...(stopped ? { stopped } : {}),
     report: r,
   };

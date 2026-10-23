@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CheckOutputSchema, type CheckInput, type CheckOutput } from '../../server/ai/provider.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v5.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v6.js';
 import { CHRONOLOGY_RULES_VERSION } from '../../server/briefs/criteria.js';
 import { judgeCheck, type CheckJudgement } from '../../server/briefs/verdicts.js';
 import { WITHHELD_CODES } from '../../server/observability/attributes.js';
@@ -45,7 +45,7 @@ const withVerdict = (claim: string, v: Partial<CheckOutput['verdicts'][number]>)
   return out;
 };
 
-describe('judged check verdicts (check.v5, G6 #3)', () => {
+describe('judged check verdicts (check.v6, G6 #3)', () => {
   it('passes only when every claim has exactly one valid supported verdict', () => {
     const j = judge(allSupported());
     expect(j).toEqual({ ok: true, codes: [], counts: { supported: 4, contradicted: 0, not_established: 0 }, problems: [], chronologyMissed: [] });
@@ -123,7 +123,7 @@ describe('judged check verdicts (check.v5, G6 #3)', () => {
     for (const code of ['contradicted', 'not_established', 'chronology_missed', 'check_missing_verdict', 'check_invalid_quote']) {
       expect(WITHHELD_CODES).toContain(code);
     }
-    expect(CHECK_PROMPT_VERSION).toBe('check.v5');
+    expect(CHECK_PROMPT_VERSION).toBe('check.v6');
     expect(CHECK_SYSTEM).toContain(`Timing rules (${CHRONOLOGY_RULES_VERSION})`);
     expect(CHECK_SYSTEM).not.toMatch(/when unsure/i);
     const user = renderCheckUser(input);

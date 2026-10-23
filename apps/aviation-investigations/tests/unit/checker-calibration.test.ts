@@ -124,7 +124,7 @@ describe('the checker calibration set (evals/checker)', () => {
         model: 'm',
         thinking: 'off',
         split: 'dev',
-        checkPrompt: 'check.v5',
+        checkPrompt: 'check.v6',
         labelsSha256: dataset.labels.sha256,
         complete: true,
         report: {

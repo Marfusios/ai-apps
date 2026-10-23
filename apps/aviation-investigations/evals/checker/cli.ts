@@ -4,7 +4,7 @@
  *   retrieve  [--confirm-cost] [--out <file>]       real retrieval bundles → evidence.json
  *   build     [--check]                             evidence.json + items → dataset.json
  *   inventory --config <name>[,<name>] [--split dev|holdout]   free: token counts, prices
- *   run       --config <name> --split dev|holdout [--samples <n>] [--confirm-cost]   (n ≤ 3 trials of each supported brief)
+ *   run       --config <name> --split dev|holdout [--samples <n>] [--confirm-cost] [--resume <trials.jsonl>]
  *   select    <dev summary.json>...                  the selection rule → selection.json
  *
  * Common options: `--env-files a,b` (as the evaluations': the dev connection files),
@@ -30,7 +30,7 @@ const USAGE = [
   'usage: pnpm eval:checker retrieve [--confirm-cost] [--out <file>]',
   '       pnpm eval:checker build [--check]',
   '       pnpm eval:checker inventory --config <name>[,<name>] [--split dev|holdout]',
-  '       pnpm eval:checker run --config <name> --split dev|holdout [--samples <n>] [--confirm-cost]',
+  '       pnpm eval:checker run --config <name> --split dev|holdout [--samples <n>] [--confirm-cost] [--resume <trials.jsonl>]',
   '       pnpm eval:checker select <dev summary.json>...',
   'common: [--env-files <a,b>] [--keys-file <file>]',
 ].join('\n');
@@ -68,6 +68,7 @@ async function main(argv: string[]): Promise<number> {
       config: { type: 'string' },
       split: { type: 'string' },
       samples: { type: 'string' },
+      resume: { type: 'string' },
     },
     strict: true,
   });
@@ -95,7 +96,14 @@ async function main(argv: string[]): Promise<number> {
       console.error(USAGE);
       return 2;
     }
-    return runCommand(config, { config: names[0]!, split, samples, confirmCost: values['confirm-cost'] === true, log });
+    return runCommand(config, {
+      config: names[0]!,
+      split,
+      samples,
+      confirmCost: values['confirm-cost'] === true,
+      ...(values.resume ? { resume: values.resume } : {}),
+      log,
+    });
   }
   console.error(USAGE);
   return 2;

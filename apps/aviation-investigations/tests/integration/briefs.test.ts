@@ -270,7 +270,7 @@ type Claim = CheckInput['claims'][number];
 type Judged = CheckVerdict | { verdict: CheckVerdict; passages?: string[]; quote?: { passage: string; text: string } };
 
 /**
- * The checker's answer as check.v5 returns it: one verdict per claim id, from `judge`
+ * The checker's answer as check.v6 returns it: one verdict per claim id, from `judge`
  * (default `supported`). A supported claim names its first cited passages (an absence
  * claim none), a contradicted one its first cited passage unless `judge` names others.
  */
@@ -675,7 +675,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v6', check: 'check.v5' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v6', check: 'check.v6' },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
       criteriaRules: 'chronology-rules-v1',
       check: { supported: true, claims: check.claims.length, counts: { supported: check.claims.length, contradicted: 0, not_established: 0 }, codes: [], problems: [], chronologyMissed: [] },
