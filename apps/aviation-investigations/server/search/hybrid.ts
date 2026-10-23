@@ -231,7 +231,8 @@ export class MalformedPassageError extends Error {
   }
 }
 
-function toHit(id: string, s: Record<string, unknown> | undefined): PassageHit {
+/** A passage hit from an index document's id and `_source` (validated; exported for the retrieval experiments). */
+export function toHit(id: string, s: Record<string, unknown> | undefined): PassageHit {
   const src = s ?? {};
   const str = (k: string): string => {
     const v = src[k];

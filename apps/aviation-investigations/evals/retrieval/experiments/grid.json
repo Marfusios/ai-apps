@@ -1,0 +1,821 @@
+{
+  "version": "10d-phase-a-v1",
+  "registered": "2026-10-23",
+  "frozen": {
+    "dataset": {
+      "file": "evals/retrieval/coded/dataset.json",
+      "sha256": "5d1746bd04af8602c18babf2ae6cca6b3e1fd2760f6d72852df86ba240b8b3a4",
+      "specSha256": "9410da39e9a319a61e7433192c237a8e6391db909ee958c3d44f234c74145e49",
+      "version": "coded-v1"
+    },
+    "generation": {
+      "id": 1,
+      "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+      "mappingVersion": "v1-empirical",
+      "fieldNormalizationVersion": "v1",
+      "citationTextVersion": "v1"
+    },
+    "passagesIndex": {
+      "name": "ai-aviation-dev-passages-v2-g1-20261022185219373-e0c815e5",
+      "version": "passages-v2",
+      "fingerprint": "ed335f462734e6b8e4888ed51f6ba2f9926747b100e97d9735eeb0c1f6043dd2"
+    },
+    "casesIndex": {
+      "name": "ai-aviation-dev-cases-v3-g1-20261022143728115-f0d0e84d",
+      "version": "cases-v3",
+      "fingerprint": "2a6f1f58b54e6da00bb252ec921b44e22cd2c3f7f9a5d95e6d526913328545e9"
+    },
+    "embedding": {
+      "model": "text-embedding-3-small",
+      "dims": 1536
+    },
+    "scope": {
+      "model": "claude-haiku-5-5",
+      "promptVersion": "scope.v2"
+    },
+    "split": "dev"
+  },
+  "baseline": {
+    "perChannel": 50,
+    "numCandidatesFactor": 4,
+    "rrfK": 60,
+    "weights": {
+      "keyword": 1,
+      "vector": 1,
+      "cases": 1
+    },
+    "fusion": "passage",
+    "caseChannel": null,
+    "keywordText": "question"
+  },
+  "variants": [
+    {
+      "id": "p100",
+      "family": "E7-depth",
+      "target": "narrowRecall20",
+      "description": "100 passages per channel (kNN num_candidates 400)",
+      "config": {
+        "perChannel": 100
+      }
+    },
+    {
+      "id": "p200",
+      "family": "E7-depth",
+      "target": "narrowRecall20",
+      "description": "200 passages per channel (kNN num_candidates 800)",
+      "config": {
+        "perChannel": 200
+      }
+    },
+    {
+      "id": "p50-nc10",
+      "family": "E7-candidates",
+      "target": "narrowRecall20",
+      "description": "50 per channel, kNN num_candidates 500",
+      "config": {
+        "numCandidatesFactor": 10
+      }
+    },
+    {
+      "id": "p50-nc20",
+      "family": "E7-candidates",
+      "target": "narrowRecall20",
+      "description": "50 per channel, kNN num_candidates 1000",
+      "config": {
+        "numCandidatesFactor": 20
+      }
+    },
+    {
+      "id": "p100-nc10",
+      "family": "E7-candidates",
+      "target": "narrowRecall20",
+      "description": "100 per channel, kNN num_candidates 1000",
+      "config": {
+        "perChannel": 100,
+        "numCandidatesFactor": 10
+      }
+    },
+    {
+      "id": "p50-k10",
+      "family": "E7-rrf-k",
+      "target": "narrowRecall20",
+      "description": "RRF k 10",
+      "config": {
+        "rrfK": 10
+      }
+    },
+    {
+      "id": "p50-k30",
+      "family": "E7-rrf-k",
+      "target": "narrowRecall20",
+      "description": "RRF k 30",
+      "config": {
+        "rrfK": 30
+      }
+    },
+    {
+      "id": "p50-k120",
+      "family": "E7-rrf-k",
+      "target": "narrowRecall20",
+      "description": "RRF k 120",
+      "config": {
+        "rrfK": 120
+      }
+    },
+    {
+      "id": "p50-w12",
+      "family": "E7-weights",
+      "target": "narrowRecall20",
+      "description": "keyword weight 1, vector weight 2",
+      "config": {
+        "weights": {
+          "keyword": 1,
+          "vector": 2
+        }
+      }
+    },
+    {
+      "id": "p50-w21",
+      "family": "E7-weights",
+      "target": "narrowRecall20",
+      "description": "keyword weight 2, vector weight 1",
+      "config": {
+        "weights": {
+          "keyword": 2,
+          "vector": 1
+        }
+      }
+    },
+    {
+      "id": "c50",
+      "family": "E7-case-fusion",
+      "target": "narrowRecall20",
+      "description": "case-level RRF, 50 per channel",
+      "config": {
+        "fusion": "case"
+      }
+    },
+    {
+      "id": "c100",
+      "family": "E7-case-fusion",
+      "target": "narrowRecall20",
+      "description": "case-level RRF, 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100
+      }
+    },
+    {
+      "id": "c200",
+      "family": "E7-case-fusion",
+      "target": "narrowRecall20",
+      "description": "case-level RRF, 200 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200
+      }
+    },
+    {
+      "id": "c100-k10",
+      "family": "E7-case-fusion",
+      "target": "narrowRecall20",
+      "description": "case-level RRF k 10, 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "rrfK": 10
+      }
+    },
+    {
+      "id": "c100-k30",
+      "family": "E7-case-fusion",
+      "target": "narrowRecall20",
+      "description": "case-level RRF k 30, 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "rrfK": 30
+      }
+    },
+    {
+      "id": "c100-w12",
+      "family": "E7-case-fusion",
+      "target": "narrowRecall20",
+      "description": "case-level RRF, 100 per channel, vector weight 2",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "weights": {
+          "keyword": 1,
+          "vector": 2
+        }
+      }
+    },
+    {
+      "id": "c100-w21",
+      "family": "E7-case-fusion",
+      "target": "narrowRecall20",
+      "description": "case-level RRF, 100 per channel, keyword weight 2",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "weights": {
+          "keyword": 2,
+          "vector": 1
+        }
+      }
+    },
+    {
+      "id": "c50+n",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case-level RRF of passage BM25, passage kNN and case BM25 over narratives (50 cases); 50 per channel",
+      "config": {
+        "fusion": "case",
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 50,
+          "role": "third"
+        }
+      }
+    },
+    {
+      "id": "c50+nf",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case-level RRF of passage BM25, passage kNN and case BM25 over narratives and findings_text (50 cases); 50 per channel",
+      "config": {
+        "fusion": "case",
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 50,
+          "role": "third"
+        }
+      }
+    },
+    {
+      "id": "c50-nv",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case BM25 over narratives (50 cases) replaces passage BM25; case-level RRF with passage kNN; 50 per channel",
+      "config": {
+        "fusion": "case",
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 50,
+          "role": "replace-keyword"
+        }
+      }
+    },
+    {
+      "id": "c50-nfv",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case BM25 over narratives and findings_text (50 cases) replaces passage BM25; case-level RRF with passage kNN; 50 per channel",
+      "config": {
+        "fusion": "case",
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 50,
+          "role": "replace-keyword"
+        }
+      }
+    },
+    {
+      "id": "c100+n",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case-level RRF of passage BM25, passage kNN and case BM25 over narratives (100 cases); 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 100,
+          "role": "third"
+        }
+      }
+    },
+    {
+      "id": "c100+nf",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case-level RRF of passage BM25, passage kNN and case BM25 over narratives and findings_text (100 cases); 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 100,
+          "role": "third"
+        }
+      }
+    },
+    {
+      "id": "c100-nv",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case BM25 over narratives (100 cases) replaces passage BM25; case-level RRF with passage kNN; 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 100,
+          "role": "replace-keyword"
+        }
+      }
+    },
+    {
+      "id": "c100-nfv",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case BM25 over narratives and findings_text (100 cases) replaces passage BM25; case-level RRF with passage kNN; 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 100,
+          "role": "replace-keyword"
+        }
+      }
+    },
+    {
+      "id": "c200+n",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case-level RRF of passage BM25, passage kNN and case BM25 over narratives (200 cases); 200 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 200,
+          "role": "third"
+        }
+      }
+    },
+    {
+      "id": "c200+nf",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case-level RRF of passage BM25, passage kNN and case BM25 over narratives and findings_text (200 cases); 200 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 200,
+          "role": "third"
+        }
+      }
+    },
+    {
+      "id": "c200-nv",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case BM25 over narratives (200 cases) replaces passage BM25; case-level RRF with passage kNN; 200 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 200,
+          "role": "replace-keyword"
+        }
+      }
+    },
+    {
+      "id": "c200-nfv",
+      "family": "E5-case-lexical",
+      "target": "narrowRecall20",
+      "description": "case BM25 over narratives and findings_text (200 cases) replaces passage BM25; case-level RRF with passage kNN; 200 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 200,
+          "role": "replace-keyword"
+        }
+      }
+    },
+    {
+      "id": "p50-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "baseline with the scope keyword text as BM25 text (what the brief pipeline sends today)",
+      "config": {
+        "keywordText": "scope"
+      }
+    },
+    {
+      "id": "p100-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "100 per channel, scope keyword text",
+      "config": {
+        "perChannel": 100,
+        "keywordText": "scope"
+      }
+    },
+    {
+      "id": "c100-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "case-level RRF, 100 per channel, scope keyword text",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "keywordText": "scope"
+      }
+    },
+    {
+      "id": "c200-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "case-level RRF, 200 per channel, scope keyword text",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "keywordText": "scope"
+      }
+    },
+    {
+      "id": "c100+n-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "c100+n with the scope keyword text in both BM25 channels",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 100,
+          "role": "third"
+        },
+        "keywordText": "scope"
+      }
+    },
+    {
+      "id": "c100+nf-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "c100+nf with the scope keyword text in both BM25 channels",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 100,
+          "role": "third"
+        },
+        "keywordText": "scope"
+      }
+    },
+    {
+      "id": "c200+n-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "c200+n with the scope keyword text in both BM25 channels",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives",
+          "depth": 200,
+          "role": "third"
+        },
+        "keywordText": "scope"
+      }
+    },
+    {
+      "id": "c200+nf-kt",
+      "family": "E3-scope-keywords",
+      "target": "narrowRecall20",
+      "description": "c200+nf with the scope keyword text in both BM25 channels",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 200,
+          "role": "third"
+        },
+        "keywordText": "scope"
+      }
+    }
+  ],
+  "pools": [
+    {
+      "id": "pool-hyb50@50",
+      "description": "baseline: the hybrid ranking's first 50 cases at 50 per channel (the registered baseline pool)",
+      "config": {},
+      "method": "ranking",
+      "size": 50
+    },
+    {
+      "id": "pool-hyb50@100",
+      "description": "hybrid ranking's first 50 cases, 100 per channel",
+      "config": {
+        "perChannel": 100
+      },
+      "method": "ranking",
+      "size": 50
+    },
+    {
+      "id": "pool-hyb50@200",
+      "description": "hybrid ranking's first 50 cases, 200 per channel",
+      "config": {
+        "perChannel": 200
+      },
+      "method": "ranking",
+      "size": 50
+    },
+    {
+      "id": "pool-case50@100",
+      "description": "case-level RRF's first 50 cases, 100 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100
+      },
+      "method": "ranking",
+      "size": 50
+    },
+    {
+      "id": "pool-case50@200",
+      "description": "case-level RRF's first 50 cases, 200 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200
+      },
+      "method": "ranking",
+      "size": 50
+    },
+    {
+      "id": "pool-bal50@100",
+      "description": "50 cases taken in turn from vector and keyword, 100 per channel",
+      "config": {
+        "perChannel": 100
+      },
+      "method": "balanced",
+      "size": 50,
+      "channels": [
+        "vector",
+        "keyword"
+      ]
+    },
+    {
+      "id": "pool-bal50@200",
+      "description": "50 cases taken in turn from vector and keyword, 200 per channel",
+      "config": {
+        "perChannel": 200
+      },
+      "method": "balanced",
+      "size": 50,
+      "channels": [
+        "vector",
+        "keyword"
+      ]
+    },
+    {
+      "id": "pool-bal50+nf@100",
+      "description": "50 cases taken in turn from vector, keyword and case BM25 (narratives and findings), 100 deep",
+      "config": {
+        "fusion": "case",
+        "perChannel": 100,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 100,
+          "role": "third"
+        }
+      },
+      "method": "balanced",
+      "size": 50,
+      "channels": [
+        "vector",
+        "keyword",
+        "cases"
+      ]
+    },
+    {
+      "id": "pool-bal50+nf@200",
+      "description": "50 cases taken in turn from vector, keyword and case BM25 (narratives and findings), 200 deep",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 200,
+          "role": "third"
+        }
+      },
+      "method": "balanced",
+      "size": 50,
+      "channels": [
+        "vector",
+        "keyword",
+        "cases"
+      ]
+    },
+    {
+      "id": "pool-case+nf50@200",
+      "description": "c200+nf's first 50 cases",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 200,
+          "role": "third"
+        }
+      },
+      "method": "ranking",
+      "size": 50
+    },
+    {
+      "id": "pool-hyb100@200",
+      "description": "hybrid ranking's first 100 cases, 200 per channel",
+      "config": {
+        "perChannel": 200
+      },
+      "method": "ranking",
+      "size": 100
+    },
+    {
+      "id": "pool-case100@200",
+      "description": "case-level RRF's first 100 cases, 200 per channel",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200
+      },
+      "method": "ranking",
+      "size": 100
+    },
+    {
+      "id": "pool-bal100@200",
+      "description": "100 cases taken in turn from vector and keyword, 200 per channel",
+      "config": {
+        "perChannel": 200
+      },
+      "method": "balanced",
+      "size": 100,
+      "channels": [
+        "vector",
+        "keyword"
+      ]
+    },
+    {
+      "id": "pool-bal100+nf@200",
+      "description": "100 cases taken in turn from vector, keyword and case BM25 (narratives and findings), 200 deep",
+      "config": {
+        "fusion": "case",
+        "perChannel": 200,
+        "caseChannel": {
+          "fields": "narratives+findings",
+          "depth": 200,
+          "role": "third"
+        }
+      },
+      "method": "balanced",
+      "size": 100,
+      "channels": [
+        "vector",
+        "keyword",
+        "cases"
+      ]
+    }
+  ],
+  "channelsAlone": [
+    {
+      "id": "kw@50",
+      "channel": "keyword",
+      "depth": 50
+    },
+    {
+      "id": "vec@50",
+      "channel": "vector",
+      "depth": 50
+    },
+    {
+      "id": "n@50",
+      "channel": "cases",
+      "depth": 50,
+      "caseChannel": {
+        "fields": "narratives",
+        "depth": 50,
+        "role": "third"
+      }
+    },
+    {
+      "id": "nf@50",
+      "channel": "cases",
+      "depth": 50,
+      "caseChannel": {
+        "fields": "narratives+findings",
+        "depth": 50,
+        "role": "third"
+      }
+    },
+    {
+      "id": "kw@100",
+      "channel": "keyword",
+      "depth": 100
+    },
+    {
+      "id": "vec@100",
+      "channel": "vector",
+      "depth": 100
+    },
+    {
+      "id": "n@100",
+      "channel": "cases",
+      "depth": 100,
+      "caseChannel": {
+        "fields": "narratives",
+        "depth": 100,
+        "role": "third"
+      }
+    },
+    {
+      "id": "nf@100",
+      "channel": "cases",
+      "depth": 100,
+      "caseChannel": {
+        "fields": "narratives+findings",
+        "depth": 100,
+        "role": "third"
+      }
+    },
+    {
+      "id": "kw@200",
+      "channel": "keyword",
+      "depth": 200
+    },
+    {
+      "id": "vec@200",
+      "channel": "vector",
+      "depth": 200
+    },
+    {
+      "id": "n@200",
+      "channel": "cases",
+      "depth": 200,
+      "caseChannel": {
+        "fields": "narratives",
+        "depth": 200,
+        "role": "third"
+      }
+    },
+    {
+      "id": "nf@200",
+      "channel": "cases",
+      "depth": 200,
+      "caseChannel": {
+        "fields": "narratives+findings",
+        "depth": 200,
+        "role": "third"
+      }
+    }
+  ],
+  "rule": {
+    "improvementPp": 5,
+    "regressionTolerancePp": 2,
+    "tieWindowPp": 1,
+    "poolImprovementPp": 5
+  },
+  "bootstrap": {
+    "resamples": 10000,
+    "seed": 20261023,
+    "lowerBound": "one-sided-95"
+  },
+  "latency": {
+    "repetitions": 3,
+    "p95AddedMs": 200,
+    "p95TotalMs": 1000
+  },
+  "cost": {
+    "phaseAUsd": 0.5,
+    "maxAddedPaidCallsPerRequest": 0
+  },
+  "scope": {
+    "samples": 3,
+    "timeoutMs": 10000,
+    "retries": 1,
+    "maxUsd": 0.1
+  },
+  "diagnostics": {
+    "perChannel": 50,
+    "backgroundSample": 300,
+    "percentile": 0.9,
+    "sensitivity": [
+      0.75,
+      0.95
+    ],
+    "seed": 1023
+  },
+  "holdout": {
+    "confirmations": 1
+  }
+}

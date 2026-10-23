@@ -498,6 +498,8 @@ and each needs an explicit flag or key:
 | --- | --- | --- |
 | `pnpm ingest index passages --generation <id> --confirm-cost` | OpenAI embeddings of every passage (`text-embedding-3-small`) | about $0.57 for the full corpus, measured; the dry run (no flag) prints the planned tokens and cost and spends nothing; `--cache-only` never pays |
 | `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
+| `pnpm eval:retrieval --track coded --confirm-cost` (README, "Coded-reference track") | embeddings of the 43 coded-reference questions | about $0.00002 |
+| `pnpm eval:retrieval:experiments ... --confirm-cost` (README, "Retrieval experiments") | query embeddings, and three scope-stage samples per question (each attempt reserved at the stage's worst case) | about $0.03 for the dev questions; refused above the registered phase limit ($0.50) |
 | `pnpm eval:checker retrieve --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9) | about $0.000005 |
 | `pnpm eval:checker run --config <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input (37 to 42 calls) | about $0.04 (Haiku), $0.09 (Haiku with thinking) or $0.76 (Sonnet) a development pass; `inventory` (free) prints it first; stops at $3 logged in total |
 | AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |

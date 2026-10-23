@@ -152,9 +152,10 @@ function restoreEnums(out: unknown, src: unknown): void {
 /**
  * Structured-output format whose `parse` never throws: invalid JSON or a schema
  * violation yields `parsed_output: null`, so the adapter still sees `stop_reason`
- * and the billed usage. The SDK's own Zod helper throws and loses both.
+ * and the billed usage. The SDK's own Zod helper throws and loses both. Exported for
+ * the retrieval experiments, which send the scope request as the adapter builds it.
  */
-function outputFormat<O>(schema: z.ZodType<O>): AutoParseableOutputFormat<O | null> {
+export function outputFormat<O>(schema: z.ZodType<O>): AutoParseableOutputFormat<O | null> {
   const { type, schema: jsonSchema } = zodOutputFormat(schema);
   restoreEnums(jsonSchema, z.toJSONSchema(schema, { reused: 'ref' }));
   return {

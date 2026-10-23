@@ -479,7 +479,12 @@ Both commands take `--env-files a,b` (otherwise `AVIATION_ENV_FILES`, otherwise
 and meters the embeddings on the ledger under `evaluation` (`DATABASE_INGEST_URL`).
 It fails closed before embedding anything: dataset problems, a target generation
 other than the one the silver set was built from, or an index that breaks the
-passages contract stop the run. So do questions tagged `multi_aircraft_filtered`
+passages contract stop the run. Generation ids are per-database sequences, so each
+dataset also records its generation's identity (`source`: archive sha256, completion
+mapping, field normalization and citation text versions), and every run re-derives
+the labels on its target, read-only, before paying for anything: a different identity,
+or any question whose labels differ there, stops it (the silver set's 76 rules take
+about 25 seconds; the coded set's about 1 second). So do questions tagged `multi_aircraft_filtered`
 (an aircraft filter over multi-aircraft events) on a `passages-v1` index, which cannot
 reach their cases. `--exploratory` continues past these problems (without those
 questions) and marks the report `gating: false`. The report holds every ranking, bundle and
@@ -500,6 +505,82 @@ only the `passages-v2` qualification reaches (tag `multi_aircraft_filtered`). Th
 questions answered by inspection dates and hours are kept as `section: "structured"` and are
 not run by the RAG evaluation. A unit test fails when `dataset.json` no longer matches
 the rules.
+
+**Coded-reference track** (Track C of the task 10c evaluation protocol). Its scores are
+labelled `coded-reference`: they measure retrieval of coded facts, not adjudicated
+relevance. Each question in `evals/retrieval/coded/questions.ts` is defined by a frozen
+code set: ten-digit `case_findings` codes (the modifier is always explicit), optionally
+required to be cited in the probable cause (`in_probable_cause`), and/or three-digit
+`case_sequence` occurrence codes. Each question also states its aircraft attribution
+(one aircraft carries every clause, or each clause some aircraft) and its filters
+(years, state, aircraft category, phase group). Under an aircraft filter the carrying
+aircraft must match, and a multi-aircraft event counts only when every aircraft matches;
+coded events the filter cannot reach are recorded as `unreachable`. Question text
+follows the code's meaning ("conditions conducive to carburetor icing", never
+"confirmed carburetor icing"), paraphrases avoid the code vocabulary and keep the
+labels, and `cause_factor` and the " - C"/" - F" description suffixes are never labels.
+The builder derives the labels from every answer-eligible US case in one read-only
+snapshot and records, per question, the codes, the description text seen, case counts
+and the class:
+
+- **narrow** (1 to 20 coded cases): gated on candidate Recall@20 (target 90%);
+- **broad** (more than 20): gated on strict P@6 and nDCG@6 of the bundle (gains
+  0/1/2 → 0/1/3); Recall@20 is a diagnostic with its ceiling.
+
+Absence of a code is not a negative judgement, so precision is reported as coded
+precision. The metric module (`evals/retrieval/metrics.ts`) also computes the bounds
+the model-judged track will need for unknown grades (exact P@6 bounds; nDCG@6 bounds
+by enumeration, or the protocol's sound relaxation beyond 12 unknowns; zero-IDCG
+flags). Questions sharing a case, and paraphrases with their originals, are split
+together, and every area and class reaches both splits.
+
+```sh
+pnpm eval:retrieval:coded --generation 1 --check   # rebuild evals/retrieval/coded/dataset.json in memory and compare (DATABASE_URL, read-only)
+pnpm eval:retrieval:coded --generation 1           # write it; --dry-run prints the questions and split groups only
+pnpm eval:retrieval --track coded                  # checks, then plan only (43 questions, about $0.00002)
+pnpm eval:retrieval --track coded --confirm-cost   # embed and write data/work/eval-retrieval-coded-<UTC>.json
+```
+
+The coded run takes the same options and fails closed in the same way, including the
+label re-derivation on the target, and also stops when the dataset was built from other
+question specs than the committed ones. Its report holds the metric definitions, the
+summary per split, class, area and tag (each also per class), a per-question table, the
+target generation's identity, and every ranking, bundle and Elasticsearch body (query
+vectors elided).
+
+The coded set's splits are frozen (`splitsFrozen`, protocol section 6): a rebuild keeps
+every committed question in its split and places only new questions, and a spec edit
+that would join questions frozen in both splits fails the build (and `--check`).
+`--freeze-splits` freezes a set, and `--reassign-splits` deliberately places every group
+afresh. Code sets taken from what generation 1 holds ("every modifier seen", "every code
+with the Maintenance personnel modifier") are frozen too: the builder and the run warn
+when a generation holds a code of the same kind outside the frozen list
+(`CODE_FAMILIES`), and never add it.
+
+**Retrieval experiments** (`evals/retrieval/experiments/`, task 10d). Experiments over
+the coded-reference dev questions, registered before they run: `PREREG.md` explains
+them and `grid.json` freezes the baseline, every variant with its target metric, the
+selection rule, the bootstrap, and the latency and cost limits. They cover fusion and
+depth (passage- or case-level reciprocal rank fusion, passages per channel, kNN
+candidates, the RRF constant, channel weights), case-level BM25 over the cases index
+(narratives, or narratives and `findings_text`) as a third channel or instead of
+passage BM25, bounded candidate pools, and the scope stage's keyword text as BM25 text.
+Every knob is a parameter whose default is today's retrieval: the experiments call the
+production stages with parameters and never change them, and a test holds that the
+default configuration sends exactly the production request bodies. Runs are read-only
+against the target (the ledger records paid calls), refuse a target or dataset other
+than the frozen one, and write their reports to `--out-dir`.
+
+```sh
+pnpm eval:retrieval:experiments preflight                  # free: target, contract, frozen identity, labels re-derived, filter consistency
+pnpm eval:retrieval:experiments scope                      # free dry run: scope-stage input tokens and reservations per question
+pnpm eval:retrieval:experiments scope --confirm-cost       # take the scope samples, every attempt reserved on the ledger
+pnpm eval:retrieval:experiments dev --scope-samples <file> --confirm-cost       # every variant on dev, diagnostics, the rule
+pnpm eval:retrieval:experiments holdout --dev-results <file> --confirm-cost     # once: the selected configuration against the baseline
+```
+
+`--keys-file <file>` reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from a dotenv
+file and never replaces a nonempty process value.
 
 ### Checker calibration
 

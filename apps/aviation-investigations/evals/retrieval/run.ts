@@ -1,18 +1,25 @@
 /**
  * `pnpm eval:retrieval`: the retrieval evaluation (amendment A13; review gate G5).
  *
- *   pnpm eval:retrieval [--env-files <a,b>] [--dataset <file>] [--sizes 50,100]
- *     [--split all|dev|holdout] [--passages-index <name>] [--out-dir <dir>]
- *     [--confirm-cost | --fake-embedder] [--exploratory]
+ *   pnpm eval:retrieval [--track silver|coded] [--env-files <a,b>] [--dataset <file>]
+ *     [--sizes 50,100] [--split all|dev|holdout] [--passages-index <name>]
+ *     [--out-dir <dir>] [--confirm-cost | --fake-embedder] [--exploratory]
+ *
+ * `--track coded` runs the coded-reference track instead (`coded/run.ts`, task 10c
+ * Track C) with the same options and the same fail-closed checks; the default
+ * `silver` track is described here.
  *
  * **Fails closed.** Before anything is embedded it validates the dataset
  * (`datasetProblems`), resolves the target (the active manifest's passages index, or
- * `--passages-index`, whose generation comes from its `_meta`), requires that the
- * target generation is the one the silver set was built from, and checks the passages
- * contract for the configured embedding model and dimensions. Any problem stops the
- * run (exit 1) with nothing paid. `--exploratory` continues past dataset problems and
- * a generation mismatch, and the report is then marked `gating: false`; an index that
- * breaks the contract always stops the run (retrieval would refuse it). A
+ * `--passages-index`, whose generation comes from its `_meta`), checks the passages
+ * contract for the configured embedding model and dimensions, and verifies the labels
+ * on the target: the target generation's id and identity (archive sha256, mapping and
+ * normalization versions) must be the ones the silver set was built from, and every
+ * question's criteria, re-run read-only on the target (`rederiveSilver`, about 25 s),
+ * must give the dataset's expected cases (`generation.ts`). Any problem stops the run
+ * (exit 1) with nothing paid. `--exploratory` continues past dataset, generation and
+ * label problems, and the report is then marked `gating: false` with the reasons; an
+ * index that breaks the contract always stops the run (retrieval would refuse it). A
  * `--fake-embedder` run is never gating either.
  *
  * - Embeds each RAG question once with the configured model (`OPENAI_EMBEDDING_MODEL`,
@@ -40,51 +47,68 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { queryEmbeddingInput, type Embedder } from '../../server/ai/embeddings.js';
-import { countTokens } from '../../server/ai/tokens.js';
 import { closeDb, createDb } from '../../server/db/client.js';
-import { getActiveManifest } from '../../server/db/generations.js';
 import { createEsClient } from '../../server/search/es.js';
-import { CANDIDATE_STAGE_PER_CHANNEL, RETRIEVAL_DEFAULTS, numCandidates, type RetrievalDataset } from '../../server/search/hybrid.js';
-import { IndexMetaError, readIndexMeta, type IndexMeta } from '../../server/search/index-meta.js';
-import { PassagesIndexIncompatibleError, checkPassagesIndex, type PassagesContract } from '../../server/search/passages-contract.js';
+import { CANDIDATE_STAGE_PER_CHANNEL, RETRIEVAL_DEFAULTS, numCandidates } from '../../server/search/hybrid.js';
 import { APP_DIR } from '../../worker/config.js';
 import { describeWorkerError } from '../../worker/errors.js';
-import { batchByLimits, createFakeEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion, reservationUsd } from '../../worker/index/embed.js';
-import { createLedgerSpendGate } from '../../worker/index/spend-gate.js';
-import { DEFAULT_DATASET } from './build-silver.js';
+import { DEFAULT_DATASET, rederiveSilver, silverLabels } from './build-silver.js';
+import { runCodedEvaluation } from './coded/run.js';
 import { evalConfig } from './config.js';
 import { MODES, evaluateRetrieval, type EvaluationResult } from './evaluate.js';
+import { targetProblems } from './generation.js';
+import { checkTarget, describePlan, embedPlan, indexReport, pct, planQueryEmbeddings, resolveRunTarget, stamp } from './harness.js';
 import { DatasetSchema, datasetProblems, needsEventAircraftQualification, type Dataset } from './silver.js';
 
+export { precomputedEmbedder } from './harness.js';
+
 const USAGE =
-  'usage: pnpm eval:retrieval [--env-files <a,b>] [--dataset <file>] [--sizes 50,100] [--split all|dev|holdout] ' +
+  'usage: pnpm eval:retrieval [--track silver|coded] [--env-files <a,b>] [--dataset <file>] [--sizes 50,100] [--split all|dev|holdout] ' +
   '[--passages-index <name>] [--out-dir <dir>] [--confirm-cost | --fake-embedder] [--exploratory]';
 
-/** An embedder answering from vectors computed up front (each question is embedded once). */
-export function precomputedEmbedder(base: Pick<Embedder, 'model' | 'dims' | 'usdPerMillionTokens'>, vectors: ReadonlyMap<string, Float32Array>): Embedder {
+export const RUN_OPTIONS = {
+  track: { type: 'string' },
+  'env-files': { type: 'string' },
+  dataset: { type: 'string' },
+  sizes: { type: 'string' },
+  split: { type: 'string' },
+  'passages-index': { type: 'string' },
+  'out-dir': { type: 'string' },
+  'confirm-cost': { type: 'boolean' },
+  'fake-embedder': { type: 'boolean' },
+  exploratory: { type: 'boolean' },
+} as const;
+
+/** Options both tracks share, validated. Null on a usage error. */
+export interface RunOptions {
+  envFiles: string | undefined;
+  dataset: string | undefined;
+  sizes: number[];
+  split: 'all' | 'dev' | 'holdout';
+  passagesIndex: string | undefined;
+  outDir: string | undefined;
+  confirmCost: boolean;
+  fake: boolean;
+  exploratory: boolean;
+}
+
+export function runOptions(values: { [K in keyof typeof RUN_OPTIONS]?: (typeof RUN_OPTIONS)[K]['type'] extends 'boolean' ? boolean : string }): RunOptions | null {
+  if (values['confirm-cost'] && values['fake-embedder']) return null;
+  const sizes = (values.sizes ?? `${RETRIEVAL_DEFAULTS.perChannel},${CANDIDATE_STAGE_PER_CHANNEL}`).split(',').map((s) => Number(s.trim()));
+  if (sizes.length === 0 || sizes.some((s) => !Number.isSafeInteger(s) || s < 1 || s > 200)) return null;
+  const split = values.split ?? 'all';
+  if (split !== 'all' && split !== 'dev' && split !== 'holdout') return null;
   return {
-    model: base.model,
-    dims: base.dims,
-    usdPerMillionTokens: base.usdPerMillionTokens,
-    async embed(texts) {
-      const out = texts.map((t) => {
-        const v = vectors.get(t);
-        if (!v) throw new Error('a query was not embedded up front');
-        return v;
-      });
-      // Usage was paid (and reported) when the batch was embedded; per query it is its token count.
-      return { vectors: out, tokens: texts.reduce((n, t) => n + countTokens(t), 0) };
-    },
+    envFiles: values['env-files'],
+    dataset: values.dataset,
+    sizes,
+    split,
+    passagesIndex: values['passages-index'],
+    outDir: values['out-dir'],
+    confirmCost: values['confirm-cost'] === true,
+    fake: values['fake-embedder'] === true,
+    exploratory: values.exploratory === true,
   };
-}
-
-function stamp(d: Date): string {
-  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-}
-
-function pct(x: number | null | undefined): string {
-  return x === undefined || x === null ? '    -  ' : `${(x * 100).toFixed(1).padStart(6)}%`;
 }
 
 function printSummary(r: EvaluationResult): void {
@@ -117,40 +141,21 @@ function printSummary(r: EvaluationResult): void {
 }
 
 async function main(argv: string[]): Promise<number> {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      'env-files': { type: 'string' },
-      dataset: { type: 'string' },
-      sizes: { type: 'string' },
-      split: { type: 'string' },
-      'passages-index': { type: 'string' },
-      'out-dir': { type: 'string' },
-      'confirm-cost': { type: 'boolean' },
-      'fake-embedder': { type: 'boolean' },
-      exploratory: { type: 'boolean' },
-    },
-    strict: true,
-  });
-  if (values['confirm-cost'] && values['fake-embedder']) {
+  const { values } = parseArgs({ args: argv, options: RUN_OPTIONS, strict: true });
+  const opts = runOptions(values);
+  const track = values.track ?? 'silver';
+  if (!opts || (track !== 'silver' && track !== 'coded')) {
     console.error(USAGE);
     return 2;
   }
-  const sizes = (values.sizes ?? `${RETRIEVAL_DEFAULTS.perChannel},${CANDIDATE_STAGE_PER_CHANNEL}`).split(',').map((s) => Number(s.trim()));
-  if (sizes.length === 0 || sizes.some((s) => !Number.isSafeInteger(s) || s < 1 || s > 200)) {
-    console.error(USAGE);
-    return 2;
-  }
-  const split = values.split ?? 'all';
-  if (!['all', 'dev', 'holdout'].includes(split)) {
-    console.error(USAGE);
-    return 2;
-  }
-  const exploratory = values.exploratory === true;
-  const fake = values['fake-embedder'] === true;
+  return track === 'coded' ? runCodedEvaluation(opts) : runSilverEvaluation(opts);
+}
 
-  const config = evalConfig(values['env-files']);
-  const datasetPath = values.dataset ? resolve(values.dataset) : DEFAULT_DATASET;
+/** The silver track (module comment). */
+async function runSilverEvaluation(opts: RunOptions): Promise<number> {
+  const { sizes, split, exploratory, fake } = opts;
+  const config = evalConfig(opts.envFiles);
+  const datasetPath = opts.dataset ? resolve(opts.dataset) : DEFAULT_DATASET;
   const raw = readFileSync(datasetPath, 'utf8');
   const parsed = DatasetSchema.safeParse(JSON.parse(raw));
   if (!parsed.success) {
@@ -169,29 +174,12 @@ async function main(argv: string[]): Promise<number> {
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 30_000 });
   try {
     // Target and passages contract, before anything is embedded.
-    let target: RetrievalDataset;
-    if (values['passages-index']) {
-      const meta = await readIndexMeta(es, values['passages-index']);
-      if (meta.generationId === null) throw new Error(`${meta.index} records no generation`);
-      target = { generationId: meta.generationId, passagesIndex: meta.index };
-    } else {
-      const manifest = await getActiveManifest(app);
-      if (!manifest) throw new Error('no dataset manifest is active; pass --passages-index');
-      if (!manifest.passagesIndex) throw new Error(`the active manifest (generation ${manifest.generationId}) has no passages index; pass --passages-index`);
-      target = { generationId: manifest.generationId, passagesIndex: manifest.passagesIndex };
+    const run = await resolveRunTarget(es, app, opts.passagesIndex, { model, dims });
+    if ('refused' in run) {
+      console.error(`${run.refused}; nothing embedded`);
+      return 1;
     }
-    const index = target.passagesIndex as string;
-    let meta: IndexMeta;
-    let contract: PassagesContract;
-    try {
-      ({ meta, contract } = await checkPassagesIndex(es, index, { generationId: target.generationId, model, dims }, { timeoutMs: 30_000 }));
-    } catch (err) {
-      if (err instanceof PassagesIndexIncompatibleError || err instanceof IndexMetaError) {
-        console.error(`${err.message}; nothing embedded`);
-        return 1;
-      }
-      throw err;
-    }
+    const { target, index, contract } = run;
     // An index without the event-level qualification can never reach these questions' multi-aircraft cases.
     const unreachable = contract.eventAircraftQualification
       ? []
@@ -203,9 +191,9 @@ async function main(argv: string[]): Promise<number> {
       );
     }
     const items = selected.filter((q) => !unreachable.includes(q.id));
-    if (target.generationId !== dataset.source.generationId) {
-      problems.push(`generation: the silver set was built from generation ${dataset.source.generationId}; the target is generation ${target.generationId}`);
-    }
+    // The dataset's labels re-derived on the target generation (read-only): generation ids are per-database sequences.
+    const verified = await checkTarget(config.databaseUrl, target.generationId, (client) => rederiveSilver(client, target.generationId, dataset));
+    problems.push(...targetProblems('silver', { source: dataset.source, labels: silverLabels(dataset) }, verified));
     if (problems.length > 0) {
       for (const p of problems) console.error(p);
       if (!exploratory) {
@@ -217,62 +205,23 @@ async function main(argv: string[]): Promise<number> {
     const reasons = [...problems, ...(exploratory ? ['--exploratory'] : []), ...(fake ? ['--fake-embedder'] : [])];
     if (!gating) console.warn(`NON-GATING run (${reasons.join('; ')}): its numbers cannot lock retrieval defaults`);
 
-    const price = embeddingUsdPerMillion(model);
-    const inputs = [...new Set(items.map((q) => queryEmbeddingInput(q.question)))];
-    const inputTokens = inputs.reduce((n, t) => n + countTokens(t), 0);
-    const batches = batchByLimits(inputs, countTokens);
-    const reserve = batches.reduce((sum, b) => sum + reservationUsd(b.reduce((n, t) => n + countTokens(t), 0), price), 0);
-    console.log(
-      `${items.length} RAG questions (${split}; ${structured} structured questions not run), ${inputs.length} query embeddings, ` +
-        `${inputTokens} tokens with ${model}/${dims}: about $${((inputTokens * price) / 1e6).toFixed(6)} (reserve $${reserve.toFixed(6)}), ` +
-        `${batches.length} request(s); index ${index} (generation ${target.generationId}) meets the passages contract`,
+    const plan = planQueryEmbeddings(
+      items.map((q) => q.question),
+      model,
+      dims,
     );
-    if (!values['confirm-cost'] && !fake) {
+    console.log(
+      `${items.length} RAG questions (${split}; ${structured} structured questions not run), ${describePlan(plan)}; ` +
+        `index ${index} (generation ${target.generationId}) meets the passages contract`,
+    );
+    if (!opts.confirmCost && !fake) {
       console.log('nothing embedded: run with --confirm-cost to evaluate (or --fake-embedder for a free, non-gating pipeline check)');
       return 0;
     }
 
     const started = new Date();
-    const vectors = new Map<string, Float32Array>();
-    let embedder: Embedder;
-    let billed = { tokens: 0, usd: 0, requests: 0, uncertain: 0 };
-    if (fake) {
-      const f = createFakeEmbedder(dims, model);
-      for (const batch of batches) {
-        const res = await f.embed(batch);
-        batch.forEach((t, j) => vectors.set(t, res.vectors[j] as Float32Array));
-      }
-      embedder = precomputedEmbedder({ model, dims, usdPerMillionTokens: 0 }, vectors);
-      console.warn('warning: fake embeddings; vector and hybrid numbers are meaningless');
-    } else {
-      if (!config.databaseIngestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
-      const ingest = createDb(config.databaseIngestUrl, { max: 2, applicationName: 'aviation-eval-retrieval-ledger' });
-      try {
-        const gate = createLedgerSpendGate(ingest, { budgets: config.ai.budgets, provider: 'openai', model, stage: 'embed' });
-        const openai = createOpenAIEmbedder({
-          apiKey: config.ai.openai.apiKey ?? '',
-          model,
-          dims,
-          gate,
-          category: 'evaluation',
-          purpose: `eval-retrieval-${stamp(started)}`,
-          log: (m) => console.error(m),
-        });
-        for (const batch of batches) {
-          const res = await openai.embed(batch);
-          batch.forEach((t, j) => vectors.set(t, res.vectors[j] as Float32Array));
-          billed = {
-            tokens: billed.tokens + res.tokens,
-            usd: billed.usd + (res.tokens * price) / 1e6,
-            requests: billed.requests + 1,
-            uncertain: billed.uncertain + (res.usageUncertain ? 1 : 0),
-          };
-        }
-      } finally {
-        await closeDb(ingest);
-      }
-      embedder = precomputedEmbedder({ model, dims, usdPerMillionTokens: price }, vectors);
-    }
+    const { embedder, billed } = await embedPlan(plan, { fake, config, purpose: `eval-retrieval-${stamp(started)}`, log: (m) => console.error(m) });
+    if (fake) console.warn('warning: fake embeddings; vector and hybrid numbers are meaningless');
 
     const result = await evaluateRetrieval(es, embedder, target, items, { sizes, log: (m) => console.error(m) });
     const finished = new Date();
@@ -280,7 +229,7 @@ async function main(argv: string[]): Promise<number> {
     for (const q of dataset.questions) groups.set(q.group, (groups.get(q.group) ?? 0) + 1);
     const report = {
       kind: 'eval-retrieval',
-      version: 2,
+      version: 3,
       gating,
       nonGatingReasons: gating ? [] : reasons,
       startedAt: started.toISOString(),
@@ -298,20 +247,11 @@ async function main(argv: string[]): Promise<number> {
         paraphrases: items.filter((q) => q.paraphrase_of !== undefined).length,
         groups: Object.fromEntries([...groups.entries()].sort(([a], [b]) => Number(a.slice(1)) - Number(b.slice(1)))),
         adjudication: dataset.adjudication,
+        /** The target generation's identity; every question's expected cases were re-derived there before anything was embedded. */
+        target: { source: verified.source, questionsRederived: verified.labels.size, ms: verified.ms },
       },
-      index: {
-        passagesIndex: index,
-        generationId: target.generationId,
-        indexVersion: meta.indexVersion,
-        eventAircraftQualification: contract.eventAircraftQualification,
-        fingerprint: meta.fingerprint,
-        buildId: meta.buildId,
-        chunkerVersion: meta.chunkerVersion,
-        inputTemplateVersion: meta.inputTemplateVersion,
-        embeddingModel: meta.embeddingModel,
-        embeddingDims: meta.embeddingDims,
-      },
-      embedder: { kind: fake ? 'fake' : 'openai', model, dims, inputs: inputs.length, countedTokens: inputTokens, billed },
+      index: indexReport(run),
+      embedder: { kind: fake ? 'fake' : 'openai', model, dims, inputs: plan.inputs.length, countedTokens: plan.inputTokens, billed },
       params: {
         live: { ...RETRIEVAL_DEFAULTS, numCandidates: numCandidates(RETRIEVAL_DEFAULTS) },
         sizes: sizes.map((s) => ({ perChannel: s, numCandidates: numCandidates({ perChannel: s, numCandidatesFactor: RETRIEVAL_DEFAULTS.numCandidatesFactor }) })),
@@ -329,7 +269,7 @@ async function main(argv: string[]): Promise<number> {
       summary: result.summary,
       questions: result.questions,
     };
-    const outDir = values['out-dir'] ? resolve(values['out-dir']) : resolve(APP_DIR, 'data/work');
+    const outDir = opts.outDir ? resolve(opts.outDir) : resolve(APP_DIR, 'data/work');
     mkdirSync(outDir, { recursive: true });
     const file = resolve(outDir, `eval-retrieval-${stamp(started)}.json`);
     writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);

@@ -4,6 +4,10 @@
   "adjudication": "pending-expert",
   "source": {
     "generationId": 1,
+    "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+    "mappingVersion": "v1-empirical",
+    "fieldNormalizationVersion": "v1",
+    "citationTextVersion": "v1",
     "answerEligibleCases": 24291,
     "builder": "evals/retrieval/build-silver.ts",
     "rulesSha256": "9cea446563d29dc2a798ad29950d35e15ec199f43903a0e49f4af584db3e183a"
