@@ -1,5 +1,5 @@
 {
-  "note": "Task 16e offline simulation: the 16c and 16d check recordings judged by judgeCheck (check-judgement-v2) and projected by projectDisplay (display-deps-v2, static abstentions of excerpt-context-v1 and ordinal-evidence-v1) over display plans the production code rebuilt for the frozen inputs, counted by checker-metrics-v3. Server-projection metrics. Counts only.",
+  "note": "Task 16e offline simulation: the 16c and 16d check recordings judged by judgeCheck (check-judgement-v2) and projected by projectDisplay (display-deps-v2, static abstentions of excerpt-context-v1 and ordinal-evidence-v2) over display plans the production code rebuilt for the frozen inputs, counted by checker-metrics-v3. Server-projection metrics. Counts only.",
   "timeoutMs": 45000,
   "criterionTextsChanged": {
     "16c": [],
@@ -7624,7 +7624,8 @@
             },
             "static": {
               "abstained": {
-                "excerpt_context": 9
+                "excerpt_context": 9,
+                "ordinal_evidence": 1
               },
               "supportedRemoved": 0,
               "supported": 255,
@@ -8183,7 +8184,8 @@
             },
             "static": {
               "abstained": {
-                "excerpt_context": 9
+                "excerpt_context": 9,
+                "ordinal_evidence": 1
               },
               "supportedRemoved": 0,
               "supported": 156,
@@ -11223,7 +11225,7 @@
             },
             "static": {
               "abstained": {
-                "ordinal_evidence": 20,
+                "ordinal_evidence": 21,
                 "excerpt_context": 20
               },
               "supportedRemoved": 0,
@@ -11805,7 +11807,7 @@
             },
             "static": {
               "abstained": {
-                "ordinal_evidence": 20,
+                "ordinal_evidence": 21,
                 "excerpt_context": 20
               },
               "supportedRemoved": 0,
@@ -12387,7 +12389,7 @@
             },
             "static": {
               "abstained": {
-                "ordinal_evidence": 20,
+                "ordinal_evidence": 21,
                 "excerpt_context": 20
               },
               "supportedRemoved": 0,
@@ -12972,7 +12974,7 @@
             },
             "static": {
               "abstained": {
-                "ordinal_evidence": 20,
+                "ordinal_evidence": 21,
                 "excerpt_context": 20
               },
               "supportedRemoved": 0,
@@ -13540,7 +13542,7 @@
             },
             "static": {
               "abstained": {
-                "ordinal_evidence": 20,
+                "ordinal_evidence": 21,
                 "excerpt_context": 20
               },
               "supportedRemoved": 0,
@@ -14108,7 +14110,7 @@
             },
             "static": {
               "abstained": {
-                "ordinal_evidence": 20,
+                "ordinal_evidence": 21,
                 "excerpt_context": 20
               },
               "supportedRemoved": 0,

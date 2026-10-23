@@ -571,7 +571,7 @@ export function checkPassages(cases: Iterable<VerifiedCase>, about: ReadonlySet<
  * the checker says (Task 16e; server/briefs/display.ts "Static abstentions"), by stable key:
  * - `excerpt_context`: a quote the excerpt-context policy found to need its surrounding
  *   text (`ResolvedCitation.excerpt`, `excerpt-context-v1`);
- * - `ordinal_evidence` (`ordinal-evidence-v1`): a timing fact stating which flight it was,
+ * - `ordinal_evidence` (`ordinal-evidence-v2`): a timing fact stating which flight it was,
  *   or how many flights came in between, without explicit evidence in the passages it
  *   cites; and a summary sentence, `why` line or gap note stating a flight ordinal without
  *   explicit evidence in the passages it cites (the check input's citations: canonical ids).

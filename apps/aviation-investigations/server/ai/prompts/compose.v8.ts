@@ -8,7 +8,7 @@
  *   pointing back, an opening "it", "he", "they", "then" or "however", "the same", "the
  *   other", "similar", or a time or flight counted from an unstated point ("2 days later",
  *   "29 hours earlier", "the previous day", "the next flight").
- * - **Which flight it was needs explicit evidence** (`ordinal-evidence-v1`,
+ * - **Which flight it was needs explicit evidence** (`ordinal-evidence-v2`,
  *   server/briefs/ordinals.ts): a `flight_ordinal` or `intervening_flights` fact, or a
  *   sentence saying which flight it was, only when a passage states that ordinal for that
  *   flight or says how many flights came in between; a narrated sequence ("the first

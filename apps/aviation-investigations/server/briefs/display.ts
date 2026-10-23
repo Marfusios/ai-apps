@@ -22,7 +22,7 @@
  * never show, whatever the checker says: an excerpt that needs its context
  * (`excerpt_context`, `excerpt-context-v1`, server/briefs/excerpts.ts) and a flight ordinal
  * without explicit evidence in its cited passages (`ordinal_evidence`,
- * `ordinal-evidence-v1`, server/briefs/ordinals.ts). They are checked like every claim (a
+ * `ordinal-evidence-v2`, server/briefs/ordinals.ts). They are checked like every claim (a
  * contradiction still counts), removed with cause `static`, and cascade like any removal.
  *
  * **Dependency rules (`display-deps-v2`).** For each presented case X:

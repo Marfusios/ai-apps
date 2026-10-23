@@ -4,7 +4,7 @@
  * is now: judged by `judgeCheck` (`check-judgement-v2`: a `supported` verdict resting on an
  * uncited passage removes that claim, no longer the whole output), projected by
  * `projectDisplay` (`display-deps-v2`, with the static abstentions of `excerpt-context-v1`
- * and `ordinal-evidence-v1`) over display plans the production code rebuilds for the frozen
+ * and `ordinal-evidence-v2`) over display plans the production code rebuilds for the frozen
  * inputs (`v1Plans`, `v2Plans`, which first prove they render exactly the frozen claims), and
  * counted by `checker-metrics-v3`. Every figure is a **server-projection metric**.
  *
@@ -109,7 +109,7 @@ export function simulate(dirs: { '16c': string; '16d': string } = DEFAULT_RECORD
     };
   });
   return {
-    note: 'Task 16e offline simulation: the 16c and 16d check recordings judged by judgeCheck (check-judgement-v2) and projected by projectDisplay (display-deps-v2, static abstentions of excerpt-context-v1 and ordinal-evidence-v1) over display plans the production code rebuilt for the frozen inputs, counted by checker-metrics-v3. Server-projection metrics. Counts only.',
+    note: 'Task 16e offline simulation: the 16c and 16d check recordings judged by judgeCheck (check-judgement-v2) and projected by projectDisplay (display-deps-v2, static abstentions of excerpt-context-v1 and ordinal-evidence-v2) over display plans the production code rebuilt for the frozen inputs, counted by checker-metrics-v3. Server-projection metrics. Counts only.',
     timeoutMs: STAGE_TIMEOUTS.check,
     criterionTextsChanged: { '16c': v1p.textChanged, '16d': v2p.textChanged },
     runs,

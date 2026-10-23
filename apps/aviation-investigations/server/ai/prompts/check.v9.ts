@@ -11,7 +11,7 @@
  *   the narrative may leave flights out (it likely invited the c10 miss). It is gone; a
  *   flight ordinal needs an ordinal the passages state for that flight or an explicitly
  *   complete count of the flights in between, and the narrated sequence is now the example
- *   of what does not establish one (the server's `ordinal-evidence-v1` rule asks the same).
+ *   of what does not establish one (the server's ordinal-evidence rule asks the same).
  * - **Timing rules `chronology-rules-v3`**: in an event with more than one aircraft, a
  *   statement about the whole event can still conflict with a statement about one aircraft
  *   (16d review m1); a flight ordinal or count settles the first flight only with that

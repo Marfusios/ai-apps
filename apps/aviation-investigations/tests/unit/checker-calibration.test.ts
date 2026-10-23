@@ -4,9 +4,13 @@ import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { CheckInputSchema, CheckOutputSchema, type CheckOutput } from '../../server/ai/provider.js';
 import {
+  EVIDENCE_V3_SHA256,
   V1_LABELS_SHA256,
   V2_FILE_SHA256,
+  V3_DEV_LABELS_SHA256,
+  V3_HOLDOUT_LABELS_SHA256,
   buildCalibrationV3,
+  heldOutBundlesV3,
   labelsHash,
   readDataset,
   readDatasetV2,
@@ -72,6 +76,14 @@ function oracle(b: CalibrationBatch, flip = false): CheckOutput {
   };
 }
 
+/** Trials of every v3 slot (protocol v3 sampling). */
+const trialsV3Of = (split: 'dev' | 'holdout', answer: (b: CalibrationBatch) => CheckOutput | null): Trial[] =>
+  plannedSlotsV3(v3, split).map((s) => {
+    const b = v3.batches.find((x) => x.id === s.batch)!;
+    const output = answer(b);
+    return { batch: s.batch, sample: s.sample, output, ...(output ? {} : { failure: 'timeout' }), latencyMs: 1_000, costUsd: 0.001 };
+  });
+
 const trialsOf = (d: CalibrationDataset, split: 'dev' | 'holdout', answer: (b: CalibrationBatch) => CheckOutput | null): Trial[] =>
   plannedSlots(d, split).map((s) => {
     const b = d.batches.find((x) => x.id === s.batch)!;
@@ -109,7 +121,7 @@ describe('the checker calibration sets (evals/checker)', () => {
       expect(x.split, b.id).toBe('dev');
       expect(x.input, b.id).toEqual(b.input);
     }
-    expect(built).toMatchObject({ displayRules: 'display-deps-v2', excerptRules: 'excerpt-context-v1', ordinalRules: 'ordinal-evidence-v1', chronologyRules: 'chronology-rules-v3' });
+    expect(built).toMatchObject({ displayRules: 'display-deps-v2', excerptRules: 'excerpt-context-v1', ordinalRules: 'ordinal-evidence-v2', chronologyRules: 'chronology-rules-v3' });
   });
 
   it('labels v3: the errata overlay changes exactly its claims, each with a source and a reason; disputed labels stay, flagged', () => {
@@ -117,7 +129,8 @@ describe('the checker calibration sets (evals/checker)', () => {
       expect(e.reason.length).toBeGreaterThan(60);
       expect(e.source.length).toBeGreaterThan(5);
     }
-    const changed = v3.batches.flatMap((b) => {
+    // The development split: the 16c and 16d items (the 16e held-out items are new).
+    const changed = v3.batches.filter((b) => b.split === 'dev').flatMap((b) => {
       const old = v2.batches.find((x) => x.id === b.id)!;
       return b.labels.flatMap((l, i) => (l.label !== old.labels[i]!.label ? [`${b.id}/${l.item}:${old.labels[i]!.label}>${l.label}`] : []));
     });
@@ -197,6 +210,42 @@ describe('the checker calibration sets (evals/checker)', () => {
     const r = rawReport(v3.batches.filter((b) => b.split === 'dev'), trialsOf(v3, 'dev', (b) => oracle(b)), 45_000);
     expect(r.semanticDetection.all.rate).toBe(1);
     expect(r.falseFlags.k).toBe(0);
+  });
+
+  it('the 16e held-out set: the pre-registered bundles, new cases, frozen labels; a perfect checker shows every supported claim and no error', () => {
+    const v3ev = readEvidenceV3()!;
+    const earlier = new Set([...EvidenceFileSchema.parse(JSON.parse(evidenceText)).bundles, ...EvidenceV2FileSchema.parse(JSON.parse(v2Text)).bundles].flatMap((b) => b.cases.map((c) => c.ntsbNo)));
+    const chosen = heldOutBundlesV3(v3ev.file, earlier);
+    expect(chosen.map((b) => b.question)).toEqual([
+      'q16e-turbocharger',
+      'q16e-crankshaft',
+      'q16e-fuel-cap',
+      'q16e-injection',
+      'q16e-induction',
+      'q16e-gascolator',
+      'q16e-main-rotor',
+      'q16e-homebuilt-engine',
+      'q16e-fuel-quantity',
+    ]);
+    const held = v3.batches.filter((b) => b.split === 'holdout');
+    expect(new Set(held.map((b) => b.bundle))).toEqual(new Set(chosen.map((b) => b.question)));
+    for (const b of held) for (const c of b.input.cases) expect(earlier.has(c.ntsbNo), `${b.id} ${c.ntsbNo}`).toBe(false);
+    expect(v3ev.file.source.retrievalVersion).toBe('retrieval.v2');
+    expect(v3.labels.splits!.holdout.sha256).toBe(V3_HOLDOUT_LABELS_SHA256);
+    expect(v3.labels.splits!.dev.sha256).toBe(V3_DEV_LABELS_SHA256);
+    expect(v3.evidenceV3Sha256).toBe(EVIDENCE_V3_SHA256);
+    // Each critical timing mutation in at least two held-out bundles.
+    for (const m of HELDOUT_V3.criticalTimingMutations) {
+      const bundles = new Set(held.filter((b) => b.labels.some((l) => l.mutation === m)).map((b) => b.bundle));
+      expect(bundles.size, m).toBeGreaterThanOrEqual(HELDOUT_V3.minimumBundlesPerTimingMutation);
+    }
+    const d = displayReport(held, trialsV3Of('holdout', (b) => oracle(b)));
+    expect(d.m1.rate).toBe(1);
+    expect(d.m2.rate).toBe(1);
+    expect(d.m3.all.k).toBe(0);
+    expect(d.m4.k).toBe(0);
+    expect(d.m5.violations).toBe(0);
+    expect(d.critical.neverDisplayed).toBe(d.critical.items);
   });
 
   it('failed calls block output but never count as detected errors (16c review I2)', () => {

@@ -40,7 +40,7 @@
  *   about the whole event still takes part in the conflict test (v3, 16d review m1): "2
  *   days" for the aircraft and "40 days" for the event conflict, as they would in a
  *   single-aircraft event, so neither settles a 30-day window.
- * - **O-1 ordinal evidence** (v3, `ordinal-evidence-v1`, server/briefs/ordinals.ts). A
+ * - **O-1 ordinal evidence** (v3, `ordinal-evidence-v2`, server/briefs/ordinals.ts). A
  *   `flight_ordinal` or `intervening_flights` fact decides only when the passages it cites
  *   give that ordinal for a flight ("the third flight") or an explicitly complete count
  *   ("had not flown since", "no flights between"); a narrated sequence may leave flights

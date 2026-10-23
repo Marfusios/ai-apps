@@ -21,7 +21,7 @@
  * - `dataset.v3.json` (`checker-cal-v3`, Task 16e): every earlier item (16c, the 16d
  *   additions and the 16d held-out set) as development, rendered by the 16e code
  *   (`chronology-rules-v3`, `display-deps-v2` plans with the static abstentions of
- *   `excerpt-context-v1` and `ordinal-evidence-v1`), with labels v3 (labels v2 and the
+ *   `excerpt-context-v1` and `ordinal-evidence-v2`), with labels v3 (labels v2 and the
  *   errata overlay `checker-errata-v1`, `labels.v3.ts`), and the 16e held-out set of new
  *   `retrieval.v2` bundles. Each brief batch carries its display plan, each batch its
  *   cluster (the source bundle). `labels.sha256` hashes every claim with its label, per
@@ -55,6 +55,7 @@ import {
 import { BRIEFS, CLAIM_BATCHES, V2_BRIEFS, V2_CLAIM_BATCHES, V2_MAX_SIZE, V3_BRIEFS, V3_CLAIM_BATCHES } from './items/index.js';
 import { BRIEF_LABELS_V2, CLAIM_LABELS_V2, LABELS_V2_VERSION } from './labels.v2.js';
 import { BRIEF_ERRATA, CLAIM_ERRATA, DISPUTED, ERRATA_VERSION, LABELS_V3_VERSION } from './labels.v3.js';
+import { HELDOUT_V3 } from './protocol.v3.js';
 import { QUESTIONS, QUESTIONS_16D, QUESTIONS_16E } from './questions.js';
 import type { BriefCategory, BriefClaimLabel, BriefSpec, ClaimBatch, Family, Label, Provenance } from './types.js';
 import { FAMILIES, MUTATIONS } from './types.js';
@@ -768,15 +769,11 @@ export function buildCalibrationV3(evidence: EvidenceFile, evidenceText: string,
   if (v3) {
     const problems = evidenceProblems({ ...evidence, bundles: v3.file.bundles });
     if (problems.length > 0) throw new BuildError(`evidence-16e.json: ${problems.join('; ')}`);
-    const earlier = new Set([...evidence.bundles, ...v2.bundles].flatMap((b) => b.cases.map((c) => c.ntsbNo)));
-    for (const b of v3.file.bundles) {
-      if (b.split !== 'holdout') throw new BuildError(`evidence-16e.json: ${b.question} is not a held-out bundle`);
-      for (const c of b.cases) {
-        if (earlier.has(c.ntsbNo)) throw new BuildError(`evidence-16e.json: ${b.question} holds ${c.ntsbNo}, a case of an earlier split`);
-        if (!v3.file.headers[c.ntsbNo]) throw new BuildError(`evidence-16e.json has no header for ${c.ntsbNo}`);
-      }
-    }
-    held.push(...buildBatches(v3.file.bundles, new Map(Object.entries(v3.file.headers)), V3_CLAIM_BATCHES, V3_BRIEFS, 'v2', () => 'holdout', LABELS_V3));
+    const chosen = heldOutBundlesV3(v3.file, new Set([...evidence.bundles, ...v2.bundles].flatMap((b) => b.cases.map((c) => c.ntsbNo))));
+    for (const b of chosen) for (const c of b.cases) if (!v3.file.headers[c.ntsbNo]) throw new BuildError(`evidence-16e.json has no header for ${c.ntsbNo}`);
+    const names = new Set(chosen.map((b) => b.question));
+    for (const item of [...V3_CLAIM_BATCHES, ...V3_BRIEFS]) if (!names.has(item.bundle)) throw new BuildError(`${item.id}: bundle ${item.bundle} is not one of the held-out bundles (${[...names].join(', ')})`);
+    held.push(...buildBatches(chosen, new Map(Object.entries(v3.file.headers)), V3_CLAIM_BATCHES, V3_BRIEFS, 'v2', () => 'holdout', LABELS_V3));
   } else if (V3_CLAIM_BATCHES.length + V3_BRIEFS.length > 0) {
     throw new BuildError('the 16e held-out items need evidence-16e.json');
   }
@@ -805,10 +802,46 @@ export function buildCalibrationV3(evidence: EvidenceFile, evidenceText: string,
   };
 }
 
+/**
+ * The 16e held-out bundles by the pre-registered rule (`HELDOUT_V3`): the retrieved 16e
+ * bundles that hold no case of an earlier split and at least `minimumCases` cases, the first
+ * `bundles` of them in question order (`QUESTIONS_16E`); no case in two of them.
+ */
+export function heldOutBundlesV3(file: EvidenceV3File, earlier: ReadonlySet<string>): EvidenceV3File['bundles'] {
+  if (file.source.retrievalVersion !== HELDOUT_V3.retrievalVersion) throw new BuildError(`evidence-16e.json is not ${HELDOUT_V3.retrievalVersion}`);
+  const order = QUESTIONS_16E.map((q) => q.id);
+  const byQuestion = new Map(file.bundles.map((b) => [b.question, b]));
+  for (const b of file.bundles) if (b.split !== 'holdout' || !order.includes(b.question)) throw new BuildError(`evidence-16e.json: ${b.question} is not a 16e held-out question`);
+  const eligible = order.flatMap((q) => {
+    const b = byQuestion.get(q);
+    return b && b.cases.length >= HELDOUT_V3.minimumCases && !b.cases.some((c) => earlier.has(c.ntsbNo)) ? [b] : [];
+  });
+  if (eligible.length < HELDOUT_V3.bundles) throw new BuildError(`only ${eligible.length} eligible 16e bundles, ${HELDOUT_V3.bundles} needed`);
+  const chosen = eligible.slice(0, HELDOUT_V3.bundles);
+  const seen = new Set<string>();
+  for (const b of chosen) {
+    for (const c of b.cases) {
+      if (seen.has(c.ntsbNo)) throw new BuildError(`${c.ntsbNo} is in two held-out bundles`);
+      seen.add(c.ntsbNo);
+    }
+  }
+  return chosen;
+}
+
 /** The frozen v1 labels' hash (Task 16c, 6e06f1e). */
 export const V1_LABELS_SHA256 = '9608ceac09ef823949d3a9f0db88987db584db9f4bf2bd104f3939ed6586ca6d';
 /** The frozen v2 dataset file's sha256 (Task 16d, e07e2d9; frozen in Task 16e). */
 export const V2_FILE_SHA256 = '25e879adb80f0bc3703b41d32843f8fd441ea1162939e4f52e00fcf6c4dd61f7';
+
+/**
+ * Dataset v3's frozen label hashes (Task 16e): the development split (labels v3) and the
+ * 16e held-out split, frozen with the 16e evidence before any 16e checker output (protocol
+ * v3, `HELDOUT_V3`). A build whose labels or evidence differ refuses: a change is a new,
+ * disclosed label set.
+ */
+export const V3_DEV_LABELS_SHA256 = '3a3b6767b5d7198ef0ab63a545487f0a56f1d67c9840f7e285ea7f341892f98f';
+export const V3_HOLDOUT_LABELS_SHA256 = 'c079a152016238854797d78105644d69f81d935253bab4533fe2341ce45978c6';
+export const EVIDENCE_V3_SHA256 = '8bf19490d1288ad8b0377ebd4451c9ba086a9a04cd16befe11b92ee33540a6c2';
 
 export async function buildDataset(opts: { check: boolean; log: (m: string) => void }): Promise<number> {
   const evidenceText = readFileSync(EVIDENCE_PATH, 'utf8');
@@ -824,6 +857,10 @@ export async function buildDataset(opts: { check: boolean; log: (m: string) => v
     if (sha256(readFileSync(DATASET_V2_PATH, 'utf8')) !== V2_FILE_SHA256) throw new BuildError('dataset.v2.json is not the frozen 16d dataset');
     v2Plans();
     dataset = buildCalibrationV3(evidence, evidenceText, v2, v2Text, readEvidenceV3());
+    const splits = dataset.labels.splits!;
+    if (dataset.evidenceV3Sha256 !== EVIDENCE_V3_SHA256) throw new BuildError('evidence-16e.json is not the frozen 16e evidence');
+    if (splits.dev.sha256 !== V3_DEV_LABELS_SHA256) throw new BuildError(`the development labels (${splits.dev.sha256.slice(0, 16)}) are not the frozen labels v3`);
+    if (splits.holdout.sha256 !== V3_HOLDOUT_LABELS_SHA256) throw new BuildError(`the held-out labels (${splits.holdout.sha256.slice(0, 16)}) are not the frozen 16e held-out set`);
   } catch (err) {
     if (err instanceof BuildError) {
       opts.log(`build failed: ${err.message}`);

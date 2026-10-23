@@ -587,7 +587,7 @@ describe('display projection (display-deps-v2): static abstentions (Task 16e)', 
     expect(oracleDisplay(b.plan, 'claims').cases.find((c) => c.ntsbNo === A)!.reading).toBe(false);
   });
 
-  it('a summary sentence stating a flight ordinal without explicit evidence in its passages is never shown (ordinal-evidence-v1)', () => {
+  it('a summary sentence stating a flight ordinal without explicit evidence in its passages is never shown (ordinal-evidence-v2)', () => {
     const summary = [SENTENCES.a, SENTENCES.b, 'In the Vans case, the engine quit on the third flight after the installation [[case:WPR18LA021]].'].join(' ');
     const b = built(composition({ summary }), WINDOW);
     expect(b.plan.claims.find((c) => c.key === 'summary.2')!.abstain).toBe('ordinal_evidence');

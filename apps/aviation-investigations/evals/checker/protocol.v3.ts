@@ -29,6 +29,13 @@
  * `static`). Intervals are clustered by source bundle; a gate whose clustered interval
  * straddles its threshold is inconclusive.
  *
+ * **Amendment v3.1** (before any paid call, before the held-out set was frozen): authoring
+ * the held-out set showed that `ordinal-evidence-v1` took words that count no flights from
+ * the maintenance as an explicit count ("had not flown in 22 years", "the previous two
+ * flights"); `ordinal-evidence-v2` requires a count to state what it counts from. That
+ * rule version is the only change; the protocol's name says v3.1 and the report discloses
+ * it.
+ *
  * **Held-out** (`HELDOUT_V3`): new `retrieval.v2` bundles whose cases are in no earlier
  * split, frozen (their split's own label hash in `dataset.v3.json`, committed) before any
  * checker output on them, and run once, for the frozen selection. It cannot reach the size
@@ -54,7 +61,7 @@ import { canonical } from './manifest.js';
 import { METRICS_VERSION, type DisplayReport, type RawReport } from './metrics.js';
 import { productionCheck } from './protocol.v2.js';
 
-export const PROTOCOL_V3 = 'checker-cal-protocol-v3';
+export const PROTOCOL_V3 = 'checker-cal-protocol-v3.1';
 export const PROTOCOL_V3_FILE = resolve(APP_DIR, 'evals/checker/protocol.v3.ts');
 
 const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -68,7 +75,7 @@ export function protocolV3Sha256(): string {
 export const FROZEN_RULES = {
   quoteMatch: 'quote-ws-v2',
   excerptContext: 'excerpt-context-v1',
-  ordinalEvidence: 'ordinal-evidence-v1',
+  ordinalEvidence: 'ordinal-evidence-v2',
   chronology: 'chronology-rules-v3',
   display: 'display-deps-v2',
   judgement: 'check-judgement-v2',

@@ -1,14 +1,15 @@
 /**
- * The ordinal-evidence rule, version **`ordinal-evidence-v1`** (Task 16e; gate G6, the 16d
+ * The ordinal-evidence rule, version **`ordinal-evidence-v2`** (Task 16e; gate G6, the 16d
  * verdict's finding 2): which flight after the maintenance the event happened on needs
  * explicit evidence. A passage that narrates "the first flight after the installation …,
  * the second flight …, the accident flight was conducted 2 days later" does not say that
  * the accident flight was the third: the narrative may leave flights out. So a flight
  * ordinal stands only on **explicit ordinal evidence** (the cited passages give that
  * ordinal for a flight: "the third flight", "its first flight since", "the 2nd flight")
- * or an **explicitly complete flight count** ("had not flown since", "no flights were made
- * between", "the only flight since", "two flights since"; for the first flight, maintenance
- * completed "immediately before the flight"). Otherwise uncertainty is kept:
+ * or an **explicitly complete flight count**, stated with what it counts from ("had not
+ * flown since", "no flights were made between", "the only flight since", "two flights
+ * since"; for the first flight, maintenance completed "immediately before the flight").
+ * Otherwise uncertainty is kept:
  *
  * - a chronology fact `flight_ordinal` or `intervening_flights` without that evidence in
  *   the passages it cites decides nothing under the timing rules (`chronology-rules-v3`,
@@ -18,13 +19,19 @@
  *   flight", "the airplane's first flight after …", "its next flight") without that
  *   evidence in the passages it cites is never shown (server/briefs/display.ts).
  *
+ * Version 2 (before any 16e paid call) narrows v1's counts, which accepted words that
+ * count no flights from the maintenance: "had not flown in 22 years" (inactivity before the
+ * work), "the previous two flights" or "all three flights" anywhere in a passage. A count
+ * is now evidence only with what it counts from beside it ("N flights since/after/between
+ * …"), and "had not flown" only with "since", "after" or "following".
+ *
  * The rule is a necessary condition, not a proof: evidence that the passages state an
  * ordinal does not establish what it is counted from ("the first flight of the day"), and
  * the evidence checker still judges the claim. It runs in code, on the validated
  * composition and the canonical passage texts, before the check.
  */
 
-export const ORDINAL_EVIDENCE_VERSION = 'ordinal-evidence-v1';
+export const ORDINAL_EVIDENCE_VERSION = 'ordinal-evidence-v2';
 
 const WORDS: Readonly<Record<string, number>> = {
   first: 1,
@@ -110,16 +117,21 @@ function ordinalPattern(n: number): RegExp {
   );
 }
 
-/** A count of flights: "two flights", "2 other flights", "no flights", "no other flights", "no flight". */
+/**
+ * A complete count of flights with what it counts from beside it: "two flights since the
+ * overhaul", "2 other flights were flown after the inspection", "no flights between".
+ */
 function countPattern(n: number): RegExp {
   const forms = [`${n}`, ...Object.entries(COUNT_WORDS).filter(([, v]) => v === n).map(([w]) => w)].join('|');
-  return new RegExp(`\\b(?:${forms})\\s+(?:other\\s+|completed\\s+|previous\\s+|prior\\s+|additional\\s+|further\\s+|subsequent\\s+|intervening\\s+)?flights?\\b`, 'i');
+  return new RegExp(
+    String.raw`\b(?:${forms})\s+(?:other\s+|completed\s+|previous\s+|prior\s+|additional\s+|further\s+|subsequent\s+|intervening\s+)?flights?\s+(?:had\s+been\s+|have\s+been\s+|were\s+|was\s+)?(?:made\s+|flown\s+|conducted\s+|completed\s+)?(?:since|after|following|between)\b`,
+    'i',
+  );
 }
 
 /** Phrases that say no flight came between the maintenance and the event flight. */
 const NO_FLIGHT_BETWEEN = [
-  /\b(?:had|has)\s+not\s+(?:been\s+)?(?:flown|operated)\s+(?:since|after|following)\b/i,
-  /\bhad(?:n['’]t|\s+not)\s+flown\b/i,
+  /\b(?:had|has)(?:n['’]t|\s+not)\s+(?:been\s+)?(?:flown|operated)\s+(?:since|after|following)\b/i,
   /\bno\s+(?:other\s+|previous\s+|prior\s+|additional\s+|intervening\s+)?flights?\s+(?:had\s+been\s+|were\s+|was\s+)?(?:made\s+|flown\s+|conducted\s+|completed\s+)?(?:since|after|between|following)\b/i,
   /\bthe\s+only\s+flight\s+(?:since|after|following)\b/i,
   /\bfirst\s+time\b.{0,80}?\b(?:flown|flew|operated)\s+(?:since|after|following)\b/i,
@@ -135,7 +147,7 @@ export function ordinalEvidence(texts: readonly string[], ordinal: number | 'nex
   if (ordinal === 1 && texts.some((t) => NO_FLIGHT_BETWEEN.some((re) => re.test(t)))) return true;
   // An explicit count of the flights in between ("two flights since the overhaul" for the third).
   const count = countPattern(ordinal - 1);
-  return ordinal > 1 && texts.some((t) => count.test(t) && /\b(?:since|after|following|between)\b/i.test(t));
+  return ordinal > 1 && texts.some((t) => count.test(t));
 }
 
 /** Whether the passages give explicit evidence for `n` completed flights in between. */

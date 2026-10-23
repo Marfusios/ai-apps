@@ -17,9 +17,9 @@ const evidence = (texts: Record<string, string>, multi?: { scopes: Record<string
   texts: new Map(Object.entries(texts)),
 });
 
-describe('ordinal-evidence-v1', () => {
+describe('ordinal-evidence-v2', () => {
   it('reads flight ordinals in prose', () => {
-    expect(ORDINAL_EVIDENCE_VERSION).toBe('ordinal-evidence-v1');
+    expect(ORDINAL_EVIDENCE_VERSION).toBe('ordinal-evidence-v2');
     expect(textOrdinals('In the Vans case, the engine quit on the third flight after the installation (WPR18LA021).')).toEqual([3]);
     expect(textOrdinals("The accident flight was the airplane's first flight after the annual inspection.")).toEqual([1]);
     expect(textOrdinals('It was its 2nd test flight and then its next flight.')).toEqual([2, 'next']);
@@ -62,6 +62,19 @@ describe('ordinal-evidence-v1', () => {
     expect(interveningEvidence(['No other flights were made since the overhaul.'], 0)).toBe(true);
     expect(interveningEvidence(['Two flights were made since the overhaul.'], 2)).toBe(true);
     expect(interveningEvidence([NARRATED], 2)).toBe(false);
+  });
+
+  it('v2: a count or "had not flown" is evidence only with what it counts from beside it', () => {
+    // 16e held-out ERA23LA144: inactivity before the work is not a count of flights after it.
+    const inactive = 'The pilot purchased an airplane that had not flown in 22 years and that had an extensive annual inspection completed the day before the accident flight.';
+    expect(ordinalEvidence([inactive], 1)).toBe(false);
+    expect(ordinalEvidence(['The airplane had not flown since the annual inspection.'], 1)).toBe(true);
+    expect(ordinalEvidence(["The airplane hadn't been flown after the repair."], 1)).toBe(true);
+    // "The previous two flights" or "all three flights" count no flights from the maintenance.
+    const previous = 'The pilot stated that there were no anomalies during the previous two flights, and the mechanic stated that the engine had issues after the annual inspection.';
+    expect(ordinalEvidence([previous], 3)).toBe(false);
+    expect(interveningEvidence(['For all three flights, on takeoff, the current rose rapidly after the inspection.'], 3)).toBe(false);
+    expect(interveningEvidence(['The previous owner flew two flights after fueling.'], 2)).toBe(true);
   });
 });
 
