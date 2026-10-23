@@ -38,7 +38,7 @@
  * settle a criterion is also recorded as `chronology_missed`: a likely extraction failure
  * (or a checker error), diagnostic only; the checker's reading never replaces the server
  * decision, and nothing is retried or repaired. What a rejected claim removes from the
- * display is the projection's business (`display-deps-v1`).
+ * display is the projection's business (`display-deps-v2`).
  *
  * **Checker quote rule `checker-quote-v1`** (Task 16d, versioned apart from the public
  * citation rule `quote-ws-v2`, which stays as it is): the same whitespace normalization

@@ -390,7 +390,7 @@ export type ClaimRef =
   | { kind: 'gap'; gap: number };
 
 /**
- * A claim's stable key (`display-deps-v1`): `summary.<i>`, `case.<ntsbNo>.why`,
+ * A claim's stable key (since `display-deps-v1`): `summary.<i>`, `case.<ntsbNo>.why`,
  * `.classification`, `.maintenance`, `.symptom`, `.timing.<fact>`, `.criterion.<criterion>`,
  * `.quote.<quote>`, or `gap.<g>`. Content-free (case numbers are public).
  */

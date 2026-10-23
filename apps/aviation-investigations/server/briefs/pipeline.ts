@@ -28,7 +28,7 @@
  *    timing rules, the supplied passages of this case do not settle whether..."), so a fact
  *    the composition left out settles nothing. The checker returns one verdict per
  *    server-issued claim id, judged in code (server/briefs/verdicts.ts), and the display
- *    projection decides what may be shown (server/briefs/display.ts, `display-deps-v1`):
+ *    projection decides what may be shown (server/briefs/display.ts, `display-deps-v2`):
  *    in `claims` mode a claim is shown only with a valid `supported` verdict and while
  *    everything it depends on is shown, under the whole-summary rules; in `whole` mode (the
  *    default until gate G6 clears partial display, `AI_PARTIAL_DISPLAY`) anything removed
