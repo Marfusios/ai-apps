@@ -175,7 +175,7 @@ export async function retrieveEvidence(
       opts.log(`${q.id}: ${verified.map((c) => `${c.ntsbNo}(${c.passages.length})`).join(' ')}${set === '16d' && seen.length ? `; in a 16c split: ${seen.join(' ')}` : ''}`);
     }
     if (set === '16d') {
-      const source = { generationId: dataset.generationId, passagesIndex: dataset.passagesIndex, chunkerVersion, retrievedAt: new Date().toISOString(), note: 'Case headers (caseHeader of the canonical case summaries) and the Task 16d bundles: public NTSB passages of real hybrid-retrieval bundles, checked like the brief pipeline checks them (verifyBundle).' };
+      const source = { generationId: dataset.generationId, passagesIndex: dataset.passagesIndex, chunkerVersion, retrievalVersion: retriever.version, retrievedAt: new Date().toISOString(), note: 'Case headers (caseHeader of the canonical case summaries) and the Task 16d bundles: public NTSB passages of real hybrid-retrieval bundles, checked like the brief pipeline checks them (verifyBundle).' };
       const prior = readV2(opts.out, source);
       writeV2(opts.out, { ...prior, source, headers: { ...prior.headers, ...headers }, bundles });
       opts.log(`wrote ${bundles.length} bundles into ${opts.out}`);

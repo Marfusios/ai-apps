@@ -9,6 +9,9 @@
  * - `evidence-16d.json` (`checker-evidence-v2`, Task 16d): every case's header line from
  *   the NTSB record's coded fields (`caseHeader`, the check input's server data since
  *   Task 16d), for the 16c cases and the new ones, and the new held-out bundles.
+ *
+ * Both files were retrieved before retrieval versions existed (task 10e), so they carry no
+ * `source.retrievalVersion`: they are `retrieval.v1` bundles.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -74,6 +77,8 @@ export const EvidenceV2FileSchema = z.strictObject({
     generationId: z.number().int().positive(),
     passagesIndex: z.string().min(1),
     chunkerVersion: z.string().min(1),
+    /** As in `checker-evidence-v1`: absent in files retrieved before versions existed (`retrieval.v1`). */
+    retrievalVersion: RetrievalVersionSchema.optional(),
     retrievedAt: z.iso.datetime(),
     note: z.string(),
   }),
