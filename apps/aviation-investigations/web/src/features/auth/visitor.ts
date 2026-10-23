@@ -20,9 +20,14 @@
  *   navigation. A Turnstile check still open for them is cancelled (`onVisitorChange`).
  * - **Memory and this tab's storage:** the questions this page asked (for "Ask again") and
  *   the retry keys of AI requests whose answer never came are forgotten too.
- * - **Other tabs.** The change is announced on a `BroadcastChannel`
- *   (`VISITOR_CHANNEL`, a message without data); every other tab of the site that listens
- *   (`listenForVisitorChanges`, from the app shell) forgets the same way.
+ * - **Other tabs.** Each change gets a random name, recorded in local storage
+ *   (`VISITOR_STORAGE_KEY`: nothing about the visitor) and announced on a
+ *   `BroadcastChannel` (`VISITOR_CHANNEL`). Every other tab of the site that listens
+ *   (`listenForVisitorChanges`, from the app shell) forgets the same way, once per change:
+ *   on the channel's message, or on the storage event the record raises (browsers without
+ *   the channel); when it starts listening, if a change came after its page loaded; and
+ *   when the page comes back from the back/forward cache, where it heard nothing (without
+ *   local storage it cannot tell, so it reads its private queries again).
  *
  * Public namespaces (`PUBLIC_QUERY_ROOTS`) are the same for everyone and stay. A test keeps
  * every query key of the app in one of the two lists.
@@ -39,10 +44,28 @@ export const PUBLIC_QUERY_ROOTS = ['config', 'search', 'case', 'dashboard'] as c
 
 /** The channel every tab of the site hears visitor changes on. */
 export const VISITOR_CHANNEL = 'casebook-visitor';
+/** Local storage: the random name of this browser's latest visitor change. */
+export const VISITOR_STORAGE_KEY = 'casebook-visitor-change';
 const CHANGED = 'visitor-changed';
 
 let generation = 0;
 const listeners = new Set<() => void>();
+
+/** The recorded change, or `undefined` when local storage cannot be read (blocked, or no window). */
+function recordedChange(): string | null | undefined {
+  try {
+    return window.localStorage.getItem(VISITOR_STORAGE_KEY);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The latest change this tab knows of: the record when its page loaded, then each change it makes or hears. */
+let knownChange: string | null | undefined = recordedChange();
+
+function newChangeName(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 
 /** This tab's channel: it posts the changes made here and hears the other tabs' (never its own posts). */
 const channel: BroadcastChannel | null = (() => {
@@ -97,19 +120,71 @@ export async function forgetVisitor(queryClient: QueryClient, opts: { announce?:
       // One listener's failure never keeps the others from forgetting.
     }
   }
-  if (opts.announce !== false) channel?.postMessage({ type: CHANGED });
+  if (opts.announce !== false) {
+    const change = newChangeName();
+    knownChange = change;
+    try {
+      // Other tabs get a storage event; a tab that listens late, or comes back from the cache, reads it.
+      window.localStorage.setItem(VISITOR_STORAGE_KEY, change);
+    } catch {
+      // No local storage: the channel still carries the change.
+    }
+    channel?.postMessage({ type: CHANGED, change });
+  }
   await Promise.all(PRIVATE_QUERY_ROOTS.map((root) => queryClient.cancelQueries({ queryKey: [root] })));
   queryClient.setQueryData<AccountResponse>(['account'], { signedIn: false });
   // Reset (not remove): screens keep their queries and read them again as the new visitor.
   for (const root of PRIVATE_QUERY_ROOTS) if (root !== 'account') void queryClient.resetQueries({ queryKey: [root] });
 }
 
-/** Forget the visitor here whenever another tab of the site announces a change; returns the unsubscribe. */
+/**
+ * Another tab changed the visitor: forget here, once per change (`change` names it; a
+ * message without a name, from a page of an earlier version, always counts).
+ */
+function heard(queryClient: QueryClient, change: string | undefined): void {
+  if (change !== undefined) {
+    if (change === knownChange) return;
+    knownChange = change;
+  }
+  void forgetVisitor(queryClient, { announce: false });
+}
+
+/** A change recorded since this tab last looked (`restored`: back from the back/forward cache)? */
+function recheck(queryClient: QueryClient, restored: boolean): void {
+  const recorded = recordedChange();
+  if (recorded === undefined) {
+    // Without local storage a restored page cannot tell: what it holds privately is read again.
+    if (restored) for (const root of PRIVATE_QUERY_ROOTS) void queryClient.resetQueries({ queryKey: [root] });
+    return;
+  }
+  if (recorded !== null && recorded !== knownChange) heard(queryClient, recorded);
+  else if (restored) void queryClient.invalidateQueries({ queryKey: ['account'] });
+}
+
+/**
+ * Forget the visitor here whenever another tab of the site changes it: its message on the
+ * channel, its record's storage event, a change recorded before this tab listened, or
+ * while its page was in the back/forward cache. Returns the unsubscribe.
+ */
 export function listenForVisitorChanges(queryClient: QueryClient): () => void {
-  if (!channel) return () => {};
+  if (typeof window === 'undefined') return () => {};
   const onMessage = (event: MessageEvent): void => {
-    if ((event.data as { type?: unknown } | null)?.type === CHANGED) void forgetVisitor(queryClient, { announce: false });
+    const data = event.data as { type?: unknown; change?: unknown } | null;
+    if (data?.type === CHANGED) heard(queryClient, typeof data.change === 'string' ? data.change : undefined);
   };
-  channel.addEventListener('message', onMessage);
-  return () => channel.removeEventListener('message', onMessage);
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key === VISITOR_STORAGE_KEY && event.newValue !== null) heard(queryClient, event.newValue);
+  };
+  const onPageShow = (event: PageTransitionEvent): void => {
+    if (event.persisted) recheck(queryClient, true);
+  };
+  channel?.addEventListener('message', onMessage);
+  window.addEventListener('storage', onStorage);
+  window.addEventListener('pageshow', onPageShow);
+  recheck(queryClient, false);
+  return () => {
+    channel?.removeEventListener('message', onMessage);
+    window.removeEventListener('storage', onStorage);
+    window.removeEventListener('pageshow', onPageShow);
+  };
 }

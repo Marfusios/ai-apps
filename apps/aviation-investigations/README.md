@@ -1451,9 +1451,12 @@ lock order in migration 0019.
   trial brief, the callback's handover), hold one lock per account and first check that
   the request's session and user still exist. A request paused while its account was
   deleted creates nothing, takes nothing over, calls no model and gives back any
-  admission (403 `signed_out`). Every writer, retention included, then locks a brief
-  before its steps (migration 0019), so deletion never deadlocks with the maintenance
-  pass.
+  admission (403 `signed_out`). Every writer, the maintenance pass included, takes rows
+  in one order: a brief, its steps, the account's idempotency records, its anti-abuse
+  record, then its sign-in rows (sessions before their deletion confirmations, the user
+  last; migration 0019 for retention). The pass's orphaned-step update, the one step out
+  of that order, skips rows another transaction holds, so deletion and the maintenance
+  pass never wait for each other in a cycle.
 - **Handover** (`server/auth/handover.ts`). Signing in from `/briefs/<id>` while this
   browser's trial owns that live brief moves the brief's read owner to the account, by
   one compare-and-set, at the callback, when the same browser's trial cookie still
@@ -1481,9 +1484,11 @@ lock order in migration 0019.
   finds the same counts. The response expires this browser's session cookie; every other
   session ends with the user. The page then forgets everything private it held
   (`web/src/features/auth/visitor.ts`), as it does on sign-out, in every open tab of the
-  site (a `BroadcastChannel`); an AI request still under way is discarded without
+  site (a `BroadcastChannel`, with a random marker in local storage for browsers without
+  one, for a tab that starts listening late and for a page restored from the
+  back/forward cache); an AI request still under way is discarded without
   restoring a question, a retry key or a navigation. A deletion's re-authentication is
-  counted per account (5 an hour), not per network.
+  counted per account (5 starts and 5 callbacks an hour), not per network.
 - **Backups** never hold the rows of the sign-in tables, the briefs or the idempotency
   records (`server/db/backup.ts`; RUNBOOK, "Backups"), so a restore cannot bring back a
   deleted account, its content, a session or OAuth state; `pnpm worker restore-check`

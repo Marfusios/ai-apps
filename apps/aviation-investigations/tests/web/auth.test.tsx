@@ -117,6 +117,10 @@ describe('sign-in dialog (UI_DESIGN §4.8)', () => {
   it('return paths drop sign-in’s own parameters; the request matches the contract', () => {
     expect(returnPath('/explore', '?q=icing&welcome=1&signin=failed&error=state_mismatch')).toBe('/explore?q=icing');
     expect(returnPath('//evil', '')).toBe('/');
+    // The query is sent percent-encoded; a raw path the server would refuse comes back as the home page.
+    expect(returnPath('/explore', '?q=caf\u00e9')).toBe('/explore?q=caf%C3%A9');
+    expect(returnPath('/caf\u00e9', '?q=x')).toBe('/');
+    expect(returnPath('/briefs/x', '?q=a\\b')).toBe('/briefs/x?q=a%5Cb');
     expect(SignInRequestSchema.safeParse(signInRequest('/explore?q=icing')).success).toBe(true);
     // Too long for the sign-in's state cookie: the query is dropped, then the path.
     const long = returnPath('/explore', `?q=${'x'.repeat(400)}`);

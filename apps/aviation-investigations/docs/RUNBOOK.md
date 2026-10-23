@@ -695,10 +695,11 @@ already issued last until they expire (7 days) unless their users sign out, or t
 secret is changed.
 
 Starting a sign-in writes nothing to the database: the OAuth state lives in an encrypted
-cookie for 10 minutes. Better Auth limits starts to 10 a minute per network identity (in
-each instance's memory). A deletion's re-authentication is counted per account instead,
-5 an hour, so other sign-in traffic from its network never holds it up; past that it
-answers 429 with Retry-After.
+cookie for 10 minutes. Better Auth limits starts and Google's callbacks to 10 a minute
+each per network identity (in each instance's memory). A deletion's re-authentication is
+counted per account instead, so other sign-in traffic from its network never holds it up:
+its start (5 an hour; past that it answers 429 with Retry-After) and Google's callback to
+the signed-in browser (5 an hour; past that the network's limit applies to it).
 
 **Deleting an account needs a recent Google sign-in** (server/auth/deletion.ts): a
 session signed in within the last 5 minutes may delete at once; any other is sent through

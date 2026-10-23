@@ -21,22 +21,29 @@
  */
 import { z } from 'zod';
 
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+/**
+ * Visible ASCII except `"`, `#` and the backslash: what the page's return paths are made
+ * of (it percent-encodes everything else), each character one byte in the state cookie's
+ * JSON, where `"` or a backslash would take two and other characters up to six.
+ */
+const RETURN_PATH_CHARS = /^[\x21\x24-\x5b\x5d-\x7e]+$/;
 /** A `.` or `..` path segment, plainly or percent-encoded, or an encoded slash or backslash. */
 const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)|%2f|%5c/i;
 
 /**
- * The longest return path. A sign-in carries three of them (to come back to, for a new
- * account, on failure) in its encrypted state cookie, which must stay within a browser's
- * 4096 bytes (server/auth/better-auth.ts); the page drops a longer query.
+ * The longest return path, in bytes (its characters are one byte each). A sign-in carries
+ * three of them (to come back to, for a new account, on failure) in its encrypted state
+ * cookie, which must stay within a browser's 4096 bytes (server/auth/better-auth.ts),
+ * whatever a client sends; the page drops a longer query.
  */
 export const RETURN_PATH_MAX = 384;
 
 /**
  * A page of this site to come back to: a root-relative path with an optional query, never
- * `//host`, an empty or dot segment (`/.//host` would resolve to `//host`), an encoded
- * slash, a backslash or a control character, at most `RETURN_PATH_MAX` characters. Better
- * Auth checks the same against the trusted origin; the server checks this first.
+ * `//host`, an empty or dot segment (`/.//host` would resolve to `//host`) or an encoded
+ * slash, in visible ASCII without `"`, `#` or a backslash (`RETURN_PATH_CHARS`), at most
+ * `RETURN_PATH_MAX` bytes. Better Auth checks the same against the trusted origin; the
+ * server checks this first.
  */
 export const ReturnPathSchema = z
   .string()
@@ -45,7 +52,7 @@ export const ReturnPathSchema = z
   .refine(
     (p) => {
       const path = p.split('?', 1)[0]!;
-      return p.startsWith('/') && !path.includes('//') && !DOT_SEGMENT.test(path) && !p.includes('\\') && !p.includes('#') && !CONTROL.test(p);
+      return p.startsWith('/') && RETURN_PATH_CHARS.test(p) && !path.includes('//') && !DOT_SEGMENT.test(path);
     },
     { message: 'expected a path on this site' },
   );

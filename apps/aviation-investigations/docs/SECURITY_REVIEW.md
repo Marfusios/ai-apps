@@ -183,9 +183,11 @@ re-reviewed. The implementation review must cover in particular:
 - that only sign-in, Google's callback and sign-out are reachable, the request the route
   rebuilds for Better Auth (the `APP_URL` origin, the header allowlist, the network
   identity for its rate limiter), return paths without dot segments or encoded
-  separators (at most 384 characters, so the state cookie stays under 4 KB), and that a
-  deletion's re-authentication is counted per account (5 an hour) and exempt from the
-  per-network limit, so no flood of other sign-ins can hold it up;
+  separators (visible ASCII without `"`, `#` or a backslash, at most 384 bytes, so the
+  state cookie stays under 4 KB whatever a client sends), and that a deletion's
+  re-authentication, its start and Google's callback to the signed-in browser, is counted
+  per account (5 an hour each) and exempt from the per-network limit, so no flood of
+  other sign-ins can hold it up;
 - the handover's compare-and-set at the callback and at signed-in refinements and
   retries (the latter beyond UI_DESIGN §5's wording, pending the owner's sign-off), the
   403 `moved` answer to the old trial, that billing principals and charges never move,
@@ -196,7 +198,9 @@ re-reviewed. The implementation review must cover in particular:
   transactions, takeovers and the callback's handover serialize on it and recheck the
   session, so nothing is created or moved for a deleted account and an admission is given
   back without a model call; and the lock order after it (brief, steps, idempotency,
-  anti-abuse record), which retention follows too (migration 0019);
+  anti-abuse record, then sessions before their deletion confirmations and the user),
+  which the maintenance pass follows too (migration 0019 for retention; its orphaned-step
+  update skips locked rows), as does issuing a confirmation;
 - account deletion: a recent Google sign-in first (5 minutes; otherwise Google again for
   the same account, which confirms that session once for 5 minutes and ends the old
   session; Google offers no `max_age` or `prompt=login`, so a person signed in to Google
@@ -209,7 +213,9 @@ re-reviewed. The implementation review must cover in particular:
   operator's `always` mode, that ordinary use takes no check, and that the anonymous
   retry check spends nothing;
 - the page forgetting the previous visitor on sign-out and deletion, in every open tab
-  (every private query, late answers dropped, the questions and retry keys; an AI request
+  (a `BroadcastChannel` and a random marker in local storage, also checked when a tab
+  starts listening and when a page returns from the back/forward cache; every private
+  query, late answers dropped, the questions and retry keys; an AI request
   under way is discarded, its open Turnstile check cancelled, and it never restores a
   question, a retry key or a navigation);
 - storage and backups: no provider tokens, scopes, picture, IP address or user agent

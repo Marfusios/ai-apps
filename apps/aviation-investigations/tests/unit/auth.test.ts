@@ -227,6 +227,20 @@ describe('contracts and copy', () => {
     }
   });
 
+  it('return paths are capped in bytes: visible ASCII without a quote, one byte each in the state cookie (Task 20 review N8)', () => {
+    // What the page sends: percent-encoded, with the URL and query punctuation browsers leave as is.
+    const ok = `/explore?q=caf%C3%A9+%22icing%22&phase=landing,takeoff&x=(a)*[b]~!$'@:;`;
+    expect(ReturnPathSchema.safeParse(ok).success).toBe(true);
+    expect(ReturnPathSchema.safeParse(`/${'~'.repeat(RETURN_PATH_MAX - 1)}`).success).toBe(true);
+    // Characters that would be wider in the cookie's JSON, and spaces and controls.
+    for (const bad of ['/a"b', '/caf\u00e9', '/\u20ac', '/a b', '/a\tb', '/a\u007fb', '/a\u0085b', '/\ud83d\ude00']) {
+      expect(ReturnPathSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+    // The review's widest cases: paths of quotes or euro signs within the character cap.
+    expect(ReturnPathSchema.safeParse(`/${'"'.repeat(RETURN_PATH_MAX - 1)}`).success).toBe(false);
+    expect(ReturnPathSchema.safeParse(`/${'\u20ac'.repeat(RETURN_PATH_MAX - 1)}`).success).toBe(false);
+  });
+
   it('the sign-in request is exactly the expected fields', () => {
     const body = { provider: 'google', callbackURL: '/', newUserCallbackURL: '/?welcome=1', errorCallbackURL: '/?signin=failed', disableRedirect: true };
     expect(SignInRequestSchema.safeParse(body).success).toBe(true);

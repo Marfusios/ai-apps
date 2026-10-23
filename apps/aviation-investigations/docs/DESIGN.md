@@ -555,16 +555,19 @@ send; only the subject, name and email are stored. The OAuth state lives in an e
 cookie, so starting a sign-in writes nothing to the database and no flood of starts can
 block anyone's sign-in; a callback is used once: the first to get through the code
 exchange and the ID-token checks claims its state atomically, before any user, session or
-handover. A deletion's re-authentication is counted per account (5 an hour), never per
-network. The handover runs at the callback when sign-in started from the brief's
+handover. A deletion's re-authentication, its start and Google's callback to the
+signed-in browser, is counted per account (5 an hour each), never per network. The handover runs at the callback when sign-in started from the brief's
 page and the browser's trial cookie still proves its owner, or at a signed-in refinement
 or retry on a brief the browser's trial owns; a retry from the old trial alone answers 403
 `moved`. Reads check the read owner in the statement that reads the content; a refinement
 or a cancel locks the brief and checks its owner before it writes. Deletion and everything
 that writes rows an account owns hold one lock per account and recheck the session first,
 so nothing is created or taken over for a deleted account; admission takes it before any
-lock other accounts share, and every writer, retention included, then locks a brief before
-its steps and the account's other records, so none of them can deadlock. A re-registered account is a
+lock other accounts share, and every writer, the maintenance pass included, takes rows in
+one order: a brief, its steps, the account's idempotency records, its anti-abuse record,
+then its sign-in rows (sessions before their confirmations, the user last). The pass's
+orphaned-step update, the one step it takes out of that order, skips rows another
+transaction holds, so no two writers wait for each other in a cycle. A re-registered account is a
 new account (the new-account allowance applies again) that finds its usage. Deletion
 needs a recent Google sign-in (OWASP re-authentication): within 5 minutes of signing in
 the account page confirms at once; otherwise it sends the person through Google again,

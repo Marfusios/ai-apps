@@ -11,9 +11,13 @@
  *   cross-site (403) or not JSON (400) before Better Auth sees them. A sign-in that
  *   re-authenticates a deletion (`DELETE_REAUTH_PATH`, from a signed-in browser) is counted
  *   per account here (at most 5 an hour, 429 past that) and marked for Better Auth
- *   (`AUTH_REAUTH_HEADER`), whose per-network limit then skips it: sign-in traffic from
- *   others on the same network never holds it up;
- * - `GET /api/auth/callback/google`: Google's redirect back.
+ *   (`AUTH_REAUTH_HEADER`), whose per-network limit then skips it;
+ * - `GET /api/auth/callback/google`: Google's redirect back. A callback to a browser
+ *   signed in to an account (a deletion's re-authentication returning; the page offers no
+ *   other sign-in while signed in) is counted per account as well, 5 an hour, and marked
+ *   the same way; past that account's limit the network's limit applies to it. Sign-in
+ *   traffic from others on the same network therefore never holds up a re-authentication,
+ *   neither its start nor its return.
  *
  * Better Auth gets a request rebuilt from an allowlist: the APP_URL origin with the
  * matched path and the raw query, the headers it needs (cookies, origin and fetch
@@ -41,7 +45,7 @@ import {
   SignInRequestSchema,
 } from '../../shared/contracts/account.js';
 import { AUTH_IP_HEADER, AUTH_REAUTH_HEADER, authClientIp } from '../auth/better-auth.js';
-import { deleteAccount, deletionConfirmedUntil, issueDeletionConfirmation, reauthStartAllowed } from '../auth/deletion.js';
+import { deleteAccount, deletionConfirmedUntil, issueDeletionConfirmation, reauthCallbackAllowed, reauthStartAllowed } from '../auth/deletion.js';
 import { retryAfterSeconds } from '../identity/gate.js';
 import { crossSite, isJsonRequest } from '../http/origin.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
@@ -109,6 +113,12 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
         }
         headers.set(AUTH_REAUTH_HEADER, '1');
       }
+    }
+    // Google's callback to a signed-in browser (a deletion's re-authentication coming back):
+    // counted per account too; past that account's limit, the network's applies.
+    if (path === '/api/auth/callback/google') {
+      const signedIn = await auth.signedIn(request.headers.cookie);
+      if (signedIn && (await reauthCallbackAllowed(ctx.db, signedIn.hash, now())).ok) headers.set(AUTH_REAUTH_HEADER, '1');
     }
     const response = await auth.handle(
       new Request(`${appOrigin}${path}${queryOf(request.url)}`, {

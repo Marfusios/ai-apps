@@ -17,7 +17,16 @@ import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { askAvailability } from '../../web/src/features/ai/status';
 import { LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { rememberUnsettled, resetUnsettledForTests, unsettledId, unsettledKey } from '../../web/src/features/ai/unsettled';
-import { PRIVATE_QUERY_ROOTS, PUBLIC_QUERY_ROOTS, VISITOR_CHANNEL, VisitorChangedError, forgetVisitor, privateRead } from '../../web/src/features/auth/visitor';
+import {
+  PRIVATE_QUERY_ROOTS,
+  PUBLIC_QUERY_ROOTS,
+  VISITOR_CHANNEL,
+  VISITOR_STORAGE_KEY,
+  VisitorChangedError,
+  forgetVisitor,
+  privateRead,
+  visitorGeneration,
+} from '../../web/src/features/auth/visitor';
 import { rememberQuestion, rememberedQuestion } from '../../web/src/features/brief/memory';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
@@ -82,13 +91,24 @@ function holdPost(pattern: string, answer: () => Response) {
   return { release, calls: () => calls };
 }
 
-/** Another tab of the site announces a visitor change. */
-async function otherTabChangesVisitor(): Promise<void> {
+/** Another tab of the site announces a visitor change (`change` names it, as the tab's own record does). */
+async function otherTabChangesVisitor(change: string = crypto.randomUUID()): Promise<void> {
   const other = new BroadcastChannel(VISITOR_CHANNEL);
-  other.postMessage({ type: 'visitor-changed' });
+  other.postMessage({ type: 'visitor-changed', change });
   other.close();
   await act(() => sleep(50));
 }
+
+/** Another tab records a visitor change in local storage; `event`: the browser tells this tab (it does not while a page is away). */
+async function otherTabRecordsChange({ event }: { event: boolean }, change: string = crypto.randomUUID()): Promise<string> {
+  window.localStorage.setItem(VISITOR_STORAGE_KEY, change);
+  if (event) window.dispatchEvent(new StorageEvent('storage', { key: VISITOR_STORAGE_KEY, newValue: change, storageArea: window.localStorage }));
+  await act(() => sleep(50));
+  return change;
+}
+
+/** The other tab's sign-out on the server (the session ends there). */
+const signOutOnServer = () => fetch(new URL('/api/auth/sign-out', window.location.href), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 
 afterEach(() => {
   delete window.turnstile;
@@ -415,4 +435,53 @@ describe('every open tab forgets the previous visitor (Task 20 review N4)', () =
     expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
     expect(screen.queryByText('AI classified')).toBeNull();
   }, 20_000);
+
+  it('without BroadcastChannel the change still arrives: the other tab’s record in local storage (Task 20 review N9)', async () => {
+    signedInApi();
+    const app = await briefWithDrawer();
+    await signOutOnServer();
+    await otherTabRecordsChange({ event: true });
+    await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
+    expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
+  }, 20_000);
+
+  it('a page restored from the back/forward cache checks the record: a change made while it was away is forgotten (N9)', async () => {
+    signedInApi();
+    const app = await briefWithDrawer();
+    // Restored with nothing changed: everything stays.
+    const before = visitorGeneration();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    await act(() => sleep(50));
+    expect(visitorGeneration()).toBe(before);
+    expect(screen.getByText(CITED, { selector: 'mark' })).toBeTruthy();
+    // Away while another tab signed out: no message reached it, the record did change.
+    await signOutOnServer();
+    await otherTabRecordsChange({ event: false });
+    expect(visitorGeneration()).toBe(before);
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
+    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
+  }, 20_000);
+
+  it('a tab that starts listening after another tab’s change still forgets it (N9)', async () => {
+    rememberQuestion('00000000-0000-4000-8000-0000000000aa', 'an earlier question');
+    const before = visitorGeneration();
+    // The change happened after this page's code loaded and before the app listened.
+    await otherTabRecordsChange({ event: false });
+    renderApp('/');
+    await waitFor(() => expect(visitorGeneration()).toBe(before + 1));
+    expect(rememberedQuestion('00000000-0000-4000-8000-0000000000aa')).toBeNull();
+  });
+
+  it('one change heard twice, on the channel and through local storage, is forgotten once (N9)', async () => {
+    signedInApi();
+    renderApp('/');
+    await act(() => sleep(50));
+    const before = visitorGeneration();
+    const change = crypto.randomUUID();
+    await otherTabChangesVisitor(change);
+    await otherTabRecordsChange({ event: true }, change);
+    expect(visitorGeneration()).toBe(before + 1);
+  });
 });

@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { Client } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
@@ -26,6 +27,7 @@ import { AUTH_IP_HEADER, AUTH_REAUTH_HEADER, GOOGLE_ISSUER, createAuthService, t
 import { pruneAuth } from '../../server/auth/deletion.js';
 import { accountLockKey } from '../../server/auth/lifecycle.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
+import { failOrphanedSteps } from '../../server/briefs/store.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { SPEND_LOCK_KEY, accountIdentityHash } from '../../server/quota/policy.js';
 import { FakeRetriever } from '../support/fake-retriever.js';
@@ -441,6 +443,8 @@ async function holdLocks(statement: string) {
   };
   return {
     query: (text: string, values?: unknown[]) => client.query(text, values),
+    /** The same transaction for the app's own functions (the maintenance pass's steps). */
+    db: drizzle(client) as unknown as Db,
     commit: () => end('COMMIT'),
     rollback: () => end('ROLLBACK'),
   };
@@ -660,6 +664,27 @@ describe('sign-in protections', () => {
     expect([400, 403]).toContain(tooLong.status);
   });
 
+  it('no client can make the state cookie wider than 4 KB: return paths are capped in bytes (Task 20 review N8)', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const { briefId } = await trialBrief(h, browser);
+    const body = (fill: string) => {
+      const base = `/briefs/${briefId}?q=`;
+      const path = `${base}${fill.repeat(RETURN_PATH_MAX - base.length)}`;
+      return { provider: 'google', callbackURL: path, newUserCallbackURL: path, errorCallbackURL: path, disableRedirect: true };
+    };
+    // A hand-made request with all three paths at the cap, and a handover candidate.
+    const widest = await send(h, 'POST', '/api/auth/sign-in/social', { jar: browser, body: body('x') });
+    expect(widest.status, JSON.stringify(widest.json)).toBe(200);
+    expect(cookieNamed(widest.setCookies, STATE)!.split(';', 1)[0]!.length).toBeLessThan(4000);
+    // Characters wider in the cookie are refused (by this app's check or Better Auth's), and nothing is set.
+    for (const fill of ['"', '\u20ac', '\\']) {
+      const refused = await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: body(fill) });
+      expect([400, 403], JSON.stringify(fill)).toContain(refused.status);
+      expect(cookieNamed(refused.setCookies, STATE), JSON.stringify(fill)).toBeUndefined();
+    }
+  });
+
   it('a callback is used once: a second one with the same state is refused before a user or a session, even if Google redeemed its code again', async () => {
     const h = harness();
     const jar = new CookieJar();
@@ -746,6 +771,44 @@ describe('sign-in protections', () => {
     // The next hour, it may start again.
     advance(60 * MIN);
     expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: owner.clone(), body: signInBody(DELETE_REAUTH_PATH) })).status).toBe(200);
+  });
+
+  it('a deletion’s re-authentication comes back even when its network has used up its callbacks (Task 20 review N7)', async () => {
+    const h = harness({}, { rateLimits: { signIn: 2, callback: 2 } });
+    // Better Auth's limiter keeps its counts per process: an address no other test uses.
+    const from = '192.0.2.211';
+    const owner = new CookieJar();
+    const user = newUser();
+    await callback(h, owner, google.authorize(await startSignIn(h, owner, '/', { from }), user), { from });
+    expect(await account(h, owner)).toMatchObject({ signedIn: true });
+    await ageSessions(10);
+    // Someone else on the same network identity (a shared address) uses up its callbacks.
+    for (let i = 0; i < 2; i++) await callback(h, new CookieJar(), `/api/auth/callback/google?state=x${i}&code=y`, { from });
+    expect((await callback(h, new CookieJar(), '/api/auth/callback/google?state=x&code=y', { from })).status).toBe(429);
+    // A client cannot claim the exemption with its own header.
+    expect((await send(h, 'GET', '/api/auth/callback/google?state=x&code=y', { jar: new CookieJar(), headers: { ...NAVIGATION_FROM_GOOGLE, [AUTH_REAUTH_HEADER]: '1' }, from })).status).toBe(429);
+    const start = await send(h, 'POST', '/api/auth/sign-in/social', { jar: owner, body: signInBody(DELETE_REAUTH_PATH), from });
+    expect(start.status).toBe(200);
+    const back = await callback(h, owner, google.authorize((start.json as { url: string }).url, user), { from });
+    expect([back.status, back.headers.location]).toEqual([302, DELETE_REAUTH_PATH]);
+    expect(await count('auth_deletion_confirmations')).toBe(1);
+  });
+
+  it('a signed-in browser’s callbacks skip the network’s limit only up to 5 an hour for its account', async () => {
+    const h = harness({}, { rateLimits: { signIn: 2, callback: 2 } });
+    const from = '192.0.2.212';
+    const owner = new CookieJar();
+    await callback(h, owner, google.authorize(await startSignIn(h, owner, '/', { from }), newUser()), { from });
+    // The network has one callback left; another browser there takes it.
+    await callback(h, new CookieJar(), '/api/auth/callback/google?state=x&code=y', { from });
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) statuses.push((await callback(h, owner.clone(), `/api/auth/callback/google?state=junk${i}&code=y`, { from })).status);
+    // Five are counted for the account (each fails as a sign-in, but none is refused for the rate); the sixth meets the network's limit.
+    expect(statuses.slice(0, 5).every((status) => status !== 429)).toBe(true);
+    expect(statuses[5]).toBe(429);
+    // The next hour the account's own count starts again.
+    advance(60 * MIN);
+    expect((await callback(h, owner.clone(), '/api/auth/callback/google?state=later&code=y', { from })).status).not.toBe(429);
   });
 
   it('nonce and claims: an ID token without this flow’s nonce, for another client, expired, or with an unverified email stores nothing', async () => {
@@ -1217,8 +1280,8 @@ describe('deleting needs a recent Google sign-in (OWASP re-authentication)', () 
     expect(errorOf(await send(h, 'POST', '/api/account/delete/start', { jar: new CookieJar(), body: {} }))).toEqual([403, 'sign_in_required']);
     const start = await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} });
     expect(start.json).toMatchObject({ next: 'confirm' });
-    // Asking again replaces it: one per session.
-    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).status).toBe(200);
+    // Asking again keeps it: one per session.
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).json).toMatchObject({ next: 'confirm', until: (start.json as { until: string }).until });
     expect(await count('auth_deletion_confirmations')).toBe(1);
     // Another session of the same account cannot use it.
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar: laptop, body: { confirm: true } }))).toEqual([403, 'reauth_required']);
@@ -1664,6 +1727,161 @@ describe('lock order: no deadlock and no stall across accounts', () => {
       await locker.rollback();
     }
     expect((await pending!).status).toBe(200);
+  });
+});
+
+describe('lock order: account deletion against the maintenance pass (Task 20 review N6)', () => {
+  /** A signed-in account with an expired session as well, not pruned yet. */
+  async function signedInWithExpiredSession(h: Harness) {
+    const browser = new CookieJar();
+    const user = newUser();
+    await signIn(h, browser, user);
+    const userId = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
+    await migrator.execute(sql`
+      INSERT INTO auth_sessions (token, user_id, expires_at, created_at, updated_at)
+      VALUES ('expired-session-token', ${userId}::uuid, now() - interval '1 hour', now() - interval '8 days', now() - interval '8 days')`);
+    return { browser, user };
+  }
+
+  /** The account's anti-abuse record has expired and is not pruned yet: retention will take it. */
+  async function expireAbuseRecord(user: GoogleUser): Promise<void> {
+    await migrator.execute(sql`
+      INSERT INTO abuse_records (identity_hash, first_seen_at, last_seen_at, retain_until)
+      VALUES (${accountHash(user.sub)}, now() - interval '40 days', now() - interval '40 days', now() - interval '1 hour')
+      ON CONFLICT (identity_hash) DO UPDATE
+        SET first_seen_at = EXCLUDED.first_seen_at, last_seen_at = EXCLUDED.last_seen_at, retain_until = EXCLUDED.retain_until`);
+  }
+
+  /**
+   * The maintenance pass as it runs, in one transaction: retention (which deletes the
+   * expired anti-abuse record), then, once the deletion waits for it, the orphaned steps
+   * and the sign-in rows. Returns the deletion's answer and what each later step did.
+   */
+  async function deleteDuringMaintenance(h: Harness, browser: CookieJar) {
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).json).toMatchObject({ next: 'confirm' });
+    const locker = await holdLocks(`SELECT prune_controls()`);
+    let deletion: Promise<Sent> | null = null;
+    const steps: Record<string, string> = {};
+    try {
+      deletion = send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+      await untilBlocked();
+      for (const [name, step] of [
+        ['orphanedSteps', () => failOrphanedSteps(locker.db, clock)],
+        ['pruneAuth', () => pruneAuth(locker.db)],
+      ] as const) {
+        try {
+          await step();
+          steps[name] = 'ok';
+        } catch (err) {
+          steps[name] = `error ${(err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code ?? 'unknown'}`;
+          break;
+        }
+      }
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    return { deletion: await deletion!, steps };
+  }
+
+  it('deleting while the pass prunes an expired anti-abuse record and an expired session: no deadlock', async () => {
+    const h = harness();
+    const { browser, user } = await signedInWithExpiredSession(h);
+    await expireAbuseRecord(user);
+    const { deletion, steps } = await deleteDuringMaintenance(h, browser);
+    expect(steps).toEqual({ orphanedSteps: 'ok', pruneAuth: 'ok' });
+    expect([deletion.status, deletion.json]).toMatchObject([200, { deleted: true }]);
+    expect(h.logs.filter((l) => /40P01|deadlock/i.test(l))).toEqual([]);
+    expect(await count('auth_users')).toBe(0);
+    expect(await count('auth_sessions')).toBe(0);
+    // The deletion's anti-abuse record is the one kept.
+    expect((await abuseRecords()).map((r) => r.identity_hash)).toEqual([accountHash(user.sub)]);
+  });
+
+  it('deleting while the pass also finds one of the account’s steps orphaned: no deadlock', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const { browser, user } = await signedInWithExpiredSession(h);
+    advance(MIN);
+    const asked = await ask(h, browser, 'Write me a poem about the sea', { token: false });
+    expect(asked.status).toBe(200);
+    await h.svc.settled();
+    // A step whose process died: still running, its reservation already closed.
+    const first = (
+      await rows<{ brief_id: string; billing_principal: string; billing_kind: string; reservation_id: number }>(sql`
+        SELECT brief_id::text AS brief_id, billing_principal, billing_kind, reservation_id::int AS reservation_id FROM brief_steps WHERE n = 1`)
+    )[0]!;
+    await migrator.execute(sql`
+      INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, created_at, updated_at)
+      VALUES (${first.brief_id}::uuid, 2, ${first.billing_principal}, ${first.billing_kind}, ${first.reservation_id},
+        ${JSON.stringify({ origin: 'text', question: 'q', refinement: 'r', readings: {} })}::jsonb, ${new Date(clock.getTime() - 10 * MIN)}, ${new Date(clock.getTime() - 10 * MIN)})`);
+    await expireAbuseRecord(user);
+    const { deletion, steps } = await deleteDuringMaintenance(h, browser);
+    expect(steps).toEqual({ orphanedSteps: 'ok', pruneAuth: 'ok' });
+    expect([deletion.status, deletion.json]).toMatchObject([200, { deleted: true }]);
+    expect(h.logs.filter((l) => /40P01|deadlock/i.test(l))).toEqual([]);
+    expect(await count('briefs')).toBe(0);
+    expect(await count('brief_steps')).toBe(0);
+  });
+
+  it('a confirmation asked for again while the account is deleted: nothing holds a confirmation while it waits for the session, no deadlock', async () => {
+    const h = harness();
+    const browser = new CookieJar();
+    await signIn(h, browser, newUser());
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).json).toMatchObject({ next: 'confirm' });
+    const sessionId = (await rows<{ id: string }>(sql`SELECT session_id::text AS id FROM auth_deletion_confirmations`))[0]!.id;
+    // Something holds the confirmation row a moment. A second start must not wait there while
+    // the deletion, holding the session, waits for the same row (an earlier version did:
+    // it then asked for the session and deadlocked).
+    const locker = await holdLocks(`SELECT 1 FROM auth_deletion_confirmations WHERE session_id = '${sessionId}'::uuid FOR UPDATE`);
+    let again: Promise<Sent> | null = null;
+    let deletion: Promise<Sent> | null = null;
+    try {
+      let againDone = false;
+      again = send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} }).finally(() => {
+        againDone = true;
+      });
+      const waiting = async () => (await rows<{ n: number }>(sql`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`))[0]!.n;
+      await until(async () => againDone || (await waiting()) >= 1, 'the second start to finish or wait');
+      deletion = send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+      await untilBlocked(againDone ? 1 : 2);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    const [restarted, deleted] = await Promise.all([again!, deletion!]);
+    expect(restarted.status).toBe(200);
+    expect([deleted.status, deleted.json]).toMatchObject([200, { deleted: true }]);
+    expect(h.logs.filter((l) => /40P01|deadlock/i.test(l))).toEqual([]);
+    expect(await count('auth_users')).toBe(0);
+    expect(await count('auth_deletion_confirmations')).toBe(0);
+  });
+
+  it('another browser of the account asking for a confirmation while the account is deleted gets none, not an error', async () => {
+    const h = harness();
+    const user = newUser();
+    const browser = new CookieJar();
+    await signIn(h, browser, user);
+    const laptop = new CookieJar();
+    await signIn(h, laptop, user);
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).json).toMatchObject({ next: 'confirm' });
+    // The deletion pauses after the sessions, at the user row.
+    const userId = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
+    const locker = await holdLocks(`SELECT 1 FROM auth_users WHERE id = '${userId}'::uuid FOR KEY SHARE`);
+    let deletion: Promise<Sent> | null = null;
+    let other: Promise<Sent> | null = null;
+    try {
+      deletion = send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+      await untilBlocked(1);
+      // The laptop's confirmation would belong to a session the deletion is removing.
+      other = send(h, 'POST', '/api/account/delete/start', { jar: laptop, body: {} });
+      await untilBlocked(2);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect([(await deletion!).status, (await deletion!).json]).toMatchObject([200, { deleted: true }]);
+    expect([(await other!).status, (await other!).json]).toEqual([200, { next: 'reauthenticate' }]);
+    expect(await count('auth_deletion_confirmations')).toBe(0);
   });
 });
 

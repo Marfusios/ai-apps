@@ -77,9 +77,10 @@
  * validated identity of server/http/network-identity.ts (never `request.ip` or a client
  * header; any client header of that name is dropped) as `AUTH_IP_HEADER`. On top of the
  * API's own limit per network identity. A deletion's re-authentication is never held up
- * by other sign-in traffic on its network: the route counts it per account instead
- * (server/auth/deletion.ts `reauthStartAllowed`) and marks it with `AUTH_REAUTH_HEADER`,
- * which only the route can set, and Better Auth's per-network limit skips it.
+ * by other sign-in traffic on its network: the route counts its start and Google's callback
+ * to the signed-in browser per account instead (server/auth/deletion.ts
+ * `reauthStartAllowed`, `reauthCallbackAllowed`) and marks them with `AUTH_REAUTH_HEADER`,
+ * which only the route can set, and Better Auth's per-network limit skips them.
  *
  * **Logging.** Better Auth's log lines go to the server log as their message only, with
  * any email address replaced; never the values it attaches (errors may quote a row).
@@ -119,9 +120,9 @@ export const NONCE_CONTEXT_KEY = 'aviationNonce';
 /** The OAuth-state key of a deletion's re-authentication: the user and session it started from, and the subject to ask Google for. */
 export const REAUTH_CONTEXT_KEY = 'aviationReauth';
 /**
- * Request header the route sets on a deletion's re-authentication start it has counted
- * per account (only the route sets it: client headers of that name are never forwarded);
- * Better Auth's per-network limit skips such a start.
+ * Request header the route sets on a deletion's re-authentication start, and on a callback
+ * to a signed-in browser, it has counted per account (only the route sets it: client
+ * headers of that name are never forwarded); Better Auth's per-network limit skips them.
  */
 export const AUTH_REAUTH_HEADER = 'x-aviation-reauth';
 /** Allowed difference between our clock and Google's. */
@@ -405,10 +406,11 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
       window: 60,
       max: 60,
       customRules: {
-        // A deletion's re-authentication, already counted per account by the route, is not
-        // held up by other sign-ins from its network.
+        // A deletion's re-authentication, its start and Google's callback to the signed-in
+        // browser, already counted per account by the route, is not held up by other sign-ins
+        // from its network.
         '/sign-in/social': (request) => (request.headers.get(AUTH_REAUTH_HEADER) === '1' ? false : { window: 60, max: limits.signIn }),
-        '/callback/*': { window: 60, max: limits.callback },
+        '/callback/*': (request) => (request.headers.get(AUTH_REAUTH_HEADER) === '1' ? false : { window: 60, max: limits.callback }),
         '/sign-out': { window: 60, max: limits.signOut },
       },
     },

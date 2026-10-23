@@ -341,8 +341,14 @@ export function isLiveStep(step: { status: BriefStepStatus; createdAt: Date }, n
  * charged): still `running` after `STALE_STEP_MS`, with a reservation that is no longer
  * open (lease expiry charged it in full, or it was settled before the step's last write
  * was lost). Run by the periodic control maintenance as aviation_app.
+ *
+ * A step another transaction holds is skipped, and a later pass finds it if it is still
+ * orphaned: the pass runs this after retention has taken anti-abuse records, and an
+ * account deletion locks the account's steps before its anti-abuse record, so waiting
+ * here could close a cycle (server/auth/lifecycle.ts, the lock order).
  */
 export async function failOrphanedSteps(db: DbOrTx, now: Date = new Date()): Promise<number> {
+  const stale = new Date(now.getTime() - STALE_STEP_MS);
   const res = await db.execute(sql`
     UPDATE brief_steps s
     SET stage = 'failed', status = 'failed',
@@ -350,8 +356,11 @@ export async function failOrphanedSteps(db: DbOrTx, now: Date = new Date()): Pro
       meta = s.meta || '{"failure":{"stage":"pipeline","category":"orphaned"}}'::jsonb,
       cost_usd = r.charged_usd, updated_at = ${now}, finished_at = ${now}
     FROM reservations r
-    WHERE s.status = 'running' AND r.id = s.reservation_id AND r.status <> 'open'
-      AND s.created_at < ${new Date(now.getTime() - STALE_STEP_MS)}`);
+    WHERE s.id IN (
+        SELECT o.id FROM brief_steps o JOIN reservations ro ON ro.id = o.reservation_id
+        WHERE o.status = 'running' AND ro.status <> 'open' AND o.created_at < ${stale}
+        FOR UPDATE OF o SKIP LOCKED)
+      AND s.status = 'running' AND r.id = s.reservation_id AND r.status <> 'open'`);
   return res.rowCount ?? 0;
 }
 

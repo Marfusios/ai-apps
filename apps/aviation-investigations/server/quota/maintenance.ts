@@ -4,7 +4,10 @@
  * brief steps whose process died as failed once their reservation is closed
  * (`failOrphanedSteps`), and delete expired sign-in sessions, OAuth state, claimed states
  * and deletion confirmations (`pruneAuth`, server/auth/deletion.ts), in that order: the
- * pass takes brief locks (retention) before any step lock, as everything else does.
+ * pass takes locks in the order every writer does (server/auth/lifecycle.ts): briefs
+ * before their steps, the anti-abuse records before the sign-in rows, sessions before
+ * confirmations. Marking orphaned steps, which comes after the anti-abuse records, skips
+ * any step another transaction holds (a later pass finds it) instead of waiting for it.
  *
  * All are available to the app role (`prune_controls()` is granted to `aviation_app` in
  * migration 0008; `expireLeases` and `pruneAuth` need only the table privileges the app

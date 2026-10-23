@@ -11,9 +11,17 @@
  *   accounts share, so waiting for it never stalls another account), the transaction that
  *   creates its brief or step (server/routes/briefs.ts), a signed-in takeover of a brief
  *   this browser's trial owns, and the sign-in callback's handover
- *   (server/auth/handover.ts). After it, a writer locks a brief before its steps, and its
- *   steps before the account's idempotency and anti-abuse records, as retention does
- *   (migration 0019), so none of them can deadlock.
+ *   (server/auth/handover.ts).
+ * - **One lock order after it.** A brief before its steps, steps before the account's
+ *   idempotency records, those before its anti-abuse record, and that before its sign-in
+ *   rows: a session before its deletion confirmation, the user last. Deletion takes them
+ *   in that order (content, the anti-abuse record, then its sessions and the user), and so
+ *   does the maintenance pass in one transaction (server/quota/maintenance.ts): retention
+ *   (migration 0019) up to the anti-abuse records, then expired sessions before expired
+ *   confirmations. The pass's one step out of order, marking orphaned steps after
+ *   retention, skips a step another transaction holds instead of waiting for it, and
+ *   issuing a deletion confirmation never holds one while it waits for a session
+ *   (server/auth/deletion.ts). So no two of these writers wait for each other in a cycle.
  * - **Revalidation under the lock.** Each of them first checks that the session the
  *   request was authenticated with still exists and has not expired, and that its user
  *   still exists (`lockLiveAccount`). Deletion removes the user, and with it every
