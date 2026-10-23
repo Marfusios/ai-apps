@@ -7,7 +7,7 @@
  * embeddings (`DATABASE_INGEST_URL`).
  *
  *   preflight --scope-samples <file>
- *   dev       --scope-samples <file> [--phase-a <dev run>] [--confirm-cost]
+ *   dev       --scope-samples <file> [--phase-a <dev run>] [--confirm-cost | --vectors <file>]
  *   load      --scope-samples <file> --vectors <file> [--concurrency 1,4,8] [--duration-ms n]
  *             [--max-requests n] [--embed-delay-ms n]
  *
@@ -26,7 +26,9 @@
  * `--confirm-cost` after the free plan; the out-dir's spend log refuses anything above
  * $0.10), saves the vectors (the `load` input; identified by model, dimensions, input
  * template and input hash), runs every arm and filter mode (`validate.ts`) and writes
- * `adoption-dev-<UTC>.json`. **load** pays nothing (`load.ts`).
+ * `adoption-dev-<UTC>.json`. With `--vectors <file>` it reuses a saved vector file
+ * instead and pays nothing (the same query vectors as that run). **load** pays nothing
+ * (`load.ts`). Both reports name the target (passages index, cases index and version).
  */
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -55,7 +57,7 @@ import { BASELINE_CONFIG, canonicalConfig, experimentConfig } from '../experimen
 import type { ExperimentItem, StoredRun } from '../experiments/experiment.js';
 import { loadGrid, sha256, type Grid } from '../experiments/grid.js';
 import { questionSha, type ScopeRun } from '../experiments/scope.js';
-import { checkTarget, describePlan, embedPlan, indexReport, planQueryEmbeddings, resolveRunTarget, stamp, type RunTarget } from '../harness.js';
+import { checkTarget, describePlan, embedPlan, indexReport, planQueryEmbeddings, precomputedEmbedder, resolveRunTarget, stamp, type RunTarget } from '../harness.js';
 import { DEFAULT_LOAD, runLoad, summarizeLoad, type LoadRequest } from './load.js';
 import {
   ARMS,
@@ -77,7 +79,7 @@ import {
 
 const USAGE =
   'usage: pnpm eval:retrieval:adoption <preflight|dev|load> --scope-samples <file> [--env-files <a,b>] [--keys-file <file>] [--out-dir <dir>] ' +
-  '[--phase-a <file>] [--confirm-cost] [--vectors <file>] [--concurrency 1,4,8] [--duration-ms n] [--max-requests n] [--embed-delay-ms n]';
+  '[--phase-a <file>] [--confirm-cost | --vectors <file>] [--concurrency 1,4,8] [--duration-ms n] [--max-requests n] [--embed-delay-ms n]';
 
 const OPTIONS = {
   'env-files': { type: 'string' },
@@ -327,25 +329,50 @@ function loadVectors(file: string, model: string, dims: number): Map<string, Flo
 // ---------------------------------------------------------------------------
 // Commands
 
+/** The indexes a run read: the passages index, and the cases index with its version (its retrieval identity beside the arms'). */
+function targetIdentity(ctx: Context): Record<string, unknown> {
+  const cases = ctx.preflight.casesIndex as { index: string; indexVersion: string | null; fingerprint: string | null };
+  return {
+    generationId: ctx.run.target.generationId,
+    passagesIndex: { name: ctx.run.index, version: ctx.run.meta.indexVersion, fingerprint: ctx.run.meta.fingerprint },
+    casesIndex: { name: cases.index, version: cases.indexVersion, fingerprint: cases.fingerprint },
+  };
+}
+
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const pp = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}`;
 
-async function cmdDev(ctx: Context, outDir: string, confirm: boolean, phaseA: string | undefined): Promise<number> {
+async function cmdDev(ctx: Context, outDir: string, confirm: boolean, phaseA: string | undefined, vectorsFile: string | undefined): Promise<number> {
   const { embeddingModel: model, embeddingDimensions: dims } = ctx.config.ai.openai;
   const plan = planQueryEmbeddings(ctx.items.map((q) => q.question), model, dims);
   const runs = ctx.items.length * ctx.grid.scope.samples * FILTER_MODES.length * Object.keys(ARMS).length;
   console.log(`${ctx.items.length} development questions x ${ctx.grid.scope.samples} cached scope samples x ${FILTER_MODES.length} filter modes x ${Object.keys(ARMS).length} arms = ${runs} retrievals`);
-  console.log(`query embeddings: ${describePlan(plan)}`);
-  const spent = spentUsd(outDir);
-  if (spent + plan.reserveUsd > MAX_SPEND_USD) throw new Error(`reserving $${plan.reserveUsd.toFixed(6)} on top of $${spent.toFixed(6)} would exceed $${MAX_SPEND_USD}; nothing sent`);
-  if (!confirm) {
-    console.log('nothing embedded: run with --confirm-cost');
-    return 0;
+  let embedder: Embedder;
+  let billed: unknown;
+  let vectors: string;
+  if (vectorsFile) {
+    // The saved vectors of an earlier run: identical query vectors, nothing paid.
+    const cached = loadVectors(vectorsFile, model, dims);
+    for (const input of plan.inputs) if (!cached.has(input)) throw new Error('the vectors file lacks a question of this run');
+    embedder = precomputedEmbedder({ model, dims, usdPerMillionTokens: 0 }, cached);
+    billed = { cached: true, requests: 0, usd: 0 };
+    vectors = resolve(vectorsFile);
+    console.log(`query vectors: ${plan.inputs.length} from the saved file; nothing embedded`);
+  } else {
+    console.log(`query embeddings: ${describePlan(plan)}`);
+    const spent = spentUsd(outDir);
+    if (spent + plan.reserveUsd > MAX_SPEND_USD) throw new Error(`reserving $${plan.reserveUsd.toFixed(6)} on top of $${spent.toFixed(6)} would exceed $${MAX_SPEND_USD}; nothing sent`);
+    if (!confirm) {
+      console.log('nothing embedded: run with --confirm-cost (or --vectors <saved file>)');
+      return 0;
+    }
+    const purpose = `eval-10e-dev-${stamp(new Date())}`;
+    const paid = await embedPlan(plan, { fake: false, config: ctx.config, purpose, log: (m) => console.error(m) });
+    embedder = paid.embedder;
+    billed = paid.billed;
+    appendFileSync(spendFile(outDir), `${JSON.stringify({ at: new Date().toISOString(), step: 'embed-dev', purpose, reservedUsd: plan.reserveUsd, chargedUsd: paid.billed.usd })}\n`);
+    vectors = await saveVectors(outDir, embedder, plan.inputs);
   }
-  const purpose = `eval-10e-dev-${stamp(new Date())}`;
-  const { embedder, billed } = await embedPlan(plan, { fake: false, config: ctx.config, purpose, log: (m) => console.error(m) });
-  appendFileSync(spendFile(outDir), `${JSON.stringify({ at: new Date().toISOString(), step: 'embed-dev', purpose, reservedUsd: plan.reserveUsd, chargedUsd: billed.usd })}\n`);
-  const vectors = await saveVectors(outDir, embedder, plan.inputs);
   const started = new Date();
   const target = { dataset: ctx.run.target, casesIndex: ctx.casesIndex };
   const all = await runAdoption(ctx.es, embedder, target, ctx.items, ctx.uses, { log: (m) => console.error(m) });
@@ -374,6 +401,7 @@ async function cmdDev(ctx: Context, outDir: string, confirm: boolean, phaseA: st
     startedAt: started.toISOString(),
     finishedAt: finished.toISOString(),
     preflight: ctx.preflight,
+    target: targetIdentity(ctx),
     arms: armIdentities(),
     comparison: COMPARISON,
     regressionCases: REGRESSION_CASES,
@@ -471,6 +499,7 @@ async function cmdLoad(ctx: Context, outDir: string, values: Record<string, stri
     startedAt: started.toISOString(),
     finishedAt: new Date().toISOString(),
     options: o,
+    target: targetIdentity(ctx),
     arms: armIdentities(),
     summary,
     samples,
@@ -504,7 +533,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(`report: ${file}`);
       return 0;
     }
-    if (command === 'dev') return await cmdDev(ctx, outDir, values['confirm-cost'] === true, values['phase-a']);
+    if (command === 'dev') return await cmdDev(ctx, outDir, values['confirm-cost'] === true, values['phase-a'], typeof values.vectors === 'string' ? values.vectors : undefined);
     return await cmdLoad(ctx, outDir, values);
   } finally {
     await ctx.es.close();
