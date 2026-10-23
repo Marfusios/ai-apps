@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
 import { aiStatusQuery } from '../../api';
+import { useSignIn } from '../auth/SignInDialog';
 import { pausedNote } from './status';
 
 const pill =
@@ -9,18 +9,22 @@ const pill =
 /**
  * The header AI counter (UI_DESIGN §5, §6). It always shows searches left, read from
  * the public AI status before anyone clicks; the number is magenta because it counts
- * AI work. Sign-in arrives with accounts, so the sign-in pills open the account page.
+ * AI work. The sign-in pills open the sign-in dialog, which comes back to this page; while
+ * Google sign-in is not configured they are plain text.
  */
 export function AiCounter() {
   const { data: status } = useQuery(aiStatusQuery());
+  const signIn = useSignIn();
   if (!status) return null;
   const r = status.remaining;
   if (status.state === 'paused') return <span className="text-muted">{pausedNote(status)}</span>;
   if (status.state === 'signed_in_only' && r?.kind !== 'account') {
+    const text = status.reason === 'trial_used' ? 'Sign in to keep asking' : 'Sign in to ask the AI';
+    if (!signIn.enabled) return <span className="text-muted">{text}</span>;
     return (
-      <Link to="/account" className={pill}>
-        {status.reason === 'trial_used' ? 'Sign in to keep asking' : 'Sign in to ask the AI'}
-      </Link>
+      <button type="button" className={`${pill} cursor-pointer`} onClick={() => signIn.open()}>
+        {text}
+      </button>
     );
   }
   if (r?.kind === 'account') {

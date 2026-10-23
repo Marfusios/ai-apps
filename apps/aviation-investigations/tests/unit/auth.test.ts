@@ -1,0 +1,259 @@
+/**
+ * Google sign-in without a database or network: the ID-token claim checks, the
+ * configuration rules, cookie names, the network identity Better Auth's limiter keys on,
+ * the handover's return-path and state parsing, log sanitizing, the account contracts,
+ * Better Auth's own schema check against our Drizzle tables, and what `GET /api/config`
+ * says about sign-in.
+ */
+import Fastify from 'fastify';
+import { describe, expect, it } from 'vitest';
+import { loadConfig, type AppConfig } from '../../shared/config.js';
+import { AccountResponseSchema, ReturnPathSchema, SignInRequestSchema } from '../../shared/contracts/account.js';
+import { ErrorResponseSchema } from '../../shared/contracts/common.js';
+import { ConfigResponseSchema } from '../../shared/contracts/config.js';
+import {
+  AUTH_IP_HEADER,
+  GOOGLE_ISSUER,
+  authClientIp,
+  authConfigProblem,
+  authCookieNames,
+  createAuthService,
+  decodeJwtClaims,
+  sanitizeAuthLogMessage,
+  verifiedGoogleUser,
+  type AuthService,
+} from '../../server/auth/better-auth.js';
+import { briefOfReturnPath, parseHandoverCandidate } from '../../server/auth/handover.js';
+import type { Db } from '../../server/db/client.js';
+import { isNoStoreRoute } from '../../server/http/cache-headers.js';
+import { ERROR_MESSAGES } from '../../server/http/reply.js';
+import { TrialIdentities } from '../../server/identity/trial.js';
+import { quotaPolicy } from '../../server/quota/policy.js';
+import { configRoutes } from '../../server/routes/config.js';
+import type { ApiContext } from '../../server/routes/context.js';
+
+const CLIENT_ID = 'casebook-test.apps.googleusercontent.com';
+const NOW = Date.parse('2026-11-01T10:00:00Z');
+const NONCE = 'n'.repeat(43);
+
+const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url');
+const jwt = (claims: Record<string, unknown>) => `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64(claims)}.c2lnbmF0dXJl`;
+const claims = (over: Record<string, unknown> = {}) => {
+  const c: Record<string, unknown> = {
+    iss: 'https://accounts.google.com',
+    aud: CLIENT_ID,
+    azp: CLIENT_ID,
+    sub: '109876543210987654321',
+    email: 'Pilot@Example.com',
+    email_verified: true,
+    name: 'Test Pilot',
+    picture: 'https://example.com/p.png',
+    iat: NOW / 1000,
+    exp: NOW / 1000 + 3600,
+    nonce: NONCE,
+  };
+  for (const [k, v] of Object.entries(over)) {
+    if (v === undefined) delete c[k];
+    else c[k] = v;
+  }
+  return c;
+};
+const verify = (over: Record<string, unknown> = {}, nonce: string | null = NONCE) =>
+  verifiedGoogleUser(jwt(claims(over)), { clientId: CLIENT_ID, nonce, nowMs: NOW });
+
+describe('the Google ID token', () => {
+  it('a token for this client, with this flow’s nonce and a verified email, is the user: name and lower-case email only', () => {
+    const v = verify();
+    expect(v).toMatchObject({ ok: true, user: { name: 'Test Pilot', email: 'pilot@example.com', emailVerified: true } });
+    if (v.ok) {
+      expect(Object.keys(v.user).sort()).toEqual(['email', 'emailVerified', 'name']);
+      expect(v.claims.sub).toBe('109876543210987654321');
+    }
+    expect(verify({ iss: 'accounts.google.com' }).ok).toBe(true);
+    expect(verify({ aud: ['other', CLIENT_ID], azp: undefined }).ok).toBe(true);
+  });
+
+  it.each([
+    ['malformed', 'not a jwt'],
+    ['issuer', { iss: 'https://evil.example' }],
+    ['audience', { aud: 'someone-else' }],
+    ['audience', { azp: 'someone-else' }],
+    ['expired', { exp: NOW / 1000 - 61 }],
+    ['subject', { sub: '' }],
+    ['subject', { sub: 'has space' }],
+    ['subject', { sub: 'x'.repeat(256) }],
+    ['email', { email: undefined }],
+    ['email', { email: 'not-an-email' }],
+    ['email_not_verified', { email_verified: false }],
+    ['email_not_verified', { email_verified: 'true' }],
+    ['nonce', { nonce: undefined }],
+    ['nonce', { nonce: 'another' }],
+  ] as const)('refuses: %s %j', (reason, over) => {
+    const v = typeof over === 'string' ? verifiedGoogleUser(over, { clientId: CLIENT_ID, nonce: NONCE, nowMs: NOW }) : verify(over);
+    expect(v).toEqual({ ok: false, reason });
+  });
+
+  it('no expected nonce (lost OAuth state) refuses every token; a long name is cut, control characters dropped', () => {
+    expect(verify({}, null)).toEqual({ ok: false, reason: 'nonce' });
+    const v = verify({ name: `A\u0000B${'x'.repeat(300)}` });
+    expect(v.ok && v.user.name).toBe(`AB${'x'.repeat(198)}`);
+    expect(verifiedGoogleUser(undefined, { clientId: CLIENT_ID, nonce: NONCE, nowMs: NOW })).toEqual({ ok: false, reason: 'malformed' });
+  });
+
+  it('decodes only compact JWT claims objects', () => {
+    expect(decodeJwtClaims(jwt({ a: 1 }))).toEqual({ a: 1 });
+    expect(decodeJwtClaims('a.b')).toBeNull();
+    expect(decodeJwtClaims(`${b64({})}.${Buffer.from('[1]').toString('base64url')}.x`)).toBeNull();
+    expect(decodeJwtClaims(`${b64({})}.!!!.x`)).toBeNull();
+  });
+});
+
+describe('configuration', () => {
+  const base = (auth: Partial<AppConfig['auth']>, over: Partial<Pick<AppConfig, 'appEnv' | 'appUrl'>> = {}) => ({
+    appEnv: over.appEnv ?? ('dev' as const),
+    appUrl: over.appUrl ?? 'https://casebook.example',
+    auth: { identityHmacSecret: 'i'.repeat(32), secret: 's'.repeat(32), googleClientId: CLIENT_ID, googleClientSecret: 'secret', ...auth },
+  });
+
+  it('Google sign-in needs the client ID and secret, a 32-character BETTER_AUTH_SECRET and the identity key; live needs https', () => {
+    expect(authConfigProblem(base({}))).toBeNull();
+    expect(authConfigProblem(base({ googleClientId: undefined }))).toMatch(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
+    expect(authConfigProblem(base({ googleClientSecret: undefined }))).toMatch(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/);
+    expect(authConfigProblem(base({ secret: 'short' }))).toMatch(/BETTER_AUTH_SECRET/);
+    expect(authConfigProblem(base({ identityHmacSecret: undefined }))).toMatch(/IDENTITY_HMAC_SECRET/);
+    expect(authConfigProblem(base({}, { appEnv: 'live', appUrl: 'http://casebook.example' }))).toMatch(/https/);
+    expect(authConfigProblem(base({}, { appEnv: 'dev', appUrl: 'http://localhost:3000' }))).toBeNull();
+  });
+
+  it('problems name settings, never values', () => {
+    const problem = authConfigProblem(base({ secret: 'a-short-secret' }));
+    expect(problem).not.toContain('a-short-secret');
+  });
+
+  it('cookie names carry __Host- over https only', () => {
+    expect(authCookieNames(true)).toMatchObject({ session_token: '__Host-aviation_session', state: '__Host-aviation_auth_state' });
+    expect(authCookieNames(false)).toMatchObject({ session_token: 'aviation_session', state: 'aviation_auth_state' });
+  });
+
+  it('Better Auth’s limiter gets the network identity as an address; an IPv6 /64 as its network address', () => {
+    expect(authClientIp('203.0.113.9')).toBe('203.0.113.9');
+    expect(authClientIp('2001:db8:1:2::/64')).toBe('2001:db8:1:2::');
+    expect(AUTH_IP_HEADER).toBe('x-aviation-client-ip');
+  });
+
+  it('every auth and account route is per visitor and never stored', () => {
+    for (const route of ['/api/auth/*', '/api/account', '/api/account/delete']) expect(isNoStoreRoute(route), route).toBe(true);
+  });
+});
+
+describe('the handover state', () => {
+  const id = '0f0e0d0c-0b0a-4908-8706-050403020100';
+
+  it('only a brief path names a brief', () => {
+    expect(briefOfReturnPath(`/briefs/${id}`)).toBe(id);
+    expect(briefOfReturnPath(`/briefs/${id}?step=2&case=DFW08TA066`)).toBe(id);
+    for (const path of ['/', `/briefs/${id}/x`, `/briefs/${id.toUpperCase()}`, '/briefs/not-a-uuid', `/cases/${id}`, `//briefs/${id}`]) {
+      expect(briefOfReturnPath(path), path).toBeNull();
+    }
+  });
+
+  it('reads back only a well-formed candidate', () => {
+    expect(parseHandoverCandidate({ briefId: id, from: 'a'.repeat(64) })).toEqual({ briefId: id, from: 'a'.repeat(64) });
+    for (const bad of [null, 'x', { briefId: id }, { briefId: 'x', from: 'a'.repeat(64) }, { briefId: id, from: 'A'.repeat(64) }]) {
+      expect(parseHandoverCandidate(bad)).toBeNull();
+    }
+  });
+});
+
+describe('contracts and copy', () => {
+  it('return paths stay on this site', () => {
+    for (const ok of ['/', '/briefs/x?step=2', '/account?signin=failed']) expect(ReturnPathSchema.safeParse(ok).success, ok).toBe(true);
+    for (const bad of ['', 'https://evil.example/', '//evil.example', '/\\evil', '/a#b', 'javascript:alert(1)', `/${'x'.repeat(512)}`, '/a\nb']) {
+      expect(ReturnPathSchema.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+
+  it('the sign-in request is exactly the expected fields', () => {
+    const body = { provider: 'google', callbackURL: '/', newUserCallbackURL: '/?welcome=1', errorCallbackURL: '/?signin=failed', disableRedirect: true };
+    expect(SignInRequestSchema.safeParse(body).success).toBe(true);
+    expect(SignInRequestSchema.safeParse({ ...body, idToken: { token: 'x' } }).success).toBe(false);
+    expect(SignInRequestSchema.safeParse({ ...body, scopes: ['x'] }).success).toBe(false);
+  });
+
+  it('the account says who is signed in and nothing more', () => {
+    expect(AccountResponseSchema.safeParse({ signedIn: true, user: { name: 'A', email: 'a@example.com', id: 'x' } }).success).toBe(false);
+    expect(AccountResponseSchema.safeParse({ signedIn: false, user: { name: 'A', email: 'a@example.com' } }).success).toBe(false);
+  });
+
+  it('a retry from the trial a brief moved away from is told to sign in', () => {
+    expect(ErrorResponseSchema.parse({ error: 'moved', message: ERROR_MESSAGES.moved }).error).toBe('moved');
+    expect(ERROR_MESSAGES.moved).toBe('This AI search moved to the account that signed in. Sign in to view it.');
+  });
+
+  it('sanitized log lines keep the message, never an email address or what was attached', () => {
+    expect(sanitizeAuthLogMessage('Invalid origin: https://evil.example')).toBe('Invalid origin: https://evil.example');
+    expect(sanitizeAuthLogMessage('duplicate key (email)=(someone@example.com) exists')).toBe('duplicate key (email)=(<email>) exists');
+    expect(sanitizeAuthLogMessage({ message: 'x' })).toBe('auth message');
+    expect(sanitizeAuthLogMessage('x'.repeat(500))).toHaveLength(160);
+  });
+});
+
+describe('the service', () => {
+  /** A database the schema check never touches (Drizzle's check reads the schema objects only). */
+  const noDb = new Proxy({}, { get: () => { throw new Error('no database in unit tests'); } }) as unknown as Db;
+
+  function service(): AuthService {
+    const config = loadConfig({ env: {}, files: [] });
+    const cfg = {
+      appEnv: 'dev' as const,
+      appUrl: 'https://casebook.example',
+      auth: { ...config.auth, identityHmacSecret: 'i'.repeat(32), ipHmacSecret: 'p'.repeat(32), secret: 's'.repeat(40), googleClientId: CLIENT_ID, googleClientSecret: 'secret' },
+    };
+    const policy = quotaPolicy({ ai: config.ai, auth: cfg.auth });
+    const trials = new TrialIdentities({ db: noDb, policy, secure: true });
+    const made = createAuthService(cfg, { db: noDb, policy, trials, log: { info() {}, warn() {}, error() {} } });
+    if (!made.service) throw new Error(made.problem);
+    return made.service;
+  }
+
+  it('Better Auth’s schema check finds our Drizzle tables complete', async () => {
+    await expect(service().checkSchema()).resolves.toBeUndefined();
+  });
+
+  it('without a session cookie nothing is looked up', async () => {
+    const s = service();
+    await expect(s.signedIn(undefined)).resolves.toBeNull();
+    await expect(s.signedIn('__Host-aviation_trial=v1.x.y')).resolves.toBeNull();
+  });
+
+  it('expires the session cookies with the same attributes', () => {
+    expect(service().expiredSessionCookies()).toEqual([
+      '__Host-aviation_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax; Secure',
+      '__Host-aviation_session_data=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax; Secure',
+      '__Host-aviation_dont_remember=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax; Secure',
+    ]);
+  });
+
+  it('accounts are keyed by Google’s issuer', () => {
+    expect(GOOGLE_ISSUER).toBe('https://accounts.google.com');
+  });
+});
+
+describe('GET /api/config', () => {
+  async function config(auth: AuthService | null) {
+    const app = Fastify();
+    const pinned = {
+      dataset: { snapshotDate: '2026-10-16', revision: 'g1-test' },
+      coverage: { defaultCohort: 1, otherRecords: 0, yearFrom: 2008, yearTo: 2026, provisional: true },
+    };
+    configRoutes(app, { datasets: { current: async () => pinned }, ai: null, auth } as unknown as ApiContext);
+    const r = await app.inject({ method: 'GET', url: '/api/config' });
+    await app.close();
+    return ConfigResponseSchema.parse(JSON.parse(r.body));
+  }
+
+  it('offers Google sign-in only while it is configured', async () => {
+    expect((await config(null)).googleEnabled).toBe(false);
+    expect((await config({} as AuthService)).googleEnabled).toBe(true);
+  });
+});

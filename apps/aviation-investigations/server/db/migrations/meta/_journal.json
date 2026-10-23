@@ -120,6 +120,13 @@
       "when": 1792705854078,
       "tag": "0016_brief_step_diagnostics",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792739843816,
+      "tag": "0017_auth",
+      "breakpoints": true
     }
   ]
 }

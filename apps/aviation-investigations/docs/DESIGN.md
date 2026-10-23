@@ -543,6 +543,20 @@ and answers remain outside telemetry by default; asynchronous evaluation uses on
 the existing 24-hour temporary-processing window. Public/synthetic benchmark
 fixtures have a separate lifecycle. See the [capture and retention policy](OBSERVABILITY_AND_EVALUATION.md#privacy-retention-cost-and-availability).
 
+**As built (Task 20).** Better Auth 1.7.7 serves three endpoints under `/api/auth`
+(sign-in, Google's callback, sign-out); anything else there is 404, and all of them are
+404 while the Google client is not configured (`googleEnabled: false`). Sessions last 7
+days, are never extended and have no cookie cache. The ID token from Google's token
+endpoint is accepted on its claims (issuer, audience, expiry, `sub`, `email_verified`)
+and on a nonce the app adds to the redirect flow, which Better Auth's Google provider
+does not send; only the subject, name and email are stored. The handover runs at the
+callback when sign-in started from the brief's page and the browser's trial cookie
+still proves its owner, or at a signed-in refinement or retry on a brief the browser's
+trial owns; a retry from the old trial alone answers 403 `moved`. A re-registered
+account is a new account (the new-account allowance applies again) that finds its usage.
+Deletion removes the account's briefs with all their steps and its idempotency records
+in the same transaction as the user; it does not ask for a fresh sign-in first.
+
 ## 8. Abuse controls and atomic accounting
 
 Cloudflare is the outer traffic filter. Validate Turnstile server-side, checking

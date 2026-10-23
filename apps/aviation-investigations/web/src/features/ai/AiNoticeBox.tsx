@@ -2,9 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { AiStatusResponse } from '../../../../shared/contracts/ai';
-import { aiStatusQuery, configQuery } from '../../api';
+import { aiStatusQuery } from '../../api';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
+import { GoogleButton, useSignIn } from '../auth/SignInDialog';
 import { retryDay } from './status';
 import type { AiNotice } from './useAiRequest';
 
@@ -34,6 +35,8 @@ export const COPY = {
   /** No answer came back, so whether it counted is unknown (Builder copy). */
   unknownSpent: 'If it went through, Try again opens it without using another search.',
   continueWithGoogle: 'Continue with Google',
+  /** A retry from the trial a brief moved away from (Builder copy, for the owner's review). */
+  moved: ['This AI search moved to the account that signed in.', 'Sign in with that account to view it.'],
 } as const;
 
 function Box({ edge, title, children }: { edge?: 'ink' | 'blue'; title: string; children?: ReactNode }) {
@@ -51,15 +54,13 @@ function Box({ edge, title, children }: { edge?: 'ink' | 'blue'; title: string; 
   );
 }
 
+/** "Continue with Google": opens the sign-in dialog (what is kept, then Google). Nothing while sign-in is off. */
 function SignInButton() {
-  const config = useQuery(configQuery());
-  // Google sign-in arrives with accounts; until it is configured there is nothing to press.
-  if (!config.data?.googleEnabled) return null;
+  const signIn = useSignIn();
+  if (!signIn.enabled) return null;
   return (
     <div className="mt-2.5">
-      <Link to="/account" className="inline-flex items-center rounded-full border-[1.5px] border-ink px-3.5 py-[5px] text-ui font-bold text-ink hover:bg-blue-wash">
-        {COPY.continueWithGoogle}
-      </Link>
+      <GoogleButton onClick={() => signIn.open()} />
     </div>
   );
 }
@@ -148,6 +149,13 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
             <p>{COPY.freePaused[1]}</p>
             <SignInButton />
             {!notice.loginRequired && <p className="pt-1 text-meta text-muted">{COPY.freePaused[2]}</p>}
+          </Box>
+        );
+      case 'moved':
+        return (
+          <Box title={COPY.moved[0]}>
+            <p>{COPY.moved[1]}</p>
+            <SignInButton />
           </Box>
         );
       case 'rate':

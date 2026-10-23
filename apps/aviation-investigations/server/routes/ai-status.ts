@@ -1,14 +1,15 @@
 /**
  * `GET /api/ai/status` (UI_DESIGN §5): whether Ask AI can work for this visitor, read
- * before anyone clicks. The visitor is the live trial proven by the trial cookie, or a
+ * before anyone clicks. The visitor is the signed-in account (its session cookie,
+ * server/auth/better-auth.ts), else the live trial proven by the trial cookie, else a
  * fresh anonymous visitor (no cookie, or one that is malformed, tampered with or
- * expired; such a cookie is ignored). Signed-in principals arrive with Task 20.
+ * expired; such a cookie is ignored). A signed-in visitor sees the account's own counts.
  *
  * The answer comes from `aiStatus` (server/quota/status.ts), which reads only and
  * never returns amounts. On top of it this route reports `paused` with reason
  * `dependency` (and no retry time) when AI cannot run at all: the startup check failed,
  * no language-model provider is available, the quota policy is missing its secrets,
- * quota storage cannot be read, there is no evidence index to search (the active
+ * quota storage or the session cannot be read, there is no evidence index to search (the active
  * manifest names no passages index, the dataset reports it not servable, or evidence
  * retrieval is not bound or refuses it),
  * or, for an anonymous visitor who would otherwise be offered AI, Turnstile is not
@@ -18,7 +19,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { AiStatusResponseSchema, type AiRemaining, type AiStatusResponse } from '../../shared/contracts/ai.js';
 import { JSON_TYPE } from '../http/reply.js';
-import type { TrialPrincipal } from '../identity/trial.js';
+import type { Principal } from '../quota/policy.js';
 import { aiStatus, type AiStatus } from '../quota/status.js';
 import type { ApiContext } from './context.js';
 
@@ -42,10 +43,11 @@ async function statusFor(ctx: ApiContext, request: FastifyRequest): Promise<AiSt
   const reservationUsd = ai?.startup.enabled ? ai.startup.reservationUsd : undefined;
   if (!ai || reservationUsd === undefined || !ai.policy || !ai.trials || !ai.llm) return dependency();
   let s: AiStatus;
-  let principal: TrialPrincipal | null;
+  let principal: Principal | null;
   try {
     const now = ai.now();
-    principal = await ai.trials.fromRequest(request, now);
+    const signedIn = ctx.auth ? await ctx.auth.signedIn(request.headers.cookie) : null;
+    principal = signedIn ? signedIn.principal : await ai.trials.fromRequest(request, now);
     s = await aiStatus(ctx.db, principal, { policy: ai.policy, reservationUsd, now });
   } catch (err) {
     request.log.warn({ err: { name: (err as Error).name } }, 'AI status unavailable');

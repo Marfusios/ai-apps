@@ -15,6 +15,7 @@ import { delay, http, HttpResponse } from 'msw';
 import type { AiStatusResponse } from '../../../shared/contracts/ai';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import { CreateBriefRequestSchema, RefinementRequestSchema } from '../../../shared/contracts/briefs';
+import { DeleteAccountRequestSchema, SignInRequestSchema, type AccountResponse } from '../../../shared/contracts/account';
 import type { ErrorResponse } from '../../../shared/contracts/common';
 import { SearchRequestSchema, paramsToQuery } from '../../../shared/contracts/search';
 import cases from '../../mock/cases.json';
@@ -45,6 +46,37 @@ export interface HandlerOptions {
   briefPolls?: number;
   /** The Turnstile site key `/api/config` offers (default: Cloudflare's always-passing test key). */
   turnstileSiteKey?: string | null;
+  /** Offer Google sign-in (default false, as the fixture config says). */
+  googleEnabled?: boolean;
+}
+
+/** The mock's Google account: synthetic. */
+export const MOCK_USER = { name: 'Alex Example', email: 'alex@example.com' } as const;
+
+/** This tab's mock sign-in: kept across the reload that coming back from "Google" causes. */
+const MOCK_ACCOUNT_KEY = 'casebook-mock-account';
+
+interface MockAccountState {
+  signedIn: boolean;
+  /** The account exists (its next sign-in is not a first one). */
+  registered: boolean;
+}
+
+function loadAccountState(): MockAccountState {
+  try {
+    const raw = JSON.parse(window.sessionStorage.getItem(MOCK_ACCOUNT_KEY) ?? 'null') as Partial<MockAccountState> | null;
+    return { signedIn: raw?.signedIn === true, registered: raw?.registered === true };
+  } catch {
+    return { signedIn: false, registered: false };
+  }
+}
+
+function saveAccountState(state: MockAccountState): void {
+  try {
+    window.sessionStorage.setItem(MOCK_ACCOUNT_KEY, JSON.stringify(state));
+  } catch {
+    // Kept for this page only.
+  }
 }
 
 /**
@@ -76,12 +108,19 @@ export function createHandlers({
   aiStatus = AI_STATUS_SAMPLES.fresh,
   briefPolls,
   turnstileSiteKey = TURNSTILE_TEST_SITE_KEY,
+  googleEnabled = false,
 }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);
   };
   const briefs = new MockBriefs(briefPolls === undefined ? {} : { pollsToFinish: briefPolls });
-  let status: AiStatusResponse = aiStatus;
+  let signIn: MockAccountState = googleEnabled ? loadAccountState() : { signedIn: false, registered: false };
+  let status: AiStatusResponse = signIn.signedIn ? AI_STATUS_SAMPLES.newAccount : aiStatus;
+  const notFound = () => HttpResponse.json({ error: 'not_found', message: 'Not found.' } satisfies ErrorResponse, { status: 404, headers: NO_STORE });
+  const setSignIn = (next: MockAccountState): void => {
+    signIn = next;
+    saveAccountState(next);
+  };
 
   /** The anonymous gate and admission, before any work (server/identity/gate.ts, DESIGN §8). */
   const refuse = (token: string | null | undefined): Response | null => {
@@ -115,7 +154,40 @@ export function createHandlers({
   return [
     http.get('*/api/config', async () => {
       await wait();
-      return HttpResponse.json({ ...config, turnstileSiteKey });
+      return HttpResponse.json({ ...config, turnstileSiteKey, googleEnabled });
+    }),
+    http.get('*/api/account', async () => {
+      await wait();
+      const body: AccountResponse = signIn.signedIn ? { signedIn: true, user: { ...MOCK_USER } } : { signedIn: false };
+      return HttpResponse.json(body, { headers: NO_STORE });
+    }),
+    http.post('*/api/auth/sign-in/social', async ({ request }) => {
+      await wait();
+      if (!googleEnabled) return notFound();
+      const parsed = SignInRequestSchema.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return badRequest(parsed.error.issues);
+      // As if Google sent the browser straight back: a new account gets the welcome.
+      const url = signIn.registered ? parsed.data.callbackURL : parsed.data.newUserCallbackURL;
+      setSignIn({ signedIn: true, registered: true });
+      status = AI_STATUS_SAMPLES.newAccount;
+      return HttpResponse.json({ url, redirect: false }, { headers: NO_STORE });
+    }),
+    http.post('*/api/auth/sign-out', async () => {
+      await wait();
+      if (!googleEnabled) return notFound();
+      setSignIn({ ...signIn, signedIn: false });
+      status = aiStatus;
+      return HttpResponse.json({ success: true }, { headers: NO_STORE });
+    }),
+    http.post('*/api/account/delete', async ({ request }) => {
+      await wait();
+      if (!googleEnabled) return notFound();
+      const parsed = DeleteAccountRequestSchema.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return badRequest(parsed.error.issues);
+      if (!signIn.signedIn) return HttpResponse.json({ error: 'sign_in_required', message: 'Sign in to delete your account.' } satisfies ErrorResponse, { status: 403, headers: NO_STORE });
+      setSignIn({ signedIn: false, registered: false });
+      status = aiStatus;
+      return HttpResponse.json({ deleted: true }, { headers: NO_STORE });
     }),
     http.get('*/api/search', async ({ request }) => {
       await wait();

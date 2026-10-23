@@ -6,7 +6,8 @@ const RESOLVED = `\0${MOCK_API_MODULE}`;
 /**
  * Provides `virtual:casebook-mock-api`, whose `startMockApi()` the entry awaits
  * before rendering. With the dev mock mode on (`WEB_MOCK_API=1`, dev server only)
- * it registers the MSW worker with the fixture handlers; otherwise, and in every
+ * it registers the MSW worker with the fixture handlers (Google sign-in mocked on);
+ * otherwise, and in every
  * production build, it is an empty function, so no mock code is bundled.
  */
 export function mockApiEntry(enabled: boolean): Plugin {
@@ -22,7 +23,7 @@ export function mockApiEntry(enabled: boolean): Plugin {
         "import { setupWorker } from 'msw/browser';",
         "import { createHandlers } from '/src/mocks/handlers.ts';",
         'export async function startMockApi() {',
-        '  const worker = setupWorker(...createHandlers({ latencyMs: 120 }));',
+        '  const worker = setupWorker(...createHandlers({ latencyMs: 120, googleEnabled: true }));',
         "  await worker.start({ onUnhandledFrame: 'bypass', quiet: true });",
         "  console.info('[casebook] Mock API: /api answers come from web/mock (NTSB fixture data).');",
         '}',

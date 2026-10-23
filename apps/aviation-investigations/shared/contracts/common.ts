@@ -81,6 +81,11 @@ export type Dataset = z.infer<typeof DatasetSchema>;
  * - `in_flight` (429): this visitor already has an AI request running.
  * - `conflict` (409): the idempotency key was used with another request.
  * - `refinement_limit` (409): the brief has used its three refinements.
+ *
+ * Accounts (shared/contracts/account.ts) add `moved` (403): a retry, from the anonymous
+ * trial that asked, of a request whose brief has since moved to the account that signed
+ * in from it (UI_DESIGN §5, "Signing in mid-brief"): sign in to view it. Nothing is
+ * replayed and nothing runs.
  */
 export const ErrorResponseSchema = z.strictObject({
   error: z.enum([
@@ -100,6 +105,7 @@ export const ErrorResponseSchema = z.strictObject({
     'in_flight',
     'conflict',
     'refinement_limit',
+    'moved',
   ]),
   message: z.string().max(500),
   /** For `bad_request`: which parameters failed. */

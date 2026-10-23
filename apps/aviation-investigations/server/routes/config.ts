@@ -8,9 +8,10 @@ export function configRoutes(app: FastifyInstance, ctx: ApiContext): void {
   app.get('/api/config', async (request, reply) => {
     const pinned = await ctx.datasets.current();
     const body = ConfigResponseSchema.parse({
-      // The widget's site key once the anonymous gate is configured; no Google sign-in yet.
+      // The widget's site key once the anonymous gate is configured.
       turnstileSiteKey: ctx.ai?.gate?.siteKey ?? null,
-      googleEnabled: false,
+      // Sign-in is offered only while Google sign-in is configured (server/auth/better-auth.ts).
+      googleEnabled: ctx.auth !== null,
       snapshotDate: pinned.dataset.snapshotDate,
       datasetRevision: pinned.dataset.revision,
       coverage: pinned.coverage,

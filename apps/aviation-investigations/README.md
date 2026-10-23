@@ -6,7 +6,8 @@ analysts exploring similar events.
 
 **Status: Experimental.** Keyword search, case pages and the dashboard are live on the
 dev environment (API server, web client, container deployment, trial identity and AI
-status); AI briefs are in progress and there is no public deployment.
+status); AI briefs and Google sign-in are in progress (sign-in waits for an OAuth client)
+and there is no public deployment.
 
 - [Implementation design](docs/DESIGN.md): TypeScript stack, retrieval, UI,
   authentication, cost controls, deployment, and delivery milestones.
@@ -1383,6 +1384,73 @@ AI is available only while the dataset reports the active passages index servabl
 `OPENAI_EMBEDDING_DIMENSIONS`) and the retriever accepts it. Otherwise, or without
 `OPENAI_API_KEY`, or when no dataset can be served at all, the brief routes answer 503
 `unavailable` and `GET /api/ai/status` reports `dependency`, never saying why.
+
+### Google sign-in and accounts
+
+`server/auth/` adds Google sign-in with [Better Auth](https://better-auth.com) (pinned,
+1.7.7), the account page's routes, the brief handover and account deletion (DESIGN §7,
+UI_DESIGN §4.8 and §5). The tables (`auth_users`, `auth_accounts`, `auth_sessions`,
+`auth_verifications`), their grants and the deletion function are in migration 0017.
+
+- **Configuration.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (a Google OAuth client
+  of type *Web application* whose authorized redirect URI is
+  `<APP_URL>/api/auth/callback/google`), `BETTER_AUTH_SECRET` (at least 32 characters;
+  `pnpm services:setup` generates one into `.env.local`) and `IDENTITY_HMAC_SECRET`.
+  Without any of them sign-in is off: `GET /api/config` says `googleEnabled: false`,
+  the page offers no sign-in, every `/api/auth` route answers 404 and the startup log
+  names the missing setting. `APP_ENV=live` also needs an https `APP_URL`.
+- **The flow.** The page posts `POST /api/auth/sign-in/social` (Google, the page to come
+  back to, `disableRedirect`; any other field is refused) and opens the URL it gets:
+  scopes `openid email profile`, PKCE (S256), a state bound to the browser by a signed
+  cookie and stored for 10 minutes, and a nonce the server adds to the request and
+  checks in the ID token. Google sends the browser to
+  `GET /api/auth/callback/google`, which signs in and returns to the page, with
+  `welcome=1` after a first sign-in (the welcome dialog) or `signin=failed` (the dialog
+  again, saying so). `POST /api/auth/sign-out` ends the session. No other Better Auth
+  endpoint is served.
+- **What is accepted and kept.** An ID token from Google's token endpoint for this
+  client, unexpired, with this flow's nonce and an email Google reports as verified.
+  The account is the Google `sub`; a second Google account with an email already in use
+  is refused, never linked. Kept: the subject, the name and the email. Never kept
+  (database hooks clear them and CHECK constraints refuse them): the picture, provider
+  tokens and scopes, a password, and the session's IP address and user agent. Sessions
+  last 7 days and are never extended; there is no session cookie cache, so sign-out
+  and deletion take effect on the next request.
+- **Cookies.** `__Host-aviation_session` and the OAuth state's `__Host-aviation_auth_state`:
+  Secure, HttpOnly, SameSite=Lax, Path=/, host-only (plain names without Secure on a local
+  http `APP_URL`).
+- **Requests.** `/api/auth/*` passes Better Auth a rebuilt request: the `APP_URL` origin,
+  the allowlisted path, the cookies, origin and fetch metadata, and the network identity
+  as its rate limiter's address (10 sign-ins and 10 callbacks per minute per identity,
+  besides the API's own limit). Cross-site and non-JSON posts are refused before Better
+  Auth, which checks the `Origin` itself when cookies are sent. Its log lines go to the
+  server log as their message only, email addresses replaced; telemetry is off.
+- **Signed in, AI.** A signed-in visitor's AI requests take no Turnstile check and are
+  billed to the account: its quota key is HMAC(issuer, sub) (`abuse_records`, usage
+  buckets), its daily allowance 5 for the first 3 days (from the account's creation),
+  then 20, and 150 a month. `GET /api/ai/status` reports the account's counts.
+- **Handover** (`server/auth/handover.ts`). Signing in from `/briefs/<id>` while this
+  browser's trial owns that live brief moves the brief's read owner to the account, by
+  one compare-and-set, at the callback, when the same browser's trial cookie still
+  proves that trial; a second or concurrent callback changes nothing. Steps keep the
+  billing principal they were admitted under; refinements after sign-in bill the
+  account. A signed-in refinement, or a signed-in retry of the trial's request, of a
+  brief the browser's trial still owns moves it the same way. After a move the trial
+  cannot read the brief, and a retry of its request from the trial alone answers 403
+  `moved` (sign in to view it): never a replay or a new run.
+- **Account** (`GET /api/account`, `POST /api/account/delete`, `server/auth/deletion.ts`).
+  Deletion (a JSON `{"confirm": true}`, refused cross-site) cancels the account's running
+  steps, then in one transaction removes its briefs with every step (also those billed to
+  the trial that signed in) and its idempotency records, and the user with its sessions
+  and Google link, and keeps the anti-abuse record until the current month's quota window
+  ends plus 7 days. Charges, reservations and usage buckets stay (HMACs and amounts only);
+  signing up again with the same Google account finds the same counts. The response
+  expires this browser's session cookie; every other session ends with the user.
+- **Retention.** The API's control maintenance also deletes expired sessions and OAuth
+  state (`pruneAuth`).
+
+Tests run against a mocked Google (`tests/support/mock-google.ts`: the authorization
+endpoint the browser visits and the token endpoint the server calls), offline.
 
 ## Deployment with Docker Compose
 

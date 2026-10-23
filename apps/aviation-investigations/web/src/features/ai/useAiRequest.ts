@@ -17,6 +17,8 @@ export type AiNotice =
   | { kind: 'paused'; status: Extract<AiStatusResponse, { state: 'paused' }> | null }
   | { kind: 'trial_used' }
   | { kind: 'free_paused'; loginRequired: boolean }
+  /** The request's brief moved to the account that signed in from it: sign in to view it. */
+  | { kind: 'moved' }
   | { kind: 'rate'; seconds: number }
   | { kind: 'failure'; spent: SpentKnowledge }
   /** `unknownBefore`: an earlier send of this request has an unknown outcome (it may have counted). */
@@ -72,6 +74,8 @@ export function noticeFor(err: unknown): AiNotice {
       return { kind: 'free_paused', loginRequired: false };
     case 'sign_in_required':
       return { kind: 'free_paused', loginRequired: true };
+    case 'moved':
+      return { kind: 'moved' };
     case 'rate_limited':
       return { kind: 'rate', seconds: err.retryAfter ?? 30 };
     case 'challenge_required':

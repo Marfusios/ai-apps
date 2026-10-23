@@ -139,7 +139,12 @@ export class TrialIdentities {
 
   /** The live trial proven by the request's cookie, or null. Reads only; never sets a cookie. */
   async fromRequest(request: FastifyRequest, now: Date): Promise<TrialPrincipal | null> {
-    const hashes = cookieValues(request.headers.cookie, this.codec.name)
+    return this.fromCookieHeader(request.headers.cookie, now);
+  }
+
+  /** The live trial proven by a `Cookie` header (the sign-in handover reads Better Auth's request), or null. */
+  async fromCookieHeader(header: string | null | undefined, now: Date): Promise<TrialPrincipal | null> {
+    const hashes = cookieValues(header ?? undefined, this.codec.name)
       .map((v) => this.codec.verify(v))
       .filter((h): h is string => h !== null);
     return hashes.length === 0 ? null : findTrial(this.db, hashes, now);

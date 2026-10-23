@@ -159,6 +159,29 @@ refuses an expired brief unless given `--include-expired`. Astra's G6 follow-up 
 this storage under the existing request/result controls; the implementation review must
 still cover it.
 
+**Google sign-in, accounts and the brief handover** (Task 20; not yet reviewed).
+Better Auth 1.7.7 behind an allowlisted `/api/auth` route (README, "Google sign-in and
+accounts"). The implementation review must cover in particular:
+
+- the OAuth flow: the state (stored server-side, bound to the browser by a signed
+  cookie, single use), PKCE, the nonce this app adds through Better Auth hooks (its Google
+  provider sends none in the redirect flow), and the ID-token claim checks, made without
+  a signature check because the token comes straight from Google's token endpoint over
+  TLS in exchange for the flow's code, verifier and client secret;
+- that only sign-in, Google's callback and sign-out are reachable, and the request the
+  route rebuilds for Better Auth (the `APP_URL` origin, the header allowlist, the network
+  identity for its rate limiter);
+- the handover's compare-and-set at the callback and at signed-in refinements and
+  retries, the 403 `moved` answer to the old trial, and that billing principals and
+  charges never move;
+- account deletion: what one transaction removes (content through
+  `delete_account_content()`), the end of every session, the anti-abuse record kept
+  through the quota window plus 7 days, and the decision not to ask for a fresh sign-in
+  before deleting;
+- storage: no provider tokens, scopes, picture, IP address or user agent (database hooks
+  clear them, CHECK constraints refuse them) and the app role's grants on the auth tables
+  (no UPDATE; no DELETE of an account link on its own).
+
 ## Required implementation review before launch
 
 Review a fixed code commit and deployment configuration with Claude Fable or Opus,

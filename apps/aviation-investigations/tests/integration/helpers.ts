@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { Client } from '@elastic/elasticsearch';
 import pg from 'pg';
 import { DB_CONNECT_TIMEOUT_MS, createDb, type Db } from '../../server/db/client.js';
-import { CONTROL_TABLES } from '../../server/db/schema/index.js';
+import { AUTH_TABLES, CONTROL_TABLES } from '../../server/db/schema/index.js';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 import { readDotenvAllowlisted } from '../../shared/env-files.js';
 
@@ -69,11 +69,14 @@ export async function resetCorpus(): Promise<void> {
   }
 }
 
-/** Empty the cost-control tables of aviation_test and re-enable AI and anonymous trials (migrator role; TRUNCATE bypasses the guards). */
+/**
+ * Empty the cost-control and sign-in tables of aviation_test and re-enable AI and anonymous
+ * trials (migrator role; TRUNCATE bypasses the guards).
+ */
 export async function resetControls(): Promise<void> {
   const pool = testPool('migrator');
   try {
-    await pool.query(`TRUNCATE ${CONTROL_TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY`);
+    await pool.query(`TRUNCATE ${[...CONTROL_TABLES, ...AUTH_TABLES].map((t) => `"${t}"`).join(', ')} RESTART IDENTITY`);
     await pool.query(`UPDATE ai_switch SET enabled = true, anonymous_enabled = true, note = NULL, updated_at = now() WHERE id = 1`);
   } finally {
     await pool.end();

@@ -60,6 +60,7 @@ export const ERROR_MESSAGES = {
   in_flight: 'An AI search is already running. Wait for it to finish.',
   conflict: 'This request conflicts with an earlier one.',
   refinement_limit: 'This brief has used its three refinements. Start a new search to keep going.',
+  moved: 'This AI search moved to the account that signed in. Sign in to view it.',
 } as const satisfies Record<ErrorResponse['error'], string>;
 
 export function sendError(

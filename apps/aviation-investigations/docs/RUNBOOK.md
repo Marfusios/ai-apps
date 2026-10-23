@@ -583,6 +583,12 @@ What lives only in PostgreSQL, and must be backed up:
   `ai_switch`), which are the only record of spend;
 - trial, usage, lease, idempotency and abuse records (`trial_identities`,
   `usage_buckets`, `leases`, `idempotency`, `abuse_records`);
+- accounts (`auth_users`, `auth_accounts`: each signed-in user's Google subject, name
+  and email). Sessions and OAuth state (`auth_sessions`, `auth_verifications`) are
+  transient: a restore without them only signs everyone out. Keep backups at most 30 days
+  (what the account page promises): a restore brings back an account deleted after the
+  backup was taken, and there is no record to replay that deletion from, so delete it
+  again on request;
 - the report links (`report_links`) and their provenance, and the passage embedding
   cache (`embedding_cache`), which is what keeps a rebuild from paying again;
 - the generation pins and the index build records.
@@ -611,8 +617,8 @@ Roles and grants are part of provisioning, not of the dump (`pnpm provision:shar
 Nothing grows without bound, but two kinds of retention run differently:
 
 - **Control data** (idempotency records, quota buckets, abuse records, trial
-  identities, redeemed Turnstile tokens, ledger lines and closed reservations) and
-  **expired leases** are handled by the API server itself. About every 10 minutes (jittered), each
+  identities, redeemed Turnstile tokens, ledger lines and closed reservations), expired
+  sign-in sessions and OAuth state, and **expired leases** are handled by the API server itself. About every 10 minutes (jittered), each
   `aviation-app` instance tries a PostgreSQL advisory lock and, if it gets it, expires
   leases of unsettled reservations (charged in full, as the cost gate requires) and calls
   `prune_controls()`. Several instances do not overlap; a failure is logged (the error
@@ -634,6 +640,30 @@ Nothing grows without bound, but two kinds of retention run differently:
   Pruned generations take their case rows with them, so run the dry run first, and
   delete the indices that belonged to them afterwards with
   `index delete-unused --older-than <hours>` (above).
+
+## Google sign-in
+
+Sign-in is off until the environment has a Google OAuth client (README, "Google sign-in
+and accounts"); the site then offers no sign-in and `/api/auth` answers 404. To turn it
+on for an environment:
+
+1. In the Google Cloud console, configure the OAuth consent screen (External; the app
+   name, support email and the privacy notice URL `<APP_URL>/privacy`; scopes `openid`,
+   `email` and `profile` only, which need no verification) and create an OAuth client of
+   type *Web application*, one per environment, with the authorized redirect URI
+   `<APP_URL>/api/auth/callback/google`. No JavaScript origin is needed: the browser
+   never talks to Google's APIs.
+2. Put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in the environment's settings
+   file, with a `BETTER_AUTH_SECRET` of at least 32 random characters (for example
+   `openssl rand -base64 32`), and redeploy. `IDENTITY_HMAC_SECRET` must already be set.
+3. Check: `GET /api/config` answers `googleEnabled: true`, and the startup log no longer
+   says "Google sign-in off".
+
+Changing `BETTER_AUTH_SECRET` signs everyone out and fails sign-ins in flight; changing
+`IDENTITY_HMAC_SECRET` also detaches every account from its usage counts and anti-abuse
+record, like the trials'. Revoking the client in Google stops new sign-ins; sessions
+already issued last until they expire (7 days) unless their users sign out, or the
+secret is changed.
 
 ## Tunnel mode
 
