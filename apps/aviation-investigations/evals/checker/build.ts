@@ -35,7 +35,7 @@ import type { ComposeOutput } from '../../shared/contracts/briefs.js';
 import { EvidenceFileSchema, EvidenceV2FileSchema, evidenceProblems, sha256, verifiedCases, type EvidenceBundle, type EvidenceFile, type EvidenceV2File } from './evidence.js';
 import { BRIEFS, CLAIM_BATCHES, V2_BRIEFS, V2_CLAIM_BATCHES, V2_MAX_SIZE } from './items/index.js';
 import { BRIEF_LABELS_V2, CLAIM_LABELS_V2, LABELS_V2_VERSION } from './labels.v2.js';
-import { QUESTIONS } from './questions.js';
+import { QUESTIONS, QUESTIONS_16D } from './questions.js';
 import type { BriefCategory, BriefClaimLabel, BriefSpec, ClaimBatch, Family, Label, Provenance } from './types.js';
 import { FAMILIES, MUTATIONS } from './types.js';
 
@@ -496,7 +496,7 @@ function buildBatches(
   }
   for (const spec of briefs) {
     const { split, cases } = casesOf(spec.bundle);
-    const question = QUESTIONS.find((q) => q.id === spec.bundle)?.question ?? '';
+    const question = [...QUESTIONS, ...QUESTIONS_16D].find((q) => q.id === spec.bundle)?.question ?? '';
     batches.push(...briefBatches(spec, split, cases, question, at));
   }
   return batches;

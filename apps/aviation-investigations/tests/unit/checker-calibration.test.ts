@@ -261,6 +261,15 @@ describe('run manifests (16d reply §6 High 2)', () => {
       const n = slotsAll.filter((s) => s.batch === b.id).length;
       expect(n, b.id).toBe(b.maxSize ? 2 : b.kind === 'brief' && (b.brief === 'supported' || b.brief === 'unresolved') ? 3 : 1);
     }
+    // The held-out pilot runs in the pre-registered order: briefs without a known error, error briefs, claim batches.
+    const rank = (id: string) => {
+      const b = v2.batches.find((x) => x.id === id)!;
+      return b.kind === 'claims' ? 2 : b.brief === 'supported' || b.brief === 'unresolved' ? 0 : 1;
+    };
+    const held = plannedSlots(v2, 'holdout').map((s) => rank(s.batch));
+    expect(held.length).toBeGreaterThan(0);
+    expect(held).toEqual([...held].sort((a, b) => a - b));
+    expect(new Set(held)).toEqual(new Set([0, 1, 2]));
     // The maximum-size inputs are at the claim limit, with real bundles' passages.
     const max = v2.batches.filter((b) => b.maxSize);
     expect(max.map((b) => b.input.claims.length)).toEqual([60, 60, 60]);

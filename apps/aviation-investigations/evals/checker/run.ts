@@ -71,9 +71,18 @@ const briefWithoutError = (b: CalibrationBatch) => b.kind === 'brief' && (b.brie
 
 const samplesOf = (b: CalibrationBatch) => (b.maxSize ? SAMPLES_V2.maxSize : briefWithoutError(b) ? SAMPLES_V2.briefWithoutError : SAMPLES_V2.other);
 
-/** The planned slots of a split (`SAMPLES_V2`). */
+/**
+ * The held-out order the protocol pre-registered (`HELDOUT_V2`): briefs without a known
+ * error, then error briefs, then claim batches, so that a run the reservation limit stops
+ * early is a partial pilot of the briefs first.
+ */
+const heldOutRank = (b: CalibrationBatch) => (b.kind === 'claims' ? 2 : briefWithoutError(b) ? 0 : 1);
+
+/** The planned slots of a split (`SAMPLES_V2`), the held-out ones in the pre-registered order. */
 export function plannedSlots(dataset: CalibrationDataset, split: 'dev' | 'holdout'): { batch: string; sample: number }[] {
-  return dataset.batches.filter((b) => b.split === split).flatMap((b) => Array.from({ length: samplesOf(b) }, (_, i) => ({ batch: b.id, sample: i + 1 })));
+  const batches = dataset.batches.filter((b) => b.split === split);
+  const ordered = split === 'holdout' ? batches.map((b, i) => ({ b, i })).sort((x, y) => heldOutRank(x.b) - heldOutRank(y.b) || x.i - y.i).map(({ b }) => b) : batches;
+  return ordered.flatMap((b) => Array.from({ length: samplesOf(b) }, (_, i) => ({ batch: b.id, sample: i + 1 })));
 }
 
 /** The figures of a run: accuracy over every batch but the maximum-size inputs, which are reported for latency and structure. */

@@ -174,4 +174,11 @@ export const QUESTIONS_16D: readonly CalibrationQuestion[] = [
     question: 'Helicopter engine power loss after an engine change or inspection',
     keywordText: 'helicopter engine power loss engine change inspection maintenance',
   },
+  {
+    // Added before any 16d checker output (16c review M8): the other bundles state the previous calendar day only once.
+    id: 'q16d-day-after-part',
+    split: 'holdout',
+    question: 'Engine trouble on the day after an engine part was replaced',
+    keywordText: 'replaced the day before the accident engine part installed run-up',
+  },
 ];
