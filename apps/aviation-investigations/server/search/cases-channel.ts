@@ -7,8 +7,10 @@
  *
  * **Same dataset.** The cases index must be the one the brief's manifest pairs with its
  * passages index (the binding resolves it from `dataset_manifests` by generation and
- * passages index), built for that generation, and a servable cases version and
- * fingerprint (`isServableCasesIndex`: cases-v3, or cases-v2 with identical fields).
+ * passages index), built for that generation, a servable cases version and fingerprint
+ * (`isServableCasesIndex`), and one of the versions the configuration's validation
+ * covered (`indexVersions`: `cases-v3`). A `cases-v2` index, still servable for keyword
+ * search, is refused here: its analysis differs and no validation ran on it.
  * `assertServableCasesIndex` checks it before anything is embedded and remembers a pass
  * (never a failure), as the passages check does.
  *
@@ -92,9 +94,9 @@ export async function assertServableCasesIndex(
   es: Client,
   index: string,
   generationId: number,
-  opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  opts: { versions: readonly string[]; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<ServableCasesIndex> {
-  const key = JSON.stringify([index, generationId, SERVABLE_CASES_VERSIONS]);
+  const key = JSON.stringify([index, generationId, SERVABLE_CASES_VERSIONS, opts.versions]);
   const known = verified.get(key);
   if (known) return { index, indexVersion: known };
   let meta;
@@ -112,6 +114,9 @@ export async function assertServableCasesIndex(
   }
   if (meta.indexVersion === null || !isServableCasesIndex(meta.indexVersion, meta.fingerprint)) {
     throw new RetrievalUnavailableError('index_mismatch', `${index} is not a servable cases index (${SERVABLE_CASES_VERSIONS.join(' or ')} with its fingerprint)`);
+  }
+  if (!opts.versions.includes(meta.indexVersion)) {
+    throw new RetrievalUnavailableError('index_mismatch', `${index} is ${meta.indexVersion}; the cases channel reads only ${opts.versions.join(' or ')} (the validated versions)`);
   }
   if (verified.size >= 16) verified.clear();
   verified.set(key, meta.indexVersion);

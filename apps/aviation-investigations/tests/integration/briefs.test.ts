@@ -1270,7 +1270,7 @@ describe.each([RETRIEVAL_V1, RETRIEVAL_V2])('hybrid retrieval behind the port ($
     // The step records the version it retrieved under (and, case-level, its mapping counts).
     const meta = (await stepRow(briefId)).meta;
     expect(meta.retrievalVersion).toBe(config.version);
-    if (caseLevel) expect(meta.retrieval).toEqual({ mapped: expect.any(Number), unmapped: 0 });
+    if (caseLevel) expect(meta.retrieval).toEqual({ casesIndex: dataset.casesIndex, casesIndexVersion: 'cases-v3', mapped: expect.any(Number), unmapped: 0 });
     else expect(meta.retrieval).toBeUndefined();
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose', 'check']]);
     const embed = await rows<{ model: string; tokens: unknown }>(sql`SELECT model, tokens FROM cost_ledger WHERE stage = 'embed'`);

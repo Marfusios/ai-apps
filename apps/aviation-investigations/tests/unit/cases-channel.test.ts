@@ -167,14 +167,25 @@ describe('the cases index check', () => {
     }) as unknown as Client;
   const ok = { index_version: CASES_INDEX_VERSION, fingerprint: casesIndexFingerprint(), generation_id: 7 };
 
-  it('accepts a servable version of the same generation and remembers the pass', async () => {
+  const VALIDATED = { versions: ['cases-v3'] };
+
+  it('accepts a validated version of the same generation and remembers the pass', async () => {
     const calls = { n: 0 };
     const es = client(ok, calls);
-    expect(await assertServableCasesIndex(es, 'cases-ok-1', 7)).toEqual({ index: 'cases-ok-1', indexVersion: CASES_INDEX_VERSION });
-    await assertServableCasesIndex(es, 'cases-ok-1', 7);
+    expect(await assertServableCasesIndex(es, 'cases-ok-1', 7, VALIDATED)).toEqual({ index: 'cases-ok-1', indexVersion: CASES_INDEX_VERSION });
+    await assertServableCasesIndex(es, 'cases-ok-1', 7, VALIDATED);
     expect(calls.n).toBe(1);
+  });
+
+  it('refuses cases-v2, servable for keyword search but never validated for the cases channel', async () => {
     const [v2, fp] = Object.entries(EARLIER_SERVABLE_CASES_VERSIONS)[0]!;
-    expect(await assertServableCasesIndex(client({ ...ok, index_version: v2, fingerprint: fp }, calls), 'cases-ok-2', 7)).toMatchObject({ indexVersion: v2 });
+    expect(v2).toBe('cases-v2');
+    const calls = { n: 0 };
+    const err = await assertServableCasesIndex(client({ ...ok, index_version: v2, fingerprint: fp }, calls), 'cases-v2-index', 7, VALIDATED).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RetrievalUnavailableError);
+    expect(err).toMatchObject({ reason: 'index_mismatch', message: expect.stringMatching(/cases-v2; the cases channel reads only cases-v3/) });
+    // Only a configuration that lists it would accept it.
+    expect(await assertServableCasesIndex(client({ ...ok, index_version: v2, fingerprint: fp }, calls), 'cases-v2-index', 7, { versions: ['cases-v3', 'cases-v2'] })).toMatchObject({ indexVersion: v2 });
   });
 
   it('refuses another generation, an unknown version or fingerprint and a missing index, and never remembers a failure', async () => {
@@ -188,7 +199,7 @@ describe('the cases index check', () => {
     ] as [Record<string, unknown> | null, RegExp][]) {
       const es = client(meta, calls);
       for (let i = 0; i < 2; i += 1) {
-        const err = await assertServableCasesIndex(es, 'cases-bad', 7).catch((e: unknown) => e);
+        const err = await assertServableCasesIndex(es, 'cases-bad', 7, VALIDATED).catch((e: unknown) => e);
         expect(err).toBeInstanceOf(RetrievalUnavailableError);
         expect(err).toMatchObject({ reason: 'index_mismatch', message: expect.stringMatching(re) });
       }

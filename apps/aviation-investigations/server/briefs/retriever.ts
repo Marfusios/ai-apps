@@ -11,13 +11,17 @@
  *   brief's generation pairs with the brief's pinned passages index (`casesIndexOf`,
  *   PostgreSQL), resolved before anything is embedded: none is `unavailable`
  *   (`no_cases_index`), and retrieval then checks it against the generation and a
- *   servable cases version before embedding too. The lookup is bounded: by
+ *   validated cases version before embedding too. The lookup is bounded: by
  *   `lookupTimeoutMs` and the request's signal in `retrieve` (a stalled pool or database
  *   fails the step as `timeout`, reason `cases_index_lookup`, or `aborted` on a cancel or
  *   deadline, with nothing embedded), and by `checkTimeoutMs` in `available`. The
  *   resolver gets the signal (`manifestCasesIndex` bounds acquisition and the statement
  *   and destroys an abandoned connection); the binding also stops waiting on its own, so
  *   a resolver that ignores the signal cannot hold a request.
+ * - **The cases index used** (name and version) is reported with the bundle
+ *   (`RetrievedEvidence.casesIndex`) for the step's private metadata: re-publishing a
+ *   generation with another cases index changes what later steps of an existing brief
+ *   retrieve, and each step records the index it read.
  *
  * - **Texts.** The dense channel embeds the question (with the text refinement in
  *   effect) as the pipeline gives it, cut to the query embedder's token cap when it is
@@ -250,7 +254,7 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
         if (config.channels.cases && casesIndexOf) {
           const casesIndex = await lookup(casesIndexOf, pinned, signal, checkTimeoutMs);
           if (!casesIndex) return false;
-          await assertServableCasesIndex(es, casesIndex, dataset.generationId, { timeoutMs: checkTimeoutMs, signal });
+          await assertServableCasesIndex(es, casesIndex, dataset.generationId, { versions: config.channels.cases.indexVersions, timeoutMs: checkTimeoutMs, signal });
         }
         return true;
       } catch {
@@ -313,6 +317,7 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
           // The served index's own contract (v1 and v2 can both be servable).
           chunkerVersion: candidates.chunkerVersion,
           mapping: candidates.mapping,
+          casesIndex: candidates.casesIndex,
           // The same candidates (mapped passages included): no embedding and no mapping again.
           async repack(maxEvidenceTokens: number, repackSignal: AbortSignal) {
             try {

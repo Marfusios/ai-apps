@@ -22,7 +22,8 @@
  *   k = 60, equal weights, compared exactly, with a total tie order
  *   (server/search/case-fusion.ts). Cases among the leading `packCandidates` that no
  *   passage channel returned get their passages from the same query vector
- *   (server/search/case-mapping.ts); packing is unchanged.
+ *   (server/search/case-mapping.ts); packing is unchanged. The cases channel reads only
+ *   the cases index version the validation covered (`cases-v3`).
  * - **`retrieval.v2-nf`, experimental**: `retrieval.v2` with `findings_text` added to
  *   the cases channel's fields. Its coded-reference gain over `retrieval.v2` rests on
  *   the field the coded labels are built from, so it waits for the narrative-relevance
@@ -68,6 +69,8 @@ export interface CasesChannelConfig {
   /** Unique cases the channel returns. */
   readonly size: number;
   readonly cutoff: 'score-then-id';
+  /** The cases index versions the channel reads: the ones its validation covered. */
+  readonly indexVersions: readonly string[];
 }
 
 export interface MappingConfig {
@@ -135,6 +138,9 @@ const passageChannels = (p: RetrievalParams, keywordCutoff: 'score-then-id' | 'e
 const CASE_RANKING =
   'exact rational RRF over what the channels returned; each channel ordered by score then id before it is collapsed to unique cases; ties: best channel rank, then the channel ranks in channel order (keyword, vector, cases), then the case number';
 
+/** The cases index versions the task 10e validation covered (cases-v2 is servable for keyword search, not here). */
+export const VALIDATED_CASES_VERSIONS: readonly string[] = Object.freeze(['cases-v3']);
+
 export const RETRIEVAL_V1: RetrievalConfig = deepFreeze({
   version: 'retrieval.v1',
   status: 'rollback',
@@ -160,7 +166,7 @@ const v2 = (version: 'retrieval.v2' | 'retrieval.v2-nf', content: CasesChannelCo
     lexicalQuery: LEXICAL_QUERY,
     channels: {
       ...passageChannels(V2_PARAMS, 'score-then-id'),
-      cases: { index: 'cases', content, fields: [...CASES_CHANNEL_FIELDS[content]], size: 200, cutoff: 'score-then-id' },
+      cases: { index: 'cases', content, fields: [...CASES_CHANNEL_FIELDS[content]], size: 200, cutoff: 'score-then-id', indexVersions: [...VALIDATED_CASES_VERSIONS] },
     },
     fusion: { level: 'case', k: V2_PARAMS.rrfK, weights: { keyword: 1, vector: 1, cases: 1 }, ranking: CASE_RANKING },
     mapping: {

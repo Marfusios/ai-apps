@@ -98,6 +98,11 @@ export interface RetrievedEvidence {
    */
   mapping: { mapped: number; unmapped: number } | null;
   /**
+   * The cases index the bundle's cases channel read (name and `_meta` version), for the
+   * step's private metadata; null for a passage-level version.
+   */
+  casesIndex: { name: string; version: string } | null;
+  /**
    * The chunker version of the served index's passages contract (the contract
    * `assertServablePassagesIndex` matched, v1 or v2): the canonical `passages` rows the
    * pipeline checks the bundle against are read under it.

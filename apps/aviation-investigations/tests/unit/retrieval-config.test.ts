@@ -40,12 +40,14 @@ describe('the frozen retrieval configurations', () => {
     expect(RETRIEVAL_V2.channels.keyword).toEqual({ index: 'passages', fields: ['text'], size: 200, cutoff: 'score-then-id' });
     expect(RETRIEVAL_V2.channels.vector).toEqual({ index: 'passages', field: 'embedding', k: 200, numCandidates: 800, cutoff: 'approximate' });
     expect(numCandidates(RETRIEVAL_V2.params)).toBe(800);
+    // The cases channel reads only the cases index version its validation covered.
     expect(RETRIEVAL_V2.channels.cases).toEqual({
       index: 'cases',
       content: 'narratives',
       fields: ['probable_cause', 'analysis', 'factual'],
       size: 200,
       cutoff: 'score-then-id',
+      indexVersions: ['cases-v3'],
     });
     // Case-level RRF, k = 60, equal channel weights, exact comparison and a total tie order.
     expect(RETRIEVAL_V2.fusion).toMatchObject({ level: 'case', k: 60, weights: { keyword: 1, vector: 1, cases: 1 } });

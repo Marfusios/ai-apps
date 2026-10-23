@@ -101,6 +101,7 @@ export class FakeRetriever implements EvidenceRetriever {
       bundle,
       chunkerVersion,
       mapping: o.mapping ?? null,
+      casesIndex: null,
       repack: async (maxEvidenceTokens: number) => {
         this.repacks.push(maxEvidenceTokens);
         return tamper(await this.bundle(query.dataset.generationId, chunkerVersion, numbers, maxEvidenceTokens), true);

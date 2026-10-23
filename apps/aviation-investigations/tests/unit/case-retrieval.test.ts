@@ -498,6 +498,8 @@ describe('the binding under a case-level version', () => {
     const retriever = createHybridRetriever({ es: f.es, embedder, retrieval: RETRIEVAL_V2, casesIndexOf: async (d) => (d.passagesIndex === PASSAGES ? CASES : null) });
     const out = await retriever.retrieve(evidenceQuery(), live(), (u) => seen.push(u));
     expect(out.mapping).toEqual({ mapped: 3, unmapped: 1 });
+    // The cases index the bundle read, for the step's private metadata.
+    expect(out.casesIndex).toEqual({ name: CASES, version: CASES_INDEX_VERSION });
     expect(out.chunkerVersion).toBe('chunk-v2');
     expect(out.bundle.cases.length).toBeGreaterThan(0);
     for (const c of out.bundle.cases) {

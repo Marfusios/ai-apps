@@ -9,9 +9,10 @@
  * **`retrieveCaseCandidates`**, in order:
  * 1. **Contracts first**, before anything is embedded: the passages index against its
  *    contract (`assertServablePassagesIndex`) and the cases index against the same
- *    generation and a servable cases version (`assertServableCasesIndex`), both bounded
- *    by the request's timeout and signal. The passages contract's version decides the
- *    aircraft semantics of both filters (`compileFilters`, `casesChannelFilter`).
+ *    generation and a validated cases version (`assertServableCasesIndex` with the
+ *    configuration's `indexVersions`), both bounded by the request's timeout and signal.
+ *    The passages contract's version decides the aircraft semantics of both filters
+ *    (`compileFilters`, `casesChannelFilter`).
  * 2. **Embedding and the lexical channels at once.** The query embedding (the effective
  *    question, `onQueryEmbedding` called as soon as it returns), passage BM25 and the
  *    cases channel (both on the keyword text) start together; passage kNN starts when
@@ -120,7 +121,7 @@ export async function retrieveCaseCandidates(es: Client, embedder: Embedder | Qu
   const bound = { timeoutMs: params.timeoutMs, ...(q.signal ? { signal: q.signal } : {}) };
   const [passages, casesIndex] = await Promise.all([
     assertServablePassagesIndex(es, q.dataset, embedder, { ...bound, ...(q.contracts ? { contracts: q.contracts } : {}) }),
-    assertServableCasesIndex(es, q.casesIndex, q.dataset.generationId, bound),
+    assertServableCasesIndex(es, q.casesIndex, q.dataset.generationId, { ...bound, versions: cases.indexVersions }),
   ]);
   const { index, contract } = passages;
   const qualification = { eventAircraftQualification: contract.eventAircraftQualification };
@@ -245,6 +246,8 @@ export interface StageOne {
   queryEmbedding: QueryEmbeddingUsage;
   /** Case-level versions: how many of the leading cases were mapped to passages, and how many could not be. */
   mapping: { mapped: number; unmapped: number } | null;
+  /** Case-level versions: the cases index the cases channel read (name and `_meta` version). */
+  casesIndex: { name: string; version: string } | null;
   detail: { level: 'passage'; result: CandidateResult } | { level: 'case'; result: CaseCandidateResult };
 }
 
@@ -259,7 +262,7 @@ export async function retrieveCandidatesWith(es: Client, embedder: Embedder | Qu
     if (config.channels.cases || config.mapping) throw new Error(`${config.version}: a passage-level version has no cases channel`);
     const { casesIndex: _unused, ...query } = q;
     const r = await retrieveCandidates(es, embedder, { ...query, params: config.params });
-    return { version: config.version, index: r.index, chunkerVersion: r.chunkerVersion, filter: r.filter, params: r.params, cases: r.cases, queryEmbedding: r.queryEmbedding, mapping: null, detail: { level: 'passage', result: r } };
+    return { version: config.version, index: r.index, chunkerVersion: r.chunkerVersion, filter: r.filter, params: r.params, cases: r.cases, queryEmbedding: r.queryEmbedding, mapping: null, casesIndex: null, detail: { level: 'passage', result: r } };
   }
   if (!q.casesIndex) throw new Error(`${config.version} needs the dataset's cases index`);
   const r = await retrieveCaseCandidates(es, embedder, config, { ...q, casesIndex: q.casesIndex });
@@ -273,6 +276,7 @@ export async function retrieveCandidatesWith(es: Client, embedder: Embedder | Qu
     cases: r.cases,
     queryEmbedding: r.queryEmbedding,
     mapping: { mapped, unmapped: r.mapping.length - mapped },
+    casesIndex: { name: r.casesIndex, version: r.casesIndexVersion },
     detail: { level: 'case', result: r },
   };
 }

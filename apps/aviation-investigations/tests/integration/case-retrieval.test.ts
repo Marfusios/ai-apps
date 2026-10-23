@@ -426,6 +426,7 @@ describe('the binding with the manifest’s cases index', () => {
     );
     expect(usages).toHaveLength(1);
     expect(out.mapping).toEqual({ mapped: expect.any(Number), unmapped: 0 });
+    expect(out.casesIndex).toEqual({ name: casesIndex, version: 'cases-v3' });
     expect(out.bundle.cases.map((c) => c.ntsbNo)).toContain('CEN24FA064');
     expect(out.bundle.cases.map((c) => c.ntsbNo)).not.toContain(GHOST);
     for (const c of out.bundle.cases) {
