@@ -164,6 +164,28 @@ describe('case-level stage 1: requests, fusion and mapping', () => {
     expect(r).toMatchObject({ version: 'retrieval.v2', casesIndex: CASES, casesIndexVersion: CASES_INDEX_VERSION, chunkerVersion: 'chunk-v2' });
   });
 
+  it('orders every channel’s returned window by score, then id, whatever order the answer listed equal scores in', async () => {
+    // Which hits a channel returns is its cutoff policy's (score then id inside Elasticsearch
+    // for the lexical channels, the approximate search's own for kNN); what fusion sees of
+    // them is the same whatever order equal scores arrive in.
+    const flatten = (reverse: boolean) => (res: estypes.SearchResponse<Record<string, unknown>>) => {
+      for (const h of res.hits.hits) h._score = 7;
+      if (reverse) res.hits.hits.reverse();
+    };
+    const run = async (reverse: boolean) => {
+      const f = fake({ tamper: { keyword: flatten(reverse), vector: flatten(reverse), cases: flatten(reverse) } });
+      const r = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
+      return {
+        channels: [r.keyword.map((h) => h.id), r.vector.map((h) => h.id), r.casesChannel.map((h) => h.ntsbNo)],
+        ranking: r.cases.map((c) => [c.ntsbNo, c.passages.map((p) => p.id)]),
+      };
+    };
+    const listed = await run(false);
+    expect(await run(true)).toEqual(listed);
+    // Every score equal: the ids decide, in each channel.
+    for (const ids of listed.channels) expect(ids).toEqual([...ids].sort());
+  });
+
   it('packs mapped cases with their best passage and every cause; an unmapped case is never packed; re-packing reuses everything', async () => {
     const f = fake();
     const r = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
