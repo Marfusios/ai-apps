@@ -414,6 +414,23 @@ none or when the index breaks the passages contract
 dataset loader use). The contract is checked before the query is embedded, within
 the request's deadline. There is no keyword-only fallback for AI answers.
 
+**Retrieval versions** (task 10e, `server/search/retrieval-config.ts`). How retrieval
+works is one frozen configuration per version, chosen by `AVIATION_RETRIEVAL_VERSION`
+(empty: `retrieval.v2`), logged at start, recorded in every brief step's
+`meta.retrievalVersion` and on its `brief.retrieve` span, and named (with the
+configuration's sha256) in evaluation reports. Index mappings do not depend on it.
+
+| Version | What it does | Status |
+| --- | --- | --- |
+| `retrieval.v1` | passage BM25 and passage kNN, 50 passages each (kNN `num_candidates` 200), passage-level fusion, cases at their best passage | the rollback: the behaviour before task 10e |
+| `retrieval.v2` | passage BM25 (200), passage kNN (200, `num_candidates` 800) and BM25 over the cases index's narratives (200 cases), fused at case level; cases no passage channel returned are mapped to their own passages | the default (task 10d's `c200+n-kt`) |
+| `retrieval.v2-nf` | `retrieval.v2` with `findings_text` in the cases channel | experimental: `dev` only, `live` refuses it |
+
+Every version searches the scope stage's keyword text with BM25 and embeds the
+question (with the text refinement in effect); packing is the same. The bullets below
+describe `retrieval.v1`'s stage 1 and both versions' filter and packing; the
+case-level stage 1 follows them.
+
 - **One filter.** `compileFilters` (in `server/search/filters.ts`, the compiler
   keyword search uses too) always adds `country: USA` and `answer_eligible: true`.
   With any aircraft facet the aircraft clause depends on the index version, which
@@ -443,6 +460,31 @@ the request's deadline. There is no keyword-only fallback for AI answers.
   4 × k) each return `perChannel` passages (50 live; the evaluation also runs 100).
   Reciprocal rank fusion in TypeScript (`sum 1/(60 + rank)`) and deduplication to
   cases at their best passage give the case ranking.
+- **Stage 1 under `retrieval.v2`** (`server/search/case-retrieval.ts`). Both index
+  contracts are checked before anything is embedded: the passages contract, and the
+  cases index the manifest of the brief's generation pairs with its passages index
+  (same generation, a servable cases version). The query embedding, passage BM25 and
+  the cases channel start together; kNN starts when the vector arrives. A failed
+  search aborts the other searches but never the paid embedding, which is awaited and
+  settled exactly once before retrieval fails; a failed or incomplete channel always
+  fails retrieval (no bundle from the other channels).
+  - **The cases channel** (`server/search/cases-channel.ts`) is BM25 over
+    `probable_cause`, `analysis` and `factual` of the cases index. Its filter reaches
+    exactly the cases the passages filter can (US, answer-eligible, with aircraft
+    rows; event facets and years as the passages compiler emits them; the passages
+    contract's aircraft semantics on the nested `aircraft`, never keyword search's
+    "some aircraft matches"). It only nominates cases: its hits carry no text.
+  - **Fusion** (`server/search/case-fusion.ts`): each channel in a total order (score,
+    then id), collapsed to unique cases, then reciprocal rank fusion over the case
+    lists, compared as exact fractions, with a total tie order (best rank, the ranks
+    channel by channel, the case number). Each case's passages follow exact
+    passage-level fusion of the two passage lists.
+  - **Mapping** (`server/search/case-mapping.ts`): each of the leading 12 cases that
+    no passage channel returned gets its best 3 passages by the same in-memory query
+    vector, under the passages filter, case by case: the count of its passages first,
+    then a kNN that considers all of them. Every case is reported mapped or unmapped
+    (`no_passages`, `incomplete`); an unmapped case is never packed. A re-pack reuses
+    the mapped candidates: nothing is embedded or mapped twice.
 - **Stage 2, packing** (`server/search/evidence.ts`). At most 6 cases, 12 passages,
   3 passages per case and 10,000 passage-text tokens. Each selected case first
   reserves its justification: its best retrieved passage and every probable-cause
@@ -571,6 +613,10 @@ default configuration sends exactly the production request bodies. Runs are read
 against the target (the ledger records paid calls), refuse a target or dataset other
 than the frozen one, and write their reports to `--out-dir`.
 
+The experiments' `applyRule` ranks qualifying variants by the improvement on each
+variant's own declared target metric (task 10e); phase A's variants all declared
+narrow Recall@20, so its selection is unchanged.
+
 ```sh
 pnpm eval:retrieval:experiments preflight                  # free: target, contract, frozen identity, labels re-derived, filter consistency
 pnpm eval:retrieval:experiments scope                      # free dry run: scope-stage input tokens and reservations per question
@@ -581,6 +627,25 @@ pnpm eval:retrieval:experiments holdout --dev-results <file> --confirm-cost     
 
 `--keys-file <file>` reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from a dotenv
 file and never replaces a nonempty process value.
+
+**Adoption validation** (`evals/retrieval/adoption/`, task 10e). `retrieval.v2` (and the
+experimental `retrieval.v2-nf`) against `retrieval.v1` through the production stages,
+on phase A's frozen target and the coded development questions only, with phase A's
+cached scope samples: identical keyword texts, filters and query vectors for every
+arm, under the evaluation filters and under the scope stage's own filters as the
+pipeline resolves them. It reports narrow Recall@20 and broad P@6/nDCG@6 with paired
+group-bootstrap intervals, per-question changes, delivered coded cases by the channels
+that brought them, and the regression cases (`REGRESSION_CASES`). `load` measures
+p50/p95/p99 over individual requests through the production binding at up to 8
+concurrent requests, with a cold pass, cancellations, injected search failures while
+the embedding is in flight and the mapping at its bound. Read-only; the only paid
+step is one embedding per question (refused above $0.10 in all).
+
+```sh
+pnpm eval:retrieval:adoption preflight --scope-samples <phase A dev scope file>             # free: target, labels, filter parity
+pnpm eval:retrieval:adoption dev --scope-samples <file> [--phase-a <dev run>] --confirm-cost # embed (about $0.00001), run every arm
+pnpm eval:retrieval:adoption load --scope-samples <file> --vectors <file from dev> [--embed-delay-ms 200]
+```
 
 ### Checker calibration
 
@@ -607,7 +672,9 @@ The held-out split runs once, for the configuration frozen in `selection.json`.
 
 - **Evidence** (`evidence.json`): nine real hybrid-retrieval bundles from the served
   passages index, verified like a brief's (`verifyBundle`); five development and four
-  held-out bundles, split by case (no case in both).
+  held-out bundles, split by case (no case in both). `retrieve` runs the configured
+  retrieval version and records it in `source.retrievalVersion`; the committed file
+  predates retrieval versions and was retrieved under `retrieval.v1`.
 - **Items** (`items/`): the first paid brief's 35 claims, verbatim, as regressions
   (`paid-run.ts`; the six known critical errors marked); controls by family and mutation
   (`dev.ts`, `holdout.ts`: negations, the wrong aircraft in multi-aircraft events, hours
@@ -1184,11 +1251,20 @@ embedder):
   embedding aborted mid-request (cancel or deadline) is `uncertain`. A usage callback
   arriving after `retrieve` returned or threw is ignored.
 - A re-pack for the compose cap packs the same candidates again; nothing is embedded
-  twice.
+  (or mapped) twice.
+- The binding runs the configured retrieval version (`AVIATION_RETRIEVAL_VERSION`) and
+  reports it as the port's `version`: the step's `meta.retrievalVersion`, the
+  `retrievalVersion` attribute of `brief.retrieve`, and under `retrieval.v2` the
+  mapping counts in `meta.retrieval` (`{mapped, unmapped}`). For the cases channel it
+  reads the cases index the manifest of the brief's generation pairs with the brief's
+  pinned passages index (`manifestCasesIndex`), before anything is embedded; none
+  (the generation was published again with another passages index, or is gone) is
+  `unavailable` with reason `no_cases_index`.
 - Failures become a `RetrievalFailure` with a fixed kind (`unavailable`, `timeout`,
-  `failed`) and reason (`index_mismatch`, `incomplete_search`, `embedding`, …) in the
-  step's `meta`; the underlying message (index names, contract values, upstream text)
-  is dropped.
+  `failed`) and reason (`index_mismatch`, `no_cases_index`, `incomplete_search`,
+  `embedding`, …) in the step's `meta`; the underlying message (index names, contract
+  values, upstream text) is dropped. An aborted request ends at once: retrieval's
+  requests skip the transport's retry backoff once their signal aborted.
 
 AI is available only while the dataset reports the active passages index servable
 (`PinnedDataset.passages`, the passages contract for `OPENAI_EMBEDDING_MODEL` and

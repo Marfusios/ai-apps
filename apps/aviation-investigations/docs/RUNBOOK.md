@@ -270,6 +270,7 @@ TURNSTILE_SITE_KEY=
 IP_HMAC_SECRET=
 IDENTITY_HMAC_SECRET=            # rotating it ends every trial cookie
 AVIATION_TRACING_ENABLED=false   # true adds compose.tracing.yaml
+AVIATION_RETRIEVAL_VERSION=      # empty: retrieval.v2; retrieval.v1 rolls retrieval back (Retrieval version)
 SHARED_OBSERVABILITY_NETWORK=    # unless the Langfuse file sets it
 TUNNEL_TOKEN=                    # required on live; on dev it switches to tunnel mode
 EDGE_SUBNET=                     # tunnel mode: a private /28, distinct per environment
@@ -373,6 +374,44 @@ and the cached prefix (against `CACHED_PREFIX_MAX`), and prints each against its
 1 when anything is over: do not run paid tests or deploy until the cap or the request
 is fixed. A cap below a stage's fixed request refuses every brief at that stage, free
 but useless (the first paid end-to-end test stopped this way at scope).
+
+### Retrieval version
+
+AI evidence is retrieved under one frozen configuration, chosen by
+`AVIATION_RETRIEVAL_VERSION` in the settings file (README, "Evidence retrieval";
+`server/search/retrieval-config.ts`):
+
+- empty or `retrieval.v2`: the default; case-level fusion of passage BM25, passage
+  kNN and BM25 over the cases index's narratives;
+- `retrieval.v1`: the rollback, the passage-only retrieval before task 10e;
+- `retrieval.v2-nf`: experimental, `dev` only. The app refuses to start with it on
+  `live`.
+
+Nothing is rebuilt or migrated to switch: index mappings and the published manifest
+are the same for every version. `retrieval.v2` reads the cases index the active
+manifest already serves, so it needs nothing beyond a published manifest: the brief's
+generation must still have its manifest row pairing that cases index with the brief's
+passages index (`worker publish` writes both together), and the cases index must be a
+servable version of that generation (cases-v3, or cases-v2). If either fails, AI
+answers 503 `unavailable` (status `dependency`) and steps fail with
+`meta.failure.reason` `no_cases_index` or `index_mismatch`.
+
+To switch, or to roll back:
+
+1. Set `AVIATION_RETRIEVAL_VERSION` in the environment's settings file
+   (`retrieval.v1` to roll back; empty for the default).
+2. `pnpm app:up`. Compose recreates the app container with the new value; steps
+   running in the old container are stopped by its shutdown (they fail as
+   `shutdown` and settle).
+3. Check: the app's start log line `AI retrieval configuration` names the version;
+   new brief steps record it in `meta.retrievalVersion`, and their `brief.retrieve`
+   spans carry `retrievalVersion` in Langfuse. A refinement of an older brief runs
+   under the version in force when it runs; each step keeps its own.
+
+The task 10e validation (`pnpm eval:retrieval:adoption`, README) is bound to the
+frozen phase A target on `dev` (generation 1 and its two indexes): its preflight
+refuses any other target. Its numbers say nothing about another generation; validate
+again there before relying on them.
 
 ## Ingestion
 

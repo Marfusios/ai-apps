@@ -615,8 +615,33 @@ status reports `dependency` (README, "AI briefs").
 ### 2.12 Retrieval
 
 Code: `server/search/hybrid.ts`, `evidence.ts`, `rrf.ts`, `filters.ts`,
-`passages-contract.ts`; `server/ai/embeddings.ts`. Gate G5 cleared its defaults
-provisionally (section 5); every value is in `RETRIEVAL_DEFAULTS`.
+`passages-contract.ts`, and for the case-level version `retrieval-config.ts`,
+`cases-channel.ts`, `case-fusion.ts`, `case-mapping.ts`, `case-retrieval.ts`;
+`server/ai/embeddings.ts`. Gate G5 cleared the first defaults provisionally (section
+5). Since task 10e the behaviour is versioned: `AVIATION_RETRIEVAL_VERSION` picks one
+frozen configuration, `retrieval.v2` by default and `retrieval.v1` (the earlier
+behaviour, every value in `RETRIEVAL_DEFAULTS`) to roll back; each brief step records
+the version it used.
+
+**How the cases index takes part in AI answers (`retrieval.v2`), in plain words.**
+The cases index, built for keyword search with one document per accident, now also
+helps choose which accidents an AI brief looks at. Three searches run for each
+question: a word search over the passages (with the search terms the scope stage
+extracted), a meaning search over the passages (with the question's embedding), and
+a word search over each accident's whole narrative in the cases index (the same
+search terms). Each search returns its 200 best matches; each list is reduced to its
+accidents, and the three lists are combined so that an accident several searches
+agree on comes first. The cases index never supplies the evidence itself: an
+accident it finds is shown only through its own passages from the passages index,
+under the same filters, with every probable cause attached. When none of its
+passages was among the passage searches' matches, the passages closest in meaning to
+the question are looked up for that accident alone (with the embedding already made;
+nothing is paid twice). The cases index search uses the same cohort as the passages:
+US, answer-eligible accidents with at least one aircraft, and the same rules for
+aircraft filters (a multi-aircraft accident counts only when every aircraft matches,
+and only on a `passages-v2` index). Only the cases index that the brief's dataset
+manifest published with its passages index is used, checked against the generation
+first. Nothing in either index changes.
 
 - **Contract first.** Retrieval refuses (`RetrievalUnavailableError`) when the
   dataset has no passages index or the index breaks the passages contract. It checks
@@ -659,10 +684,25 @@ provisionally (section 5); every value is in `RETRIEVAL_DEFAULTS`.
 - **Stage 1, case candidates.** The question is embedded once (template `query-v1`:
   whitespace collapsed, no header, at most 1,000 tokens). BM25 over passage `text`
   (with the search terms the brief's scope stage extracts, when there are any) and
-  kNN (`num_candidates` = 4 × k) each return 50 passages live; the evaluation
-  also runs 100. Reciprocal rank fusion, `sum(1 / (60 + rank))`, runs in TypeScript
-  (native RRF needs a paid license), and the fused list is deduplicated to cases at
-  their best passage.
+  kNN (`num_candidates` = 4 × k) each return 50 passages under `retrieval.v1`, 200
+  under `retrieval.v2`; the evaluation also runs 100. Reciprocal rank fusion,
+  `sum(1 / (60 + rank))`, runs in TypeScript (native RRF needs a paid license).
+  `retrieval.v1` fuses the passage lists and takes each case at its best passage.
+  `retrieval.v2` adds the cases channel (200 cases, BM25 over `probable_cause`,
+  `analysis` and `factual`), collapses each channel to its unique cases (in a total
+  order: score, then id), and fuses the case lists with exact fractions and a total
+  tie order (best rank, ranks channel by channel, case number). Its filter is the
+  passages filter restated on the cases index: compulsory `country` and
+  `answer_eligible`, `aircraft_count >= 1`, the same event facets and years, and the
+  passages contract's aircraft rule on the nested `aircraft` (one aircraft meeting
+  every facet; under `passages-v2` also a multi-aircraft event whose every aircraft
+  meets the full conjunction). An integration test compares it with the passages
+  filter and an independent reference on adversarial selections for both contract
+  versions, and the validation's preflight checks it on the target for every
+  evaluation and scope-inferred filter. The leading 12 cases no passage channel
+  returned are mapped: the count of each case's passages under the passages filter,
+  then a kNN for that case with `num_candidates` equal to the count (an exact search)
+  and k = 3, verified case by case; an unmapped case is reported and never packed.
 - **Stage 2, packing.** At most 6 cases, 12 passages, 3 passages per case and 10,000
   `cl100k_base` passage-text tokens. Each selected case first reserves its
   justification: its best retrieved passage and every probable-cause variant it has
@@ -719,6 +759,22 @@ events as unreachable). Absence of a code is not a negative judgement: precision
 coded precision. `pnpm eval:retrieval --track coded` runs it with the silver run's
 checks, plus a check that the dataset was built from the committed specs. Its splits
 are frozen: rebuilds keep every committed question in its split.
+
+**Task 10e validation of `retrieval.v2`** (`evals/retrieval/adoption/`, coded-reference,
+development split only, phase A's cached scope samples and one query vector per
+question for every arm). Against what the pipeline retrieved before (`retrieval.v1`,
+phase A's `p50-kt`), narrow Recall@20 rose from 62.1% to 72.2% (+10.1 points, 95% group
+bootstrap [+5.8, +16.0]); broad coded P@6 from 40.1% to 45.1% and nDCG@6 from 39.7% to
+46.6%, with intervals spanning zero on 9 broad questions in 3 groups. With the scope
+stage's own filters instead of the evaluation filters the figures are the same for
+narrow questions and 40.7% to 45.1% (P@6), 41.6% to 47.7% (nDCG@6) for broad ones.
+One broad question loses heavily and is kept as a regression case
+(`per-pilot-decision-cause-weight-shift`, nDCG@6 65.8% to 25.9%: in its small
+weight-shift cohort the two word searches agree on accidents that repeat the generic
+search terms and outrank accidents whose probable cause states the decision). No
+development question needed the mapping, and every delivered case was also found by a
+passage channel. These are not holdout or release results: the phase A holdout
+confirmed the findings variant, not this one.
 
 Both runs verify their labels on the target before anything is embedded. Each dataset
 records its generation's id and identity (archive sha256 and the completion mapping,
@@ -804,6 +860,15 @@ channels and the cause fetch, no attribution to an individual aircraft, and the
 exclusion kept until those tests pass. `passages-v2` implements it; the extension
 itself goes back to G5 before it runs on `dev`. G6 (model input and quote
 validation) is still ahead.
+
+Task 10e (adopting the case-level `retrieval.v2`) was approved with binding
+conditions: a frozen, versioned configuration with a rollback; the cases channel on
+the same manifest generation with the passages contract's cohort and aircraft rule;
+deterministic, exact case-level fusion; a mapping that reuses the query vector and
+verifies every case; unchanged packing guarantees; failures that still settle the
+paid embedding once; and validation against the deployed retrieval, end to end with
+inferred filters, on delivered evidence, on the regression question and under
+concurrent load. The implementation goes back to that review before it merges.
 
 ## 6. Known limits and open owner items
 
