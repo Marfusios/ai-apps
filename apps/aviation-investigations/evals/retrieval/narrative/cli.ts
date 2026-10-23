@@ -5,17 +5,19 @@
  *   build         [--generation <id>] [--out <file>] [--dry-run | --check]   the question set (PostgreSQL, read-only)
  *   calibration   --generation <id> [--out <file>] [--check]                 the calibration sets, labels frozen
  *   plan          [--samples 1|3]                                            the free dry run: preflight, inventory, cost
- *   pools         [--samples 1|3] [--max-usd <usd>] [--confirm-cost]         paid: scope samples and query embeddings; builds the pools
- *   judge         --set calibration [--split dev|holdout|all] [--confirm-cost]
- *   judge         --set relevance --pools <file> [--confirm-cost]
- *   answerability --pools <file> [--confirm-cost]
+ *   pools         [--samples 1|3] [--confirm-cost --allocation <name>]       paid: scope samples and query embeddings; builds the pools
+ *   judge         --set calibration --split dev|holdout [--confirm-cost --allocation <name>]
+ *   judge         --set relevance --pools <file> [--stage 1|2] [--confirm-cost --allocation <name>]
+ *   answerability --pools <file> [--confirm-cost --allocation <name>]
  *   report        [--pools <file>] --judgments <a,b,...>                     free: metrics and diagnostics
  *
  * Common options: `--env-files a,b` (as the other evaluation commands), `--keys-file
  * <file>` (only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are read from it, never over a
  * nonempty process value), `--out-dir` (default `data/work/narrative`). Paid options:
- * `--max-usd`, `--concurrency`, `--max-escalation-share` (at most 0.25 for pools).
- * Without `--confirm-cost` a paid command prints its plan and sends nothing.
+ * `--allocation <name>` (required with `--confirm-cost`: the phase or month budget, its
+ * cap given once with `--allocation-usd`), `--max-usd` (this run's own limit),
+ * `--concurrency`, `--max-escalation-share` (at most 0.25 for pools). Without
+ * `--confirm-cost` a paid command prints its plan and sends nothing.
  */
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -30,9 +32,10 @@ export const USAGE = [
   'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]',
   '       pnpm eval:retrieval:narrative calibration [--env-files <a,b>] --generation <id> [--out <file>] [--check]',
   '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--out-dir <dir>]',
-  '       pnpm eval:retrieval:narrative pools [--samples 1|3] [--max-usd <usd>] [--confirm-cost] ...',
-  '       pnpm eval:retrieval:narrative judge --set calibration|relevance [--split dev|holdout|all] [--pools <file>] [--max-usd <usd>] [--concurrency <n>] [--max-escalation-share <share>] [--confirm-cost] ...',
-  '       pnpm eval:retrieval:narrative answerability --pools <file> [--confirm-cost] ...',
+  '       pnpm eval:retrieval:narrative pools [--samples 1|3] [--max-usd <usd>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
+  '       pnpm eval:retrieval:narrative judge --set calibration --split dev|holdout [--max-usd <usd>] [--concurrency <n>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
+  '       pnpm eval:retrieval:narrative judge --set relevance --pools <file> [--stage 1|2] [--max-usd <usd>] [--concurrency <n>] [--max-escalation-share <share>] [--confirm-cost --allocation <name>] ...',
+  '       pnpm eval:retrieval:narrative answerability --pools <file> [--confirm-cost --allocation <name>] ...',
   '       pnpm eval:retrieval:narrative report [--pools <file>] --judgments <a,b,...> [--out-dir <dir>]',
 ].join('\n');
 
@@ -66,6 +69,9 @@ export async function main(argv: string[]): Promise<number> {
       concurrency: { type: 'string' },
       'max-escalation-share': { type: 'string' },
       'confirm-cost': { type: 'boolean' },
+      stage: { type: 'string' },
+      allocation: { type: 'string' },
+      'allocation-usd': { type: 'string' },
     },
     allowPositionals: true,
     strict: true,
@@ -80,9 +86,14 @@ export async function main(argv: string[]): Promise<number> {
     console.error('--samples is 1 or 3');
     return 2;
   }
-  const split = (values.split ?? 'all') as 'dev' | 'holdout' | 'all';
-  if (!['dev', 'holdout', 'all'].includes(split)) {
+  const split = values.split as 'dev' | 'holdout' | 'all' | undefined;
+  if (split !== undefined && !['dev', 'holdout', 'all'].includes(split)) {
     console.error('--split is dev, holdout or all');
+    return 2;
+  }
+  const stage = values.stage === undefined ? undefined : Number(values.stage);
+  if (stage !== undefined && stage !== 1 && stage !== 2) {
+    console.error('--stage is 1 or 2');
     return 2;
   }
   let generation: number | undefined;
@@ -118,7 +129,9 @@ export async function main(argv: string[]): Promise<number> {
   const base = { config, outDir, confirm: values['confirm-cost'] === true, log };
   const maxUsd = positiveNumber(values['max-usd'], '--max-usd');
   if (command === 'plan') return planCommand({ ...base, confirm: false, samples, broadSample: { bm25: 30, lure: 5, random: 5 } });
-  if (command === 'pools') return poolsCommand({ ...base, samples, ...(maxUsd !== undefined ? { maxUsd } : {}) });
+  const allocationUsd = positiveNumber(values['allocation-usd'], '--allocation-usd');
+  const allocation = { ...(values.allocation ? { allocation: values.allocation } : {}), ...(allocationUsd !== undefined ? { allocationUsd } : {}) };
+  if (command === 'pools') return poolsCommand({ ...base, samples, ...(maxUsd !== undefined ? { maxUsd } : {}), ...allocation });
   const set = command === 'answerability' ? 'answerability' : values.set;
   if (set !== 'calibration' && set !== 'relevance' && set !== 'answerability') {
     console.error('judge needs --set calibration or relevance');
@@ -129,7 +142,9 @@ export async function main(argv: string[]): Promise<number> {
   return judgeCommand({
     ...base,
     set,
-    split,
+    ...(split ? { split } : {}),
+    ...(stage !== undefined ? { stage: stage as 1 | 2 } : {}),
+    ...allocation,
     ...(values.pools ? { pools: values.pools } : {}),
     ...(maxUsd !== undefined ? { maxUsd } : {}),
     ...(concurrency !== undefined ? { concurrency: Math.floor(concurrency) } : {}),

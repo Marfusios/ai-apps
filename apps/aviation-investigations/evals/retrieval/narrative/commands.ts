@@ -15,12 +15,16 @@
  * problem stops a paid command; `plan` reports them.
  *
  * **Money.** Every paid attempt reserves its worst case on the evaluation ledger and
- * settles; each command appends to `<out-dir>/spend.jsonl` and stops before a reservation
- * that would take that log above the command's limit (`RUN_LIMITS_USD`, or `--max-usd`)
- * or above what remains of the monthly indexing and evaluation allowance.
+ * settles. Each run writes its own spend log (`<out-dir>/spend/<run>.jsonl`) and stops
+ * before a reservation that would take its own spend above its limit (`RUN_LIMITS_USD`,
+ * or `--max-usd`), the cap of its allocation (`--allocation <name>`, a log under
+ * `<out-dir>/allocations/` shared by the runs of one phase or month, its cap fixed when it
+ * is created with `--allocation-usd`), or what remains of the monthly indexing and
+ * evaluation allowance on the ledger. The judgment cache (`<out-dir>/cache.jsonl`) is
+ * shared by every run and allocation, so a new month resumes from it under its own cap.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
 import pg from 'pg';
 import { createAnthropicProvider } from '../../../server/ai/anthropic.js';
@@ -44,7 +48,7 @@ import { attemptReserveUsd, createAnthropicJudge, createOpenAIJudge, type JudgeC
 import { ADJUDICATOR, DEFAULT_CONCURRENCY, JUDGE_A, JUDGE_B, JUDGE_TIMEOUT_MS, RUN_LIMITS_USD } from './config.js';
 import { NarrativeDatasetSchema, families, narrativeDatasetProblems, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { CASE_TOKEN_BUDGET, bundleFingerprint, fingerprint, loadCaseEvidence, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
-import { AttemptSender, JudgmentCache, answerabilitySubject, judgePairs, relevanceSubject, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
+import { AttemptSender, JudgmentCache, answerabilitySubject, byPriority, judgePairs, loggedSpendUsd, openAllocation, relevanceSubject, type Allocation, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
 import {
   ASSUMPTIONS,
   addRuns,
@@ -64,7 +68,7 @@ import {
   type RunCost,
   type Samples,
 } from './plan.js';
-import { POOL_RULE, buildPools, bundlePairs, casePriority, indexCohort, poolFileVersion, type FamilyPool, type PoolFile } from './pool.js';
+import { POOL_RULE, SCHEDULE, buildPools, bundlePairs, casePriority, indexCohort, poolFileVersion, tierOf, type FamilyPool, type PoolFile, type Stage } from './pool.js';
 import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
 import {
   agreementReport,
@@ -407,14 +411,8 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
 // ---------------------------------------------------------------------------
 // Paid commands
 
-/** Logged spend of a command's spend log, and the limit check before anything is reserved. */
-function spentOf(file: string): number {
-  if (!existsSync(file)) return 0;
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim() !== '')
-    .reduce((n, l) => n + (JSON.parse(l) as { chargedUsd: number }).chargedUsd, 0);
-}
+/** A run's own spend log: a new file for every run, so no limit is ever summed over earlier runs. */
+const runSpendLog = (outDir: string, runId: string): string => resolve(outDir, 'spend', `${runId}.jsonl`);
 
 function ledgerGates(ingest: Db, config: AppConfig): (c: JudgeCaller['config']) => SpendGate {
   const gates = new Map<string, SpendGate>();
@@ -430,7 +428,7 @@ function ledgerGates(ingest: Db, config: AppConfig): (c: JudgeCaller['config']) 
 }
 
 /** `pools`: scope samples and query embeddings (paid, reserved per attempt), then the method runs (Elasticsearch reads) and the pool file. */
-export async function poolsCommand(opts: CommandOptions & { samples: Samples; maxUsd?: number }): Promise<number> {
+export async function poolsCommand(opts: CommandOptions & { samples: Samples; maxUsd?: number; allocation?: string; allocationUsd?: number }): Promise<number> {
   const { log } = opts;
   const ctx = await openContext(opts.config, log);
   try {
@@ -454,23 +452,30 @@ export async function poolsCommand(opts: CommandOptions & { samples: Samples; ma
       log('nothing sent: run with --confirm-cost to take the scope samples, embed the questions and build the pools');
       return 0;
     }
-    const spendLog = resolve(opts.outDir, 'spend.jsonl');
-    const limit = opts.maxUsd ?? RUN_LIMITS_USD.pools;
-    if (spentOf(spendLog) + inventory.reserveUsd + emb.reserveUsd > limit + 1e-12) throw new Error(`the pool reservations would exceed the limit of $${limit}; nothing sent`);
+    if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
+    const allocation = openAllocation(opts.outDir, opts.allocation, opts.allocationUsd);
+    const purpose = `eval-10c2-pools-${stamp(new Date())}`;
+    const spendLog = runSpendLog(opts.outDir, purpose);
+    const limit = Math.min(opts.maxUsd ?? RUN_LIMITS_USD.pools, allocation.capUsd - loggedSpendUsd(allocation.log));
+    if (inventory.reserveUsd + emb.reserveUsd > limit + 1e-12) throw new Error(`the pool reservations ($${(inventory.reserveUsd + emb.reserveUsd).toFixed(6)}) exceed the run limit or what remains of allocation ${allocation.name} ($${limit.toFixed(6)}); nothing sent`);
     if (!ctx.config.databaseIngestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
     const ingest = createDb(ctx.config.databaseIngestUrl, { max: 2, applicationName: 'aviation-eval-narrative-ledger' });
     let run: ScopeRun;
-    const purpose = `eval-10c2-pools-${stamp(new Date())}`;
     try {
       const gate = createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' });
-      run = await runScopeSamples(caller, gate, items, { samples: opts.samples, retries: 1, maxUsd: limit - spentOf(spendLog), purpose, log });
+      run = await runScopeSamples(caller, gate, items, { samples: opts.samples, retries: 1, maxUsd: limit - emb.reserveUsd, purpose, log });
     } finally {
       await closeDb(ingest);
     }
-    mkdirSync(opts.outDir, { recursive: true });
-    appendFileSync(spendLog, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, purpose: 'scope', provider: 'anthropic', model: a.scopeModel, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd })}\n`);
+    const charge = (entry: Record<string, unknown>) => {
+      for (const file of [spendLog, allocation.log]) {
+        mkdirSync(dirname(file), { recursive: true });
+        appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, ...entry })}\n`);
+      }
+    };
+    charge({ purpose: 'scope', provider: 'anthropic', model: a.scopeModel, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd });
     const { embedder, billed } = await embedPlan(emb, { fake: false, config: ctx.config, purpose, log });
-    appendFileSync(spendLog, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: billed.usd })}\n`);
+    charge({ purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: billed.usd });
     const texts = new Map<string, string[]>();
     for (const q of d.questions) texts.set(q.id, run.samples.filter((s) => s.id === q.id).sort((x, y) => x.sample - y.sample).map((s) => s.keywordText));
     const pools = await buildPools(
@@ -514,7 +519,7 @@ const refOf = (q: { question: string; rubric: NarrativeItem['rubric']; questionV
   rubricVersion: q.rubricVersion,
 });
 
-/** The relevance pairs of a pool file, in priority order (bundle cases first). */
+/** The relevance pairs of a pool file, in the frozen schedule's priority order (`SCHEDULE`). */
 export async function poolSubjects(ctx: NarrativeContext, pools: PoolFile): Promise<{ items: PairPlanItem[]; missing: string[] }> {
   const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-judge' });
   await client.connect();
@@ -532,7 +537,7 @@ export async function poolSubjects(ctx: NarrativeContext, pools: PoolFile): Prom
         items.push({ subject: relevanceSubject(refOf(f, f.id), e, planChunks(e), fingerprint(e)), priority: casePriority(c, pool.type) });
       }
     }
-    return { items: items.sort((x, y) => (x.subject.ref.family < y.subject.ref.family ? -1 : x.subject.ref.family > y.subject.ref.family ? 1 : 0)), missing: [...loaded.missing, ...loaded.integrity.map((x) => x.ntsbNo)] };
+    return { items: items.sort(byPriority), missing: [...loaded.missing, ...loaded.integrity.map((x) => x.ntsbNo)] };
   } finally {
     await client.end();
   }
@@ -595,10 +600,11 @@ export async function answerabilitySubjects(ctx: NarrativeContext, pools: PoolFi
         passages.push({ ...p, text });
       }
       if (passages.length !== x.passages.length) continue;
+      // Every delivered bundle case is tier 0 of the schedule, ordered by its best case rank.
       const best = Math.min(...x.runs.map((r) => r.caseRank));
       items.push({ subject: answerabilitySubject(refOf(f, f.id), e, passages, bundleFingerprint(e.ntsbNo, e.event, e.aircraft, passages)), priority: best });
     }
-    return { items, problems };
+    return { items: items.sort(byPriority), problems };
   } finally {
     await client.end();
   }
@@ -611,31 +617,72 @@ export interface JudgingDeps {
   ledger: () => { gate: SpendGate | ((c: JudgeCaller['config']) => SpendGate); close: () => Promise<void> };
 }
 
+/** What a judgment run records about its schedule: the version, the stage and the pairs per tier. */
+export interface ScheduleInfo {
+  version: string;
+  stage: Stage | null;
+  tiers: Record<string, number>;
+}
+
+export const scheduleInfo = (items: readonly PairPlanItem[], stage: Stage | null): ScheduleInfo => {
+  const tiers: Record<string, number> = {};
+  for (const i of items) tiers[String(tierOf(i.priority))] = (tiers[String(tierOf(i.priority))] ?? 0) + 1;
+  return { version: SCHEDULE.version, stage, tiers };
+};
+
 /**
  * The paid part of `judge` and `answerability`: without `confirm` it prints the plan and
- * creates nothing (no client, no ledger connection); with it, every pair is judged with
- * per-attempt reservations, and a budget stop ends the run with its records kept.
+ * creates nothing (no client, no ledger connection); with it, every pair is judged in the
+ * schedule's order with per-attempt reservations against the run's own limit, its
+ * allocation and the ledger, and a budget stop ends the run with its records kept.
  */
 export async function runJudging(
   items: readonly PairPlanItem[],
-  opts: { set: 'calibration' | 'relevance' | 'answerability'; confirm: boolean; limitUsd: number; maxEscalationShare: number; concurrency: number; outDir: string; reference: string; log: (m: string) => void },
+  opts: {
+    set: 'calibration' | 'relevance' | 'answerability';
+    confirm: boolean;
+    limitUsd: number;
+    allocation: { name: string; capUsd?: number } | null;
+    maxEscalationShare: number;
+    concurrency: number;
+    outDir: string;
+    reference: string;
+    schedule: ScheduleInfo;
+    /** The frozen experiment identity the records are made under (`identity.ts`). */
+    experiment?: Record<string, unknown>;
+    log: (m: string) => void;
+  },
   deps: JudgingDeps,
 ): Promise<number> {
   const { log } = opts;
-  log(`${opts.set}: ${items.length} pairs; judges ${JUDGE_A.model} and ${JUDGE_B.model}, adjudicator ${ADJUDICATOR.model} (at most ${Math.floor(opts.maxEscalationShare * items.length)} escalations); limit $${opts.limitUsd}`);
+  log(`${opts.set}: ${items.length} pairs (schedule ${opts.schedule.version}${opts.schedule.stage ? `, stage ${opts.schedule.stage}` : ''}: ${Object.entries(opts.schedule.tiers).map(([t, n]) => `tier ${t} ${n}`).join(', ')}); judges ${JUDGE_A.model} and ${JUDGE_B.model}, adjudicator ${ADJUDICATOR.model} (at most ${Math.floor(opts.maxEscalationShare * items.length)} escalations); run limit $${opts.limitUsd}`);
   if (!opts.confirm) {
-    log('nothing sent: run `plan` for the cost, then this command with --confirm-cost');
+    log('nothing sent: run `plan` for the cost, then this command with --confirm-cost and --allocation');
     return 0;
   }
+  if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
+  const allocation: Allocation = openAllocation(opts.outDir, opts.allocation.name, opts.allocation.capUsd);
   const callers = deps.callers();
   const ledger = deps.ledger();
   const runId = `eval-10c2-${opts.set}-${stamp(new Date())}`;
   try {
-    const sender = new AttemptSender({ gate: ledger.gate, limitUsd: opts.limitUsd, spendLog: resolve(opts.outDir, 'spend.jsonl'), run: runId }, JUDGE_TIMEOUT_MS);
+    const sender = new AttemptSender({ gate: ledger.gate, limitUsd: opts.limitUsd, spendLog: runSpendLog(opts.outDir, runId), allocation, run: runId }, JUDGE_TIMEOUT_MS);
+    log(`allocation ${allocation.name}: $${sender.allocationSpentUsd.toFixed(4)} of $${allocation.capUsd} spent before this run`);
     const cache = new JudgmentCache(resolve(opts.outDir, 'cache.jsonl'));
     const { records, stopped } = await judgePairs(items, { judges: callers.judges, adjudicator: callers.adjudicator, sender, cache, concurrency: opts.concurrency, maxEscalationShare: opts.maxEscalationShare, log: (m) => console.error(m) });
-    const file = writeJson(opts.outDir, `narrative-judgments-${opts.set}-${stamp(new Date())}.json`, { kind: 'track-n-judgments', set: opts.set, reference: opts.reference, run: runId, git: gitState(), stopped, records });
-    log(`${records.length} pair records; spend ${usd(sender.spentUsd)}; ${stopped ? `stopped: ${stopped}; ` : ''}${file}`);
+    const file = writeJson(opts.outDir, `narrative-judgments-${opts.set}-${stamp(new Date())}.json`, {
+      kind: 'track-n-judgments',
+      set: opts.set,
+      reference: opts.reference,
+      run: runId,
+      allocation: allocation.name,
+      git: gitState(),
+      ...(opts.experiment ? { experiment: opts.experiment } : {}),
+      schedule: opts.schedule,
+      stopped,
+      records,
+    });
+    log(`${records.length} pair records; run spend ${usd(sender.spentUsd)}; allocation ${allocation.name} ${usd(sender.allocationSpentUsd)} of $${allocation.capUsd}; ${stopped ? `stopped: ${stopped}; ` : ''}${file}`);
     return stopped ? 1 : 0;
   } finally {
     await ledger.close();
@@ -644,7 +691,17 @@ export async function runJudging(
 
 /** `judge` / `answerability`: plan, then (with `--confirm-cost`) judge every pair with per-attempt reservations. */
 export async function judgeCommand(
-  opts: CommandOptions & { set: 'calibration' | 'relevance' | 'answerability'; split: 'dev' | 'holdout' | 'all'; pools?: string; maxUsd?: number; concurrency?: number; maxEscalationShare?: number },
+  opts: CommandOptions & {
+    set: 'calibration' | 'relevance' | 'answerability';
+    split?: 'dev' | 'holdout' | 'all';
+    stage?: Stage;
+    pools?: string;
+    maxUsd?: number;
+    concurrency?: number;
+    maxEscalationShare?: number;
+    allocation?: string;
+    allocationUsd?: number;
+  },
 ): Promise<number> {
   const { log } = opts;
   const ctx = await openContext(opts.config, log);
@@ -652,6 +709,7 @@ export async function judgeCommand(
     if (ctx.problems.length > 0) throw new Error(`preflight failed; nothing paid:\n  ${ctx.problems.join('\n  ')}`);
     let items: PairPlanItem[];
     if (opts.set === 'calibration') {
+      if (!opts.split) throw new Error('--split dev|holdout is required for calibration (dev first, holdout once)');
       const r = await calibrationSubjects(ctx, opts.split);
       if (r.problems.length > 0) throw new Error(`calibration inputs: ${r.problems.join('; ')}; nothing paid`);
       items = r.items;
@@ -662,7 +720,8 @@ export async function judgeCommand(
       if (opts.set === 'relevance') {
         const r = await poolSubjects(ctx, pools);
         if (r.missing.length > 0) log(`warning: ${r.missing.length} pool case(s) without usable evidence are unknown: ${r.missing.slice(0, 5).join(', ')}`);
-        items = r.items;
+        const last = SCHEDULE.stages[opts.stage ?? 2];
+        items = r.items.filter((i) => tierOf(i.priority) <= last);
       } else {
         const r = await answerabilitySubjects(ctx, pools);
         if (r.problems.length > 0) throw new Error(`answerability inputs: ${r.problems.slice(0, 5).join('; ')}; nothing paid`);
@@ -677,7 +736,18 @@ export async function judgeCommand(
     const ingestUrl = ctx.config.databaseIngestUrl;
     return await runJudging(
       items,
-      { set: opts.set, confirm: opts.confirm, limitUsd: limit, maxEscalationShare: share, concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY, outDir: opts.outDir, reference: ctx.dataset.reference, log },
+      {
+        set: opts.set,
+        confirm: opts.confirm,
+        limitUsd: limit,
+        allocation: opts.allocation ? { name: opts.allocation, ...(opts.allocationUsd !== undefined ? { capUsd: opts.allocationUsd } : {}) } : null,
+        maxEscalationShare: share,
+        concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY,
+        outDir: opts.outDir,
+        reference: ctx.dataset.reference,
+        schedule: scheduleInfo(items, opts.set === 'relevance' ? (opts.stage ?? 2) : null),
+        log,
+      },
       {
         callers: () => {
           if (!a || !o) throw new Error('ANTHROPIC_API_KEY and OPENAI_API_KEY are required (pass --keys-file)');

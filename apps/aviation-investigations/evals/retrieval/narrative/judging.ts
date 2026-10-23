@@ -38,8 +38,8 @@
  * version, validator version, chunk budget); adjudications also by the two verdicts they
  * saw. A cached outcome is reused, never re-bought.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { SpendGate } from '../../../worker/index/spend-gate.js';
 import { SpendRefusedError } from '../../../worker/index/spend-gate.js';
 import {
@@ -138,39 +138,91 @@ export interface SpendLogEntry {
   chargedUsd: number;
 }
 
-/** Logged spend of a spend log file (0 when missing). */
+/** Logged spend of a spend or allocation log (0 when missing; header lines carry no charge). */
 export function loggedSpendUsd(path: string | null): number {
   if (!path || !existsSync(path)) return 0;
   return readFileSync(path, 'utf8')
     .split('\n')
     .filter((l) => l.trim() !== '')
-    .reduce((n, l) => n + (JSON.parse(l) as SpendLogEntry).chargedUsd, 0);
+    .reduce((n, l) => n + ((JSON.parse(l) as Partial<SpendLogEntry>).chargedUsd ?? 0), 0);
+}
+
+/**
+ * A named budget allocation shared by the runs of one phase or month (for example
+ * `track-n-2026-10`): every attempt of every run under it is appended to its log, and no
+ * run may take the log above its cap. The cap is written once, in the log's first line,
+ * and a later run cannot change it (a new allocation needs a new name). Reusable outputs
+ * (the judgment cache) are kept apart from allocations, so a new month's allocation
+ * resumes from the same cache with its own cap.
+ */
+export interface Allocation {
+  name: string;
+  capUsd: number;
+  log: string;
+}
+
+interface AllocationHeader {
+  kind: 'track-n-allocation';
+  name: string;
+  capUsd: number;
+  createdAt: string;
+}
+
+/** Open (or create) the allocation `name` under `dir`; `capUsd` is required to create it and must match an existing one. */
+export function openAllocation(dir: string, name: string, capUsd: number | undefined): Allocation {
+  if (!/^[a-z0-9][a-z0-9._-]{2,63}$/.test(name)) throw new Error(`allocation name "${name}": use 3 to 64 lower-case letters, digits, dots, hyphens or underscores`);
+  const log = join(dir, 'allocations', `${name}.jsonl`);
+  if (existsSync(log)) {
+    const first = readFileSync(log, 'utf8').split('\n')[0] ?? '';
+    const header = JSON.parse(first) as Partial<AllocationHeader>;
+    if (header.kind !== 'track-n-allocation' || header.name !== name || typeof header.capUsd !== 'number') throw new Error(`${log} is not a Track N allocation log`);
+    if (capUsd !== undefined && Math.abs(capUsd - header.capUsd) > 1e-9) {
+      throw new Error(`allocation ${name} has a cap of $${header.capUsd}; it cannot be changed (use a new allocation name)`);
+    }
+    return { name, capUsd: header.capUsd, log };
+  }
+  if (capUsd === undefined || !(capUsd > 0)) throw new Error(`allocation ${name} does not exist yet: give its cap with --allocation-usd`);
+  mkdirSync(dirname(log), { recursive: true });
+  const header: AllocationHeader = { kind: 'track-n-allocation', name, capUsd, createdAt: new Date().toISOString() };
+  writeFileSync(log, `${JSON.stringify(header)}\n`, { flag: 'wx' });
+  return { name, capUsd, log };
 }
 
 export interface RunMoney {
   /** The evaluation ledger's gate for a judge (its provider, model and stage label the reservations). */
   gate: SpendGate | ((judge: JudgeCaller['config']) => SpendGate);
-  /** This run's limit (USD) over its spend log. */
+  /** This run's limit (USD) over its own spend only. */
   limitUsd: number;
+  /** This run's spend log (one file per run, never shared with another run). */
   spendLog: string | null;
+  /** The allocation this run spends from, shared with the other runs of its phase or month; null in tests. */
+  allocation: Allocation | null;
   run: string;
 }
 
 /** Sends attempts with their reservations (module comment). */
 export class AttemptSender {
   private spent: number;
-  /** Reservations of attempts in flight (concurrent attempts count against the limit before they settle). */
+  private allocationSpent: number;
+  /** Reservations of attempts in flight (concurrent attempts count against the limits before they settle). */
   private inFlight = 0;
+  /** A ledger settle failed: the run sends nothing more (the reservation stays open, which keeps the ledger conservative). */
+  private ledgerFailure: string | null = null;
   constructor(
     private readonly money: RunMoney,
     private readonly timeoutMs: number,
     private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
   ) {
     this.spent = loggedSpendUsd(money.spendLog);
+    this.allocationSpent = money.allocation ? loggedSpendUsd(money.allocation.log) : 0;
   }
 
   get spentUsd(): number {
     return this.spent;
+  }
+
+  get allocationSpentUsd(): number {
+    return this.allocationSpent;
   }
 
   wait(ms: number): Promise<void> {
@@ -178,6 +230,7 @@ export class AttemptSender {
   }
 
   async send(caller: JudgeCaller, req: JudgeRequest): Promise<{ output: unknown; record: AttemptRecord } | { error: JudgeCallError; record: AttemptRecord }> {
+    if (this.ledgerFailure !== null) throw new FatalJudgeError(`the evaluation ledger could not settle an attempt (${this.ledgerFailure}); the run stops`);
     const c = caller.config;
     let counted: number | null = null;
     for (let i = 0; counted === null; i += 1) {
@@ -191,11 +244,17 @@ export class AttemptSender {
     const reserve = attemptReserveUsd(c, counted);
     if (this.spent + this.inFlight + reserve > this.money.limitUsd + 1e-12) {
       throw new BudgetStop(
-        `the next attempt's reservation ($${reserve.toFixed(6)}) would take this run's logged spend ($${this.spent.toFixed(6)}) and open reservations ($${this.inFlight.toFixed(6)}) above its limit of $${this.money.limitUsd}`,
+        `the next attempt's reservation ($${reserve.toFixed(6)}) would take this run's spend ($${this.spent.toFixed(6)}) and open reservations ($${this.inFlight.toFixed(6)}) above its limit of $${this.money.limitUsd}`,
       );
     }
-    // Claimed in the same synchronous turn as the check, so a concurrent attempt sees it;
-    // released only after the attempt's charge is added to `spent`.
+    const a = this.money.allocation;
+    if (a && this.allocationSpent + this.inFlight + reserve > a.capUsd + 1e-12) {
+      throw new BudgetStop(
+        `the next attempt's reservation ($${reserve.toFixed(6)}) would take allocation ${a.name} ($${this.allocationSpent.toFixed(6)} spent, $${this.inFlight.toFixed(6)} open) above its cap of $${a.capUsd}`,
+      );
+    }
+    // Claimed in the same synchronous turn as the checks, so a concurrent attempt sees it;
+    // released only after the attempt's charge is added to the spend.
     this.inFlight += reserve;
     try {
       return await this.sendReserved(caller, req, counted, reserve);
@@ -226,34 +285,43 @@ export class AttemptSender {
     const t0 = performance.now();
     const base = { purpose: req.purpose, role: c.role, provider: c.provider, model: c.model, inputTokens: counted, reservedUsd: reserve };
     let out: { output: unknown; record: AttemptRecord } | { error: JudgeCallError; record: AttemptRecord };
+    let settlement: Parameters<SpendGate['settle']>[1];
     try {
       const r = await caller.call(req, this.timeoutMs, caller.countsWithProvider ? counted : undefined);
       const cost = judgeCostUsd(c.model, r.usage);
-      await gate.settle(reservation, { usd: cost, tokens: r.usage.inputTokens + r.usage.cacheWriteTokens + r.usage.cacheReadTokens + r.usage.outputTokens });
+      settlement = { usd: cost, tokens: r.usage.inputTokens + r.usage.cacheWriteTokens + r.usage.cacheReadTokens + r.usage.outputTokens };
       out = { output: r.output, record: { ...base, status: 'ok', category: null, billing: 'usage', chargedUsd: cost, usage: r.usage, latencyMs: Math.round(performance.now() - t0) } };
     } catch (err) {
       const e = err instanceof JudgeCallError ? err : new JudgeCallError('unexpected', { kind: 'uncertain' });
       let charged: number;
       if (e.billing.kind === 'usage') {
         charged = judgeCostUsd(c.model, e.billing.usage);
-        await gate.settle(reservation, { usd: charged });
+        settlement = { usd: charged };
       } else if (e.billing.kind === 'none') {
         charged = 0;
-        await gate.settle(reservation, { usd: 0 });
+        settlement = { usd: 0 };
       } else {
         charged = reserve;
-        await gate.settle(reservation, 'uncertain');
+        settlement = 'uncertain';
       }
       out = {
         error: e,
         record: { ...base, status: 'failed', category: e.category, billing: e.billing.kind, chargedUsd: charged, usage: e.billing.kind === 'usage' ? e.billing.usage : null, latencyMs: Math.round(performance.now() - t0) },
       };
     }
+    // The money is spent: record it before settling, so a settle failure cannot lose a paid output.
     this.spent += out.record.chargedUsd;
-    if (this.money.spendLog) {
-      mkdirSync(dirname(this.money.spendLog), { recursive: true });
-      const entry: SpendLogEntry = { at: new Date().toISOString(), run: this.money.run, purpose: req.purpose, provider: c.provider, model: c.model, reservedUsd: reserve, chargedUsd: out.record.chargedUsd };
-      appendFileSync(this.money.spendLog, `${JSON.stringify(entry)}\n`);
+    this.allocationSpent += out.record.chargedUsd;
+    const entry: SpendLogEntry = { at: new Date().toISOString(), run: this.money.run, purpose: req.purpose, provider: c.provider, model: c.model, reservedUsd: reserve, chargedUsd: out.record.chargedUsd };
+    for (const log of [this.money.spendLog, this.money.allocation?.log ?? null]) {
+      if (!log) continue;
+      mkdirSync(dirname(log), { recursive: true });
+      appendFileSync(log, `${JSON.stringify(entry)}\n`);
+    }
+    try {
+      await gate.settle(reservation, settlement);
+    } catch (err) {
+      this.ledgerFailure = err instanceof Error ? err.message : String(err);
     }
     return out;
   }
@@ -336,7 +404,8 @@ export interface Subject {
   fingerprint: string;
   /** Answerability: the delivered passages' ids and text hashes, in delivered order (how runs find their judgment). */
   bundleKey?: string;
-  judge(sender: AttemptSender, caller: JudgeCaller, opts: { cacheCase: boolean }): Promise<JudgeOutcome>;
+  /** `purpose` labels the ledger reservation of a single-request judgment (the adjudicator's blind step). */
+  judge(sender: AttemptSender, caller: JudgeCaller, opts: { cacheCase: boolean; purpose?: 'adjudicate-initial' }): Promise<JudgeOutcome>;
   adjudicate(sender: AttemptSender, caller: JudgeCaller, initial: Extract<JudgeOutcome, { status: 'valid' }>, shown: readonly [ShownVerdict | null, ShownVerdict | null]): Promise<StepOutcome<ValidatedVerdict>>;
 }
 
@@ -359,7 +428,7 @@ export function relevanceSubject(ref: FamilyRef, evidence: CaseEvidence, plan: C
     async judge(sender, caller, opts) {
       if (plan.uncovered !== null || plan.chunks.length === 0) return { status: 'uncovered', reason: plan.uncovered ?? 'no chunks', attempts: [] };
       if (plan.chunks.length === 1) {
-        const r = await step(sender, caller, (f) => withFeedback(relevanceRequest(q, evidence, { cacheCase: opts.cacheCase }), f), (o) =>
+        const r = await step(sender, caller, (f) => withFeedback(relevanceRequest(q, evidence, { cacheCase: opts.cacheCase, ...(opts.purpose ? { purpose: opts.purpose } : {}) }), f), (o) =>
           validateVerdict(o as Verdict, { sources: whole, allowAbstain: false, allowAbsence: true }),
         );
         return r.status === 'valid' ? { status: 'valid', verdict: r.value, attempts: r.attempts } : { status: r.status, reason: r.reason, attempts: r.attempts };
@@ -408,7 +477,7 @@ export function answerabilitySubject(ref: FamilyRef, header: Pick<CaseEvidence, 
     fingerprint,
     bundleKey: bundleKeyOf(passages.map((p) => ({ passageId: p.passageId, textSha256: sha256(p.text) }))),
     async judge(sender, caller, opts) {
-      const r = await step(sender, caller, (f) => withFeedback(answerabilityRequest(q, block, { cacheCase: opts.cacheCase }), f), (o) =>
+      const r = await step(sender, caller, (f) => withFeedback(answerabilityRequest(q, block, { cacheCase: opts.cacheCase, ...(opts.purpose ? { purpose: opts.purpose } : {}) }), f), (o) =>
         validateAnswerability(o as Answerability, { sources, allowAbstain: false, allowAbsence: true }),
       );
       return r.status === 'valid' ? { status: 'valid', verdict: r.value, attempts: r.attempts } : { status: r.status, reason: r.reason, attempts: r.attempts };
@@ -426,7 +495,7 @@ export function answerabilitySubject(ref: FamilyRef, header: Pick<CaseEvidence, 
 
 export interface CacheEntry {
   key: string;
-  kind: 'judge' | 'adjudication';
+  kind: 'judge' | 'adjudication-initial' | 'adjudication';
   identity: Record<string, unknown>;
   outcome: unknown;
   at: string;
@@ -505,9 +574,12 @@ export interface PairRecord {
   questionVersion: string;
   rubricVersion: string;
   fingerprint: string;
-  judges: { role: JudgeRole; provider: string; model: string; key: string; status: JudgeOutcome['status']; grade: Grade | null; reason: string | null; absent: boolean | null; cached: boolean }[];
+  /** `outcome` is the hash of the judge's outcome (`outcomeHash`): records of one pair agree on it unless one of them failed. */
+  judges: { role: JudgeRole; provider: string; model: string; key: string; outcome: string; status: JudgeOutcome['status']; grade: Grade | null; reason: string | null; absent: boolean | null; cached: boolean }[];
   adjudication: null | {
-    key: string;
+    /** The cache key of the blind first step, and of the decision (null when the first step gave no valid grade). */
+    initialKey: string;
+    key: string | null;
     order: [JudgeRole, JudgeRole];
     initial: Grade | null;
     initialStatus: JudgeOutcome['status'];
@@ -526,9 +598,16 @@ export interface PairRecord {
 
 export interface PairPlanItem {
   subject: Subject;
-  /** Lower is more important: escalations follow this order. */
+  /** Lower is more important: pairs are judged, and escalated, in this order (the frozen schedule, `pool.ts`). */
   priority: number;
 }
+
+/** Stable priority order: priority, then case, then family (the frozen schedule). */
+export const byPriority = (x: PairPlanItem, y: PairPlanItem): number =>
+  x.priority - y.priority ||
+  (x.subject.ntsbNo < y.subject.ntsbNo ? -1 : x.subject.ntsbNo > y.subject.ntsbNo ? 1 : 0) ||
+  (x.subject.ref.family < y.subject.ref.family ? -1 : x.subject.ref.family > y.subject.ref.family ? 1 : 0) ||
+  ((x.subject.bundleKey ?? '') < (y.subject.bundleKey ?? '') ? -1 : (x.subject.bundleKey ?? '') > (y.subject.bundleKey ?? '') ? 1 : 0);
 
 export interface JudgingOptions {
   judges: readonly [JudgeCaller, JudgeCaller];
@@ -576,7 +655,7 @@ async function judgeOnce(o: JudgingOptions, subject: Subject, caller: JudgeCalle
 export const adjudicationOrder = (s: Pick<Subject, 'ntsbNo' | 'ref' | 'kind'>): [0 | 1, 0 | 1] =>
   parseInt(sha256(`${s.kind}|${s.ref.family}|${s.ntsbNo}`).slice(0, 8), 16) % 2 === 0 ? [0, 1] : [1, 0];
 
-/** Judge every pair, then escalate disagreements in priority order (module comment). */
+/** Judge every pair in priority order, then escalate disagreements in that order (module comment). */
 export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptions): Promise<{ records: PairRecord[]; stopped: string | null }> {
   const log = o.log ?? (() => undefined);
   let stopped: string | null = null;
@@ -585,8 +664,9 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
     if (!(err instanceof BudgetStop)) throw err;
     stopped ??= err.message;
   };
+  const schedule = [...items].sort(byPriority);
   const results: { item: PairPlanItem; outcomes: [Awaited<ReturnType<typeof judgeOnce>>, Awaited<ReturnType<typeof judgeOnce>>] }[] = [];
-  await runPool(items, o.concurrency, async (item) => {
+  await runPool(schedule, o.concurrency, async (item) => {
     if (stopped !== null) return;
     const settled = await Promise.allSettled([judgeOnce(o, item.subject, o.judges[0]), judgeOnce(o, item.subject, o.judges[1])]);
     const [a, b] = settled;
@@ -603,7 +683,7 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
   });
   const share = o.maxEscalationShare ?? MAX_ESCALATION_SHARE;
   const cap = Math.floor(share * items.length);
-  const ordered = [...results].sort((x, y) => x.item.priority - y.item.priority || (x.item.subject.ntsbNo < y.item.subject.ntsbNo ? -1 : x.item.subject.ntsbNo > y.item.subject.ntsbNo ? 1 : 0) || (x.item.subject.ref.family < y.item.subject.ref.family ? -1 : 1));
+  const ordered = [...results].sort((x, y) => byPriority(x.item, y.item));
   const records: PairRecord[] = [];
   let escalated = 0;
   const toAdjudicate: { r: (typeof ordered)[number]; record: PairRecord }[] = [];
@@ -625,6 +705,7 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
           provider: caller.config.provider,
           model: caller.config.model,
           key: x.key,
+          outcome: outcomeHash(x.outcome),
           status: x.outcome.status,
           grade: gradeOf(x.outcome),
           reason: x.outcome.status === 'valid' ? null : x.outcome.reason,
@@ -661,7 +742,11 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
     escalated += 1;
     toAdjudicate.push({ r, record });
   }
-  /** One escalation: the adjudicator's blind grade, then its decision (module comment). */
+  /**
+   * One escalation: the adjudicator's blind grade, then its decision. Each step is cached
+   * on its own as soon as it is paid for, so a budget stop between them never makes the
+   * next run buy the blind grade again.
+   */
   const adjudicate = async (r: (typeof ordered)[number], record: PairRecord): Promise<void> => {
     const s = r.item.subject;
     const [a, b] = r.outcomes;
@@ -670,40 +755,51 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
       const x = (i === 0 ? a : b).outcome;
       return x.status === 'valid' ? shownOf(x.verdict) : null;
     }) as [ShownVerdict | null, ShownVerdict | null];
-    const identity = {
-      ...judgeKeyIdentity(s, o.adjudicator),
-      prompts: `${s.kind === 'relevance' ? JUDGE_PROMPTS_VERSION : ANSWERABILITY_PROMPTS_VERSION}+${ADJUDICATOR_PROMPTS_VERSION}`,
-      verdicts: order.map((i) => outcomeHash((i === 0 ? a : b).outcome)),
-    };
-    const key = keyOf(identity);
-    const hit = o.cache.get(key);
+    const initialIdentity = { ...judgeKeyIdentity(s, o.adjudicator), step: 'adjudicate-initial' };
+    const initialKey = keyOf(initialIdentity);
+    const hitInitial = o.cache.get(initialKey);
     let initial: JudgeOutcome;
-    let final: StepOutcome<ValidatedVerdict> | null = null;
-    let cached = false;
-    if (hit) {
-      const stored = hit.outcome as { initial: JudgeOutcome; final: StepOutcome<ValidatedVerdict> | null };
-      initial = stored.initial;
-      final = stored.final;
-      cached = true;
+    let initialCached = false;
+    if (hitInitial) {
+      initial = hitInitial.outcome as JudgeOutcome;
+      initialCached = true;
     } else {
-      initial = await s.judge(o.sender, o.adjudicator, { cacheCase: true });
+      initial = await s.judge(o.sender, o.adjudicator, { cacheCase: true, purpose: 'adjudicate-initial' });
       record.attempts.push(...initial.attempts);
-      if (initial.status === 'valid') {
+      if (initial.status !== 'failed') o.cache.put({ key: initialKey, kind: 'adjudication-initial', identity: initialIdentity, outcome: { ...initial, attempts: [] } });
+    }
+    let final: StepOutcome<ValidatedVerdict> | null = null;
+    let finalKey: string | null = null;
+    let finalCached = false;
+    if (initial.status === 'valid') {
+      const identity = {
+        ...judgeKeyIdentity(s, o.adjudicator),
+        step: 'adjudicate-final',
+        prompts: `${s.kind === 'relevance' ? JUDGE_PROMPTS_VERSION : ANSWERABILITY_PROMPTS_VERSION}+${ADJUDICATOR_PROMPTS_VERSION}`,
+        verdicts: order.map((i) => outcomeHash((i === 0 ? a : b).outcome)),
+        initial: outcomeHash(initial),
+      };
+      finalKey = keyOf(identity);
+      const hit = o.cache.get(finalKey);
+      if (hit) {
+        final = hit.outcome as StepOutcome<ValidatedVerdict>;
+        finalCached = true;
+      } else {
         final = await s.adjudicate(o.sender, o.adjudicator, initial, shown);
         record.attempts.push(...final.attempts);
+        if (final.status !== 'failed') o.cache.put({ key: finalKey, kind: 'adjudication', identity, outcome: { ...final, attempts: [] } });
       }
-      const failed = initial.status === 'failed' || final?.status === 'failed';
-      if (!failed) o.cache.put({ key, kind: 'adjudication', identity, outcome: { initial: { ...initial, attempts: [] }, final: final ? { ...final, attempts: [] } : null } });
     }
     const roles = o.judges.map((j) => j.config.role) as [JudgeRole, JudgeRole];
     record.adjudication = {
-      key,
+      initialKey,
+      key: finalKey,
       order: [roles[order[0]], roles[order[1]]],
       initial: gradeOf(initial),
       initialStatus: initial.status,
       final: final?.status === 'valid' ? final.value.grade : null,
       status: initial.status === 'valid' ? (final?.status ?? 'unjudgeable') : initial.status === 'uncovered' ? 'uncovered' : initial.status === 'failed' ? 'failed' : 'unjudgeable',
-      cached,
+      cached: initialCached && (final === null || finalCached),
     };
     if (initial.status === 'valid') record.verdicts.push({ role: 'adjudicator-initial', verdict: initial.verdict });
     if (initial.status === 'failed' || final?.status === 'failed') {
@@ -729,6 +825,7 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
       await adjudicate(r, record);
     } catch (err) {
       budgetStop(err);
+      // The blind step, when it was paid for, is cached: the next run decides from it.
       record.status = 'escalation-budget-exhausted';
       record.adjudication = null;
     }

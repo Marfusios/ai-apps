@@ -40,7 +40,8 @@ import {
   type PairPlanItem,
   type PairRecord,
 } from '../../evals/retrieval/narrative/judging.js';
-import { runJudging } from '../../evals/retrieval/narrative/commands.js';
+import { runJudging, scheduleInfo } from '../../evals/retrieval/narrative/commands.js';
+import { SCHEDULE, casePriority, tierOf } from '../../evals/retrieval/narrative/pool.js';
 import { relevanceRequest, type JudgeRequest } from '../../evals/retrieval/narrative/prompts.js';
 import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
 import { questionVersion, rubricVersion } from '../../evals/retrieval/narrative/spec.js';
@@ -249,7 +250,7 @@ function subject(over: Partial<FamilyRef> = {}) {
 
 function harness(opts: { allowance?: number; limit?: number; cache?: JudgmentCache } = {}) {
   const gate = createMemorySpendGate(opts.allowance ?? 20);
-  const sender = new AttemptSender({ gate, limitUsd: opts.limit ?? 5, spendLog: null, run: 'test' }, 5_000, async () => undefined);
+  const sender = new AttemptSender({ gate, limitUsd: opts.limit ?? 5, spendLog: null, allocation: null, run: 'test' }, 5_000, async () => undefined);
   return { gate, sender, cache: opts.cache ?? new JudgmentCache(null) };
 }
 
@@ -417,7 +418,19 @@ describe('the paid judging step', () => {
   const tmp = () => mkdtempSync(join(tmpdir(), 'narrative-judging-'));
   const items = (): PairPlanItem[] => [{ subject: subject(), priority: 0 }];
   const fakes = () => ({ judges: [createFakeJudge(HAIKU, reply([VERDICT.relevant])), createFakeJudge(LUNA, reply([VERDICT.relevant]))] as const, adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])) });
-  const opts = (outDir: string, over: Partial<Parameters<typeof runJudging>[1]> = {}) => ({ set: 'calibration' as const, confirm: false, limitUsd: 1, maxEscalationShare: 1, concurrency: 1, outDir, reference: 'model-judged', log: () => undefined, ...over });
+  const opts = (outDir: string, over: Partial<Parameters<typeof runJudging>[1]> = {}): Parameters<typeof runJudging>[1] => ({
+    set: 'calibration' as const,
+    confirm: false,
+    limitUsd: 1,
+    allocation: { name: 'track-n-test', capUsd: 1 },
+    maxEscalationShare: 1,
+    concurrency: 1,
+    outDir,
+    reference: 'model-judged',
+    schedule: scheduleInfo(items(), null),
+    log: () => undefined,
+    ...over,
+  });
 
   it('creates no client and no ledger connection without --confirm-cost', async () => {
     const touched: string[] = [];
@@ -445,7 +458,41 @@ describe('the paid judging step', () => {
     expect(body).toMatchObject({ stopped: null, reference: 'model-judged' });
     expect(body.records.map((r) => r.status)).toEqual(['agreed']);
     expect(gate.records).toHaveLength(2);
-    expect(readFileSync(join(dir, 'spend.jsonl'), 'utf8').trim().split('\n')).toHaveLength(2);
+    // The run's own spend log, and the allocation log (its header and the two attempts).
+    const runLogs = readdirSync(join(dir, 'spend'));
+    expect(runLogs).toHaveLength(1);
+    expect(readFileSync(join(dir, 'spend', runLogs[0] as string), 'utf8').trim().split('\n')).toHaveLength(2);
+    expect(readFileSync(join(dir, 'allocations', 'track-n-test.jsonl'), 'utf8').trim().split('\n')).toHaveLength(3);
+  });
+
+  it('refuses a paid run without an allocation, and an allocation whose cap would change', async () => {
+    const dir = tmp();
+    const deps = { callers: fakes, ledger: () => ({ gate: createMemorySpendGate(20), close: async () => undefined }) };
+    await expect(runJudging(items(), opts(dir, { confirm: true, allocation: null }), deps)).rejects.toThrow(/--allocation is required/);
+    await expect(runJudging(items(), opts(dir, { confirm: true, allocation: { name: 'track-n-test' } }), deps)).rejects.toThrow(/give its cap/);
+    expect(await runJudging(items(), opts(dir, { confirm: true }), deps)).toBe(0);
+    await expect(runJudging(items(), opts(dir, { confirm: true, allocation: { name: 'track-n-test', capUsd: 2 } }), deps)).rejects.toThrow(/cannot be changed/);
+    // An existing allocation is reused without restating its cap.
+    expect(await runJudging(items(), opts(dir, { confirm: true, allocation: { name: 'track-n-test' } }), deps)).toBe(0);
+  });
+
+  it("limits each run by its own spend and every run by its allocation's cap, never by earlier runs' logs", async () => {
+    const dir = tmp();
+    const deps = () => ({ callers: () => ({ judges: [createFakeJudge(HAIKU, () => VERDICT.relevant), createFakeJudge(LUNA, () => VERDICT.relevant)] as const, adjudicator: createFakeJudge(SONNET, () => VERDICT.relevant) }), ledger: () => ({ gate: createMemorySpendGate(20), close: async () => undefined }) });
+    const pairs = (tag: string) => [0, 1].map((i) => ({ subject: subject({ family: `${tag}-${i}`, questionVersion: `q-00000000000000${tag}${i}` }), priority: i }));
+    // A first run spends; a second run with a limit far below the first run's spend still runs.
+    expect(await runJudging(pairs('a'), opts(dir, { confirm: true, allocation: { name: 'month', capUsd: 1 } }), deps())).toBe(0);
+    const entries = readdirSync(join(dir, 'spend')).map((f) => readFileSync(join(dir, 'spend', f), 'utf8')).join('').trim().split('\n').map((l) => JSON.parse(l) as { chargedUsd: number; reservedUsd: number });
+    const spentFirst = entries.reduce((n, e) => n + e.chargedUsd, 0);
+    const reservedPerPair = (entries[0]?.reservedUsd ?? 0) + (entries[1]?.reservedUsd ?? 0);
+    // Room for this run's own two pairs, but less than the first run's spend plus one pair: a summed log would refuse it.
+    const limit = 2 * reservedPerPair;
+    expect(limit).toBeLessThan(spentFirst + 2 * reservedPerPair);
+    expect(await runJudging(pairs('b'), opts(dir, { confirm: true, limitUsd: limit, allocation: { name: 'month' } }), deps())).toBe(0);
+    // A new allocation with a cap below one attempt stops at once; the old one is untouched.
+    expect(await runJudging(pairs('c'), opts(dir, { confirm: true, allocation: { name: 'next-month', capUsd: 0.000001 } }), deps())).toBe(1);
+    const stoppedFile = readdirSync(dir).filter((f) => f.startsWith('narrative-judgments-')).sort().at(-1) as string;
+    expect((JSON.parse(readFileSync(join(dir, stoppedFile), 'utf8')) as { stopped: string }).stopped).toMatch(/allocation next-month/);
   });
 
   it('stops before the run limit and keeps what it has', async () => {
@@ -457,7 +504,74 @@ describe('the paid judging step', () => {
   });
 });
 
+describe('the frozen schedule', () => {
+  it('judges pairs in priority order, so a stopped run has judged the lowest priorities', async () => {
+    const priorities = [50_001, 10_000, 2, 40_000, 10_001, 1];
+    const items: PairPlanItem[] = priorities.map((priority, i) => ({ subject: subject({ family: `fam-${String.fromCharCode(97 + i)}`, questionVersion: `q-00000000000000${String(i).padStart(2, '0')}` }), priority }));
+    const probe = harness();
+    const one = (await judgePairs(items.slice(0, 1), { judges: [createFakeJudge(HAIKU, () => VERDICT.relevant), createFakeJudge(LUNA, () => VERDICT.relevant)], adjudicator: createFakeJudge(SONNET, () => VERDICT.relevant), sender: probe.sender, cache: new JudgmentCache(null), concurrency: 1 })).records[0] as PairRecord;
+    const charge = one.attempts.reduce((n, x) => n + x.chargedUsd, 0);
+    const reserve = one.attempts.reduce((n, x) => n + x.reservedUsd, 0);
+    // The third pair's reservations fit after two charged pairs, the fourth's do not after three.
+    const h = harness({ limit: 2.5 * charge + reserve });
+    const out = await judgePairs(items, { judges: [createFakeJudge(HAIKU, () => VERDICT.relevant), createFakeJudge(LUNA, () => VERDICT.relevant)], adjudicator: createFakeJudge(SONNET, () => VERDICT.relevant), sender: h.sender, cache: new JudgmentCache(null), concurrency: 1 });
+    expect(out.stopped).not.toBeNull();
+    const judged = new Set(out.records.map((r) => r.family));
+    // The three lowest priorities (1, 2, 10,000) are judged; 10,001, 40,000 and 50,001 wait.
+    expect([...judged].sort()).toEqual(['fam-b', 'fam-c', 'fam-f']);
+  });
+
+  it('gives every pool case its tier: delivered, first 20, bounded cohort, other method or related, lure or tail', () => {
+    const base = { ntsbNo: 'X', sources: ['method' as const], lureRank: null, delivered: false };
+    expect(tierOf(casePriority({ ...base, bestRank: { a: 3 }, delivered: true }, 'broad'))).toBe(0);
+    expect(tierOf(casePriority({ ...base, bestRank: { a: 15 } }, 'broad'))).toBe(1);
+    expect(tierOf(casePriority({ ...base, bestRank: { a: 60 } }, 'bounded-cohort'))).toBe(2);
+    expect(tierOf(casePriority({ ...base, sources: ['cohort'], bestRank: { a: null } }, 'bounded-cohort'))).toBe(2);
+    expect(tierOf(casePriority({ ...base, bestRank: { a: 60 } }, 'broad'))).toBe(3);
+    expect(tierOf(casePriority({ ...base, sources: ['related'], bestRank: { a: null } }, 'broad'))).toBe(3);
+    expect(tierOf(casePriority({ ...base, sources: ['hard-negative'], bestRank: { a: null }, lureRank: 4 }, 'broad'))).toBe(4);
+    expect(SCHEDULE.stages[1]).toBe(2);
+    expect(scheduleInfo([{ subject: subject(), priority: 3 }, { subject: subject({ family: 'g' }), priority: 20_005 }], 1)).toEqual({ version: SCHEDULE.version, stage: 1, tiers: { '0': 1, '2': 1 } });
+  });
+});
+
+describe('adjudication across a budget stop', () => {
+  it('keeps a paid blind grade: a stop before the decision leaves it cached, and the next run buys only the decision', async () => {
+    const cache = new JudgmentCache(null);
+    const judges = () => [createFakeJudge(HAIKU, () => VERDICT.relevant), createFakeJudge(LUNA, () => VERDICT.partial)] as const;
+    // Budget: the two judges and the blind step fit, the decision does not.
+    const probe = harness();
+    const full = (await judgePairs([{ subject: subject(), priority: 0 }], { judges: judges(), adjudicator: createFakeJudge(SONNET, () => VERDICT.relevant), sender: probe.sender, cache: new JudgmentCache(null), concurrency: 1, maxEscalationShare: 1 })).records[0] as PairRecord;
+    const chargedBeforeDecision = full.attempts.slice(0, 3).reduce((n, x) => n + x.chargedUsd, 0);
+    const decisionReserve = full.attempts[3]?.reservedUsd as number;
+    const h = harness({ limit: chargedBeforeDecision + decisionReserve - 1e-9 });
+    const adj1 = createFakeJudge(SONNET, () => VERDICT.relevant);
+    const out = await judgePairs([{ subject: subject(), priority: 0 }], { judges: judges(), adjudicator: adj1, sender: h.sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(out.stopped).not.toBeNull();
+    expect(adj1.calls).toHaveLength(1);
+    expect(out.records[0]).toMatchObject({ status: 'escalation-budget-exhausted', label: 'unknown' });
+    expect(h.gate.records.some((r) => r.purpose.includes('adjudicate-initial-adjudicator'))).toBe(true);
+    const adj2 = createFakeJudge(SONNET, () => VERDICT.relevant);
+    const again = await judgePairs([{ subject: subject(), priority: 0 }], { judges: judges(), adjudicator: adj2, sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(adj2.calls).toHaveLength(1);
+    expect(adj2.calls[0]?.blocks.map((b) => b.text).join('\n')).toContain('<initial>');
+    expect(again.records[0]).toMatchObject({ status: 'adjudicated', label: 2 });
+  });
+});
+
 describe('the attempt sender', () => {
+  it('keeps a paid output when the ledger cannot settle it, and stops the run before the next attempt', async () => {
+    const base = createMemorySpendGate(20);
+    const gate = { ...base, settle: async () => Promise.reject(new Error('connection reset')) };
+    const sender = new AttemptSender({ gate, limitUsd: 5, spendLog: null, allocation: null, run: 't' }, 5_000, async () => undefined);
+    const judge = createFakeJudge(HAIKU, () => VERDICT.relevant);
+    const req = relevanceRequest(q, evidence());
+    await expect(sender.send(judge, req)).resolves.toMatchObject({ record: { status: 'ok' } });
+    expect(sender.spentUsd).toBeGreaterThan(0);
+    await expect(sender.send(judge, req)).rejects.toBeInstanceOf(FatalJudgeError);
+    expect(judge.calls).toHaveLength(1);
+  });
+
   it('counts reservations in flight against the run limit, so concurrent attempts cannot overshoot it', async () => {
     const gate = createMemorySpendGate(20);
     let release: () => void = () => undefined;
@@ -471,7 +585,7 @@ describe('the attempt sender', () => {
     } };
     const req = relevanceRequest(q, evidence());
     const one = attemptReserveUsd(HAIKU, await caller.inputTokens(req, 5_000));
-    const sender = new AttemptSender({ gate, limitUsd: one * 1.5, spendLog: null, run: 't' }, 5_000, async () => undefined);
+    const sender = new AttemptSender({ gate, limitUsd: one * 1.5, spendLog: null, allocation: null, run: 't' }, 5_000, async () => undefined);
     // Both start in the same turn: the second must see the first's open reservation.
     const first = sender.send(caller, req);
     const second = sender.send(caller, req);

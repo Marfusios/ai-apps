@@ -106,10 +106,10 @@ describe('the pool rule', () => {
   it('orders escalations: delivered, then the first 20, then bounded cohorts, then the rest; bundle pairs are distinct', () => {
     const base = { ntsbNo: 'X', sources: ['method' as const], lureRank: null, delivered: false };
     expect(casePriority({ ...base, bestRank: { a: 3 }, delivered: true }, 'broad')).toBe(3);
-    expect(casePriority({ ...base, bestRank: { a: 15 } }, 'broad')).toBe(115);
-    expect(casePriority({ ...base, bestRank: { a: 60 } }, 'bounded-cohort')).toBe(260);
-    expect(casePriority({ ...base, bestRank: { a: 60 } }, 'broad')).toBe(1060);
-    expect(casePriority({ ...base, sources: ['hard-negative'], bestRank: { a: null }, lureRank: 4 }, 'broad')).toBe(5004);
+    expect(casePriority({ ...base, bestRank: { a: 15 } }, 'broad')).toBe(10_015);
+    expect(casePriority({ ...base, bestRank: { a: 60 } }, 'bounded-cohort')).toBe(20_060);
+    expect(casePriority({ ...base, bestRank: { a: 60 } }, 'broad')).toBe(30_060);
+    expect(casePriority({ ...base, sources: ['hard-negative'], bestRank: { a: null }, lureRank: 4 }, 'broad')).toBe(40_004);
     const p = assemblePool({ family: item(), members: [item()], runs: [...runs, run('c200+n-kt', 2, COHORT.slice(0, 5))], cohort: COHORT, lure: [], rule: RULE as never });
     const pairs = bundlePairs(p);
     expect(pairs.map((x) => x.ntsbNo)).toEqual(['C000XX', 'C001XX', 'C003XX', 'C004XX']);
@@ -197,8 +197,8 @@ describe('agreement and calibration figures', () => {
     rubricVersion: 'r',
     fingerprint: 'f',
     judges: [
-      { role: 'judge-a', provider: 'anthropic', model: 'm', key: 'k', status: a === null ? 'unjudgeable' : 'valid', grade: a, reason: null, absent: null, cached: false },
-      { role: 'judge-b', provider: 'openai', model: 'm', key: 'k', status: b === null ? 'unjudgeable' : 'valid', grade: b, reason: null, absent: null, cached: false },
+      { role: 'judge-a', provider: 'anthropic', model: 'm', key: 'k', outcome: `a${a}`, status: a === null ? 'unjudgeable' : 'valid', grade: a, reason: null, absent: null, cached: false },
+      { role: 'judge-b', provider: 'openai', model: 'm', key: 'k', outcome: `b${b}`, status: b === null ? 'unjudgeable' : 'valid', grade: b, reason: null, absent: null, cached: false },
     ],
     adjudication,
     label,
@@ -206,7 +206,7 @@ describe('agreement and calibration figures', () => {
     attempts: [],
     verdicts: [],
   });
-  const adj = (initial: 0 | 1 | 2, final: 0 | 1 | 2 | 'abstain'): PairRecord['adjudication'] => ({ key: 'k', order: ['judge-a', 'judge-b'], initial, initialStatus: 'valid', final, status: 'valid', cached: false });
+  const adj = (initial: 0 | 1 | 2, final: 0 | 1 | 2 | 'abstain'): PairRecord['adjudication'] => ({ initialKey: 'ki', key: 'k', order: ['judge-a', 'judge-b'], initial, initialStatus: 'valid', final, status: 'valid', cached: false });
   const records = [
     record('f1', 'A', 2, 2, 2, 'agreed'),
     record('f1', 'B', 0, 0, 0, 'agreed'),

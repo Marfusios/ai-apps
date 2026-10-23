@@ -195,18 +195,38 @@ export const poolFileVersion = (p: Omit<PoolFile, 'version'>): string =>
 // Priorities and pairs
 
 /**
- * A pool case's escalation priority (lower first): delivered in some bundle, then in some
- * method's first 20, then bounded-cohort cases (needed for an exhaustive Recall@20), then
- * by best rank; lure and tail cases last.
+ * The frozen judging schedule (`SCHEDULE`): every pair of a pool gets a priority, lower
+ * first, from its tier and its rank within the tier, and pairs are judged and escalated
+ * in that order (`judgePairs`). The tiers:
+ *
+ * 0. delivered in some run's bundle (rank: the best case rank among the bundles);
+ * 1. in some method's first 20 unique cases;
+ * 2. a bounded-cohort case (the cohort is judged completely for Recall@20);
+ * 3. another method case (ranks 21 to 100) or a related coded positive;
+ * 4. a lure (hard-negative) or tail case (rank: its lure rank).
+ *
+ * A stage judges a prefix of the tiers (`--stage`): stage 1 is tiers 0 to 2 (every
+ * bounded-cohort case and the broad questions' delivered and first-20 cases, the pairs
+ * the strict P@6, nDCG@6 and Recall@20 values rest on), stage 2 is every tier. A stage's
+ * run finishes its own escalations; a later stage reuses the earlier stage's judgments
+ * from the cache.
  */
+export const SCHEDULE = Object.freeze({
+  version: 'track-n-schedule-v1',
+  tierWidth: 10_000,
+  /** The last tier each stage includes. */
+  stages: Object.freeze({ 1: 2, 2: 4 } as const),
+});
+export type Stage = keyof typeof SCHEDULE.stages;
+
+export const tierOf = (priority: number): number => Math.floor(priority / SCHEDULE.tierWidth);
+
+/** A pool case's priority in the frozen schedule (module comment of `SCHEDULE`). */
 export function casePriority(c: PoolCase, type: FamilyPool['type']): number {
   const ranks = Object.values(c.bestRank).filter((r): r is number => r !== null);
-  const best = ranks.length > 0 ? Math.min(...ranks) : 1_000;
-  if (c.delivered) return best;
-  if (best <= 20) return 100 + best;
-  if (type === 'bounded-cohort') return 200 + best;
-  if (c.sources.includes('method') || c.sources.includes('related')) return 1_000 + best;
-  return 5_000 + (c.lureRank ?? 500);
+  const best = ranks.length > 0 ? Math.min(...ranks) : 999;
+  const tier = c.delivered ? 0 : best <= 20 ? 1 : type === 'bounded-cohort' ? 2 : c.sources.includes('method') || c.sources.includes('related') ? 3 : 4;
+  return tier * SCHEDULE.tierWidth + (tier === 4 ? Math.min(c.lureRank ?? 999, 9_999) : best);
 }
 
 /** Every distinct delivered bundle case of a family (answerability pairs), with the runs that delivered it. */
