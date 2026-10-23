@@ -165,8 +165,8 @@ still cover it. Task 16d keeps the same record, under the same controls, for an 
 shown with claims removed by the display projection (reason `partial_display`), so the
 raw verdicts behind a partial display can be read.
 
-**Claim-level display** (Task 16d, `display-deps-v1`; off in production until gate G6
-clears it, `AI_PARTIAL_DISPLAY`). A claim the evidence check did not confirm, and
+**Claim-level display** (Task 16d, `display-deps-v2` since Task 16e; off in production
+until gate G6 clears it, `AI_PARTIAL_DISPLAY`). A claim the evidence check did not confirm, and
 everything that depends on it, is removed by one pure function (server/briefs/display.ts)
 before any response is built: the step result, the stored dimensions the case context
 reads, and the inputs of a refinement are rendered from the projection's outcome, so
@@ -175,7 +175,12 @@ sentences and whole fields; nothing is spliced or reworded, and a removed summar
 leaves only a count marker. A criterion decision is never recomputed after a removal, so
 it can only be downgraded to unconfirmed. The integration tests check every route surface
 for removed text (tests/integration/briefs.test.ts, "claim-level display"). Diagnostics
-keep the raw verdicts server-side only, as above.
+keep the raw verdicts server-side only, as above. Task 16e adds two deterministic rules
+before the check (`excerpt-context-v1`, `ordinal-evidence-v2`): a claim they abstain from
+is projected out like a rejected one, on every surface (tests "excerpt-context-v1 end to
+end" and "ordinal-evidence-v2 end to end"), and the step keeps only its key, rule and
+content-free problem codes (`meta.staticRules`). The new page and drawer copy for removals
+(UI_DESIGN §4.3) is fixed templates and counts, never model text.
 
 ## Required implementation review before launch
 

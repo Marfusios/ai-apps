@@ -692,35 +692,59 @@ pnpm eval:retrieval:adoption load --scope-samples <file> --vectors <file from de
 
 ### Checker calibration
 
-`evals/checker/` calibrates the evidence checker (Tasks 16c and 16d, gate G6): which model,
-thinking and prompt judge claims well enough to show a summary, and, since Task 16d, what
-the display projection would show with that judgement. Every check input is rendered by
-the production code from real retrieval bundles, so the checker reads what it reads in a
-brief.
+`evals/checker/` calibrates the evidence checker (Tasks 16c, 16d and 16e, gate G6): which
+model, thinking, effort and prompt judge claims well enough to show a summary, and, since
+Task 16d, what the display projection would show with that judgement. Every check input is
+rendered by the production code from real retrieval bundles, so the checker reads what it
+reads in a brief.
 
 ```sh
-pnpm eval:checker retrieve --questions 16d    # plan only; --confirm-cost embeds the 17 Task 16d questions and writes evidence-16d.json
-pnpm eval:checker headers                     # free: the case header of every calibration case (read-only), into evidence-16d.json
-pnpm eval:checker build                       # evidence + items → dataset.v2.json (labels hashed per split); --check compares instead
-pnpm eval:checker simulate                    # free: the 16c recordings through the display projection → results/16d-simulation.json
-pnpm eval:checker inventory --candidate haiku-think-v8 --split dev   # free: provider token counts, expected and worst-case cost
-pnpm eval:checker run --candidate haiku-think-v8 --split dev --confirm-cost   # paid, on the evaluation ledger
-pnpm eval:checker select data/work/checker/dev-*.summary.json        # the frozen selection rule → selection.v2.json
+pnpm eval:checker retrieve --questions 16e    # plan only; --confirm-cost embeds the 16 Task 16e questions and writes evidence-16e.json (retrieval.v2 only, with channel ranks)
+pnpm eval:checker headers                     # free: the case header of every 16c and 16d calibration case (read-only), into evidence-16d.json
+pnpm eval:checker build                       # evidence + items → dataset.v3.json (labels hashed per split, frozen hashes checked); --check compares instead
+pnpm eval:checker simulate --write            # free: the 16c and 16d recordings through the current projection → results/16e-simulation.json
+pnpm eval:checker excerpts --write            # free: the excerpt-context rule on its labelled corpora → results/16e-excerpts.json
+pnpm eval:checker inventory --candidate haiku-think-v9-low --split dev   # free: provider token counts, expected and worst-case cost
+pnpm eval:checker run --candidate haiku-think-v9-low --split dev --concurrency 3 --confirm-cost   # paid, charged to allocation checker-16e-2026-10
+pnpm eval:checker select data/work/checker16e/dev-*.summary.json     # the frozen selection rule → selection.v3.json
 ```
 
 All take `--env-files a,b` and `--keys-file <file>` (only `ANTHROPIC_API_KEY` and
 `OPENAI_API_KEY` are read from it, never over a nonempty process value). A run is bound
-to a manifest (`manifest.ts`: the candidate's complete configuration, the dataset and
-label hashes and the planned slots), reserves each call's worst case on the evaluation
-ledger (`DATABASE_INGEST_URL`), settles it, appends it to
-`data/work/checker/spend-16d.jsonl`, and stops before a call that would take the logged
-total above `BUDGET_V2_USD` ($1.50); `--resume <manifest>` continues only an identical
-run. The candidates run the production adapter with the production caps, call timeout
-and maximum claim count (a call that runs out of time is a failed call, as in
-production). The held-out split runs once, for the candidate frozen in
-`selection.v2.json`, and a unit test holds production to that selection.
+to a manifest (`manifest.ts`: the candidate's complete configuration, the frozen rule
+versions, the protocol file's sha256, the dataset and label hashes and the planned
+slots), reserves each call's worst case on the evaluation ledger (`DATABASE_INGEST_URL`),
+settles it and charges it to the allocation `checker-16e-2026-10` (its log and lock under
+`data/work/checker16e/`, one run at a time); a call whose reservation would take the
+allocation over $2.50, or the ledger's evaluation allowance below the $12 protected for
+another track's allocation, is not sent. `--resume <manifest>` continues only an identical
+run. The candidates run the production adapter with the production prompt, schema, caps
+and maximum claim count at their own effort; each call's transport timeout (90 s)
+measures the latency past the production check timeout, and every figure counts a call
+over that timeout as a failed call, as production would. The held-out split runs once,
+for the candidate frozen in `selection.v3.json`, and a unit test holds production to
+that selection. The 16d runner (`run.ts`, protocol v2) stays as the record.
 
-- **Protocol** (`protocol.v2.ts`, committed before any paid 16d call): the complete
+- **Protocol v3.1** (`protocol.v3.ts`, Task 16e, committed before any paid 16e call and
+  before the 16e held-out set existed; amended once, before any paid call, when authoring
+  the held-out set showed the ordinal rule reading "had not flown in 22 years" as a
+  count): two candidates, `check.v9` at effort `low` and at effort `medium`; the frozen
+  rule versions (`quote-ws-v2`, `excerpt-context-v1`, `ordinal-evidence-v2`,
+  `chronology-rules-v3`, `display-deps-v2`, `check-judgement-v2`, `checker-metrics-v3`,
+  `checker-labels-v3`); the trials per batch; the targets with M4 in the eligibility; the
+  selection code; the derivation of the production check timeout from the measured
+  latency (1.25 × the slowest development call, 30 to 45 s); the held-out rules and the
+  money.
+- **Dataset v3** (`dataset.v3.json`; `dataset.json` and `dataset.v2.json` stay frozen):
+  every 16c and 16d item is development now (the 16d held-out pilot included), with labels
+  v3 (labels v2 and the errata overlay `checker-errata-v1` in `labels.v3.ts`, each
+  correction with its source and reason; disputed labels flagged for sensitivity figures).
+  The held-out split is new (`items/v3-holdout.ts`, `evidence-16e.json`): the first nine
+  `retrieval.v2` bundles of the 16e questions with no case of an earlier split, each with
+  a brief as compose.v8 would write it, one-error and two mixed-error variants, reading
+  variants and a claim batch (92 batches, 105 trials); its label hash, the development
+  label hash and the evidence hash are frozen in the builder.
+- **Protocol v2** (`protocol.v2.ts`, committed before any paid 16d call): the complete
   candidate definitions (model, thinking, effort, prompt and its hash, output schema and
   its hash, caps, timeout, maximum claims), the trials per batch, the targets and the
   selection code. `protocol.ts` and `v1.ts` keep 16c's protocol and selection as the
@@ -1047,7 +1071,7 @@ reset `aviation_test`'s corpus, so do not run them at the same time.
 `server/ai/` holds the provider interface (`provider.ts`) that the scope, compose
 and check stages call, the Anthropic adapter (`anthropic.ts`), a deterministic fake
 for tests (`fake.ts`, allowed only with `NODE_ENV=test`) and versioned prompts
-(`prompts/scope.v2.ts`, `compose.v7.ts`, `check.v8.ts`; `check.v7.ts` stays as the checker calibration's round-1 candidate; earlier versions are in the git
+(`prompts/scope.v2.ts`, `compose.v8.ts`, `check.v9.ts`; `check.v7.ts` and `check.v8.ts` stay as the record of the 16d calibration's candidates; earlier versions are in the git
 history, each file's header says what changed). The scope stage
 returns the intent, validated filters, a `keywordText` query for the keyword channel
 and at most one ambiguity as allowlisted tokens. Each stage validates its bounded input, sends the question and
@@ -1291,7 +1315,7 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    relation, `zero_interval` for a zero number of days or hours) cites its own passages,
    with one decimal place for hours and whole days; every NTSB-number-shaped token in
    generated text must be allowlisted). Then the reader's criteria in code
-   (`criteria.ts`, the timing rules `chronology-rules-v2`, DESIGN §3: only facts from the
+   (`criteria.ts`, the timing rules `chronology-rules-v3`, DESIGN §3: only facts from the
    relevant maintenance decide, one aircraft at a time; facts that cannot hold together
    decide nothing, checked before any decision; "the day before" and "immediately
    before" are calendar dates, never hours; operating hours never decide flight hours; the
@@ -1299,7 +1323,10 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    decides nothing; a presented case outside the criteria withholds the summary). Every
    decision is then a server-template claim, including "under the timing rules, the
    supplied passages of this case do not settle whether…", so a fact the composition
-   left out settles nothing. The check stage (`check.v8`, 45 s, at most 60 claims;
+   left out settles nothing. Before the check, two deterministic rules decide what can
+   never be shown (DESIGN §3): `excerpt-context-v1` omits a quote whose words depend on
+   text outside it, and `ordinal-evidence-v2` keeps a flight ordinal only on explicit
+   evidence; what they abstain from is still checked. The check stage (`check.v9`, 45 s, at most 60 claims;
    Haiku 5.5 with adaptive thinking, the configuration the checker calibration froze,
    below) reads a server-built header per case (aircraft, place, date) and gives every
    claim, by its server-issued id, exactly one verdict (`supported`, `contradicted` or
@@ -1307,13 +1334,14 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    (`verdicts.ts`): a claim is confirmed only by a valid `supported` verdict naming
    passages it cites (none for an absence claim, which cites every passage of its case);
    a missing, duplicate or unknown id, an invalid passage or quote, or a failed call
-   withholds everything, and a contradicted "do not settle" claim is recorded as
+   withholds everything (support named from an uncited passage of the case rejects that
+   claim only), and a contradicted "do not settle" claim is recorded as
    `chronology_missed`. What is shown is then decided by the display projection
-   (`display.ts`, `display-deps-v1`, DESIGN §5): with `AI_PARTIAL_DISPLAY` unset (the
-   default until gate G6 clears partial display), any claim the check did not confirm
-   withholds the summary, as before; with it set, only the unconfirmed claims and what
-   depends on them are removed, whole sentences only, and the step says it was partially
-   checked. A check input over its cap withholds too (recorded in the step's `meta`, the
+   (`display.ts`, `display-deps-v2`, DESIGN §5): with `AI_PARTIAL_DISPLAY` unset (the
+   default until gate G6 clears partial display), any claim the check did not confirm or
+   a rule abstained from withholds the summary, as before; with it set, only those claims
+   and what depends on them are removed, whole sentences only, and the step says how many
+   statements were removed ("Evidence check completed · 2 statements removed"). A check input over its cap withholds too (recorded in the step's `meta`, the
    evidence never cut to fit). A case whose passages do not settle a criterion is shown
    labelled unconfirmed, on its card and its summary citations: this analysis could not
    establish it from the supplied passages. There is no repair loop.

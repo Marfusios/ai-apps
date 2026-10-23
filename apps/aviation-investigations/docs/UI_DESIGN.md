@@ -597,6 +597,29 @@ are the 6 cases it found, with their NTSB text. You can still open, compare and
 print them." The cases follow as plain cards with no AI lines. This counts as a
 search.
 
+**What the evidence check removed** (Task 16e, Proposed: every string below awaits
+owner review). The server's display projection (DESIGN §3, claim-level display) decides
+what is shown; the page renders its states and never drops a case it counts. All of it
+is server data or fixed templates, never model text.
+
+| Where | Copy |
+| --- | --- |
+| Checklist row "Verify every quote", result | "COMPLETED · 2 STATEMENTS REMOVED" ("1 STATEMENT", "0 STATEMENTS"), "COMPLETED" for a result stored before the count existed, "NOTHING TO CHECK" for an abstention with nothing of its own to check; spoken "Evidence check completed: 2 statements removed." |
+| Under the summary | "Evidence check completed · 2 statements removed" (replaces the universal "PARTLY CHECKED") |
+| A removed run of summary sentences | "[one statement not shown: the check could not confirm it]" (Task 16d) |
+| Cases kept without a confirmed classification (mechanical grouping) | A section "Not classified" after the groups: "The evidence check could not confirm a classification for these cases." |
+| The same for examples | "Not confirmed": "The evidence check could not confirm an AI reading of these cases." |
+| Card without its AI reading | Tag "AI reading not shown": "The check could not confirm this case’s AI reading against the cited passages. Its NTSB text is below." |
+| Card with fields removed | Tag "Not verified": "The check could not confirm the timing and a quote against the cited passages, so they are not shown." (the fields named from: why it matched, the classification, the maintenance relation, the symptom, the timing, a quote, your criteria) |
+| Card with quotes the excerpt rule left out | "One quote left out: it needs the report’s surrounding text to keep its meaning." / "2 quotes left out: they need the report’s surrounding text to keep their meaning." |
+| Drawer, case without its reading | Line READING: "AI reading not shown: the check could not confirm it against the cited passages" |
+| Drawer, quotes left out | Line QUOTES: "One quote left out: it needs the report’s surrounding text to keep its meaning" |
+| Drawer, a removed field (Task 16d) | "Not verified: the check could not confirm this against the cited passages" |
+| Compare strip | "AI reading not shown: the check could not confirm it"; "Timing not verified by the check"; "Classification not verified by the check" |
+
+Print keeps every marker, note and unclassified case (nothing above is
+`data-print="hide"`).
+
 ### 4.4 While the AI works: "Checklist" (Owner)
 
 The question and chips stay on top. Below them is a challenge-and-response

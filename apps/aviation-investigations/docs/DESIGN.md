@@ -136,7 +136,7 @@ time in service, plain "hours") are their own relation, `operating_hours`, never
 hours. The attribution (one aircraft, or the whole event) is never written by the model:
 the server derives it from the cited passages' verified scope. A fact no passage states
 is left out, and leaving one out never makes a case match. The reader's criteria are
-decided in code by the versioned timing rules **`chronology-rules-v2`**
+decided in code by the versioned timing rules **`chronology-rules-v3`**
 (server/briefs/criteria.ts; the check prompt states the same rules). Each fact is read as
 a constraint on one quantity (calendar days, flight hours, operating hours, completed
 flights):
@@ -145,7 +145,9 @@ flights):
   decides anything; a bound worked out from a time measured from something else decides
   nothing. In an event with more than one aircraft, only a fact cited from one aircraft's
   passages counts, facts about different aircraft are never compared or combined, and
-  facts naming more than one aircraft decide nothing.
+  facts naming more than one aircraft decide nothing. Since version 3 a fact about the
+  whole event still takes part in the conflict test with one aircraft's fact: "2 days" for
+  one airplane and "40 days" for the event leave the days unsettled (16d review m1).
 - **Conflicts first.** Before any decision, all the facts on one quantity (one anchor,
   one aircraft, one unit) must hold together: their ranges must overlap, or the quantity
   decides nothing whatever the window ("exact 20 days" and "at least 40 days" conflict
@@ -166,15 +168,21 @@ flights):
 - **Which flight** (the first flight, or zero completed flights in between) decides only
   the first-flight criterion, and calendar days or flight hours never decide which flight
   it was. The first flight alone never establishes a calendar-day or flight-hour window.
+  Since version 3 an ordinal or a count of flights decides only with explicit evidence in
+  the passages it cites (rule O-1, `ordinal-evidence-v2`, below): a narrated sequence ("the
+  first flight …, the second flight …, the accident flight was conducted 2 days later")
+  does not make the accident flight the third. Without that evidence the fact can still
+  conflict with another, never settle one, and its timing statement is never shown.
 - A window matches when either unit is within; it fails only when every unit it names is
   outside; a conflict on a quantity it reads decides nothing. Anything else is `unknown`,
   with a content-free reason (`unstated`, `other_anchor`, `ambiguous_attribution`,
-  `approximate`, `insufficient_bound`, `not_settling`, `operating_hours`, `conflict`).
+  `approximate`, `insufficient_bound`, `not_settling`, `operating_hours`, `conflict`,
+  `ordinal_unverified`).
 
 Version 1 (Task 16c) compared facts only after reducing each to within, outside or
 unknown, so an approximate or bounded fact that conflicted with the deciding one went
 unnoticed (16c review I3); version 2 also adds the one-aircraft rule, operating hours and
-the zero-interval refusal.
+the zero-interval refusal; version 3 (Task 16e) the event-level conflict and rule O-1.
 
 A case whose passages do not settle a criterion is shown labelled unconfirmed, never as a
 match; the copy says this analysis could not establish the timing from the supplied
@@ -187,12 +195,45 @@ its own claim and the facts it rests on are confirmed; the display never recompu
 so a removal can only downgrade it to unconfirmed (claim-level display, below). There is
 no repair call.
 
-**Claim-level display** (Task 16d, versioned dependency rules **`display-deps-v1`**,
-server/briefs/display.ts). After the evidence check (§5), one pure function decides what may be
-shown, from dependencies the server derives from the composition's structure and never from the
-model. A claim is shown only with exactly one valid `supported` verdict, and only while
-everything it depends on is shown; removal is of whole sentences and whole fields, never
-spliced or reworded.
+**Deterministic rules before the check** (Task 16e, gate G6's 16d verdict, findings 1 and
+2). Two versioned rules run in code on the validated composition and the canonical passage
+texts and decide, whatever any model says, what can never be shown. A claim they abstain
+from is still sent to the evidence checker (its verdict counts, a contradiction included),
+and is never shown; in `whole` mode an abstention withholds the summary like any removal.
+
+- **Excerpt context, `excerpt-context-v1`** (server/briefs/excerpts.ts, in the validator):
+  a quote is shown only when its words keep their meaning read alone in a card. It is
+  omitted when it is not whole sentences of its passage (a pilot's or witness's account may
+  leave out "the pilot reported that"), opens with a pointing word or connective ("This
+  deformation", "He", "However"), keeps a pronoun with no person named, a demonstrative
+  ("this work", "these repairs", "at that time") whose noun it does not name, a relative
+  time without its anchor ("approximately 29 hours earlier", "the previous day"), a
+  relative sequence ("the next flight", "then"), or a comparison without its object ("the
+  same mechanic", "similar debris"). Version 1 supplies no surrounding context: nothing
+  can prove that added words hold the antecedent, so such an excerpt is omitted, and the
+  card says how many quotes were left out. Measured on a blind sample of 200 sentences of
+  the 16e evidence, labelled before the frozen rule ran on them: 7 of 166 standalone
+  sentences omitted (4.2%, Wilson 95% 2.1–8.4%), 18 of 34 context-dependent ones caught; the
+  misses (quoted handbook words, unnamed test settings, "the valve" among many) are left to
+  the checker. On the development sample the rule was revised against, 1 of 164 and 25 of
+  36.
+- **Ordinal evidence, `ordinal-evidence-v2`** (server/briefs/ordinals.ts): which flight it
+  was needs an ordinal the cited passages state for a flight ("the first flight after the
+  annual inspection", "the accident flight was the first following …") or a complete count
+  stated with what it counts from ("had not flown since", "two flights since the overhaul",
+  maintenance completed "immediately before the flight"). A timing fact, summary sentence,
+  `why` line or gap note stating an ordinal without it is never shown (an ordinal in a
+  "whether" clause is asked, not stated). The rule is a necessary condition only: it does
+  not check what the ordinal is counted from, which the checker judges. Version 2 (before
+  any paid 16e call) stopped reading "had not flown in 22 years" or "the previous two
+  flights" as counts.
+
+**Claim-level display** (Task 16d, versioned dependency rules **`display-deps-v2`** since Task
+16e, server/briefs/display.ts). After the evidence check (§5), one pure function decides what may
+be shown, from dependencies the server derives from the composition's structure and never from
+the model. A claim is shown only with exactly one valid `supported` verdict, no abstention by
+the rules above, and only while everything it depends on is shown; removal is of whole
+sentences and whole fields, never spliced or reworded.
 
 - **Reading.** A presented case's AI reading needs a confirmed `why` line, at least one
   confirmed quote and no contradicted criterion claim (a contradicted decision has no
@@ -205,14 +246,21 @@ spliced or reworded.
   essential.
 - **Group.** A case keeps its group only with its reading, its basis and (mechanical grouping)
   its confirmed classification; otherwise it is shown unclassified, never in another group.
+  A classification also depends on the case's basis (v2).
 - **Criteria.** A decision is shown as decided only when its own claim is confirmed and the
   facts it reads are shown (every timing fact for the timing window and the first flight; the
   symptom for a failure type); otherwise it is shown unconfirmed and marked not verified.
-  Decisions are never recomputed, so a removal only ever downgrades one.
+  Decisions are never recomputed, so a removal only ever downgrades one. Timing facts that
+  conflict with each other are shown together or not at all (v2): "2 days" is never left
+  standing once the "40 days" beside it is removed.
 - **Summary sentences.** A sentence depends on the reading and basis of every case it cites,
-  and on every earlier sentence when it refers outside itself (a conservative lexicon:
-  "this", "these", "such", "also", "however", a sentence opening with "it", "they", "then" and
-  similar). A case's own sentences stand or fall together. A comparison citing two or more
+  and, when it refers outside itself anywhere (v2, 16d review I1: comparatives and anaphora such
+  as "similar", "again", "comparable", "too", "also", "another", "both", "the same", "the second
+  case", "earlier", "remaining", "this", "these", "however", a leading "it" or "they"), on every
+  other sentence and every case those sentences present; a sentence that counts or contrasts
+  the presented cases ("in both cases", "all three") depends on every presented case's reading
+  and basis. When in doubt, the sentence is removed with its antecedent. A case's own sentences
+  stand or fall together. A comparison citing two or more
   cases also depends on every statement and group placement of those cases, on their own
   sentences and on other comparisons sharing a case; removing a comparison never removes a
   case's own sentences. Gap notes depend on nothing else.
@@ -224,8 +272,13 @@ spliced or reworded.
   summary is never shown.
 - **Copy.** A removed run of sentences leaves a count marker; a removed field or decision is
   marked as not verified ("the check could not confirm this against the cited passages"),
-  never as evidence the NTSB record lacks. The result is "partially checked", with counts by
-  kind, never a blanket "passed".
+  never as evidence the NTSB record lacks. The checklist states the count, never a blanket
+  status: "Evidence check completed · 2 statements removed" (Task 16e; "PARTLY CHECKED" is
+  gone). Every case the result counts is on the sheet: one the projection keeps without a
+  confirmed classification is listed under "Not classified" (or "Not confirmed" for
+  examples), one without its reading says "AI reading not shown", and its drawer, the print
+  view and Compare carry the same markers (UI_DESIGN §4.3, "What the evidence check
+  removed").
 
 The [data assessment](DATA_REVIEW.md) gives four real seed cases. DFW08TA066
 supports a maintenance-related causal fault; DEN08LA103 an undetermined cause
@@ -434,13 +487,16 @@ The online pipeline is fixed:
    also carries a server-built header per case (aircraft, place and date from the coded
    record, since `check.v7`): a claim may name a case by it, and it supports nothing else. Code
    decides the outcome (server/briefs/verdicts.ts, server/briefs/display.ts): a missing,
-   duplicate or unknown id, a verdict naming passages outside the claim's cases (or, for
-   `supported`, outside its own citations), an unverifiable quote, and a failed,
-   truncated or malformed response withhold everything generated. A claim is confirmed
+   duplicate or unknown id, a verdict naming passages outside the claim's cases, a
+   `supported` verdict naming no passage for a claim that is not an absence, an
+   unverifiable quote, and a failed, truncated or malformed response withhold everything
+   generated; since `check-judgement-v2` (Task 16e) a `supported` verdict naming a passage
+   of the case that the claim does not cite makes only that claim not established
+   (`supported_outside_citations`). A claim is confirmed
    only by exactly one valid `supported` verdict; an absence claim ("none of the supplied
    passages mentions maintenance"), which cites every passage of its case, needs
    `supported` too. What is shown is decided by one pure function, the **display
-   projection** (`display-deps-v1`, Task 16d; the rules in §3), from dependencies the server derives from
+   projection** (`display-deps-v2`, Tasks 16d and 16e; the rules in §3), from dependencies the server derives from
    the composition's structure, never from the model: a case's reading needs its
    confirmed why line and at least one confirmed quote and no contradicted criterion; a
    contradicted essential claim of a case (why, classification, maintenance, timing,
@@ -449,7 +505,10 @@ The online pipeline is fixed:
    decided only while its claim and the facts it rests on are confirmed (never
    recomputed, so it can only be downgraded to unconfirmed); a case's own sentences stand
    or fall together, a comparison depends on everything about the cases it cites, and a
-   sentence that refers outside itself depends on the sentences before it. Whole
+   sentence that refers outside itself anywhere depends on the other sentences and the
+   cases they present; conflicting timing facts are shown together or not at all; and
+   what the deterministic rules abstain from (an excerpt that loses its context, a flight
+   ordinal no passage states; §3) is never shown. Whole
    sentences only: nothing is spliced or reworded. More than a third of the summary's
    sentences removed, two or more contradictions, or no shown sentence and case reading
    withhold the whole output (pre-registered usability defaults, not safety guarantees).
@@ -763,8 +822,8 @@ free) on 2026-10-22 against real shared-dev passages; `claude-haiku-5-5` and
 tokens of the same NTSB text (median 1.59, 90th percentile 1.68, maximum 1.89 over
 100 passages; 1.62 over a 12-passage bundle), and a structured-output schema costs
 about 2.5× its JSON size. Each stage's fixed request (system prompt and schema) is
-3,204 tokens for scope, 5,411 for the answer and 4,649 for the check (the `compose.v7`
-and `check.v8` prompts, measured by the preflight on 2026-10-23). A typical request,
+3,204 tokens for scope, 5,673 for the answer and 4,684 for the check (the `compose.v8`
+and `check.v9` prompts, measured by the preflight on 2026-10-23, Task 16e). A typical request,
 estimated from those sizes and, for the check, from the calibration's settled usage
 (about 30 claims; Haiku thinks adaptively):
 
@@ -793,8 +852,8 @@ synthetic worst cases of `pnpm worker ai-preflight`):
 | Stage | Input | Output | Largest measured request |
 | --- | --- | --- | --- |
 | Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
-| Answer | 28,000 | 11,000, including thinking | fixed 5,411 (`compose.v7`); a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,951 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,600, and the measured stress cases fit without re-packing; output at its schema bounds (six cases, each with four chronology facts naming their anchors) 8,000 plus 1,500 for thinking |
-| Check | 40,000 | 24,500, including thinking | fixed 4,649 (`check.v8`); a full bundle's complete evidence with 60 claims (`MAX_CHECK_CLAIMS`) 26,934; the visible output at its schema bounds (a verdict for each of 60 claims, each naming 12 passages, and eight 1,000-character quotes) 6,461, plus a 15,000-token thinking allowance (the most measured: 8,178 thinking tokens on a 60-claim check in the Task 16d development rounds, against 4,915 and 5,545 on 16c's development and held-out checks) |
+| Answer | 28,000 | 11,000, including thinking | fixed 5,673 (`compose.v8`); a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 23,213 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,600, and the measured stress cases fit without re-packing; output at its schema bounds (six cases, each with four chronology facts naming their anchors) 8,000 plus 1,500 for thinking |
+| Check | 40,000 | 24,500, including thinking | fixed 4,684 (`check.v9`); a full bundle's complete evidence with 60 claims (`MAX_CHECK_CLAIMS`) 26,969; the visible output at its schema bounds (a verdict for each of 60 claims, each naming 12 passages, and eight 1,000-character quotes) 6,461, plus a 15,000-token thinking allowance (the most measured at effort `low`: 9,180 thinking tokens on a 60-claim check in the Task 16e development round, against 8,178 in 16d's and 4,915 and 5,545 on 16c's development and held-out checks) |
 | Embedding | 1,000 | — | — |
 
 The models read passage ids as short aliases (`P1`..`P12`): a 64-character id costs
@@ -894,7 +953,7 @@ from measured request sizes; the paid runs' settled usage replaces them.
 **Capacity trade-off** (the owner's decision after the paid run): the Opus answer
 model's $0.36 reservation is mostly its output cap (11,000 tokens, including room for
 thinking), so it admits about 21 briefs and 3 to 4 anonymous searches a day. The
-calibrated checker (Haiku with adaptive thinking, `check.v8` since Task 16d) adds about
+calibrated checker (Haiku with adaptive thinking, `check.v9` since Task 16e) adds about
 $0.003 to a typical brief, and its 15,000-token thinking allowance about $0.0075 to the worst
 case. Sonnet roughly
 doubles both at half the cost per brief; a lower answer output cap or a larger anonymous

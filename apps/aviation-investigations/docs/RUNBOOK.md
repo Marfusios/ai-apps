@@ -550,10 +550,38 @@ composition; the command prints the failure and the stop reason instead.
 The same command reads an answer that was shown with claims removed (Task 16d's
 claim-level display, `meta.display`; its diagnostics have the reason `partial_display`):
 it prints the display projection (rules, mode, what was removed and why, by claim key)
-beside the raw verdicts. Claim-level display stays off in production until gate G6 clears
-it: with `AI_PARTIAL_DISPLAY` unset the projection runs in `whole` mode, and any claim
-the check did not confirm withholds the summary as before (code `display_whole_brief`).
-Do not set `AI_PARTIAL_DISPLAY` on a shared or public environment without that decision.
+beside the raw verdicts, with the claims the deterministic rules abstained from
+(`meta.staticRules`: `excerpt_context` or `ordinal_evidence`, by claim key). Claim-level
+display stays off in production until gate G6 clears it: with `AI_PARTIAL_DISPLAY` unset
+the projection runs in `whole` mode, and any claim the check did not confirm, or a rule
+abstained from, withholds the summary as before (code `display_whole_brief`). Do not set
+`AI_PARTIAL_DISPLAY` on a shared or public environment without that decision.
+
+### Enabling partial display
+
+`AI_PARTIAL_DISPLAY=true` makes the projection run in `claims` mode: confirmed statements
+are shown and the rest are removed with markers (DESIGN §3; the copy in UI_DESIGN §4.3).
+Enabling it on an environment requires, in this order:
+
+1. **Gate G6's written clearance** of claim-level display, from the reviewer's reading of
+   the latest calibration package (Task 16e: `task-16e-report.md`); the held-out run is a
+   pilot and never a pass by itself.
+2. **Production equal to the frozen checker selection**: `selection.v3.json` names the
+   candidate (model, thinking, effort, `check.v9`, schema, caps, maximum claims) and the
+   check timeout derived from its measured latency, and the unit test "production runs
+   the frozen selection" passes on the commit being deployed.
+3. **The same commit for server and web**: the web client must render the projection's
+   states (unclassified cases, cards without a reading, removal markers, the factual
+   checklist count, the drawer's READING and QUOTES lines, Compare's markers); an older
+   client would drop or mislabel them.
+4. **The setting** in the environment's settings file, then a restart of the app
+   container; `AI_PARTIAL_DISPLAY` is read at start.
+5. **A smoke check**: one brief on the environment, then `pnpm worker brief-diagnose
+   <brief-id>` shows `display.mode: claims`, and the page shows "Evidence check completed ·
+   N statements removed".
+
+To turn it off, unset the variable and restart: briefs are projected again in `whole`
+mode (stored results keep the projection they were shown with until they expire).
 
 ## Costs of the opt-in commands
 
