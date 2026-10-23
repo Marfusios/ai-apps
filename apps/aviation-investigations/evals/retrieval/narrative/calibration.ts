@@ -14,14 +14,19 @@
  *   Per question: positives, partials and zeros drawn with a seeded sample, the zeros
  *   preferring cases with another modifier of a listed finding (hard negatives).
  * - **Narrative controls** (`narrative-control`): synthetic records written for the
- *   purpose (`calibration/controls.ts`), minimal variants for negation, chronology,
- *   pilot statement against investigator finding and cross-aircraft attribution, each
- *   labelled **constructed** under a development question's rubric.
+ *   purpose (`calibration/controls*.ts`), minimal variants for negation, chronology,
+ *   pilot statement against investigator finding, cross-aircraft attribution (with
+ *   aircraft-scoped sections) and causal uncertainty; answerability items whose
+ *   delivered bundle supports less or more than the complete record (judged with the
+ *   answerability prompt); and long records judged in parts. Each is labelled
+ *   **constructed** under a development question's rubric and tagged with its family
+ *   and with `reading:edge-case` or `reading:novel`.
  *
  * **Splits.** Each set is split into `dev` and `holdout` by question (code-reading) or
- * by base record (controls), so variants of one record never straddle the split. A
- * judge prompt may be revised only on `dev` results; the holdout runs once for a frozen
- * configuration.
+ * by base record (controls), so variants of one record never straddle the split; every
+ * family has at least `CALIBRATION_CRITERIA.perFamily.minItems` holdout items and every
+ * grade in each split. Configurations are selected on `dev` only; the holdout runs once
+ * for a frozen configuration and is judged against the frozen criteria (criteria.ts).
  *
  * **Freezing.** `labels.sha256` hashes every item's identity, label and provenance; the
  * builder's `--check` rebuilds in memory and refuses any difference.
@@ -31,11 +36,32 @@ import { mulberry32 } from '../experiments/stats.js';
 import type { CodedCorpus, CodedDataset, CodedItem } from '../coded/coded.js';
 import { GENERATION_IDENTITY_FIELDS, type GenerationSource } from '../generation.js';
 import { deriveCohort, type CohortCase } from './dataset.js';
-import { fingerprint, type CaseEvidence } from './evidence.js';
-import { CONTROL_FAMILIES, NARRATIVE_CONTROLS, type Control, type ControlRecord } from './calibration/controls.js';
+import { bundleFingerprint, fingerprint, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
+import { CALIBRATION_CRITERIA } from './criteria.js';
+import { bundleKeyOf } from './judging.js';
+import { ATTRIBUTION_CONTROLS, CHRONOLOGY_CONTROLS, CONTROL_FAMILIES, CROSS_AIRCRAFT_CONTROLS, NEGATION_CONTROLS, type Control, type ControlRecord } from './calibration/controls.js';
+import { ANSWERABILITY_CONTROLS } from './calibration/controls-bundles.js';
+import { LONG_CONTROLS, LONG_FILLERS } from './calibration/controls-long.js';
+import { ATTRIBUTION_READING, CAUSAL_READING, CHRONOLOGY_READING, CROSS_AIRCRAFT_READING, NEGATION_READING } from './calibration/controls-reading.js';
 import { CaseNoSchema, RubricSchema, canonicalJson, questionVersion, rubricVersion, sha256, type Grade, type NarrativeQuestionSpec, type Rubric } from './spec.js';
 
-export const CALIBRATION_VERSION = 'track-n-calibration-v1';
+/** v2 (fix round 1): new rubrics, realistic case numbers, reading controls, answerability items and long records; at least 8 holdout items per family. */
+export const CALIBRATION_VERSION = 'track-n-calibration-v2';
+
+/** Every narrative control, in family order. */
+export const NARRATIVE_CONTROLS: readonly Control[] = [
+  ...NEGATION_CONTROLS,
+  ...NEGATION_READING,
+  ...CHRONOLOGY_CONTROLS,
+  ...CHRONOLOGY_READING,
+  ...ATTRIBUTION_CONTROLS,
+  ...ATTRIBUTION_READING,
+  ...CROSS_AIRCRAFT_CONTROLS,
+  ...CROSS_AIRCRAFT_READING,
+  ...CAUSAL_READING,
+  ...ANSWERABILITY_CONTROLS,
+  ...LONG_CONTROLS,
+];
 
 /** The Track C questions of the code-reading set, their split and how many items of each grade to draw. */
 export const CODE_READING_SPECS: readonly { question: string; split: 'dev' | 'holdout'; positives: number; partials: number; zeros: number }[] = [
@@ -48,8 +74,31 @@ export const CODE_READING_SPECS: readonly { question: string; split: 'dev' | 'ho
   { question: 'env-tailwind-cause-landing-utah', split: 'holdout', positives: 4, partials: 2, zeros: 4 },
 ];
 
-/** Base records of the narrative controls in the holdout split (the rest are dev). */
-export const CONTROL_HOLDOUT_GROUPS: readonly string[] = ['neg-gear', 'chr-heli', 'att-data', 'mx-pattern'];
+/**
+ * Base records (groups) of the narrative controls in the holdout split; the rest are dev.
+ * Every family has at least `CALIBRATION_CRITERIA.perFamily.minItems` holdout items, and
+ * no holdout record is a variant of a dev record.
+ */
+export const CONTROL_HOLDOUT_GROUPS: readonly string[] = [
+  'neg-gear',
+  'neg-jump',
+  'chr-heli',
+  'chr-thrush',
+  'chr-cub',
+  'att-data',
+  'att-engine',
+  'att-yaw',
+  'mx-pattern',
+  'mx-scoped',
+  'mx-ramp',
+  'cu-fire',
+  'cu-show2',
+  'ans-taxi',
+  'ans-pv',
+  'ans-late2',
+  'long-pv',
+  'long-mx',
+];
 /** A control's base record group: its id up to the second hyphen (`neg-skyd-...` → `neg-skyd`). */
 export const controlGroup = (id: string): string => id.split('-').slice(0, 2).join('-');
 
@@ -61,8 +110,8 @@ export const ControlBundleSchema = z.strictObject({
     .array(
       z.strictObject({
         passageId: z.string().min(1),
-        /** S1, S2 or S3 of the record (factual, analysis, probable cause). */
-        section: z.enum(['S1', 'S2', 'S3']),
+        /** The record's section alias (S1 the factual section, then any aircraft sections, the analysis, the probable cause). */
+        section: z.string().regex(/^S[1-9]$/),
         start: z.number().int().nonnegative(),
         end: z.number().int().positive(),
         textSha256: z.string().regex(/^[0-9a-f]{64}$/),
@@ -110,6 +159,8 @@ const ControlRecordSchema = z.strictObject({
   factual: z.string(),
   analysis: z.string(),
   probableCause: z.string(),
+  aircraftSections: z.array(z.strictObject({ aircraft: z.number().int().positive(), text: z.string() })).optional(),
+  event: z.strictObject({ highestInjury: z.string().optional(), light: z.string().optional(), weather: z.string().optional() }).optional(),
   findings: z.array(z.strictObject({ aircraft: z.number().int(), code: z.string(), description: z.string(), inProbableCause: z.boolean() })),
   occurrences: z.array(z.strictObject({ aircraft: z.number().int(), code: z.string(), phase: z.string(), description: z.string(), defining: z.boolean() })),
 });
@@ -127,48 +178,74 @@ export const CalibrationDatasetSchema = z.strictObject({
   /** The judged questions and rubrics, by id. */
   questions: z.record(z.string(), z.strictObject({ question: z.string().min(10), rubric: RubricSchema, questionVersion: z.string(), rubricVersion: z.string() })),
   items: z.array(CalibrationItemSchema).min(1),
-  /** The synthetic records of the narrative controls, by case number. */
+  /** The synthetic records of the narrative controls, by case number (long texts as `{{fill:<key>}}`). */
   records: z.record(z.string(), ControlRecordSchema),
+  /** The long texts of the long-record controls, stored once per group. */
+  fillers: z.record(z.string(), z.string()).default({}),
 });
 export type CalibrationDataset = z.infer<typeof CalibrationDatasetSchema>;
 
 export const CALIBRATION_NOTE =
   'Track N judge calibration (task 10c protocol v4, section 3): code-reading items (Track C questions, answer-bearing ' +
   'codes visible, labels derived from the coded rows) and narrative controls (synthetic minimal-variant records for ' +
-  'negation, chronology, pilot versus investigator and cross-aircraft attribution). Every label is constructed; none ' +
-  'is an expert\'s. Diagnostics, not validation. Rebuild with pnpm eval:retrieval:narrative calibration.';
+  'negation, chronology, pilot versus investigator, cross-aircraft attribution and causal uncertainty; answerability ' +
+  'items whose delivered bundle supports less or more than the complete record; long records judged in parts). Every ' +
+  'label is constructed; none is an expert\'s. Pass criteria are frozen in criteria.ts and apply to the holdout, which ' +
+  'runs once per configuration. Rebuild with pnpm eval:retrieval:narrative calibration.';
 
 // ---------------------------------------------------------------------------
 // Synthetic records as judge evidence
 
-/** A control record as the judge reads it, through the same renderer as a real case. */
+/** A control record with its long texts filled in (`{{fill:<key>}}` from the file's `fillers`). */
+export function resolveRecord(r: ControlRecord, fillers: Readonly<Record<string, string>>): ControlRecord {
+  const fill = (text: string) =>
+    text.replace(/\{\{fill:([a-z0-9-]+)\}\}/g, (_m, key: string) => {
+      const t = fillers[key];
+      if (t === undefined) throw new Error(`${r.ntsbNo}: no filler ${key}`);
+      return t;
+    });
+  return {
+    ...r,
+    factual: fill(r.factual),
+    analysis: fill(r.analysis),
+    probableCause: fill(r.probableCause),
+    ...(r.aircraftSections ? { aircraftSections: r.aircraftSections.map((x) => ({ ...x, text: fill(x.text) })) } : {}),
+  };
+}
+
+/**
+ * A (resolved) control record as the judge reads it, through the same renderer as a real
+ * case: the factual section (event-scoped with several aircraft), then any aircraft-scoped
+ * factual sections, the analysis and the probable cause.
+ */
 export function controlEvidence(r: ControlRecord): CaseEvidence {
   const multi = r.aircraft.length > 1;
-  const scope = multi ? 'event' : 'aircraft';
-  const key = (kind: string) => (multi ? `${kind}/event-1` : `${kind}/aircraft-1`);
-  const sections = (
-    [
-      ['factual', r.factual],
-      ['analysis', r.analysis],
-      ['probable_cause', r.probableCause],
-    ] as const
-  ).map(([kind, text], i) => {
-    const sha = sha256(text);
+  const scopeOf = (aircraft: number | null) => (aircraft === null ? (multi ? { scope: 'event' as const, key: 'event-1', aircraftKey: null } : { scope: 'aircraft' as const, key: 'aircraft-1', aircraftKey: 1 }) : { scope: 'aircraft' as const, key: `aircraft-${aircraft}`, aircraftKey: aircraft });
+  const parts: { kind: 'factual' | 'analysis' | 'probable_cause'; text: string; aircraft: number | null }[] = [
+    { kind: 'factual', text: r.factual, aircraft: null },
+    ...(r.aircraftSections ?? []).map((x) => ({ kind: 'factual' as const, text: x.text, aircraft: x.aircraft })),
+    { kind: 'analysis', text: r.analysis, aircraft: null },
+    { kind: 'probable_cause', text: r.probableCause, aircraft: null },
+  ];
+  const sections = parts.map((p, i) => {
+    const sc = scopeOf(p.aircraft);
+    const sectionKey = `${p.kind}/${sc.key}`;
+    const sha = sha256(p.text);
     return {
       alias: `S${i + 1}`,
-      sectionId: `${r.ntsbNo}:${key(kind)}`,
-      sectionKey: key(kind),
-      kind,
-      scope: scope as 'event' | 'aircraft',
-      aircraftKey: multi ? null : 1,
-      revisionId: sha256(JSON.stringify([r.ntsbNo, key(kind), sha, 'synthetic'])),
+      sectionId: `${r.ntsbNo}:${sectionKey}`,
+      sectionKey,
+      kind: p.kind,
+      scope: sc.scope,
+      aircraftKey: sc.aircraftKey,
+      revisionId: sha256(JSON.stringify([r.ntsbNo, sectionKey, sha, 'synthetic'])),
       sha256: sha,
-      text,
+      text: p.text,
     };
   });
   return {
     ntsbNo: r.ntsbNo,
-    event: { date: r.date, city: r.city, state: r.state, highestInjury: 'MINR', light: 'DAYL', weather: 'VMC' },
+    event: { date: r.date, city: r.city, state: r.state, highestInjury: r.event?.highestInjury ?? 'MINR', light: r.event?.light ?? 'DAYL', weather: r.event?.weather ?? 'VMC' },
     aircraft: r.aircraft.map((a, i) => ({
       aircraftKey: i + 1,
       aircraftNtsbNo: multi ? `${r.ntsbNo}${String.fromCharCode(65 + i)}` : null,
@@ -202,6 +279,27 @@ export function controlEvidence(r: ControlRecord): CaseEvidence {
       isDefining: o.defining,
     })),
   };
+}
+
+/** The delivered passages of a control's bundle: each text located (once) in its section of the evidence. */
+export function bundlePassages(e: CaseEvidence, bundle: readonly { section: string; text: string }[]): DeliveredPassage[] {
+  return bundle.map((b) => {
+    const s = e.sections.find((x) => x.alias === b.section);
+    if (!s) throw new Error(`${e.ntsbNo}: no section ${b.section}`);
+    const start = s.text.indexOf(b.text);
+    if (start < 0 || s.text.indexOf(b.text, start + 1) >= 0) throw new Error(`${e.ntsbNo}: a bundle passage must occur exactly once in ${b.section}`);
+    return { passageId: `${e.ntsbNo}:${b.section}:${start}-${start + b.text.length}`, sectionId: s.sectionId, revisionId: s.revisionId, kind: s.kind, scope: s.scope, aircraftKey: s.aircraftKey, start, end: start + b.text.length, text: b.text };
+  });
+}
+
+/** An item's frozen bundle as delivered passages, read back from the (resolved) record and checked against the frozen text hashes. */
+export function itemPassages(e: CaseEvidence, bundle: ControlBundle): DeliveredPassage[] {
+  return bundle.passages.map((p) => {
+    const s = e.sections.find((x) => x.alias === p.section);
+    const text = s?.text.slice(p.start, p.end);
+    if (!s || text === undefined || sha256(text) !== p.textSha256) throw new Error(`${e.ntsbNo}: bundle passage ${p.passageId} does not match its record`);
+    return { passageId: p.passageId, sectionId: s.sectionId, revisionId: s.revisionId, kind: s.kind, scope: s.scope, aircraftKey: s.aircraftKey, start: p.start, end: p.end, text };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -390,29 +488,70 @@ export function assembleCalibration(
     }
   }
   const records: CalibrationDataset['records'] = {};
+  const fillers: Record<string, string> = {};
   for (const c of controls) {
     const spec = questions.get(c.question);
     if (!spec) {
       problems.push(`${c.id}: unknown development question ${c.question}`);
       continue;
     }
-    const e = controlEvidence(c.record);
-    const all = e.sections.map((s) => s.text).join('\n');
+    for (const key of [...JSON.stringify(c.record).matchAll(/\{\{fill:([a-z0-9-]+)\}\}/g)].map((m) => m[1] as string)) {
+      const text = LONG_FILLERS[key];
+      if (text === undefined) problems.push(`${c.id}: no filler ${key}`);
+      else fillers[key] = text;
+    }
+    let resolved: ControlRecord;
+    try {
+      resolved = resolveRecord(c.record, fillers);
+    } catch (err) {
+      problems.push(`${c.id}: ${(err as Error).message}`);
+      continue;
+    }
+    const e = controlEvidence(resolved);
+    const all = e.sections.map((x) => x.text).join('\n');
     for (const a of c.anchors) if (!all.includes(a)) problems.push(`${c.id}: the anchor "${a.slice(0, 40)}" is not in the record`);
-    if (records[c.record.ntsbNo]) problems.push(`${c.id}: case number ${c.record.ntsbNo} is used twice`);
+    if (c.anchorParts) {
+      const plan = planChunks(e);
+      if (plan.chunks.length < 2) problems.push(`${c.id}: a long record must be judged in parts (${plan.tokens} tokens make ${plan.chunks.length} part)`);
+      c.anchors.forEach((a, k) => {
+        const part = plan.chunks.findIndex((pieces) => pieces.some((p) => (e.sections.find((x) => x.alias === p.alias)?.text.slice(p.start, p.end) ?? '').includes(a)));
+        if (part + 1 !== c.anchorParts?.[k]) problems.push(`${c.id}: the anchor "${a.slice(0, 40)}" is in part ${part + 1}, not ${c.anchorParts?.[k]}`);
+      });
+    }
+    const existing = records[c.record.ntsbNo];
+    if (existing && JSON.stringify(existing) !== JSON.stringify(c.record)) problems.push(`${c.id}: case number ${c.record.ntsbNo} names two different records`);
     records[c.record.ntsbNo] = c.record;
     judged[spec.id] = { question: spec.question, rubric: spec.rubric, questionVersion: questionVersion(spec), rubricVersion: rubricVersion(spec.rubric) };
+    const kind = c.kind ?? 'relevance';
+    let bundle: ControlBundle | null = null;
+    let fp = fingerprint(e);
+    if (kind === 'answerability') {
+      if (!c.bundle || c.bundle.length === 0) {
+        problems.push(`${c.id}: an answerability control needs a bundle`);
+        continue;
+      }
+      let passages: DeliveredPassage[];
+      try {
+        passages = bundlePassages(e, c.bundle);
+      } catch (err) {
+        problems.push(`${c.id}: ${(err as Error).message}`);
+        continue;
+      }
+      const frozen = passages.map((p) => ({ passageId: p.passageId, section: e.sections.find((x) => x.sectionId === p.sectionId)?.alias as string, start: p.start, end: p.end, textSha256: sha256(p.text) }));
+      bundle = { key: bundleKeyOf(frozen), passages: frozen };
+      fp = bundleFingerprint(e.ntsbNo, e.event, e.aircraft, passages);
+    }
     items.push({
       id: `nc-${c.id}`,
       set: 'narrative-control',
-      kind: 'relevance',
-      bundle: null,
+      kind,
+      bundle,
       split: CONTROL_HOLDOUT_GROUPS.includes(controlGroup(c.id)) ? 'holdout' : 'dev',
-      tags: [c.family],
+      tags: [c.family, `reading:${c.reading}`],
       question: spec.id,
       questionVersion: questionVersion(spec),
       rubricVersion: rubricVersion(spec.rubric),
-      case: { ntsbNo: c.record.ntsbNo, source: 'synthetic', fingerprint: fingerprint(e) },
+      case: { ntsbNo: c.record.ntsbNo, source: 'synthetic', fingerprint: fp },
       label: c.label,
       provenance: 'constructed',
       mutation: c.mutation,
@@ -425,13 +564,17 @@ export function assembleCalibration(
     if (ids.has(i.id)) problems.push(`duplicate item ${i.id}`);
     ids.add(i.id);
   }
+  const min = CALIBRATION_CRITERIA.perFamily.minItems;
   for (const family of CONTROL_FAMILIES) {
     for (const split of ['dev', 'holdout'] as const) {
       const mine = items.filter((i) => i.set === 'narrative-control' && i.tags.includes(family) && i.split === split);
       if (mine.length === 0) problems.push(`no ${split} control of family ${family}`);
-      if (split === 'dev' && new Set(mine.map((i) => i.label)).size < 3) problems.push(`the dev controls of family ${family} do not cover every grade`);
+      if (new Set(mine.map((i) => i.label)).size < 3) problems.push(`the ${split} controls of family ${family} do not cover every grade`);
+      if (split === 'holdout' && mine.length < min) problems.push(`family ${family} has ${mine.length} holdout controls (at least ${min})`);
     }
   }
+  const crHoldout = items.filter((i) => i.set === 'code-reading' && i.split === 'holdout').length;
+  if (draws.length > 0 && crHoldout < min) problems.push(`the code-reading set has ${crHoldout} holdout items (at least ${min})`);
   const byGrade = { '0': 0, '1': 0, '2': 0 };
   for (const i of items) byGrade[String(i.label) as '0' | '1' | '2'] += 1;
   const dataset: CalibrationDataset = {
@@ -448,6 +591,7 @@ export function assembleCalibration(
     questions: Object.fromEntries(Object.entries(judged).sort(([a], [b]) => (a < b ? -1 : 1))),
     items,
     records,
+    fillers: Object.fromEntries(Object.entries(fillers).sort(([a], [b]) => (a < b ? -1 : 1))),
   };
   const parsed = CalibrationDatasetSchema.safeParse(dataset);
   if (!parsed.success) problems.push(...parsed.error.issues.slice(0, 10).map((i) => `${i.path.join('.')}: ${i.message}`));

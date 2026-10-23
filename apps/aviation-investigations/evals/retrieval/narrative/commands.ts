@@ -43,7 +43,7 @@ import { DEFAULT_GRID, filterConsistency, gitState } from '../experiments/cli.js
 import { loadGrid } from '../experiments/grid.js';
 import { providerScopeCaller, runScopeSamples, scopeInventory, type ScopeRun } from '../experiments/scope.js';
 import { DEFAULT_CALIBRATION, DEFAULT_NARRATIVE_DATASET } from './build.js';
-import { CalibrationDatasetSchema, calibrationProblems, controlEvidence, itemKey, type CalibrationDataset } from './calibration.js';
+import { CalibrationDatasetSchema, calibrationProblems, controlEvidence, itemKey, itemPassages, resolveRecord, type CalibrationDataset, type ControlBundle } from './calibration.js';
 import { CALIBRATION_CRITERIA, CRITERIA_SHA256 } from './criteria.js';
 import { experimentIdentity, joinJudgments, type ExperimentData, type JudgmentFile, type JudgmentSet } from './identity.js';
 import { attemptReserveUsd, createAnthropicJudge, createOpenAIJudge, type JudgeCaller } from './clients.js';
@@ -59,6 +59,7 @@ import {
   expectedOutputs,
   likelyPool,
   measureAnswerability,
+  measureBundle,
   measureCase,
   poolEstimates,
   prefixTokens,
@@ -273,9 +274,11 @@ export async function planCommand(opts: CommandOptions & { samples: Samples; bro
     // Calibration items.
     const calMeasured: Measured[] = [];
     for (const item of ctx.calibration.items) {
-      const e = item.case.source === 'synthetic' ? controlEvidence(ctx.calibration.records[item.case.ntsbNo] as never) : loaded.evidence.get(item.case.ntsbNo);
+      const record = ctx.calibration.records[item.case.ntsbNo];
+      const e = item.case.source === 'synthetic' ? (record ? controlEvidence(resolveRecord(record, ctx.calibration.fillers)) : undefined) : loaded.evidence.get(item.case.ntsbNo);
       const q = ctx.calibration.questions[item.question];
-      if (e && q) calMeasured.push(await measureCase(haiku, item.question, q, e));
+      if (!e || !q) continue;
+      calMeasured.push(item.kind === 'answerability' ? await measureBundle(haiku, item.question, q, e, itemPassages(e, item.bundle as ControlBundle)) : await measureCase(haiku, item.question, q, e));
     }
     // Sonnet counts like Haiku? A subset.
     const check = measured.filter((m) => m.chunks === 1).slice(0, 25);
@@ -577,10 +580,27 @@ export async function calibrationSubjects(ctx: NarrativeContext, split: 'dev' | 
     const problems: string[] = [];
     const items: PairPlanItem[] = [];
     for (const i of chosen) {
-      const e = i.case.source === 'synthetic' ? controlEvidence(cal.records[i.case.ntsbNo] as never) : loaded.evidence.get(i.case.ntsbNo);
+      const record = cal.records[i.case.ntsbNo];
+      const e = i.case.source === 'synthetic' ? (record ? controlEvidence(resolveRecord(record, cal.fillers)) : undefined) : loaded.evidence.get(i.case.ntsbNo);
       const q = cal.questions[i.question];
       if (!e || !q) {
         problems.push(`${i.id}: no evidence or question`);
+        continue;
+      }
+      if (i.kind === 'answerability') {
+        let passages: DeliveredPassage[];
+        try {
+          passages = itemPassages(e, i.bundle as ControlBundle);
+        } catch (err) {
+          problems.push(`${i.id}: ${(err as Error).message}`);
+          continue;
+        }
+        const subject = answerabilitySubject(refOf(q, i.question), e, passages, bundleFingerprint(e.ntsbNo, e.event, e.aircraft, passages));
+        if (subject.fingerprint !== i.case.fingerprint || subject.bundleKey !== i.bundle?.key) {
+          problems.push(`${i.id}: the bundle changed since its label was made (fingerprint or key differs)`);
+          continue;
+        }
+        items.push({ subject, priority: 0 });
         continue;
       }
       if (fingerprint(e) !== i.case.fingerprint) {
@@ -849,7 +869,7 @@ export function recordCheck(d: NarrativeDataset, c: CalibrationDataset, pools: P
       const item = itemsByKey.get(`${r.kind}|${r.family}|${r.ntsbNo}|${r.bundleKey ?? ''}`);
       if (!item) return 'no frozen calibration item matches it';
       if (item.questionVersion !== r.questionVersion || item.rubricVersion !== r.rubricVersion) return 'its question or rubric version is not the frozen item\'s';
-      if (item.kind === 'relevance' && item.case.fingerprint !== r.fingerprint) return 'its evidence fingerprint is not the frozen item\'s';
+      if (item.case.fingerprint !== r.fingerprint) return 'its evidence fingerprint is not the frozen item\'s';
       return null;
     }
     const f = familiesById.get(r.family);

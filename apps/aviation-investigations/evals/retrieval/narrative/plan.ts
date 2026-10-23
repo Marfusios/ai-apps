@@ -33,11 +33,11 @@ import { countTokens } from '../../../server/ai/tokens.js';
 import { compileFilters } from '../../../server/search/filters.js';
 import { assertCompleteResponse, keywordChannelBody, toHit } from '../../../server/search/hybrid.js';
 import { uniqueTop } from '../metrics.js';
-import { controlEvidence, seededSample, type CalibrationDataset } from './calibration.js';
+import { controlEvidence, resolveRecord, seededSample, type CalibrationDataset } from './calibration.js';
 import { attemptReserveUsd, estimateOpenAIInput, type JudgeCaller, type JudgeModelConfig } from './clients.js';
 import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from './config.js';
 import { families, membersOf, type NarrativeDataset, type NarrativeItem } from './dataset.js';
-import { loadCaseEvidence, planChunks, renderBundleCase, type CaseEvidence } from './evidence.js';
+import { loadCaseEvidence, planChunks, renderBundleCase, type CaseEvidence, type DeliveredPassage } from './evidence.js';
 import { adjudicationBlock, answerabilityRequest, chunkRequest, consolidateRequest, relevanceRequest, type JudgeRequest } from './prompts.js';
 import { POOL_RULE, lureCases } from './pool.js';
 import type { Rubric } from './spec.js';
@@ -289,7 +289,7 @@ export async function likelyPool(es: Client, t: { passagesIndex: string; casesIn
 export async function sampleEvidence(client: pg.ClientBase, generationId: number, ntsbNos: readonly string[], calibration: CalibrationDataset): Promise<{ evidence: Map<string, CaseEvidence>; missing: string[]; integrity: string[] }> {
   const loaded = await loadCaseEvidence(client, generationId, [...ntsbNos, ...calibration.items.filter((i) => i.case.source === 'canonical').map((i) => i.case.ntsbNo)]);
   const evidence = new Map(loaded.evidence);
-  for (const r of Object.values(calibration.records)) evidence.set(r.ntsbNo, controlEvidence(r));
+  for (const r of Object.values(calibration.records)) evidence.set(r.ntsbNo, controlEvidence(resolveRecord(r, calibration.fillers)));
   return { evidence, missing: loaded.missing, integrity: loaded.integrity.map((x) => x.sectionId) };
 }
 
@@ -312,5 +312,11 @@ export function proxyBundle(e: CaseEvidence): string {
 
 export async function measureAnswerability(claude: JudgeCaller, family: string, q: { question: string; rubric: Rubric }, e: CaseEvidence): Promise<Measured> {
   const req = answerabilityRequest(q, proxyBundle(e));
+  return { ntsbNo: e.ntsbNo, family, claude: [await countRequest(claude, req)], openai: [estimateOpenAIInput(req)], caseTokens: countTokens(req.blocks[1]?.text ?? ''), chunks: 1, uncovered: false };
+}
+
+/** An answerability judgment of a known bundle (calibration items), measured like a pool pair's. */
+export async function measureBundle(claude: JudgeCaller, family: string, q: { question: string; rubric: Rubric }, e: CaseEvidence, passages: readonly DeliveredPassage[]): Promise<Measured> {
+  const req = answerabilityRequest(q, renderBundleCase(e, passages));
   return { ntsbNo: e.ntsbNo, family, claude: [await countRequest(claude, req)], openai: [estimateOpenAIInput(req)], caseTokens: countTokens(req.blocks[1]?.text ?? ''), chunks: 1, uncovered: false };
 }

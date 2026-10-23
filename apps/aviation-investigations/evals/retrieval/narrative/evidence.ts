@@ -39,10 +39,13 @@
 import pg from 'pg';
 import { assembleCaseRecords, type CaseRecord, type CaseRecordRows } from '../../../server/db/queries/case-records.js';
 import { countTokens } from '../../../server/ai/tokens.js';
+import { DEFAULT_CODE_LABELS, PHASE_LABEL } from '../../../shared/codes.js';
+import { AIRCRAFT_CATEGORY, DAMAGE, ENGINE_TYPE, FAR_PART, FLIGHT_PURPOSE } from '../../../shared/vocab.js';
 import { normalizeFindingDescription } from '../coded/coded.js';
 import { canonicalJson, sha256 } from './spec.js';
 
-export const JUDGE_INPUT_VERSION = 'judge-input-v1';
+/** v2: header facets as descriptions with their codes (for example `light Night, dark (NDRK)`). */
+export const JUDGE_INPUT_VERSION = 'judge-input-v2';
 /** The per-judgment budget for a case's rendered evidence (`cl100k_base` tokens); above it the case is chunked. */
 export const CASE_TOKEN_BUDGET = 12_000;
 
@@ -386,22 +389,32 @@ const SECTION_LABEL: Readonly<Record<SectionKind, string>> = { factual: 'factual
 const yesNo = (b: boolean | null): string => (b === null ? 'not recorded' : b ? 'yes' : 'no');
 const value = (v: string | null | undefined): string => (v === null || v === undefined || v.trim() === '' ? 'not recorded' : v.trim());
 
+/** A coded facet as its description and code (`Night, dark (NDRK)`); an unknown code as itself. */
+const described = (v: string | null | undefined, vocabulary: Readonly<Record<string, string>>): string => {
+  const code = value(v);
+  if (code === 'not recorded') return code;
+  const label = vocabulary[code.toUpperCase()] ?? vocabulary[code];
+  return label && label !== code ? `${label} (${code})` : code;
+};
+const PHASES: Readonly<Record<string, string>> = PHASE_LABEL;
+
 function aircraftLine(a: EvidenceAircraft): string {
   const name = [a.make, a.model].filter((x): x is string => x !== null && x.trim() !== '').join(' ') || 'make and model not recorded';
   return (
-    `Aircraft ${a.aircraftKey}${a.aircraftNtsbNo ? ` (${a.aircraftNtsbNo})` : ''}: ${untrustedText(name)}; category ${value(a.category)}; ` +
-    `operating rules ${value(a.farPart)}; purpose ${value(a.purpose)}; damage ${value(a.damage)}; ` +
-    `defining event phase ${value(a.definingPhaseGroup)}; engine type ${a.engines.length > 0 ? a.engines.join(', ') : 'not recorded'}`
+    `Aircraft ${a.aircraftKey}${a.aircraftNtsbNo ? ` (${a.aircraftNtsbNo})` : ''}: ${untrustedText(name)}; category ${described(a.category, AIRCRAFT_CATEGORY)}; ` +
+    `operating rules ${described(a.farPart, FAR_PART)}; purpose ${described(a.purpose, FLIGHT_PURPOSE)}; damage ${described(a.damage, DAMAGE)}; ` +
+    `defining event phase ${described(a.definingPhaseGroup, PHASES)}; engine type ${a.engines.length > 0 ? a.engines.map((x) => described(x, ENGINE_TYPE)).join(', ') : 'not recorded'}`
   );
 }
 
-/** The event and aircraft facts every judge input starts with. */
+/** The event and aircraft facts every judge input starts with, coded facets as descriptions with their codes. */
 export function renderHeader(e: Pick<CaseEvidence, 'ntsbNo' | 'event' | 'aircraft'>): string {
   const ev = e.event;
   return [
     '<header>',
     `Case ${e.ntsbNo}. Date ${value(ev.date)}; location ${untrustedText([ev.city, ev.state].filter((x): x is string => x !== null && x.trim() !== '').join(', ') || 'not recorded')}; ` +
-      `highest injury ${value(ev.highestInjury)}; light ${value(ev.light)}; basic weather ${value(ev.weather)}; ${e.aircraft.length} aircraft.`,
+      `highest injury ${described(ev.highestInjury, DEFAULT_CODE_LABELS.ev_highest_injury)}; light ${described(ev.light, DEFAULT_CODE_LABELS.light_cond)}; ` +
+      `basic weather ${described(ev.weather, DEFAULT_CODE_LABELS.wx_cond_basic)}; ${e.aircraft.length} aircraft.`,
     ...e.aircraft.map(aircraftLine),
     '</header>',
   ].join('\n');

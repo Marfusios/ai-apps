@@ -2,7 +2,9 @@
  * The Track N calibration sets: code-reading labels derived from the coded rows by rule
  * (2 / 1 / 0, the probable-cause and same-aircraft requirements), the seeded draws with
  * hard negatives, the synthetic narrative controls (rendered like real cases, anchors
- * present, balanced per family, split by base record), and the frozen labels.
+ * present, every grade in each split of each family, at least 8 holdout items per
+ * family, split by base record, neutral filler, long records judged in parts,
+ * answerability bundles frozen by their passages), and the frozen labels.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -10,8 +12,13 @@ import { describe, expect, it } from 'vitest';
 import type { CodedCorpus, CodedItem } from '../../evals/retrieval/coded/coded.js';
 import {
   CALIBRATION_VERSION,
+  CONTROL_HOLDOUT_GROUPS,
   CalibrationDatasetSchema,
+  NARRATIVE_CONTROLS,
   assembleCalibration,
+  bundlePassages,
+  itemPassages,
+  resolveRecord,
   calibrationProblems,
   codeReadingGrade,
   codeReadingRubric,
@@ -22,9 +29,12 @@ import {
   seededSample,
   type CalibrationDataset,
 } from '../../evals/retrieval/narrative/calibration.js';
-import { CONTROL_FAMILIES, NARRATIVE_CONTROLS } from '../../evals/retrieval/narrative/calibration/controls.js';
+import { CONTROL_FAMILIES } from '../../evals/retrieval/narrative/calibration/controls.js';
+import { FILLER_FORBIDDEN, fillerParagraphs, longFiller } from '../../evals/retrieval/narrative/calibration/filler.js';
+import { CALIBRATION_CRITERIA } from '../../evals/retrieval/narrative/criteria.js';
+import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import type { CohortCase } from '../../evals/retrieval/narrative/dataset.js';
-import { renderCase } from '../../evals/retrieval/narrative/evidence.js';
+import { planChunks, renderCase } from '../../evals/retrieval/narrative/evidence.js';
 import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
 import { rubricVersion } from '../../evals/retrieval/narrative/spec.js';
 
@@ -113,27 +123,85 @@ describe('the code-reading draw', () => {
 });
 
 describe('the narrative controls', () => {
-  it('cover every family with every grade, under rubrics of the development questions', () => {
+  it('cover every family with every grade in each split, under rubrics of the development questions', () => {
     const ids = new Set(NARRATIVE_QUESTIONS.map((q) => q.id));
+    const holdout = (id: string) => CONTROL_HOLDOUT_GROUPS.includes(controlGroup(id));
     for (const family of CONTROL_FAMILIES) {
-      const mine = NARRATIVE_CONTROLS.filter((c) => c.family === family);
-      expect(new Set(mine.map((c) => c.label))).toEqual(new Set([0, 1, 2]));
+      for (const split of [true, false]) {
+        const mine = NARRATIVE_CONTROLS.filter((c) => c.family === family && holdout(c.id) === split);
+        expect({ family, split, grades: new Set(mine.map((c) => c.label)) }).toEqual({ family, split, grades: new Set([0, 1, 2]) });
+        if (split) expect(mine.length).toBeGreaterThanOrEqual(CALIBRATION_CRITERIA.perFamily.minItems);
+      }
     }
     for (const c of NARRATIVE_CONTROLS) {
       expect(ids.has(c.question)).toBe(true);
-      expect(c.record.ntsbNo).toMatch(/^SYN\d{2}[A-Z]{2}\d{3}$/);
+      // The real format with a sequence of 900 or above (the builder also checks the database).
+      expect(c.record.ntsbNo).toMatch(/^[A-Z]{3}\d{2}(LA|FA|MA)9\d{2}$/);
     }
+    // Every family holds controls that need reading as well as edge-case lookups, and the holdout mostly needs reading.
+    const novelHoldout = NARRATIVE_CONTROLS.filter((c) => holdout(c.id) && c.reading === 'novel').length;
+    expect(novelHoldout / NARRATIVE_CONTROLS.filter((c) => holdout(c.id)).length).toBeGreaterThan(0.5);
   });
 
-  it('render like real cases: aircraft scope with one aircraft, event scope with several', () => {
+  it('render like real cases: aircraft scope with one aircraft, event scope with several, aircraft sections in their own scope', () => {
     const single = NARRATIVE_CONTROLS.find((c) => c.record.aircraft.length === 1);
-    const multi = NARRATIVE_CONTROLS.find((c) => c.record.aircraft.length > 1);
+    const multi = NARRATIVE_CONTROLS.find((c) => c.record.aircraft.length > 1 && !c.record.aircraftSections);
+    const scoped = NARRATIVE_CONTROLS.find((c) => c.record.aircraftSections !== undefined && !c.record.factual.includes('{{fill:'));
     const s = controlEvidence(single?.record as never);
     const m = controlEvidence(multi?.record as never);
     expect(s.sections.every((x) => x.scope === 'aircraft' && x.aircraftKey === 1)).toBe(true);
     expect(m.sections.every((x) => x.scope === 'event' && x.aircraftKey === null)).toBe(true);
     expect(m.aircraft.map((a) => a.aircraftNtsbNo)).toEqual([`${multi?.record.ntsbNo}A`, `${multi?.record.ntsbNo}B`]);
     expect(renderCase(m)).toContain('<section id="S1" kind="factual information" scope="event">');
+    const sc = controlEvidence(scoped?.record as never);
+    expect(sc.sections.map((x) => [x.alias, x.kind, x.scope, x.aircraftKey])).toEqual([
+      ['S1', 'factual', 'event', null],
+      ['S2', 'factual', 'aircraft', 1],
+      ['S3', 'factual', 'aircraft', 2],
+      ['S4', 'analysis', 'event', null],
+      ['S5', 'probable_cause', 'event', null],
+    ]);
+    expect(renderCase(sc)).toContain('<section id="S3" kind="factual information" scope="aircraft" aircraft="2">');
+  });
+
+  it('use neutral filler that never states anything a rubric turns on', () => {
+    const place = { airport: 'Test Field', station: 'KTST', elevation: 500, temperature: 20 };
+    for (const seed of ['a', 'b', 'c', 'd']) {
+      for (const p of fillerParagraphs(seed, place, 9)) expect(FILLER_FORBIDDEN.test(p)).toBe(false);
+      expect(FILLER_FORBIDDEN.test(longFiller(seed, place, 30))).toBe(false);
+    }
+    expect(fillerParagraphs('a', place, 3)).toEqual(fillerParagraphs('a', place, 3));
+  });
+
+  it('judge long records in parts, with the deciding sentences in the parts they were placed in', () => {
+    const d = committed();
+    const long = d.items.filter((i) => i.tags[0] === 'long_record');
+    expect(long.length).toBeGreaterThanOrEqual(8);
+    for (const i of long) {
+      const e = controlEvidence(resolveRecord(d.records[i.case.ntsbNo] as never, d.fillers));
+      const plan = planChunks(e);
+      expect(plan.chunks.length).toBeGreaterThanOrEqual(2);
+      expect(plan.uncovered).toBeNull();
+      const parts = i.anchors.map((a) => plan.chunks.findIndex((pieces) => pieces.some((p) => (e.sections.find((x) => x.alias === p.alias)?.text.slice(p.start, p.end) ?? '').includes(a))));
+      expect(new Set(parts).size).toBeGreaterThan(1);
+    }
+  });
+
+  it('freeze each answerability bundle by its passages, and pair it with the complete record\'s relevance', () => {
+    const d = committed();
+    const ans = d.items.filter((i) => i.kind === 'answerability');
+    expect(ans.length).toBeGreaterThanOrEqual(8);
+    for (const i of ans) {
+      const e = controlEvidence(resolveRecord(d.records[i.case.ntsbNo] as never, d.fillers));
+      const passages = itemPassages(e, i.bundle as never);
+      expect(bundleKeyOf(i.bundle?.passages ?? [])).toBe(i.bundle?.key);
+      expect(passages.map((p) => p.text)).toEqual(i.anchors);
+      // The same record's relevance item exists, and some bundle's label differs from it.
+      expect(d.items.some((x) => x.kind === 'relevance' && x.case.ntsbNo === i.case.ntsbNo)).toBe(true);
+    }
+    const differs = ans.filter((i) => d.items.find((x) => x.kind === 'relevance' && x.case.ntsbNo === i.case.ntsbNo)?.label !== i.label);
+    expect(differs.length).toBeGreaterThanOrEqual(6);
+    expect(() => bundlePassages(controlEvidence(resolveRecord(d.records[ans[0]?.case.ntsbNo as string] as never, d.fillers)), [{ section: 'S1', text: 'not in the record' }])).toThrow(/exactly once/);
   });
 
   it('keep variants of one base record in one split', () => {
@@ -170,7 +238,7 @@ describe('assembly and frozen labels', () => {
     const d = committed();
     expect(d.version).toBe(CALIBRATION_VERSION);
     expect(calibrationProblems(d)).toEqual([]);
-    expect(d.labels.sha256).toBe('98e78bdfc4be14459100ca30baf42a436d05d1d73ddb37d3eeca55c5725b8bca');
+    expect(d.labels.sha256).toBe('9266af5a2923e847947b48eaeade3a8b1f086bb341eb28c048aeccc8ac4ae896');
     expect(d.items.every((i) => i.provenance === 'constructed')).toBe(true);
     for (const q of Object.values(d.questions)) expect(q.rubricVersion).toBe(rubricVersion(q.rubric));
     const sets = new Set(d.items.map((i) => `${i.set}/${i.split}`));

@@ -32,7 +32,7 @@ const APP_DIR = resolve(import.meta.dirname, '../..');
  * version string and update the pin here in the same change (identity.ts).
  */
 const REQUEST_PINS: Record<string, string> = {
-  'track-n-judge.v1|track-n-adjudicate.v1|track-n-answerability.v1|judge-input-v1': '1f6db22a92651a054867d0f6e01cd117e10f3c963482aa01fb25aa66cf220c56',
+  'track-n-judge.v2|track-n-adjudicate.v2|track-n-answerability.v2|judge-input-v2': '337ca796479e7e183e3f52aa14e873834e694cbaa0c4a6c3791cabed1664386f',
 };
 const SCHEMA_PINS: Record<string, string> = {
   'track-n-validate.v1+quote-ws-v2': '8f2c3ad326bbb8def6d1155addac0e379f88f07d06fd9783ba3fee51ea045e85',

@@ -20,7 +20,7 @@ import { APP_DIR } from '../../../worker/config.js';
 import { CORPUS_QUERIES, DEFAULT_CODED_DATASET } from '../coded/build-coded.js';
 import { CodedDatasetSchema, CodedFiltersSchema, deriveQuestion, indexCorpus, type CodedCorpus } from '../coded/coded.js';
 import { readGenerationSource, type GenerationSource } from '../generation.js';
-import { CODE_READING_SPECS, assembleCalibration, codedQuestions, drawCodeReading } from './calibration.js';
+import { CODE_READING_SPECS, itemFamily, assembleCalibration, codedQuestions, drawCodeReading } from './calibration.js';
 import { assembleNarrative, deriveCohort, type CohortAircraft, type CohortCase, type NarrativeBuild, type NarrativeDataset } from './dataset.js';
 import { loadCaseEvidence } from './evidence.js';
 import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
@@ -236,6 +236,19 @@ export async function calibrationCommand(opts: { databaseUrl: string; generation
     const built = assembleCalibration(corpus.source, draws, loaded.evidence, new Map(NARRATIVE_QUESTIONS.map((q) => [q.id, q])));
     problems.push(...built.problems);
     const d = built.dataset;
+    // Synthetic case numbers have the real format: none may name a case of any generation.
+    const synthetic = Object.keys(d.records);
+    const taken = await client.query<{ ntsb_no: string }>('select distinct ntsb_no from cases where ntsb_no = any($1::text[]) order by ntsb_no', [synthetic]);
+    for (const r of taken.rows) problems.push(`synthetic case number ${r.ntsb_no} is a real case of the database`);
+    log(`synthetic case numbers: ${synthetic.length} records, ${taken.rows.length} used by real cases`);
+    const byFamily = new Map<string, Map<string, number>>();
+    for (const i of d.items) {
+      const fam = itemFamily(i);
+      const m = byFamily.get(fam) ?? new Map<string, number>();
+      m.set(i.split, (m.get(i.split) ?? 0) + 1);
+      byFamily.set(fam, m);
+    }
+    for (const [fam, m] of [...byFamily.entries()].sort()) log(`  family ${fam.padEnd(22)} dev ${String(m.get('dev') ?? 0).padStart(3)}  holdout ${String(m.get('holdout') ?? 0).padStart(3)}`);
     for (const set of ['code-reading', 'narrative-control'] as const) {
       for (const split of ['dev', 'holdout'] as const) {
         const items = d.items.filter((i) => i.set === set && i.split === split);
