@@ -99,6 +99,8 @@ import {
   measuredUsage,
   outputsFor,
   planInputs,
+  poolCounts,
+  poolSample,
   protocolArithmetic,
   type MeasuredUsage,
 } from './plan.js';
@@ -146,6 +148,7 @@ import {
   tailEstimate,
   type QuestionValue,
 } from './score.js';
+import { seededSample } from './calibration.js';
 import { canonicalJson, specSha256, sha256 } from './spec.js';
 
 export interface CommandOptions {
@@ -281,6 +284,8 @@ export async function planCommand(
     allocationUsd?: number;
     /** An existing allocation (under `--out-dir`) whose spend so far the remaining sequence is set against (read only). */
     allocation?: string;
+    /** A built pool file: plan from its exact pair counts, measuring its own cases and delivered bundles (the re-plan from actual counts). */
+    pools?: string;
     /** Judgment files whose records give the measured output tokens and disagreement (review N13). */
     measured?: string[];
     /** Mean output tokens per judge call (visible plus thinking or reasoning), judge A and judge B. */
@@ -307,34 +312,55 @@ export async function planCommand(
     const emb = planQueryEmbeddings(d.questions.map((q) => q.question), ctx.config.ai.openai.embeddingModel, ctx.config.ai.openai.embeddingDimensions);
     log(`pool building: scope stage ${scope.model}, ${scope.calls} calls (${scopeItems(d).length} questions x ${opts.samples} samples; ${d.questions.length - scopeItems(d).length} diagnostic question(s) keep their frozen scope output), ${scope.inputTokens} input tokens counted; at most ${usd(scope.upperUsd)} at the output cap, reservations ${usd(scope.reserveUsd)}`);
     log(`pool building: ${describePlan(emb)}`);
-    // Pool sizes.
-    const estimates = { 1: poolEstimates(d, 1), 3: poolEstimates(d, 3) } as const;
+    // Pool sizes: a built pool file's exact counts, or the estimates.
+    const actual = opts.pools ? readPools(opts.pools) : null;
+    if (actual && (actual.datasetSpecSha256 !== d.source.specSha256 || actual.generationId !== ctx.source.generationId)) throw new Error('the pool file is of another dataset or generation');
+    const otherSamples: Samples = opts.samples === 3 ? 1 : 3;
+    const estimates = (actual ? { [opts.samples]: poolCounts(actual, d), [otherSamples]: poolEstimates(d, otherSamples) } : { 1: poolEstimates(d, 1), 3: poolEstimates(d, 3) }) as Record<Samples, ReturnType<typeof poolEstimates>>;
     const sum = (s: Samples, k: 'mean' | 'max') => estimates[s].reduce((n, e) => n + e[k], 0);
     const pairsAns = (s: Samples, k: 'mean' | 'max') => estimates[s].reduce((n, e) => n + e.answerabilityPairs[k], 0);
-    log(`pools (rule ${POOL_RULE.version}, ${POOL_RULE.methods.join(', ')} through the production retrievers): relevance pairs about ${Math.round(sum(opts.samples, 'mean'))} (largest ${Math.round(sum(opts.samples, 'max'))}); answerability pairs about ${Math.round(pairsAns(opts.samples, 'mean'))}`);
+    if (actual) {
+      const e = estimates[opts.samples];
+      log(
+        `pools (actual: version ${actual.version.slice(0, 12)}, rule ${actual.rule.version}): ${Math.round(sum(opts.samples, 'mean'))} relevance pairs, ${e.reduce((n, x) => n + x.stage1.mean, 0)} of them in stage 1; ` +
+          `${Math.round(pairsAns(opts.samples, 'mean'))} answerability pairs (${e.reduce((n, x) => n + x.mappingDiagnostic.mean, 0)} from the mapping diagnostic only)`,
+      );
+    } else {
+      log(`pools (rule ${POOL_RULE.version}, ${POOL_RULE.methods.join(', ')} through the production retrievers): relevance pairs about ${Math.round(sum(opts.samples, 'mean'))} (largest ${Math.round(sum(opts.samples, 'max'))}); answerability pairs about ${Math.round(pairsAns(opts.samples, 'mean'))}`);
+    }
     {
       const e = estimates[opts.samples];
       const diag = e.filter((x) => x.role === 'diagnostic');
       const add = (xs: readonly number[]) => Math.round(xs.reduce((n, x) => n + x, 0));
-      for (const x of diag) log(`  diagnostic ${x.family}: about ${x.mean} relevance pairs (stage 1 about ${x.stage1.mean}), ${Math.round(x.answerabilityPairs.mean)} answerability pairs`);
-      log(`  mapping diagnostic (labelled, forced): about ${add(e.map((x) => x.mappingDiagnostic.mean))} delivered bundles (largest ${add(e.map((x) => x.mappingDiagnostic.max))}), each an answerability pair and a stage 1 relevance pair`);
+      const about = actual ? '' : 'about ';
+      for (const x of diag) log(`  diagnostic ${x.family}: ${about}${x.mean} relevance pairs (stage 1 ${about}${x.stage1.mean}), ${Math.round(x.answerabilityPairs.mean)} answerability pairs`);
+      log(`  mapping diagnostic (labelled, forced): ${about}${add(e.map((x) => x.mappingDiagnostic.mean))} delivered bundles${actual ? ' no retrieval run delivered' : ` (largest ${add(e.map((x) => x.mappingDiagnostic.max))})`}, each an answerability pair and a stage 1 relevance pair`);
     }
-    // Samples of judge inputs.
+    // Samples of judge inputs: a built pool's own cases, or each broad question's likely pool.
     const qualification = ctx.run.contract.eventAircraftQualification;
     const samples: CaseSample[] = [];
     for (const f of families(d)) {
+      const pool = actual?.families.find((p) => p.family === f.id);
       if (f.type === 'bounded-cohort') samples.push(...(f.cohort.cases ?? []).map((ntsbNo) => ({ family: f.id, ntsbNo, origin: 'cohort' as const })));
+      else if (pool) samples.push(...poolSample(pool, { stage1: 30, rest: 10 }));
       else samples.push(...(await likelyPool(ctx.es, { passagesIndex: ctx.run.index, casesIndex: ctx.casesIndex, qualification }, f, await indexCohort(ctx.es, ctx.run.index, f, qualification), opts.broadSample)));
     }
+    // A built pool's delivered bundles to measure answerability on (a seeded sample per family), instead of proxies.
+    const bundleSamples = actual
+      ? actual.families.flatMap((p) => seededSample(bundlePairs(p).map((x) => ({ family: p.family, ...x })), 8, `${p.family}|plan-bundles`))
+      : [];
     const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-plan' });
     await client.connect();
     let loaded: Awaited<ReturnType<typeof sampleEvidence>>;
     try {
-      loaded = await sampleEvidence(client, ctx.source.generationId, samples.map((s) => s.ntsbNo), ctx.calibration);
+      loaded = await sampleEvidence(client, ctx.source.generationId, [...new Set([...samples.map((s) => s.ntsbNo), ...bundleSamples.map((x) => x.ntsbNo)])], ctx.calibration);
     } finally {
       await client.end();
     }
-    log(`judge inputs: ${samples.length} sampled pool cases (${samples.filter((s) => s.origin === 'cohort').length} bounded-cohort cases, ${samples.filter((s) => s.origin !== 'cohort').length} likely-pool cases of broad questions), ${ctx.calibration.items.length} calibration items; counting with the provider (free)`);
+    log(
+      `judge inputs: ${samples.length} sampled pool cases (${samples.filter((s) => s.origin === 'cohort').length} bounded-cohort cases, ${samples.filter((s) => s.origin !== 'cohort').length} ${actual ? 'cases of the built pools' : 'likely-pool cases'} of broad questions), ` +
+        `${actual ? `${bundleSamples.length} delivered bundles, ` : ''}${ctx.calibration.items.length} calibration items; counting with the provider (free)`,
+    );
     const haiku = createAnthropicJudge(JUDGE_A, { apiKey: anthropicKey });
     const sonnet = createAnthropicJudge(ADJUDICATOR, { apiKey: anthropicKey });
     const byFamily = new Map(families(d).map((f) => [f.id, f]));
@@ -378,12 +404,26 @@ export async function planCommand(
       const e = any ? loaded.evidence.get(any.ntsbNo) : undefined;
       if (e) prefixes.set(f.id, await prefixTokens(haiku, f, e));
     }
-    // Answerability proxies: the first five sampled cases of each family.
+    // Answerability: a built pool's delivered bundles as the judges read them, or proxies (the first five sampled cases of each family).
     const ansMeasured: Measured[] = [];
-    for (const f of families(d)) {
-      for (const s of samples.filter((x) => x.family === f.id).slice(0, 5)) {
-        const e = loaded.evidence.get(s.ntsbNo);
-        if (e) ansMeasured.push(await measureAnswerability(haiku, f.id, f, e));
+    if (actual) {
+      for (const x of bundleSamples) {
+        const e = loaded.evidence.get(x.ntsbNo);
+        const f = byFamily.get(x.family) as NarrativeItem;
+        if (!e) continue;
+        const passages: DeliveredPassage[] = [];
+        for (const p of x.passages) {
+          const text = e.sections.find((sec) => sec.sectionId === p.sectionId && sec.revisionId === p.revisionId)?.text.slice(p.start, p.end);
+          if (text !== undefined && sha256(text) === p.textSha256) passages.push({ passageId: p.passageId, sectionId: p.sectionId, revisionId: p.revisionId, kind: p.kind, scope: p.scope, aircraftKey: p.aircraftKey, start: p.start, end: p.end, text });
+        }
+        if (passages.length === x.passages.length) ansMeasured.push(await measureBundle(haiku, x.family, f, e, passages));
+      }
+    } else {
+      for (const f of families(d)) {
+        for (const s of samples.filter((x) => x.family === f.id).slice(0, 5)) {
+          const e = loaded.evidence.get(s.ntsbNo);
+          if (e) ansMeasured.push(await measureAnswerability(haiku, f.id, f, e));
+        }
       }
     }
     const block = adjudicationBlockTokens();

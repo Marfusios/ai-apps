@@ -42,8 +42,8 @@ import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from './config.js';
 import { families, membersOf, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { loadCaseEvidence, planChunks, renderBundleCase, type CaseEvidence, type DeliveredPassage } from './evidence.js';
 import { adjudicationBlock, answerabilityRequest, chunkRequest, consolidateRequest, relevanceRequest, type JudgeRequest } from './prompts.js';
-import { POOL_RULE, lureCases } from './pool.js';
-import type { PairRecord } from './judging.js';
+import { POOL_RULE, SCHEDULE, bundlePairs, casePriority, lureCases, tierOf, type FamilyPool, type PoolFile } from './pool.js';
+import { bundleKeyOf, type PairRecord } from './judging.js';
 import type { Rubric } from './spec.js';
 
 /*
@@ -418,8 +418,42 @@ export const statsOf = (xs: readonly number[]): CallStats => {
 export interface CaseSample {
   family: string;
   ntsbNo: string;
-  /** `cohort`: an exact pool member (bounded cohort); `bm25`, `lure`, `random`: a broad question's likely pool. */
-  origin: 'cohort' | 'bm25' | 'lure' | 'random';
+  /** `cohort`: an exact pool member (bounded cohort); `bm25`, `lure`, `random`: a broad question's likely pool; `pool`: a case of a built pool. */
+  origin: 'cohort' | 'bm25' | 'lure' | 'random' | 'pool';
+}
+
+/**
+ * The exact pairs of a built pool file, per family, in the plan's estimate shape (the
+ * re-plan from actual counts): relevance pairs (every pool case), stage 1 (tiers 0 to 2
+ * of the frozen schedule), answerability pairs (every distinct delivered bundle) and the
+ * mapping diagnostic's bundles among them.
+ */
+export function poolCounts(p: Pick<PoolFile, 'families'>, d: NarrativeDataset): FamilyPoolEstimate[] {
+  const byId = new Map(families(d).map((f) => [f.id, f]));
+  return p.families.map((f) => {
+    const stage1 = f.cases.filter((c) => tierOf(casePriority(c, f.type)) <= SCHEDULE.stages[1]).length;
+    const answerability = bundlePairs(f).length;
+    const runBundles = new Set(bundlePairs({ runs: f.runs, mappingDiagnostic: [] }).map((x) => `${x.ntsbNo}|${bundleKeyOf(x.passages)}`));
+    const mapping = bundlePairs({ runs: [], mappingDiagnostic: f.mappingDiagnostic }).filter((x) => !runBundles.has(`${x.ntsbNo}|${bundleKeyOf(x.passages)}`)).length;
+    return {
+      family: f.family,
+      role: byId.get(f.family)?.role ?? 'benchmark',
+      type: f.type,
+      members: f.members.length,
+      mean: f.cases.length,
+      max: f.cases.length,
+      stage1: { mean: stage1, max: stage1 },
+      answerabilityPairs: { mean: answerability, max: answerability },
+      mappingDiagnostic: { mean: mapping, max: mapping },
+    };
+  });
+}
+
+/** A built pool's cases to measure for a broad family: a seeded sample of its stage 1 cases and of the rest. */
+export function poolSample(f: Pick<FamilyPool, 'family' | 'type' | 'cases'>, n: { stage1: number; rest: number }): CaseSample[] {
+  const first = f.cases.filter((c) => tierOf(casePriority(c, f.type)) <= SCHEDULE.stages[1]).map((c) => c.ntsbNo);
+  const rest = f.cases.filter((c) => tierOf(casePriority(c, f.type)) > SCHEDULE.stages[1]).map((c) => c.ntsbNo);
+  return [...seededSample(first, n.stage1, `${f.family}|plan-pool-1`), ...seededSample(rest, n.rest, `${f.family}|plan-pool-2`)].map((ntsbNo) => ({ family: f.family, ntsbNo, origin: 'pool' as const }));
 }
 
 /** A broad question's likely pool: first cases by passage BM25 on the question, the lure's first cases, a random cohort sample. */

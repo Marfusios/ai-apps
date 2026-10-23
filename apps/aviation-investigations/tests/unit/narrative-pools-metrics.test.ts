@@ -25,6 +25,8 @@ import {
   addRuns,
   callUsd,
   canaryOf,
+  poolCounts,
+  poolSample,
   caseCost,
   fullEscalationUsd,
   measuredUsage,
@@ -684,6 +686,28 @@ describe('the dry run arithmetic', () => {
     expect(diag.family).toBe('per-pilot-decision-cause-weight-shift');
     expect(diag).toEqual(poolEstimates(d, 1).find((x) => x.role === 'diagnostic'));
     expect(diag.mappingDiagnostic.mean).toBe(PRODUCTION_MAPPING_DIAGNOSTIC[1].delivered.mean);
+  });
+
+  it('re-plans from a built pool: its exact pairs per family, and its own cases to measure', () => {
+    const d = dataset();
+    const fam = d.questions.find((q) => q.type === 'broad' && q.role === 'benchmark') as NarrativeItem;
+    const runs = [run('retrieval.v1', 1, COHORT.slice(0, 30), COHORT.slice(0, 6), fam.id), run('retrieval.v2', 1, COHORT.slice(5, 35), COHORT.slice(5, 11), fam.id)];
+    const mapping = [{ ...forced('retrieval.v2', 1, ['C036XX', 'C037XX']), member: fam.id }];
+    const pool = assemblePool({ family: fam, members: [fam], runs, mapping, cohort: COHORT, lure: [], rule: RULE as never });
+    const [counts] = poolCounts({ families: [pool] }, d);
+    expect(counts).toMatchObject({ family: fam.id, role: 'benchmark', type: 'broad', members: 1, mean: pool.cases.length, max: pool.cases.length });
+    expect(counts?.stage1.mean).toBe(pool.cases.filter((c) => tierOf(casePriority(c, 'broad')) <= SCHEDULE.stages[1]).length);
+    expect(counts?.answerabilityPairs.mean).toBe(bundlePairs(pool).length);
+    // The mapping diagnostic's own bundles: two cases no retrieval run delivered.
+    expect(counts?.mappingDiagnostic.mean).toBe(2);
+    const sample = poolSample(pool, { stage1: 4, rest: 3 });
+    expect(sample).toHaveLength(7);
+    expect(new Set(sample.map((x) => x.ntsbNo)).size).toBe(7);
+    expect(sample.every((x) => x.origin === 'pool' && x.family === fam.id)).toBe(true);
+    const tierOfCase = (n: string) => tierOf(casePriority(pool.cases.find((c) => c.ntsbNo === n) as never, 'broad'));
+    expect(sample.slice(0, 4).every((x) => tierOfCase(x.ntsbNo) <= 2)).toBe(true);
+    expect(sample.slice(4).every((x) => tierOfCase(x.ntsbNo) > 2)).toBe(true);
+    expect(poolSample(pool, { stage1: 4, rest: 3 })).toEqual(sample);
   });
 
   it("splits each family's pairs into the schedule's stage 1 and the rest, and reproduces the protocol's own estimate", () => {

@@ -4,9 +4,10 @@
  *
  *   build         [--generation <id>] [--out <file>] [--dry-run | --check]   the question set (PostgreSQL, read-only)
  *   calibration   --generation <id> [--out <file>] [--check]                 the calibration sets, labels frozen
- *   plan          [--samples 1|3] [--allocation-usd <usd>] [--allocation <name>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>]
+ *   plan          [--samples 1|3] [--allocation-usd <usd>] [--allocation <name>] [--pools <file>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>]
  *                 the free dry run: preflight, inventory, cost, the month's sequence (what remains of it set against an existing
- *                 allocation's spend, read only); measured usage replaces the assumptions
+ *                 allocation's spend, read only); measured usage replaces the assumptions; a built pool file replaces the pool
+ *                 estimates with its exact counts and is measured on its own cases and delivered bundles
  *   pools         [--samples 1|3] [--vectors <file>] [--confirm-cost --allocation <name>]
  *                 paid: the cached inputs (scope samples, query embeddings), then the pools through the production
  *                 retrievers and their frozen identity (frozen-pools.json, committed before judging)
@@ -38,7 +39,7 @@ import { judgeCommand, planCommand, poolsCommand, recoverCommand, reportCommand 
 export const USAGE = [
   'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]',
   '       pnpm eval:retrieval:narrative calibration [--env-files <a,b>] --generation <id> [--out <file>] [--check]',
-  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--allocation-usd <usd>] [--allocation <name>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>] [--out-dir <dir>]',
+  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--allocation-usd <usd>] [--allocation <name>] [--pools <file>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>] [--out-dir <dir>]',
   '       pnpm eval:retrieval:narrative pools [--samples 1|3] [--vectors <file>] [--max-usd <usd>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
   '       pnpm eval:retrieval:narrative pools --inputs <file> ...',
   '       pnpm eval:retrieval:narrative judge --set calibration --split dev|holdout [--max-pairs <n>] [--max-usd <usd>] [--concurrency <n>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
@@ -173,6 +174,7 @@ export async function main(argv: string[]): Promise<number> {
       broadSample: { bm25: 30, lure: 5, random: 5 },
       ...(allocationUsd !== undefined ? { allocationUsd } : {}),
       ...(values.allocation ? { allocation: values.allocation } : {}),
+      ...(values.pools ? { pools: values.pools } : {}),
       ...(values.measured ? { measured: values.measured.split(',').map((f) => f.trim()).filter(Boolean) } : {}),
       ...(outputTokens ? { outputTokens } : {}),
       ...(disagreement !== undefined ? { disagreement } : {}),
