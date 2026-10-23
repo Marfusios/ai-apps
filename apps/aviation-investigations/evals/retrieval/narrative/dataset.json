@@ -1,0 +1,2200 @@
+{
+  "version": "narrative-v1",
+  "reference": "model-judged",
+  "description": "Narrative-relevance retrieval set (Track N, task 10c protocol v4): development questions over negation, maintenance chronology, causal uncertainty, pilot-versus-investigator attribution, paraphrase, multi-aircraft and aircraft filters, operational and mechanical concepts, each with a written rubric (2/1/0 with edge cases). Bounded cohorts list every answer-eligible case their filters reach (all judged); broad questions are judged on a pool. Labels are model-judged, never expert-adjudicated. Rebuild with pnpm eval:retrieval:narrative build.",
+  "caveat": "Model-judged labels: two judges from different providers (claude-haiku-5-5, gpt-5.6-luna) grade each case 0/1/2 against the question's written rubric on the case's complete record, and claude-sonnet-5-5 adjudicates their disagreements. Unjudgeable, unresolved and abstained cases are unknown and stay in every denominator. These are model judgments, never expert-adjudicated relevance.",
+  "source": {
+    "generationId": 1,
+    "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+    "mappingVersion": "v1-empirical",
+    "fieldNormalizationVersion": "v1",
+    "citationTextVersion": "v1",
+    "answerEligibleCases": 24291,
+    "builder": "evals/retrieval/narrative/build.ts",
+    "specSha256": "6f63302aa3bdbb82b62d15f5acccc09e46c2ea763572974cb56d50d020fb68b5"
+  },
+  "limits": {
+    "boundedMax": 150,
+    "maxRelatedPositives": 80
+  },
+  "questions": [
+    {
+      "id": "ng-skydiving-power-loss-no-anomaly",
+      "question": "Which skydiving flights lost engine power even though the engine examination afterwards found nothing mechanically wrong?",
+      "family": "ng-skydiving-power-loss-no-anomaly",
+      "tags": [
+        "negation",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "bounded-cohort",
+      "filters": {
+        "purpose": [
+          "SKYD"
+        ]
+      },
+      "questionVersion": "q-57573e70a954cea3",
+      "memberVersion": "q-57573e70a954cea3",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial) during the flight, AND the investigators state that their examination of the engine found no mechanical malfunction, failure or anomaly (for example, \"no preimpact mechanical malfunctions or anomalies that would have precluded normal operation\"). Why power was lost may be undetermined or something other than an engine defect (fuel, ice, the way the engine was operated). A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "The record reports a loss of engine power, but leaves the examination result open: the engine was not examined, could be examined only in part (fire or impact damage), or the \"no anomalies\" statement covers only the airframe or only part of the engine. Also partial: the examination found nothing wrong, but the investigators doubt that power was lost.",
+        "notRelevant": "No loss of engine power is reported; or the examination found an engine malfunction, failure, damage or wear that existed before the accident (for example, a fractured connecting rod, a failed magneto, a stuck valve).",
+        "edgeCases": [
+          {
+            "situation": "Fuel exhaustion caused the power loss, and the examination found no mechanical anomaly with the engine.",
+            "grade": 2,
+            "why": "The question is about the engine's mechanical condition, not about why power was lost."
+          },
+          {
+            "situation": "The engine lost power on climb-out and was destroyed by the post-crash fire, so it could not be examined.",
+            "grade": 1,
+            "why": "The examination result is unknown."
+          },
+          {
+            "situation": "The engine lost power; the examination found a fatigue fracture of the crankshaft.",
+            "grade": 0,
+            "why": "A pre-existing mechanical failure was found."
+          },
+          {
+            "situation": "The pilot reported a partial loss of power; the engine later ran at full power on a test stand with no anomalies.",
+            "grade": 2,
+            "why": "A reported power loss and an examination, including the test run, that found nothing wrong."
+          },
+          {
+            "situation": "The airplane stalled during the jump run; the engine was producing power at impact and nothing was wrong with it.",
+            "grade": 0,
+            "why": "No loss of engine power."
+          }
+        ]
+      },
+      "rubricVersion": "r-254fe384da841d53",
+      "lure": "skydiving airplane engine lost power examination revealed fractured failed cylinder crankshaft magneto",
+      "cohort": {
+        "size": 107,
+        "cases": [
+          "ANC11LA038",
+          "CEN09LA325",
+          "CEN09LA525",
+          "CEN09LA542",
+          "CEN10LA168",
+          "CEN11CA655",
+          "CEN11FA115",
+          "CEN11FA559",
+          "CEN12CA016",
+          "CEN12FA534",
+          "CEN12IA385",
+          "CEN12LA224",
+          "CEN12LA549",
+          "CEN13LA286",
+          "CEN13LA330",
+          "CEN13LA525",
+          "CEN13LA571",
+          "CEN14CA289",
+          "CEN14CA365",
+          "CEN14LA036",
+          "CEN14LA133",
+          "CEN14LA272",
+          "CEN15FA427",
+          "CEN15LA323",
+          "CEN16LA177",
+          "CEN16LA235",
+          "CEN16LA247",
+          "CEN16LA288",
+          "CEN16LA323",
+          "CEN18LA163",
+          "CEN21LA404",
+          "CEN22LA094",
+          "CEN24LA197",
+          "CHI08LA144",
+          "CHI08LA190",
+          "DEN08FA078",
+          "DFW08LA166",
+          "ERA09CA082",
+          "ERA09LA344",
+          "ERA09LA435",
+          "ERA10LA389",
+          "ERA11CA237",
+          "ERA11CA430",
+          "ERA11LA239",
+          "ERA11LA357",
+          "ERA12CA024",
+          "ERA12CA427",
+          "ERA12CA519",
+          "ERA12LA231",
+          "ERA12LA261",
+          "ERA12LA470",
+          "ERA13CA247",
+          "ERA14CA419",
+          "ERA14LA235",
+          "ERA15CA302",
+          "ERA15LA071",
+          "ERA15LA263",
+          "ERA16LA059",
+          "ERA17LA018",
+          "ERA17LA166",
+          "ERA18FA231",
+          "ERA18LA165",
+          "ERA18TA236",
+          "ERA19TA211",
+          "ERA19TA278",
+          "ERA22LA264",
+          "ERA22LA348",
+          "ERA23FA249",
+          "ERA23LA292",
+          "ERA24LA168",
+          "ERA26LA009",
+          "GAA16CA081",
+          "GAA16CA184",
+          "GAA16CA477",
+          "GAA17CA133",
+          "GAA17CA303",
+          "GAA17CA307",
+          "GAA17CA325",
+          "GAA17CA367",
+          "GAA17CA490",
+          "GAA18CA487",
+          "LAX08CA167",
+          "MIA08LA180",
+          "NYC08CA295",
+          "SEA08LA100",
+          "WPR09LA179",
+          "WPR11LA269",
+          "WPR12CA069",
+          "WPR12CA137",
+          "WPR12CA346",
+          "WPR12LA286",
+          "WPR13LA408",
+          "WPR14CA217",
+          "WPR15LA185",
+          "WPR15LA201",
+          "WPR16FA116",
+          "WPR16FA183",
+          "WPR16LA107",
+          "WPR16LA150",
+          "WPR18LA183",
+          "WPR19MA177",
+          "WPR20LA291",
+          "WPR22FA197",
+          "WPR22LA114",
+          "WPR24LA042",
+          "WPR24LA300",
+          "WPR25LA176"
+        ]
+      },
+      "relatedPositives": [],
+      "note": "Purpose SKYD (skydiving) bounds the cohort. The negation is the examination finding nothing wrong; the contrast is an examination that found the failure. Fuel-related reasons are allowed on purpose: the rubric asks about the engine, not about the cause."
+    },
+    {
+      "id": "cu-banner-tow-unexplained-power-loss",
+      "question": "Which banner-towing flights lost engine power for a reason the investigation could not determine?",
+      "family": "cu-banner-tow-unexplained-power-loss",
+      "tags": [
+        "causal_uncertainty",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "bounded-cohort",
+      "filters": {
+        "purpose": [
+          "BANT"
+        ]
+      },
+      "questionVersion": "q-d018067bb70fbf2a",
+      "memberVersion": "q-d018067bb70fbf2a",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial), AND the investigators state that its reason could not be determined (for example, \"for undetermined reasons\", \"the reason for the loss of engine power could not be determined\", \"no cause for the power loss was found\"). A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "A loss of engine power, and the investigators give a possible or likely reason without establishing it (\"likely\", \"may have\", \"could not be ruled out\"), or name several candidate reasons; or the record states no reason at all and does not say that the reason was undetermined.",
+        "notRelevant": "No loss of engine power; or the investigators established its reason (for example, fuel exhaustion, fuel starvation from the selector position, a failed engine part, carburetor icing stated as the cause).",
+        "edgeCases": [
+          {
+            "situation": "The power loss was \"likely due to carburetor icing\" given the temperature and dew point.",
+            "grade": 1,
+            "why": "A likely reason, not an established one, and not stated as undetermined."
+          },
+          {
+            "situation": "The pilot had not refueled and the power loss was due to fuel exhaustion.",
+            "grade": 0,
+            "why": "The reason was established."
+          },
+          {
+            "situation": "\"A total loss of engine power for reasons that could not be determined because postaccident examination did not reveal any anomalies.\"",
+            "grade": 2,
+            "why": "Explicitly undetermined."
+          },
+          {
+            "situation": "The airplane stalled while picking up the banner; the engine was operating normally.",
+            "grade": 0,
+            "why": "No loss of engine power."
+          }
+        ]
+      },
+      "rubricVersion": "r-26eee9f0e220a6de",
+      "lure": "banner tow airplane loss of engine power due to fuel exhaustion fuel starvation determined cause",
+      "cohort": {
+        "size": 83,
+        "cases": [
+          "CEN10LA514",
+          "CEN11LA182",
+          "CEN12CA030",
+          "CEN13CA246",
+          "CEN13LA249",
+          "CEN14FA230",
+          "CEN14LA331",
+          "CEN15LA297",
+          "CEN16LA236",
+          "CEN19LA214",
+          "CEN20CA151",
+          "CEN20CA303",
+          "CEN25LA322",
+          "ERA09LA380",
+          "ERA10CA240",
+          "ERA10CA300",
+          "ERA10CA417",
+          "ERA10LA101",
+          "ERA11CA352",
+          "ERA11LA200",
+          "ERA11LA388",
+          "ERA11LA411",
+          "ERA11LA437",
+          "ERA12CA339",
+          "ERA12FA130",
+          "ERA12FA465",
+          "ERA12LA453",
+          "ERA12LA468",
+          "ERA12LA474",
+          "ERA12LA482",
+          "ERA13LA174",
+          "ERA13LA339",
+          "ERA14CA140",
+          "ERA14CA188",
+          "ERA14FA372",
+          "ERA14FA416",
+          "ERA14LA008",
+          "ERA14LA167",
+          "ERA15LA358",
+          "ERA16CA241",
+          "ERA16LA244",
+          "ERA17LA037",
+          "ERA17LA281",
+          "ERA18FA180",
+          "ERA18FA208",
+          "ERA18LA210",
+          "ERA19FA112",
+          "ERA20CA317",
+          "ERA20LA275",
+          "ERA22FA243",
+          "ERA22FA315",
+          "ERA23FA234",
+          "ERA23LA356",
+          "ERA23LA371",
+          "ERA24LA128",
+          "ERA24LA299",
+          "GAA15CA175",
+          "GAA17CA033",
+          "GAA17CA537",
+          "GAA18CA503",
+          "LAX08CA215",
+          "LAX08CA224",
+          "MIA08LA130",
+          "MIA08LA135",
+          "MIA08LA158",
+          "MIA08LA187",
+          "NYC08CA094",
+          "NYC08CA141",
+          "NYC08LA201",
+          "NYC08LA249",
+          "SEA08LA192",
+          "WPR10FA315",
+          "WPR11CA309",
+          "WPR12LA227",
+          "WPR13CA311",
+          "WPR13LA392",
+          "WPR15CA207",
+          "WPR15FA238",
+          "WPR15LA149",
+          "WPR20LA026",
+          "WPR21LA104",
+          "WPR22LA268",
+          "WPR23LA336"
+        ]
+      },
+      "relatedPositives": [],
+      "note": "Purpose BANT (banner tow) bounds the cohort. Causal uncertainty: the investigators say they could not determine why power was lost; a likely reason is only partial."
+    },
+    {
+      "id": "mc-ag-arkansas-engine-after-maintenance",
+      "question": "Which agricultural flights in Arkansas lost engine power within 25 flight hours of maintenance on the engine?",
+      "family": "mc-ag-arkansas-engine-after-maintenance",
+      "tags": [
+        "maintenance_chronology",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "bounded-cohort",
+      "filters": {
+        "far_part": [
+          "137"
+        ],
+        "state": [
+          "AR"
+        ]
+      },
+      "questionVersion": "q-e1b743f9a6e58cec",
+      "memberVersion": "q-e1b743f9a6e58cec",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial), AND it states maintenance on that engine (an overhaul, a repair, a part or accessory replaced or installed, or an inspection that included the engine) AND a time between that maintenance and the accident of 25 flight hours or less (in flight, tachometer or Hobbs hours, or as the first flight after it). The investigators need not link the maintenance to the power loss. A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "Both the power loss and engine maintenance are stated, but the time between them is given only in calendar time that does not establish 25 flight hours or less (\"two weeks before\"), is approximate close to the limit (\"about 25 hours\", \"about 30 hours\"), or cannot be worked out from the record.",
+        "notRelevant": "No loss of engine power; or no maintenance on the engine is stated; or the stated time since that maintenance is clearly more than 25 flight hours; or the maintenance concerned only the airframe, the propeller or other systems that are not part of the engine.",
+        "edgeCases": [
+          {
+            "situation": "The engine had accumulated 12.4 hours since a major overhaul when it lost power.",
+            "grade": 2,
+            "why": "Engine maintenance 12.4 flight hours before the power loss."
+          },
+          {
+            "situation": "A cylinder was replaced about 40 flight hours before the power loss.",
+            "grade": 0,
+            "why": "Clearly outside the 25-hour window."
+          },
+          {
+            "situation": "The last annual inspection was three weeks before the accident; the hours flown since are not stated.",
+            "grade": 1,
+            "why": "Calendar time only."
+          },
+          {
+            "situation": "The power loss happened on the first flight after the fuel control unit was replaced.",
+            "grade": 2,
+            "why": "First flight after maintenance on an engine accessory."
+          },
+          {
+            "situation": "The engine had 15 hours since overhaul, but the airplane struck a power line and no loss of engine power is reported.",
+            "grade": 0,
+            "why": "No loss of engine power."
+          }
+        ]
+      },
+      "rubricVersion": "r-81ba1c89878fa5e1",
+      "lure": "agricultural airplane engine overhauled years before the accident total time since overhaul hours engine power",
+      "cohort": {
+        "size": 93,
+        "cases": [
+          "CEN09CA313",
+          "CEN09CA361",
+          "CEN09CA428",
+          "CEN09LA401",
+          "CEN10CA265",
+          "CEN10CA391",
+          "CEN10CA582",
+          "CEN10FA310",
+          "CEN10LA236",
+          "CEN10LA298",
+          "CEN10LA353",
+          "CEN10LA555",
+          "CEN11CA006",
+          "CEN11CA098",
+          "CEN11CA174",
+          "CEN11CA224",
+          "CEN11CA294",
+          "CEN11CA608",
+          "CEN11LA404",
+          "CEN11LA460",
+          "CEN11LA484",
+          "CEN11LA610",
+          "CEN12FA312",
+          "CEN12LA310",
+          "CEN12LA323",
+          "CEN12LA352",
+          "CEN13LA191",
+          "CEN13LA384",
+          "CEN13LA402",
+          "CEN13LA504",
+          "CEN13LA568",
+          "CEN14CA258",
+          "CEN14CA283",
+          "CEN14CA314",
+          "CEN14LA298",
+          "CEN14LA299",
+          "CEN14LA301",
+          "CEN14LA308",
+          "CEN15FA331",
+          "CEN15IA200",
+          "CEN15LA259",
+          "CEN15LA367",
+          "CEN15LA384",
+          "CEN16LA182",
+          "CEN16LA312",
+          "CEN17FA259",
+          "CEN17LA177",
+          "CEN17LA230",
+          "CEN17LA284",
+          "CEN18FA263",
+          "CEN18LA211",
+          "CEN20LA109",
+          "CEN20LA234",
+          "CEN20LA269",
+          "CEN20LA287",
+          "CEN20LA327",
+          "CEN20LA357",
+          "CEN21FA270",
+          "CEN21LA005",
+          "CEN21LA161",
+          "CEN21LA240",
+          "CEN21LA287",
+          "CEN21LA296",
+          "CEN22FA215",
+          "CEN22LA226",
+          "CEN22LA228",
+          "CEN22LA287",
+          "CEN22LA335",
+          "CEN23LA212",
+          "CEN23LA223",
+          "CEN23LA228",
+          "CEN24LA175",
+          "CEN24LA257",
+          "CEN24LA313",
+          "CEN25LA140",
+          "CEN25LA200",
+          "DEN08CA089",
+          "DEN08LA106",
+          "DEN08LA107",
+          "DFW08CA084",
+          "DFW08CA104",
+          "DFW08CA155",
+          "DFW08CA199",
+          "DFW08LA143",
+          "ERA22FA338",
+          "GAA15CA202",
+          "GAA17CA030",
+          "GAA17CA267",
+          "GAA17CA342",
+          "GAA17CA454",
+          "GAA18CA265",
+          "GAA19CA271",
+          "GAA19CA289"
+        ]
+      },
+      "relatedPositives": [],
+      "note": "Part 137 (agricultural) in Arkansas bounds the cohort. Maintenance chronology: a stated interval in flight hours (or first flight) inside a 25-hour window; calendar-only intervals and values close to the limit are partial."
+    },
+    {
+      "id": "op-balloon-power-lines",
+      "question": "Which hot air balloon flights since 2018 struck power lines?",
+      "family": "op-balloon-power-lines",
+      "tags": [
+        "operational",
+        "aircraft_filter"
+      ],
+      "type": "bounded-cohort",
+      "filters": {
+        "category": [
+          "BALL"
+        ],
+        "yearFrom": 2018
+      },
+      "questionVersion": "q-288ad3522cb849f5",
+      "memberVersion": "q-288ad3522cb849f5",
+      "rubric": {
+        "relevant": "During the flight, including the approach and landing, the balloon (envelope, basket, burner frame or its lines) contacted power lines, utility wires or their poles.",
+        "partial": "Power lines are part of the accident sequence without stated contact (for example, the pilot descended steeply or landed hard to avoid them); or the balloon contacted wires that the record does not identify as power or utility lines (a fence wire, a guy wire, an antenna cable).",
+        "notRelevant": "No contact with wires, and power lines play no part in the accident sequence.",
+        "edgeCases": [
+          {
+            "situation": "On the landing approach the basket struck power lines, which arced and burned the load tapes.",
+            "grade": 2,
+            "why": "Contact with power lines."
+          },
+          {
+            "situation": "To avoid power lines the pilot made a fast descent and the basket tipped over on landing.",
+            "grade": 1,
+            "why": "Power lines shaped the sequence, but there was no contact."
+          },
+          {
+            "situation": "The envelope snagged on a tree and the basket was dragged across a field.",
+            "grade": 0,
+            "why": "No wires involved."
+          },
+          {
+            "situation": "The basket caught a barbed-wire fence on landing.",
+            "grade": 1,
+            "why": "A wire, but not a power or utility line."
+          }
+        ]
+      },
+      "rubricVersion": "r-081d269b40fdd9ec",
+      "lure": "hot air balloon hard landing high winds basket tipped over passengers injured landing site",
+      "relatedCodes": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0302203281",
+              "0302203282",
+              "0302203284",
+              "0302203285",
+              "0302203286",
+              "0302203287",
+              "0302203291",
+              "0302203299"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "cohort": {
+        "size": 82,
+        "cases": [
+          "CEN18LA245",
+          "CEN18LA309",
+          "CEN18LA364",
+          "CEN19CA128",
+          "CEN19TA328",
+          "CEN21LA164",
+          "CEN21LA210",
+          "CEN22LA159",
+          "CEN22LA221",
+          "CEN22LA238",
+          "CEN22LA356",
+          "CEN22LA365",
+          "CEN23LA006",
+          "CEN23LA293",
+          "CEN23LA302",
+          "CEN23LA305",
+          "CEN23LA325",
+          "CEN24LA009",
+          "CEN24LA093",
+          "CEN24LA139",
+          "CEN24LA209",
+          "CEN24LA302",
+          "CEN24LA369",
+          "CEN25LA390",
+          "CEN26LA108",
+          "ERA18LA116",
+          "ERA20CA138",
+          "ERA20LA094",
+          "ERA21LA290",
+          "ERA21LA366",
+          "ERA22LA129",
+          "ERA23LA315",
+          "ERA23LA377",
+          "ERA23LA391",
+          "ERA24LA382",
+          "ERA25LA321",
+          "GAA18CA185",
+          "GAA19CA030",
+          "GAA19CA314",
+          "GAA19CA484",
+          "GAA20CA012",
+          "GAA20CA037",
+          "WPR19LA104",
+          "WPR19LA228",
+          "WPR19LA257",
+          "WPR19TA005",
+          "WPR19TA110",
+          "WPR20CA050",
+          "WPR20CA262",
+          "WPR20CA263",
+          "WPR20CA267",
+          "WPR20CA272",
+          "WPR20LA333",
+          "WPR21FA242",
+          "WPR21LA074",
+          "WPR21LA155",
+          "WPR21LA158",
+          "WPR21LA191",
+          "WPR21LA225",
+          "WPR22LA010",
+          "WPR22LA066",
+          "WPR22LA152",
+          "WPR22LA368",
+          "WPR24FA072",
+          "WPR24LA006",
+          "WPR24LA011",
+          "WPR24LA019",
+          "WPR24LA029",
+          "WPR24LA142",
+          "WPR24LA223",
+          "WPR24LA245",
+          "WPR25LA016",
+          "WPR25LA023",
+          "WPR25LA081",
+          "WPR25LA284",
+          "WPR26LA021",
+          "WPR26LA039",
+          "WPR26LA052",
+          "WPR26LA079",
+          "WPR26LA118",
+          "WPR26LA170",
+          "WPR26LA176"
+        ]
+      },
+      "relatedPositives": [
+        "CEN22LA356",
+        "CEN24LA009",
+        "CEN24LA139",
+        "CEN24LA209",
+        "ERA18LA116",
+        "ERA24LA382",
+        "GAA20CA037",
+        "WPR20CA050",
+        "WPR21FA242",
+        "WPR21LA074",
+        "WPR25LA023",
+        "WPR26LA021"
+      ],
+      "note": "Category BALL from 2018 bounds the cohort. Operational: wire strikes, a known balloon hazard. Related codes: the Wire finding (every modifier seen); its coded positives join the pool and disagreements are logged, never labels."
+    },
+    {
+      "id": "op-external-load-line-strike",
+      "question": "Which external-load helicopter flights had the longline, sling or load strike the helicopter?",
+      "family": "op-external-load-line-strike",
+      "tags": [
+        "operational",
+        "aircraft_filter"
+      ],
+      "type": "bounded-cohort",
+      "filters": {
+        "purpose": [
+          "EXLD"
+        ]
+      },
+      "questionVersion": "q-fc7e0e4b16870d0d",
+      "memberVersion": "q-fc7e0e4b16870d0d",
+      "rubric": {
+        "relevant": "During an external-load operation, the longline, sling, cargo-hook equipment or the load itself contacted the helicopter (main rotor, tail rotor, skids, fuselage or tail boom).",
+        "partial": "Contact with the helicopter is suspected but not established (\"likely\", \"may have\"); or the line or load became entangled with, or snagged on, trees, terrain or structures and that caused the accident without the line or load contacting the helicopter.",
+        "notRelevant": "The line or load neither contacted the helicopter nor snagged on anything in the accident sequence (for example, an engine power loss, a loss of control in the hover, a load dropped without further consequence).",
+        "edgeCases": [
+          {
+            "situation": "After the load was released, the empty longline rose into the tail rotor.",
+            "grade": 2,
+            "why": "The line contacted the helicopter."
+          },
+          {
+            "situation": "The load snagged a tree during the lift and the helicopter rolled over.",
+            "grade": 1,
+            "why": "An entanglement without contact with the helicopter."
+          },
+          {
+            "situation": "The engine lost power during the lift and the pilot released the load before landing.",
+            "grade": 0,
+            "why": "The line and load played no part beyond being released."
+          },
+          {
+            "situation": "The tail rotor damage was consistent with a longline strike, but the investigators could not determine whether it happened before the impact.",
+            "grade": 1,
+            "why": "Contact suspected, not established."
+          }
+        ]
+      },
+      "rubricVersion": "r-c616e15574af509b",
+      "lure": "external load helicopter engine power loss load released autorotation hover loss of control",
+      "cohort": {
+        "size": 106,
+        "cases": [
+          "ANC08LA076",
+          "ANC12CA018",
+          "ANC12CA082",
+          "ANC12CA100",
+          "ANC13FA017",
+          "ANC13LA074",
+          "ANC13TA076",
+          "ANC14FA030",
+          "ANC20CA070",
+          "ANC21LA003",
+          "ANC21LA079",
+          "ANC22FA018",
+          "ANC23LA085",
+          "ANC25LA097",
+          "CEN09LA413",
+          "CEN11LA200",
+          "CEN12LA235",
+          "CEN13CA027",
+          "CEN13CA281",
+          "CEN13CA501",
+          "CEN13FA075",
+          "CEN13FA415",
+          "CEN13LA321",
+          "CEN13LA461",
+          "CEN14LA398",
+          "CEN16FA171",
+          "CEN17FA127",
+          "CEN17LA314",
+          "CEN18FA182",
+          "CEN18LA026",
+          "CEN18LA121",
+          "CEN19FA020",
+          "CEN20CA334",
+          "CEN21LA102",
+          "CEN21LA116",
+          "CEN21LA165",
+          "CEN22LA146",
+          "CEN24FA049",
+          "CEN24LA358",
+          "DEN08LA138",
+          "ERA09FA414",
+          "ERA09LA317",
+          "ERA10CA477",
+          "ERA10LA238",
+          "ERA11FA042",
+          "ERA12LA493",
+          "ERA13LA344",
+          "ERA15CA055",
+          "ERA16LA030",
+          "ERA17LA209",
+          "ERA18LA091",
+          "ERA19FA035",
+          "ERA19FA118",
+          "ERA20LA160",
+          "ERA20LA229",
+          "ERA21LA262",
+          "ERA23LA309",
+          "ERA24LA148",
+          "ERA25LA040",
+          "GAA15LA217",
+          "GAA16CA179",
+          "GAA16CA480",
+          "GAA18CA378",
+          "GAA18CA573",
+          "GAA19CA344",
+          "GAA19CA531",
+          "LAX08LA139",
+          "LAX08LA230",
+          "NYC08LA129",
+          "WPR09LA010",
+          "WPR09LA226",
+          "WPR10FA012",
+          "WPR10FA295",
+          "WPR11FA163",
+          "WPR11LA048",
+          "WPR12LA036",
+          "WPR12LA125",
+          "WPR12LA279",
+          "WPR12LA328",
+          "WPR13CA057",
+          "WPR13FA006",
+          "WPR13FA411",
+          "WPR13LA303",
+          "WPR14CA373",
+          "WPR14LA008",
+          "WPR14LA308",
+          "WPR15LA109",
+          "WPR15LA159",
+          "WPR15LA178",
+          "WPR16LA020",
+          "WPR16LA021",
+          "WPR16LA188",
+          "WPR18LA152",
+          "WPR19FA091",
+          "WPR20LA163",
+          "WPR20LA211",
+          "WPR20LA235",
+          "WPR20LA331",
+          "WPR21LA185",
+          "WPR22LA034",
+          "WPR22LA174",
+          "WPR22LA330",
+          "WPR23LA097",
+          "WPR24LA036",
+          "WPR25LA034",
+          "WPR26LA086"
+        ]
+      },
+      "relatedPositives": [],
+      "note": "Purpose EXLD (external load) bounds the cohort. Operational: the line or load striking the helicopter; entanglement with obstacles is partial."
+    },
+    {
+      "id": "me-powered-parachute-propeller-strike",
+      "question": "Which powered parachute accidents involved the wing, its lines or loose gear getting into the propeller?",
+      "family": "me-powered-parachute-propeller-strike",
+      "tags": [
+        "mechanical",
+        "operational",
+        "aircraft_filter"
+      ],
+      "type": "bounded-cohort",
+      "filters": {
+        "category": [
+          "PPAR"
+        ]
+      },
+      "questionVersion": "q-0ab000a86b168bee",
+      "memberVersion": "q-0ab000a86b168bee",
+      "rubric": {
+        "relevant": "The parachute wing (canopy), its suspension or steering lines, or an object carried on the aircraft or by an occupant (clothing, a strap, a helmet, a bag) contacted or became entangled in the propeller, in flight or during the takeoff or landing roll.",
+        "partial": "The propeller was damaged while the aircraft was operating by something the record does not identify; or contact with the propeller is suspected but not established.",
+        "notRelevant": "No contact with or entanglement in the propeller by the wing, its lines or carried objects (for example, a wing collapse, a hard landing, a collision with an obstacle), even when the propeller was damaged when the aircraft hit the ground.",
+        "edgeCases": [
+          {
+            "situation": "During the takeoff roll a steering line was drawn into the propeller and the wing collapsed.",
+            "grade": 2,
+            "why": "A line in the propeller."
+          },
+          {
+            "situation": "The propeller was damaged when the aircraft nosed over on landing.",
+            "grade": 0,
+            "why": "Impact damage only."
+          },
+          {
+            "situation": "The pilot's jacket came loose in flight and struck the propeller.",
+            "grade": 2,
+            "why": "Loose gear contacted the propeller."
+          },
+          {
+            "situation": "The propeller blades were broken in flight, and the investigators could not determine what struck them.",
+            "grade": 1,
+            "why": "Propeller damage from an unidentified source."
+          }
+        ]
+      },
+      "rubricVersion": "r-7456919aced2b699",
+      "lure": "powered parachute wing collapsed turbulence hard landing propeller damaged impact terrain",
+      "cohort": {
+        "size": 99,
+        "cases": [
+          "ANC09CA077",
+          "CEN09CA025",
+          "CEN09CA108",
+          "CEN09CA371",
+          "CEN09CA580",
+          "CEN09CA588",
+          "CEN10CA229",
+          "CEN10CA480",
+          "CEN10CA570",
+          "CEN10LA099",
+          "CEN10LA492",
+          "CEN11CA057",
+          "CEN11CA154",
+          "CEN11CA445",
+          "CEN11CA453",
+          "CEN11LA456",
+          "CEN12CA131",
+          "CEN12CA631",
+          "CEN12CA666",
+          "CEN12LA114",
+          "CEN12LA428",
+          "CEN12LA578",
+          "CEN12LA678",
+          "CEN13LA506",
+          "CEN13LA555",
+          "CEN14CA490",
+          "CEN14LA316",
+          "CEN14LA346",
+          "CEN15LA212",
+          "CEN15LA398",
+          "CEN18LA206",
+          "CEN19FA134",
+          "CEN19LA316",
+          "CEN20CA231",
+          "CEN20CA275",
+          "CEN20CA387",
+          "CEN21LA179",
+          "CEN21LA387",
+          "CEN23LA272",
+          "CEN23LA376",
+          "CEN23LA413",
+          "CEN23LA414",
+          "CEN23LA424",
+          "CEN24LA031",
+          "CEN25LA011",
+          "CHI08CA149",
+          "CHI08LA297",
+          "DEN08LA113",
+          "DFW08CA179",
+          "ERA09CA003",
+          "ERA09CA129",
+          "ERA09CA445",
+          "ERA10CA072",
+          "ERA10CA480",
+          "ERA11LA326",
+          "ERA12CA389",
+          "ERA12CA462",
+          "ERA12CA472",
+          "ERA12CA548",
+          "ERA12CA587",
+          "ERA12LA264",
+          "ERA12LA509",
+          "ERA13CA009",
+          "ERA15CA036",
+          "ERA15CA307",
+          "ERA15LA044",
+          "ERA16LA254",
+          "ERA17FA144",
+          "ERA17FA211",
+          "ERA23LA003",
+          "ERA24LA297",
+          "ERA25LA023",
+          "ERA25LA089",
+          "GAA15LA085",
+          "GAA16CA526",
+          "GAA18CA029",
+          "GAA18CA325",
+          "GAA19CA208",
+          "MIA08CA150",
+          "MIA08CA191",
+          "WPR09CA188",
+          "WPR09LA426",
+          "WPR09LA442",
+          "WPR10LA032",
+          "WPR11LA133",
+          "WPR11LA270",
+          "WPR11LA275",
+          "WPR12LA149",
+          "WPR12LA205",
+          "WPR13CA136",
+          "WPR13CA361",
+          "WPR13LA069",
+          "WPR13LA135",
+          "WPR13LA398",
+          "WPR18LA071",
+          "WPR18LA076",
+          "WPR20CA070",
+          "WPR20LA001",
+          "WPR22LA117"
+        ]
+      },
+      "relatedPositives": [],
+      "note": "Category PPAR (powered parachute) bounds the cohort. Mechanical and operational: wing, line or gear contact with the propeller; impact damage alone is not relevant."
+    },
+    {
+      "id": "ng-carb-icing-not-conducive",
+      "question": "Which airplane engine power losses happened in weather that was not conducive to carburetor icing?",
+      "family": "ng-carb-icing-not-conducive",
+      "tags": [
+        "negation",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "AIR"
+        ],
+        "engine": [
+          "REC"
+        ]
+      },
+      "questionVersion": "q-c3627d12e5b1d13d",
+      "memberVersion": "q-c3627d12e5b1d13d",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial), AND states that the weather conditions at the time (temperature and dew point, or the carburetor icing probability chart) were not conducive or not favorable to carburetor icing at the power setting in use. A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "A loss of engine power, and the record's statement about carburetor icing is mixed or qualified without saying which power setting applied (for example, conducive at glide power but not at cruise power); or the record rules out carburetor icing for a reason other than the weather (the engine was fuel injected, carburetor heat was applied).",
+        "notRelevant": "No loss of engine power; or the record states the conditions were conducive to carburetor icing at the power setting in use; or carburetor icing is not discussed.",
+        "edgeCases": [
+          {
+            "situation": "Power loss in cruise; the temperature and dew point were \"not conducive to carburetor icing at any power setting\".",
+            "grade": 2,
+            "why": "Explicitly not conducive."
+          },
+          {
+            "situation": "Power loss during the descent; \"conditions were conducive to serious carburetor icing at glide power\".",
+            "grade": 0,
+            "why": "Conducive at the power setting in use."
+          },
+          {
+            "situation": "Power loss in cruise; the chart showed icing only at glide power, not at cruise power.",
+            "grade": 2,
+            "why": "Not conducive at the cruise power in use."
+          },
+          {
+            "situation": "Power loss; the engine was fuel injected, so carburetor icing could not occur.",
+            "grade": 1,
+            "why": "Icing ruled out, but not by the weather."
+          }
+        ]
+      },
+      "rubricVersion": "r-c19292c5e147cf5f",
+      "lure": "loss of engine power temperature dew point conditions conducive to serious carburetor icing at glide power",
+      "cohort": {
+        "size": 18251,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Airplanes with reciprocating engines. Negation against the coded concept: Track C labels \"conducive to carburetor icing\"; here the relevant cases say the opposite, and the conducive cases are the hard negatives."
+    },
+    {
+      "id": "ng-gear-collapse-no-defect",
+      "question": "Which airplane landing gear collapses happened even though no pre-existing defect was found in the gear?",
+      "family": "ng-gear-collapse-no-defect",
+      "tags": [
+        "negation",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "AIR"
+        ],
+        "yearFrom": 2010
+      },
+      "questionVersion": "q-674a7ca7b4b5ea4e",
+      "memberVersion": "q-674a7ca7b4b5ea4e",
+      "rubric": {
+        "relevant": "A landing gear leg (main, nose or tail) collapsed, folded or retracted during the landing, takeoff or ground operation, AND the investigators state that their examination of that gear found no pre-existing defect, malfunction or anomaly (for example, \"no evidence of a preimpact mechanical malfunction of the landing gear\").",
+        "partial": "A gear collapse, and the examination result is general or limited (\"no anomalies with the airplane\" without naming the gear, or the gear was not examined); or the record attributes the collapse to the landing (a hard landing, a side load, a loss of directional control) without stating an examination result.",
+        "notRelevant": "No gear collapse; or the examination found a defect or failure that existed before the accident (a fatigue crack, corrosion, a failed actuator, improper rigging or maintenance); or a gear-up landing in which the gear was never extended (not a collapse).",
+        "edgeCases": [
+          {
+            "situation": "The nose gear collapsed after a hard landing; examination revealed no preimpact anomalies with the nose gear.",
+            "grade": 2,
+            "why": "A collapse with an examination of that gear that found nothing."
+          },
+          {
+            "situation": "The right main gear collapsed; the trunnion had a pre-existing fatigue crack.",
+            "grade": 0,
+            "why": "A pre-existing defect was found."
+          },
+          {
+            "situation": "The pilot forgot to extend the gear and landed gear up.",
+            "grade": 0,
+            "why": "Not a collapse."
+          },
+          {
+            "situation": "The left main gear collapsed during a ground loop; the gear was not examined.",
+            "grade": 1,
+            "why": "Collapse without an examination result."
+          }
+        ]
+      },
+      "rubricVersion": "r-48a4aec7726cfb1d",
+      "lure": "landing gear collapsed fatigue crack fracture corrosion trunnion actuator failed examination revealed",
+      "cohort": {
+        "size": 18004,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Airplanes since 2010. Negation: an examination that found no defect; the contrast is a found defect, and a gear-up landing is not a collapse."
+    },
+    {
+      "id": "mc-first-flight-after-annual",
+      "question": "Which accidents happened on the first flight after an annual inspection?",
+      "family": "mc-first-flight-after-annual",
+      "tags": [
+        "maintenance_chronology"
+      ],
+      "type": "broad",
+      "filters": {},
+      "questionVersion": "q-f7f6994acc706a5c",
+      "memberVersion": "q-f7f6994acc706a5c",
+      "rubric": {
+        "relevant": "The record states that the accident flight was the first flight after an annual inspection (or a condition inspection, its equivalent for an amateur-built or light-sport aircraft): explicitly (\"the first flight since the annual\"), as the test flight right after the annual, or by stating that the aircraft had not flown since the annual was completed.",
+        "partial": "The accident happened shortly after an annual inspection but not on the first flight, or the record does not say it was the first (for example, 0.5 hours or one flight since the annual); or it was the first flight after a 100-hour or progressive inspection rather than an annual.",
+        "notRelevant": "No recent annual inspection is described as preceding the flight, or the time since the annual is longer (several flights or days of flying); or it was the first flight after other maintenance that the record does not call an annual or condition inspection.",
+        "edgeCases": [
+          {
+            "situation": "The annual inspection was signed off on the morning of the accident, and the accident flight was the post-inspection test flight.",
+            "grade": 2,
+            "why": "First flight after the annual."
+          },
+          {
+            "situation": "The airplane had flown 0.3 hours since the annual, on a test flight the day before.",
+            "grade": 1,
+            "why": "Shortly after the annual, but not the first flight."
+          },
+          {
+            "situation": "The last annual inspection was 11 months before the accident.",
+            "grade": 0,
+            "why": "Not recent."
+          },
+          {
+            "situation": "The accident was the first flight after the engine was replaced; no inspection is mentioned.",
+            "grade": 0,
+            "why": "Other maintenance, not an annual inspection."
+          }
+        ]
+      },
+      "rubricVersion": "r-ce9e03e0ae6b1c5c",
+      "lure": "annual inspection completed months before the accident airplane flown hours since the last annual inspection",
+      "cohort": {
+        "size": 24291,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "No filters: the whole answer-eligible cohort. Maintenance chronology anchored on the annual inspection; the first flight after other maintenance is a distractor."
+    },
+    {
+      "id": "mc-helicopter-control-rotor-maintenance-10h",
+      "question": "Which helicopter accidents happened within 10 flight hours after maintenance on the flight controls or rotor system?",
+      "family": "mc-helicopter-control-rotor-maintenance-10h",
+      "tags": [
+        "maintenance_chronology",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "questionVersion": "q-10ce141adf4ba24e",
+      "memberVersion": "q-10ce141adf4ba24e",
+      "rubric": {
+        "relevant": "The record states maintenance (a repair, a replacement, an adjustment or rigging, an installation, or an inspection that included the work) on a flight control component (cyclic, collective, pedals, servos, control linkages, swashplate) or a rotor system component (main or tail rotor blades, hubs, pitch links, gearboxes, drive shafts), AND that the accident happened 10 flight hours or less after it (stated in hours, or as the first flight after it). A link to the accident is not required.",
+        "partial": "Such maintenance is stated, but the interval is given only in calendar time (\"three days before\"), is approximate near the limit (\"about 10 hours\"), or cannot be worked out; or a general inspection (annual, 100-hour) within 10 flight hours, without stated work on the controls or rotor system.",
+        "notRelevant": "No maintenance on the flight controls or rotor system is stated; or the interval is clearly more than 10 flight hours; or the maintenance concerned only the engine, the airframe or the avionics.",
+        "edgeCases": [
+          {
+            "situation": "The tail rotor pitch link bearing was replaced 2.1 flight hours before the accident.",
+            "grade": 2,
+            "why": "Rotor system work inside the window."
+          },
+          {
+            "situation": "The main rotor blades were replaced about 300 flight hours before the accident.",
+            "grade": 0,
+            "why": "Clearly outside the window."
+          },
+          {
+            "situation": "A 100-hour inspection was done 4 flight hours before the accident; no control or rotor work is described.",
+            "grade": 1,
+            "why": "A general inspection without stated control or rotor work."
+          },
+          {
+            "situation": "The cyclic friction was adjusted the day before; the hours flown since are not stated.",
+            "grade": 1,
+            "why": "Calendar time only."
+          }
+        ]
+      },
+      "rubricVersion": "r-f88412700b5d25c0",
+      "lure": "helicopter main rotor blades replaced hundreds of hours before the accident maintenance records total time",
+      "cohort": {
+        "size": 2326,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Helicopters. Maintenance chronology in flight hours with a component scope (controls or rotor system); engine-only work is excluded."
+    },
+    {
+      "id": "cu-airplane-power-loss-undetermined",
+      "question": "Which airplane accidents since 2015 involved an engine power loss that investigators could not explain?",
+      "family": "cu-airplane-power-loss-undetermined",
+      "tags": [
+        "causal_uncertainty",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "AIR"
+        ],
+        "yearFrom": 2015
+      },
+      "questionVersion": "q-cfa501bc726675b2",
+      "memberVersion": "q-cfa501bc726675b2",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial), AND the investigators state that its reason could not be determined (for example, \"for reasons that could not be determined\", \"the reason for the loss of engine power could not be determined\"). A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "A loss of engine power, and the investigators give a possible or likely reason without establishing it, or name several possible reasons.",
+        "notRelevant": "No loss of engine power; or its reason was established (fuel exhaustion or starvation, a failed part, carburetor icing stated as the cause, the pilot's mismanagement of the engine controls).",
+        "edgeCases": [
+          {
+            "situation": "\"A total loss of engine power for undetermined reasons.\"",
+            "grade": 2,
+            "why": "Explicitly undetermined."
+          },
+          {
+            "situation": "\"The loss of engine power was likely the result of carburetor icing.\"",
+            "grade": 1,
+            "why": "Likely, not established."
+          },
+          {
+            "situation": "\"Fuel exhaustion due to the pilot's improper fuel planning.\"",
+            "grade": 0,
+            "why": "Established reason."
+          },
+          {
+            "situation": "The pilot reported a power loss, the engine ran normally in a test, and the investigators state that the reason for the reported power loss could not be determined.",
+            "grade": 2,
+            "why": "A reported loss whose reason the investigators could not determine."
+          }
+        ]
+      },
+      "rubricVersion": "r-417b392e81d5f8eb",
+      "lure": "airplane total loss of engine power due to fuel exhaustion improper fuel planning fuel starvation selector",
+      "cohort": {
+        "size": 11730,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Airplanes since 2015. Causal uncertainty. No related codes: the power plant findings coded \"Unknown/Not determined\" reach 205 cases under these filters, above the pool limit for related positives (80), so the pool relies on the methods, the lure and the tail."
+    },
+    {
+      "id": "cu-competing-explanations",
+      "question": "In which accidents did investigators name more than one possible cause without deciding which it was?",
+      "family": "cu-competing-explanations",
+      "tags": [
+        "causal_uncertainty"
+      ],
+      "type": "broad",
+      "filters": {},
+      "questionVersion": "q-aad83641ecfdb8bf",
+      "memberVersion": "q-aad83641ecfdb8bf",
+      "rubric": {
+        "relevant": "The analysis or the probable cause names two or more alternative explanations for the same failure or event, and states or makes clear that the investigation could not determine which of them occurred (for example, \"the loss of power was due to either carburetor icing or fuel contamination\").",
+        "partial": "One cause is given as likely or possible, with no alternative; or alternatives are discussed in the analysis but the probable cause settles on one of them.",
+        "notRelevant": "The investigators determined a single cause; or the cause is undetermined and no candidate explanations are named.",
+        "edgeCases": [
+          {
+            "situation": "\"The partial loss of engine power due to either carburetor icing or fuel contamination.\"",
+            "grade": 2,
+            "why": "Two alternatives left open."
+          },
+          {
+            "situation": "\"The pilot's loss of control, likely due to spatial disorientation.\"",
+            "grade": 1,
+            "why": "One likely cause, no alternative."
+          },
+          {
+            "situation": "\"The pilot's failure to maintain airspeed, which resulted in an aerodynamic stall.\"",
+            "grade": 0,
+            "why": "A single determined cause."
+          },
+          {
+            "situation": "The analysis weighs a fuel leak against a blocked fuel line, and the probable cause cites the blocked line.",
+            "grade": 1,
+            "why": "Alternatives discussed, then one settled on."
+          }
+        ]
+      },
+      "rubricVersion": "r-f8d7657ffc7c81bc",
+      "lure": "the probable cause was determined to be the pilot failure to maintain adequate airspeed resulting in an aerodynamic stall",
+      "cohort": {
+        "size": 24291,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "No filters: the whole answer-eligible cohort. Causal uncertainty between named alternatives, as opposed to a single likely cause or a fully undetermined one."
+    },
+    {
+      "id": "pv-pilot-reported-failure-not-confirmed",
+      "question": "In which accidents did the pilot report a mechanical failure that the investigation did not confirm?",
+      "family": "pv-pilot-reported-failure-not-confirmed",
+      "tags": [
+        "pilot_vs_investigator",
+        "negation"
+      ],
+      "type": "broad",
+      "filters": {
+        "yearFrom": 2010
+      },
+      "questionVersion": "q-8c90edd86261f799",
+      "memberVersion": "q-8c90edd86261f799",
+      "rubric": {
+        "relevant": "The record gives the pilot's (or another crew member's) report that a specific mechanical problem occurred (for example, a loss of engine power, a brake failure, jammed controls, a landing gear or instrument malfunction), AND the investigators state that examination or testing found no evidence of that problem, or found the system working.",
+        "partial": "The pilot reported a mechanical problem, and the investigators could not examine it or leave it unresolved without saying whether evidence was found; or the investigators found a different problem without addressing the one the pilot reported.",
+        "notRelevant": "The investigation confirmed the problem the pilot reported; or no crew member reported a mechanical problem (reports only by witnesses, mechanics or operators do not count).",
+        "edgeCases": [
+          {
+            "situation": "The pilot reported that the brakes failed; examination found that the brake system operated normally.",
+            "grade": 2,
+            "why": "Reported failure, examination found it working."
+          },
+          {
+            "situation": "The pilot reported a total loss of engine power; the engine test-ran without anomalies.",
+            "grade": 2,
+            "why": "Reported failure not confirmed."
+          },
+          {
+            "situation": "The pilot reported a loss of engine power; examination found a failed magneto.",
+            "grade": 0,
+            "why": "The investigation confirmed a failure."
+          },
+          {
+            "situation": "A witness reported the engine sputtering; the pilot reported no problem.",
+            "grade": 0,
+            "why": "No crew report of a mechanical problem."
+          },
+          {
+            "situation": "The pilot reported that the landing gear would not extend; the gear system was not examined.",
+            "grade": 1,
+            "why": "Reported problem left unresolved."
+          }
+        ]
+      },
+      "rubricVersion": "r-d7d99b98766035d8",
+      "lure": "pilot reported engine failure examination confirmed fractured failed component found consistent with pilot report",
+      "cohort": {
+        "size": 20981,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Since 2010. Pilot-versus-investigator attribution: the pilot's account of a failure against the investigators' examination; a confirmed failure is the contrast."
+    },
+    {
+      "id": "pv-recorded-data-contradicts-pilot",
+      "question": "Which accidents had a pilot's account of the flight that recorded data, such as GPS or engine monitor data, contradicted?",
+      "family": "pv-recorded-data-contradicts-pilot",
+      "tags": [
+        "pilot_vs_investigator"
+      ],
+      "type": "broad",
+      "filters": {
+        "yearFrom": 2012
+      },
+      "questionVersion": "q-fd2d3bef7c143f16",
+      "memberVersion": "q-fd2d3bef7c143f16",
+      "rubric": {
+        "relevant": "The record states what the pilot (or crew) reported about the flight (altitude, airspeed, fuel state, engine behavior, flight path or the sequence of events) AND that data recorded by a device (GPS, ADS-B or radar data, an engine monitor, a flight data recorder, video) showed something different.",
+        "partial": "The pilot's account and the recorded data differ, but the record does not point out the difference; or the pilot's account is contradicted by a witness or by physical evidence rather than by recorded data.",
+        "notRelevant": "No recorded data is described; or the recorded data agree with the pilot's account; or the record gives no account by the pilot.",
+        "edgeCases": [
+          {
+            "situation": "The pilot said he climbed to 3,000 ft; ADS-B data showed the airplane never exceeded 900 ft.",
+            "grade": 2,
+            "why": "Recorded data contradict the account."
+          },
+          {
+            "situation": "The pilot reported a loss of engine power; engine monitor data showed normal engine parameters until impact.",
+            "grade": 2,
+            "why": "Recorded data contradict the account."
+          },
+          {
+            "situation": "A witness saw the airplane flying lower than the pilot reported.",
+            "grade": 1,
+            "why": "Contradicted by a witness, not by recorded data."
+          },
+          {
+            "situation": "GPS data matched the pilot's description of the approach.",
+            "grade": 0,
+            "why": "No contradiction."
+          }
+        ]
+      },
+      "rubricVersion": "r-c656465c3ec886bb",
+      "lure": "GPS data consistent with the pilot account engine monitor data recorded flight track matched",
+      "cohort": {
+        "size": 17817,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Since 2012, when portable recorders became common. Pilot-versus-investigator attribution through recorded data."
+    },
+    {
+      "id": "pv-helicopter-tail-rotor-claim",
+      "question": "Which helicopter accidents involved a pilot reporting a tail rotor failure that investigators did not find?",
+      "family": "pv-helicopter-tail-rotor-claim",
+      "tags": [
+        "pilot_vs_investigator",
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "questionVersion": "q-99e6513b31afcf87",
+      "memberVersion": "q-99e6513b31afcf87",
+      "rubric": {
+        "relevant": "The pilot (or crew) reported a tail rotor malfunction or failure, or a loss of tail rotor control, AND the investigators found no failure or malfunction of the tail rotor system (including when they attribute the yaw to loss of tail rotor effectiveness, the flight conditions or the pilot's technique).",
+        "partial": "The pilot reported a tail rotor problem and the record does not settle it (the system could not be examined, or impact damage prevented a determination).",
+        "notRelevant": "The investigation found a failure or malfunction of the tail rotor system; or the pilot did not report a tail rotor problem.",
+        "edgeCases": [
+          {
+            "situation": "The pilot reported a tail rotor failure; examination established tail rotor drive continuity and the investigators attributed the spin to loss of tail rotor effectiveness.",
+            "grade": 2,
+            "why": "Reported failure not found."
+          },
+          {
+            "situation": "The pilot reported a loss of tail rotor control; the tail rotor drive shaft had fractured from fatigue.",
+            "grade": 0,
+            "why": "A failure was found."
+          },
+          {
+            "situation": "The pilot reported the pedals became ineffective; the tail boom was destroyed and continuity could not be established.",
+            "grade": 1,
+            "why": "Not settled."
+          }
+        ]
+      },
+      "rubricVersion": "r-f72abfd0ffa4d497",
+      "lure": "helicopter tail rotor drive shaft fractured fatigue failure confirmed examination tail rotor gearbox failed",
+      "cohort": {
+        "size": 2326,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Helicopters. Pilot-versus-investigator attribution on a mechanical claim; a confirmed tail rotor failure is the contrast."
+    },
+    {
+      "id": "ma-airplane-collision-student-pilot",
+      "question": "In which collisions between two airplanes was one of them flown by a student pilot?",
+      "family": "ma-airplane-collision-student-pilot",
+      "tags": [
+        "multi_aircraft",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "AIR"
+        ]
+      },
+      "questionVersion": "q-b1d3943f80f67761",
+      "memberVersion": "q-b1d3943f80f67761",
+      "rubric": {
+        "relevant": "Two or more airplanes collided (in flight or on the ground), AND the record states that one of the colliding airplanes was flown by a student pilot (solo, or a student at the controls on an instructional flight).",
+        "partial": "Two airplanes collided and a student pilot or an instructional flight is mentioned, but the record does not make clear that the student was flying one of the colliding airplanes.",
+        "notRelevant": "Only one aircraft was involved; or the collision was with a vehicle, an object or an animal; or neither colliding airplane was flown by a student pilot (for example, a flight review or a flight instructor flying alone).",
+        "edgeCases": [
+          {
+            "situation": "A solo student pilot's airplane collided with another airplane on final approach.",
+            "grade": 2,
+            "why": "A student flew one of the colliding airplanes."
+          },
+          {
+            "situation": "A student pilot on a solo flight struck a deer on landing.",
+            "grade": 0,
+            "why": "Not a collision between airplanes."
+          },
+          {
+            "situation": "Two airplanes collided on the runway; one pilot was receiving a flight review.",
+            "grade": 0,
+            "why": "A flight review is not student instruction."
+          },
+          {
+            "situation": "Two airplanes collided; one was on an instructional flight, but the record does not say whether the person at the controls was a student pilot.",
+            "grade": 1,
+            "why": "Student involvement not established."
+          }
+        ]
+      },
+      "rubricVersion": "r-0ec0cbf44a632f77",
+      "lure": "student pilot solo flight landing accident bounced runway excursion flight instructor endorsement",
+      "cohort": {
+        "size": 20823,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Airplanes only: a multi-aircraft event qualifies only when every aircraft is an airplane (the passages-v2 qualification). Cross-aircraft attribution: the student must be in one of the colliding airplanes."
+    },
+    {
+      "id": "ma-taxiing-strikes-stationary",
+      "question": "Which ground collisions happened when a taxiing aircraft struck a parked or stopped aircraft?",
+      "family": "ma-taxiing-strikes-stationary",
+      "tags": [
+        "multi_aircraft",
+        "operational"
+      ],
+      "type": "broad",
+      "filters": {},
+      "questionVersion": "q-d1b35c38cfb4ae59",
+      "memberVersion": "q-d1b35c38cfb4ae59",
+      "rubric": {
+        "relevant": "An aircraft taxiing under its own power struck another aircraft that was parked, stopped or holding still at the time (its propeller or rotor striking the other aircraft included).",
+        "partial": "Two aircraft collided on the ground but the record does not make clear which one was moving or whether the other was stopped; or both were taxiing; or the moving aircraft was on its landing or takeoff roll, or being towed, rather than taxiing.",
+        "notRelevant": "No collision between two aircraft on the ground (a midair collision, or a collision with a vehicle, building, fence or other object).",
+        "edgeCases": [
+          {
+            "situation": "While taxiing to the ramp, the airplane's propeller struck a parked helicopter.",
+            "grade": 2,
+            "why": "Taxiing aircraft struck a parked aircraft."
+          },
+          {
+            "situation": "During the landing roll the airplane struck an airplane holding short of the runway.",
+            "grade": 1,
+            "why": "A landing roll, not taxiing."
+          },
+          {
+            "situation": "The taxiing airplane's wing struck a hangar.",
+            "grade": 0,
+            "why": "Not another aircraft."
+          },
+          {
+            "situation": "Two airplanes taxiing in opposite directions touched wingtips.",
+            "grade": 1,
+            "why": "Neither aircraft was stopped."
+          }
+        ]
+      },
+      "rubricVersion": "r-395c36bada020851",
+      "lure": "airplane taxiing struck hangar fence vehicle fuel truck sign wing damaged while taxiing to the ramp",
+      "cohort": {
+        "size": 24291,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "No filters: the multi-aircraft events are a small part of the cohort. Attribution of which aircraft moved."
+    },
+    {
+      "id": "ma-midair-pattern-nontowered",
+      "question": "Which midair collisions between airplanes happened in the traffic pattern at an airport without an operating control tower?",
+      "family": "ma-midair-pattern-nontowered",
+      "tags": [
+        "multi_aircraft",
+        "operational",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "AIR"
+        ]
+      },
+      "questionVersion": "q-53e2c759eb934a15",
+      "memberVersion": "q-53e2c759eb934a15",
+      "rubric": {
+        "relevant": "Two airplanes collided in flight, AND the record places the collision in or next to an airport traffic pattern (upwind, crosswind, downwind, base, final, or entering the pattern), AND that airport had no operating control tower at the time (non-towered, uncontrolled, or the tower was closed).",
+        "partial": "A midair collision in or near an airport traffic pattern where the record does not say whether a control tower was operating; or a midair near a non-towered airport but outside its pattern.",
+        "notRelevant": "Not a midair collision; or a midair away from any airport traffic pattern (en route, a practice area); or the airport's control tower was operating.",
+        "edgeCases": [
+          {
+            "situation": "Two airplanes collided on final approach to a non-towered airport while both pilots were making position reports on the common traffic frequency.",
+            "grade": 2,
+            "why": "Pattern, non-towered."
+          },
+          {
+            "situation": "Two airplanes collided on the downwind leg; the record does not mention a tower.",
+            "grade": 1,
+            "why": "Tower status unknown."
+          },
+          {
+            "situation": "Two airplanes collided on final at a towered airport while the tower was open.",
+            "grade": 0,
+            "why": "An operating tower."
+          },
+          {
+            "situation": "Two airplanes came close in the pattern but did not touch.",
+            "grade": 0,
+            "why": "No collision."
+          }
+        ]
+      },
+      "rubricVersion": "r-ce38b9baf8bc0e43",
+      "lure": "midair collision en route cruise flight practice area two airplanes collided level flight control tower",
+      "cohort": {
+        "size": 20823,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Airplanes only (every aircraft of the event must be an airplane). Multi-aircraft with an operational condition."
+    },
+    {
+      "id": "op-night-vfr-into-clouds",
+      "question": "Which night flights under visual flight rules continued into clouds or fog before crashing?",
+      "family": "op-night-vfr-into-clouds",
+      "tags": [
+        "operational"
+      ],
+      "type": "broad",
+      "filters": {
+        "light": [
+          "NITE",
+          "NDRK",
+          "NBRT"
+        ]
+      },
+      "questionVersion": "q-f43cc1f96519e05f",
+      "memberVersion": "q-f43cc1f96519e05f",
+      "rubric": {
+        "relevant": "The flight was at night and under visual flight rules (no instrument flight plan or clearance), AND the record states that the aircraft entered or continued into clouds, fog or instrument meteorological conditions (restricted visibility) before the accident.",
+        "partial": "A night VFR flight in deteriorating weather where entry into clouds or IMC is likely but not stated (for example, low ceilings along the route); or a VFR flight that entered IMC at dusk or dawn where the record does not say it was night.",
+        "notRelevant": "The flight was on an instrument flight plan or clearance; or no entry into clouds, fog or IMC is described; or the accident happened in visual conditions (for example, a night landing accident in clear weather).",
+        "edgeCases": [
+          {
+            "situation": "The pilot, who held no instrument rating, departed at night without a flight plan into an area of low clouds and lost control after entering the clouds.",
+            "grade": 2,
+            "why": "Night, VFR, entered clouds."
+          },
+          {
+            "situation": "The pilot was on an IFR flight plan and crashed during the instrument approach in fog.",
+            "grade": 0,
+            "why": "Not a VFR flight."
+          },
+          {
+            "situation": "Night VFR flight; ceilings along the route were 500 ft overcast and the airplane struck terrain, but the record does not say it entered clouds.",
+            "grade": 1,
+            "why": "Entry into IMC likely, not stated."
+          },
+          {
+            "situation": "A night landing in clear weather ended in a runway excursion.",
+            "grade": 0,
+            "why": "No clouds or IMC."
+          }
+        ]
+      },
+      "rubricVersion": "r-4ceacfe40bcaa1f4",
+      "lure": "night instrument flight rules approach clouds fog instrument landing system clearance IFR flight plan",
+      "cohort": {
+        "size": 1771,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Light conditions night, night dark and night bright (event facet). Operational: VFR into IMC at night; IFR flights are the contrast."
+    },
+    {
+      "id": "me-gear-up-mechanical",
+      "question": "Since 2015, which airplanes landed with the landing gear up because a mechanical, hydraulic or electrical problem kept it from extending?",
+      "family": "me-gear-up-mechanical",
+      "tags": [
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "AIR"
+        ],
+        "yearFrom": 2015
+      },
+      "questionVersion": "q-57ba6d8e24f2e595",
+      "memberVersion": "q-57ba6d8e24f2e595",
+      "rubric": {
+        "relevant": "The airplane landed (or attempted to land) with one or more landing gear legs not extended or not locked, AND the investigators found a mechanical, hydraulic or electrical malfunction or failure that prevented normal extension or locking (for example, a failed motor, actuator, pump or cable, or a fault that opened a circuit breaker).",
+        "partial": "A gear-up or partial-gear landing after the pilot reported a malfunction that the investigators did not or could not examine (no finding either way); or a malfunction was found, but the pilot also did not use the emergency extension system as published, so both contributed.",
+        "notRelevant": "The pilot did not extend the landing gear (forgot, was distracted, misread the indications) and no malfunction was found, including when the gear extended normally when tested after the accident; or the gear extended and then collapsed; or there was no gear-up landing.",
+        "edgeCases": [
+          {
+            "situation": "The landing gear motor's brushes were worn out and the gear would not extend; the emergency extension also failed.",
+            "grade": 2,
+            "why": "A mechanical failure prevented extension."
+          },
+          {
+            "situation": "The pilot reported the gear would not extend; after the accident the gear extended normally on jacks.",
+            "grade": 0,
+            "why": "No malfunction was found."
+          },
+          {
+            "situation": "The pilot became distracted by traffic and did not extend the gear.",
+            "grade": 0,
+            "why": "Pilot omission."
+          },
+          {
+            "situation": "A hydraulic line had chafed through and the gear extended only partly; the pilot did not use the hand pump.",
+            "grade": 1,
+            "why": "Malfunction and procedure both contributed."
+          }
+        ]
+      },
+      "rubricVersion": "r-4b7d744fd2207469",
+      "lure": "pilot did not extend the landing gear distracted forgot gear warning horn checklist gear-up landing",
+      "relatedCodes": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0102323001",
+              "0102323002",
+              "0102323026"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "cohort": {
+        "size": 11730,
+        "cases": null
+      },
+      "relatedPositives": [
+        "CEN15LA116",
+        "CEN15LA309",
+        "CEN15LA444",
+        "CEN16LA190",
+        "CEN16LA336",
+        "CEN16LA356",
+        "CEN17LA022",
+        "CEN17LA091",
+        "CEN17LA351",
+        "CEN18FA236",
+        "CEN18LA128",
+        "CEN19LA059",
+        "CEN19LA246",
+        "CEN19LA315",
+        "CEN19TA333",
+        "CEN20CA212",
+        "CEN20CA416",
+        "CEN21LA009",
+        "CEN21LA065",
+        "CEN21LA147",
+        "CEN21LA244",
+        "CEN21LA460",
+        "CEN22LA102",
+        "CEN22LA204",
+        "CEN24LA091",
+        "CEN25LA015",
+        "CEN25LA061",
+        "CEN25LA278",
+        "CEN26LA041",
+        "DCA16CA226",
+        "DCA19LA070",
+        "DCA20LA138",
+        "DCA23FA339",
+        "ENG17IA005",
+        "ERA15LA225",
+        "ERA16LA135",
+        "ERA17LA054",
+        "ERA17LA287",
+        "ERA18LA201",
+        "ERA19LA085",
+        "ERA19LA239",
+        "ERA20CA171",
+        "ERA20LA259",
+        "ERA22LA005",
+        "ERA22LA138",
+        "ERA23LA302",
+        "ERA24LA051",
+        "ERA24LA056",
+        "ERA24LA138",
+        "ERA24LA186",
+        "ERA24LA275",
+        "ERA24LA298",
+        "ERA24LA307",
+        "ERA24LA376",
+        "ERA24LA377",
+        "ERA24LA386",
+        "ERA25LA168",
+        "ERA25LA343",
+        "ERA26LA028",
+        "GAA15CA178",
+        "WPR16LA060",
+        "WPR17LA061",
+        "WPR18LA175",
+        "WPR18LA209",
+        "WPR19LA220",
+        "WPR19LA237",
+        "WPR19LA239",
+        "WPR20LA252",
+        "WPR20LA288",
+        "WPR22FA229",
+        "WPR24LA157",
+        "WPR24LA275"
+      ],
+      "note": "Airplanes since 2015. Mechanical cause against pilot omission. Related codes: the gear extension and retraction system coded Failure, Malfunction or Inoperative (anywhere)."
+    },
+    {
+      "id": "me-helicopter-tail-rotor-drive-failure",
+      "question": "Which helicopters lost tail rotor drive in flight because a drive shaft, coupling or gearbox failed?",
+      "family": "me-helicopter-tail-rotor-drive-failure",
+      "tags": [
+        "mechanical",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "HELI"
+        ]
+      },
+      "questionVersion": "q-75c0069ec5b7811e",
+      "memberVersion": "q-75c0069ec5b7811e",
+      "rubric": {
+        "relevant": "In flight (including the hover), the tail rotor lost its drive, AND the investigators identified the failure of a tail rotor drive component (a drive shaft or its sections, a coupling, a hanger bearing, the intermediate or tail rotor gearbox, splines) as the reason.",
+        "partial": "A loss of tail rotor drive in flight where the failed component was not identified, or its failure is suspected but not established; or a drive component failure found after a ground run or on the ground.",
+        "notRelevant": "The tail rotor drive was lost because the tail rotor or tail boom struck something (an object, terrain, the main rotor); or loss of tail rotor effectiveness without a component failure; or no loss of tail rotor drive.",
+        "edgeCases": [
+          {
+            "situation": "The tail rotor drive shaft failed in flight from a fatigue crack at a hanger bearing.",
+            "grade": 2,
+            "why": "A drive component failure caused the loss of drive."
+          },
+          {
+            "situation": "The tail rotor struck a tree during the approach and the helicopter spun.",
+            "grade": 0,
+            "why": "A strike, not a drive failure."
+          },
+          {
+            "situation": "The pilot lost directional control in a crosswind hover; no mechanical anomaly was found.",
+            "grade": 0,
+            "why": "Loss of tail rotor effectiveness, no failure."
+          },
+          {
+            "situation": "The tail rotor gearbox output shaft was fractured, but the investigators could not determine whether it fractured before the impact.",
+            "grade": 1,
+            "why": "Failure suspected, not established."
+          }
+        ]
+      },
+      "rubricVersion": "r-3368c9c4f487736f",
+      "lure": "helicopter tail rotor struck tree object terrain loss of tail rotor effectiveness spun hover",
+      "relatedCodes": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0104650001",
+              "0104650002",
+              "0104650005",
+              "0104651001",
+              "0104651002",
+              "0104651005",
+              "0104651006",
+              "0104652001",
+              "0104652002",
+              "0104652005",
+              "0104652006"
+            ],
+            "inProbableCause": false
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "cohort": {
+        "size": 2326,
+        "cases": null
+      },
+      "relatedPositives": [
+        "ANC12CA100",
+        "ANC13FA017",
+        "ANC13TA076",
+        "ANC15LA073",
+        "ANC24LA013",
+        "CEN11LA315",
+        "CEN11LA414",
+        "CEN12LA120",
+        "CEN12LA181",
+        "CEN12LA525",
+        "CEN13FA192",
+        "CEN15LA379",
+        "CEN15LA412",
+        "CEN16LA027",
+        "CEN16LA047",
+        "CEN17LA375",
+        "CEN18LA247",
+        "CEN19LA065",
+        "CEN19LA174",
+        "CEN21LA389",
+        "CHI08LA104",
+        "DFW08LA100",
+        "ERA12LA368",
+        "ERA13LA390",
+        "ERA16LA015",
+        "ERA20LA310",
+        "ERA21FA195",
+        "ERA21LA339",
+        "ERA21LA386",
+        "ERA24LA263",
+        "ERA25LA040",
+        "NYC08CA252",
+        "WPR09LA226",
+        "WPR11LA282",
+        "WPR13FA006",
+        "WPR14LA225",
+        "WPR17LA002",
+        "WPR22LA084",
+        "WPR23LA004"
+      ],
+      "note": "Helicopters. Mechanical: an identified drive component failure; tail rotor strikes and loss of tail rotor effectiveness are the contrast. Related codes: the tail rotor drive system failures (anywhere)."
+    },
+    {
+      "id": "para-airplane-power-loss-undetermined",
+      "question": "Since 2015, which airplane engines quit for reasons nobody could pin down?",
+      "family": "cu-airplane-power-loss-undetermined",
+      "tags": [
+        "causal_uncertainty",
+        "mechanical",
+        "aircraft_filter",
+        "paraphrase"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "AIR"
+        ],
+        "yearFrom": 2015
+      },
+      "questionVersion": "q-cfa501bc726675b2",
+      "memberVersion": "q-4a5009337364cc5f",
+      "rubric": {
+        "relevant": "The record reports a loss of engine power (total or partial), AND the investigators state that its reason could not be determined (for example, \"for reasons that could not be determined\", \"the reason for the loss of engine power could not be determined\"). A loss of engine power the pilot reported counts as reported unless the investigators dispute it.",
+        "partial": "A loss of engine power, and the investigators give a possible or likely reason without establishing it, or name several possible reasons.",
+        "notRelevant": "No loss of engine power; or its reason was established (fuel exhaustion or starvation, a failed part, carburetor icing stated as the cause, the pilot's mismanagement of the engine controls).",
+        "edgeCases": [
+          {
+            "situation": "\"A total loss of engine power for undetermined reasons.\"",
+            "grade": 2,
+            "why": "Explicitly undetermined."
+          },
+          {
+            "situation": "\"The loss of engine power was likely the result of carburetor icing.\"",
+            "grade": 1,
+            "why": "Likely, not established."
+          },
+          {
+            "situation": "\"Fuel exhaustion due to the pilot's improper fuel planning.\"",
+            "grade": 0,
+            "why": "Established reason."
+          },
+          {
+            "situation": "The pilot reported a power loss, the engine ran normally in a test, and the investigators state that the reason for the reported power loss could not be determined.",
+            "grade": 2,
+            "why": "A reported loss whose reason the investigators could not determine."
+          }
+        ]
+      },
+      "rubricVersion": "r-417b392e81d5f8eb",
+      "lure": "airplane total loss of engine power due to fuel exhaustion improper fuel planning fuel starvation selector",
+      "cohort": {
+        "size": 11730,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Paraphrase of cu-airplane-power-loss-undetermined. Lay wording of an undetermined power loss: no \"investigators\", \"determine\" or \"power loss\".",
+      "paraphrase_of": "cu-airplane-power-loss-undetermined"
+    },
+    {
+      "id": "para-first-flight-after-annual",
+      "question": "Which aircraft crashed the very first time they flew after coming out of their yearly inspection?",
+      "family": "mc-first-flight-after-annual",
+      "tags": [
+        "maintenance_chronology",
+        "paraphrase"
+      ],
+      "type": "broad",
+      "filters": {},
+      "questionVersion": "q-f7f6994acc706a5c",
+      "memberVersion": "q-fc540ea650ea9d17",
+      "rubric": {
+        "relevant": "The record states that the accident flight was the first flight after an annual inspection (or a condition inspection, its equivalent for an amateur-built or light-sport aircraft): explicitly (\"the first flight since the annual\"), as the test flight right after the annual, or by stating that the aircraft had not flown since the annual was completed.",
+        "partial": "The accident happened shortly after an annual inspection but not on the first flight, or the record does not say it was the first (for example, 0.5 hours or one flight since the annual); or it was the first flight after a 100-hour or progressive inspection rather than an annual.",
+        "notRelevant": "No recent annual inspection is described as preceding the flight, or the time since the annual is longer (several flights or days of flying); or it was the first flight after other maintenance that the record does not call an annual or condition inspection.",
+        "edgeCases": [
+          {
+            "situation": "The annual inspection was signed off on the morning of the accident, and the accident flight was the post-inspection test flight.",
+            "grade": 2,
+            "why": "First flight after the annual."
+          },
+          {
+            "situation": "The airplane had flown 0.3 hours since the annual, on a test flight the day before.",
+            "grade": 1,
+            "why": "Shortly after the annual, but not the first flight."
+          },
+          {
+            "situation": "The last annual inspection was 11 months before the accident.",
+            "grade": 0,
+            "why": "Not recent."
+          },
+          {
+            "situation": "The accident was the first flight after the engine was replaced; no inspection is mentioned.",
+            "grade": 0,
+            "why": "Other maintenance, not an annual inspection."
+          }
+        ]
+      },
+      "rubricVersion": "r-ce9e03e0ae6b1c5c",
+      "lure": "annual inspection completed months before the accident airplane flown hours since the last annual inspection",
+      "cohort": {
+        "size": 24291,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Paraphrase of mc-first-flight-after-annual. Lay wording: \"yearly inspection\" for annual inspection.",
+      "paraphrase_of": "mc-first-flight-after-annual"
+    },
+    {
+      "id": "para-pilot-reported-failure-not-confirmed",
+      "question": "When did a pilot say something on the aircraft broke, but the examiners found it working fine?",
+      "family": "pv-pilot-reported-failure-not-confirmed",
+      "tags": [
+        "pilot_vs_investigator",
+        "negation",
+        "paraphrase"
+      ],
+      "type": "broad",
+      "filters": {
+        "yearFrom": 2010
+      },
+      "questionVersion": "q-8c90edd86261f799",
+      "memberVersion": "q-ce90172af4497772",
+      "rubric": {
+        "relevant": "The record gives the pilot's (or another crew member's) report that a specific mechanical problem occurred (for example, a loss of engine power, a brake failure, jammed controls, a landing gear or instrument malfunction), AND the investigators state that examination or testing found no evidence of that problem, or found the system working.",
+        "partial": "The pilot reported a mechanical problem, and the investigators could not examine it or leave it unresolved without saying whether evidence was found; or the investigators found a different problem without addressing the one the pilot reported.",
+        "notRelevant": "The investigation confirmed the problem the pilot reported; or no crew member reported a mechanical problem (reports only by witnesses, mechanics or operators do not count).",
+        "edgeCases": [
+          {
+            "situation": "The pilot reported that the brakes failed; examination found that the brake system operated normally.",
+            "grade": 2,
+            "why": "Reported failure, examination found it working."
+          },
+          {
+            "situation": "The pilot reported a total loss of engine power; the engine test-ran without anomalies.",
+            "grade": 2,
+            "why": "Reported failure not confirmed."
+          },
+          {
+            "situation": "The pilot reported a loss of engine power; examination found a failed magneto.",
+            "grade": 0,
+            "why": "The investigation confirmed a failure."
+          },
+          {
+            "situation": "A witness reported the engine sputtering; the pilot reported no problem.",
+            "grade": 0,
+            "why": "No crew report of a mechanical problem."
+          },
+          {
+            "situation": "The pilot reported that the landing gear would not extend; the gear system was not examined.",
+            "grade": 1,
+            "why": "Reported problem left unresolved."
+          }
+        ]
+      },
+      "rubricVersion": "r-d7d99b98766035d8",
+      "lure": "pilot reported engine failure examination confirmed fractured failed component found consistent with pilot report",
+      "cohort": {
+        "size": 20981,
+        "cases": null
+      },
+      "relatedPositives": [],
+      "note": "Paraphrase of pv-pilot-reported-failure-not-confirmed. Lay wording without \"mechanical failure\", \"report\" or \"investigation\".",
+      "paraphrase_of": "pv-pilot-reported-failure-not-confirmed"
+    },
+    {
+      "id": "para-powered-parachute-propeller-strike",
+      "question": "Which powered parachutes got their canopy lines or other gear sucked into the prop?",
+      "family": "me-powered-parachute-propeller-strike",
+      "tags": [
+        "mechanical",
+        "operational",
+        "aircraft_filter",
+        "paraphrase"
+      ],
+      "type": "bounded-cohort",
+      "filters": {
+        "category": [
+          "PPAR"
+        ]
+      },
+      "questionVersion": "q-0ab000a86b168bee",
+      "memberVersion": "q-9597d58e12ea9020",
+      "rubric": {
+        "relevant": "The parachute wing (canopy), its suspension or steering lines, or an object carried on the aircraft or by an occupant (clothing, a strap, a helmet, a bag) contacted or became entangled in the propeller, in flight or during the takeoff or landing roll.",
+        "partial": "The propeller was damaged while the aircraft was operating by something the record does not identify; or contact with the propeller is suspected but not established.",
+        "notRelevant": "No contact with or entanglement in the propeller by the wing, its lines or carried objects (for example, a wing collapse, a hard landing, a collision with an obstacle), even when the propeller was damaged when the aircraft hit the ground.",
+        "edgeCases": [
+          {
+            "situation": "During the takeoff roll a steering line was drawn into the propeller and the wing collapsed.",
+            "grade": 2,
+            "why": "A line in the propeller."
+          },
+          {
+            "situation": "The propeller was damaged when the aircraft nosed over on landing.",
+            "grade": 0,
+            "why": "Impact damage only."
+          },
+          {
+            "situation": "The pilot's jacket came loose in flight and struck the propeller.",
+            "grade": 2,
+            "why": "Loose gear contacted the propeller."
+          },
+          {
+            "situation": "The propeller blades were broken in flight, and the investigators could not determine what struck them.",
+            "grade": 1,
+            "why": "Propeller damage from an unidentified source."
+          }
+        ]
+      },
+      "rubricVersion": "r-7456919aced2b699",
+      "lure": "powered parachute wing collapsed turbulence hard landing propeller damaged impact terrain",
+      "cohort": {
+        "size": 99,
+        "cases": [
+          "ANC09CA077",
+          "CEN09CA025",
+          "CEN09CA108",
+          "CEN09CA371",
+          "CEN09CA580",
+          "CEN09CA588",
+          "CEN10CA229",
+          "CEN10CA480",
+          "CEN10CA570",
+          "CEN10LA099",
+          "CEN10LA492",
+          "CEN11CA057",
+          "CEN11CA154",
+          "CEN11CA445",
+          "CEN11CA453",
+          "CEN11LA456",
+          "CEN12CA131",
+          "CEN12CA631",
+          "CEN12CA666",
+          "CEN12LA114",
+          "CEN12LA428",
+          "CEN12LA578",
+          "CEN12LA678",
+          "CEN13LA506",
+          "CEN13LA555",
+          "CEN14CA490",
+          "CEN14LA316",
+          "CEN14LA346",
+          "CEN15LA212",
+          "CEN15LA398",
+          "CEN18LA206",
+          "CEN19FA134",
+          "CEN19LA316",
+          "CEN20CA231",
+          "CEN20CA275",
+          "CEN20CA387",
+          "CEN21LA179",
+          "CEN21LA387",
+          "CEN23LA272",
+          "CEN23LA376",
+          "CEN23LA413",
+          "CEN23LA414",
+          "CEN23LA424",
+          "CEN24LA031",
+          "CEN25LA011",
+          "CHI08CA149",
+          "CHI08LA297",
+          "DEN08LA113",
+          "DFW08CA179",
+          "ERA09CA003",
+          "ERA09CA129",
+          "ERA09CA445",
+          "ERA10CA072",
+          "ERA10CA480",
+          "ERA11LA326",
+          "ERA12CA389",
+          "ERA12CA462",
+          "ERA12CA472",
+          "ERA12CA548",
+          "ERA12CA587",
+          "ERA12LA264",
+          "ERA12LA509",
+          "ERA13CA009",
+          "ERA15CA036",
+          "ERA15CA307",
+          "ERA15LA044",
+          "ERA16LA254",
+          "ERA17FA144",
+          "ERA17FA211",
+          "ERA23LA003",
+          "ERA24LA297",
+          "ERA25LA023",
+          "ERA25LA089",
+          "GAA15LA085",
+          "GAA16CA526",
+          "GAA18CA029",
+          "GAA18CA325",
+          "GAA19CA208",
+          "MIA08CA150",
+          "MIA08CA191",
+          "WPR09CA188",
+          "WPR09LA426",
+          "WPR09LA442",
+          "WPR10LA032",
+          "WPR11LA133",
+          "WPR11LA270",
+          "WPR11LA275",
+          "WPR12LA149",
+          "WPR12LA205",
+          "WPR13CA136",
+          "WPR13CA361",
+          "WPR13LA069",
+          "WPR13LA135",
+          "WPR13LA398",
+          "WPR18LA071",
+          "WPR18LA076",
+          "WPR20CA070",
+          "WPR20LA001",
+          "WPR22LA117"
+        ]
+      },
+      "relatedPositives": [],
+      "note": "Paraphrase of me-powered-parachute-propeller-strike. A paraphrase of a bounded cohort, so its Recall@20 is defined once the cohort is judged.",
+      "paraphrase_of": "me-powered-parachute-propeller-strike"
+    }
+  ]
+}
