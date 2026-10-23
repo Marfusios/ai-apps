@@ -7,6 +7,7 @@
  */
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, eq, gt, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { boundedRead } from './bounded-read.js';
 import type { Db, DbOrTx, Schema } from './client.js';
 import * as schema from './schema/index.js';
 import {
@@ -107,6 +108,32 @@ export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | nu
     .where(eq(datasetManifests.active, true));
   if (!row) return null;
   return { ...row, publishedAt: row.publishedAt as Date };
+}
+
+/**
+ * The cases index of the manifest that pairs `generationId` with `passagesIndex` (one
+ * manifest row per generation, active or retired), or null when there is none: the
+ * generation is gone, or it was published again with another passages index. AI
+ * retrieval with the cases channel reads the cases index a brief's pinned passages index
+ * was published with, never the active manifest's (task 10e).
+ *
+ * It runs on the request path, so it is one bounded read (`boundedRead`): pool
+ * acquisition and the statement end within `timeoutMs` or when `signal` aborts, and an
+ * abandoned connection is destroyed, never returned busy.
+ */
+export async function manifestCasesIndex(
+  db: Db,
+  generationId: number,
+  passagesIndex: string,
+  opts: { timeoutMs: number; signal?: AbortSignal },
+): Promise<string | null> {
+  const rows = await boundedRead<{ cases_index: string }>(
+    db.$client,
+    'select cases_index from dataset_manifests where generation_id = $1 and passages_index = $2',
+    [generationId, passagesIndex],
+    opts,
+  );
+  return rows[0]?.cases_index ?? null;
 }
 
 /** Elasticsearch index names: lower-case, no path or wildcard characters (checked again in SQL). */

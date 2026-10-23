@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { DEFAULT_RETRIEVAL_VERSION, RETRIEVAL_VERSIONS, isExperimentalRetrieval, type RetrievalVersion } from './contracts/retrieval.js';
 import { readDotenvAllowlisted } from './env-files.js';
 
 function str(): z.ZodOptional<z.ZodString>;
@@ -62,6 +63,7 @@ const envSchema = z.object({
   OPENAI_SCOPE_MODEL: str('gpt-5.6-luna'),
   OPENAI_ANSWER_MODEL: str('gpt-5.4-mini-2026-03-17'),
   OPENAI_CHECK_MODEL: str('gpt-5.6-luna'),
+  AVIATION_RETRIEVAL_VERSION: z.enum(RETRIEVAL_VERSIONS).default(DEFAULT_RETRIEVAL_VERSION),
   AVIATION_TRACING_ENABLED: z
     .enum(['true', 'false', '1', '0'])
     .default('false')
@@ -160,6 +162,12 @@ export interface AppConfig {
       globalConcurrency: number;
     };
   };
+  /**
+   * The frozen retrieval configuration AI briefs run (`AVIATION_RETRIEVAL_VERSION`,
+   * server/search/retrieval-config.ts); `retrieval.v1` is the rollback. An experimental
+   * version is refused on `live`.
+   */
+  retrieval: { version: RetrievalVersion };
   auth: {
     secret?: string;
     googleClientId?: string;
@@ -215,6 +223,9 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (e.AI_LLM_PROVIDER === 'fake' && e.NODE_ENV !== 'test') {
     throw new Error("Invalid configuration: AI_LLM_PROVIDER 'fake' is allowed only when NODE_ENV=test");
   }
+  if (e.APP_ENV === 'live' && isExperimentalRetrieval(e.AVIATION_RETRIEVAL_VERSION)) {
+    throw new Error(`Invalid configuration: AVIATION_RETRIEVAL_VERSION ${e.AVIATION_RETRIEVAL_VERSION} is experimental and is never served on live`);
+  }
 
   return {
     nodeEnv: e.NODE_ENV,
@@ -269,6 +280,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
         globalConcurrency: e.AI_GLOBAL_CONCURRENCY,
       },
     },
+    retrieval: { version: e.AVIATION_RETRIEVAL_VERSION },
     auth: {
       secret: e.BETTER_AUTH_SECRET,
       googleClientId: e.GOOGLE_CLIENT_ID,

@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { CRITERIA, WITHHELD_REASONS, type WithheldReason } from '../../shared/contracts/briefs.js';
+import { RETRIEVAL_VERSIONS, type RetrievalVersion } from '../../shared/contracts/retrieval.js';
 import { STAGE_WARNINGS } from '../ai/provider.js';
 import { VALIDATION_CODES } from '../briefs/validate.js';
 import { DISPLAY_WITHHELD_CODES } from '../briefs/display.js';
@@ -113,6 +114,8 @@ export interface AllowedAttrs {
   withheld?: WithheldReason;
   /** Its codes, `+`-joined (`WITHHELD_CODES`). */
   withheldCodes?: string;
+  /** The frozen retrieval configuration a `brief.retrieve` span ran (`RETRIEVAL_VERSIONS`). */
+  retrievalVersion?: RetrievalVersion;
 }
 
 const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
@@ -139,6 +142,7 @@ const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
   warnings: 'string',
   withheld: 'string',
   withheldCodes: 'string',
+  retrievalVersion: 'string',
 };
 
 /** Attributes that take only the values of a closed set. */
@@ -147,6 +151,7 @@ const ENUMS: Readonly<Partial<Record<keyof AllowedAttrs, ReadonlySet<string>>>> 
   failureStage: new Set(FAILURE_STAGES),
   stopReason: new Set(STOP_REASONS),
   withheld: new Set(WITHHELD_REASONS),
+  retrievalVersion: new Set(RETRIEVAL_VERSIONS),
 };
 
 /** Attributes that take `+`-joined values of a closed set (`enumList`). */

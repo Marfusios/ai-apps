@@ -28,6 +28,7 @@ import {
   type RetrievedEvidence,
 } from '../../server/briefs/evidence.js';
 import type { PassagesContract } from '../../server/search/passages-contract.js';
+import { DEFAULT_RETRIEVAL_VERSION, type RetrievalVersion } from '../../shared/contracts/retrieval.js';
 
 export const FAKE_EMBEDDING: Readonly<EmbeddingUsage> = Object.freeze({
   provider: 'openai',
@@ -54,6 +55,10 @@ export interface FakeRetrieverOptions {
    * `assertServablePassagesIndex` returns it (the harness asks the real check).
    */
   served: (dataset: EvidenceDataset) => Promise<Pick<PassagesContract, 'chunkerVersion'>>;
+  /** The retrieval version it reports (default: the server's default). */
+  version?: RetrievalVersion;
+  /** The mapping counts it reports with a bundle (default none: a passage-level result). */
+  mapping?: { mapped: number; unmapped: number } | null;
 }
 
 export class FakeRetriever implements EvidenceRetriever {
@@ -64,6 +69,10 @@ export class FakeRetriever implements EvidenceRetriever {
     private readonly db: Db,
     public options: FakeRetrieverOptions,
   ) {}
+
+  get version(): RetrievalVersion {
+    return this.options.version ?? DEFAULT_RETRIEVAL_VERSION;
+  }
 
   async available(dataset: { generationId: number; passagesIndex: string | null }): Promise<boolean> {
     const a = this.options.available ?? true;
@@ -91,6 +100,8 @@ export class FakeRetriever implements EvidenceRetriever {
     return {
       bundle,
       chunkerVersion,
+      mapping: o.mapping ?? null,
+      casesIndex: null,
       repack: async (maxEvidenceTokens: number) => {
         this.repacks.push(maxEvidenceTokens);
         return tamper(await this.bundle(query.dataset.generationId, chunkerVersion, numbers, maxEvidenceTokens), true);

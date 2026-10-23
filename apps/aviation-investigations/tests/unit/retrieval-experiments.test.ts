@@ -27,7 +27,8 @@ import { experimentAppConfig, spentUsd } from '../../evals/retrieval/experiments
 import { BASELINE_CONFIG, canonicalConfig, changedKnobs, experimentConfig, isBaseline, paramsOf } from '../../evals/retrieval/experiments/config.js';
 import { classify, representableVia, thresholdsOf, type Signals } from '../../evals/retrieval/experiments/diagnose.js';
 import { gridConfigs, latencyOf, poolCases, poolCeiling, questionValue, runKey, summarize, type ExperimentItem, type StoredRun } from '../../evals/retrieval/experiments/experiment.js';
-import { candidatesFor, caseRrfFuse, roundRobinCases, uniqueCaseOrder, weightedRrfFuse } from '../../evals/retrieval/experiments/fusion.js';
+import { candidatesFor, caseRrfFuse, integerWeights, roundRobinCases, uniqueCaseOrder, weightedRrfFuse } from '../../evals/retrieval/experiments/fusion.js';
+import { exactRrf } from '../../server/search/case-fusion.js';
 import { GRID_VERSION, GridSchema, gridProblems, loadGrid, sha256, type Grid } from '../../evals/retrieval/experiments/grid.js';
 import { CodedDatasetSchema } from '../../evals/retrieval/coded/coded.js';
 import { SCOPE_STAGE_TIMEOUT_MS, ScopeBudgetError, attemptReserveUsd, providerScopeCaller, runScopeSamples, scopeInventory } from '../../evals/retrieval/experiments/scope.js';
@@ -309,14 +310,39 @@ describe('fusion', () => {
     const cases = caseRrfFuse([uniqueCaseOrder(k), uniqueCaseOrder(v)], [1, 1], 60);
     expect(cases[0]).toMatchObject({ ntsbNo: 'A', ranks: [2, 2], rank: 1 });
     expect(cases[0]?.score).toBeCloseTo(2 / 62, 12);
-    // Ties: the best rank any list gave, then the case number.
-    expect(caseRrfFuse([['B', 'A'], ['A', 'B']], [1, 1], 60).map((c) => c.ntsbNo)).toEqual(['A', 'B']);
-    expect(caseRrfFuse([['Q'], ['P']], [1, 1], 60).map((c) => c.ntsbNo)).toEqual(['P', 'Q']);
+    // Ties as production breaks them (exactRrf): the best rank any list gave, then the ranks list by list, then the case number.
+    expect(caseRrfFuse([['B', 'A'], ['A', 'B']], [1, 1], 60).map((c) => c.ntsbNo)).toEqual(['B', 'A']);
+    expect(caseRrfFuse([['Q'], ['P']], [1, 1], 60).map((c) => c.ntsbNo)).toEqual(['Q', 'P']);
+    // Exact: ranks (3, 80) and (24, 30) are one score, so the better best rank wins (a float sum would not tie).
+    const pad = (entries: [string, number][], tag: string) => {
+      const out = Array.from({ length: 100 }, (_, i) => `${tag}${i}`);
+      for (const [id, rank] of entries) out[rank - 1] = id;
+      return out;
+    };
+    const tied = caseRrfFuse([pad([['X', 24], ['Y', 3]], 'k'), pad([['X', 30], ['Y', 80]], 'v')], [1, 1], 60).map((c) => c.ntsbNo);
+    expect(tied.indexOf('Y')).toBeLessThan(tied.indexOf('X'));
     // A repeat inside one list keeps its first rank.
     expect(caseRrfFuse([['A', 'B', 'A']], [1], 60).map((c) => [c.ntsbNo, c.ranks[0]])).toEqual([
       ['A', 1],
       ['B', 2],
     ]);
+  });
+
+  it('fuses with production’s exact comparator, weights scaled to the smallest equal integers', () => {
+    expect(() => experimentConfig({ fusion: 'case', rrfK: 60.5 })).toThrow(/integer RRF constant/);
+    expect(experimentConfig({ fusion: 'passage', rrfK: 60.5 }).rrfK).toBe(60.5);
+    expect(integerWeights([1, 1, 1])).toEqual([1, 1, 1]);
+    expect(integerWeights([2, 4])).toEqual([1, 2]);
+    expect(integerWeights([0.5, 1, 1.5])).toEqual([1, 2, 3]);
+    expect(integerWeights([0, 2])).toEqual([0, 1]);
+    expect(() => integerWeights([0.1234567])).toThrow(/six decimals/);
+    expect(() => integerWeights([-1])).toThrow();
+    const lists = [['A', 'B', 'C'], ['C', 'A'], ['B', 'D']];
+    for (const weights of [[1, 1, 1], [2, 1, 1], [1, 2, 0.5]]) {
+      const harness = caseRrfFuse(lists, weights, 60);
+      const production = exactRrf(lists, (n) => n, integerWeights(weights), 60);
+      expect(harness.map((c) => [c.ntsbNo, c.ranks, c.rank])).toEqual(production.map((c) => [c.id, c.ranks, c.rank]));
+    }
   });
 
   it('builds a channel-balanced pool in turn, unique and bounded', () => {
@@ -526,6 +552,28 @@ describe('the registered selection rule', () => {
     expect(out.selected).toBe('close-same-ndcg-faster');
     const knobs = applyRule([evaluation('two', 0.2, { changedKnobs: 2 }), evaluation('one', 0.2, { changedKnobs: 1 })], RULE);
     expect(knobs.selected).toBe('one');
+  });
+
+  it('ranks each variant by its own declared target metric first', () => {
+    // A reranker declared on broad nDCG@6: +15 pp there, narrow Recall@20 unchanged.
+    const reranker = evaluation('reranker', 0, { target: 'broadNdcg6', ndcg: 0.15, lower: 0 });
+    reranker.metrics.broadNdcg6 = boot(0.15, 0.04);
+    const recall = evaluation('recall', 0.08);
+    const out = applyRule([recall, reranker], RULE);
+    expect(out.verdicts.every((v) => v.qualifies)).toBe(true);
+    // Before the fix the narrow Recall@20 improvement decided (+8 against 0) whatever the target.
+    expect(out.order).toEqual(['reranker', 'recall']);
+    expect(out.selected).toBe('reranker');
+    // Its target must still qualify on its own: +1.5 pp of nDCG@6 is not enough, whatever the recall.
+    const weak = evaluation('weak-reranker', 0.3, { target: 'broadNdcg6' });
+    weak.metrics.broadNdcg6 = boot(0.015, 0.01);
+    expect(applyRule([weak], RULE).verdicts[0]?.reasons.join('; ')).toMatch(/target broadNdcg6 improves 1\.5 pp/);
+    // The tie window is measured on the target improvements: within 1 pp, broad nDCG@6 decides.
+    const near = applyRule([evaluation('narrow-target', 0.15, { ndcg: 0 }), { ...reranker, id: 'ndcg-target', metrics: { ...reranker.metrics, broadNdcg6: boot(0.145, 0.04) } }], RULE);
+    expect(near.order).toEqual(['ndcg-target', 'narrow-target']);
+    // Every phase A variant declared narrow Recall@20: the ranking is the narrow one, as registered.
+    const phaseA = [evaluation('a', 0.258), evaluation('b', 0.248), evaluation('c', 0.147, { ndcg: 0.12 })];
+    expect(applyRule(phaseA, RULE).order).toEqual(['a', 'b', 'c']);
   });
 });
 

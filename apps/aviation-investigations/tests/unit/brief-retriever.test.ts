@@ -192,6 +192,7 @@ describe('servableEvidence', () => {
   const manifest = { generationId: 3 } as PinnedDataset['manifest'];
   const asked: unknown[] = [];
   const retriever = (accepts: boolean): EvidenceRetriever => ({
+    version: 'retrieval.v2',
     available: async (d) => {
       asked.push(d);
       return accepts;

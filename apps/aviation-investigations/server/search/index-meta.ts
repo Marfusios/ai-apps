@@ -41,6 +41,20 @@ export class IndexMetaError extends Error {
 const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 
 /**
+ * The transport's retry backoff (@elastic/transport's own: exponential with jitter, in
+ * seconds), skipped once the request's signal has aborted. An abort can surface as a
+ * connection error, which the transport retries after its backoff before it notices the
+ * abort; without this an aborted request could be held for 1 to 2 s (task 10e load test).
+ */
+export function abortAwareBackoff(signal: AbortSignal): (min: number, max: number, attempt: number) => number {
+  return (min, max, attempt) => {
+    if (signal.aborted) return 0;
+    const ceiling = Math.min(max, 2 ** attempt) / 2;
+    return ceiling + (Math.random() * (ceiling - min) + min);
+  };
+}
+
+/**
  * Read an index's `_meta`. Throws `IndexMetaError` when the index does not exist or
  * the name is an alias (an alias resolves to differently named indices).
  */
@@ -48,7 +62,7 @@ export async function readIndexMeta(es: Client, index: string, opts: IndexMetaOp
   let found: Record<string, { mappings?: { _meta?: Record<string, unknown> } }>;
   const transport = {
     ...(opts.timeoutMs !== undefined ? { requestTimeout: opts.timeoutMs } : {}),
-    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.signal ? { signal: opts.signal, retryBackoff: abortAwareBackoff(opts.signal) } : {}),
   };
   try {
     found = (await es.indices.getMapping({ index }, transport)) as typeof found;

@@ -296,7 +296,7 @@ hash (`hashBrief`). `scripts/trace-smoke.ts` sends one synthetic span by hand.
 | Where | Keys |
 | --- | --- |
 | Resource (every span) | `service.name` = `aviation-casebook`; `deployment.environment` and `deployment.environment.name` = `APP_ENV` (`dev` or `live`). Set explicitly: the SDK default (`unknown_service:<node path>`) would export a filesystem path. |
-| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `thinkingTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage`, `stopReason`, `warnings`, `withheld`, `withheldCodes` |
+| Span attributes | `stage`, `provider`, `model`, `promptVersion`, `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `thinkingTokens`, `usd`, `durationMs`, `outcome`, `briefHash`, `datasetGeneration`, `indexVersion`, `passageCount`, `caseCount`, `failure`, `failureStage`, `stopReason`, `warnings`, `withheld`, `withheldCodes`, `retrievalVersion` |
 | GenAI keys (model-call spans only, derived) | `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cost` |
 | Instrumentation scope | `aviation-casebook` |
 
@@ -319,6 +319,18 @@ or log field. A server shutdown also stops a running stage: its span carries
 with `failureStage: pipeline` (on `brief.step`, in `meta.failure` and on the log line).
 Neither stop is an error of the stage, so its span ends with status unset; a failed
 stage's span ends with status error.
+
+`retrievalVersion` is the frozen retrieval configuration a `brief.retrieve` span ran
+(`RETRIEVAL_VERSIONS`: `retrieval.v1`, `retrieval.v2`, `retrieval.v2-nf`; anything
+else is dropped), set when the span starts, so a failed retrieval carries it too. The
+step's `meta.retrievalVersion` holds the same value, and under a case-level version
+`meta.retrieval` holds the cases index the step read and the mapping counts
+(`{casesIndex, casesIndexVersion, mapped, unmapped}`: the index name and its `_meta`
+version, then the leading candidate cases no passage channel returned that got their
+own passages, and those that could not and were never packed). The index name stays in
+the step's private metadata: no response or span carries it. Evaluation reports name
+the version they measured with its configuration sha256 (`retrievalIdentity`), so
+numbers from different versions are never mixed.
 
 `thinkingTokens` is the provider's reported reasoning share of a stage's output
 (`usage.output_tokens_details.thinking_tokens`), when it reports one; it is also kept

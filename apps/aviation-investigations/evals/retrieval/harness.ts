@@ -10,9 +10,10 @@ import pg from 'pg';
 import type { AppConfig } from '../../shared/config.js';
 import { queryEmbeddingInput, type Embedder } from '../../server/ai/embeddings.js';
 import { countTokens } from '../../server/ai/tokens.js';
-import { closeDb, createDb, type Db } from '../../server/db/client.js';
+import { DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from '../../server/db/client.js';
 import { getActiveManifest } from '../../server/db/generations.js';
 import type { RetrievalDataset } from '../../server/search/hybrid.js';
+import { RETRIEVAL_V1, retrievalConfig, retrievalIdentity } from '../../server/search/retrieval-config.js';
 import { IndexMetaError, readIndexMeta, type IndexMeta } from '../../server/search/index-meta.js';
 import { PassagesIndexIncompatibleError, checkPassagesIndex, type PassagesContract } from '../../server/search/passages-contract.js';
 import { batchByLimits, createFakeEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion, reservationUsd } from '../../worker/index/embed.js';
@@ -94,7 +95,7 @@ export async function checkTarget(
   generationId: number,
   rederive: (client: pg.ClientBase) => Promise<{ labels: ReadonlyMap<string, QuestionLabels>; warnings?: string[] }>,
 ): Promise<TargetCheck & { ms: number }> {
-  const client = new pg.Client({ connectionString: databaseUrl, application_name: 'aviation-eval-verify' });
+  const client = new pg.Client({ connectionString: databaseUrl, application_name: 'aviation-eval-verify', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await client.connect();
   const started = Date.now();
   try {
@@ -211,5 +212,25 @@ export function indexReport(t: RunTarget): Record<string, unknown> {
     inputTemplateVersion: t.meta.inputTemplateVersion,
     embeddingModel: t.meta.embeddingModel,
     embeddingDims: t.meta.embeddingDims,
+  };
+}
+
+/**
+ * What a report records about retrieval (task 10e): the keyword, vector and hybrid modes
+ * of these evaluations are built on `retrieval.v1`'s passage channels and passage-level
+ * fusion, but with BM25 on the question text (not the scope stage's keyword text) and the
+ * passages per channel in `params.sizes`, so they are not that frozen configuration and
+ * carry no sha256 of their own: `measured.basedOn` names the version they derive from.
+ * `configured` is the version the settings select (`AVIATION_RETRIEVAL_VERSION`).
+ */
+export function retrievalReport(config: AppConfig): Record<string, unknown> {
+  return {
+    measured: {
+      basedOn: retrievalIdentity(RETRIEVAL_V1),
+      stage: 'passage channels and passage-level fusion',
+      keywordText: 'question',
+      passagesPerChannel: 'params.sizes',
+    },
+    configured: retrievalIdentity(retrievalConfig(config.retrieval.version)),
   };
 }

@@ -53,7 +53,9 @@ export const ExperimentConfigSchema = z
     caseChannel: CaseChannelSchema.nullable(),
     keywordText: z.enum(['question', 'scope']),
   })
-  .refine((c) => c.caseChannel === null || c.fusion === 'case', { message: 'a case-level channel needs case-level fusion' });
+  .refine((c) => c.caseChannel === null || c.fusion === 'case', { message: 'a case-level channel needs case-level fusion' })
+  // Case-level fusion is production's exact comparator (`exactRrf`): an integer constant.
+  .refine((c) => c.fusion !== 'case' || Number.isSafeInteger(c.rrfK), { message: 'case-level fusion needs an integer RRF constant' });
 export type ExperimentConfig = z.infer<typeof ExperimentConfigSchema>;
 
 /** Overrides of the baseline, as the grid writes them. */

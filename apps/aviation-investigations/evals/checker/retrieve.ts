@@ -8,12 +8,15 @@
  * for the query embeddings (`DATABASE_INGEST_URL`, category `evaluation`). Without
  * `--confirm-cost` it prints the embedding plan and pays nothing.
  *
- * Each question is retrieved exactly as a brief retrieves (`createHybridRetriever`, the
- * production defaults, no filters), the bundle is checked fail closed like the pipeline's
- * (`verifyBundle`), and the result is written to `evidence.json` (`--questions v1`, Task
- * 16c, frozen) or into `evidence-16d.json` (`--questions 16d`: the bundles, with each case's
- * header line from `caseHeader`). A 16d bundle with a case of a 16c split is reported: the
- * held-out set must not use it.
+ * Each question is retrieved exactly as a brief retrieves (`createHybridRetriever` under
+ * the configured retrieval version, `AVIATION_RETRIEVAL_VERSION`, recorded in the file's
+ * `source.retrievalVersion`; no filters), the bundle is checked fail closed like the
+ * pipeline's (`verifyBundle`), and the result is written to `evidence.json` (`--questions
+ * v1`, Task 16c, frozen) or into `evidence-16d.json` (`--questions 16d`: the bundles, with
+ * each case's header line from `caseHeader`). A 16d bundle with a case of a 16c split is
+ * reported: the held-out set must not use it. Both frozen files were retrieved before
+ * retrieval versions existed (no `source.retrievalVersion`: `retrieval.v1`); reproducing
+ * them needs `AVIATION_RETRIEVAL_VERSION=retrieval.v1`.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -24,8 +27,9 @@ import { verifyBundle } from '../../server/briefs/pipeline.js';
 import { checkHeader } from '../../server/briefs/render.js';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
 import { closeDb, createDb } from '../../server/db/client.js';
-import { getActiveManifest } from '../../server/db/generations.js';
+import { getActiveManifest, manifestCasesIndex } from '../../server/db/generations.js';
 import { createEsClient } from '../../server/search/es.js';
+import { retrievalConfig } from '../../server/search/retrieval-config.js';
 import type { AppConfig } from '../../shared/config.js';
 import { APP_DIR } from '../../worker/config.js';
 import { batchByLimits, createOpenAIEmbedder, embeddingUsdPerMillion, reservationUsd } from '../../worker/index/embed.js';
@@ -118,7 +122,12 @@ export async function retrieveEvidence(
       const res = await openai.embed(batch);
       batch.forEach((t, j) => vectors.set(t, res.vectors[j] as Float32Array));
     }
-    const retriever = createHybridRetriever({ es, embedder: precomputedEmbedder({ model, dims, usdPerMillionTokens: price }, vectors) });
+    const retriever = createHybridRetriever({
+      es,
+      embedder: precomputedEmbedder({ model, dims, usdPerMillionTokens: price }, vectors),
+      retrieval: retrievalConfig(config.retrieval.version),
+      casesIndexOf: (d, signal) => manifestCasesIndex(app, d.generationId, d.passagesIndex, { timeoutMs: 5_000, signal }),
+    });
     const catalog = createCaseCatalog(app);
     const bundles: EvidenceFile['bundles'] = [];
     const headers: Record<string, string> = {};
@@ -178,6 +187,7 @@ export async function retrieveEvidence(
         generationId: dataset.generationId,
         passagesIndex: dataset.passagesIndex,
         chunkerVersion,
+        retrievalVersion: retriever.version,
         retrievedAt: new Date().toISOString(),
         note: 'Public NTSB passages of real hybrid-retrieval bundles, checked like the brief pipeline checks them (verifyBundle).',
       },
