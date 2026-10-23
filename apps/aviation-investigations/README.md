@@ -169,6 +169,16 @@ pnpm worker brief-diagnose <brief-id> [--step <n>] [--include-expired]  # why a 
 instead: the briefs and control tables are the app's, and `aviation_ingest` cannot
 read them.
 
+**Connection timeouts** (`server/db/client.ts`). Every PostgreSQL pool and client the
+app, the worker and the tools open has a finite connect timeout. For a pool it bounds
+both opening a connection (an attempt that stalls in the handshake is cut off and its
+slot freed) and waiting for a free one (the acquisition fails, also while the pool shuts
+down), so a server that accepts TCP and never answers cannot hold a slot, the queue or
+`pool.end()`. It is 5 s for the API's pool, every tool's pool and every single client
+(migrations, provisioning, the evaluation readers), and 120 s for the worker's pools,
+whose long locks and snapshot streams are sized never to queue an acquisition.
+Request-path reads keep their own, shorter bound (the cases index lookup: 2 s).
+
 - **Dataset generations.** Every load writes a new generation in one transaction:
   it inserts the generation as `loading`, inserts every row, records its ingestion
   run as `succeeded` and seals the generation (`loaded`) before committing. A

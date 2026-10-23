@@ -94,6 +94,13 @@ database:
   is `aviation_migrator`, so objects are always owned by the group role. Both
   node-postgres and `psql` read the option from the URL; a connection pooler in
   transaction mode would not keep it.
+- **Connection timeouts.** Opening a PostgreSQL connection, or waiting for a free
+  pooled one, fails after 5 s in the API, the tools and the migration runner, and
+  after 120 s in the worker (`server/db/client.ts`). A database that accepts
+  connections but never answers therefore shows up as failing requests within seconds
+  (a brief step's cases index lookup ends at its own 2 s bound, `cases_index_lookup`),
+  the API still shuts down within its grace, and a worker command fails after two
+  minutes instead of hanging.
 
 Elasticsearch has one role pair per environment: `aviation_<env>_reader`
 (`read`, `view_index_metadata`) and `aviation_<env>_writer` (`create_index`,
