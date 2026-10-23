@@ -109,15 +109,23 @@ The implementation review must cover these. It must check in particular that no
 reachable model, including any refusal-fallback target, lacks an allowlisted
 price.
 
-**Summary citations fail closed** (Task 16, post-E2E rounds 4 and 5). Every summary
-sentence must end with the case markers it cites, so a sentence the validator does not
-see as its own could borrow another's citation past the deterministic check. The splitter
-and validator therefore withhold anything unusual (server/briefs/sentences.ts):
-- a summary that is not plain one-line text (controls, invisible or format characters,
-  line breaks, non-ASCII sentence terminators, "…", Markdown or decoration, emoji, HTML
-  entities);
-- a sentence with any `.`, `!` or `?` inside it other than a decimal point;
+**Summary citations** (Task 16, post-E2E rounds 4 and 5; the allow-list in Task 16c).
+Every summary sentence must end with the case markers it cites, so a sentence the
+validator does not see as its own could borrow another's citation past the deterministic
+check. The splitter and validator therefore withhold (server/briefs/sentences.ts):
+- a summary with any character outside an allow-list: printable ASCII except Markdown
+  and decoration (`* _ ~ | [ ] { }`), the quotation marks `“ ” ‘ ’`, the dashes `– —`,
+  `° ± × ½ ¼ ¾ §`, and Latin-1 letters with diacritics; and HTML entities. What it
+  guarantees: the only characters left that can end a sentence are `.`, `!` and `?`, and
+  the only space is U+0020, so no other script's terminator, lookalike, line break,
+  invisible character or other space can hide a boundary;
+- a sentence with any `.`, `!` or `?` inside it other than a decimal point or a declared
+  abbreviation context;
 - a marker anywhere but at a sentence's end.
+
+It does not guarantee that every human-visible clause boundary is a split: clauses
+joined by `;`, `:`, a comma or a dash, and the declared contexts below, form one
+sentence, and the checker judges that sentence whole.
 
 An adversarial review of efe27ce (more than 600,000 crafted and random summaries, families
 A to F) found the bypasses this closes; its 237-string corpus is a committed test

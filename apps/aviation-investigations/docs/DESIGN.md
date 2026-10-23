@@ -300,13 +300,17 @@ The online pipeline is fixed:
    and falls back to retrieved case cards. Render labels/links from server-owned fields. The checker
    is still fallible and has no tools or authorization role.
    Every summary sentence must end with the case markers it cites, and the code check
-   fails closed on anything that could join two sentences into one cited claim
-   (server/briefs/sentences.ts): the summary must be plain one-line text, a sentence ends
-   at every `.`, `!` or `?` before whitespace, and no other one may remain inside a
-   sentence. The only exception is six declared abbreviation contexts ("No. 2", "approx.
-   5", "Mr. Smith", "U.S. operator", "49 U.S.C. 1154", "e.g. a school"). They are an
-   accepted residual: a sentence that really ends with one of them ("…hurt? No. 3
-   passengers…") joins the next, and the checker judges the joined claim whole.
+   withholds any summary whose sentence boundaries it cannot see
+   (server/briefs/sentences.ts): the summary is written with an allow-list of
+   characters (printable ASCII except Markdown and decoration, the quotation marks
+   `“ ” ‘ ’`, the dashes `– —`, `° ± × ½ ¼ ¾ §`, and Latin-1 letters with diacritics),
+   so the only characters that can end a sentence are `.`, `!` and `?` and the only space
+   is U+0020; a sentence ends at every `.`, `!` or `?` before a space, and no other one
+   may remain inside a sentence. What this does not cover: six declared abbreviation
+   contexts ("No. 2", "approx. 5", "Mr. Smith", "U.S. operator", "49 U.S.C. 1154", "e.g.
+   a school") are an accepted residual (a sentence that really ends with one of them,
+   "…hurt? No. 3 passengers…", joins the next), and clauses joined by a semicolon, colon,
+   comma or dash are one sentence; the checker judges each joined claim whole.
    Failed/inconclusive validation returns case cards without generated conclusions.
    There is no automatic repair loop.
 6. **Settle:** record cost metadata, settle reservations, release concurrency, and

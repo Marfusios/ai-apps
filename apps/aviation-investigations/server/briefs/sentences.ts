@@ -8,10 +8,16 @@
  * borrow the other's citation, past the deterministic citation check. So anything unusual
  * withholds:
  *
- * 1. `summaryFormatProblem`: a summary is plain text on one line. Controls, format and
- *    other invisible characters, any line break, sentence terminators other than `.`, `!`
- *    and `?` (such as "…", "。" or "‽"), Markdown and decoration, emoji and HTML entities
- *    fail it (`summary_format`).
+ * 1. `summaryFormatProblem`: a summary is plain text on one line, written with an
+ *    **allow-list** of characters (`summaryCharAllowed`): printable ASCII except Markdown
+ *    and decoration, a short typographic set and Latin-1 letters with diacritics. Every
+ *    other code point fails it (`summary_format`): every control, line break, invisible or
+ *    format character, every space but U+0020, every sentence terminator but `.`, `!` and
+ *    `?`, and every lookalike or symbol not listed (a Tibetan shad, a two-dot leader, a
+ *    Lisu letter that renders as a period, a return symbol, a middle dot). HTML entities
+ *    fail it too. What it guarantees: the only characters left that can end a sentence
+ *    are `.`, `!` and `?`, and the only space is U+0020, so every sentence boundary is
+ *    one the splitter sees.
  * 2. `splitSentences`: a sentence ends at a run of `.`, `!` or `?` ("..." and "?!" are
  *    one end), with any closing quotation marks or parenthesis after it (`"`, `'`, `”`,
  *    `’`, `)`), followed by whitespace or the end of the text, and after any `[[case:…]]`
@@ -46,22 +52,42 @@ const TERMINATORS = '.!?';
 /** Closing quotation marks and parenthesis that belong to the sentence they follow. */
 const CLOSERS = `"')”’`;
 
+/** Printable ASCII used for Markdown and decoration, never in a plain summary (case markers are removed first). */
+const DECORATION = new Set(['*', '_', '~', '|', '[', ']', '{', '}']);
 /**
- * What a plain one-line summary never needs, and what could hide or fake a sentence end:
- * controls (any line break, tab or NUL included), format and other default-ignorable
- * (invisible) characters, line and paragraph separators, the object replacement and
- * replacement characters; sentence terminators other than `.`, `!` and `?` (the Greek
- * question mark and "…" included); Markdown and decoration (`* _ ~ | [ ] { }`, guillemets,
- * low-9 and reversed quotation marks, corner brackets, daggers, bullets, superscripts);
- * emoji and other pictographs; HTML entities. English quotation marks (`"`, `'`, `“`, `”`,
- * `‘`, `’`) are allowed: an opening one glued to a terminator fails `ambiguousBoundary`.
+ * The typographic characters a summary may use beyond ASCII: English quotation marks
+ * (`“ ” ‘ ’`; the closing ones belong to the sentence they end, `CLOSERS`), the en and em
+ * dashes (`– —`, joining clauses), and measurement and number signs (`° ± × ½ ¼ ¾`) and
+ * `§` (a statute reference, a declared context). None can end a sentence or hide a space.
  */
-const UNPLAIN =
-  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\uFFFC\uFFFD\u037E\u2026*_~|\[\]{}\u00AB\u00BB\u2039\u203A\u201E\u201A\u201B\u201F\u300C\u300D\u300E\u300F\u2020\u2021\u2022\u2023\u2043\u25E6\u00B2\u00B3\u00B9\u2070-\u209F\p{Extended_Pictographic}]|(?![.!?])\p{Sentence_Terminal}|&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);/u;
+const TYPOGRAPHIC = new Set(['\u201C', '\u201D', '\u2018', '\u2019', '\u2013', '\u2014', '\u00B0', '\u00B1', '\u00D7', '\u00BD', '\u00BC', '\u00BE', '\u00A7']);
 
-/** True when the summary is not plain one-line text (`UNPLAIN`); leading and trailing whitespace and case markers aside. */
+/**
+ * The allow-list of a summary's characters (one code point): printable ASCII (U+0020 to
+ * U+007E) except `DECORATION`; `TYPOGRAPHIC`; and Latin-1 letters with diacritics
+ * (U+00C0 to U+00FF except `×` and `÷`) for place and person names ("Cañon City",
+ * "Española"). Nothing else: no other space, control, format or invisible character, no
+ * other terminator, symbol, lookalike or script.
+ */
+export function summaryCharAllowed(c: string): boolean {
+  const cp = c.codePointAt(0)!;
+  if (c.length !== (cp > 0xffff ? 2 : 1)) return false;
+  if (cp >= 0x20 && cp <= 0x7e) return !DECORATION.has(c);
+  if (TYPOGRAPHIC.has(c)) return true;
+  return cp >= 0xc0 && cp <= 0xff && cp !== 0xd7 && cp !== 0xf7;
+}
+
+const HTML_ENTITY = /&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);/;
+
+/**
+ * True when the summary is not plain one-line text: a character outside the allow-list
+ * (`summaryCharAllowed`), or an HTML entity. Leading and trailing whitespace and case
+ * markers aside.
+ */
 export function summaryFormatProblem(summary: string): boolean {
-  return UNPLAIN.test(summary.replace(MARKERS_G, ' ').trim());
+  const text = summary.replace(MARKERS_G, ' ').trim();
+  for (const c of text) if (!summaryCharAllowed(c)) return true;
+  return HTML_ENTITY.test(text);
 }
 
 /**

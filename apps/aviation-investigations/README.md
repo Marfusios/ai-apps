@@ -940,11 +940,12 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    recorded; every claim cites passages of its own case; every summary sentence ends
    with the `[[case:…]]` markers of the cases it is about, immediately before or after
    its final punctuation (`uncited_summary` without one, `misplaced_citation` with one
-   mid-sentence). The summary check fails closed (`sentences.ts`), because a split can
-   only withhold while a merge could let an uncited sentence borrow a citation: the
-   summary must be plain one-line text, with no control or invisible characters, line
-   breaks, other scripts' sentence ends or "…", Markdown or decoration, emoji or HTML
-   entities (`summary_format`); a sentence ends at a run of `.`, `!` or `?` (with any
+   mid-sentence). The summary check withholds what it cannot split (`sentences.ts`),
+   because a split can only withhold while a merge could let an uncited sentence borrow a
+   citation: the summary uses an allow-list of characters (printable ASCII except
+   Markdown and decoration, `“ ” ‘ ’ – — ° ± × ½ ¼ ¾ §` and Latin-1 letters with
+   diacritics; HTML entities fail too, `summary_format`), so only `.`, `!` and `?` can end
+   a sentence and U+0020 is the only space; a sentence ends at a run of `.`, `!` or `?` (with any
    closing quote or parenthesis) before whitespace or the end of the text, markers
    after the punctuation included, and a period is not an end only in six declared
    contexts ("No. 2", "approx. 5", "Mr. Smith", "U.S. operator", "49 U.S.C. 1154",
