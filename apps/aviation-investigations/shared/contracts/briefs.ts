@@ -77,6 +77,18 @@ export type Symptom = (typeof SYMPTOMS)[number];
 /** The failure readings a clarification or interpretation can pin. */
 export const FAILURE_TYPES = ['total_power_loss', 'partial_power_loss', 'rough_running', 'failure_to_climb'] as const;
 export type FailureType = (typeof FAILURE_TYPES)[number];
+/**
+ * The reader's words for each failure type: the one table that the server's templates
+ * (interpretation chips and clarification readings in server/briefs/clarify.ts, step
+ * origins in server/routes/briefs.ts, the case drawer's SYMPTOM line in
+ * server/briefs/context.ts) and the web client's chip editor use.
+ */
+export const FAILURE_TYPE_LABELS: Readonly<Record<FailureType, string>> = {
+  total_power_loss: 'Total loss of engine power',
+  partial_power_loss: 'Partial loss of engine power',
+  rough_running: 'Engine running rough',
+  failure_to_climb: 'Unable to climb',
+};
 
 /**
  * Timing since the relevant maintenance (DESIGN §3), as the chips show it: one chip per
@@ -352,13 +364,35 @@ export const StartBriefResponseSchema = z.discriminatedUnion('kind', [
 ]);
 export type StartBriefResponse = z.infer<typeof StartBriefResponseSchema>;
 
+/** An interpretation chip: a server-rendered reading, editable as a refinement (1 search). */
+export const InterpretationChipSchema = z.discriminatedUnion('field', [
+  z.strictObject({ field: z.literal('timing_window'), value: TimingWindowSchema, label: z.string().min(1).max(120), pinned: z.boolean() }),
+  z.strictObject({ field: z.literal('first_flight_only'), value: z.boolean(), label: z.string().min(1).max(120), pinned: z.boolean() }),
+  z.strictObject({ field: z.literal('failure_type'), value: z.enum(FAILURE_TYPES), label: z.string().min(1).max(120), pinned: z.boolean() }),
+]);
+export type InterpretationChip = z.infer<typeof InterpretationChipSchema>;
+
 /**
  * Checklist results (UI_DESIGN §4.4), filled in as stages complete. The server sends
- * stage status and counts only, never partial answer text.
+ * stage status and counts, plus the scope stage's readings and filters as server
+ * templates once it has sent the step on to search; never partial answer text.
  */
 export const ChecklistSchema = z.strictObject({
   /** Question → IN SCOPE. */
   question: z.literal('in_scope').optional(),
+  /**
+   * The readings and filters the scope stage settled on, sent once that stage has
+   * completed, so the chips can stay on top while the rest of the step runs (UI_DESIGN
+   * §4.4). The same server templates and validated filters as the finished result's.
+   * Every later checklist of the step keeps it, a cancelled or failed one's included; a
+   * static reply has none (server/routes/briefs.ts `checklistOf`).
+   */
+  interpretation: z
+    .strictObject({
+      interpretations: z.array(InterpretationChipSchema).max(3),
+      filters: BriefFiltersSchema,
+    })
+    .optional(),
   /** Search → "6 CASES · 12 PASSAGES". */
   searched: z
     .strictObject({
@@ -372,14 +406,6 @@ export const ChecklistSchema = z.strictObject({
   verified: z.enum(['passed', 'withheld']).optional(),
 });
 export type Checklist = z.infer<typeof ChecklistSchema>;
-
-/** An interpretation chip: a server-rendered reading, editable as a refinement (1 search). */
-export const InterpretationChipSchema = z.discriminatedUnion('field', [
-  z.strictObject({ field: z.literal('timing_window'), value: TimingWindowSchema, label: z.string().min(1).max(120), pinned: z.boolean() }),
-  z.strictObject({ field: z.literal('first_flight_only'), value: z.boolean(), label: z.string().min(1).max(120), pinned: z.boolean() }),
-  z.strictObject({ field: z.literal('failure_type'), value: z.enum(FAILURE_TYPES), label: z.string().min(1).max(120), pinned: z.boolean() }),
-]);
-export type InterpretationChip = z.infer<typeof InterpretationChipSchema>;
 
 /** A timing chip: typed value plus its server-rendered label ("5.1 FH", "≤ 17 DAYS", "PREVIOUS DAY", "1ST FLIGHT"). */
 export const TimingChipSchema = z.strictObject({

@@ -25,6 +25,7 @@ import { TURNSTILE_ACTION } from '../../shared/contracts/ai.js';
 import {
   BriefStepResponseSchema,
   CaseContextResponseSchema,
+  FAILURE_TYPE_LABELS,
   StartBriefResponseSchema,
   type BriefStepResponse,
   type ComposeChronology,
@@ -230,6 +231,17 @@ const scopeOut = (over: Partial<ScopeOutput> = {}): ScopeOutput => ({
   ambiguity: { type: 'timing_window', values: ['30d_or_10h'] },
   ...over,
 });
+
+/** The interpretation chip of `scopeOut()`'s default reading (`30d_or_10h`, not pinned). */
+const DEFAULT_TIMING_CHIP = {
+  field: 'timing_window',
+  value: { days: 30, flightHours: 10 },
+  label: 'Within 30 days or 10 flight hours',
+  pinned: false,
+} as const;
+
+/** `checklist.interpretation` of a step that ran with `scopeOut()` and no filters. */
+const DEFAULT_INTERPRETATION = { interpretations: [DEFAULT_TIMING_CHIP], filters: {} };
 
 /** The first sentence of a passage: an exact substring, as the prompt asks. */
 function firstSentence(text: string): string {
@@ -617,7 +629,13 @@ describe('POST /api/briefs: the pipeline', () => {
     expect(started.status).toBe(202);
     expect(started.json).toEqual({ kind: 'started', briefId, step: 1, stage: 'retrieve' });
     expect(step).toMatchObject({ step: 1, steps: 1, refinementsLeft: 3, stage: 'done', origin: { kind: 'question' } });
-    expect(step.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 }, written: true, verified: 'passed' });
+    expect(step.checklist).toEqual({
+      question: 'in_scope',
+      interpretation: DEFAULT_INTERPRETATION,
+      searched: { cases: 4, passages: 8 },
+      written: true,
+      verified: 'passed',
+    });
     const result = step.result!;
     if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
     expect(result.grouping).toBe('mechanical');
@@ -628,9 +646,7 @@ describe('POST /api/briefs: the pipeline', () => {
       ['insufficient', []],
     ]);
     expect(result.cases.map((c) => c.case.ntsbNo)).toEqual(SEEDS);
-    expect(result.interpretations).toEqual([
-      { field: 'timing_window', value: { days: 30, flightHours: 10 }, label: 'Within 30 days or 10 flight hours', pinned: false },
-    ]);
+    expect(result.interpretations).toEqual([DEFAULT_TIMING_CHIP]);
     const dfw = result.cases[0]!;
     expect(dfw.reading?.glyph).toBe('causal');
     expect(dfw.reading?.evidence).toEqual({ scope: 'aircraft', aircraftKey: expect.any(Number) });
@@ -749,7 +765,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const { briefId, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'compose_failed' });
     if (step.result?.kind === 'withheld') expect(step.result.cases).toHaveLength(4);
-    expect(step.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 }, verified: 'withheld' });
+    expect(step.checklist).toEqual({ question: 'in_scope', interpretation: DEFAULT_INTERPRETATION, searched: { cases: 4, passages: 8 }, verified: 'withheld' });
     // The refusal was billed: its usage is a ledger line, and the settlement is certain.
     expect(await ledgerStages()).toEqual([['scope', 'embed', 'compose']]);
     const [res] = await reservations();
@@ -810,7 +826,7 @@ describe('POST /api/briefs: the pipeline', () => {
     advance(MIN);
     const none = await askAndWait(empty, 'Engine power loss shortly after maintenance', { cookie: null });
     expect(none.step.result).toMatchObject({ kind: 'no_results', filters: {} });
-    expect(none.step.checklist).toEqual({ question: 'in_scope', searched: { cases: 0, passages: 0 } });
+    expect(none.step.checklist).toEqual({ question: 'in_scope', interpretation: DEFAULT_INTERPRETATION, searched: { cases: 0, passages: 0 } });
     expect((await trialUsed())[1]).toBe(0);
   });
 });
@@ -1541,6 +1557,200 @@ describe('cancel and expiry', () => {
     const { briefId, cookie } = await askAndWait(h);
     advance(24 * 60 * MIN + 1);
     expect((await read(h, briefId, cookie)).status).toBe(404);
+  });
+});
+
+/** A promise the test opens: a scripted stage waits on it, so reads see the step mid-run. */
+function gate(): { opened: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { opened, open };
+}
+
+describe('checklist interpretation: the chips stay on top while a step runs (UI_DESIGN §4.4)', () => {
+  it('once the scope stage is done, a running step carries its readings and filters as server templates; done, they are the result’s', async () => {
+    const writing = gate();
+    const checking = gate();
+    const h = harness(
+      answering({
+        scope: { output: scopeOut({ filters: { injury: ['FATL'] }, keywordText: 'planner-written keyword text' }) },
+        compose: async (input) => {
+          await writing.opened;
+          return composition(input);
+        },
+        check: async (input) => {
+          await checking.opened;
+          return SUPPORTED(input);
+        },
+      }),
+    );
+    // The question's own filters win per facet over the planner's.
+    const started = await ask(h, 'Engine power loss shortly after maintenance', { filters: { category: ['AIR'] } });
+    expect(started.json).toMatchObject({ kind: 'started', step: 1, stage: 'retrieve' });
+    const cookie = cookieOf(started.setCookie);
+    const { briefId } = started.json;
+    const interpretation = { interpretations: [DEFAULT_TIMING_CHIP], filters: { injury: ['FATL'], category: ['AIR'] } };
+
+    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
+    const composing = await read(h, briefId, cookie, 1);
+    expect(composing.json).toMatchObject({ stage: 'compose', finishedAt: null });
+    expect(composing.json.result).toBeUndefined();
+    expect(composing.json.checklist).toEqual({ question: 'in_scope', interpretation, searched: { cases: 4, passages: 8 } });
+    // Templates only: each label is a reading template, and nothing the planner wrote is sent.
+    const templates = clarificationTemplateLabels();
+    for (const { label } of composing.json.checklist.interpretation!.interpretations) {
+      expect(templates.fixed.includes(label) || templates.patterns.some((p) => p.test(label)), label).toBe(true);
+    }
+    expect(JSON.stringify(composing.json)).not.toContain('planner-written');
+
+    writing.open();
+    await until(() => h.llm.calls.some((c) => c.stage === 'check'));
+    const validating = await read(h, briefId, cookie);
+    expect(validating.json).toMatchObject({ stage: 'validate', finishedAt: null });
+    expect(validating.json.checklist).toEqual({ question: 'in_scope', interpretation, searched: { cases: 4, passages: 8 }, written: true });
+
+    checking.open();
+    await h.svc.settled();
+    const done = (await read(h, briefId, cookie)).json;
+    expect(done).toMatchObject({ stage: 'done', checklist: { verified: 'passed' }, result: { kind: 'answer' } });
+    if (done.result?.kind !== 'answer') throw new Error(`expected an answer, got ${done.result?.kind}`);
+    expect(done.checklist.interpretation).toEqual({ interpretations: done.result.interpretations, filters: done.result.filters });
+    expect(done.checklist.interpretation).toEqual(interpretation);
+  });
+
+  it('before its scope stage is done a step has none; a refinement then carries its own', async () => {
+    const scoping = gate();
+    const writing = gate();
+    const h = harness(
+      answering({
+        scope: [
+          { output: scopeOut({ filters: { injury: ['FATL'] } }) },
+          async () => {
+            await scoping.opened;
+            return { output: scopeOut() };
+          },
+        ],
+        compose: [
+          (input) => composition(input),
+          async (input) => {
+            await writing.opened;
+            return composition(input);
+          },
+        ],
+      }),
+    );
+    const first = await askAndWait(h);
+    const firstInterpretation = { interpretations: [DEFAULT_TIMING_CHIP], filters: { injury: ['FATL'] } };
+    expect(first.step.checklist.interpretation).toEqual(firstInterpretation);
+    advance(MIN);
+
+    // The refine request waits for its scope stage; the step is read meanwhile.
+    const refining = refine(h, first.briefId, first.cookie, { kind: 'interpretation', field: 'failure_type', value: 'total_power_loss' });
+    await until(() => h.llm.calls.filter((c) => c.stage === 'scope').length === 2);
+    for (const n of [2, undefined]) {
+      const scope = await read(h, first.briefId, first.cookie, n);
+      expect(scope.json).toMatchObject({ step: 2, steps: 2, stage: 'scope', finishedAt: null });
+      expect(scope.json.checklist).toEqual({});
+    }
+
+    scoping.open();
+    expect((await refining).json).toMatchObject({ kind: 'started', step: 2, stage: 'retrieve' });
+    await until(() => h.llm.calls.filter((c) => c.stage === 'compose').length === 2);
+    // The refinement's own readings (the reader's pick, pinned) and the filters it kept.
+    const interpretation = {
+      interpretations: [DEFAULT_TIMING_CHIP, { field: 'failure_type', value: 'total_power_loss', label: FAILURE_TYPE_LABELS.total_power_loss, pinned: true }],
+      filters: { injury: ['FATL'] },
+    };
+    const composing = await read(h, first.briefId, first.cookie, 2);
+    expect(composing.json).toMatchObject({ stage: 'compose', finishedAt: null });
+    expect(composing.json.checklist).toEqual({ question: 'in_scope', interpretation, searched: { cases: 4, passages: 8 } });
+    // The earlier step keeps its own.
+    expect((await read(h, first.briefId, first.cookie, 1)).json.checklist.interpretation).toEqual(firstInterpretation);
+
+    writing.open();
+    await h.svc.settled();
+    const done = (await read(h, first.briefId, first.cookie, 2)).json;
+    expect(done).toMatchObject({ stage: 'done', result: { kind: 'answer' } });
+    if (done.result?.kind !== 'answer') throw new Error(`expected an answer, got ${done.result?.kind}`);
+    expect(done.checklist.interpretation).toEqual({ interpretations: done.result.interpretations, filters: done.result.filters });
+    expect(done.checklist.interpretation).toEqual(interpretation);
+  });
+
+  it('a step cancelled or failed after its scope stage keeps them (Try again asks with those filters)', async () => {
+    const interpretation = { interpretations: [DEFAULT_TIMING_CHIP], filters: { injury: ['FATL'] } };
+    const script = answering({ scope: { output: scopeOut({ filters: { injury: ['FATL'] } }) } });
+    // Cancelled while searching.
+    const h = harness(script, { retriever: { hang: true }, timeouts: { retrieve: 20_000 } });
+    const started = await ask(h, 'Engine power loss shortly after maintenance');
+    const cookie = cookieOf(started.setCookie);
+    await until(() => h.retriever.queries.length === 1);
+    const searching = await read(h, started.json.briefId, cookie);
+    expect(searching.json).toMatchObject({ stage: 'retrieve', finishedAt: null });
+    expect(searching.json.checklist).toEqual({ question: 'in_scope', interpretation });
+    expect((await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie })).status).toBe(204);
+    await h.svc.settled();
+    const cancelled = (await read(h, started.json.briefId, cookie)).json;
+    expect(cancelled).toMatchObject({ stage: 'failed', result: { kind: 'cancelled' } });
+    expect(cancelled.checklist).toEqual({ question: 'in_scope', interpretation });
+
+    // Failed in retrieval.
+    const failing = harness(script, { retriever: { fail: { failure: new RetrievalFailure('failed', 'none'), afterEmbedding: true } } });
+    advance(MIN);
+    const failed = await askAndWait(failing, 'Engine power loss shortly after maintenance', { cookie: null });
+    expect(failed.step).toMatchObject({ stage: 'failed', result: { kind: 'failed' } });
+    expect(failed.step.checklist).toEqual({ question: 'in_scope', interpretation });
+  });
+
+  it('a static reply or a failed scope stage has none', async () => {
+    const h = harness({
+      scope: [{ output: scopeOut({ intent: 'out_of_scope', mechanicalCause: false, keywordText: '', ambiguity: undefined }) }, { fail: 'refusal' }],
+    });
+    const reply = await ask(h, 'Write me a poem about the sea');
+    expect(reply.json).toMatchObject({ kind: 'scope_reply' });
+    const cookie = cookieOf(reply.setCookie);
+    await h.svc.settled();
+    const replied = (await read(h, reply.json.briefId, cookie)).json;
+    expect(replied).toMatchObject({ stage: 'done', result: { kind: 'scope_reply' } });
+    expect(replied.checklist).toEqual({});
+
+    advance(MIN);
+    const refused = await ask(h, 'Engine power loss shortly after maintenance', { cookie });
+    expect(refused.json).toMatchObject({ kind: 'started', stage: 'failed' });
+    await h.svc.settled();
+    const failed = (await read(h, refused.json.briefId, cookie)).json;
+    expect(failed).toMatchObject({ stage: 'failed', result: { kind: 'failed' } });
+    expect(failed.checklist).toEqual({});
+  });
+
+  it('a stored reading that would not render to the contract is left out, and the read still answers', async () => {
+    const h = harness(answering());
+    const first = await askAndWait(h);
+    const { reservation_id: reservation, billing_principal: billing } = (
+      await rows<{ reservation_id: number; billing_principal: string }>(
+        sql`SELECT reservation_id::int AS reservation_id, billing_principal FROM brief_steps WHERE brief_id = ${first.briefId}::uuid AND n = 1`,
+      )
+    )[0]!;
+    // A running step past its scope stage whose stored reading is out of the contract's range.
+    const request = JSON.stringify({ origin: 'text', question: 'q', refinement: 'r', readings: {} });
+    const checklist = JSON.stringify({ question: 'in_scope', searched: { cases: 4, passages: 8 } });
+    const intent = JSON.stringify({
+      intent: 'case_search',
+      mechanicalCause: true,
+      filters: {},
+      keywordText: 'k',
+      readings: { timingWindow: { value: { days: 0, flightHours: null }, pinned: false } },
+      caseNumbers: [],
+    });
+    await migrator.execute(sql`
+      INSERT INTO brief_steps (brief_id, n, billing_principal, billing_kind, reservation_id, request, created_at, updated_at)
+      VALUES (${first.briefId}::uuid, 2, ${billing}, 'trial', ${reservation}, ${request}::jsonb, ${clock}, ${clock})`);
+    await appDb.execute(sql`
+      UPDATE brief_steps SET stage = 'compose', checklist = ${checklist}::jsonb, intent = ${intent}::jsonb
+      WHERE brief_id = ${first.briefId}::uuid AND n = 2`);
+    const r = await read(h, first.briefId, first.cookie, 2);
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ step: 2, stage: 'compose', finishedAt: null });
+    expect(r.json.checklist).toEqual({ question: 'in_scope', searched: { cases: 4, passages: 8 } });
   });
 });
 

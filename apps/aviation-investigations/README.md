@@ -649,12 +649,58 @@ breakpoints. Components never use raw colours.
 
 Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with facet
 counts, the case drawer and the compare tray), the full case page and Compare
-(flight strips with NTSB columns, "Same in all", sort and Print for class), plus
-About and Privacy. They show NTSB data only; Ask AI is present but disabled until
-briefs arrive. View state is in the URL: the search keys of `SearchRequest`
-(`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`, `sort`, `page`), the
-open case (`case`) and the compare selection (`cases`). Phones get a "Filters (n)"
-sheet, a full-screen case sheet and a compare bar.
+(flight strips with NTSB columns, "Same in all", sort and Print for class), the AI
+brief (`/briefs/:id`), plus About and Privacy. View state is in the URL: the search
+keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`,
+`sort`, `page`), the open case (`case`), the compare selection (`cases`) and, for
+briefs, the step (`step`) and the brief a case or compare page was opened from
+(`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
+compare bar.
+
+The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
+
+- **Ask AI and the counter** read `GET /api/ai/status` before anyone clicks ("Ask AI ·
+  3 free", "AI searches left: 2 of 3", "AI back tomorrow"). Ask AI needs a click or
+  Ctrl/Cmd+Enter; Enter runs the free Search.
+- **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from
+  a new widget, which is removed as soon as its token is taken. Each request holds a
+  check session: a second control waits its turn ("Checking…"), and ending one session
+  never cancels another. The first request of a trial identity (`started: false`) shows
+  "Quick check before your first AI search"; later ones run invisibly while the button
+  reads "Checking…". When no answer comes back (a network or server error), the notice
+  does not claim the search was free, and Try again replays the same request under the
+  same idempotency key; if that replay is a 409 `conflict` (the earlier attempt never
+  completed), it is sent once more under a new key. The key is kept until a 2xx or that
+  409 settles it: a refused retry (a failed or cancelled check, a paused or used-up status,
+  a known refusal of the replay) leaves it for the next ask. Such keys are kept for the
+  tab (`web/src/features/ai/unsettled.ts`: `sessionStorage`, or memory when storage is
+  unavailable) under a hash of the normalised request (question and canonical filters, or
+  brief and change), so the same request from any page or control replays them; they
+  expire after 24 hours, with the server's idempotency record. A 503 `unavailable` or `ai_paused`
+  released the admission and spent nothing: the paused copy shows, and the next ask uses
+  a new key. The site key comes from `/api/config`, and Cloudflare's script loads only
+  when an AI request needs it. The server's Content-Security-Policy allows
+  `https://challenges.cloudflare.com` as a script and frame source whenever anonymous
+  AI is configured (see "Security headers" under API server).
+- **The brief page** polls the running step once a second and shows the answer
+  checklist (completions announced politely, once each). Polling stops on a 404 (the
+  expired view never polls) or another refusal, waits for `Retry-After` on a 429, and
+  backs off exponentially (up to 30 s) after other failures. The chips stay on top
+  while a step runs: the scope stage's `checklist.interpretation` once it is sent,
+  else, for a refinement, the previous step's. Then the briefing sheet:
+  the AI summary with case citations, evidence groups, case cards with WHY IT
+  MATCHED, timing chips and UNCONFIRMED labels, gap notes, the step switcher and
+  REFINE. Two citations in a row are separated ("DFW08TA066, MIA08LA156"). In a
+  multi-aircraft event, cards, the drawer and compare say whose evidence it is: an
+  aircraft, or the event narrative, which is never attributed to one aircraft.
+  Withheld summaries, the explicit abstention, scope replies, failures and
+  cancels use the server's or UI_DESIGN's copy. Every control that runs the AI on a
+  brief says "· uses 1" before the click.
+- **AI context** for a case (the drawer, the case page, compare's AI columns) comes
+  only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, never merged into the
+  public case data. A citation opens the drawer at the cited passage, with the quoted
+  spans highlighted from their UTF-16 offsets; all AI and NTSB text is rendered as
+  text.
 
 ```sh
 pnpm dev:web          # Vite dev server; /api is proxied to the API server
@@ -685,17 +731,27 @@ simple stand-in for the analyzer.
 `web/src/mocks/handlers.ts` serves it through MSW, in the dev mock mode and in tests;
 production builds contain no mock code. `GET /api/ai/status` answers one of the
 hand-written samples in `web/mock/ai-status.ts` (a fresh anonymous visitor by
-default; `createHandlers({ aiStatus })` picks another). The brief routes are answered by
+default; `createHandlers({ aiStatus })` picks another) and changes like the server's:
+the trial is `started` after the first accepted request, a running search uses one, and
+an anonymous request without a Turnstile token is refused. `/api/config` offers
+Cloudflare's documented always-passing test site key. The brief routes are answered by
 `web/mock/briefs.ts`: an in-memory brief server with hand-written readings of the four
 seed cases whose quotes are located in the fixture texts, the server's own static
 replies and reading templates, a checklist that moves one row per poll
-(`createHandlers({ briefPolls })`), and question keywords that select the other outcomes
-(withheld, out of scope, operational, counting, comparison, clarification, no results).
+(`createHandlers({ briefPolls })`) and carries the step's readings and filters after the
+scope row, replays of a request key, and question keywords that select the other
+outcomes (withheld, no match, a two-aircraft "midair" answer with adjacent citations, out
+of scope, operational, counting, comparison, clarification, no results) or, the first time
+a question is asked, a failure: "unavailable" (503, its key then a 409), "lost before
+start" (no answer, its key then a 409) and "lost response" (no answer, its key then
+replays the started brief).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
-`--with-deps` on a fresh Linux machine).
+`--with-deps` on a fresh Linux machine). `tests/e2e/brief.spec.ts` installs a local
+stand-in for Cloudflare's widget before the app loads, so the AI tests make no
+network requests.
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`
@@ -1128,7 +1184,11 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
 
 The step has a 90-second deadline. Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
-only stage status and counts are visible until the end. Each stage's usage is settled
+until the end a read shows only stage status and counts, plus, once the scope stage has
+sent the step on to search, the readings and filters it settled on
+(`checklist.interpretation`: chips rendered from the stored intent with the server's
+templates, and the validated filters, the same as the finished result's; a cancelled or
+failed step keeps them, a static reply has none). Each stage's usage is settled
 as itemized ledger lines with one request id; a call without reliable usage (timeout,
 abort) settles the full reservation as uncertain. Scope replies (settled before they
 are sent), empty results and failures before any spend give the free search back;

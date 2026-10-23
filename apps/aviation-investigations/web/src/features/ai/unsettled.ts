@@ -1,0 +1,206 @@
+/**
+ * Idempotency keys of AI requests whose outcome is unknown (the answer never arrived), kept
+ * for this tab so that the same request, sent again from any Ask AI or Refine control and
+ * from any page, replays the key instead of paying a second time (DESIGN §8).
+ *
+ * - **The same request** is the normalised request the server hashes for idempotency
+ *   (server/briefs/intent.ts `createRequestHash` and `refineRequestHash`): a create's
+ *   question and canonical filters, or a refinement's brief and change.
+ * - **Storage** is `sessionStorage` (this tab only, gone when it closes), under a hash of
+ *   that normalised request, so no question text is stored. Every access is wrapped:
+ *   when storage is unavailable or refuses a write, the entry lives in memory instead.
+ * - **Lifetime:** an entry is cleared by a 2xx or by the 409 swap (the earlier attempt never
+ *   completed), and it expires with the server's idempotency record, 24 hours after it was
+ *   first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`).
+ */
+import type { BriefFilterFacet, BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
+import { FACET_VALUES } from '../../../../shared/contracts/search';
+
+/**
+ * `BRIEF_FILTER_FACETS`, in its order. Listed here so the home page does not load the brief
+ * contracts (they arrive with the first AI request); a test holds the two lists together.
+ */
+export const FILTER_FACETS = ['phase', 'injury', 'conditions', 'light', 'category', 'engine', 'far_part', 'purpose', 'state'] as const satisfies readonly BriefFilterFacet[];
+
+/** The server keeps an idempotency record this long (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). */
+export const UNSETTLED_TTL_MS = 24 * 60 * 60_000;
+
+const PREFIX = 'casebook-ai-unsettled:';
+const KEY_SHAPE = /^[A-Za-z0-9_-]{8,128}$/;
+
+export type AiRequestShape =
+  | { kind: 'create'; question: string; filters?: BriefFilters | undefined }
+  | { kind: 'refine'; briefId: string; change: RefinementChange };
+
+/**
+ * Filters as the server hashes them (server/briefs/intent.ts `canonicalFilters`): facets in
+ * a fixed order, values in vocabulary order, empty facets dropped, years kept.
+ */
+export function canonicalFilters(f: BriefFilters): BriefFilters {
+  const out: Record<string, unknown> = {};
+  for (const facet of FILTER_FACETS) {
+    const values = f[facet] as readonly string[] | undefined;
+    if (!values || values.length === 0) continue;
+    out[facet] = (FACET_VALUES[facet] as readonly string[]).filter((v) => values.includes(v));
+  }
+  if (f.yearFrom !== undefined) out.yearFrom = f.yearFrom;
+  if (f.yearTo !== undefined) out.yearTo = f.yearTo;
+  return out as BriefFilters;
+}
+
+/** What makes two requests the same for the server's idempotency check. */
+export function normalisedRequest(r: AiRequestShape): unknown {
+  if (r.kind === 'create') return { op: 'brief.create', question: r.question, filters: canonicalFilters(r.filters ?? {}) };
+  const change = r.change.kind === 'filters' ? { ...r.change, filters: canonicalFilters(r.change.filters) } : r.change;
+  return { op: 'brief.refine', briefId: r.briefId, change };
+}
+
+/** JSON with object keys sorted, so equal requests give equal text. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** FNV-1a, 64 bits: only where Web Crypto is missing (a page served over plain HTTP). */
+function fnv1a64(text: string): string {
+  let h = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(text)) {
+    h ^= BigInt(byte);
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, '0');
+}
+
+/** The storage id of a request: a hash of its normalised form, never the question itself. */
+export async function unsettledId(r: AiRequestShape): Promise<string> {
+  const text = canonicalJson(normalisedRequest(r));
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return fnv1a64(text);
+  try {
+    const digest = await subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    return fnv1a64(text);
+  }
+}
+
+interface Entry {
+  key: string;
+  /** When the key was first remembered (ms since the epoch). */
+  at: number;
+}
+
+/** The fallback when sessionStorage is unavailable or refuses a write. */
+const memory = new Map<string, Entry>();
+
+function session(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function parse(raw: string | null): Entry | null {
+  if (raw === null) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<Entry>;
+    return typeof v.key === 'string' && KEY_SHAPE.test(v.key) && typeof v.at === 'number' && Number.isFinite(v.at) ? { key: v.key, at: v.at } : null;
+  } catch {
+    return null;
+  }
+}
+
+function read(id: string): Entry | null {
+  try {
+    const stored = parse(session()?.getItem(PREFIX + id) ?? null);
+    if (stored) return stored;
+  } catch {
+    // Unavailable: memory below.
+  }
+  return memory.get(id) ?? null;
+}
+
+function write(id: string, entry: Entry): void {
+  memory.set(id, entry);
+  try {
+    session()?.setItem(PREFIX + id, JSON.stringify(entry));
+  } catch {
+    // Kept in memory for this page.
+  }
+}
+
+function remove(id: string): void {
+  memory.delete(id);
+  try {
+    session()?.removeItem(PREFIX + id);
+  } catch {
+    // Nothing stored there.
+  }
+}
+
+/** Drops expired entries (both places). */
+function prune(now: number): void {
+  for (const [id, e] of memory) if (now - e.at >= UNSETTLED_TTL_MS) memory.delete(id);
+  try {
+    const store = session();
+    if (!store) return;
+    const ids: string[] = [];
+    for (let i = 0; i < store.length; i++) {
+      const name = store.key(i);
+      if (name?.startsWith(PREFIX)) ids.push(name.slice(PREFIX.length));
+    }
+    for (const id of ids) {
+      const e = parse(store.getItem(PREFIX + id));
+      if (!e || now - e.at >= UNSETTLED_TTL_MS) store.removeItem(PREFIX + id);
+    }
+  } catch {
+    // Unavailable.
+  }
+}
+
+/** The key to replay for this request, if its outcome is still unknown and not expired. */
+export function unsettledKey(id: string, now: number = Date.now()): string | null {
+  const e = read(id);
+  if (!e) return null;
+  if (now - e.at >= UNSETTLED_TTL_MS || e.at > now + 60_000) {
+    remove(id);
+    return null;
+  }
+  return e.key;
+}
+
+/** Remembers a key whose outcome is unknown. A key remembered again keeps its first time. */
+export function rememberUnsettled(id: string, key: string, now: number = Date.now()): void {
+  const earlier = read(id);
+  write(id, { key, at: earlier && earlier.key === key ? earlier.at : now });
+  prune(now);
+}
+
+/** Settled: a 2xx, or the 409 swap (the earlier attempt never completed). */
+export function forgetUnsettled(id: string): void {
+  remove(id);
+}
+
+/** Test hook: forget every entry, in memory and in this tab's storage. */
+export function resetUnsettledForTests(): void {
+  memory.clear();
+  try {
+    const store = session();
+    if (!store) return;
+    const names: string[] = [];
+    for (let i = 0; i < store.length; i++) {
+      const name = store.key(i);
+      if (name?.startsWith(PREFIX)) names.push(name);
+    }
+    for (const name of names) store.removeItem(name);
+  } catch {
+    // Unavailable.
+  }
+}

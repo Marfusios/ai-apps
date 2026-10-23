@@ -89,6 +89,9 @@
   --shadow-ask: var(--ask-shadow);
   --shadow-drawer: var(--drawer-shadow);
   --shadow-sheet: var(--sheet-shadow);
+  --color-checklist-head: var(--checklist-head);
+  --color-checklist-head-ink: var(--checklist-head-ink);
+  --color-checklist-edge: var(--checklist-edge);
   --color-transparent: transparent;
   --color-current: currentColor;
 }
