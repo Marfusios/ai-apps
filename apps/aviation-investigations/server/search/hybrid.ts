@@ -289,8 +289,19 @@ function hitsOf(res: estypes.SearchResponse<Record<string, unknown>>): PassageHi
 // ---------------------------------------------------------------------------
 // Request bodies (pure; exported for tests and the evaluation report)
 
-/** The BM25 channel: `multi_match` over the passage text, the compiled filter as `bool.filter`. */
-export function keywordChannelBody(index: string, text: string, filter: Query[], size: number): estypes.SearchRequest {
+/**
+ * The sort that makes a lexical channel's cut deterministic (task 10e fix round 1): score,
+ * then the id, applied by Elasticsearch while it collects the top `size`, so equal-score
+ * hits at the cut are chosen by the id, not by Lucene's document order.
+ */
+export const PASSAGE_TIEBREAK_SORT: estypes.SortCombinations[] = [{ _score: { order: 'desc' } }, { passage_id: { order: 'asc' } }];
+
+/**
+ * The BM25 channel: `multi_match` over the passage text, the compiled filter as
+ * `bool.filter`. `tiebreak` (case-level versions) adds `PASSAGE_TIEBREAK_SORT`;
+ * `retrieval.v1` sends the body without it, as before.
+ */
+export function keywordChannelBody(index: string, text: string, filter: Query[], size: number, opts: { tiebreak?: boolean } = {}): estypes.SearchRequest {
   return {
     index,
     size,
@@ -303,6 +314,7 @@ export function keywordChannelBody(index: string, text: string, filter: Query[],
         filter,
       },
     },
+    ...(opts.tiebreak ? { sort: PASSAGE_TIEBREAK_SORT.map((x) => ({ ...(x as object) }) as estypes.SortCombinations) } : {}),
   };
 }
 

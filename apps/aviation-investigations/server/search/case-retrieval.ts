@@ -20,9 +20,13 @@
  *    exactly once (through `onQueryEmbedding`, or as the embedding's own error), and only
  *    then does retrieval fail. The error thrown is the embedding's when it failed (its
  *    billing decides the settlement), otherwise the first search failure.
- * 3. **Fusion** (server/search/case-fusion.ts): each channel in a total order (score,
- *    then id), collapsed to unique cases, fused with exact reciprocal rank fusion and a
- *    total tie order; each case's passages in exact passage-level fusion order.
+ * 3. **Discovery, then fusion.** The channels discover candidates; what each returns is
+ *    fixed by its cutoff policy (`retrieval-config.ts`): the lexical channels' cut is by
+ *    score, then id, inside Elasticsearch (the tie-break sort), and the kNN channel's is
+ *    approximate. Fusion (server/search/case-fusion.ts) is then exact and totally ordered
+ *    over what was returned: each channel in a total order (score, then id), collapsed to
+ *    unique cases, exact reciprocal rank fusion with a total tie order; each case's
+ *    passages in exact passage-level fusion order.
  * 4. **Mapping** (server/search/case-mapping.ts): the leading `packCandidates` cases
  *    that no passage channel returned get their passages from the same in-memory vector:
  *    every passage of the case scored exactly, the best kept by score then id; a case
@@ -136,7 +140,7 @@ export async function retrieveCaseCandidates(es: Client, embedder: Embedder | Qu
       throw error;
     });
 
-  const keywordBody = keywordChannelBody(index, keywordText, filter, params.perChannel);
+  const keywordBody = keywordChannelBody(index, keywordText, filter, params.perChannel, { tiebreak: config.channels.keyword.cutoff === 'score-then-id' });
   const casesBody = casesChannelBody(casesIndex.index, keywordText, cases.fields, casesFilter, cases.size);
   const sent: { vector?: estypes.SearchRequest; embeddedAt?: number } = {};
   const embedding = embedQuery(embedder, q.text, q.signal, q.onQueryEmbedding).then((r) => {

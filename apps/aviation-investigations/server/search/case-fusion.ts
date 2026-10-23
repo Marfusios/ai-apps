@@ -1,11 +1,16 @@
 /**
- * Deterministic case-level fusion (`retrieval.v2`; the gate's condition 5). Pure.
+ * Deterministic case-level fusion (`retrieval.v2`; the gate's condition 5). Pure: it
+ * fuses what the channels returned. Which hits a channel returns at its cut is candidate
+ * discovery, decided before this code runs (the cutoff policies of
+ * server/search/retrieval-config.ts: score then id inside Elasticsearch for the lexical
+ * channels, approximate for kNN).
  *
- * 1. **A total order in every channel.** Each channel's hits are ordered by score
- *    (descending), then id (passage id, or case number in the cases channel). Elasticsearch
- *    breaks equal scores by internal document order, which depends on segments and
- *    shards; this order does not, so equal channel scores are tied the same way on every
- *    copy of the index (`orderChannel`).
+ * 1. **A total order in every channel.** Each channel's returned hits are ordered by
+ *    score (descending), then id (passage id, or case number in the cases channel), so
+ *    equal scores inside the returned window are tied by the id whatever order the
+ *    response listed them in (`orderChannel`). For the lexical channels this is the order
+ *    Elasticsearch already applied; for kNN it fixes the order of the window, not which
+ *    hits the approximate search found.
  * 2. **Unique cases first.** Each channel is collapsed to its unique cases in that order
  *    (a case at its best hit) before any rank is assigned, so two channels agreeing on a
  *    case through different passages both count (`uniqueCases`).

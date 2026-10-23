@@ -28,6 +28,20 @@
  *   the field the coded labels are built from, so it waits for the narrative-relevance
  *   track (Track N); operators may select it on `dev` only.
  *
+ * **Cutoffs** (task 10e fix round 1). Candidate discovery and fusion are kept apart:
+ * - the lexical channels (`cutoff: score-then-id`) ask Elasticsearch to sort by score,
+ *   then passage id or case number, while it collects the top `size`, so which of several
+ *   equal-score hits fill the last places is decided by the id, not by Lucene's document
+ *   order. The scores come from the index's term statistics, so this fixes the cut for
+ *   the scores an index gives, not the scores of a differently built copy;
+ * - the kNN channel (`cutoff: approximate`) is approximate discovery: HNSW decides which
+ *   candidates it finds and int8 quantization is computed per segment, so membership and
+ *   scores belong to one index state and can differ on a rebuilt copy; no sort applies;
+ * - the mapping (`selection`) scores every passage of a mapped case exactly and keeps the
+ *   best by score, then passage id;
+ * - fusion (`ranking`) is exact and totally ordered over whatever the channels returned.
+ * `retrieval.v1` keeps Elasticsearch's own cut (`elasticsearch-order`), as before.
+ *
  * Index mappings are unchanged by these versions: they are query behaviour.
  */
 import { createHash } from 'node:crypto';
@@ -44,12 +58,16 @@ export type CasesChannelContent = keyof typeof CASES_CHANNEL_FIELDS;
 /** Every BM25 channel's query: `multi_match`, `best_fields`, operator `or`, the index's search analyzer. */
 export const LEXICAL_QUERY = Object.freeze({ type: 'best_fields', operator: 'or' } as const);
 
+/** How a channel's last places are filled (module comment). */
+export type ChannelCutoff = 'score-then-id' | 'approximate' | 'elasticsearch-order';
+
 export interface CasesChannelConfig {
   readonly index: 'cases';
   readonly content: CasesChannelContent;
   readonly fields: readonly string[];
   /** Unique cases the channel returns. */
   readonly size: number;
+  readonly cutoff: 'score-then-id';
 }
 
 export interface MappingConfig {
@@ -77,8 +95,8 @@ export interface RetrievalConfig {
   readonly text: { readonly lexical: 'keyword-text'; readonly vector: 'question' };
   readonly lexicalQuery: typeof LEXICAL_QUERY;
   readonly channels: {
-    readonly keyword: { readonly index: 'passages'; readonly fields: readonly ['text']; readonly size: number };
-    readonly vector: { readonly index: 'passages'; readonly field: 'embedding'; readonly k: number; readonly numCandidates: number };
+    readonly keyword: { readonly index: 'passages'; readonly fields: readonly ['text']; readonly size: number; readonly cutoff: 'score-then-id' | 'elasticsearch-order' };
+    readonly vector: { readonly index: 'passages'; readonly field: 'embedding'; readonly k: number; readonly numCandidates: number; readonly cutoff: 'approximate' };
     readonly cases: CasesChannelConfig | null;
   };
   readonly fusion: {
@@ -108,14 +126,14 @@ const V1_PARAMS = retrievalParams({ ...RETRIEVAL_DEFAULTS });
 export const MAX_MAPPED_PASSAGES = 1_000;
 const V2_PARAMS = retrievalParams({ ...RETRIEVAL_DEFAULTS, perChannel: 200 });
 
-const passageChannels = (p: RetrievalParams) =>
+const passageChannels = (p: RetrievalParams, keywordCutoff: 'score-then-id' | 'elasticsearch-order') =>
   ({
-    keyword: { index: 'passages', fields: ['text'], size: p.perChannel },
-    vector: { index: 'passages', field: 'embedding', k: p.perChannel, numCandidates: p.perChannel * p.numCandidatesFactor },
+    keyword: { index: 'passages', fields: ['text'], size: p.perChannel, cutoff: keywordCutoff },
+    vector: { index: 'passages', field: 'embedding', k: p.perChannel, numCandidates: p.perChannel * p.numCandidatesFactor, cutoff: 'approximate' },
   }) as const;
 
 const CASE_RANKING =
-  'exact rational RRF; each channel ordered by score then id before it is collapsed to unique cases; ties: best channel rank, then the channel ranks in channel order (keyword, vector, cases), then the case number';
+  'exact rational RRF over what the channels returned; each channel ordered by score then id before it is collapsed to unique cases; ties: best channel rank, then the channel ranks in channel order (keyword, vector, cases), then the case number';
 
 export const RETRIEVAL_V1: RetrievalConfig = deepFreeze({
   version: 'retrieval.v1',
@@ -123,7 +141,7 @@ export const RETRIEVAL_V1: RetrievalConfig = deepFreeze({
   params: V1_PARAMS,
   text: { lexical: 'keyword-text', vector: 'question' },
   lexicalQuery: LEXICAL_QUERY,
-  channels: { ...passageChannels(V1_PARAMS), cases: null },
+  channels: { ...passageChannels(V1_PARAMS, 'elasticsearch-order'), cases: null },
   fusion: {
     level: 'passage',
     k: V1_PARAMS.rrfK,
@@ -140,7 +158,10 @@ const v2 = (version: 'retrieval.v2' | 'retrieval.v2-nf', content: CasesChannelCo
     params: V2_PARAMS,
     text: { lexical: 'keyword-text', vector: 'question' },
     lexicalQuery: LEXICAL_QUERY,
-    channels: { ...passageChannels(V2_PARAMS), cases: { index: 'cases', content, fields: [...CASES_CHANNEL_FIELDS[content]], size: 200 } },
+    channels: {
+      ...passageChannels(V2_PARAMS, 'score-then-id'),
+      cases: { index: 'cases', content, fields: [...CASES_CHANNEL_FIELDS[content]], size: 200, cutoff: 'score-then-id' },
+    },
     fusion: { level: 'case', k: V2_PARAMS.rrfK, weights: { keyword: 1, vector: 1, cases: 1 }, ranking: CASE_RANKING },
     mapping: {
       cases: 'leading-without-passages',

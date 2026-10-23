@@ -107,13 +107,23 @@ describe('case-level stage 1: requests, fusion and mapping', () => {
     const [keyword] = byKind('keyword');
     const [cases] = byKind('cases');
     const [vector] = byKind('vector');
-    expect(keyword).toMatchObject({ index: PASSAGES, size: 200, allow_partial_search_results: false, query: { bool: { must: [{ multi_match: { query: KEYWORDS, fields: ['text'] } }], filter } } });
+    // The lexical cuts: score, then id, inside Elasticsearch's top-200 selection.
+    expect(keyword).toMatchObject({
+      index: PASSAGES,
+      size: 200,
+      allow_partial_search_results: false,
+      query: { bool: { must: [{ multi_match: { query: KEYWORDS, fields: ['text'] } }], filter } },
+      sort: [{ _score: { order: 'desc' } }, { passage_id: { order: 'asc' } }],
+    });
     expect(cases).toMatchObject({
       index: CASES,
       size: 200,
       allow_partial_search_results: false,
       query: { bool: { must: [{ multi_match: { query: KEYWORDS, fields: ['probable_cause', 'analysis', 'factual'], type: 'best_fields', operator: 'or' } }], filter: casesChannelFilter({}, { eventAircraftQualification: true }) } },
+      sort: [{ _score: { order: 'desc' } }, { ntsb_no: { order: 'asc' } }],
     });
+    // The kNN cut is the approximate search's own: no sort can apply to it.
+    expect(vector?.sort).toBeUndefined();
     const knn = vector?.knn as estypes.KnnSearch;
     expect(knn).toMatchObject({ field: 'embedding', k: 200, num_candidates: 800 });
     expect(knn.query_vector).toEqual(Array.from(fakeVector(queryEmbeddingInput(QUESTION), DIMS)));

@@ -35,9 +35,12 @@
  *   aircraft" branch for `blank`) is never used here: it would reach mixed events and
  *   facets met by different aircraft, which the passages filter excludes.
  *
- * **Query.** `multi_match`, `best_fields`, operator `or` over the configured fields, the
- * scope stage's keyword text, the index's search analyzer; `allow_partial_search_results:
- * false`, and an incomplete response fails retrieval (`IncompleteSearchError`).
+ * **Query.** `multi_match`, `best_fields`, operator `or` over the configured fields (a case
+ * scores by its best-matching field), the scope stage's keyword text, the index's search
+ * analyzer; sorted by score, then case number, while Elasticsearch collects the top
+ * `size`, so equal-score cases at the cut are chosen by their number
+ * (`CASE_TIEBREAK_SORT`); `allow_partial_search_results: false`, and an incomplete response
+ * fails retrieval (`IncompleteSearchError`).
  */
 import type { Client, estypes } from '@elastic/elasticsearch';
 import { BLANK } from '../../shared/contracts/search.js';
@@ -180,7 +183,10 @@ export function casesChannelFilter(filters: RetrievalFilters, opts: { eventAircr
 // ---------------------------------------------------------------------------
 // The search
 
-/** BM25 over `fields` of the cases index, the filter as `bool.filter`; only `ntsb_no` is returned. */
+/** Score, then case number, applied while Elasticsearch collects the channel's top `size`. */
+export const CASE_TIEBREAK_SORT: estypes.SortCombinations[] = [{ _score: { order: 'desc' } }, { ntsb_no: { order: 'asc' } }];
+
+/** BM25 over `fields` of the cases index, the filter as `bool.filter`, the tie-break sort; only `ntsb_no` is returned. */
 export function casesChannelBody(index: string, text: string, fields: readonly string[], filter: Query[], size: number): estypes.SearchRequest {
   return {
     index,
@@ -194,6 +200,7 @@ export function casesChannelBody(index: string, text: string, fields: readonly s
         filter,
       },
     },
+    sort: CASE_TIEBREAK_SORT.map((x) => ({ ...(x as object) }) as estypes.SortCombinations),
   };
 }
 

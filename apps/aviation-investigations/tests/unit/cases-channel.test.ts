@@ -96,7 +96,7 @@ describe('the cases channel filter', () => {
 });
 
 describe('the cases channel request and hits', () => {
-  it('BM25 over the configured fields with the keyword text, the filter as bool.filter, no partial results', () => {
+  it('BM25 over the configured fields with the keyword text, the filter as bool.filter, no partial results, the cut by score then case number', () => {
     const body = casesChannelBody('cases-x', 'fuel selector', ['probable_cause', 'analysis', 'factual'], COHORT, 200);
     expect(body).toEqual({
       index: 'cases-x',
@@ -110,6 +110,8 @@ describe('the cases channel request and hits', () => {
           filter: COHORT,
         },
       },
+      // Applied while Elasticsearch collects the top 200: equal scores at the cut go by case number.
+      sort: [{ _score: { order: 'desc' } }, { ntsb_no: { order: 'asc' } }],
     });
   });
 

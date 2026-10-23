@@ -33,17 +33,18 @@ import { manifestCasesIndex, publishManifest } from '../../server/db/generations
 import { streamCaseRecords, type CaseRecord, type CaseRecordAircraft } from '../../server/db/queries/case-records.js';
 import { MAX_EXACT_CANDIDATES, mapCasesToPassages } from '../../server/search/case-mapping.js';
 import { retrieveCaseCandidates } from '../../server/search/case-retrieval.js';
-import { casesChannelFilter } from '../../server/search/cases-channel.js';
+import { casesChannelBody, casesChannelFilter } from '../../server/search/cases-channel.js';
 import { RetrievalFiltersSchema, aircraftSelectionOf, compileFilters, filterClauses, type AircraftSelection, type Query, type RetrievalFilters } from '../../server/search/filters.js';
-import { fetchAndPack, retrievalParams } from '../../server/search/hybrid.js';
+import { fetchAndPack, keywordChannelBody, retrievalParams } from '../../server/search/hybrid.js';
 import { MAX_MAPPED_PASSAGES, RETRIEVAL_V2, type RetrievalConfig } from '../../server/search/retrieval-config.js';
 import { BLANK } from '../../shared/contracts/search.js';
 import { CHUNKER_VERSION } from '../../worker/index/chunk.js';
-import { rebuildCasesIndex } from '../../worker/index/cases-index.js';
+import { CASES_MAPPING, CASES_SETTINGS, rebuildCasesIndex } from '../../worker/index/cases-index.js';
 import { createFakeEmbedder, fakeVector } from '../../worker/index/embed.js';
 import { EMBEDDING_INPUT_TEMPLATE_VERSION, buildCasePassages } from '../../worker/index/passages.js';
 import {
   PASSAGES_EMBEDDING_DIMS,
+  PASSAGES_MAPPING,
   PASSAGES_SETTINGS,
   PASSAGES_V1_MAPPING,
   buildPassageDocument,
@@ -491,4 +492,102 @@ describe('the manifest lookup is bounded on real PostgreSQL', () => {
       await closeDb(small);
     }
   }, 30_000);
+});
+
+describe('the lexical cut is by score, then id, inside Elasticsearch', () => {
+  /** 201 documents that score exactly alike, indexed in ascending or descending id order. */
+  const ids = Array.from({ length: 201 }, (_, i) => `TIE${String(i).padStart(4, '0')}`);
+  const TEXT = 'carburetor icing partial loss of engine power during cruise flight';
+
+  async function casesTwin(order: 'asc' | 'desc'): Promise<string> {
+    const index = `${PREFIX}-tie-cases-${order}`;
+    await es.indices.create({ index, settings: CASES_SETTINGS, mappings: CASES_MAPPING });
+    const docs = (order === 'asc' ? ids : [...ids].reverse()).map((n) => ({
+      ntsb_no: n,
+      country: 'USA',
+      answer_eligible: true,
+      completed_with_cause: true,
+      completion_class: 'completed',
+      aircraft_count: 1,
+      aircraft: [{ aircraft_key: 1, category: 'AIR', eng_types: ['REC'] }],
+      defining_phase_groups: [],
+      sequence_phase_groups: [],
+      defining_events: [],
+      probable_cause: [TEXT],
+      analysis: [],
+      factual: [],
+      findings_text: [],
+    }));
+    const res = await es.bulk({ operations: docs.flatMap((d) => [{ create: { _index: index, _id: d.ntsb_no } }, d]), refresh: true });
+    expect(res.errors).toBe(false);
+    return index;
+  }
+
+  async function passagesTwin(order: 'asc' | 'desc'): Promise<string> {
+    const index = `${PREFIX}-tie-passages-${order}`;
+    await es.indices.create({ index, settings: PASSAGES_SETTINGS, mappings: PASSAGES_MAPPING });
+    const docs = (order === 'asc' ? ids : [...ids].reverse()).map((n) => ({
+      passage_id: n.toLowerCase(),
+      ntsb_no: n,
+      section_id: `${n}:probable_cause/aircraft-1`,
+      revision_id: 'r',
+      section_kind: 'probable_cause',
+      scope: 'aircraft',
+      aircraft_specific: true,
+      aircraft_key: 1,
+      start: 0,
+      end: TEXT.length,
+      part: 1,
+      parts: 1,
+      continuation: false,
+      text: TEXT,
+      country: 'USA',
+      answer_eligible: true,
+      defining_phase_groups: [],
+      aircraft: [{ aircraft_key: 1, category: 'AIR', eng_types: ['REC'] }],
+      event_aircraft: [],
+      event_aircraft_complete: false,
+    }));
+    const res = await es.bulk({ operations: docs.flatMap((d) => [{ create: { _index: index, _id: d.passage_id } }, d]), refresh: true });
+    expect(res.errors).toBe(false);
+    return index;
+  }
+
+  const idsOf = async (body: estypes.SearchRequest) => {
+    const res = await es.search<Record<string, unknown>>(body);
+    const scores = new Set(res.hits.hits.map((h) => h._score));
+    return { ids: res.hits.hits.map((h) => String(h._id)), distinctScores: scores.size };
+  };
+
+  it('cases channel: 201 equal scores and size 200 give the same 200 cases whatever the document order', async () => {
+    const [asc, desc] = [await casesTwin('asc'), await casesTwin('desc')];
+    const filter = casesChannelFilter({}, { eventAircraftQualification: true });
+    const body = (index: string) => casesChannelBody(index, TEXT, ['probable_cause', 'analysis', 'factual'], filter, 200);
+    const a = await idsOf(body(asc));
+    const b = await idsOf(body(desc));
+    expect(a.distinctScores).toBe(1);
+    expect(a.ids).toHaveLength(200);
+    // The cut goes by case number: the same 200, the largest number left out, on both copies.
+    expect(a.ids).toEqual(ids.slice(0, 200));
+    expect(b.ids).toEqual(a.ids);
+    // Without the sort, Lucene's document order decides which case is left out.
+    const { sort: _sort, ...unsorted } = body(asc);
+    const ua = await idsOf(unsorted as estypes.SearchRequest);
+    const ub = await idsOf({ ...(unsorted as estypes.SearchRequest), index: desc });
+    expect(new Set(ua.ids)).not.toEqual(new Set(ub.ids));
+  });
+
+  it('passage BM25 (retrieval.v2): the same, by passage id; retrieval.v1 keeps Elasticsearch’s own cut', async () => {
+    const [asc, desc] = [await passagesTwin('asc'), await passagesTwin('desc')];
+    const filter = compileFilters({}, { eventAircraftQualification: true }).bool.filter;
+    const a = await idsOf(keywordChannelBody(asc, TEXT, filter, 200, { tiebreak: true }));
+    const b = await idsOf(keywordChannelBody(desc, TEXT, filter, 200, { tiebreak: true }));
+    expect(a.distinctScores).toBe(1);
+    expect(a.ids).toEqual(ids.slice(0, 200).map((n) => n.toLowerCase()));
+    expect(b.ids).toEqual(a.ids);
+    const v1a = await idsOf(keywordChannelBody(asc, TEXT, filter, 200));
+    const v1b = await idsOf(keywordChannelBody(desc, TEXT, filter, 200));
+    expect(keywordChannelBody(asc, TEXT, filter, 200).sort).toBeUndefined();
+    expect(new Set(v1a.ids)).not.toEqual(new Set(v1b.ids));
+  });
 });

@@ -26,8 +26,9 @@ describe('the frozen retrieval configurations', () => {
   it('retrieval.v1 is exactly the behaviour before task 10e, kept as the rollback', () => {
     expect(RETRIEVAL_V1).toMatchObject({ version: 'retrieval.v1', status: 'rollback', channels: { cases: null }, mapping: null });
     expect(RETRIEVAL_V1.params).toEqual(RETRIEVAL_DEFAULTS);
-    expect(RETRIEVAL_V1.channels.keyword).toEqual({ index: 'passages', fields: ['text'], size: 50 });
-    expect(RETRIEVAL_V1.channels.vector).toEqual({ index: 'passages', field: 'embedding', k: 50, numCandidates: 200 });
+    // Elasticsearch's own cut, as before (no tie-break sort is sent under retrieval.v1).
+    expect(RETRIEVAL_V1.channels.keyword).toEqual({ index: 'passages', fields: ['text'], size: 50, cutoff: 'elasticsearch-order' });
+    expect(RETRIEVAL_V1.channels.vector).toEqual({ index: 'passages', field: 'embedding', k: 50, numCandidates: 200, cutoff: 'approximate' });
     expect(RETRIEVAL_V1.fusion).toMatchObject({ level: 'passage', k: 60, weights: { keyword: 1, vector: 1 } });
     expect(RETRIEVAL_V1.text).toEqual({ lexical: 'keyword-text', vector: 'question' });
   });
@@ -35,10 +36,17 @@ describe('the frozen retrieval configurations', () => {
   it('retrieval.v2 is exactly the tested c200+n-kt, with the existing packing', () => {
     expect(RETRIEVAL_V2).toMatchObject({ version: 'retrieval.v2', status: 'production' });
     // 200 passage BM25 + 200 passage kNN + 200 cases; num_candidates 800 (the existing factor of four).
-    expect(RETRIEVAL_V2.channels.keyword).toEqual({ index: 'passages', fields: ['text'], size: 200 });
-    expect(RETRIEVAL_V2.channels.vector).toEqual({ index: 'passages', field: 'embedding', k: 200, numCandidates: 800 });
+    // Cutoffs: the lexical cuts by score then id inside Elasticsearch; kNN approximate discovery.
+    expect(RETRIEVAL_V2.channels.keyword).toEqual({ index: 'passages', fields: ['text'], size: 200, cutoff: 'score-then-id' });
+    expect(RETRIEVAL_V2.channels.vector).toEqual({ index: 'passages', field: 'embedding', k: 200, numCandidates: 800, cutoff: 'approximate' });
     expect(numCandidates(RETRIEVAL_V2.params)).toBe(800);
-    expect(RETRIEVAL_V2.channels.cases).toEqual({ index: 'cases', content: 'narratives', fields: ['probable_cause', 'analysis', 'factual'], size: 200 });
+    expect(RETRIEVAL_V2.channels.cases).toEqual({
+      index: 'cases',
+      content: 'narratives',
+      fields: ['probable_cause', 'analysis', 'factual'],
+      size: 200,
+      cutoff: 'score-then-id',
+    });
     // Case-level RRF, k = 60, equal channel weights, exact comparison and a total tie order.
     expect(RETRIEVAL_V2.fusion).toMatchObject({ level: 'case', k: 60, weights: { keyword: 1, vector: 1, cases: 1 } });
     expect(RETRIEVAL_V2.fusion.ranking).toMatch(/exact/);
