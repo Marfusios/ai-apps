@@ -698,8 +698,9 @@ grade each case against the question's written rubric, and an adjudicator settle
 disagreements. Nothing is expert-adjudicated, and no label waits for a person.
 
 - **Questions** (`questions.ts`, built into `dataset.json` by `build`): 25 development
-  questions in 21 families, each with filters, a type, a lure for hard negatives and a
-  rubric that defines grade 2 (relevant), 1 (partially relevant) and 0 with edge cases.
+  benchmark questions in 21 families, and one diagnostic question (below), each with
+  filters, a type, a lure for hard negatives and a rubric that defines grade 2 (relevant),
+  1 (partially relevant) and 0 with edge cases.
   Rubrics and prompts decide in a fixed order: first what is stated (a condition the
   record states and then contradicts is not stated; the later or more specific finding
   stands), then grade 2 when every condition is stated, then grade 0 when the record
@@ -754,15 +755,42 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
   family above its floor, so the frozen criteria pass. The labels are constructed
   (synthetic controls and coded rows): this measures the judges, not retrieval, and is
   never an expert's validation. The calibration cost $0.38 in all.
-- **Pools** (`pool.ts`): per family, the union of the first 100 unique cases of
-  `p50-kt`, `c200+n-kt` and `c200+nf-kt` (the experiment harness, cached scope outputs),
-  every bounded-cohort case, related-code positives, lure hard negatives and a seeded tail
-  sample, versioned by their complete content with every case's evidence fingerprint
-  (loading recomputes each version). Pairs are judged in a frozen priority schedule:
-  delivered cases, then first-20 cases, then bounded cohorts, then the rest, lure and
-  tail cases last; `--stage 1` judges the first three tiers and finishes their
-  escalations. A bounded cohort counts for the Recall@20 gate only without unknowns, so
-  stage 1 is rerun until no failed pair is left (failed outcomes are never cached).
+- **Pools** (`pool.ts`, `inputs.ts`): built through the production retrievers,
+  `retrieval.v1`, `retrieval.v2` and `retrieval.v2-nf` (`retrieveCandidatesWith` and
+  `fetchAndPack`: exact case-level fusion, the score-then-id cuts in Elasticsearch, the
+  individually counted and validated mapping), each version's configuration sha256
+  recorded. Every version runs on identical cached inputs: each member's scope-stage
+  keyword texts and its query vector, taken once by the paid `pools` run and saved
+  (`narrative-pool-inputs-*.json`; `pools --inputs <file>` rebuilds for free). Per family,
+  the union of the versions' first 100 unique cases, every bounded-cohort case,
+  related-code positives, lure hard negatives (the production cases channel's order), the
+  mapping diagnostic's cases and a seeded tail sample, versioned by their complete content
+  with every case's evidence fingerprint and each case-level run's mapping outcomes
+  (which leading cases needed the mapping, mapped or not). `pools` freezes the pool
+  identity in `frozen-pools.json`, which is committed before any judging; relevance and
+  answerability judging refuse any other pool file, and a different identity is not
+  frozen over the committed one. Pairs are judged in a frozen priority schedule
+  (`track-n-schedule-v2`): delivered cases (the mapping diagnostic's included), then
+  first-20 cases, then bounded cohorts, then the rest, lure and tail cases last;
+  `--stage 1` judges the first three tiers and finishes their escalations. A bounded
+  cohort counts for the Recall@20 gate only without unknowns, so stage 1 is rerun until
+  no failed pair is left (failed outcomes are never cached).
+- **Diagnostics**, reported apart from the benchmark (never in its values, comparisons,
+  agreement figures or audit samples): task 10e's regression question
+  `per-pilot-decision-cause-weight-shift` (Track C's question, filter and code set with
+  a narrative rubric; it runs with phase A's cached scope output, frozen with it, so its
+  runs are the ones that showed the regression; pass task 10e's saved vectors with
+  `--vectors` to reuse its query vector too), under comparison rules frozen before any
+  judging: `retrieval.v2` and `retrieval.v2-nf` against `retrieval.v1` on nDCG@6 (P@6
+  and supported P@6 reported), a regression only when the upper bound of the difference
+  is below zero, the displaced and admitted cases listed, and the coded values checked
+  against task 10e's (65.8% and 25.9%); and the **mapping diagnostic** (labelled,
+  forced), because development questions do not reach the mapping (none of task 10e's
+  development runs did): each case-level run's first two cases that only the
+  cases channel returned are mapped and packed by the production code, and the report
+  sets their relevance against the answerability of what was delivered for them,
+  including whether a supported bundle rests on a mapped passage or only on the
+  attached probable cause.
 - **Metrics** (`score.ts`, `report`): Recall@20 on exhaustive bounded cohorts only, strict
   P@6 and nDCG@6 with bounds over unknowns, supported P@6 (relevant and answerable in the
   delivered passages); comparisons bootstrap bounds on each question's improvement
@@ -780,10 +808,12 @@ pnpm eval:retrieval:narrative build --generation 1 --check        # the question
 pnpm eval:retrieval:narrative calibration --generation 1 --check  # the calibration sets; refuses changed labels
 pnpm eval:retrieval:narrative plan --keys-file <file> --allocation-usd <usd>   # free dry run: inventory, cost, the month's sequence
 pnpm eval:retrieval:narrative plan --keys-file <file> --allocation-usd <usd> --measured <dev judgments>   # re-plan from measured output tokens and disagreement
+pnpm eval:retrieval:narrative plan --keys-file <file> --allocation <name> --measured <judgments>   # what remains of the month, set against the allocation's spend
 pnpm eval:retrieval:narrative judge --set calibration --split dev --max-pairs 1 --max-usd 0.11 --concurrency 1 --confirm-cost --allocation <name> --allocation-usd <usd>   # the canary
 pnpm eval:retrieval:narrative judge --set calibration --split dev --concurrency 1 --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative judge --set calibration --split holdout --confirm-cost --allocation <name>   # once; commit holdout-runs.jsonl
-pnpm eval:retrieval:narrative pools --confirm-cost --allocation <name>
+pnpm eval:retrieval:narrative pools [--vectors <saved vectors>] --confirm-cost --allocation <name>   # commit frozen-pools.json
+pnpm eval:retrieval:narrative pools --inputs <file>   # free: the same pools from the saved inputs (the frozen identity, or a refusal)
 pnpm eval:retrieval:narrative judge --set relevance --pools <file> --stage 1 --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative answerability --pools <file> --confirm-cost --allocation <name>
 pnpm eval:retrieval:narrative report --pools <file> --judgments <a,b>   # free
@@ -803,7 +833,9 @@ its ledger reservations is still within its lease, and takes an exclusive claim,
 recoveries cannot both proceed. It reconciles the run's ledger charges (settled costs,
 full reservations of uncertain, expired and lease-expired ones) with what the
 allocation's log holds for the run, prints both, and with `--confirm` appends the
-difference to the log before it removes the lock. A budget stop keeps the run's records, and
+difference to the log before it removes the lock. A `pools` run whose scope stage or
+embedding stops before its charges reach the allocation's log keeps the lock, so
+`recover` reconciles them from the ledger. A budget stop keeps the run's records, and
 the judgment cache, shared by every run and allocation, lets the next run (or month)
 continue without paying again. A rejected request stops the run: its own attempt is not
 billed, but the other judge's concurrent attempts are, so the canary runs one pair with

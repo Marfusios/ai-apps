@@ -799,7 +799,8 @@ passage channel. These are not holdout or release results: the phase A holdout
 confirmed the findings variant, not this one.
 
 The narrative-relevance set (`evals/retrieval/narrative/`, Track N) has 25 development
-questions in 21 families over negation, maintenance chronology, causal uncertainty,
+benchmark questions in 21 families, and task 10e's regression question as a diagnostic
+reported apart, over negation, maintenance chronology, causal uncertainty,
 pilot-versus-investigator attribution, paraphrases, multi-aircraft events and aircraft
 filters, operational and mechanical concepts, each with a written rubric whose grades
 are decided in order. Six are bounded cohorts (82 to 107 answer-eligible cases each, 581
@@ -807,7 +808,10 @@ in all) judged completely; the others are judged on pools. Cohorts are derived f
 (every aircraft of a multi-aircraft event must meet the aircraft filters) and checked
 against the passages index before any paid step. Labels are model-judged: two judges
 from different providers grade each case on its complete record, and an adjudicator
-settles disagreements; unresolved pairs stay unknown. Two calibration sets with
+settles disagreements; unresolved pairs stay unknown. Its pools come from the production
+retrieval versions (`retrieval.v1`, `retrieval.v2`, `retrieval.v2-nf`, each configuration
+hash recorded) run on identical cached inputs, and their identity is frozen before any
+judging. Two calibration sets with
 constructed labels (code-reading items and synthetic narrative controls, including
 answerability bundles and long records judged in parts) are frozen by hash; the
 synthetic records carry real-format case numbers that the builder checks no real case

@@ -183,7 +183,12 @@ configuration or a relabelled holdout); agreement figures are diagnostics with
 investigation thresholds (kappa
 0.7, agreement 0.8), never validation. Unknown judgments keep their ranks and stay in
 every denominator, with metric-specific bounds; reports refuse judgments made under
-another experiment identity and compare methods only by bounds on the improvement.
+another experiment identity and compare methods only by bounds on the improvement. The
+judged pools are built through the production retrieval versions on identical cached
+inputs, each version's configuration hash recorded, and their identity is committed
+before judging; diagnostics (task 10e's regression question under comparison rules
+frozen before judging, and a labelled mapping diagnostic) are reported apart from the
+benchmark.
 
 ## Production feedback and evaluations
 
