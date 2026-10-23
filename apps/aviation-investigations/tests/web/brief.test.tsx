@@ -209,6 +209,31 @@ describe('AI notices (UI_DESIGN §5 copy)', () => {
     expect(unknown).toContain('If it went through, Try again opens it without using another search.');
   });
 
+  it('a long rate-limit wait (a per-network limit) reads in minutes or as a UTC time, never thousands of seconds (review W-4)', () => {
+    // Per-minute limits: the approved copy, in seconds.
+    expect(notice({ kind: 'rate', seconds: 119 })).toBe('Slow down a moment. Try again in 119 seconds.');
+    // Hourly and daily limits are per network (the trial-creation cap is one): minutes, then the time.
+    const tail = 'Everything else works: keyword search, every case, comparisons and printing.Search by keyword instead';
+    expect(notice({ kind: 'rate', seconds: 120 })).toBe(`AI searches from this network are limited for now.Try again in 2 minutes.${tail}`);
+    expect(notice({ kind: 'rate', seconds: 3480 })).toBe(`AI searches from this network are limited for now.Try again in 58 minutes.${tail}`);
+    const at = Date.UTC(2026, 9, 23, 13, 0, 30);
+    expect(notice({ kind: 'rate', seconds: 7200, at })).toBe(`AI searches from this network are limited for now.Try again after 15:01 UTC.${tail}`);
+    expect(notice({ kind: 'rate', seconds: 39_570, at })).toBe(`AI searches from this network are limited for now.Try again after 00:00 UTC.${tail}`);
+    expect(notice({ kind: 'rate', seconds: 3480 })).not.toMatch(/\d{3,} seconds/);
+  });
+
+  it('a 429 with a long Retry-After from the server reads as minutes (review W-4)', { timeout: 15_000 }, async () => {
+    freshApi();
+    installTurnstile();
+    server.use(http.post('*/api/briefs', () => HttpResponse.json({ error: 'rate_limited', message: 'Too many requests.', retryAfter: 3480 }, { status: 429 })));
+    renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText('AI searches from this network are limited for now.', {}, SLOW)).toBeTruthy();
+    expect(screen.getByText('Try again in 58 minutes.')).toBeTruthy();
+    expect(screen.queryByText(/3480/)).toBeNull();
+  });
+
   it('a notice appears inside a live region that was there before it', () => {
     const client = new QueryClient();
     client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.fresh);

@@ -37,7 +37,27 @@ export const COPY = {
   continueWithGoogle: 'Continue with Google',
   /** A retry from the trial a brief moved away from (Builder copy, for the owner's review). */
   moved: ['This AI search moved to the account that signed in.', 'Sign in with that account to view it.'],
+  /**
+   * A rate limit of an hour or a day: the per-network limits (DESIGN §7), the trial-creation
+   * cap among them (Builder copy, Task 22 review W-4, for the owner's review).
+   */
+  networkLimited: 'AI searches from this network are limited for now.',
 } as const;
+
+/** Waits up to this long are per-minute limits, said in seconds (UI_DESIGN §5 "Limit reached (rate)"). */
+export const LONG_RATE_WAIT_S = 120;
+
+/**
+ * When a long rate-limit wait ends: "Try again in 58 minutes." under an hour, otherwise
+ * the UTC time it ends, rounded up to the minute ("Try again after 15:01 UTC."), as the
+ * budget resets are said in UTC. `at`: when the refusal arrived.
+ */
+export function retryWhen(seconds: number, at: number = Date.now()): string {
+  if (seconds < 3600) return `Try again in ${Math.ceil(seconds / 60)} minutes.`;
+  const end = new Date(Math.ceil((at + seconds * 1000) / 60_000) * 60_000);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `Try again after ${pad(end.getUTCHours())}:${pad(end.getUTCMinutes())} UTC.`;
+}
 
 function Box({ edge, title, children }: { edge?: 'ink' | 'blue'; title: string; children?: ReactNode }) {
   return (
@@ -65,6 +85,17 @@ function SignInButton() {
   );
 }
 
+/** "Search by keyword instead": a free search with the question, as a blue outline pill. */
+function KeywordLink({ href }: { href: string }) {
+  return (
+    <div className="mt-2.5">
+      <Link to={href} className="inline-flex items-center rounded-full border-[1.5px] border-blue px-3.5 py-[5px] text-ui font-bold text-blue hover:bg-blue-wash">
+        {COPY.keyword}
+      </Link>
+    </div>
+  );
+}
+
 /** "AI search is done for today." and its variants (an ink-edged box; a normal state). */
 function Paused({ status, keywordHref }: { status: Extract<AiStatusResponse, { state: 'paused' }> | null; keywordHref: string }) {
   const r = status?.reason;
@@ -80,13 +111,7 @@ function Paused({ status, keywordHref }: { status: Extract<AiStatusResponse, { s
       </Box>
     );
   }
-  const keyword = (
-    <div className="mt-2.5">
-      <Link to={keywordHref} className="inline-flex items-center rounded-full border-[1.5px] border-blue px-3.5 py-[5px] text-ui font-bold text-blue hover:bg-blue-wash">
-        {COPY.keyword}
-      </Link>
-    </div>
-  );
+  const keyword = <KeywordLink href={keywordHref} />;
   if (r === 'daily_budget' && status?.retryAt) {
     return (
       <Box edge="ink" title={COPY.pausedDaily[0]}>
@@ -159,7 +184,15 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
           </Box>
         );
       case 'rate':
-        return <Box title={`Slow down a moment. Try again in ${notice.seconds} seconds.`} />;
+        if (notice.seconds < LONG_RATE_WAIT_S) return <Box title={`Slow down a moment. Try again in ${notice.seconds} seconds.`} />;
+        // An hourly or daily limit: never "Try again in 3480 seconds".
+        return (
+          <Box edge="ink" title={COPY.networkLimited}>
+            <p>{retryWhen(notice.seconds, notice.at)}</p>
+            <p>{COPY.everythingElse}</p>
+            <KeywordLink href={keywordHref} />
+          </Box>
+        );
       case 'failure':
         return (
           <Box title={COPY.failure[0]}>
