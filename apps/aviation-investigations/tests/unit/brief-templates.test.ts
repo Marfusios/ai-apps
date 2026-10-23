@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChronologyAmount, ComposeCase, ComposeOutput } from '../../shared/contracts/briefs.js';
+import type { ChronologyFact, ComposeChronology, ComposeCase, ComposeOutput, TimingBound } from '../../shared/contracts/briefs.js';
 import { ScopeOutputSchema, type ScopeOutput } from '../../server/ai/provider.js';
 import {
   clarificationReadings,
@@ -22,8 +22,18 @@ import {
   scopeInput,
 } from '../../server/briefs/intent.js';
 import { CRITERION_LINE, readingLines, timingLine } from '../../server/briefs/context.js';
-import { againstLimit, criteriaLines, evaluateCase, firstFlightDecision, timingDecision } from '../../server/briefs/criteria.js';
 import {
+  CHRONOLOGY_RULES_VERSION,
+  againstLimit,
+  criteriaLines,
+  evaluateCase,
+  factAttribution,
+  firstFlightDecision,
+  timingDecision,
+  type CaseEvidence,
+} from '../../server/briefs/criteria.js';
+import {
+  caseEvidence,
   checkInput,
   chronologyFacts,
   storedDimensions,
@@ -44,6 +54,20 @@ import {
   outOfScopeReply,
 } from '../../server/briefs/static-replies.js';
 import type { ResolvedCitation } from '../../server/briefs/validate.js';
+
+/** A chronology fact from the relevant maintenance. */
+const fact = (relation: ChronologyFact['relation'], over: Partial<ChronologyFact> & { passageIds: string[] }): ChronologyFact => ({
+  anchor: 'relevant_maintenance',
+  relation,
+  ...over,
+});
+const chrono = (maintenance: string, facts: ChronologyFact[]): ComposeChronology => ({ maintenance, facts });
+/** A single-aircraft case whose passages are all aircraft-scoped to aircraft 1. */
+const evidence = (ids: string[]): CaseEvidence => ({
+  passageIds: ids,
+  scopes: new Map(ids.map((id) => [id, { scope: 'aircraft' as const, aircraftKey: 1 }])),
+  multiAircraft: false,
+});
 
 const scope = (over: Partial<ScopeOutput> = {}): ScopeOutput =>
   ScopeOutputSchema.parse({ intent: 'case_search', mechanicalCause: true, filters: {}, keywordText: 'power loss', ...over });
@@ -190,36 +214,58 @@ describe('rendering', () => {
     expect(summarySentences('Loose nut. [[case:A1B2C3]] Next one.')).toEqual(['Loose nut. [[case:A1B2C3]]', 'Next one.']);
   });
 
-  it('timing chips are server labels, one per stated fact, with the value exactly as checked', () => {
-    const facts = chronologyFacts({
-      flightHours: { value: 20, bound: 'exact', passageIds: ['p1'] },
-      calendarDays: { value: 40, bound: 'about', passageIds: ['p2'] },
-      flight: { value: 'later', passageIds: ['p1'] },
-      qualitative: { passageIds: ['p3'] },
-    });
+  it('timing chips are server labels, one per stated fact from the relevant maintenance, with the value exactly as checked', () => {
+    const facts = chronologyFacts(
+      chrono('the overhaul', [
+        fact('flight_hours', { value: 20, bound: 'exact', passageIds: ['p1'] }),
+        fact('calendar_days', { value: 40, bound: 'about', passageIds: ['p2'] }),
+        fact('previous_day', { passageIds: ['p2'] }),
+        fact('immediately_before', { passageIds: ['p3'] }),
+        fact('flight_ordinal', { value: 3, passageIds: ['p1'] }),
+        fact('intervening_flights', { value: 0, bound: 'exact', passageIds: ['p1'] }),
+        fact('words', { passageIds: ['p3'] }),
+        // Measured from another anchor: kept in the composition, never shown or decisive.
+        { ...fact('calendar_days', { value: 2, bound: 'exact', passageIds: ['p1'] }), anchor: 'other', other: 'the second test flight' },
+      ]),
+    );
     expect(facts.map(timingChip)).toEqual([
       { basis: 'flight_hours', value: 20, bound: 'exact', label: '20 FH' },
       { basis: 'calendar_days', value: 40, bound: 'about', label: '≈ 40 DAYS' },
-      { basis: 'subsequent_flight', value: null, bound: 'exact', label: 'LATER FLIGHT' },
-      { basis: 'qualitative', value: null, bound: 'exact', label: 'NOT QUANTIFIED' },
+      { basis: 'previous_day', value: null, bound: 'exact', label: 'PREVIOUS DAY' },
+      { basis: 'immediately_before', value: null, bound: 'exact', label: 'IMMEDIATELY BEFORE' },
+      { basis: 'subsequent_flight', value: 3, bound: 'exact', label: '3RD FLIGHT' },
+      { basis: 'flights_between', value: 0, bound: 'exact', label: '0 FLIGHTS BETWEEN' },
+      { basis: 'qualitative', value: null, bound: 'exact', label: 'IN WORDS' },
     ]);
     expect(facts.map((f) => [f.claim, f.passageIds])).toEqual([
-      ['The event happened 20 flight hours after the relevant maintenance.', ['p1']],
-      ['The event happened about 40 calendar days after the relevant maintenance.', ['p2']],
-      ['The event happened on a later flight after the relevant maintenance, not the first.', ['p1']],
-      ['The passages describe the time between the relevant maintenance and the event in words, without a number.', ['p3']],
+      ['The event happened 20 flight hours after the relevant maintenance (the overhaul).', ['p1']],
+      ['The event happened about 40 calendar days after the relevant maintenance (the overhaul).', ['p2']],
+      ['The relevant maintenance (the overhaul) was done on the calendar day before the event.', ['p2']],
+      ['The relevant maintenance (the overhaul) was completed immediately before the flight on which the event happened.', ['p3']],
+      ['The event happened on the third flight after the relevant maintenance (the overhaul).', ['p1']],
+      ['No completed flight came between the relevant maintenance (the overhaul) and the flight on which the event happened.', ['p1']],
+      ['A supplied passage describes the time between the relevant maintenance (the overhaul) and the event in words, without a number.', ['p3']],
     ]);
-    const chip = (c: Parameters<typeof chronologyFacts>[0]) => chronologyFacts(c).map(timingChip)[0]!;
-    expect(chip({ calendarDays: { value: 17, bound: 'at_most', passageIds: ['p'] } }).label).toBe('≤ 17 DAYS');
-    expect(chip({ calendarDays: { value: 1, bound: 'about', passageIds: ['p'] } }).label).toBe('≈ 1 DAY');
-    expect(chip({ flight: { value: 'first', passageIds: ['p'] } })).toEqual({ basis: 'first_flight', value: null, bound: 'exact', label: '1ST FLIGHT' });
+    const chip = (f: ChronologyFact) => chronologyFacts(chrono('m', [f])).map(timingChip)[0]!;
+    expect(chip(fact('calendar_days', { value: 17, bound: 'at_most', passageIds: ['p'] })).label).toBe('≤ 17 DAYS');
+    expect(chip(fact('calendar_days', { value: 1, bound: 'about', passageIds: ['p'] })).label).toBe('≈ 1 DAY');
+    expect(chip(fact('same_day', { passageIds: ['p'] })).label).toBe('SAME DAY');
+    expect(chip(fact('flight_ordinal', { value: 1, passageIds: ['p'] }))).toEqual({ basis: 'first_flight', value: 1, bound: 'exact', label: '1ST FLIGHT' });
+    expect(chip(fact('flight_ordinal', { value: 12, passageIds: ['p'] })).label).toBe('12TH FLIGHT');
+    expect(chip(fact('intervening_flights', { value: 2, bound: 'at_least', passageIds: ['p'] })).label).toBe('≥ 2 FLIGHTS BETWEEN');
     expect(chronologyFacts(undefined)).toEqual([]);
+    // Every label fits its schema bound.
+    for (const f of facts) expect(timingChip(f).label.length).toBeLessThanOrEqual(24);
     // One canonical representation: what is shown is what was checked (no rounding).
     expect(timingValueText(12.5)).toBe('12.5');
-    expect(timingLine(chip({ flightHours: { value: 12.5, bound: 'about', passageIds: ['p'] } }))).toBe('About 12.5 flight hours after the maintenance');
+    expect(timingLine(chip(fact('flight_hours', { value: 12.5, bound: 'about', passageIds: ['p'] })), 'the overhaul')).toBe(
+      'About 12.5 flight hours after the maintenance (the overhaul)',
+    );
+    expect(timingLine(chip(fact('previous_day', { passageIds: ['p'] })))).toBe('On the calendar day after the maintenance');
+    expect(timingLine(chip(fact('flight_ordinal', { value: 3, passageIds: ['p'] })), 'the installation')).toBe('On the third flight after the maintenance (the installation)');
   });
 
-  it('the checker gets every claim with its own passages, and every passage of each case it is about', () => {
+  it('the checker gets every claim under a server-issued id, with its own passages and every passage of each case it is about', () => {
     const passage = (id: string, text: string, kind: 'analysis' | 'probable_cause' = 'analysis'): VerifiedCase['passages'][number] => ({
       passageId: id,
       role: kind === 'analysis' ? 'retrieved' : 'probable_cause',
@@ -256,7 +302,7 @@ describe('rendering', () => {
       evidencePassageIds: [],
       maintenance: { relation: 'no_evidence', passageIds: [] },
       symptom: { value: 'other', passageIds: ['p1'] },
-      chronology: { calendarDays: { value: 1, bound: 'exact', passageIds: ['p2'] }, flight: { value: 'first', passageIds: ['p2'] } },
+      chronology: chrono('the engine change', [fact('previous_day', { passageIds: ['p2'] }), fact('flight_ordinal', { value: 1, passageIds: ['p2'] })]),
     };
     const composition: ComposeOutput = {
       outcome: 'answer',
@@ -278,12 +324,14 @@ describe('rendering', () => {
     const opts = {
       mechanicalCause: false,
       criteria: criteriaLines(readings),
-      criterionChecks: new Map([['DFW08TA066', evaluateCase(readings, k, false, ['p1', 'p2', 'p3'])]]),
+      criterionChecks: new Map([['DFW08TA066', evaluateCase(readings, k, false, caseEvidence(vc))]]),
     };
     const { input, claims } = checkInput(composition, [citation], cases, { ...opts, mechanicalCause: true });
     expect(claims.map((c) => c.kind)).toEqual([
       'summary', 'summary', 'why', 'classification', 'maintenance', 'timing', 'timing', 'criterion', 'criterion', 'criterion', 'attribution', 'gap',
     ]);
+    // Server-issued ids, in order; the verdicts must name exactly these.
+    expect(input.claims.map((c) => c.id)).toEqual(input.claims.map((_, i) => `C${i + 1}`));
     const all = (kind: string) => input.claims.filter((_, i) => claims[i]!.kind === kind);
     const byKind = (kind: string) => all(kind)[0]!;
     // Every passage of the case, the probable cause included, even though only p1 was quoted.
@@ -293,24 +341,39 @@ describe('rendering', () => {
       ['p3', 'Probable cause', 'Hughes OH-6'],
     ]);
     expect(input.criteria).toEqual(opts.criteria);
-    expect(input.claims[0]).toEqual({ kind: 'summary', ntsbNo: 'DFW08TA066', text: 'A nut came loose (DFW08TA066).', passageIds: ['p1', 'p2', 'p3'] });
-    // Insufficiency and absence are judged on all of the case's passages, never only the quoted one.
-    expect(byKind('classification')).toMatchObject({ passageIds: ['p1', 'p2', 'p3'] });
+    expect(input.claims[0]).toEqual({ id: 'C1', kind: 'summary', ntsbNo: 'DFW08TA066', text: 'A nut came loose (DFW08TA066).', passageIds: ['p1', 'p2', 'p3'], absence: false });
+    // Absence claims cite every passage of the case: their scope is explicit.
+    expect(byKind('classification')).toMatchObject({ passageIds: ['p1', 'p2', 'p3'], absence: true });
     expect(byKind('classification').text).toContain('This is about the supplied passages, not an NTSB finding.');
-    expect(byKind('maintenance')).toMatchObject({ text: 'None of the supplied passages of this case mentions maintenance relevant to the event.', passageIds: ['p1', 'p2', 'p3'] });
-    // Each chronology fact is its own claim with its own passages.
-    expect(all('timing').map((c) => [c.text, c.passageIds])).toEqual([
-      ['The event happened 1 calendar day after the relevant maintenance.', ['p2']],
-      ['The event happened on the first flight after the relevant maintenance.', ['p2']],
+    expect(byKind('maintenance')).toMatchObject({
+      text: 'None of the supplied passages of this case mentions maintenance relevant to the event.',
+      passageIds: ['p1', 'p2', 'p3'],
+      absence: true,
+    });
+    expect(byKind('gap')).toMatchObject({ passageIds: ['p1', 'p2', 'p3'], absence: true });
+    expect(byKind('why')).toMatchObject({ passageIds: ['p1'], absence: false });
+    // Each chronology fact is its own claim with its own passages, naming the maintenance.
+    expect(all('timing').map((c) => [c.text, c.passageIds, c.absence])).toEqual([
+      ['The relevant maintenance (the engine change) was done on the calendar day before the event.', ['p2'], false],
+      ['The event happened on the first flight after the relevant maintenance (the engine change).', ['p2'], false],
     ]);
-    // Every criterion decision is a claim: unknown and semantic ones on every passage of the case.
-    expect(all('criterion').map((c) => [c.text, c.passageIds])).toEqual([
-      ['The passages do not establish whether the event happened within 1 flight hour after the relevant maintenance.', ['p1', 'p2', 'p3']],
-      ['The event happened on the first flight after the relevant maintenance.', ['p2']],
-      ['This event involved a total loss of engine power.', ['p1', 'p2', 'p3']],
+    // Every criterion decision is a claim: unknown ones are absence claims on every passage.
+    expect(all('criterion').map((c) => [c.text, c.passageIds, c.absence])).toEqual([
+      [
+        'Under the timing rules, the supplied passages of this case do not settle whether the event happened within 1 flight hour after the relevant maintenance (the engine change).',
+        ['p1', 'p2', 'p3'],
+        true,
+      ],
+      ['Under the timing rules, the event happened on the first flight after the relevant maintenance (the engine change).', ['p2'], false],
+      ['This event involved a total loss of engine power.', ['p1', 'p2', 'p3'], false],
     ]);
+    expect(claims.filter((c) => c.kind === 'criterion').map((c) => [c.criterion, c.decision])).toEqual([
+      ['timing_window', 'unknown'],
+      ['first_flight_only', 'matches'],
+      ['failure_type', 'matches'],
+    ]);
+    expect(claims[0]!.scope).toEqual(['p1', 'p2', 'p3']);
     expect(byKind('attribution').text).toContain('“A nut was loose.”');
-    expect(byKind('gap')).toMatchObject({ passageIds: ['p2'] });
 
     // More claims than the checker takes: the check is inconclusive, never partial.
     const many = { ...composition, summary: Array.from({ length: 120 }, () => 'A note [[case:DFW08TA066]].').join(' ') };
@@ -320,9 +383,10 @@ describe('rendering', () => {
     // The case context keeps each criterion's checked passage set apart from timing and symptom support.
     const dims = storedDimensions(composition, true, opts.criterionChecks)[0]!;
     expect(dims.timing).toEqual([
-      { basis: 'calendar_days', passageIds: ['p2'] },
+      { basis: 'previous_day', passageIds: ['p2'] },
       { basis: 'first_flight', passageIds: ['p2'] },
     ]);
+    expect(dims.relevantMaintenance).toBe('the engine change');
     expect(dims.criteria).toEqual([
       { criterion: 'timing_window', decision: 'unconfirmed', passageIds: ['p1', 'p2', 'p3'] },
       { criterion: 'first_flight_only', decision: 'matches', passageIds: ['p2'] },
@@ -331,104 +395,188 @@ describe('rendering', () => {
   });
 });
 
-describe('the reader’s criteria (server-owned, decided in code, every decision checked)', () => {
-  const amount = (value: number, bound: ChronologyAmount['bound'], passageIds = ['p']): ChronologyAmount => ({ value, bound, passageIds });
-  const hours = (value: number, bound: ChronologyAmount['bound']) => ({ flightHours: amount(value, bound) });
-  const days = (value: number, bound: ChronologyAmount['bound']) => ({ calendarDays: amount(value, bound) });
-  const decision = (w: { days: number | null; flightHours: number | null }, c: Parameters<typeof timingDecision>[1]) => timingDecision(w, c).decision;
+describe('the reader’s criteria under the timing rules (server-owned, decided in code, every decision checked)', () => {
+  const single = evidence(['p', 'q', 'pd', 'ph', 'pf']);
+  const window = (w: { days: number | null; flightHours: number | null }, facts: ChronologyFact[], ev = single) => timingDecision(w, chrono('the overhaul', facts), ev);
+  const decision = (w: { days: number | null; flightHours: number | null }, facts: ChronologyFact[]) => window(w, facts).decision;
+  const hours = (value: number, bound: TimingBound, ids = ['ph']) => fact('flight_hours', { value, bound, passageIds: ids });
+  const days = (value: number, bound: TimingBound, ids = ['pd']) => fact('calendar_days', { value, bound, passageIds: ids });
+  const shortly = { days: 30, flightHours: 10 };
 
-  it('timing windows are bound-aware and never convert days into hours', () => {
+  it('TW-N: numbers are bound-aware and days are never converted into hours', () => {
     const oneHour = { days: null, flightHours: 1 };
-    expect(decision(oneHour, hours(5.1, 'exact'))).toBe('does_not_match');
-    expect(decision(oneHour, hours(0.5, 'exact'))).toBe('matches');
-    expect(decision(oneHour, hours(5, 'at_most'))).toBe('unknown');
-    expect(decision(oneHour, hours(0.5, 'at_most'))).toBe('matches');
-    expect(decision(oneHour, hours(0.5, 'at_least'))).toBe('unknown');
-    expect(decision(oneHour, hours(2, 'at_least'))).toBe('does_not_match');
-    expect(decision(oneHour, days(0, 'exact'))).toBe('unknown');
-    expect(decision(oneHour, { flight: { value: 'first', passageIds: ['p'] } })).toBe('unknown');
-    expect(decision(oneHour, undefined)).toBe('unknown');
+    expect(decision(oneHour, [hours(5.1, 'exact')])).toBe('does_not_match');
+    expect(decision(oneHour, [hours(0.5, 'exact')])).toBe('matches');
+    expect(decision(oneHour, [hours(5, 'at_most')])).toBe('unknown');
+    expect(decision(oneHour, [hours(0.5, 'at_most')])).toBe('matches');
+    expect(decision(oneHour, [hours(0.5, 'at_least')])).toBe('unknown');
+    expect(decision(oneHour, [hours(2, 'at_least')])).toBe('does_not_match');
+    expect(decision(oneHour, [days(0, 'exact')])).toBe('unknown');
+    expect(window(oneHour, [])).toEqual({ decision: 'unknown', passageIds: [], rules: [], reason: 'unstated' });
+    expect(timingDecision(oneHour, undefined, single)).toEqual({ decision: 'unknown', passageIds: [], rules: [], reason: 'unstated' });
     // An OR window: outside on hours, but days are not stated.
-    const shortly = { days: 30, flightHours: 10 };
-    expect(decision(shortly, hours(12, 'exact'))).toBe('unknown');
-    expect(decision(shortly, hours(5.1, 'exact'))).toBe('matches');
-    // Within on either basis matches, with the deciding fact's passages.
-    expect(timingDecision(shortly, { flightHours: amount(20, 'exact', ['ph']), calendarDays: amount(3, 'exact', ['pd']) })).toEqual({ decision: 'matches', passageIds: ['pd'] });
+    expect(window(shortly, [hours(12, 'exact')])).toEqual({ decision: 'unknown', passageIds: [], rules: [], reason: 'not_settling' });
+    expect(decision(shortly, [hours(5.1, 'exact')])).toBe('matches');
+    // Within on either basis matches, with the deciding fact's passages and rule.
+    expect(window(shortly, [hours(20, 'exact'), days(3, 'exact')])).toEqual({ decision: 'matches', passageIds: ['pd'], rules: ['TW-N'] });
   });
 
   it('G6 regression (c): 40 days and 20 flight hours are both stated, so 30 days OR 10 hours does not match', () => {
-    const both = { calendarDays: amount(40, 'exact', ['pd']), flightHours: amount(20, 'exact', ['ph']) };
-    expect(timingDecision({ days: 30, flightHours: 10 }, both)).toEqual({ decision: 'does_not_match', passageIds: ['pd', 'ph'] });
+    expect(window(shortly, [days(40, 'exact'), hours(20, 'exact')])).toEqual({ decision: 'does_not_match', passageIds: ['pd', 'ph'], rules: ['TW-N'] });
   });
 
-  it('G6 #2: an approximate value supplies no bound, so it never decides eligibility (no assumed tolerance)', () => {
-    // "About eight hours" against a nine-hour window: unknown, not a match.
-    expect(decision({ days: null, flightHours: 9 }, hours(8, 'about'))).toBe('unknown');
-    expect(decision({ days: null, flightHours: 1 }, hours(1, 'about'))).toBe('unknown');
-    expect(decision({ days: 30, flightHours: null }, days(60, 'about'))).toBe('unknown');
+  it('G6: an approximate value supplies no bound, so it never decides eligibility (no assumed tolerance)', () => {
+    expect(window({ days: null, flightHours: 9 }, [hours(8, 'about')])).toMatchObject({ decision: 'unknown', reason: 'approximate' });
+    expect(decision({ days: null, flightHours: 1 }, [hours(1, 'about')])).toBe('unknown');
+    expect(decision({ days: 30, flightHours: null }, [days(60, 'about')])).toBe('unknown');
+    // Even far inside the limit: "about 45 minutes" is approximate, and the summary must not present it as within.
+    expect(window(shortly, [hours(0.8, 'about')])).toMatchObject({ decision: 'unknown', reason: 'approximate' });
     expect(againstLimit({ value: 0.1, bound: 'about' }, 500)).toBe('unknown');
     // A stated limit is usable: "less than ten hours" under a ten-hour window.
-    expect(decision({ days: null, flightHours: 10 }, hours(10, 'at_most'))).toBe('matches');
-    // The case is shown unconfirmed: never "Within your timing window".
-    const k = { ntsbNo: 'DFW08TA066', why: 'w', quotes: [], evidencePassageIds: [], chronology: hours(8, 'about') } as unknown as ComposeCase;
-    const [check] = evaluateCase({ timingWindow: { value: { days: null, flightHours: 9 }, pinned: true } }, k, true, ['p', 'q']);
-    expect(check).toMatchObject({ decision: 'unknown', passageIds: ['p', 'q'] });
+    expect(decision({ days: null, flightHours: 10 }, [hours(10, 'at_most')])).toBe('matches');
+    expect(window({ days: null, flightHours: 10 }, [hours(40, 'at_most')])).toMatchObject({ decision: 'unknown', reason: 'insufficient_bound' });
+    // The case is shown unconfirmed: never "Within your timing window", never "the investigation has no timing".
+    const k = { ntsbNo: 'DFW08TA066', why: 'w', quotes: [], evidencePassageIds: [], chronology: chrono('the overhaul', [hours(8, 'about', ['p'])]) } as unknown as ComposeCase;
+    const [check] = evaluateCase({ timingWindow: { value: { days: null, flightHours: 9 }, pinned: true } }, k, true, evidence(['p', 'q']));
+    expect(check).toMatchObject({ decision: 'unknown', passageIds: ['p', 'q'], absence: true, reason: 'approximate' });
     const lines = readingLines(
       { glyph: null, why: 'w', timing: chronologyFacts(k.chronology).map(timingChip), quotes: [], evidence: { scope: 'event', multiAircraft: false }, criteria: [{ criterion: 'timing_window', decision: 'unconfirmed' }] },
-      { ntsbNo: 'DFW08TA066', evidencePassageIds: [], timing: [{ basis: 'flight_hours', passageIds: ['p'] }], criteria: [{ criterion: 'timing_window', decision: 'unconfirmed', passageIds: ['p', 'q'] }] },
+      { ntsbNo: 'DFW08TA066', evidencePassageIds: [], timing: [{ basis: 'flight_hours', passageIds: ['p'] }], relevantMaintenance: 'the overhaul', criteria: [{ criterion: 'timing_window', decision: 'unconfirmed', passageIds: ['p', 'q'] }] },
     );
     expect(lines).toEqual([
-      { label: 'TIMING', text: 'About 8 flight hours after the maintenance', passageIds: ['p'] },
-      { label: 'CRITERIA', text: 'Unconfirmed: the passages do not establish your timing window', passageIds: ['p', 'q'] },
+      { label: 'TIMING', text: 'About 8 flight hours after the maintenance (the overhaul)', passageIds: ['p'] },
+      { label: 'CRITERIA', text: 'Unconfirmed: this analysis could not establish your timing window from the supplied passages', passageIds: ['p', 'q'] },
     ]);
-    expect(Object.values(CRITERION_LINE).every((l) => l.unconfirmed.startsWith('Unconfirmed:') && !l.unconfirmed.includes('Within'))).toBe(true);
+    for (const l of Object.values(CRITERION_LINE)) {
+      expect(l.unconfirmed.startsWith('Unconfirmed: this analysis could not establish')).toBe(true);
+      expect(l.unconfirmed).not.toMatch(/investigation|no timing|Within/);
+    }
+  });
+
+  it('TW-I and FF-I: "immediately before the flight" is a relation, never a zero-day or zero-hour interval', () => {
+    const before = fact('immediately_before', { passageIds: ['pf'] });
+    // Within any calendar-day window, by rule; the first flight, by rule.
+    expect(window(shortly, [before])).toEqual({ decision: 'matches', passageIds: ['pf'], rules: ['TW-I'] });
+    expect(firstFlightDecision(chrono('the annual inspection', [before]), single)).toEqual({ decision: 'matches', passageIds: ['pf'], rules: ['FF-I'] });
+    // Not a number of flight hours: a flight-hour window stays unknown.
+    expect(window({ days: null, flightHours: 10 }, [before])).toMatchObject({ decision: 'unknown', reason: 'not_settling' });
+    // Its chip and claim say what the passage says, not "0 DAYS" or "0 FH".
+    expect(chronologyFacts(chrono('the annual inspection', [before])).map((f) => [timingChip(f).label, f.claim])).toEqual([
+      ['IMMEDIATELY BEFORE', 'The relevant maintenance (the annual inspection) was completed immediately before the flight on which the event happened.'],
+    ]);
+  });
+
+  it('TW-C: "the previous day" is one calendar-date boundary, not 24 hours', () => {
+    const previous = fact('previous_day', { passageIds: ['pd'] });
+    expect(window(shortly, [previous])).toEqual({ decision: 'matches', passageIds: ['pd'], rules: ['TW-C'] });
+    expect(window({ days: 1, flightHours: null }, [previous])).toMatchObject({ decision: 'matches' });
+    expect(window({ days: 1, flightHours: null }, [fact('same_day', { passageIds: ['pd'] })])).toMatchObject({ decision: 'matches', rules: ['TW-C'] });
+    // Never on the flight-hour basis, and never the first flight.
+    expect(window({ days: null, flightHours: 24 }, [previous])).toMatchObject({ decision: 'unknown', reason: 'not_settling' });
+    expect(firstFlightDecision(chrono('m', [previous]), single)).toMatchObject({ decision: 'unknown', reason: 'not_settling' });
+  });
+
+  it('FF-O and FF-Z: which flight settles only the first flight; the first flight alone never settles a calendar-day window', () => {
+    const first = fact('flight_ordinal', { value: 1, passageIds: ['pf'] });
+    expect(firstFlightDecision(chrono('m', [first]), single)).toEqual({ decision: 'matches', passageIds: ['pf'], rules: ['FF-O'] });
+    expect(window(shortly, [first])).toMatchObject({ decision: 'unknown', reason: 'not_settling' });
+    expect(firstFlightDecision(chrono('m', [fact('flight_ordinal', { value: 3, passageIds: ['pf'] })]), single)).toMatchObject({ decision: 'does_not_match', rules: ['FF-O'] });
+    // Zero completed flights in between is its own statement, settling the first flight by rule.
+    const none = (bound: TimingBound, value = 0) => firstFlightDecision(chrono('m', [fact('intervening_flights', { value, bound, passageIds: ['pf'] })]), single);
+    expect(none('exact')).toMatchObject({ decision: 'matches', rules: ['FF-Z'] });
+    expect(none('at_most')).toMatchObject({ decision: 'matches', rules: ['FF-Z'] });
+    expect(none('at_least', 1)).toMatchObject({ decision: 'does_not_match', rules: ['FF-Z'] });
+    expect(none('exact', 2)).toMatchObject({ decision: 'does_not_match' });
+    expect(none('about', 2)).toMatchObject({ decision: 'unknown', reason: 'approximate' });
+    expect(none('at_most', 3)).toMatchObject({ decision: 'unknown', reason: 'insufficient_bound' });
+    // Hours alone do not say which flight it was.
+    expect(firstFlightDecision(chrono('m', [hours(0.2, 'exact')]), single)).toMatchObject({ decision: 'unknown', reason: 'not_settling' });
+  });
+
+  it('A-1: "two days later" keeps its antecedent; a time from another anchor decides nothing', () => {
+    // WPR18LA021: the accident flight was 2 days after the second test flight, the third flight after the installation.
+    const later = { ...fact('calendar_days', { value: 2, bound: 'exact', passageIds: ['pd'] }), anchor: 'other' as const, other: 'the second test flight' };
+    const third = fact('flight_ordinal', { value: 3, passageIds: ['pf'] });
+    expect(window(shortly, [later])).toEqual({ decision: 'unknown', passageIds: [], rules: [], reason: 'other_anchor' });
+    expect(window(shortly, [later, third])).toMatchObject({ decision: 'unknown', reason: 'not_settling' });
+    expect(firstFlightDecision(chrono('the installation of the new engine systems', [later, third]), single)).toMatchObject({ decision: 'does_not_match', passageIds: ['pf'] });
+    expect(chronologyFacts(chrono('the installation', [later])).length).toBe(0);
+  });
+
+  it('C-1: conflicting facts decide nothing', () => {
+    expect(window(shortly, [days(2, 'exact'), days(40, 'exact', ['pd2'])])).toMatchObject({ decision: 'unknown', reason: 'conflict' });
+    // The other basis can still decide.
+    expect(window(shortly, [days(2, 'exact'), days(40, 'exact'), hours(3, 'exact')])).toMatchObject({ decision: 'matches', rules: ['TW-N'] });
+    const both = chrono('m', [fact('flight_ordinal', { value: 1, passageIds: ['pf'] }), fact('intervening_flights', { value: 2, bound: 'exact', passageIds: ['pf'] })]);
+    expect(firstFlightDecision(both, single)).toMatchObject({ decision: 'unknown', reason: 'conflict' });
+  });
+
+  it('A-2: in a multi-aircraft event, a fact not cited from passages of one aircraft decides nothing', () => {
+    const multi: CaseEvidence = { ...evidence(['e1', 'a1']), multiAircraft: true, scopes: new Map([['e1', { scope: 'event', aircraftKey: null }], ['a1', { scope: 'aircraft', aircraftKey: 2 }]]) };
+    const onEvent = fact('previous_day', { passageIds: ['e1'] });
+    expect(window(shortly, [onEvent], multi)).toEqual({ decision: 'unknown', passageIds: [], rules: [], reason: 'ambiguous_attribution' });
+    expect(factAttribution(onEvent, multi)).toEqual({ scope: 'event', multiAircraft: true });
+    expect(window(shortly, [fact('previous_day', { passageIds: ['a1'] })], multi)).toMatchObject({ decision: 'matches' });
+    expect(factAttribution(fact('previous_day', { passageIds: ['a1'] }), multi)).toEqual({ scope: 'aircraft', aircraftKey: 2 });
+    // In a single-aircraft event, event-level text is about that aircraft.
+    expect(window(shortly, [onEvent], { ...multi, multiAircraft: false })).toMatchObject({ decision: 'matches' });
   });
 
   it('G6 regression (b): a stated later flight fails first-flight-only, whatever the hours say', () => {
-    const second = { flightHours: amount(1.2, 'exact', ['ph']), flight: { value: 'later' as const, passageIds: ['pf'] } };
-    expect(firstFlightDecision(second)).toEqual({ decision: 'does_not_match', passageIds: ['pf'] });
-    expect(firstFlightDecision({ flight: { value: 'first', passageIds: ['pf'] } })).toEqual({ decision: 'matches', passageIds: ['pf'] });
-    // Hours alone do not say which flight it was: unknown, and that claim goes to the checker.
-    expect(firstFlightDecision(hours(0.2, 'exact')).decision).toBe('unknown');
-    const k = { ntsbNo: 'DFW08TA066', why: 'w', quotes: [], evidencePassageIds: [], chronology: hours(1.2, 'exact') } as unknown as ComposeCase;
-    expect(evaluateCase({ firstFlightOnly: { value: true, pinned: true } }, k, true, ['p1', 'p2'])).toEqual([
+    const second = [hours(1.2, 'exact'), fact('flight_ordinal', { value: 2, passageIds: ['pf'] })];
+    expect(firstFlightDecision(chrono('m', second), single)).toEqual({ decision: 'does_not_match', passageIds: ['pf'], rules: ['FF-O'] });
+    const k = { ntsbNo: 'DFW08TA066', why: 'w', quotes: [], evidencePassageIds: [], chronology: chrono('the overhaul', [hours(1.2, 'exact', ['p1'])]) } as unknown as ComposeCase;
+    expect(evaluateCase({ firstFlightOnly: { value: true, pinned: true } }, k, true, evidence(['p1', 'p2']))).toEqual([
       {
         criterion: 'first_flight_only',
         decision: 'unknown',
-        claim: 'The passages do not establish whether the event happened on the first flight after the relevant maintenance.',
+        claim: 'Under the timing rules, the supplied passages of this case do not settle whether the event happened on the first flight after the relevant maintenance (the overhaul).',
         passageIds: ['p1', 'p2'],
+        absence: true,
+        rules: [],
+        reason: 'not_settling',
       },
     ]);
   });
 
-  it('G6 regression (a): an omitted fact settles nothing; the unknown decision is a claim on every passage', () => {
+  it('G6 regression (a): an omitted fact settles nothing; the unknown decision is an absence claim on every passage', () => {
     const k = { ntsbNo: 'DFW08TA066', why: 'w', quotes: [], evidencePassageIds: [] } as unknown as ComposeCase;
     const pinned = { timingWindow: { value: { days: null, flightHours: 1 }, pinned: true } };
-    expect(evaluateCase(pinned, k, true, ['p1', 'p2', 'p3'])).toEqual([
+    expect(evaluateCase(pinned, k, true, evidence(['p1', 'p2', 'p3']))).toEqual([
       {
         criterion: 'timing_window',
         decision: 'unknown',
-        claim: 'The passages do not establish whether the event happened within 1 flight hour after the relevant maintenance.',
+        claim: 'Under the timing rules, the supplied passages of this case do not settle whether the event happened within 1 flight hour after the relevant maintenance.',
         passageIds: ['p1', 'p2', 'p3'],
+        absence: true,
+        rules: [],
+        reason: 'unstated',
       },
     ]);
   });
 
   it('a case is judged on every reading in effect; semantic criteria go to the checker', () => {
-    const k = { ntsbNo: 'DFW08TA066', why: 'w', quotes: [], evidencePassageIds: [], chronology: hours(5.1, 'exact') } as unknown as ComposeCase;
+    const k = { ntsbNo: 'DFW08TA066', why: 'w', quotes: [], evidencePassageIds: [], chronology: chrono('the overhaul', [hours(5.1, 'exact', ['p'])]) } as unknown as ComposeCase;
     const pinned = { timingWindow: { value: { days: null, flightHours: 1 }, pinned: true } };
-    expect(evaluateCase(pinned, k, true, ['p', 'q'])).toEqual([
-      { criterion: 'timing_window', decision: 'does_not_match', claim: 'The event did not happen within 1 flight hour after the relevant maintenance.', passageIds: ['p'] },
+    expect(evaluateCase(pinned, k, true, evidence(['p', 'q']))).toEqual([
+      {
+        criterion: 'timing_window',
+        decision: 'does_not_match',
+        claim: 'Under the timing rules, the event did not happen within 1 flight hour after the relevant maintenance (the overhaul).',
+        passageIds: ['p'],
+        absence: false,
+        rules: ['TW-N'],
+      },
     ]);
     const failure = { failureType: { value: 'total_power_loss' as const, pinned: false } };
     // No structured symptom: semantic, confirmed by the checker on all of the case's passages.
-    expect(evaluateCase(failure, k, true, ['p', 'q'])).toEqual([
-      { criterion: 'failure_type', decision: 'matches', claim: 'This event involved a total loss of engine power.', passageIds: ['p', 'q'] },
+    expect(evaluateCase(failure, k, true, evidence(['p', 'q']))).toEqual([
+      { criterion: 'failure_type', decision: 'matches', claim: 'This event involved a total loss of engine power.', passageIds: ['p', 'q'], absence: false, rules: [] },
     ]);
-    expect(evaluateCase(failure, { ...k, symptom: { value: 'total_power_loss', passageIds: ['ps'] } }, true, ['p', 'q'])).toEqual([
-      { criterion: 'failure_type', decision: 'matches', claim: 'This event involved a total loss of engine power.', passageIds: ['ps'] },
+    expect(evaluateCase(failure, { ...k, symptom: { value: 'total_power_loss', passageIds: ['ps'] } }, true, evidence(['p', 'q']))).toEqual([
+      { criterion: 'failure_type', decision: 'matches', claim: 'This event involved a total loss of engine power.', passageIds: ['ps'], absence: false, rules: [] },
     ]);
-    expect(evaluateCase(failure, { ...k, symptom: { value: 'partial_power_loss', passageIds: ['ps'] } }, true, ['p', 'q']).map((c) => c.decision)).toEqual([
+    expect(evaluateCase(failure, { ...k, symptom: { value: 'partial_power_loss', passageIds: ['ps'] } }, true, evidence(['p', 'q'])).map((c) => c.decision)).toEqual([
       'does_not_match',
     ]);
     expect(criteriaLines({ ...pinned, firstFlightOnly: { value: true, pinned: true }, ...failure })).toEqual([
@@ -436,6 +584,7 @@ describe('the reader’s criteria (server-owned, decided in code, every decision
       'First flight: the event happened on the first flight after the relevant maintenance.',
       'Failure: the event involved a total loss of engine power.',
     ]);
+    expect(CHRONOLOGY_RULES_VERSION).toBe('chronology-rules-v1');
   });
 
   it('G6 #3: the semantic failure-type line links the passage set its claim was checked on', () => {

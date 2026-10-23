@@ -5,12 +5,12 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it, vi } from 'vitest';
-import { createAnthropicProvider } from '../../server/ai/anthropic.js';
+import { createAnthropicProvider, STAGE_THINKING, thinkingParam } from '../../server/ai/anthropic.js';
 import { PHASE_GROUPS } from '../../shared/codes.js';
 import { createFakeProvider, DEFAULT_FAKE_USAGE } from '../../server/ai/fake.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v3.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v5.js';
+import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v4.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v6.js';
 import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
   CheckOutputSchema,
@@ -65,7 +65,7 @@ const checkInput: CheckInput = {
       text: 'The contract mechanic failed.',
     },
   ],
-  claims: [{ kind: 'why', ntsbNo: 'DFW08TA066', text: 'A mechanic error caused it.', passageIds: ['p-dfw-1'] }],
+  claims: [{ id: 'C1', kind: 'why', ntsbNo: 'DFW08TA066', text: 'A mechanic error caused it.', passageIds: ['p-dfw-1'], absence: false }],
 };
 
 const scopeOutput: ScopeOutput = {
@@ -88,13 +88,19 @@ const composeOutput: ComposeOutput = {
       evidencePassageIds: ['p-dfw-1'],
       maintenance: { relation: 'investigator_attributed', passageIds: ['p-dfw-1'] },
       symptom: { value: 'total_power_loss', passageIds: ['p-dfw-1'] },
-      chronology: { flightHours: { value: 5.1, bound: 'exact', passageIds: ['p-dfw-1'] }, flight: { value: 'first', passageIds: ['p-dfw-1'] } },
+      chronology: {
+        maintenance: 'the engine replacement',
+        facts: [
+          { anchor: 'relevant_maintenance', relation: 'flight_hours', value: 5.1, bound: 'exact', passageIds: ['p-dfw-1'] },
+          { anchor: 'relevant_maintenance', relation: 'flight_ordinal', value: 1, passageIds: ['p-dfw-1'] },
+        ],
+      },
     },
   ],
   gaps: [],
 };
 
-const checkOutput: CheckOutput = { supported: true, problems: [] };
+const checkOutput: CheckOutput = { verdicts: [{ claim: 'C1', verdict: 'supported', passages: ['p-dfw-1'] }], quotes: [] };
 
 const USAGE = {
   input_tokens: 900,
@@ -261,6 +267,23 @@ describe('Anthropic adapter requests', () => {
     expect(sonnet.bodies[0]!.thinking).toEqual({ type: 'between_tools' });
   });
 
+  it('a stage can think adaptively where the model can turn thinking off; Opus omits the parameter either way', async () => {
+    for (const [model, expected] of [
+      [HAIKU, { type: 'adaptive' }],
+      [SONNET, { type: 'adaptive' }],
+      [OPUS, undefined],
+    ] as const) {
+      const { client, bodies } = stubClient(jsonResponse(200, messageJson(JSON.stringify(checkOutput))), 1_000);
+      const p = createAnthropicProvider({ models: { ...DEFAULT_MODELS, check: model }, client, thinking: { check: 'adaptive' } });
+      await p.check(checkInput, ctx('check'));
+      expect(bodies[0]!.thinking, model).toEqual(expected);
+      // The other stages keep their defaults.
+      expect(thinkingParam(HAIKU, STAGE_THINKING.scope)).toEqual({ type: 'disabled' });
+    }
+    expect(thinkingParam(OPUS, 'off')).toBeUndefined();
+    expect(thinkingParam('claude-unknown', 'adaptive')).toBeUndefined();
+  });
+
   it('adapter never sends temperature or prefill', async () => {
     const allowed = ['model', 'max_tokens', 'system', 'messages', 'output_config', 'thinking'];
     for (const answer of [OPUS, SONNET, HAIKU]) {
@@ -333,7 +356,7 @@ describe('Anthropic adapter results', () => {
     const result = await p.compose(composeInput, ctx('compose'));
     expect(result.output).toEqual(composeOutput);
     expect(result.model).toBe(OPUS);
-    expect(result.promptVersion).toBe('compose.v5');
+    expect(result.promptVersion).toBe('compose.v6');
   });
 
   it('keeps the reported thinking tokens as calibration data; output_tokens stays the billed total', async () => {
@@ -696,7 +719,7 @@ describe('fake provider', () => {
     const fake = createFakeProvider({
       compose: [{ fail: 'refusal' }, { hang: true }, { output: { ...composeOutput, extra: true } as ComposeOutput }],
       check: (input) => ({
-        output: { supported: input.claims.length === 1, problems: [] },
+        output: { verdicts: input.claims.map((c) => ({ claim: c.id, verdict: 'supported' as const, passages: c.passageIds.slice(0, 1) })), quotes: [] },
         usage: { outputTokens: 3 },
       }),
     });
@@ -706,7 +729,7 @@ describe('fake provider', () => {
     expect([timeout.category, timeout.billing.kind]).toEqual(['timeout', 'uncertain']);
     expect((await stageError(fake.compose(composeInput, ctx('compose')))).category).toBe('invalid_output');
     const checked = await fake.check(checkInput, ctx('check'));
-    expect(checked.output.supported).toBe(true);
+    expect(checked.output.verdicts).toEqual([{ claim: 'C1', verdict: 'supported', passages: ['p-dfw-1'] }]);
     expect(checked.usage.outputTokens).toBe(3);
   });
 

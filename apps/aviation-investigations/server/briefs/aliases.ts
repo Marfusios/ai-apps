@@ -15,7 +15,9 @@
  * - `compositionFromModel` and `citationsFromModel` then map every passage id back to its
  *   canonical id, strictly: an id that is not an alias of the bundle throws.
  *
- * The check output names claims by index, so it needs no mapping.
+ * The check output names claims by their server-issued ids and passages by these aliases;
+ * it is judged as the model wrote it, against the check input it was given
+ * (server/briefs/verdicts.ts), so it needs no mapping.
  */
 import type { ComposeOutput } from '../../shared/contracts/briefs.js';
 import type { CheckInput, ComposeInput } from '../ai/provider.js';
@@ -87,14 +89,7 @@ export function compositionFromModel(c: ComposeOutput, a: PassageAliases): Compo
       ...(k.maintenance ? { maintenance: { ...k.maintenance, passageIds: ids(k.maintenance.passageIds) } } : {}),
       ...(k.symptom ? { symptom: { ...k.symptom, passageIds: ids(k.symptom.passageIds) } } : {}),
       ...(k.chronology
-        ? {
-            chronology: {
-              ...(k.chronology.flightHours ? { flightHours: { ...k.chronology.flightHours, passageIds: ids(k.chronology.flightHours.passageIds) } } : {}),
-              ...(k.chronology.calendarDays ? { calendarDays: { ...k.chronology.calendarDays, passageIds: ids(k.chronology.calendarDays.passageIds) } } : {}),
-              ...(k.chronology.flight ? { flight: { ...k.chronology.flight, passageIds: ids(k.chronology.flight.passageIds) } } : {}),
-              ...(k.chronology.qualitative ? { qualitative: { passageIds: ids(k.chronology.qualitative.passageIds) } } : {}),
-            },
-          }
+        ? { chronology: { ...k.chronology, facts: k.chronology.facts.map((f) => ({ ...f, passageIds: ids(f.passageIds) })) } }
         : {}),
     })),
     gaps: c.gaps.map((g) => ({ ...g, passageIds: ids(g.passageIds) })),

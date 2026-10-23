@@ -9,8 +9,8 @@
 import { describe, expect, it } from 'vitest';
 import { outputJsonSchema } from '../../server/ai/anthropic.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
-import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v3.js';
-import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v5.js';
+import { CHECK_SYSTEM, renderCheckUser } from '../../server/ai/prompts/check.v4.js';
+import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v6.js';
 import { renderScopeUser, SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
 import {
   CheckInputSchema,
@@ -24,7 +24,14 @@ import {
 } from '../../server/ai/provider.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { ComposeOutputSchema } from '../../shared/contracts/briefs.js';
-import { OFFLINE_FIXED_FACTOR, OFFLINE_TEXT_FACTOR, THINKING_ALLOWANCE, preflightRequests, runAiPreflight } from '../../worker/ai-preflight.js';
+import {
+  CHECK_THINKING_ALLOWANCE,
+  OFFLINE_FIXED_FACTOR,
+  OFFLINE_TEXT_FACTOR,
+  THINKING_ALLOWANCE,
+  preflightRequests,
+  runAiPreflight,
+} from '../../worker/ai-preflight.js';
 
 const r = preflightRequests();
 const fixed = (system: string, schema: Parameters<typeof outputJsonSchema>[0]) =>
@@ -68,7 +75,8 @@ describe('the stage caps against the requests they bound (offline sizing)', () =
     const base = fixed(CHECK_SYSTEM, CheckOutputSchema);
     expect(base + text(renderCheckUser(r.fixed.check))).toBeLessThanOrEqual(STAGE_CAPS.check.input);
     expect(base + text(renderCheckUser(r.worst.check))).toBeLessThanOrEqual(STAGE_CAPS.check.input);
-    expect(text(r.outputs.check)).toBeLessThanOrEqual(STAGE_CAPS.check.output);
+    // A verdict for each of the most claims at its bounds, with room for thinking.
+    expect(text(r.outputs.check) + CHECK_THINKING_ALLOWANCE).toBeLessThanOrEqual(STAGE_CAPS.check.output);
   });
 
   it('every frozen prefix (system prompt and schema) fits the cached-prefix bound', async () => {
@@ -86,8 +94,8 @@ describe('the stage caps against the requests they bound (offline sizing)', () =
 describe('runAiPreflight with a stub counter', () => {
   const models: StageModels = { scope: 'claude-haiku-5-5', answer: 'claude-opus-5-5', check: 'claude-haiku-5-5' };
   const key = (x: unknown) => JSON.stringify(x);
-  /** The provider's count of each stage's fixed request (the preflight's measurements with compose.v5); 1,000 for anything else. */
-  const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 4_752, check: 1_961 };
+  /** The provider's count of each stage's fixed request (the preflight's measurements with compose.v6 and check.v4); 1,000 for anything else. */
+  const fixedCounts: Record<LlmStage, number> = { scope: 3_204, compose: 5_007, check: 2_889 };
   const fixedInputs = new Map<string, LlmStage>([
     [key(r.fixed.scope), 'scope'],
     [key(r.fixed.compose), 'compose'],
@@ -119,7 +127,7 @@ describe('runAiPreflight with a stub counter', () => {
       limit: CACHED_PREFIX_MAX,
       ok: true,
     });
-    expect(await prefixRows()).toEqual([row('scope', 3_182), row('answer', 4_628), row('check', 1_834)]);
+    expect(await prefixRows()).toEqual([row('scope', 3_182), row('answer', 4_883), row('check', 2_762)]);
   });
 
   it('a prefix over the bound fails the preflight even when its request fits the stage cap', async () => {

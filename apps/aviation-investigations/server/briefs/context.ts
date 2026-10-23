@@ -19,7 +19,7 @@ import type {
   Symptom,
   TimingChip,
 } from '../../shared/contracts/briefs.js';
-import { timingValueText } from './render.js';
+import { ordinalWord, timingValueText } from './render.js';
 import type { StepRow, StoredDimensions } from './store.js';
 
 const EVIDENCE_LINE: Readonly<Record<GlyphKind, string>> = {
@@ -43,33 +43,58 @@ const SYMPTOM_LINE: Readonly<Record<Exclude<Symptom, 'other'>, string>> = {
 };
 
 /**
- * Definite wording only for a decision the facts settle (an approximate value never
- * matches: server/briefs/criteria.ts); an unconfirmed one says so first.
+ * Definite wording only for a decision the facts settle under the timing rules (an
+ * approximate value never matches: server/briefs/criteria.ts); an unconfirmed one says
+ * so first, and says this analysis could not establish it from the supplied passages,
+ * never that the investigation has no such information.
  */
 export const CRITERION_LINE: Readonly<Record<CriterionDecision['criterion'], Record<CriterionDecision['decision'], string>>> = {
-  timing_window: { matches: 'Within your timing window', unconfirmed: 'Unconfirmed: the passages do not establish your timing window' },
+  timing_window: {
+    matches: 'Within your timing window',
+    unconfirmed: 'Unconfirmed: this analysis could not establish your timing window from the supplied passages',
+  },
   first_flight_only: {
     matches: 'On the first flight after maintenance, as asked',
-    unconfirmed: 'Unconfirmed: the passages do not establish the first flight',
+    unconfirmed: 'Unconfirmed: this analysis could not establish the first flight from the supplied passages',
   },
-  failure_type: { matches: 'The failure you asked about', unconfirmed: 'Unconfirmed: the passages do not establish the failure type' },
+  failure_type: {
+    matches: 'The failure you asked about',
+    unconfirmed: 'Unconfirmed: this analysis could not establish the failure type from the supplied passages',
+  },
 };
 
-export function timingLine(t: TimingChip): string {
+/** "the maintenance (the annual inspection)": the relevant maintenance a TIMING line is about. */
+const maintenanceLabel = (m: string | undefined) => (m ? `the maintenance (${m})` : 'the maintenance');
+
+export function timingLine(t: TimingChip, maintenance?: string): string {
   const bound = { exact: '', about: 'About ', at_most: 'At most ', at_least: 'At least ' }[t.bound];
   const v = t.value === null ? '' : timingValueText(t.value);
-  switch (t.basis) {
-    case 'flight_hours':
-      return `${bound}${v} flight ${t.value === 1 ? 'hour' : 'hours'} after the maintenance`;
-    case 'calendar_days':
-      return `${bound}${v} ${t.value === 1 ? 'day' : 'days'} after the maintenance`;
-    case 'first_flight':
-      return 'On the first flight after the maintenance';
-    case 'subsequent_flight':
-      return 'On a later flight after the maintenance';
-    case 'qualitative':
-      return 'Time since maintenance described in words only';
-  }
+  const m = maintenanceLabel(maintenance);
+  const line = (() => {
+    switch (t.basis) {
+      case 'flight_hours':
+        return `${bound}${v} flight ${t.value === 1 ? 'hour' : 'hours'} after ${m}`;
+      case 'calendar_days':
+        return `${bound}${v} calendar ${t.value === 1 ? 'day' : 'days'} after ${m}`;
+      case 'same_day':
+        return `On the same calendar day as ${m}`;
+      case 'previous_day':
+        return `On the calendar day after ${m}`;
+      case 'immediately_before':
+        return `On the flight that began immediately after ${m}`;
+      case 'first_flight':
+        return `On the first flight after ${m}`;
+      case 'subsequent_flight':
+        return `On the ${ordinalWord(t.value ?? 2)} flight after ${m}`;
+      case 'flights_between':
+        return t.value === 0 && t.bound === 'exact'
+          ? `No completed flight between ${m} and the event flight`
+          : `${bound}${v} completed ${t.value === 1 ? 'flight' : 'flights'} between ${m} and the event flight`;
+      case 'qualitative':
+        return `Time since ${m} also described in words`;
+    }
+  })();
+  return line.length <= 200 ? line : `${line.slice(0, 199)}…`;
 }
 
 /**
@@ -85,9 +110,11 @@ export function readingLines(reading: CaseReading, dims: StoredDimensions | unde
   if (dims?.symptom && dims.symptom.value !== 'other') {
     lines.push({ label: 'SYMPTOM', text: SYMPTOM_LINE[dims.symptom.value], passageIds: dims.symptom.passageIds });
   }
-  for (const t of reading.timing) {
-    lines.push({ label: 'TIMING', text: timingLine(t), passageIds: dims?.timing?.find((x) => x.basis === t.basis)?.passageIds ?? [] });
-  }
+  reading.timing.forEach((t, i) => {
+    // `dims.timing` is in chip order: each line links the passages of its own fact.
+    const own = dims?.timing?.[i];
+    lines.push({ label: 'TIMING', text: timingLine(t, dims?.relevantMaintenance), passageIds: own && own.basis === t.basis ? own.passageIds : [] });
+  });
   for (const c of reading.criteria) {
     // The passage set the criterion's own claim cited, never the symptom's or timing's.
     const passageIds = dims?.criteria?.find((x) => x.criterion === c.criterion)?.passageIds ?? [];

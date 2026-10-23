@@ -20,8 +20,8 @@ import Anthropic, {
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { llmPrice } from './pricing.js';
-import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v3.js';
-import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v5.js';
+import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v4.js';
+import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v6.js';
 import { renderScopeUser, SCOPE_PROMPT_VERSION, SCOPE_SYSTEM } from './prompts/scope.v2.js';
 import {
   CheckInputSchema,
@@ -47,17 +47,48 @@ import {
 type ThinkingParam = Anthropic.Messages.ThinkingConfigParam;
 
 /**
- * Per-model request settings; a model missing here cannot be configured.
+ * Per-model request settings; a model missing here cannot be configured. `off` is how the
+ * model turns thinking off; a model without it cannot.
  * - Opus 5.5 cannot disable thinking (`disabled` is a 400), so `thinking` is omitted
  *   and effort `low` bounds it. Its default effort is `medium`, so effort is always sent.
  * - Sonnet 5.5 turns thinking off with `between_tools` (effort `high` or below).
  * - Haiku 5.5 accepts `disabled` at effort `high` or below.
+ * Budgeted thinking (`budget_tokens`) is a 400 on all three: the only allowance is the
+ * stage's output cap, which holds the visible output at its schema bounds plus the
+ * thinking room that stage's calibration measured.
  */
-export const ANTHROPIC_MODEL_SETTINGS: Readonly<Record<string, { readonly thinking?: ThinkingParam }>> = {
+export const ANTHROPIC_MODEL_SETTINGS: Readonly<Record<string, { readonly off?: ThinkingParam }>> = {
   'claude-opus-5-5': {},
-  'claude-sonnet-5-5': { thinking: { type: 'between_tools' } },
-  'claude-haiku-5-5': { thinking: { type: 'disabled' } },
+  'claude-sonnet-5-5': { off: { type: 'between_tools' } },
+  'claude-haiku-5-5': { off: { type: 'disabled' } },
 };
+
+/**
+ * A stage's thinking: `off` where the model can turn it off, or `adaptive` (the model
+ * decides how much to think, within the stage's output cap, at effort `low`).
+ */
+export type ThinkingMode = 'off' | 'adaptive';
+
+/**
+ * Each stage's thinking. The answer stage runs on Opus, which cannot turn thinking off:
+ * it thinks at effort `low` within the answer output cap's thinking allowance. The check
+ * stage's mode is part of its calibrated configuration (Task 16c, evals/checker): a change
+ * needs the calibration and the check output cap's thinking allowance re-measured.
+ */
+export const STAGE_THINKING: Readonly<Record<LlmStage, ThinkingMode>> = {
+  scope: 'off',
+  compose: 'off',
+  check: 'off',
+};
+
+/** The request's `thinking` parameter for a model and mode, or undefined to omit it. */
+export function thinkingParam(model: string, mode: ThinkingMode): ThinkingParam | undefined {
+  const settings = ANTHROPIC_MODEL_SETTINGS[model];
+  if (!settings) return undefined;
+  if (mode === 'off') return settings.off;
+  // Opus thinks adaptively when `thinking` is omitted; the others are asked to.
+  return settings.off ? { type: 'adaptive' } : undefined;
+}
 
 export const ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
@@ -69,6 +100,8 @@ export interface AnthropicProviderConfig {
   apiKey?: string;
   models: StageModels;
   client?: AnthropicMessagesClient;
+  /** Overrides of `STAGE_THINKING` (the checker calibration compares modes; production uses the defaults). */
+  thinking?: Partial<Record<LlmStage, ThinkingMode>>;
 }
 
 interface StageSpec<I, O> {
@@ -260,7 +293,7 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     const format = outputFormat(spec.output);
     const role = STAGE_ROLE[spec.stage];
     const model = cfg.models[role];
-    const { thinking } = ANTHROPIC_MODEL_SETTINGS[model] ?? {};
+    const thinking = thinkingParam(model, cfg.thinking?.[spec.stage] ?? STAGE_THINKING[spec.stage]);
     const meta: Meta = { stage: spec.stage, provider: 'anthropic', model, promptVersion: spec.promptVersion };
     const fail = (category: StageError['category'], billing: StageErrorInfo['billing'], extra?: Partial<Meta>) =>
       new StageError(category, { ...meta, ...extra, billing });

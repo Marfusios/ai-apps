@@ -68,18 +68,47 @@ describe('brief-diagnose', () => {
     ]);
   });
 
-  it('prints the checker’s problems with their claims, and says when nothing was kept', () => {
+  it('prints each judged claim with its verdict, passages and quote, and says when nothing was kept', () => {
     const claims = [
-      { kind: 'summary', ntsbNo: 'DFW08TA066', text: 'The engine quit 2 hrs. after an overhaul (DFW08TA066).', passageIds: ['P1'] },
-      { kind: 'why', ntsbNo: 'DFW08TA066', text: 'The engine lost power after maintenance.', passageIds: ['P1'] },
+      { id: 'C1', kind: 'summary', ntsbNo: 'DFW08TA066', text: 'The engine quit 2 hrs. after an overhaul (DFW08TA066).', passageIds: ['P1'], absence: false },
+      { id: 'C2', kind: 'why', ntsbNo: 'DFW08TA066', text: 'The engine lost power after maintenance.', passageIds: ['P1'], absence: false },
+      { id: 'C3', kind: 'criterion', ntsbNo: 'DFW08TA066', text: 'Under the timing rules, the supplied passages of this case do not settle it.', passageIds: ['P1'], absence: true },
     ];
-    const meta = { check: { supported: false, problems: [{ claimIndex: 1, kind: 'why', reason: 'not_supported' }] } };
-    const lines = formatDiagnosis(step(meta, 'evidence_check'), { ...diagnostics, reason: 'evidence_check', claims });
-    expect(lines.slice(1, 5)).toEqual([
-      'check: supported=false, 1 problem(s) over 2 claim(s)',
-      '  not_supported at claim 1 (why, DFW08TA066)',
+    const meta = {
+      check: {
+        supported: false,
+        claims: 3,
+        counts: { supported: 1, contradicted: 1, not_established: 1 },
+        codes: ['contradicted', 'not_established', 'chronology_missed'],
+        problems: [
+          { claim: 'C2', claimIndex: 1, kind: 'why', code: 'not_established' },
+          { claim: 'C3', claimIndex: 2, kind: 'criterion', code: 'contradicted' },
+          { claim: 'C3', claimIndex: 2, kind: 'criterion', code: 'chronology_missed' },
+        ],
+        chronologyMissed: [{ claim: 'C3', ntsbNo: 'DFW08TA066', criterion: 'timing_window' }],
+      },
+    };
+    const verdicts = {
+      verdicts: [
+        { claim: 'C1', verdict: 'supported', passages: ['P1'] },
+        { claim: 'C2', verdict: 'not_established', passages: [] },
+        { claim: 'C3', verdict: 'contradicted', passages: ['P1'] },
+      ],
+      quotes: [{ claim: 'C3', passage: 'P1', text: 'replaced 5.1 hours prior to the accident' }],
+    };
+    const lines = formatDiagnosis(step(meta, 'evidence_check'), { ...diagnostics, reason: 'evidence_check', claims, verdicts });
+    expect(lines.slice(1, 12)).toEqual([
+      'check: supported=false, 3 claim(s); verdicts supported 1, contradicted 1, not_established 1; codes contradicted, not_established, chronology_missed',
+      '  not_established at C2 (why, DFW08TA066)',
       '    claim: "The engine lost power after maintenance."',
-      `    passages: P1 = ${ID}`,
+      `    cites: P1 = ${ID}`,
+      '    verdict: not_established; passages none',
+      '  contradicted + chronology_missed at C3 (criterion, DFW08TA066)',
+      '    claim: "Under the timing rules, the supplied passages of this case do not settle it."',
+      `    cites: P1 = ${ID} (absence claim: every supplied passage of its case)`,
+      '    verdict: contradicted; passages P1',
+      `    quote from P1 = ${ID}: "replaced 5.1 hours prior to the accident"`,
+      '  chronology_missed: DFW08TA066 timing_window (C3): the checker found timing the composition did not extract, or the checker erred; nothing was repaired',
     ]);
     const failed = formatDiagnosis(step({ failure: { stage: 'compose', category: 'truncated' } }, 'compose_failed'), null);
     expect(failed).toEqual([

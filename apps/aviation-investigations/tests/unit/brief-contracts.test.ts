@@ -66,11 +66,21 @@ describe('brief request contracts', () => {
     expect(ComposeOutputSchema.safeParse({ ...ok, html: '<b>' }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], quotes: [] }] }).success).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], timing: '5.1 FH' }] }).success).toBe(false);
-    // Chronology: independent typed facts, each with its passages.
-    const chronology = { flightHours: { value: 20, bound: 'exact', passageIds: ['p1'] }, calendarDays: { value: 40, bound: 'exact', passageIds: ['p1'] } };
-    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], chronology }] }).success).toBe(true);
-    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], chronology: { ...chronology, weeks: 6 } }] }).success).toBe(false);
-    expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], chronology: { flight: { value: 2, passageIds: ['p1'] } } }] }).success).toBe(false);
+    // Chronology: the relevant maintenance, then independent facts stored as anchor, relation and evidence.
+    const fact = { anchor: 'relevant_maintenance', relation: 'flight_hours', value: 20, bound: 'exact', passageIds: ['p1'] };
+    const chronology = {
+      maintenance: 'the overhaul',
+      facts: [fact, { ...fact, relation: 'calendar_days', value: 40 }, { anchor: 'other', other: 'the second flight', relation: 'calendar_days', value: 2, bound: 'exact', passageIds: ['p1'] }],
+    };
+    const withChronology = (c: unknown) => ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], chronology: c }] }).success;
+    expect(withChronology(chronology)).toBe(true);
+    expect(withChronology({ ...chronology, weeks: 6 })).toBe(false);
+    expect(withChronology({ maintenance: 'the overhaul', facts: [{ ...fact, attribution: 'aircraft' }] })).toBe(false);
+    expect(withChronology({ maintenance: 'the overhaul', facts: [{ ...fact, relation: 'fortnight' }] })).toBe(false);
+    expect(withChronology({ maintenance: 'the overhaul', facts: Array.from({ length: 5 }, () => fact) })).toBe(false);
+    expect(withChronology({ maintenance: 'x'.repeat(81), facts: [] })).toBe(false);
+    expect(withChronology({ facts: [fact] })).toBe(false);
+    expect(withChronology({ flightHours: { value: 20, bound: 'exact', passageIds: ['p1'] } })).toBe(false);
     expect(ComposeOutputSchema.safeParse({ ...ok, cases: [{ ...ok.cases[0], maintenance: 'investigator_attributed' }] }).success).toBe(false);
   });
 
@@ -120,7 +130,7 @@ describe('mock briefs (web/mock/briefs.ts)', () => {
     // An unconfirmed criterion says so first, with the passage set its claim was checked on.
     expect(context.lines.find((l) => l.label === 'CRITERIA')).toEqual({
       label: 'CRITERIA',
-      text: 'Unconfirmed: the passages do not establish your timing window',
+      text: 'Unconfirmed: this analysis could not establish your timing window from the supplied passages',
       passageIds: ['mock-DEN08LA103-analysis', 'mock-DEN08LA103-probable_cause'],
     });
     expect(context.passages[0]!.highlights).toHaveLength(2);

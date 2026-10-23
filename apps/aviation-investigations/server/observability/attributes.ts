@@ -1,7 +1,8 @@
 import { createHmac } from 'node:crypto';
 import { CRITERIA, WITHHELD_REASONS, type WithheldReason } from '../../shared/contracts/briefs.js';
-import { CHECK_REASONS, STAGE_WARNINGS } from '../ai/provider.js';
+import { STAGE_WARNINGS } from '../ai/provider.js';
 import { VALIDATION_CODES } from '../briefs/validate.js';
+import { CHECK_CODES } from '../briefs/verdicts.js';
 
 /**
  * Why a brief step's stage failed: the closed set recorded in the step's `meta.failure`,
@@ -52,9 +53,10 @@ export function stopReasonOf(raw: string | null | undefined): StopReason | undef
 /**
  * The codes a withheld summary records with its reason (`withheldCodes`): the validation
  * codes of a `citation_check`, the criteria a case failed in a `criteria_check`, and the
- * checker's problem reasons in an `evidence_check`.
+ * judged check's codes in an `evidence_check` (server/briefs/verdicts.ts: verdicts other
+ * than `supported`, `chronology_missed`, and incomplete or invalid check output).
  */
-export const WITHHELD_CODES = [...new Set<string>([...VALIDATION_CODES, ...CRITERIA, ...CHECK_REASONS])];
+export const WITHHELD_CODES = [...new Set<string>([...VALIDATION_CODES, ...CRITERIA, ...CHECK_CODES])];
 
 /**
  * Values of a closed set joined with `+` (a span attribute holds one string), in order,

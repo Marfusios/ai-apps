@@ -52,8 +52,10 @@ export interface StoredDimensions {
   evidencePassageIds: string[];
   maintenance?: { relation: MaintenanceRelation; passageIds: string[] };
   symptom?: { value: Symptom; passageIds: string[] };
-  /** Each stated chronology fact (one per timing chip) with the passages that state it. */
+  /** Each stated chronology fact (one per timing chip, in chip order) with the passages that state it. */
   timing?: { basis: TimingBasis; passageIds: string[] }[];
+  /** The relevant maintenance those facts and the criteria are about, in the passages' words (checked with them). */
+  relevantMaintenance?: string;
   /** Each criterion decision with the passage set its checker claim cited (not the symptom's or timing's). */
   criteria?: { criterion: Criterion; decision: CriterionDecision['decision']; passageIds: string[] }[];
 }
@@ -104,8 +106,13 @@ export interface StepDiagnostics {
   aliases: Record<string, string>;
   /** The summary as the validator split it: a `summary.<i>` reason names entry `i`. */
   summarySentences: string[];
-  /** For `evidence_check`: the claims the checker was given, in index order (with aliases). */
-  claims?: { kind: string; ntsbNo?: string; text: string; passageIds: string[] }[];
+  /** For `evidence_check`: the claims the checker was given, in id order (with aliases). */
+  claims?: { id?: string; kind: string; ntsbNo?: string; text: string; passageIds: string[]; absence?: boolean }[];
+  /** For `evidence_check` with a parsed check output: the checker's verdicts and quotes as it returned them (aliases). */
+  verdicts?: {
+    verdicts: { claim: string; verdict: string; passages: string[] }[];
+    quotes: { claim: string; passage: string; text: string }[];
+  };
 }
 
 /**

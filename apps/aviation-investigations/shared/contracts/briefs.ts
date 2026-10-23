@@ -80,10 +80,22 @@ export type FailureType = (typeof FAILURE_TYPES)[number];
 
 /**
  * Timing since the relevant maintenance (DESIGN §3), as the chips show it: one chip per
- * chronology fact the passages state (flight hours, calendar days, which flight, or
- * wording without a number). Facts no passage states are left out.
+ * chronology fact the passages state from the relevant maintenance to the event (flight
+ * hours, calendar days, the same or the previous calendar day, completed immediately
+ * before the event flight, which flight, completed flights in between, or wording
+ * without a number). Facts no passage states are left out.
  */
-export const TIMING_BASES = ['flight_hours', 'calendar_days', 'first_flight', 'subsequent_flight', 'qualitative'] as const;
+export const TIMING_BASES = [
+  'flight_hours',
+  'calendar_days',
+  'same_day',
+  'previous_day',
+  'immediately_before',
+  'first_flight',
+  'subsequent_flight',
+  'flights_between',
+  'qualitative',
+] as const;
 export type TimingBasis = (typeof TIMING_BASES)[number];
 /**
  * How a stated number bounds the time: `exact` ("5.1 hours"), `about` ("about eight
@@ -92,9 +104,46 @@ export type TimingBasis = (typeof TIMING_BASES)[number];
  */
 export const TIMING_BOUNDS = ['exact', 'about', 'at_most', 'at_least'] as const;
 export type TimingBound = (typeof TIMING_BOUNDS)[number];
-/** Which flight after the relevant maintenance: the first, or a later one ("second flight"). */
-export const FLIGHT_ORDERS = ['first', 'later'] as const;
-export type FlightOrder = (typeof FLIGHT_ORDERS)[number];
+
+/**
+ * What a chronology fact measures the time from (compose.v6): the case's relevant
+ * maintenance (named once, `ComposeChronology.maintenance`), or anything else the
+ * passage measures from, such as an earlier flight or other maintenance ("the accident
+ * flight was conducted 2 days later" after the second test flight). A fact keeps its
+ * own antecedent; only a fact from the relevant maintenance can decide a criterion.
+ */
+export const CHRONOLOGY_ANCHORS = ['relevant_maintenance', 'other'] as const;
+export type ChronologyAnchor = (typeof CHRONOLOGY_ANCHORS)[number];
+/**
+ * How a chronology fact relates its anchor to the flight on which the event happened
+ * (server/briefs/criteria.ts `CHRONOLOGY_RULES_VERSION` says what each one settles):
+ * - `flight_hours`, `calendar_days`: a number with its bound (`value`, `bound`);
+ *   calendar days count calendar dates, not 24-hour periods;
+ * - `same_day`, `previous_day`: the anchor's calendar date is the event's, or the one
+ *   before it (one calendar-date boundary, not 24 elapsed hours);
+ * - `flight_ordinal`: the event flight was the `value`-th flight after the anchor (1:
+ *   the first);
+ * - `intervening_flights`: `value` completed flights came between the anchor and the
+ *   event flight, with its bound (zero completed flights is not the same statement as
+ *   "the first flight");
+ * - `immediately_before`: the anchor was completed immediately before the event flight
+ *   (a relation, never a zero-day or zero-hour interval);
+ * - `words`: other wording without a number ("shortly after", "a few weeks later").
+ */
+export const CHRONOLOGY_RELATIONS = [
+  'flight_hours',
+  'calendar_days',
+  'same_day',
+  'previous_day',
+  'flight_ordinal',
+  'intervening_flights',
+  'immediately_before',
+  'words',
+] as const;
+export type ChronologyRelation = (typeof CHRONOLOGY_RELATIONS)[number];
+/** Relations that carry a number, and the ones whose number carries a bound. */
+export const NUMBERED_RELATIONS: ReadonlySet<ChronologyRelation> = new Set(['flight_hours', 'calendar_days', 'flight_ordinal', 'intervening_flights']);
+export const BOUNDED_RELATIONS: ReadonlySet<ChronologyRelation> = new Set(['flight_hours', 'calendar_days', 'intervening_flights']);
 
 // ---------------------------------------------------------------------------
 // Shared pieces
@@ -332,7 +381,7 @@ export const InterpretationChipSchema = z.discriminatedUnion('field', [
 ]);
 export type InterpretationChip = z.infer<typeof InterpretationChipSchema>;
 
-/** A timing chip: typed value plus its server-rendered label ("5.1 FH", "≤ 17 DAYS", "1ST FLIGHT"). */
+/** A timing chip: typed value plus its server-rendered label ("5.1 FH", "≤ 17 DAYS", "PREVIOUS DAY", "1ST FLIGHT"). */
 export const TimingChipSchema = z.strictObject({
   basis: z.enum(TIMING_BASES),
   value: z.number().min(0).max(100_000).nullable(),
@@ -392,11 +441,13 @@ export type Criterion = (typeof CRITERIA)[number];
 /**
  * How a presented case stands against one criterion. Every decision is a server-template
  * claim the evidence checker confirmed against all of the case's supplied passages.
- * `matches`: decided in code from the case's checked chronology facts or symptom, or a
- * semantic criterion. `unconfirmed`: the supplied passages do not settle it (timing
- * stated only in words or approximately, or not at all); the card shows the case
- * labelled UNCONFIRMED, its summary citations are flagged `unconfirmed`, and it is never
- * presented as a confirmed match. A case that does not match is never presented as one
+ * `matches`: decided in code from the case's checked chronology facts (under the
+ * versioned timing rules) or symptom, or a semantic criterion. `unconfirmed`: the
+ * analysis could not settle it from the supplied passages (timing stated only
+ * approximately, as an insufficient bound, in other words, from another anchor, or not
+ * at all); the card shows the case labelled UNCONFIRMED, its summary citations are
+ * flagged `unconfirmed`, and it is never presented as a confirmed match. It never says
+ * the investigation has no timing. A case that does not match is never presented as one
  * (the summary is withheld).
  */
 export const CRITERION_DECISIONS = ['matches', 'unconfirmed'] as const;
@@ -617,29 +668,43 @@ export const ComposeQuoteSchema = z.strictObject({
   speaker: z.enum(SPEAKERS),
 });
 
-/** A stated amount of time: the value checked, stored and displayed is exactly this number. */
-const ChronologyAmountSchema = z.strictObject({
-  value: z.number().min(0).max(100_000),
-  bound: z.enum(TIMING_BOUNDS),
-  passageIds: SupportSchema,
-});
-export type ChronologyAmount = z.infer<typeof ChronologyAmountSchema>;
+/** Anchor wording: one short phrase in the passages' words ("the annual inspection", "the second test flight"). */
+const AnchorTextSchema = z.string().min(1).max(80);
 
 /**
- * The time from the relevant maintenance to the event, as independently stated facts:
- * each optional, each with the passages that state it, so "40 days and 20 flight hours"
- * is two facts. A fact no passage states is left out; leaving one out never settles a
- * criterion (the evidence checker confirms that the passages do not establish it).
+ * One stated time relation between an anchor and the flight on which the event happened
+ * (compose.v6), stored as its parts: the anchor (`anchor`, with `other` naming any anchor
+ * that is not the relevant maintenance), the relation (`relation`, `value`, `bound`) and
+ * the evidence (`passageIds`). The attribution (aircraft or event) is never written by
+ * the model: the server derives it from the cited passages' verified scope.
+ */
+export const ChronologyFactSchema = z.strictObject({
+  anchor: z.enum(CHRONOLOGY_ANCHORS),
+  /** For `anchor: other`: what the time is measured from, in the passage's words; absent for the relevant maintenance. */
+  other: AnchorTextSchema.optional(),
+  relation: z.enum(CHRONOLOGY_RELATIONS),
+  /** The number of a numbered relation (`NUMBERED_RELATIONS`); absent for the others. */
+  value: z.number().min(0).max(100_000).optional(),
+  /** How `value` bounds the time, for a bounded relation (`BOUNDED_RELATIONS`); absent for the others. */
+  bound: z.enum(TIMING_BOUNDS).optional(),
+  passageIds: SupportSchema,
+});
+export type ChronologyFact = z.infer<typeof ChronologyFactSchema>;
+
+/**
+ * The time between the relevant maintenance and the event, as independently stated facts,
+ * each with the passages that state it: "40 days and 20 flight hours after the overhaul"
+ * is two facts, and "the accident flight was conducted 2 days later" (after the second
+ * test flight) keeps its own antecedent (`anchor: other`). `maintenance` names the
+ * relevant maintenance every `relevant_maintenance` fact and every criterion claim is
+ * about. A fact no passage states is left out; leaving one out never settles a criterion
+ * (the evidence checker confirms, under the timing rules, that the passages do not
+ * settle it).
  */
 export const ComposeChronologySchema = z.strictObject({
-  /** Flight hours since the maintenance (at most one decimal place). */
-  flightHours: ChronologyAmountSchema.optional(),
-  /** Calendar days since the maintenance (whole days). */
-  calendarDays: ChronologyAmountSchema.optional(),
-  /** Which flight after the maintenance: the first, or a later one ("second flight"). */
-  flight: z.strictObject({ value: z.enum(FLIGHT_ORDERS), passageIds: SupportSchema }).optional(),
-  /** Wording without a number ("shortly after", "a few weeks later"). */
-  qualitative: z.strictObject({ passageIds: SupportSchema }).optional(),
+  /** The relevant maintenance, in the passages' words ("the annual inspection", "the fuel system work"). */
+  maintenance: AnchorTextSchema,
+  facts: z.array(ChronologyFactSchema).max(4),
 });
 export type ComposeChronology = z.infer<typeof ComposeChronologySchema>;
 
@@ -653,7 +718,7 @@ export const ComposeCaseSchema = z.strictObject({
   /** Mechanical questions only. */
   maintenance: z.strictObject({ relation: z.enum(MAINTENANCE_RELATIONS), passageIds: SupportSchema }).optional(),
   symptom: z.strictObject({ value: z.enum(SYMPTOMS), passageIds: SupportSchema }).optional(),
-  /** Every time relation between the relevant maintenance and the event that a passage states. */
+  /** The relevant maintenance and every time relation to the event that a passage states. */
   chronology: ComposeChronologySchema.optional(),
 });
 export type ComposeCase = z.infer<typeof ComposeCaseSchema>;

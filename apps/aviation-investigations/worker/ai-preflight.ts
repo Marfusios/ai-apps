@@ -13,7 +13,8 @@
  *   largest size within the retrieval evidence budget, 400-character headers) with the
  *   longest claims the composition schema allows;
  * - the visible output at the output schema's bounds, counted as text: for the answer
- *   stage against its output cap less `THINKING_ALLOWANCE` (thinking shares the cap);
+ *   and check stages against the output cap less `THINKING_ALLOWANCE` and
+ *   `CHECK_THINKING_ALLOWANCE` (thinking shares the cap);
  * - the frozen prefix the stage caches (system prompt and schema: the fixed request less
  *   its user turn counted alone) against `CACHED_PREFIX_MAX`, the size the reservation's
  *   cache-write premium assumes.
@@ -28,12 +29,16 @@ import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOu
 import { PHASE_GROUPS } from '../shared/codes.js';
 import { MAX_QUERY_INPUT_TOKENS } from '../server/ai/embeddings.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../server/ai/pricing.js';
-import { renderCheckUser } from '../server/ai/prompts/check.v3.js';
-import { renderComposeUser } from '../server/ai/prompts/compose.v5.js';
+import { renderCheckUser } from '../server/ai/prompts/check.v4.js';
+import { renderComposeUser } from '../server/ai/prompts/compose.v6.js';
 import { renderScopeUser } from '../server/ai/prompts/scope.v2.js';
 import {
   AIRCRAFT_CATEGORY_CODES,
+  CHECK_QUOTE_MAX,
   INJURY_CODES,
+  MAX_CHECK_CLAIMS,
+  MAX_CHECK_QUOTES,
+  MAX_VERDICT_PASSAGES,
   LIGHT_CODES,
   WEATHER_CODES,
   stageCtx,
@@ -47,7 +52,7 @@ import {
 import { countTokens } from '../server/ai/tokens.js';
 import { checkForModel, composeForModel, passageAliases } from '../server/briefs/aliases.js';
 import { criteriaLines, evaluateCase } from '../server/briefs/criteria.js';
-import { checkInput, type VerifiedCase } from '../server/briefs/render.js';
+import { caseEvidence, checkInput, type VerifiedCase } from '../server/briefs/render.js';
 import type { ResolvedCitation } from '../server/briefs/validate.js';
 import { RETRIEVAL_DEFAULTS } from '../server/search/hybrid.js';
 import { DEFAULT_CHUNK_OPTIONS } from './index/chunk.js';
@@ -58,6 +63,13 @@ import { DEFAULT_CHUNK_OPTIONS } from './index/chunk.js';
  * paid runs exist.
  */
 export const THINKING_ALLOWANCE = 1_500;
+
+/**
+ * Output tokens left for thinking under the check stage's output cap, for the check
+ * configuration the calibration chose (Task 16c, evals/checker): its reasoning share of
+ * the billed output, measured on production-shaped bundles, with headroom.
+ */
+export const CHECK_THINKING_ALLOWANCE = 3_000;
 
 /**
  * Offline sizing (no provider call), for the unit test that keeps the caps honest
@@ -227,11 +239,17 @@ export function preflightRequests(): PreflightRequests {
         evidencePassageIds: ids,
         maintenance: { relation: 'investigator_attributed' as const, passageIds: ids },
         symptom: { value: 'partial_power_loss' as const, passageIds: ids },
+        // Four facts at their longest: each measured from another anchor named in 80 characters.
         chronology: {
-          flightHours: { value: 12.4, bound: 'exact' as const, passageIds: ids },
-          calendarDays: { value: 37, bound: 'exact' as const, passageIds: ids },
-          flight: { value: 'later' as const, passageIds: ids },
-          qualitative: { passageIds: ids },
+          maintenance: exactly(80, ci),
+          facts: [0, 1, 2, 3].map((f) => ({
+            anchor: 'other' as const,
+            other: exactly(80, ci + f + 1),
+            relation: 'intervening_flights' as const,
+            value: 99_999,
+            bound: 'at_least' as const,
+            passageIds: ids,
+          })),
         },
       };
     }),
@@ -253,7 +271,19 @@ export function preflightRequests(): PreflightRequests {
       occurrence: 'first' as const,
     })),
   );
-  // Every criterion in effect, unsettled: each decision cites every passage of its case.
+  // The checker's worst case: every fact a timing claim from the relevant maintenance (the
+  // longest template), and every criterion in effect unsettled, so each decision cites
+  // every passage of its case and names the maintenance.
+  const checked: ComposeOutput = {
+    ...composition,
+    cases: composition.cases.map((k) => ({
+      ...k,
+      chronology: k.chronology && {
+        maintenance: k.chronology.maintenance,
+        facts: k.chronology.facts.map((f) => ({ anchor: 'relevant_maintenance' as const, relation: f.relation, value: f.value, bound: f.bound, passageIds: f.passageIds })),
+      },
+    })),
+  };
   const readings = {
     timingWindow: { value: { days: 30, flightHours: 10 }, pinned: false },
     firstFlightOnly: { value: true, pinned: true },
@@ -261,9 +291,12 @@ export function preflightRequests(): PreflightRequests {
   };
   const byCase = new Map(verified.map((v) => [v.ntsbNo, v]));
   const criterionChecks = new Map(
-    composition.cases.map((k) => [k.ntsbNo, evaluateCase(readings, { ...k, chronology: undefined }, false, byCase.get(k.ntsbNo)!.passages.map((p) => p.passageId))]),
+    checked.cases.map((k) => [
+      k.ntsbNo,
+      evaluateCase(readings, { ...k, chronology: k.chronology && { maintenance: k.chronology.maintenance, facts: [] } }, false, caseEvidence(byCase.get(k.ntsbNo))),
+    ]),
   );
-  const built = checkInput(composition, citations, byCase, { mechanicalCause: true, criteria: criteriaLines(readings), criterionChecks });
+  const built = checkInput(checked, citations, byCase, { mechanicalCause: true, criteria: criteriaLines(readings), criterionChecks });
   const check = checkForModel(built.input, aliases);
 
   // Scope: the longest refinement step, in English and in dense text at the query-embedding cap.
@@ -305,8 +338,16 @@ export function preflightRequests(): PreflightRequests {
     ambiguity: { type: 'timing_window', values: ['30d_or_10h', '7d', 'first_flight'] },
     caseNumbers: cases.slice(0, 4).map((c) => c.ntsbNo),
   };
-  // The checker's output at its bounds: a problem for each of 100 claims.
-  const checkOutput = { supported: false, problems: Array.from({ length: 100 }, (_, i) => ({ claimIndex: i, reason: 'overstated_certainty' })) };
+  // The checker's output at its bounds: a verdict for each of the most claims, each naming
+  // the most passages, and the most contradiction quotes at their longest.
+  const checkOutput = {
+    verdicts: Array.from({ length: MAX_CHECK_CLAIMS }, (_, i) => ({
+      claim: `C${i + 1}`,
+      verdict: 'not_established',
+      passages: Array.from({ length: MAX_VERDICT_PASSAGES }, (_, p) => `P${MAX_BRIEF_PASSAGES - p}`),
+    })),
+    quotes: Array.from({ length: MAX_CHECK_QUOTES }, (_, i) => ({ claim: `C${MAX_CHECK_CLAIMS - i}`, passage: `P${MAX_BRIEF_PASSAGES}`, text: exactly(CHECK_QUOTE_MAX, i) })),
+  };
   const modelComposition = JSON.stringify({
     ...composition,
     cases: composition.cases.map((k) => ({
@@ -315,7 +356,7 @@ export function preflightRequests(): PreflightRequests {
       evidencePassageIds: k.evidencePassageIds.map((x) => aliases.toModel.get(x)),
       maintenance: k.maintenance && { ...k.maintenance, passageIds: k.maintenance.passageIds.map((x) => aliases.toModel.get(x)) },
       symptom: k.symptom && { ...k.symptom, passageIds: k.symptom.passageIds.map((x) => aliases.toModel.get(x)) },
-      chronology: k.chronology && Object.fromEntries(Object.entries(k.chronology).map(([f, v]) => [f, { ...v, passageIds: v.passageIds.map((x) => aliases.toModel.get(x)) }])),
+      chronology: k.chronology && { ...k.chronology, facts: k.chronology.facts.map((f) => ({ ...f, passageIds: f.passageIds.map((x) => aliases.toModel.get(x)) })) },
     })),
     gaps: composition.gaps.map((g) => ({ ...g, passageIds: g.passageIds.map((x) => aliases.toModel.get(x)) })),
   });
@@ -328,7 +369,7 @@ export function preflightRequests(): PreflightRequests {
       check: {
         criteria: [],
         passages: [{ ...minimalPassage, ntsbNo: caseNo(0) }],
-        claims: [{ kind: 'why', ntsbNo: caseNo(0), text: 'Engine power was lost.', passageIds: ['P1'] }],
+        claims: [{ id: 'C1', kind: 'why', ntsbNo: caseNo(0), text: 'Engine power was lost.', passageIds: ['P1'], absence: false }],
       },
     },
     worst: { scope: scopeWorst, compose, check },
@@ -384,7 +425,7 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
   add('check', 'fixed (system prompt + schema)', checkFixed, STAGE_CAPS.check.input);
   add('check', 'cached prefix (system prompt + schema)', await prefix(models.check, checkFixed, renderCheckUser(r.fixed.check)), CACHED_PREFIX_MAX);
   add('check', `full bundle, ${r.facts.claims} claims`, await provider.countInputTokens('check', r.worst.check, ctx('check')), STAGE_CAPS.check.input);
-  add('check', 'output at its schema bounds', await output(models.check, r.outputs.check), STAGE_CAPS.check.output);
+  add('check', `output at its schema bounds (+${CHECK_THINKING_ALLOWANCE} thinking)`, (await output(models.check, r.outputs.check)) + CHECK_THINKING_ALLOWANCE, STAGE_CAPS.check.output);
   return rows;
 }
 

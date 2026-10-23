@@ -27,6 +27,7 @@ import {
   CaseContextResponseSchema,
   StartBriefResponseSchema,
   type BriefStepResponse,
+  type ComposeChronology,
   type ComposeOutput,
   type StartBriefResponse,
 } from '../../shared/contracts/briefs.js';
@@ -35,7 +36,7 @@ import { SpanStatusCode } from '@opentelemetry/api';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
 import { startTracing } from '../../server/observability/tracing.js';
-import type { CheckInput, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
+import type { CheckInput, CheckOutput, CheckVerdict, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
 import { SHUTDOWN_GRACE_MS, buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
@@ -265,7 +266,29 @@ function composition(input: ComposeInput, tweak?: (c: ComposeOutput) => void): F
   return { output: out };
 }
 
-const SUPPORTED = { output: { supported: true, problems: [] } };
+type Claim = CheckInput['claims'][number];
+type Judged = CheckVerdict | { verdict: CheckVerdict; passages?: string[]; quote?: { passage: string; text: string } };
+
+/**
+ * The checker's answer as check.v4 returns it: one verdict per claim id, from `judge`
+ * (default `supported`). A supported claim names its first cited passages (an absence
+ * claim none), a contradicted one its first cited passage unless `judge` names others.
+ */
+function verdicts(input: CheckInput, judge: (claim: Claim, i: number) => Judged = () => 'supported'): FakeResult<CheckOutput> {
+  const out: CheckOutput = { verdicts: [], quotes: [] };
+  input.claims.forEach((c, i) => {
+    const j = judge(c, i);
+    const verdict = typeof j === 'string' ? j : j.verdict;
+    const named = typeof j === 'object' && j.passages ? j.passages : undefined;
+    const passages = named ?? (verdict === 'supported' ? (c.absence ? [] : c.passageIds.slice(0, 4)) : verdict === 'contradicted' ? c.passageIds.slice(0, 1) : []);
+    out.verdicts.push({ claim: c.id, verdict, passages });
+    if (typeof j === 'object' && j.quote) out.quotes.push({ claim: c.id, ...j.quote });
+  });
+  return { output: out };
+}
+
+/** Every claim supported. */
+const SUPPORTED = (input: CheckInput) => verdicts(input);
 
 /** A compose count over the answer input cap (a re-pack follows). */
 const OVER_ANSWER_CAP = STAGE_CAPS.answer.input + 4_000;
@@ -529,7 +552,8 @@ async function reportOf(briefId: string): Promise<string> {
 }
 
 /** The step's `brief step finished` log line. */
-const finishedLine = (h: Harness) => h.logs.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.msg === 'brief step finished');
+/** The latest "brief step finished" log line. */
+const finishedLine = (h: Harness) => h.logs.map((l) => JSON.parse(l) as Record<string, unknown>).findLast((l) => l.msg === 'brief step finished');
 
 // ---------------------------------------------------------------------------
 
@@ -548,37 +572,42 @@ function contradict(c: ComposeOutput, dfw: ComposeInput['cases'][number]): void 
 function timing51(c: ComposeOutput, dfw: ComposeInput['cases'][number]): void {
   const k = c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
   const stating = dfw.passages.find((p) => p.text.includes('5.1 hours')) ?? dfw.passages[0]!;
-  k.chronology = { flightHours: { value: 5.1, bound: 'exact', passageIds: [stating.passageId] } };
+  k.chronology = { maintenance: 'the engine replacement', facts: [{ anchor: 'relevant_maintenance', relation: 'flight_hours', value: 5.1, bound: 'exact', passageIds: [stating.passageId] }] };
 }
+
+/** A chronology from the relevant maintenance with one fact cited from `passageId`. */
+const chronologyOf = (maintenance: string, passageId: string, fact: Omit<ComposeChronology['facts'][number], 'passageIds' | 'anchor'> & { anchor?: 'relevant_maintenance' | 'other' }) => ({
+  maintenance,
+  facts: [{ anchor: 'relevant_maintenance' as const, ...fact, passageIds: [passageId] }],
+});
 
 /** Passages that state a chronology fact ("5.1 hours prior", "12 hours since installation", "depart again"). */
 const STATES_CHRONOLOGY = /\b\d+(?:\.\d+)?\s+hours\b|\bmonths? prior\b|\bdepart again\b|\bsecond flight\b/i;
 
 /**
- * A checker that reads the whole case for criterion claims, as the check prompt asks: "the
- * passages do not establish whether..." is contradicted when any passage of the case
- * states a time since the maintenance or which flight it was.
+ * A checker that reads the whole case for criterion claims, as the check prompt asks:
+ * "under the timing rules, the supplied passages of this case do not settle whether..."
+ * is contradicted when any passage of the case states a time since the maintenance or
+ * which flight it was.
  */
-function judgeCriteria(input: CheckInput): FakeResult<{ supported: boolean; problems: { claimIndex: number; reason: 'contradicted' }[] }> {
-  const problems = input.claims.flatMap((claim, i) => {
-    if (claim.kind !== 'criterion' || !claim.text.startsWith('The passages do not establish')) return [];
-    const settled = input.passages.some((p) => p.ntsbNo === claim.ntsbNo && STATES_CHRONOLOGY.test(p.text));
-    return settled ? [{ claimIndex: i, reason: 'contradicted' as const }] : [];
+function judgeCriteria(input: CheckInput): FakeResult<CheckOutput> {
+  return verdicts(input, (claim) => {
+    if (claim.kind !== 'criterion' || !claim.text.startsWith('Under the timing rules, the supplied passages of this case do not settle')) return 'supported';
+    const stating = input.passages.filter((p) => p.ntsbNo === claim.ntsbNo && STATES_CHRONOLOGY.test(p.text));
+    return stating.length > 0 ? { verdict: 'contradicted', passages: [stating[0]!.passageId] } : 'supported';
   });
-  return { output: { supported: problems.length === 0, problems } };
 }
 
 /**
  * A checker that reads the whole case, as the check prompt asks: a "no relevant
  * maintenance" claim is contradicted by a probable cause that blames a mechanic.
  */
-function judge(input: CheckInput): FakeResult<{ supported: boolean; problems: { claimIndex: number; reason: 'contradicted' }[] }> {
-  const problems = input.claims.flatMap((claim, i) => {
-    if (claim.kind !== 'maintenance' || !claim.text.startsWith('None of the supplied passages')) return [];
-    const blames = input.passages.some((p) => p.ntsbNo === claim.ntsbNo && p.section === 'Probable cause' && /mechanic/i.test(p.text));
-    return blames ? [{ claimIndex: i, reason: 'contradicted' as const }] : [];
+function judge(input: CheckInput): FakeResult<CheckOutput> {
+  return verdicts(input, (claim) => {
+    if (claim.kind !== 'maintenance' || !claim.text.startsWith('None of the supplied passages')) return 'supported';
+    const blaming = input.passages.filter((p) => p.ntsbNo === claim.ntsbNo && p.section === 'Probable cause' && /mechanic/i.test(p.text));
+    return blaming.length > 0 ? { verdict: 'contradicted', passages: [blaming[0]!.passageId] } : 'supported';
   });
-  return { output: { supported: problems.length === 0, problems } };
 }
 
 describe('POST /api/briefs: the pipeline', () => {
@@ -646,9 +675,10 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v5', check: 'check.v3' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v6', check: 'check.v4' },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
-      check: { supported: true, problems: [] },
+      criteriaRules: 'chronology-rules-v1',
+      check: { supported: true, claims: check.claims.length, counts: { supported: check.claims.length, contradicted: 0, not_established: 0 }, codes: [], problems: [], chronologyMissed: [] },
     });
 
     // The case context: the cited passage with its highlight, and template lines.
@@ -662,7 +692,7 @@ describe('POST /api/briefs: the pipeline', () => {
     // Unconfirmed: labelled so, linking the passage set the claim was checked on (all of the case's).
     expect(context.lines[3]).toEqual({
       label: 'CRITERIA',
-      text: 'Unconfirmed: the passages do not establish your timing window',
+      text: 'Unconfirmed: this analysis could not establish your timing window from the supplied passages',
       passageIds: context.passages.map((p) => p.passageId),
     });
     expect((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/CEN19FA024`, { cookie })).status).toBe(404);
@@ -744,10 +774,10 @@ describe('POST /api/briefs: the pipeline', () => {
   });
 
   it('an inconclusive check withholds the summary', async () => {
-    const h = harness(answering({ check: { output: { supported: true, problems: [{ claimIndex: 0, reason: 'overstated_certainty' }] } } }));
+    const h = harness(answering({ check: (input) => verdicts(input, (_, i) => (i === 0 ? 'not_established' : 'supported')) }));
     const { briefId, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
-    expect((await stepRow(briefId)).meta).toMatchObject({ check: { supported: true, problems: [{ kind: 'summary', reason: 'overstated_certainty' }] } });
+    expect((await stepRow(briefId)).meta).toMatchObject({ check: { supported: false, codes: ['not_established'], problems: [{ claim: 'C1', claimIndex: 0, kind: 'summary', code: 'not_established' }] } });
 
     const failing = harness(answering({ check: { fail: 'truncated' } }));
     advance(MIN);
@@ -1386,7 +1416,7 @@ describe('hybrid retrieval behind the port', () => {
     expect(one.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
     // The checker had every passage of the case, the probable cause the composition did not quote included.
     expect(checks[0]!.passages.filter((p) => p.ntsbNo === 'DFW08TA066').map((p) => p.section)).toContain('Probable cause');
-    expect((await stepRow(one.briefId)).meta).toMatchObject({ check: { problems: [{ kind: 'maintenance', reason: 'contradicted' }] } });
+    expect((await stepRow(one.briefId)).meta).toMatchObject({ check: { problems: [{ kind: 'maintenance', code: 'contradicted' }] } });
 
     advance(MIN);
     const two = await askAndWait(h, SEED_QUESTION, { cookie: one.cookie });
@@ -1412,7 +1442,7 @@ describe('hybrid retrieval behind the port', () => {
     const four = await read(h, three.briefId, three.cookie, 2);
     expect(four.json.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
     expect((await stepRow(three.briefId, 2)).meta).toMatchObject({
-      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match', rules: ['TW-N'] }]),
     });
     // Code refused it before the checker was asked.
     expect(checks).toHaveLength(2);
@@ -1585,7 +1615,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(dfw.map((p) => p.section)).toEqual(['Analysis', 'Probable cause']);
     const claim = checks[0]!.claims.find((c) => c.kind === 'maintenance' && c.ntsbNo === 'DFW08TA066')!;
     expect(claim.passageIds).toEqual(dfw.map((p) => p.passageId));
-    expect((await stepRow(briefId)).meta).toMatchObject({ check: { supported: false, problems: [{ kind: 'maintenance', reason: 'contradicted' }] } });
+    expect((await stepRow(briefId)).meta).toMatchObject({ check: { supported: false, problems: [{ kind: 'maintenance', code: 'contradicted' }] } });
   });
 
   it('a supported 5.1 flight hours under a pinned within-one-flight-hour reading is not presented as a match', async () => {
@@ -1603,7 +1633,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     const step = await read(h, first.briefId, first.cookie, 2);
     expect(step.json.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
     expect((await stepRow(first.briefId, 2)).meta).toMatchObject({
-      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match', rules: ['TW-N'] }]),
     });
     // The pinned reading was enforced in code: the checker was never asked about step 2.
     expect(h.llm.calls.filter((c) => c.stage === 'check')).toHaveLength(1);
@@ -1631,17 +1661,29 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(dfw.some((p) => p.text.includes('5.1 hours'))).toBe(true);
     const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'DFW08TA066')!;
     expect(claim).toEqual({
+      id: expect.stringMatching(/^C\d+$/),
       kind: 'criterion',
       ntsbNo: 'DFW08TA066',
-      text: 'The passages do not establish whether the event happened within 1 flight hour after the relevant maintenance.',
+      text: 'Under the timing rules, the supplied passages of this case do not settle whether the event happened within 1 flight hour after the relevant maintenance.',
       passageIds: dfw.map((p) => p.passageId),
+      absence: true,
     });
     expect(checks[0]!.criteria).toEqual(['Timing: the event happened within 1 flight hour after the relevant maintenance.']);
     const meta = (await stepRow(briefId)).meta;
     expect(meta).toMatchObject({
-      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown' }]),
-      check: { supported: false, problems: expect.arrayContaining([{ claimIndex: expect.any(Number), kind: 'criterion', reason: 'contradicted' }]) },
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'unstated' }]),
+      check: {
+        supported: false,
+        codes: ['contradicted', 'chronology_missed'],
+        problems: expect.arrayContaining([{ claim: claim.id, claimIndex: expect.any(Number), kind: 'criterion', code: 'chronology_missed' }]),
+        // NYC08LA106's passages state 12 hours since its installation too: also contradicted.
+        chronologyMissed: expect.arrayContaining([{ claim: claim.id, ntsbNo: 'DFW08TA066', criterion: 'timing_window' }]),
+      },
     });
+    // Diagnostic only: still withheld, and no repair call was made.
+    expect(h.llm.calls.map((c) => c.stage)).toEqual(['scope', 'compose', 'check']);
+    expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted', 'chronology_missed'] } });
+    expect(await reportOf(briefId)).toContain('chronology_missed: DFW08TA066 timing_window');
   });
 
   it('G6 regression (b): a stated later flight fails first-flight-only; left out, the unknown decision fails the check', async () => {
@@ -1651,8 +1693,11 @@ describe('gate G6: evidence semantics through the routes', () => {
       const nyc = input.cases.find((x) => x.ntsbNo === 'NYC08LA106')!;
       const stating = nyc.passages.find((p) => STATES_CHRONOLOGY.test(p.text)) ?? nyc.passages[0]!;
       c.cases.find((x) => x.ntsbNo === 'NYC08LA106')!.chronology = {
-        flightHours: { value: 12, bound: 'exact', passageIds: [stating.passageId] },
-        ...(withFlight ? { flight: { value: 'later' as const, passageIds: [stating.passageId] } } : {}),
+        maintenance: 'the fuel pump installation',
+        facts: [
+          { anchor: 'relevant_maintenance', relation: 'flight_hours', value: 12, bound: 'exact', passageIds: [stating.passageId] },
+          ...(withFlight ? [{ anchor: 'relevant_maintenance' as const, relation: 'flight_ordinal' as const, value: 2, passageIds: [stating.passageId] }] : []),
+        ],
       };
     };
     const h = harness(
@@ -1668,16 +1713,20 @@ describe('gate G6: evidence semantics through the routes', () => {
     const first = await askAndWait(h);
     expect(first.step.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
     expect((await stepRow(first.briefId)).meta).toMatchObject({
-      criteria: expect.arrayContaining([{ ntsbNo: 'NYC08LA106', criterion: 'first_flight_only', decision: 'does_not_match' }]),
+      criteria: expect.arrayContaining([{ ntsbNo: 'NYC08LA106', criterion: 'first_flight_only', decision: 'does_not_match', rules: ['FF-O'] }]),
     });
     expect(checks).toHaveLength(0);
     advance(MIN);
     const second = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
     expect(second.step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
     const claim = checks[0]!.claims.find((c) => c.kind === 'criterion' && c.ntsbNo === 'NYC08LA106')!;
-    expect(claim.text).toBe('The passages do not establish whether the event happened on the first flight after the relevant maintenance.');
+    expect(claim.text).toBe(
+      'Under the timing rules, the supplied passages of this case do not settle whether the event happened on the first flight after the relevant maintenance (the fuel pump installation).',
+    );
     expect(claim.passageIds).toEqual(checks[0]!.passages.filter((p) => p.ntsbNo === 'NYC08LA106').map((p) => p.passageId));
-    expect((await stepRow(second.briefId)).meta).toMatchObject({ check: { problems: expect.arrayContaining([{ claimIndex: expect.any(Number), kind: 'criterion', reason: 'contradicted' }]) } });
+    expect((await stepRow(second.briefId)).meta).toMatchObject({
+      check: { problems: expect.arrayContaining([{ claim: claim.id, claimIndex: expect.any(Number), kind: 'criterion', code: 'contradicted' }]) },
+    });
   });
 
   it('G6 regression (c): 40 days and 20 flight hours against the default 30 days OR 10 hours do not match', async () => {
@@ -1687,8 +1736,11 @@ describe('gate G6: evidence semantics through the routes', () => {
           composition(input, (c) => {
             const p = input.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.passages[0]!;
             c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.chronology = {
-              calendarDays: { value: 40, bound: 'exact', passageIds: [p.passageId] },
-              flightHours: { value: 20, bound: 'exact', passageIds: [p.passageId] },
+              maintenance: 'the engine replacement',
+              facts: [
+                { anchor: 'relevant_maintenance', relation: 'calendar_days', value: 40, bound: 'exact', passageIds: [p.passageId] },
+                { anchor: 'relevant_maintenance', relation: 'flight_hours', value: 20, bound: 'exact', passageIds: [p.passageId] },
+              ],
             };
           }),
       }),
@@ -1696,7 +1748,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     const { briefId, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'criteria_check' });
     expect((await stepRow(briefId)).meta).toMatchObject({
-      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match' }]),
+      criteria: expect.arrayContaining([{ ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'does_not_match', rules: ['TW-N'] }]),
     });
     expect(h.llm.calls.some((c) => c.stage === 'check')).toBe(false);
     // Diagnosable: the failed criterion is the withheld code; the developer's command shows the case's chronology.
@@ -1704,7 +1756,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(await diagnosticsOf(briefId)).toMatchObject({ reason: 'criteria_check' });
     const report = await reportOf(briefId);
     expect(report).toContain('DFW08TA066 timing_window: does_not_match');
-    expect(report).toMatch(/chronology: .*"calendarDays":\{[^}]*"value":40\b/);
+    expect(report).toMatch(/chronology: .*"value":40,[^}]*"relation":"calendar_days"/);
     // The whole AI summary is withheld, not just that case: every retrieved case is a plain NTSB card.
     if (step.result?.kind !== 'withheld') throw new Error('expected a withheld summary');
     expect(step.result.cases.map((c) => [c.case.ntsbNo, c.reading])).toEqual(SEEDS.map((n) => [n, null]));
@@ -1719,11 +1771,11 @@ describe('gate G6: evidence semantics through the routes', () => {
         compose: (input) =>
           composition(input, (c) => {
             const p = input.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.passages[0]!;
-            c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.chronology = { flightHours: { value: 8, bound: 'about', passageIds: [p.passageId] } };
+            c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.chronology = chronologyOf('the engine replacement', p.passageId, { relation: 'flight_hours', value: 8, bound: 'about' });
           }),
         check: (input) => {
           checks.push(input);
-          return SUPPORTED;
+          return SUPPORTED(input);
         },
       }),
     );
@@ -1735,14 +1787,73 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(dfw.criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
     expect(result.summary).toContainEqual({ kind: 'case', ntsbNo: 'DFW08TA066', unconfirmed: true });
     expect(checks[0]!.claims.filter((c) => c.kind === 'criterion' && c.ntsbNo === 'DFW08TA066').map((c) => c.text)).toEqual([
-      'The passages do not establish whether the event happened within 9 flight hours after the relevant maintenance.',
+      'Under the timing rules, the supplied passages of this case do not settle whether the event happened within 9 flight hours after the relevant maintenance (the engine replacement).',
     ]);
     const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DFW08TA066`, { cookie })).json);
     expect(ctx.lines.filter((l) => l.label === 'TIMING' || l.label === 'CRITERIA').map((l) => l.text)).toEqual([
-      'About 8 flight hours after the maintenance',
-      'Unconfirmed: the passages do not establish your timing window',
+      'About 8 flight hours after the maintenance (the engine replacement)',
+      'Unconfirmed: this analysis could not establish your timing window from the supplied passages',
     ]);
     expect(JSON.stringify(ctx.lines)).not.toContain('Within your timing window');
+  });
+
+  it('timing rules: "immediately before the flight" matches by rule TW-I, never as zero days; a time from another anchor decides nothing', async () => {
+    const checks: CheckInput[] = [];
+    const h = harness(
+      answering({
+        compose: (input) =>
+          composition(input, (c) => {
+            const p = (n: string) => input.cases.find((x) => x.ntsbNo === n)!.passages[0]!.passageId;
+            c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!.chronology = chronologyOf('the engine replacement', p('DFW08TA066'), { relation: 'immediately_before' });
+            // "The accident flight was conducted 2 days later", after the earlier flights: its own antecedent.
+            c.cases.find((x) => x.ntsbNo === 'NYC08LA106')!.chronology = chronologyOf('the fuel pump installation', p('NYC08LA106'), {
+              anchor: 'other',
+              other: 'the earlier test flights',
+              relation: 'calendar_days',
+              value: 2,
+              bound: 'exact',
+            });
+          }),
+        check: (input) => {
+          checks.push(input);
+          return SUPPORTED(input);
+        },
+      }),
+    );
+    const { briefId, cookie, step } = await askAndWait(h);
+    const result = step.result!;
+    if (result.kind !== 'answer') throw new Error(`expected an answer, got ${result.kind}`);
+    const reading = (n: string) => result.cases.find((c) => c.case.ntsbNo === n)!.reading!;
+    expect(reading('DFW08TA066').timing).toEqual([{ basis: 'immediately_before', value: null, bound: 'exact', label: 'IMMEDIATELY BEFORE' }]);
+    expect(reading('DFW08TA066').criteria).toEqual([{ criterion: 'timing_window', decision: 'matches' }]);
+    // The fact from another anchor is neither shown nor decisive.
+    expect(reading('NYC08LA106').timing).toEqual([]);
+    expect(reading('NYC08LA106').criteria).toEqual([{ criterion: 'timing_window', decision: 'unconfirmed' }]);
+    expect((await stepRow(briefId)).meta).toMatchObject({
+      criteriaRules: 'chronology-rules-v1',
+      criteria: expect.arrayContaining([
+        { ntsbNo: 'DFW08TA066', criterion: 'timing_window', decision: 'matches', rules: ['TW-I'] },
+        { ntsbNo: 'NYC08LA106', criterion: 'timing_window', decision: 'unknown', rules: [], reason: 'other_anchor' },
+      ]),
+    });
+    // Both decisions are claims the checker judged, under the timing rules and naming the maintenance.
+    const texts = checks[0]!.claims.filter((c) => c.kind === 'criterion' || c.kind === 'timing').map((c) => [c.ntsbNo, c.text]);
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        ['DFW08TA066', 'The relevant maintenance (the engine replacement) was completed immediately before the flight on which the event happened.'],
+        ['DFW08TA066', 'Under the timing rules, the event happened within 30 calendar days or 10 flight hours after the relevant maintenance (the engine replacement).'],
+        [
+          'NYC08LA106',
+          'Under the timing rules, the supplied passages of this case do not settle whether the event happened within 30 calendar days or 10 flight hours after the relevant maintenance (the fuel pump installation).',
+        ],
+      ]),
+    );
+    expect(JSON.stringify(checks[0]!.claims)).not.toMatch(/\b0 calendar days|\b0 flight hours|\b2 calendar days/);
+    const ctx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DFW08TA066`, { cookie })).json);
+    expect(ctx.lines.filter((l) => l.label === 'TIMING' || l.label === 'CRITERIA').map((l) => l.text)).toEqual([
+      'On the flight that began immediately after the maintenance (the engine replacement)',
+      'Within your timing window',
+    ]);
   });
 
   it('G6 #3: a semantic failure-type decision (no structured symptom) keeps and links its checked passages', async () => {
@@ -1756,7 +1867,7 @@ describe('gate G6: evidence semantics through the routes', () => {
           }),
         check: (input) => {
           checks.push(input);
-          return SUPPORTED;
+          return SUPPORTED(input);
         },
       }),
     );
@@ -1892,7 +2003,7 @@ describe('gate G6: evidence semantics through the routes', () => {
             const dfw = c.cases.find((x) => x.ntsbNo === 'DFW08TA066')!;
             dfw.evidencePassageIds = [cause.passageId];
             dfw.maintenance = { relation: 'investigator_attributed', passageIds: [cause.passageId] };
-            dfw.chronology = { flightHours: { value: 5.1, bound: 'exact', passageIds: [analysis.passageId] } };
+            dfw.chronology = chronologyOf('the engine replacement', analysis.passageId, { relation: 'flight_hours', value: 5.1, bound: 'exact' });
             // NYC08LA106 is left out of the answer and noted as a gap.
             c.cases = c.cases.filter((x) => x.ntsbNo !== 'NYC08LA106');
             c.groups = c.groups.map((g) => ({ ...g, caseNumbers: g.caseNumbers.filter((n) => n !== 'NYC08LA106') })).filter((g) => g.caseNumbers.length > 0);
@@ -1912,7 +2023,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     const line = (label: string) => ctx.lines.find((l) => l.label === label)!;
     expect(line('EVIDENCE').passageIds).toEqual([cause]);
     expect(line('MAINTENANCE').passageIds).toEqual([cause]);
-    expect(line('TIMING')).toEqual({ label: 'TIMING', text: '5.1 flight hours after the maintenance', passageIds: [dfwQuote.passageId] });
+    expect(line('TIMING')).toEqual({ label: 'TIMING', text: '5.1 flight hours after the maintenance (the engine replacement)', passageIds: [dfwQuote.passageId] });
     // The criterion's own checked passages: the fact that decided it (G6 #3).
     expect(line('CRITERIA')).toEqual({ label: 'CRITERIA', text: 'Within your timing window', passageIds: [dfwQuote.passageId] });
     // A case whose passages state no time is shown, labelled unconfirmed, on its card and its summary citation.
@@ -1927,7 +2038,7 @@ describe('gate G6: evidence semantics through the routes', () => {
     const denCtx = CaseContextResponseSchema.parse((await inject(h, 'GET', `/api/briefs/${briefId}/steps/1/cases/DEN08LA103`, { cookie })).json);
     expect(denCtx.lines.find((l) => l.label === 'CRITERIA')).toEqual({
       label: 'CRITERIA',
-      text: 'Unconfirmed: the passages do not establish your timing window',
+      text: 'Unconfirmed: this analysis could not establish your timing window from the supplied passages',
       passageIds: denCtx.passages.map((p) => p.passageId),
     });
     // A gap-only case opens in the drawer with its gap and its passages.
@@ -1954,7 +2065,7 @@ describe('gate G6: evidence semantics through the routes', () => {
         },
         check: (input) => {
           checks.push(input);
-          return SUPPORTED;
+          return SUPPORTED(input);
         },
       }),
     );
@@ -1964,7 +2075,9 @@ describe('gate G6: evidence semantics through the routes', () => {
     expect(NO_MATCH_LINES[0]).toContain('cases this search retrieved');
     expect(NO_MATCH_LINES[1]).toContain('not proof that no such investigation exists');
     if (step.result?.kind === 'no_match') expect(step.result.cases.map((c) => c.case.ntsbNo)).toEqual(SEEDS);
-    expect(checks[0]!.claims.map((c) => c.kind)).toEqual(['gap']);
+    expect(checks[0]!.claims.map((c) => [c.kind, c.absence])).toEqual([['gap', true]]);
+    // A gap note is judged on every supplied passage of its case.
+    expect(checks[0]!.claims[0]!.passageIds).toEqual(checks[0]!.passages.map((p) => p.passageId));
     expect(new Set(checks[0]!.passages.map((p) => p.ntsbNo))).toEqual(new Set(['NYC08LA106']));
     expect((await stepRow(briefId)).status).toBe('no_match');
     expect(await trialUsed()).toEqual([1]);
@@ -2127,20 +2240,81 @@ describe('diagnosable withholding and model-call telemetry', () => {
     }
   });
 
-  it('a withheld check keeps the claims the checker read, by index; its problems name them', async () => {
-    const h = harness(answering({ check: { output: { supported: false, problems: [{ claimIndex: 1, reason: 'contradicted' }] } } }));
+  it('a withheld check keeps the claims the checker read and its verdicts, by id; its problems name them', async () => {
+    let quoted = '';
+    const h = harness(
+      answering({
+        check: (input) =>
+          verdicts(input, (claim, i) => {
+            if (i !== 1) return 'supported';
+            const p = input.passages.find((x) => x.passageId === claim.passageIds[0])!;
+            quoted = firstSentence(p.text);
+            return { verdict: 'contradicted', passages: [p.passageId], quote: { passage: p.passageId, text: quoted } };
+          }),
+      }),
+    );
     const { briefId, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
-    expect((await stepRow(briefId)).meta.check).toEqual({ supported: false, problems: [{ claimIndex: 1, kind: 'summary', reason: 'contradicted' }] });
+    const input = h.llm.calls.find((c) => c.stage === 'check')!.input as CheckInput;
+    expect((await stepRow(briefId)).meta.check).toEqual({
+      supported: false,
+      claims: input.claims.length,
+      counts: { supported: input.claims.length - 1, contradicted: 1, not_established: 0 },
+      codes: ['contradicted'],
+      problems: [{ claim: 'C2', claimIndex: 1, kind: 'summary', code: 'contradicted' }],
+      chronologyMissed: [],
+    });
     const d = (await diagnosticsOf(briefId))!;
     expect(d.reason).toBe('evidence_check');
-    // Exactly the claims the checker was given, passage aliases included.
-    expect(d.claims).toEqual((h.llm.calls.find((c) => c.stage === 'check')!.input as CheckInput).claims);
-    expect(d.claims![1]).toMatchObject({ kind: 'summary', text: expect.stringContaining('Power was lost after maintenance') });
+    // Exactly the claims the checker was given, passage aliases included, and its verdicts as returned.
+    expect(d.claims).toEqual(input.claims);
+    expect(d.claims![1]).toMatchObject({ id: 'C2', kind: 'summary', text: expect.stringContaining('Power was lost after maintenance') });
+    expect(d.verdicts!.verdicts).toHaveLength(input.claims.length);
+    expect(d.verdicts!.quotes).toEqual([{ claim: 'C2', passage: input.claims[1]!.passageIds[0], text: quoted }]);
     expect(finishedLine(h)).toMatchObject({ withheld: { reason: 'evidence_check', codes: ['contradicted'] } });
     const report = await reportOf(briefId);
-    expect(report).toContain('contradicted at claim 1 (summary');
+    expect(report).toContain('contradicted at C2 (summary');
     expect(report).toContain(`claim: ${JSON.stringify(d.claims![1]!.text)}`);
+    expect(report).toContain(`: ${JSON.stringify(quoted)}`);
+  });
+
+  it('deterministic completeness: a missing, repeated or unknown verdict, or support from an uncited passage, withholds', async () => {
+    const outcomes: [string, (input: CheckInput) => FakeResult<CheckOutput>][] = [
+      ['check_missing_verdict', (input) => {
+        const r = verdicts(input) as { output: CheckOutput };
+        r.output.verdicts.pop();
+        return r;
+      }],
+      ['check_duplicate_verdict', (input) => {
+        const r = verdicts(input) as { output: CheckOutput };
+        r.output.verdicts.push({ ...r.output.verdicts[0]! });
+        return r;
+      }],
+      ['check_unknown_claim', (input) => {
+        const r = verdicts(input) as { output: CheckOutput };
+        r.output.verdicts.push({ claim: `C${input.claims.length + 1}`, verdict: 'supported', passages: [] });
+        return r;
+      }],
+      // A correct statement whose citation does not establish it: support from another passage is not support.
+      ['check_invalid_evidence', (input) =>
+        verdicts(input, (claim) => {
+          const uncited = input.passages.find((p) => p.ntsbNo === claim.ntsbNo && !claim.passageIds.includes(p.passageId));
+          return claim.kind === 'why' && uncited ? { verdict: 'supported', passages: [uncited.passageId] } : 'supported';
+        })],
+      // "No relevant maintenance" needs supported: not_established never authorizes it.
+      ['not_established', (input) => verdicts(input, (claim) => (claim.absence ? 'not_established' : 'supported'))],
+    ];
+    const h = harness(answering({ check: outcomes.map(([, step]) => step) }), { trialRequests: 10 });
+    for (const [code] of outcomes) {
+      const { briefId, step } = await askAndWait(h, 'Engine power loss shortly after maintenance', { cookie: null });
+      expect(step.result, code).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+      expect((await stepRow(briefId)).meta.check, code).toMatchObject({ supported: false, codes: [code] });
+      expect(finishedLine(h), code).toMatchObject({ withheld: { reason: 'evidence_check', codes: [code] } });
+      advance(MIN);
+    }
+    // Each was one check call; nothing was retried or repaired.
+    expect(h.llm.calls.filter((c) => c.stage === 'check')).toHaveLength(outcomes.length);
+    expect(h.llm.calls.filter((c) => c.stage === 'compose')).toHaveLength(outcomes.length);
   });
 
   it('each model call’s stop reason, warnings, usage and cost: in the meta and on its span, with the GenAI keys; an answer keeps no diagnostics', async () => {

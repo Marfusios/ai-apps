@@ -1,0 +1,2409 @@
+{
+  "version": "checker-evidence-v1",
+  "source": {
+    "generationId": 1,
+    "passagesIndex": "ai-aviation-dev-passages-v2-g1-20261022185219373-e0c815e5",
+    "chunkerVersion": "chunk-v2",
+    "retrievedAt": "2026-10-23T00:45:23.452Z",
+    "note": "Public NTSB passages of real hybrid-retrieval bundles, checked like the brief pipeline checks them (verifyBundle)."
+  },
+  "bundles": [
+    {
+      "question": "q-power-loss-maintenance",
+      "split": "dev",
+      "cases": [
+        {
+          "ntsbNo": "WPR23LA307",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BOEING",
+              "model": "A75N1(PT17)"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "55a74487042bd4346ed5b22f15fec011955c6faa6fa37a964997763aec5bcc04",
+              "ntsbNo": "WPR23LA307",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR23LA307:probable_cause/aircraft-1",
+              "revisionId": "c3efee258988c034efcfbd46a6140369b41408f1dbf3758bd3334dceee58fc07",
+              "sectionSha": "8a1fbe2759df32613ef9a0cd689a075956c9a567f1ac4124be9b22c77b3f558c",
+              "sectionStart": 0,
+              "text": "A partial loss of engine power during the initial climb out due to improper maintenance of the magneto.",
+              "textSha": "8a1fbe2759df32613ef9a0cd689a075956c9a567f1ac4124be9b22c77b3f558c"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA20LA050",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "Zenith",
+              "model": "ZODIAC CH-650"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "e60cb04c56de2ba84ec78bd5ed134621404184f4f74c9a7c501a5610ed48961b",
+              "ntsbNo": "ERA20LA050",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA20LA050:analysis/aircraft-1",
+              "revisionId": "fbeb5723b2fdf01d75148f88394bd3eb1a1ae6c55425531890338098007fbde5",
+              "sectionSha": "214d68b603cb3c13fd0d52f350bd3e2e94cd054f547514352ebd9d717990ff0f",
+              "sectionStart": 0,
+              "text": "According to the pilot of the experimental, amateur-built airplane, he was taking the airplane out for a test flight after making some adjustments to the propeller blade angles. During the initial climb, the engine lost power, restarted on its own and lost power again. The pilot turned back to the airport, but the airplane could not reach the runway and he conducted a forced landing off-field, which resulted in substantial damage to the airplane. \nExamination of the airplane by a certified mechanic revealed that the fuel pump was weak on pressure and the electric fuel pump was installed incorrectly between the engine driven pump and the carburetor. The fuel flow meter was installed using pipe fittings connected to flare fittings. All fittings were finger tight. These discrepancies were consistent with improper maintenance practices on the fuel system and likely resulted in a reduction in fuel flow during the initial climb after takeoff, and a loss of engine power due to fuel starvation.",
+              "textSha": "bbcff809c652a2175e4bb86e76770f86361921b416b2ecb9a3a9dd0ea8190fe4"
+            },
+            {
+              "passageId": "886d3883f45b79057de2d5ba58f132f56d1c2b4c6b9ae474e6c6b0b096269fad",
+              "ntsbNo": "ERA20LA050",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 34,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA20LA050:probable_cause/aircraft-1",
+              "revisionId": "0a95e4e15dad97478a00ee8d32933dae25b52d34b22658e7738345caee4ed49f",
+              "sectionSha": "2a5d1ff1662a2e18a47232b3e5f7fd976f2ccef7785e1691c0fd24d3664f4e7a",
+              "sectionStart": 0,
+              "text": "Improper maintenance practices on the fuel system causing fuel starvation and a total loss of engine power.",
+              "textSha": "a7aa8ce4825f99eeba1627fb76ff450ce90f2b424346cef59efdccc0f3a281dd"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN15FA269",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "GRUMMAN AMERICAN AVN. CORP.",
+              "model": "AA-5"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "3862cb99f1f8e1480b0cb8c2598ca860b1109eb39b5887ae6b5bd9a5369680e3",
+              "ntsbNo": "CEN15FA269",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 3,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN15FA269:analysis/aircraft-1",
+              "revisionId": "0298462baffc4c38adb2cb1a2d92f02107acf26afe14648c212bd7fce9304f4f",
+              "sectionSha": "f605511fd56a650d76e0e29362529297d65c02935d7af4d06ca968f81129688e",
+              "sectionStart": 0,
+              "text": "The private pilot reported that his passenger, an aviation mechanic, had completed an annual inspection of the airplane immediately before the flight. The pilot did not identify any anomalies with the airplane during his preflight inspection following the annual inspection nor did he observe any fuel contamination in the samples that he collected from the airplane's four fuel drains. Additionally, he reported that the engine operated normally during a before-takeoff runup. Although the pilot did not recall all portions of the flight, he remembered that the engine lost power shortly after takeoff and had a brief memory of the airplane pointing nose-down toward the ground. The pilot did not recall any corrective actions that he made following the loss of engine power. The pilot reported that, while he was being treated at the hospital, he had apparently told his wife that the engine had lost power shortly after takeoff and that he had lowered the nose to regain airspeed. An onsite examination established that the airplane impacted the ground in a nose-low attitude, and the lack of an appreciable debris path was consistent with an aerodynamic stall. It is likely that the pilot did not maintain adequate airspeed following the loss of engine power, which resulted in the airplane exceeding its critical angle of attack and experiencing an aerodynamic stall at a low altitude.\n\nPostaccident examination revealed water and particulate contamination within the fuel distribution system, which likely resulted in a partial loss of engine power during initial climb. Based on the amount of fuel contamination observed after the accident, the mechanic did not adequately inspect the entire fuel system during the annual inspection that he completed immediately before the flight. According to the airplane's maintenance manual, during an annual inspection, the auxiliary electric fuel pump should be disassembled and its filter inspected/cleaned, the fuel tanks and sumps inspected, and the engine carburetor bowl drained. Had the mechanic examined the auxiliary electric fuel pump, he would have noted the extensive water and particulate contamination. The maintenance logbooks did not contain an entry for the annual inspection or any work associated with the inspection.",
+              "textSha": "f605511fd56a650d76e0e29362529297d65c02935d7af4d06ca968f81129688e"
+            },
+            {
+              "passageId": "792e86a88d50275d8fa970ef257698cecb792168c2c2349400017d5c2446e5fa",
+              "ntsbNo": "CEN15FA269",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN15FA269:probable_cause/aircraft-1",
+              "revisionId": "3a8b3f143212f5a8dcad8cfa9238f505fff210dfacc96a5ce7a1eef6b5290ca2",
+              "sectionSha": "46f6005f41780e43acbfe9d3d3137d099e2bca6fc8b6fdae0cf69443e4d747d0",
+              "sectionStart": 0,
+              "text": "The pilot's failure to maintain adequate airspeed following a partial loss of engine power during initial climb, which resulted in the airplane exceeding its critical angle of attack and experiencing an aerodynamic stall. Also causal was the mechanic's inadequate inspection of the airplane fuel system, which resulted in the partial loss of engine power due to fuel contamination.",
+              "textSha": "46f6005f41780e43acbfe9d3d3137d099e2bca6fc8b6fdae0cf69443e4d747d0"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR18LA021",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "METCALFE ROBERT B",
+              "model": "VANS RV 6"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "aedabaa09db43de367435346460f38147beeaba76437375bb132adab0d603f3a",
+              "ntsbNo": "WPR18LA021",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR18LA021:factual/aircraft-1",
+              "revisionId": "407cd5b303fa3f53199cbca50a55e756a53b4c0674cb4528785eda594bcfc9af",
+              "sectionSha": "4104f4c759fdc032a76a8fe9acc301bcc1c0caaeed84e3e07678ec3291920cd5",
+              "sectionStart": 10549,
+              "text": "The airborne segment of the first flight subsequent to the installation of the new engine systems lasted about 5 minutes. The second flight was initiated about 70 minutes later, and its airborne segment lasted for about 10 minutes. The accident flight was conducted 2 days later, and lasted about 30 minutes.\n\nEngine Performance and Power Loss\n\nRecorded system and engine parameters included voltage (V), current (A), exhaust gas temperature (EGT), cylinder head temperature (CHT), manifold, oil, and fuel pressure, fuel flow, RPM, and \"power.\" Except for \"power,\" which was a derived/calculated value, all other engine parameters were measured values. The exact locations in the electrical system where the voltage and current were measured was not determined by the investigation.\n\nAside from the voltage and current data streams, no anomalies were observed with any of the engine parameters prior to the power loss. As indicated by multiple parameters, the engine ceased operating at 1411:02, and the power loss was essentially instantaneous.\n\nReview of all available voltage data indicated that nominal system voltage was about 13.1V to 13.5V for all ground and flight modes. Excluding the accident flight, the highest recorded voltage value was 13.5V. On the accident flight, the nominal voltage was about 13.8V. About 3 minutes before the engine stopped producing power, the voltage began to rise, and reached a peak value of 16.3V. The engine stopped producing power within a few seconds of that voltage peak, and the voltage decreased to 13.5V about 7 seconds later. The voltage then gradually decreased to 12.8V by the end of the flight, which was about 5 minutes later.\n\nFor all three flights, on takeoff, the current values rose rapidly to about 30A, remained near 30A for climbs and level flight, but then decreased to about 18A during descents. On the accident flight, the current initially fluctuated somewhat, but then remained very stable at about 30A for the 15 minute-period just prior to the time that the voltage began to rise. Once the voltage started to rise, the current also started to rise, and climbed to a peak value of 33A. The first data line that indicated that the engine had stopped also indicated that the current had simultaneously and instantaneously decreased to a value of 0A. The current remained at 0A for the remainder of the flight.\n\nElectrical Provisions and Failure Modes\n\nElectrical problems or failures can result in a complete loss of engine power in airplanes equipped with fully electronic ignition or fuel-control systems, but there are several hardware or system-architecture approaches to reduce the possibility of a complete engine power loss. These include equipment redundancy (eg dual batteries, dual alternators, etc), alerting systems/indicators, and circuitry isolation mechanisms.",
+              "textSha": "786db7e1ae71f1993cb8b37e3d43775da33ef9d74f921998f07f316b04dc7bfb"
+            },
+            {
+              "passageId": "72e38c3f4e6f91f63f1a067dd34c8c815f1c46717e751f83afc75f1bf5a40272",
+              "ntsbNo": "WPR18LA021",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR18LA021:probable_cause/aircraft-1",
+              "revisionId": "9d1a11a3a26ac93f0e9b674ec59e691932b84edaf69a7cfa1e60ae57f3423125",
+              "sectionSha": "6974dd268957322d2b3e54c9d3c8bd1d98e2e88e818330ff884b724f9caf761d",
+              "sectionStart": 0,
+              "text": "The pilot’s failure to properly secure an alternator ground cable swage that led to problems with the electrical system and/or electronic engine controls, which resulted in a total loss of engine power.",
+              "textSha": "b1be829c22d10a70a8476dbfd48333688e16fe1a6125ce7f5ee1ada760074910"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN24LA107",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "Edge",
+              "model": "540"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "5df30a5f983cfa5c99e688befbdd53cf26e5384cea263a5abd9cae558fe3fdee",
+              "ntsbNo": "CEN24LA107",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN24LA107:probable_cause/aircraft-1",
+              "revisionId": "a26f6f1ae5b20f5daed05eb90af51457e8ee95c280d2d54fec5ab79957575451",
+              "sectionSha": "3fcd79f8e906b68071d01a64f4b911d2031bc1c331adb0d65b4ea85d90b768cc",
+              "sectionStart": 0,
+              "text": "A loss of engine power after takeoff for undetermined reasons.",
+              "textSha": "3fcd79f8e906b68071d01a64f4b911d2031bc1c331adb0d65b4ea85d90b768cc"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR10FA264",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-28-161"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "edbd677003b7ea7821cec12883af95bc1fd5d7bb70b344ced418ba656b6c8653",
+              "ntsbNo": "WPR10FA264",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR10FA264:factual/aircraft-1",
+              "revisionId": "c2b0ec11040f672b76f52f637b379c6e54e0d37f7cdc49ff43a051ae4860fc8d",
+              "sectionSha": "f0666829e4f3b9db6ab20d6323017fd9dc6b38a8f0a1efc715e1a21f8a73bd4a",
+              "sectionStart": 9696,
+              "text": "The \"B\" nut to the carburetor input fitting was secured and when unfastened appear grey and clean.\n\nThe carburetor remained secure at the mounting pad. The throttle and mixture controls remained secure at their respective control arms of the carburetor.\n\nADDITIONAL INFORMATION\n\nAccording to the Textron Lycoming, Service Table of Limits and Torque Value Recommendations SSP1776, page 1 - 37, Table IV, the published subject fuel line “B” Nut torque is 35 in-lbs. SSP1776 is also contained within the Overhaul Manual 60294-7.\n\nPersonnel Interviews\n\nAccording to the FAA certificated airframe and powerplant (A&P) mechanic that last performed maintenance on the engine, he did not notice anything unusual with the engine during the annual inspection. He noted that after performing an annual there are occasions when an air bubble will be stuck in the fuel lines. He stated that he can hear it when the boost pumps are activated and the pressure will not come up. To alleviate this problem, he can loosen a \"B\" nut on a fuel line to purge the air and then retighten the “B” nut. He reported that the accident airplane did not have such a problem (air trapped in the fuel lines) following the recent maintenance, nor did he recall adjusting any fuel lines.\n\nChandler Air Service \n\nThe maintenance for all the Chandler Air Service airplanes is performed by their maintenance department, which consists of 5 A&P mechanics and a lead mechanic who oversees them and holds an Inspection Authorization (IA).  The A&Ps work a normal work week from about 0800 to 1700, 5 days a week. For annual inspections, typically the IA will assign 1 A&P to the airframe and 1 to perform maintenance on the engine. They will usually be the sole person working on their part of that specific airplane until completion; thereafter, the IA will normally inspect their work and do a run-up. \n\nThe mechanics have checklists to complete the annual inspection and a discrepancy list, where all the information of items found during the inspection is recorded. The checklist used did not contain a line item to ensure a mechanic checks the torque of the fuel lines. According to the checklist, the fuel line from the fuel pump to the carburetor would not normally be removed or loosened during a routine 100-hour or annual inspection. The discrepancy sheets indicated that no non-routine maintenance was performed during the last maintenance involving the aforementioned fuel line.",
+              "textSha": "f94fd9cfca72690a6957f17330897fa43eca17100787074f234a4f2d29a0bfa4"
+            },
+            {
+              "passageId": "2f6dc4ef878b1cb4cab39be0382f0866dd12abefe9c6bc61d2e6777ba2004da6",
+              "ntsbNo": "WPR10FA264",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR10FA264:probable_cause/aircraft-1",
+              "revisionId": "a5d261b81af985e1642bd86009114ee66d4a3b250fffc31966d67b71794c7fd3",
+              "sectionSha": "21ecf68d06750e69e0c00b191f5a056a4bb63786901f839d4230a78f25cbeeed",
+              "sectionStart": 0,
+              "text": "Failure of the maintenance personnel to ensure adequate torque of a fuel line fitting, which resulted in an in-flight fire.",
+              "textSha": "21ecf68d06750e69e0c00b191f5a056a4bb63786901f839d4230a78f25cbeeed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-first-flight-annual",
+      "split": "dev",
+      "cases": [
+        {
+          "ntsbNo": "ANC21LA096",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-14"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "84d11a5c39b52edc4cf24ab7f4674c504709e377b2eb696c8435e89791cbe9db",
+              "ntsbNo": "ANC21LA096",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ANC21LA096:analysis/aircraft-1",
+              "revisionId": "b6c818f2b34a75920fa24d83590f33430fdf5a27e9e3e8b8ccf9e7d88385c05f",
+              "sectionSha": "3e917f8dbe7cbf874519561af9cb8ae6b63befaa03f93e3eab3d368c287ba2dc",
+              "sectionStart": 0,
+              "text": "The accident flight was the first flight after the airplane’s annual inspection.  The pilots completed a “thorough” preflight inspection, and an engine run-up revealed no anomalies.  Just after the airplane became airborne during takeoff, the engine lost power, regained power momentarily, and then lost power again. Insufficient runway remained on which to land, and the airplane impacted an area of tree- and brush-covered terrain off the end of the runway and nosed over.  Examination of the engine and fuel system did not reveal any anomalies that would have resulted in a loss of engine power. The reason for the loss of power could not be determined based on the available information.",
+              "textSha": "3e917f8dbe7cbf874519561af9cb8ae6b63befaa03f93e3eab3d368c287ba2dc"
+            },
+            {
+              "passageId": "d9240f37f4aeaec32b058e6e8a24362503be65759f60e6001a160e9b637c3e3a",
+              "ntsbNo": "ANC21LA096",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ANC21LA096:probable_cause/aircraft-1",
+              "revisionId": "68ed81d3a1f8388d0382bb12cbc267f89f77552598f02c603d86fdbb7512a828",
+              "sectionSha": "5459476cab1eb6c02723fedff8dd641a61d69729b5d206d987e7e277e2c40782",
+              "sectionStart": 0,
+              "text": "A total loss of engine power during takeoff for reasons that could not be determined based on the available information.",
+              "textSha": "5459476cab1eb6c02723fedff8dd641a61d69729b5d206d987e7e277e2c40782"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN22LA322",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "AERO COMMANDER",
+              "model": "112"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "cc15792cf058b753412597a91b6bfc272e2cb4c2fc3f462616ba51124a2597cf",
+              "ntsbNo": "CEN22LA322",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN22LA322:factual/aircraft-1",
+              "revisionId": "12589a0e18ae9a70bcedf8d7e356514285d56cc1d5d77f280a5f96eb501595bb",
+              "sectionSha": "949ae1eb5c66b48d85afcf270b45c52e383db0fb799d0d25a40add10624c7a21",
+              "sectionStart": 0,
+              "text": "On July 18, 2022, at 1100 central daylight time, an Aero Commander 112, N1181J, was substantially damaged with it was involved in an accident near Granbury, Texas. The pilot was uninjured. The airplane was operated as a Title 14 Code of Federal Regulations Part 91 personal flight.\nThe pilot, who was also the airplane owner, stated that he performed a new engine run-up on the day of the accident. He stated that after he preflighted the airplane, he taxied the airplane and performed multiple run-ups. He then shut down the airplane and allowed it to cool for about 15 minutes. He restarted the airplane and taxied to the airport fuel facility, where he added about 10 gallons of fuel per tank so that the total fuel aboard was about 28 gallons. After he started the airplane, he performed additional runups, and “no irregularities or abnormalities were indicated.” The pilot then taxied to the runway and performed additional runups while holding for takeoff and “no irregularities or abnormalities were indicated.”\nAfter takeoff, the engine sustained a loss of power while the airplane climbed through about 100 ft above ground level. The pilot extended the landing gear, pitched the nose down with the stall warning horn sounding, and performed a forced landing on a road. The airplane impacted a highway guard rail and the terrain, resulting in substantial damage to the fuselage.\nPostaccident examination of the airplane revealed that one of the airbox’s three metal spacers was missing. Pieces of the spacer were found in cylinder Nos. 1 and 2. These cylinders exhibited pitting damage from the spacer. The No. 1 cylinder spark plug gap contained spacer material within the gap. There were no other anomalies with the engine or airframe that would have precluded normal operations. \nThe airframe logbook showed that an annual inspection and engine installation, following a propeller strike teardown inspection, was completed September 15, 2021, with a tachometer time of 3,593.9 hours and an airframe time of 3,563.9 hours. The accident occurred on the first flight following the annual inspection. \nThe airframe logbook entry showed that the last annual inspection was dated July 12, 2022, with a tachometer time of 3,595.49 hours, and was performed by a different airframe and powerplant mechanic (later mechanic) than the one who performed the September 15, 2021, annual inspection. The later mechanic stated to the Federal Aviation Administration (FAA) inspector that he did not have the airplane’s engine logbook when he performed his annual inspection. The later mechanic’s entry stated, “performed an annual inspection,” and there was no verbiage in the entry that stated that the annual inspection was limited to the airframe.",
+              "textSha": "949ae1eb5c66b48d85afcf270b45c52e383db0fb799d0d25a40add10624c7a21"
+            },
+            {
+              "passageId": "dbb3dd7753b215c207f3bc761cb8e08b32b000cb7076ec6d6548904b16018332",
+              "ntsbNo": "CEN22LA322",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN22LA322:probable_cause/aircraft-1",
+              "revisionId": "134ed9b31092f0e2963d82a95a91b0d0646f677cb2d24cc6fb126a3a08ac5a82",
+              "sectionSha": "669c430f3a1402257483bd9b0833027408a85639cf10f1e14dbc1da0f819af1f",
+              "sectionStart": 0,
+              "text": "The loss of engine power due to metal contamination within the cylinder following poor maintenance.",
+              "textSha": "669c430f3a1402257483bd9b0833027408a85639cf10f1e14dbc1da0f819af1f"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR14LA118",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "P210N"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "61b9bbbc3d7afb6247bed77b35fe15329b0cca75139ad36d047ef289c09004fa",
+              "ntsbNo": "WPR14LA118",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 3,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR14LA118:analysis/aircraft-1",
+              "revisionId": "bf7c49a6086c60c0dd5e75c602bb77904d9cf3330a3b10c5d58118d1fbdfae21",
+              "sectionSha": "c3698834f70721cb60694a42542a6238af1c03099d85b2a4aac5a8e837fba310",
+              "sectionStart": 0,
+              "text": "The pilot reported that the accident flight was the first flight in the airplane since its annual inspection, which occurred about 6 weeks before the accident. He conducted a thorough preflight inspection and run-up. Before takeoff, he added full power with the brakes applied, and, after noting no abnormal engine or instrument indications, he took off. When the airplane reached about 150 to 200 ft above the ground, the engine started to run roughly. The airplane was unable to maintain altitude, so the pilot executed a forced landing to a nearby field. During the landing, the airplane sunk into the mud and nosed over. \n\nPostaccident examination of the engine revealed that the fuel lines connected to the input and output of the fuel flow indicator were loose and leaking. After these lines were tightened about 1.5 turns and pressure was applied, a third leak was found in the vicinity of a metal label on the fuel line between the fuel manifold and the fuel pressure gauge. The aircraft manufacturer's service manual states that the engine compartment rubber hoses must be replaced every 5 years or at engine overhaul, whichever occurs first. According to the airplane's maintenance logbook, the most recent engine overhaul occurred about 18 years before the accident. The mechanic who conducted the annual inspection reported that, during the inspection, he removed the fuel lines to and from the engine-mounted fuel flow transducer to troubleshoot a lack of indicated fuel pressure at the cockpit-mounted instrument. It is likely that the mechanic failed to adequately tighten the fuel lines when he reinstalled them.",
+              "textSha": "c3698834f70721cb60694a42542a6238af1c03099d85b2a4aac5a8e837fba310"
+            },
+            {
+              "passageId": "a99e151e7456c71c8a8877d95aa28c7e062a70c058a8cdc706d84a93584ff499",
+              "ntsbNo": "WPR14LA118",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR14LA118:probable_cause/aircraft-1",
+              "revisionId": "7ae08fc50df0aba43b222d419f641c92ce40a1d94ad73c2056c3db7f84ca3d4e",
+              "sectionSha": "5575e4a6f305c8d28ab0d01478c12a076f16bd4200a59fcc4259acc32d96b1f0",
+              "sectionStart": 0,
+              "text": "Fuel starvation due to the in-flight loosening of the fuel lines attached to the fuel flow indicator as a result of inadequate maintenance.",
+              "textSha": "b5a9d06e8d07bf825ca56826bb03c9ec23bb4f88ac4c8a77036c1848c37d5695"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA22LA194",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-28-140B"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "fe175242f9ac50ecd637fd9cfb8f1997a746978a0bc7aab800be82e33f0c7a99",
+              "ntsbNo": "ERA22LA194",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA22LA194:factual/aircraft-1",
+              "revisionId": "6857e086fe736bed4019f0f5e176c414ec779528b3ee1973009f56f9a1b5ef0e",
+              "sectionSha": "f725f8d0efc0b0becdc6299d922d5f5789dff63def5dc367d321277041b97412",
+              "sectionStart": 8632,
+              "text": "However, the document did not state that an annual inspection had been completed. \nNo entries were found in the airplane maintenance records for a time span of about 5 years, from November 30, 2017, until February 14, 2022.\nA review of the engine maintenance records revealed that the engine had accumulated 1,874.29 hours since major overhaul at the time of the accident. The most recent engine overhaul was completed on March 16, 1972, more than 50 years before the accident.\nAccording to Lycoming Service Instruction No. 1009BE, “All engine models are to be overhauled within twelve (12) calendar years of the date they first entered service or of last overhaul. This calendar year time period [time before overhaul] is to mitigate engine deterioration that occurs with age, including corrosion of metallic components and degradation of non-metallic components such as gaskets, seals, flexible hoses, and fuel pump diaphragms.”\nA review of Piper Aircraft Corporation Inspection Report (Part Number 230-207), which met the requirements of 14 CFR Part 43 (Maintenance, Preventive Maintenance, Rebuilding and Alteration), indicated that approximately 174 checklist items were required to be checked/inspected on a 100 hour/Annual inspection. These various checklist items were listed in the “PROPELLER GROUP,” “ENGINE GROUP,” “CABIN AND COCKPIT GROUP,” “FUSELAGE AND EMPENNAGE GROUP,” “WING GROUP,” “LANDING GEAR GROUP,” “FLOAT GROUP (IF INSTALLED),” “SPECIAL INSPECTIONS,” “OPERATIONAL INSPECTION,” and “GENERAL.” Further review also indicated about 18 of the checklist items involved inspection of the fuel system, including checking the wing tanks and fuel lines, gascolator, boost pump, engine-driven fuel pump, carburetor inlet screen, and carburetor. Additional review of the “GENERAL” section also revealed that one checklist item stated, “Appropriate entries made in the Aircraft and Engine Logbooks” and another stated, “Airworthiness & Registration Certificates in the aircraft and properly displayed.”\nAccording to an FAA inspector, this was the first time that the mechanic had signed off an annual inspection.",
+              "textSha": "031ca43776b847b1cba2d39feaa7a39dc0522cf1feaa3d0dc81ddfc1f8395797"
+            },
+            {
+              "passageId": "7925c3f05d88c3ca6a2e9a2801d6be8accc23d061396a8f7b4c4fd5dad8a412d",
+              "ntsbNo": "ERA22LA194",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA22LA194:probable_cause/aircraft-1",
+              "revisionId": "4dd1bf76c1dd30291267ad0dfc8afe240699aae5cd351e7c76f91fb81e24d943",
+              "sectionSha": "8163ab3a3b0c641e1c92ac0b79e869dbc947421eb824481327a28d6901c5f5ab",
+              "sectionStart": 0,
+              "text": "A total loss of engine power due to fuel contamination. Contributing to the accident was the inadequate maintenance and inspection of the airplane and engine by maintenance personnel, and the pilot’s inadequate preflight inspection and runup.",
+              "textSha": "8163ab3a3b0c641e1c92ac0b79e869dbc947421eb824481327a28d6901c5f5ab"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA25FA082",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "172"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "2e94e35d2734456788f8c918ffc2b9b5a9dfd94217af8e945d6fb659e48cbffa",
+              "ntsbNo": "ERA25FA082",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA25FA082:factual/aircraft-1",
+              "revisionId": "6baf2b6b822bd2e51f279a076c05dcd2a3a70ca64bd1ca51ebca04e92d0b628b",
+              "sectionSha": "635db9418045f620af9cbe0996f19ef4c3bff5c3eefffff10fde25019b5a8765",
+              "sectionStart": 2743,
+              "text": "The entry documenting that inspection also noted that the left wing aileron carry through cable was replaced with a new flight control cable; the reason for the replacement was not stated. The available maintenance logbooks did not show the right wing aileron carry through cable had ever been replaced. \nAn FAA inspector performed a ramp inspection of the accident airplane on July 5, 2024, about 1 month after the airplane’s most recent annual inspection, and during this inspection they noted corrosion in 7 of the 12 discrepancies, including on the right wing. The airplane maintenance records showed the items noted during the inspection were addressed on July 18, 2024, by removing the superficial corrosion, chemically treating the areas, applying primer, and applying paint.\nThe airplane’s most recent 100-hour inspection was completed on October 23, 2024, at an airframe total time of 3,471 flight hours. AIRPORT INFORMATIONFAA aircraft registration records showed that the airplane was purchased by the flight school in 2012. A review of maintenance records showed that the airplane’s most recent annual inspection was completed on June 7, 2024, at an airframe total time of 3,271 flight hours. The entry documenting that inspection also noted that the left wing aileron carry through cable was replaced with a new flight control cable; the reason for the replacement was not stated. The available maintenance logbooks did not show the right wing aileron carry through cable had ever been replaced. \nAn FAA inspector performed a ramp inspection of the accident airplane on July 5, 2024, about 1 month after the airplane’s most recent annual inspection, and during this inspection they noted corrosion in 7 of the 12 discrepancies, including on the right wing. The airplane maintenance records showed the items noted during the inspection were addressed on July 18, 2024, by removing the superficial corrosion, chemically treating the areas, applying primer, and applying paint.\nThe airplane’s most recent 100-hour inspection was completed on October 23, 2024, at an airframe total time of 3,471 flight hours.",
+              "textSha": "ade9f6ffddb7fc6c6d89d4ffe373616cb3908b62352a1799196e8ec8802d7d28"
+            },
+            {
+              "passageId": "ab1498ac3ecea7ac5687a6660092351fd34c125f0894ce1d7d644af9bec4649d",
+              "ntsbNo": "ERA25FA082",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA25FA082:probable_cause/aircraft-1",
+              "revisionId": "b4aa5f0f7eb85142100c8849b5f8866766a9ba851ef042ea08b807f96849c12b",
+              "sectionSha": "5d17134c81838d9bc2674d0c03ec237b16b1b678f3a6042fac24d6ba0e6fd17d",
+              "sectionStart": 0,
+              "text": "Maintenance personnel’s inadequate inspection of the airplane, which resulted in inflight the failure of the right aileron carry through cable due to wear, reduced effectiveness of the airplane’s ailerons, and a subsequent loss of control.",
+              "textSha": "5d17134c81838d9bc2674d0c03ec237b16b1b678f3a6042fac24d6ba0e6fd17d"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN16LA251",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CHAMPION",
+              "model": "7EC"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "e2cce094728f878136fb72c06aecb377e152f3a7202ab6039d1c8d5573d00cc3",
+              "ntsbNo": "CEN16LA251",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN16LA251:analysis/aircraft-1",
+              "revisionId": "0cf23a472f8d038afba4b9a3762dded4c8570f04396527054a2c825ed4bd7ce9",
+              "sectionSha": "2bd4ee38b048a551bf2576401eb74b2adadb3fa053c9fff3e124e7a8cd36b661",
+              "sectionStart": 0,
+              "text": "The airline transport pilot was conducting the first flight in the airplane after an extended period of inactivity. The pilot reported that, about 10-15 minutes after takeoff, the engine sputtered. He applied carburetor heat and checked the position of the fuel selector and the magnetos. The engine operation smoothed out; however, a short time later, the engine experienced a total loss of power. The pilot conducted a forced landing in a corn field, which resulted in substantial damage to the airframe.\n\nA postaccident examination of the airplane revealed the fuel line between the fuel strainer and the carburetor was deteriorated and leaking fuel, and the fuel selector was rigged in such a way that it would only open about 25%, which limited the amount of fuel flowing to the engine. The mechanic who signed off the airplane's most recent annual inspection, which was completed the month before the accident, reported that the airplane's owner assisted with the inspection, and that he did not verify the owner's work before endorsing the annual inspection.",
+              "textSha": "2bd4ee38b048a551bf2576401eb74b2adadb3fa053c9fff3e124e7a8cd36b661"
+            },
+            {
+              "passageId": "be21e62ee8c9bbb6d70ca47fe09db23b418a7067a0ec931941cbacfed1df1f34",
+              "ntsbNo": "CEN16LA251",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN16LA251:probable_cause/aircraft-1",
+              "revisionId": "7d68f6610bb448c178e68d541d3b71ed3f73b49183f2807d3e7123d9790dd0f7",
+              "sectionSha": "927898ef31946f882795a01a748776dd449ea8208d907792fc467745b4f342f5",
+              "sectionStart": 0,
+              "text": "The inadequate annual inspection of the fuel system that failed to detect a deteriorated fuel line and a misrigged fuel selector, which resulted in fuel starvation and a subsequent total loss of engine power. Contributing to the accident was the mechanic’s failure to verify the work completed by the owner before endorsing the annual inspection.",
+              "textSha": "9a6216f2200f99a7e9654de4e001794c78d9d8d45b2b4ed73e4fcb9f2e50f83f"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-day-after-maintenance",
+      "split": "dev",
+      "cases": [
+        {
+          "ntsbNo": "WPR18FA171",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BEECH",
+              "model": "A35"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "1f6bc2625dcb7198175a4d455c49bc2178a6d95dd7fd9c963eabf50cfa120ef6",
+              "ntsbNo": "WPR18FA171",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR18FA171:factual/aircraft-1",
+              "revisionId": "b9a4fe8a564acecf390ffddc0d385b9952cce6c0a4c5d3d3e7bed06942c1889b",
+              "sectionSha": "370a953c50293d59788a80d48b9642dd46dcd118a55c7365663311be33e1bbdd",
+              "sectionStart": 2363,
+              "text": "The previous maintenance entry in the logbooks indicated an annual inspection was completed on June 16, 2010, at a tachometer time of 149.7 hours and a total airframe time of 2,474.5 hours.\n\nThe mechanic, who worked on the airplane the day before the accident, reported that the airplane had quite a few maintenance issues, however, he completed a few items that the pilot wanted fixed. He replaced some side paneling and cowling, secured the left exhaust stack, and helped find the source of an oil leak. When the engine was running to find the oil leak, the mechanic noted that the engine was not running particularly well. In addition, he noted that the throttle was only going to about 3/4 power despite the throttle lever being full forward. He observed that the oil leak was coming from the oil pressure line, so he capped the line. Since he did not have any oil lines with him, he informed the pilot that he could not fly until after he replaced the line the next day (the day of the accident). The pilot appeared unhappy about this because he needed to fly to a nearby airport, but he did not elaborate why. The mechanic noted that he did not record a maintenance logbook entry because the maintenance had not been completed at the time of the accident. AIRPORT INFORMATIONThe airplane was purchased by the pilot in September 2017. The airplane's most recent maintenance logbook entries were inconsistent and contained date corrections. The airplane's most recent logbook entries in the airframe, engine, and propeller logbooks referenced an annual inspection. The propeller logbook indicated the annual inspection was completed on August 17, 2017, at a tachometer time of 176.9 hours. The annual inspection in the engine logbook was dated September 18, 2017, at a tachometer time of 176.9. The airframe logbook indicated the annual inspection was completed on August 17, 2017; however, the date was darkened with unreadable numbers underneath. The previous maintenance entry in the logbooks indicated an annual inspection was completed on June 16, 2010, at a tachometer time of 149.7 hours and a total airframe time of 2,474.5 hours.",
+              "textSha": "6f5066b29c7f9c8d7ec38c1f6745816deb4ff0388012a7761e936bfdb4e0a09b"
+            },
+            {
+              "passageId": "d4e1031915cd8d1649c6717758fd68930219d38caf6993ff4878596049e930f2",
+              "ntsbNo": "WPR18FA171",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR18FA171:probable_cause/aircraft-1",
+              "revisionId": "7fcff998a177e696b637c50dd32ddc6bf9e170b14fe746a91742ff63d389786a",
+              "sectionSha": "a7575e2163ac9a776c1f2323cebf81f8d4c2685618a6900b9ed6973d964a5852",
+              "sectionStart": 0,
+              "text": "The pilot's failure to maintain airplane control during an attempted return to the airport following the separation of the spinner bulkhead during takeoff as a result of fatigue cracking.  Contributing to the accident was the pilot's improper decision to fly an unairworthy airplane.",
+              "textSha": "a7575e2163ac9a776c1f2323cebf81f8d4c2685618a6900b9ed6973d964a5852"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA21LA250",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "DIAMOND",
+              "model": "DA20"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "ae5cf9c5e2e4224d9a803c1026d850e3a5c5e79147b78c345e62796eec7723c4",
+              "ntsbNo": "ERA21LA250",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA21LA250:probable_cause/aircraft-1",
+              "revisionId": "86494aa11acc5d7eaf1f78b376b282ae193d0ccb39b6f20f82fc6cd74f34470b",
+              "sectionSha": "efd3bf1b6c4911ce347f5ee3a209c7495eaecae130e566b5ee4fa12843ec7c05",
+              "sectionStart": 0,
+              "text": "The mechanic’s failure to properly secure the oil sump drain plug during a 100-hour maintenance inspection, which resulted in a total loss of engine power due to oil starvation.",
+              "textSha": "efd3bf1b6c4911ce347f5ee3a209c7495eaecae130e566b5ee4fa12843ec7c05"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN11LA048",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-32R-301T"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "a23aa8af20f28f671382a7bea42efc6baa40a121f2370541b26ba9111d950ffd",
+              "ntsbNo": "CEN11LA048",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 3,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN11LA048:factual/aircraft-1",
+              "revisionId": "18b0a1f666b1877d8e174e1234c216c3e3d8e257d0b02f5ad75cda4c42faae1a",
+              "sectionSha": "5659b6cb7471e6bc5f7dc19d1c9ecc509f73e4d95af4d9da9842ef7ac37538b7",
+              "sectionStart": 1677,
+              "text": "The turnbuckle fitting was constructed using SAE-AISI 303 SE stainless steel.\n\nThe most recent annual inspection had been completed on November 1, 2009. The airplane had accumulated about 1 hour of flight time since the previous annual inspection.\n\nThe airplane manufacturer had previously issued a maintenance alert service letter (dated March 31, 2003). The service letter noted that corrosion may be found on control cable attachment fittings; especially in aircraft which have been in service for 15 years or more. The service letter recommended inspection of cable terminals, turnbuckles, and fittings for corrosion or cracking within the next 100 hours time in service, or to coincide with the next scheduled maintenance event. For airplanes in service for 15 years or more, the letter suggested the use of a 10X magnifier. Any evidence of corrosion or cracking is cause for replacement according to the service letter. The current revision of the airplane service manual (dated July 15, 2006) included the special control cable fitting inspection for airplanes in service 15 years or more, as outlined in the prior service letter.\n\nThe FAA issued Special Airworthiness Information Bulletins (SAIB) related to corrosion and subsequent failure of control cables. The first, released in November 2001, advised operators of corrosion and cracking being experienced with control cable terminals fabricated from 303SE stainless steel. The bulletin recommended inspection of flight control cables and replacement of any cables showing signs of corrosion or cracking. A revision to that SAIB was released in January 2004, to include the use a magnifying glass for the corrosion inspections.\n\nAn additional FAA SAIB, dated October 4, 2010, advised operators of specific failures related to the horizontal stabilator turnbuckle/control cable assembly on Piper airplanes. This SAIB recommended that operators incorporate the previously issued Piper service letter into their inspection procedures. It also noted that any evidence of corrosion or cracking is cause for replacement of the cable assembly.\n\nThe NTSB issued safety recommendations A-01-6 through A-01-8 in April 2001. The recommendations noted the previous failure of control cable turnbuckles and recommended issuance of an airworthiness directive to require inspections of affected aircraft. In response, the FAA issued the November 2001 SAIB recommending the inspections in all aircraft with 303SE stainless steel turnbuckles installed. The recommendations were subsequently closed noting acceptable alternate action.\n\nFAA regulations (91.409) require that an annual inspection be completed within the preceding 12 calendar months. Accordingly, the annual inspection completed in November 2009 was valid through the last day of November  2010.",
+              "textSha": "6cb1e436a7a60e45c2622608268d975b57b3e84944218d11675e7e26b6ca195b"
+            },
+            {
+              "passageId": "5dfbbdee86df87b029e0ccada17369e178237b2048113d03353d17b8fb005e3b",
+              "ntsbNo": "CEN11LA048",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN11LA048:probable_cause/aircraft-1",
+              "revisionId": "12ec299bafc7c01baec392fde7415a52f063c81128784df88ccc17b65c304e9d",
+              "sectionSha": "5f54d2e85e83272c468b76fccda1b8701ca3596e6ab69698b14e3a0db891abaa",
+              "sectionStart": 0,
+              "text": "The separation of a stabilator control cable turnbuckle due to stress corrosion cracking, which resulted in a loss of airplane control during takeoff.",
+              "textSha": "5f54d2e85e83272c468b76fccda1b8701ca3596e6ab69698b14e3a0db891abaa"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN22LA322",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "AERO COMMANDER",
+              "model": "112"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "dbb3dd7753b215c207f3bc761cb8e08b32b000cb7076ec6d6548904b16018332",
+              "ntsbNo": "CEN22LA322",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN22LA322:probable_cause/aircraft-1",
+              "revisionId": "134ed9b31092f0e2963d82a95a91b0d0646f677cb2d24cc6fb126a3a08ac5a82",
+              "sectionSha": "669c430f3a1402257483bd9b0833027408a85639cf10f1e14dbc1da0f819af1f",
+              "sectionStart": 0,
+              "text": "The loss of engine power due to metal contamination within the cylinder following poor maintenance.",
+              "textSha": "669c430f3a1402257483bd9b0833027408a85639cf10f1e14dbc1da0f819af1f"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN16FA111",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CIRRUS DESIGN CORP",
+              "model": "SR20"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "07a9b0d9125bd5508e96b5ddc680092af76119c568bb3fe7f8c4f59b15e07658",
+              "ntsbNo": "CEN16FA111",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN16FA111:factual/aircraft-1",
+              "revisionId": "b649ff7720da56db357a0e282cd44e50b8c31ab9a4af21a9a8b133a780bb88bf",
+              "sectionSha": "8778a7cde25f9fca00ef26620bfbe9ff602c8931dc4009ad9b927c7a04e5552a",
+              "sectionStart": 4703,
+              "text": "According to the owner's pilot logbook, he had a total of 106 hours of flight time of which 57.1 hours were in SR-20 airplanes. The owner had previously flown with the flight instructor on 11 dual instructional flights, which totaled 25.7 hours. AIRCRAFT INFORMATIONThe airplane, serial number 1378, was a four-place, low-wing, single-engine airplane with fixed landing gear. The airplane was manufactured in 2003 and equipped with a Cirrus Airframe Parachute System (CAPS). The owner purchased the airplane on January 12, 2016.\n\nMaintenance records indicated that the last annual inspection on the airframe was completed on January 12, 2016, at a total airplane and Hobbs meter time of 431.5 hours. The Hobbs meter at the time of the accident indicated 487.2 hours.\n\nThe airplane was equipped with a 210-horsepower, Continental Motors IO-360-ES6B engine, serial number 357628. The last annual inspection of the engine was completed on January 12, 2016, at an airframe total time of 431.5 hours. The last maintenance entry in the engine logbook was an oil and oil filter change on February 26, 2016, at an airframe total time of 481.6 hours.\n\nThere were no entries in the engine logbook showing that the engine had been overhauled or torn down; however, during the postaccident engine examination it was discovered that the crankshaft and bearings were not the original parts installed when the engine was manufactured in 2003. The owner of the maintenance facility that performed the most recent annual inspections stated that the engine had been removed for a teardown inspection for metal contamination in April 2015. Records of the teardown inspection provided by the maintenance facility and the engine overhaul facility that performed the teardown inspection indicated that the engine overhaul facility completed the teardown inspection on August 17, 2015. A copy of the logbook entry prepared by the engine overhaul facility stated, in part, that the engine was \"disassembled for metal contamination due to #6 piston burnt, replace cracked crankshaft with customer supplied New VAR crankshaft, repair 6ea.cylinders as necessary.\"  The owner of the maintenance facility stated that the facility provided the previous airplane owner with the information and records for the engine logbook.\n\nThe airplane was fueled twice the day before the accident. The time on the fuel receipt indicated that the last fueling took place at 1655 when the airplane was fueled with 22.6 gallons of 100LL aviation fuel. According to the operator who fueled the airplane, the fuel added had topped-off the fuel tanks. It is not known if the airplane was flown between the last fueling and the accident flight.",
+              "textSha": "adc29a5e54b18b612a790eeef2f5c5a12b691c47c586c4b30b6c24390a2cc00f"
+            },
+            {
+              "passageId": "876ecc3798b96a92916ad6a5e6399794d99c13f5a8cd4c9d651ec950d15f0d2c",
+              "ntsbNo": "CEN16FA111",
+              "role": "retrieved",
+              "reserved": false,
+              "rank": 72,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN16FA111:factual/aircraft-1",
+              "revisionId": "b649ff7720da56db357a0e282cd44e50b8c31ab9a4af21a9a8b133a780bb88bf",
+              "sectionSha": "8778a7cde25f9fca00ef26620bfbe9ff602c8931dc4009ad9b927c7a04e5552a",
+              "sectionStart": 7058,
+              "text": "The time on the fuel receipt indicated that the last fueling took place at 1655 when the airplane was fueled with 22.6 gallons of 100LL aviation fuel. According to the operator who fueled the airplane, the fuel added had topped-off the fuel tanks. It is not known if the airplane was flown between the last fueling and the accident flight.\n\nCirrus Aircraft performed stall speed calculations for the airplane. The calculations showed that, at gross weights of 2,904 pounds (full fuel) and 2,688 pounds (20 gallons of fuel), the flaps up stall speeds at 1g would have been 78 knots calibrated airspeed (KCAS) and 75 KCAS, respectively. AIRPORT INFORMATIONThe airplane, serial number 1378, was a four-place, low-wing, single-engine airplane with fixed landing gear. The airplane was manufactured in 2003 and equipped with a Cirrus Airframe Parachute System (CAPS). The owner purchased the airplane on January 12, 2016.\n\nMaintenance records indicated that the last annual inspection on the airframe was completed on January 12, 2016, at a total airplane and Hobbs meter time of 431.5 hours. The Hobbs meter at the time of the accident indicated 487.2 hours.\n\nThe airplane was equipped with a 210-horsepower, Continental Motors IO-360-ES6B engine, serial number 357628. The last annual inspection of the engine was completed on January 12, 2016, at an airframe total time of 431.5 hours. The last maintenance entry in the engine logbook was an oil and oil filter change on February 26, 2016, at an airframe total time of 481.6 hours.\n\nThere were no entries in the engine logbook showing that the engine had been overhauled or torn down; however, during the postaccident engine examination it was discovered that the crankshaft and bearings were not the original parts installed when the engine was manufactured in 2003. The owner of the maintenance facility that performed the most recent annual inspections stated that the engine had been removed for a teardown inspection for metal contamination in April 2015. Records of the teardown inspection provided by the maintenance facility and the engine overhaul facility that performed the teardown inspection indicated that the engine overhaul facility completed the teardown inspection on August 17, 2015. A copy of the logbook entry prepared by the engine overhaul facility stated, in part, that the engine was \"disassembled for metal contamination due to #6 piston burnt, replace cracked crankshaft with customer supplied New VAR crankshaft, repair 6ea.cylinders as necessary.\"  The owner of the maintenance facility stated that the facility provided the previous airplane owner with the information and records for the engine logbook.",
+              "textSha": "6e299c3e88081ba1dd2410f7fd687ddad203bcc44c86ffa4d4fe54ced481c28d"
+            },
+            {
+              "passageId": "248e17d1cab417bbef44c2d08275875e6df382493eba4f715993d6585c869d2b",
+              "ntsbNo": "CEN16FA111",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN16FA111:probable_cause/aircraft-1",
+              "revisionId": "c530bb64cb6321e4a9ed048eee05602b7d9cd97480988469e9dd07bcdb922c47",
+              "sectionSha": "64d22381224894206231632a450eb92d80abdc869ca4d072e044b7e89837f548",
+              "sectionStart": 0,
+              "text": "The flight instructor's delayed remedial action to prevent a stall at an altitude that was too low to recover. Contributing to the accident was the owner/non-certificated pilot's failure to maintain control of the airplane, which resulted in an accelerated aerodynamic stall.",
+              "textSha": "64d22381224894206231632a450eb92d80abdc869ca4d072e044b7e89837f548"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "NYC08LA137",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "150F"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "6de72b9b7f450c691413301a959242918a0e317516157e515af367fd7c79a0bb",
+              "ntsbNo": "NYC08LA137",
+              "role": "retrieved",
+              "reserved": false,
+              "rank": 58,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "NYC08LA137:analysis/aircraft-1",
+              "revisionId": "d6eb48fdc02c5f1f0e7c7b7ced96cd82225417a3d806b45129856fbdf98d7190",
+              "sectionSha": "c2774a4c2a60df1fc34766bb26ec501dbea0932147e36ece40961581bbc00841",
+              "sectionStart": 0,
+              "text": "During a period of 6 months, a major engine overhaul and annual inspection was being performed on the pilot's airplane. The work was being performed by the pilot's friend, who was an airframe and powerplant mechanic with an inspector authorization. The accident flight was the first flight after the work was completed. About 10 minutes after departure, the engine began vibrating and lost all power during cruise flight. The major overhaul had included the installation of new cylinders. Proper installation of the new cylinders required that the exhaust valve rocker arms have a small orifice to allow oil to pass and lubricate the valves. The intake valve rocker arms did not have an orifice. Examination of the accident engine revealed that the No. 1 cylinder intake valve was stuck open, and exhibited features consistent with oil starvation. Further examination revealed that the No. 1 cylinder had an intake rocker arm (no orifices) on both the intake and exhaust valves. The No. 3 cylinder had an exhaust valve rocker arm (with orifice) on both the intake and exhaust valves. Review of a make and model engine overhaul manual revealed a caution, noting that the exhaust valve rocker arms have an orifice. Further examination of the cylinder did not reveal any additional mechanical anomalies.",
+              "textSha": "c2774a4c2a60df1fc34766bb26ec501dbea0932147e36ece40961581bbc00841"
+            },
+            {
+              "passageId": "b3bf47fa5e62f23e12a4035815af218da86db91db5d8ac331d9d8c126a77d333",
+              "ntsbNo": "NYC08LA137",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "NYC08LA137:probable_cause/aircraft-1",
+              "revisionId": "8f1850adfada5f578a3866fc2281f3e4f23fe1837fa9a8622ed5c1c75373e8be",
+              "sectionSha": "828471be4e86f8c0f4fb7a1c43eb8362e6a7d5c2cc23a42f2c008797f58c3084",
+              "sectionStart": 0,
+              "text": "The mechanic's improper maintenance installation of the No. 1 cylinder rocker arms which led to oil starvation and a loss of engine power.",
+              "textSha": "828471be4e86f8c0f4fb7a1c43eb8362e6a7d5c2cc23a42f2c008797f58c3084"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-midair-two-airplanes",
+      "split": "dev",
+      "cases": [
+        {
+          "ntsbNo": "GAA17CA458",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "RANDALL MARVIN L",
+              "model": "VANS RV 3A"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "WILTS GAYLE T",
+              "model": "RV-3A"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "7f50b01fc9ad261953b852f2aec837e51ca722c716c0da7e671fb25ad4274f14",
+              "ntsbNo": "GAA17CA458",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA17CA458:analysis/event-1",
+              "revisionId": "5ac5cb010db5e66b849dbf762b38458de019f46bf60510be51d9001eca9bb553",
+              "sectionSha": "b7d5005810d5869135423559dae69310342d186357262080870bbab80a620589",
+              "sectionStart": 0,
+              "text": "The pilots reported that, following a formation flight and landing of four airplanes and while taxiing to park, the lead airplane reduced power to idle, and the engine quit.\n\nAfter multiple attempts to restart the engine, the lead pilot signaled the other pilots to pass on the left side and continue to park. As the second airplane taxied past, the third airplane followed.\n\nThe pilots added that the third airplane's pilot had limited forward visibility due to the nose attitude of the airplane and that the pilot was unaware that the lead airplane was stationary. Subsequently, the third airplane passed the lead airplane with insufficient clearance, which resulted in the third airplane's right wing colliding with the lead airplane's left elevator and the third airplane's propeller striking the lead airplane's left wing.\n\nThe lead airplane sustained substantial damage to the left wing and left elevator.\n\nThe pilots reported that there were no preaccident mechanical failures or malfunctions with the airplanes that would have precluded normal operation.",
+              "textSha": "b7d5005810d5869135423559dae69310342d186357262080870bbab80a620589"
+            },
+            {
+              "passageId": "ee7d791814968de89835b8b089b94bb0da07a8ddf5896db13f32d6e073fdbd77",
+              "ntsbNo": "GAA17CA458",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA17CA458:probable_cause/event-1",
+              "revisionId": "aeaae40796c2a9b5c90240532c30eaf8da0b664fbfbf7fb2899d260c82b291a1",
+              "sectionSha": "0dceb228019d1a6ff70f987a2665a3204f8ffa8e4c112dd4cc7f27e007120b57",
+              "sectionStart": 0,
+              "text": "The pilot’s failure to maintain adequate clearance and visual lookout while taxiing, which resulted in his airplane colliding with the stationary airplane.",
+              "textSha": "149f978c6e92e750e94e78634a9942f1ca68c850fdfd3df3e672a2a943f880c4"
+            },
+            {
+              "passageId": "78396746f656d65a6d91248f4e6bf15bb263663ac6014db8381082318a2fd0a5",
+              "ntsbNo": "GAA17CA458",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA17CA458:probable_cause/event-2",
+              "revisionId": "0f3813c3dedbbc4387c89cbb5a123602568be36522e76820f9619b789a17bf61",
+              "sectionSha": "e1e6a9973ff9595595e04f8450bcf3bfab444488e84fae2338da455349f3a44d",
+              "sectionStart": 0,
+              "text": "The other pilot’s failure to maintain adequate clearance and visual lookout while taxiing, which resulted in his airplane colliding with the stationary airplane.",
+              "textSha": "1b928d3349cfd60b24561bfe33c072adcc314ed937ab0e8b5ab13960c82d3b44"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR18LA267",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "Aero Vodochody",
+              "model": "L39"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "Aero Vodochody",
+              "model": "L 39"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "df243732a536a211d4b6c4dd073c7095a7971a361284b43e67a3dba85f361031",
+              "ntsbNo": "WPR18LA267",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR18LA267:analysis/event-1",
+              "revisionId": "98672ded35c74b353a7013f3593c2d3ff59cfc4a812ebc0a534293551c66c3c6",
+              "sectionSha": "638d6df0e04009a130fb99e627dc2a14dc959267b24180385d35f123ee315af9",
+              "sectionStart": 0,
+              "text": "During the closed course air race, the pilot of the race 13 airplane announced that he was passing the race 37 airplane on his right. A video recording of the midair collision showed that, as the two airplanes approached one of the racecourse pylons, race 13 was in a slight left bank behind race 37, which was in a level attitude. Shortly after, race 37 initiated a left bank, while race 13 was rapidly approaching race 37 from behind. Just before the collision, race 13 rolled out of the turn to an almost level attitude. The two airplanes then collided, which resulted in damage to the right wing and aileron of race 37 and damage to two inspection panels and fairings on the forward left side of the fuselage of race 13. Both airplanes landed uneventfully after the collision. The pilot of race 13 failed to maintain adequate separation from race 37 while overtaking the other airplane.",
+              "textSha": "638d6df0e04009a130fb99e627dc2a14dc959267b24180385d35f123ee315af9"
+            },
+            {
+              "passageId": "81032d576fced2f31110cbb43d6edf431c7827e8ddd6d7178f2faf8a9d36cd6a",
+              "ntsbNo": "WPR18LA267",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR18LA267:probable_cause/event-1",
+              "revisionId": "271ca27830d3fe57b292d8352577145db62839e8deef5b370b3df944025fe1cc",
+              "sectionSha": "43b07cc291b64ec4c71b6f7ecb2e6637e5d88b096ab9253dd18db0c104db74ed",
+              "sectionStart": 0,
+              "text": "The pilot of the race 13 airplane's failure to maintain clearance from the race 37 airplane during the closed course air race.",
+              "textSha": "e078301df524f7bbfe153801524a7bac9e3beb4a450a573839feeb99ac2575cb"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN13LA506",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BUCKEYE AVIATION INC",
+              "model": "BREEZE"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "SIX CHUTER",
+              "model": "SR7 XL"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "9d33c70b6451563c4ddc3ccfdd8ac018d8cc2d485ff95452ec84c02e867dafc7",
+              "ntsbNo": "CEN13LA506",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "CEN13LA506:analysis/event-1",
+              "revisionId": "6a5fb5a6e058db5558a3803bff42873766f3426999e9d3c2e8aa8faf3a85f2d5",
+              "sectionSha": "d6b6811d459cf5bff17b285faea72530158341f10ae0e2ca7358f80846811451",
+              "sectionStart": 0,
+              "text": "The Buckeye Breeze and Six Chuter powered parachutes collided in midair while conducting pattern operations at a private airpark configured with two grass runways oriented north-south and east-west. The noncertificated pilot of the Buckeye Breeze was approaching the east runway on a northerly heading, and the pilot of the Six Chuter was on the left downwind leg to the north runway on a southerly heading. Neither pilot was using their handheld radio to broadcast their intended traffic patterns. Further, neither pilot noticed the other parachute until immediately before the midair collision.",
+              "textSha": "d6b6811d459cf5bff17b285faea72530158341f10ae0e2ca7358f80846811451"
+            },
+            {
+              "passageId": "f774720622a2cfa966270103a0306288e4eacaf74c9c2b28f3428feea9fe33a1",
+              "ntsbNo": "CEN13LA506",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "CEN13LA506:probable_cause/event-1",
+              "revisionId": "8ee15cbbb14131471e4ea3e899359faa4f068c068c39afd34975e1d5cabfc4bc",
+              "sectionSha": "d7034ca1eb5d361c8ad56605dd212bd75be5bb4ece9f9a635735e18e3857e0e9",
+              "sectionStart": 0,
+              "text": "The failure of both pilots, one of whom was noncertificated, to maintain adequate visual lookout while maneuvering to land, which resulted in a midair collision. Contributing to the accident was the pilots’ inadequate communication about their intended traffic patterns.",
+              "textSha": "b32878e4dab615af83b54455e7bd97b856c416ed8dc5f94e7c64e179bf27133c"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR23LA129",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "NAVION",
+              "model": "NAVION A"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "YAKOVLEV",
+              "model": "YAK-52"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "249630e7258d6351538e149f07bdbcb6b941b9baa3a735c9ae4621bdddbd3e7b",
+              "ntsbNo": "WPR23LA129",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR23LA129:analysis/event-1",
+              "revisionId": "4226d8a1cae44bb2c7bf2c5eb99e2f0d72e48f76f71c554cb24429812ff7910c",
+              "sectionSha": "671b4acc791ce4524d3e18815a01231e18f4878812d8dfab4029bcb792030151",
+              "sectionStart": 0,
+              "text": "The pilot of a Yakovlev Yak-52 reported that he was in the number three position, off the lead airplane’s left wing while in a four-airplane formation flight. The pilot of the lead airplane initiated a left turn and the formation followed. While in the left turn, the pilot of the number three airplane felt “a bump” from underneath and observed the number four airplane pass under his right wing, and ascend toward the lead airplane. The pilot of the number three airplane realized there had been a mid-air collision, broke away from the formation to the left, and executed an emergency landing. The number three airplane’s right wing sustained substantial damage. \nThe pilot of a Ryan Navion reported that, he was in the number four position off of the number three airplane’s left wing in the four-airplane formation flight. The pilot of the lead airplane initiated a left turn and the formation followed. When the pilot of the number four airplane “felt to level off”, his airplane collided with the number three airplane from underneath. He then executed an emergency landing. The fuselage, vertical stabilizer, and rudder were substantially damaged. \nThe pilots of both airplanes reported that there were no preaccident mechanical malfunctions or failures with the airplanes that would have precluded normal operation.",
+              "textSha": "671b4acc791ce4524d3e18815a01231e18f4878812d8dfab4029bcb792030151"
+            },
+            {
+              "passageId": "c8d05ccadc72203d7d5871d26765f1d5e077dcffec5a7fd524e1e204a067b8fe",
+              "ntsbNo": "WPR23LA129",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR23LA129:probable_cause/event-1",
+              "revisionId": "27760f8319a317e42f75e5a43456f3b91c521de3c756b31efe2fb1d142d5f98d",
+              "sectionSha": "1c87b24e30fb355fdfcb44eb5f440610708a8f7957b203611b13945950363dd4",
+              "sectionStart": 0,
+              "text": "The pilot of the Ryan Navion’s failure to maintain visual sight of and clearance from another airplane during a formation flight, which resulted in a mid-air collision.",
+              "textSha": "1c87b24e30fb355fdfcb44eb5f440610708a8f7957b203611b13945950363dd4"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "GAA15CA157",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BALLOON WORKS",
+              "model": "FIREFLY8 - 24"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "BALONY KUBICEK SPOL SRO",
+              "model": "BB30Z"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "9cba5451e62690db0b117c2f5c7206d239d4e9247eefafe3845263e7852caf49",
+              "ntsbNo": "GAA15CA157",
+              "role": "retrieved",
+              "reserved": false,
+              "rank": 13,
+              "sectionKind": "factual",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA15CA157:factual/event-1",
+              "revisionId": "e399b046c932ede2ea3e11db6811085622ce3a71ac369bc842e2d3f6f920acc5",
+              "sectionSha": "6e296687dda48e870e7b5ad9088df205cfe817975ff154b3701387dd50553f5a",
+              "sectionStart": 0,
+              "text": "**This report was modified on 4/21/2016. Please see the public docket for this accident for more information.**\n\nThe pilots of the two balloons involved in a midair collision reported that they both began the takeoff ascent as part of a competition. The Balloon Works balloon pilot, who was lower than the Balony balloon during the ascent, reported that his envelope collided vertically with the basket of the Balony balloon, about 2,000 feet above the ground. The Balony balloon pilot reported that he saw the Balloon Works balloon below him and started to use both of the available burners, but was unable to climb fast enough. A witness to the accident reported that the Balony balloon pilot did not use the balloon's burners until after the collision. After the midair collision, the Balloon Works balloon began to descend about 700 feet per minute and impacted the ground. The pilot of the Balony Balloon reported that he landed without further incident.\n\nBoth of the pilots reported there were no pre-impact mechanical failures or malfunctions with their balloons or burners that would have precluded normal operation. \n\nA postaccident inspection of the Balony balloon revealed no damage to the balloon or the burner. A postaccident inspection of the Balloon Works balloon revealed substantial damage to the envelope.\n\nAccording to FAA-H-8083-11A, Balloon Flying Handbook, \"There is an unwritten rule in ballooning (not regulatory) that the balloon below has the right of way (due to lack of visibility above). Although the balloon below has the right of way, the higher balloon needs time to climb out of the way, if necessary. Pilots must maintain awareness of other balloons operating near them, particularly in crowded or rally situations.\"\n\nAccording to FAA-H-8083-11A, Balloon Flying Handbook, \"All pilots must be alert to the potential for midair collision and near midair collisions. The general operating and flight rules in 14 CFR Part 91 set forth the concept of \"See and Avoid.\" This concept requires that vigilance shall be maintained at all times, by each person operating an aircraft. Pilots should also keep in mind their responsibility for continuously maintaining a vigilant lookout regardless of the type of balloon being flown and the purpose of the flight.\"\n\nAccording to the Code of Federal Regulations, Part 91.113(b), \"When weather conditions permit, regardless of whether an operation is conducted under instrument flight rules or visual flight rules, vigilance shall be maintained by each person operating an aircraft so as to see and avoid other aircraft. When a rule of this section gives another aircraft the right-of-way, the pilot shall give way to that aircraft and may not pass over, under, or ahead of it unless well clear.\"",
+              "textSha": "6e296687dda48e870e7b5ad9088df205cfe817975ff154b3701387dd50553f5a"
+            },
+            {
+              "passageId": "8ad044efa071b7f565b0c53d4a5ef1b276551a94fc7c63ef87fca5e30e45055c",
+              "ntsbNo": "GAA15CA157",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA15CA157:analysis/event-1",
+              "revisionId": "467651417238ecb89c12c652e14edbaaaae7ab079947458abf0446a0c8fc8b79",
+              "sectionSha": "cd35c158eee6ea393a58007282bac2bb19b5577c432f7dc31d2a369edb89839c",
+              "sectionStart": 0,
+              "text": "**This report was modified on 4/21/2016. Please see the public docket for this accident for more information.**\n\nThe pilots of the two balloons involved in a midair collision reported that they both began the takeoff ascent as part of a competition. The Balloon Works balloon pilot, who was lower than the Balony balloon during the ascent, reported that his envelope collided vertically with the basket of the Balony balloon, about 2,000 feet above the ground. The Balony balloon pilot reported that he saw the Balloon Works balloon below him and started to use both of the available burners, but was unable to climb fast enough. A witness to the accident reported that the Balony balloon pilot did not use the balloon's burners until after the collision. After the midair collision, the Balloon Works balloon began to descend about 700 feet per minute and impacted the ground. The pilot of the Balony Balloon reported that he landed without further incident.\n\nBoth of the pilots reported there were no pre-impact mechanical failures or malfunctions with their balloons or burners that would have precluded normal operation. \n\nA postaccident inspection of the Balony balloon revealed no damage to the balloon or the burner. A postaccident inspection of the Balloon Works balloon revealed substantial damage to the envelope.",
+              "textSha": "cd35c158eee6ea393a58007282bac2bb19b5577c432f7dc31d2a369edb89839c"
+            },
+            {
+              "passageId": "b95c66cb0d6718c6886a561709a5d275bc0b5571fcb79034dd40e72b8ee3518f",
+              "ntsbNo": "GAA15CA157",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA15CA157:probable_cause/event-1",
+              "revisionId": "86e19c376cbea7b8044f7cd23ec04628f05efbedb67ff7369305750afc56d1d9",
+              "sectionSha": "f6ba525a45b17c7698b47623ed928bc2407d0db35ac3472309355b49ff7f9fd9",
+              "sectionStart": 0,
+              "text": "**This report was modified on 4/21/2016. Please see the public docket for this accident for more information.**\n\nThe failure of the Balony balloon pilot to see and avoid the Balloon Works balloon during an ascent, which resulted in the basket of the Balony balloon colliding vertically with the envelope of the Balloon Works balloon.",
+              "textSha": "f6ba525a45b17c7698b47623ed928bc2407d0db35ac3472309355b49ff7f9fd9"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-midair-first-flight",
+      "split": "dev",
+      "cases": [
+        {
+          "ntsbNo": "GAA15CA157",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BALLOON WORKS",
+              "model": "FIREFLY8 - 24"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "BALONY KUBICEK SPOL SRO",
+              "model": "BB30Z"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "8ad044efa071b7f565b0c53d4a5ef1b276551a94fc7c63ef87fca5e30e45055c",
+              "ntsbNo": "GAA15CA157",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA15CA157:analysis/event-1",
+              "revisionId": "467651417238ecb89c12c652e14edbaaaae7ab079947458abf0446a0c8fc8b79",
+              "sectionSha": "cd35c158eee6ea393a58007282bac2bb19b5577c432f7dc31d2a369edb89839c",
+              "sectionStart": 0,
+              "text": "**This report was modified on 4/21/2016. Please see the public docket for this accident for more information.**\n\nThe pilots of the two balloons involved in a midair collision reported that they both began the takeoff ascent as part of a competition. The Balloon Works balloon pilot, who was lower than the Balony balloon during the ascent, reported that his envelope collided vertically with the basket of the Balony balloon, about 2,000 feet above the ground. The Balony balloon pilot reported that he saw the Balloon Works balloon below him and started to use both of the available burners, but was unable to climb fast enough. A witness to the accident reported that the Balony balloon pilot did not use the balloon's burners until after the collision. After the midair collision, the Balloon Works balloon began to descend about 700 feet per minute and impacted the ground. The pilot of the Balony Balloon reported that he landed without further incident.\n\nBoth of the pilots reported there were no pre-impact mechanical failures or malfunctions with their balloons or burners that would have precluded normal operation. \n\nA postaccident inspection of the Balony balloon revealed no damage to the balloon or the burner. A postaccident inspection of the Balloon Works balloon revealed substantial damage to the envelope.",
+              "textSha": "cd35c158eee6ea393a58007282bac2bb19b5577c432f7dc31d2a369edb89839c"
+            },
+            {
+              "passageId": "b95c66cb0d6718c6886a561709a5d275bc0b5571fcb79034dd40e72b8ee3518f",
+              "ntsbNo": "GAA15CA157",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "GAA15CA157:probable_cause/event-1",
+              "revisionId": "86e19c376cbea7b8044f7cd23ec04628f05efbedb67ff7369305750afc56d1d9",
+              "sectionSha": "f6ba525a45b17c7698b47623ed928bc2407d0db35ac3472309355b49ff7f9fd9",
+              "sectionStart": 0,
+              "text": "**This report was modified on 4/21/2016. Please see the public docket for this accident for more information.**\n\nThe failure of the Balony balloon pilot to see and avoid the Balloon Works balloon during an ascent, which resulted in the basket of the Balony balloon colliding vertically with the envelope of the Balloon Works balloon.",
+              "textSha": "f6ba525a45b17c7698b47623ed928bc2407d0db35ac3472309355b49ff7f9fd9"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA22LA194",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-28-140B"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "fe175242f9ac50ecd637fd9cfb8f1997a746978a0bc7aab800be82e33f0c7a99",
+              "ntsbNo": "ERA22LA194",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA22LA194:factual/aircraft-1",
+              "revisionId": "6857e086fe736bed4019f0f5e176c414ec779528b3ee1973009f56f9a1b5ef0e",
+              "sectionSha": "f725f8d0efc0b0becdc6299d922d5f5789dff63def5dc367d321277041b97412",
+              "sectionStart": 8632,
+              "text": "However, the document did not state that an annual inspection had been completed. \nNo entries were found in the airplane maintenance records for a time span of about 5 years, from November 30, 2017, until February 14, 2022.\nA review of the engine maintenance records revealed that the engine had accumulated 1,874.29 hours since major overhaul at the time of the accident. The most recent engine overhaul was completed on March 16, 1972, more than 50 years before the accident.\nAccording to Lycoming Service Instruction No. 1009BE, “All engine models are to be overhauled within twelve (12) calendar years of the date they first entered service or of last overhaul. This calendar year time period [time before overhaul] is to mitigate engine deterioration that occurs with age, including corrosion of metallic components and degradation of non-metallic components such as gaskets, seals, flexible hoses, and fuel pump diaphragms.”\nA review of Piper Aircraft Corporation Inspection Report (Part Number 230-207), which met the requirements of 14 CFR Part 43 (Maintenance, Preventive Maintenance, Rebuilding and Alteration), indicated that approximately 174 checklist items were required to be checked/inspected on a 100 hour/Annual inspection. These various checklist items were listed in the “PROPELLER GROUP,” “ENGINE GROUP,” “CABIN AND COCKPIT GROUP,” “FUSELAGE AND EMPENNAGE GROUP,” “WING GROUP,” “LANDING GEAR GROUP,” “FLOAT GROUP (IF INSTALLED),” “SPECIAL INSPECTIONS,” “OPERATIONAL INSPECTION,” and “GENERAL.” Further review also indicated about 18 of the checklist items involved inspection of the fuel system, including checking the wing tanks and fuel lines, gascolator, boost pump, engine-driven fuel pump, carburetor inlet screen, and carburetor. Additional review of the “GENERAL” section also revealed that one checklist item stated, “Appropriate entries made in the Aircraft and Engine Logbooks” and another stated, “Airworthiness & Registration Certificates in the aircraft and properly displayed.”\nAccording to an FAA inspector, this was the first time that the mechanic had signed off an annual inspection.",
+              "textSha": "031ca43776b847b1cba2d39feaa7a39dc0522cf1feaa3d0dc81ddfc1f8395797"
+            },
+            {
+              "passageId": "7925c3f05d88c3ca6a2e9a2801d6be8accc23d061396a8f7b4c4fd5dad8a412d",
+              "ntsbNo": "ERA22LA194",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA22LA194:probable_cause/aircraft-1",
+              "revisionId": "4dd1bf76c1dd30291267ad0dfc8afe240699aae5cd351e7c76f91fb81e24d943",
+              "sectionSha": "8163ab3a3b0c641e1c92ac0b79e869dbc947421eb824481327a28d6901c5f5ab",
+              "sectionStart": 0,
+              "text": "A total loss of engine power due to fuel contamination. Contributing to the accident was the inadequate maintenance and inspection of the airplane and engine by maintenance personnel, and the pilot’s inadequate preflight inspection and runup.",
+              "textSha": "8163ab3a3b0c641e1c92ac0b79e869dbc947421eb824481327a28d6901c5f5ab"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA24LA190",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BEECH",
+              "model": "B24R"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "cc32a63c0bfdb03d51aca14541842708bf3c15d046e4dc5ad7f9df71b6236d6c",
+              "ntsbNo": "ERA24LA190",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA24LA190:factual/aircraft-1",
+              "revisionId": "c9a8a016aa3f4726dfdbe4027d2690260088238aa8bba64446577a3a5d0afd94",
+              "sectionSha": "d04354bd8151df7c18d7b5b7759a6390e7fcdc668629e7c7046a3121ecd74962",
+              "sectionStart": 0,
+              "text": "On April 22, 2024, at 1715 eastern daylight time, a Beech B24R, N53EM, sustained substantial damage when it was involved in an accident at the Flying W Airport (N14), Lumberton Township, New Jersey. The pilot sustained minor injuries. The airplane was operated as a Title 14 Code of Federal Regulations (CFR) Part 91 personal flight.\nThe pilot/owner said he was taking his airplane get an annual inspection at another airport. He performed a preflight inspection of the airplane, started the engine, and checked the magnetos before departing. Once the airplane became airborne, it did not climb very well and began to settle back towards the ground with the landing gear still extended. \nA witness said the airplane’s engine was “sputtering” as it was trying to climb, and sounded like there was a significant drop in rpm. The witness that the airplane subsequently “stalled” and impacted a field off the end of the runway.\nA postaccident examination of the airplane revealed that the lower fuselage sustained substantial damage. Examination of the engine revealed low compression on the No. 2 cylinder. The cylinder was examined with a borescope and carbon build-up was noted. The intake valve was not sealing, and the valve seat appeared to be cracked. \nA review of the maintenance records revealed the last annual inspection on the engine was completed on May 14, 2014, at a total time of 1,469.2 hours since overhaul. At the time of the accident, the airplane had accrued about 16 hours since the last annual inspection. \nPer Federal Aviation Regulation (FAR) 91.409(a), an aircraft must undergo an annual maintenance inspection every 12 calendar months to be legal to operate. 14 CFR Part 43, Appendix D, outlines the scope and detail of items that must be checked during the annual inspection of reciprocating engine aircraft. This regulation is critical for ensuring the airworthiness of aircraft by mandating comprehensive inspections of various systems and components, including the engine.",
+              "textSha": "d04354bd8151df7c18d7b5b7759a6390e7fcdc668629e7c7046a3121ecd74962"
+            },
+            {
+              "passageId": "8299221617d860aacf3ba10b0488c40679a8f863eea2a243f560ff3976975fc8",
+              "ntsbNo": "ERA24LA190",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA24LA190:probable_cause/aircraft-1",
+              "revisionId": "7af551f8503c4884ce08909abe89363c7692fa041c98234962b66e1c5fa2a466",
+              "sectionSha": "5ebd1687c3dcd376cf5ca220af5198279c3543587f15fd94475a8f38f921993c",
+              "sectionStart": 0,
+              "text": "The pilot/owner’s failure to ensure adequate maintenance of the airplane, which resulted in a partial loss of engine power during takeoff.",
+              "textSha": "5ebd1687c3dcd376cf5ca220af5198279c3543587f15fd94475a8f38f921993c"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA25FA082",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "172"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "2e94e35d2734456788f8c918ffc2b9b5a9dfd94217af8e945d6fb659e48cbffa",
+              "ntsbNo": "ERA25FA082",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA25FA082:factual/aircraft-1",
+              "revisionId": "6baf2b6b822bd2e51f279a076c05dcd2a3a70ca64bd1ca51ebca04e92d0b628b",
+              "sectionSha": "635db9418045f620af9cbe0996f19ef4c3bff5c3eefffff10fde25019b5a8765",
+              "sectionStart": 2743,
+              "text": "The entry documenting that inspection also noted that the left wing aileron carry through cable was replaced with a new flight control cable; the reason for the replacement was not stated. The available maintenance logbooks did not show the right wing aileron carry through cable had ever been replaced. \nAn FAA inspector performed a ramp inspection of the accident airplane on July 5, 2024, about 1 month after the airplane’s most recent annual inspection, and during this inspection they noted corrosion in 7 of the 12 discrepancies, including on the right wing. The airplane maintenance records showed the items noted during the inspection were addressed on July 18, 2024, by removing the superficial corrosion, chemically treating the areas, applying primer, and applying paint.\nThe airplane’s most recent 100-hour inspection was completed on October 23, 2024, at an airframe total time of 3,471 flight hours. AIRPORT INFORMATIONFAA aircraft registration records showed that the airplane was purchased by the flight school in 2012. A review of maintenance records showed that the airplane’s most recent annual inspection was completed on June 7, 2024, at an airframe total time of 3,271 flight hours. The entry documenting that inspection also noted that the left wing aileron carry through cable was replaced with a new flight control cable; the reason for the replacement was not stated. The available maintenance logbooks did not show the right wing aileron carry through cable had ever been replaced. \nAn FAA inspector performed a ramp inspection of the accident airplane on July 5, 2024, about 1 month after the airplane’s most recent annual inspection, and during this inspection they noted corrosion in 7 of the 12 discrepancies, including on the right wing. The airplane maintenance records showed the items noted during the inspection were addressed on July 18, 2024, by removing the superficial corrosion, chemically treating the areas, applying primer, and applying paint.\nThe airplane’s most recent 100-hour inspection was completed on October 23, 2024, at an airframe total time of 3,471 flight hours.",
+              "textSha": "ade9f6ffddb7fc6c6d89d4ffe373616cb3908b62352a1799196e8ec8802d7d28"
+            },
+            {
+              "passageId": "ab1498ac3ecea7ac5687a6660092351fd34c125f0894ce1d7d644af9bec4649d",
+              "ntsbNo": "ERA25FA082",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA25FA082:probable_cause/aircraft-1",
+              "revisionId": "b4aa5f0f7eb85142100c8849b5f8866766a9ba851ef042ea08b807f96849c12b",
+              "sectionSha": "5d17134c81838d9bc2674d0c03ec237b16b1b678f3a6042fac24d6ba0e6fd17d",
+              "sectionStart": 0,
+              "text": "Maintenance personnel’s inadequate inspection of the airplane, which resulted in inflight the failure of the right aileron carry through cable due to wear, reduced effectiveness of the airplane’s ailerons, and a subsequent loss of control.",
+              "textSha": "5d17134c81838d9bc2674d0c03ec237b16b1b678f3a6042fac24d6ba0e6fd17d"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR18LA267",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "Aero Vodochody",
+              "model": "L39"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "Aero Vodochody",
+              "model": "L 39"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "df243732a536a211d4b6c4dd073c7095a7971a361284b43e67a3dba85f361031",
+              "ntsbNo": "WPR18LA267",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR18LA267:analysis/event-1",
+              "revisionId": "98672ded35c74b353a7013f3593c2d3ff59cfc4a812ebc0a534293551c66c3c6",
+              "sectionSha": "638d6df0e04009a130fb99e627dc2a14dc959267b24180385d35f123ee315af9",
+              "sectionStart": 0,
+              "text": "During the closed course air race, the pilot of the race 13 airplane announced that he was passing the race 37 airplane on his right. A video recording of the midair collision showed that, as the two airplanes approached one of the racecourse pylons, race 13 was in a slight left bank behind race 37, which was in a level attitude. Shortly after, race 37 initiated a left bank, while race 13 was rapidly approaching race 37 from behind. Just before the collision, race 13 rolled out of the turn to an almost level attitude. The two airplanes then collided, which resulted in damage to the right wing and aileron of race 37 and damage to two inspection panels and fairings on the forward left side of the fuselage of race 13. Both airplanes landed uneventfully after the collision. The pilot of race 13 failed to maintain adequate separation from race 37 while overtaking the other airplane.",
+              "textSha": "638d6df0e04009a130fb99e627dc2a14dc959267b24180385d35f123ee315af9"
+            },
+            {
+              "passageId": "81032d576fced2f31110cbb43d6edf431c7827e8ddd6d7178f2faf8a9d36cd6a",
+              "ntsbNo": "WPR18LA267",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR18LA267:probable_cause/event-1",
+              "revisionId": "271ca27830d3fe57b292d8352577145db62839e8deef5b370b3df944025fe1cc",
+              "sectionSha": "43b07cc291b64ec4c71b6f7ecb2e6637e5d88b096ab9253dd18db0c104db74ed",
+              "sectionStart": 0,
+              "text": "The pilot of the race 13 airplane's failure to maintain clearance from the race 37 airplane during the closed course air race.",
+              "textSha": "e078301df524f7bbfe153801524a7bac9e3beb4a450a573839feeb99ac2575cb"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR16LA016",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "310C"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "PIPER",
+              "model": "PA 28R-200"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "3c029de9f5015bfc25ad76a4ec355064488580625cea1f551ec37f8433c9bf9d",
+              "ntsbNo": "WPR16LA016",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 7,
+              "sectionKind": "factual",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR16LA016:factual/event-1",
+              "revisionId": "e4e4cb6a0e82c20ba75bb8741f2f787d1003ad6ad80a5fb7190ff5744b9eece3",
+              "sectionSha": "c31e56ac3c4e5b0d820c82e013ce83d697e4c6b68539b1d710a40c89493cd100",
+              "sectionStart": 1519,
+              "text": "The Cessna subsequently landed at HND without further incident. A postaccident examination revealed that the airplane's vertical stabilizer and rudder had sustained substantial damage.\n\nIn a telephone conversation with the NTSB IIC, the pilot of the Piper stated that he was level on a southwest heading at 6,500 msl level doing engine power checks, and as he initiated, or was already in a left turn, he heard a loud bang. The pilot reported that after the impact, he observed another airplane flying away from his position, and shortly thereafter heard a radio transmission to the HND tower from a pilot indicating that he had been involved in a midair collision, and was returning to HND. The pilot further stated that he subsequently experienced a loss of engine power, after which he elected to land on a dry lake bed. The pilot added that upon landing and during the landing roll, he had no right brake, which was the result of the right main landing gear brake line having been compromised due to the collision. Additionally, fuel was dripping from the right side of the airplane, due to a fuel line having been compromised as a result of the impact with the Cessna. It was also revealed that the right wing's forward wing root area had sustained substantial damage, as well as the left horizontal stabilizer.\n\nAccording to a local Federal Aviation Administration operations aviation safety inspector who interviewed the pilots of both airplanes, the inspector reported that the area in which the accident occurred, near the Jean Airport (0LF), Jean, Nevada, is widely used for training. As such, a common practice is for pilots in the area to use the 0LF Common Traffic Advisory Frequency (CTAF) 122.9, while in the area to make position reports, monitor other aircraft, and to continue to do so while operating in the area. The inspector reported that none of the three pilots reported using the 0LF CTAF frequency at any time leading up to the accident; they were monitoring the HND control tower frequency.\n\nThe FAA Airplane Flying Handbook states,\n\n\"Collision Avoidance:  All pilots must be alert to the potential for midair collision and near midair collision.  This concept requires that vigilance shall be maintained at all times, by each person operating an aircraft regardless of whether the operation is conducted under instrument flight rules (IFR) or visual flight rules (VFR).  Most midair collision accidents and reported near midair collision incidents occur in good VFR weather conditions, and during the hours of daylight. Most of these accident/incidents occur within 5 miles of an airport, and/or near navigation aids.\"",
+              "textSha": "b454ff2f47d9d8d21fd735914868b6b40ebc99a7d5d5cb53d7d8efcc5431abeb"
+            },
+            {
+              "passageId": "114e19ec3db95c9dc75ba6bd6da57893dde605c0b783fc7ea79648b110bf97c1",
+              "ntsbNo": "WPR16LA016",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 87,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR16LA016:probable_cause/event-1",
+              "revisionId": "dc86b42ea8bb798358a73756ca67e610794090242e76c2905a3932ac6d185ece",
+              "sectionSha": "2824bbabd3264f60126e49514dbd4e206ab9d966354babb0ddf06c0951c63471",
+              "sectionStart": 0,
+              "text": "The inadequate visual lookout by the pilots of both airplanes, which resulted in a midair collision. Contributing to the accident was the pilots' failure to tune to, monitor, and communicate over the common traffic advisory frequency their relative positions while in the training area.",
+              "textSha": "2824bbabd3264f60126e49514dbd4e206ab9d966354babb0ddf06c0951c63471"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-oil-change",
+      "split": "holdout",
+      "cases": [
+        {
+          "ntsbNo": "ERA11FA414",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CIRRUS DESIGN CORP",
+              "model": "SR22"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "c4a313362dace2f0c4e6f43f8645087ea65d57906ff0f25dc2a7dd50dbb0ec76",
+              "ntsbNo": "ERA11FA414",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA11FA414:factual/aircraft-1",
+              "revisionId": "81f2d1112a1d1c33ae3b376db578f49768d774c236d8029439f89d381a6f6b0b",
+              "sectionSha": "4596e0a5ac32c21b18aa306206379dccbd910a4065d2350ef5f521300b6d98d0",
+              "sectionStart": 34799,
+              "text": "Additionally, an oil filter was also presented by friends of the pilot to be from the last oil change. Further inspection of the pilot’s hangar revealed an unopened case of AeroShell SAE 50 100W oil, several unopened bottles of AeroShell SAE 50 Oil 100W, and several pint sized bottles of oil additive.\n\nA friend of the pilot who helped the airplane owner change the engine oil last reported that during that process, a hole was punctured in the top of the oil filter and a rubber tipped air nozzle was pressed into the hole and shop air pressure was applied into the oil filter. The friend reported air was blown into the filter in an attempt to push the oil into the engine to prevent leakage onto the engine during removal of the oil filter.\n\nVisual inspection of the oil filter presented to NTSB as being from the last oil change revealed it was not cut open. The top of the oil filter contained a hole that was consistent with being made by a number 2 or 3 phillips screwdriver. The oil filter was marked as being “AA48109”,“TEMPEST”, and “The Original Aviation Spin-On Oil Filter.”\n\nReview of the engine logbook revealed an entry dated July 6, 2011, indicating the oil and oil filter were changed by the owner. The entry does not indicate that the oil filter was cut open and checked for ferrous materials. The oil change entry further indicates that the hour meter reading was 1265, and 7 quarts Aeroshell 100 and 1 quart Cam Guard were added.\n\nThe oil filter presented to NTSB to be from the last oil change was cut open during the postaccident examination of the engine and the filter element did not contain ferrous particles.\n\nThe normal procedures section of the POH/AFM lists steps to be checked during preflight inspection of the airplane. The steps include in part a check of the engine oil quantity, to look for leaks, and to verify that the oil gauge rod and cap assembly and oil access door are secured. The emergency procedures section of the POH/AFM lists steps to follow in the event of low oil pressure. A warning indicates that prolonged use of high power settings after loss of oil pressure will lead to engine mechanical damage and total engine failure, which could be catastrophic. A note indicates that if low oil pressure is accompanied by normal oil temperature, it is possible that the oil pressure sensor, gauge, or relief valve is malfunctioning. In any case, land as soon as practical and determine cause.\n\nThe steps for low oil pressure in the POH/AFM are:\n\n1. Power Lever ................................................MINIMUM REQUIRED\n2. Land as soon as possible.",
+              "textSha": "a594c5ef9de65b3254991adedcf31306e2aa2f545b2faf5e69d58abc6f58e9ed"
+            },
+            {
+              "passageId": "18697fe5b1b4fb8763742058f3e00882a8333fbfae582f5a2c450a7e68906ce8",
+              "ntsbNo": "ERA11FA414",
+              "role": "retrieved",
+              "reserved": false,
+              "rank": 15,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA11FA414:factual/aircraft-1",
+              "revisionId": "81f2d1112a1d1c33ae3b376db578f49768d774c236d8029439f89d381a6f6b0b",
+              "sectionSha": "4596e0a5ac32c21b18aa306206379dccbd910a4065d2350ef5f521300b6d98d0",
+              "sectionStart": 38868,
+              "text": "Mechanical exposure of the fractured faces of the vertical cracks revealed cyclic crack growth marks and radiating lines consistent with the crack originating near the oil scraper ring groove on the inside surface of the skirt wall. Examination of the two vertical cracks using a scanning electron microscope (SEM) revealed features occasional regions that exhibited features consistent with quasi-cleavage fracture consistent with progressive crack growth under cyclic stresses.\n\nThe NTSB Materials Laboratory Factual Report indicates that the oil filler breather tube, and oil gauge rod and cap assembly were examined which revealed light scratches on each of the lock tabs of the oil filler breather tube. The cap portion of the oil gauge rod and cap assembly was examined for impact marks or indications of mechanical deformation but none were found. The examination of the oil gauge rod and cap assembly revealed an approximately 8 degree bend near the top of the oil gauge rod and cap assembly. When the oil gauge rod and cap assembly was inserted into the oil filler breather tube, but not secured, the bend near the top of the stick caused the oil gauge rod and cap assembly to rest at an angle on the top of the tube, leaving an opening on one side of the tube. In that condition, when the oil filler breather tube and oil gauge rod and cap assembly was turned upside-down, the oil gauge rod and cap assembly fell out of the oil filler breather tube under its own weight. The oil gauge cap and rod assembly was then inserted into the tube and the cap was quarter-turned back and forth by hand; it could be secured and unsecured without difficulty. When the oil gauge cap and rod assembly was secured to the oil filler tube, the oil gauge rod and cap assembly laid flat against the top of the oil filler breather tube and a rubber gasket on the oil gauge rod and cap assembly formed a seal against the top of the oil filler breather tube. The NTSB Materials Laboratory Factual Report is contained in the NTSB public docket for this case.\n\nAccording to the NTSB Vehicle Recorder Division Image Device Factual Report, the digital camera located with the wreckage (Canon PC1249 Powershot Camera) is an 8 Megapixel “point and shoot” type digital camera. Upon arrival at the audio laboratory the camera appeared to have minor damage. The picture files were downloaded from the Kingston 4 gigabyte Secure Digital (SD) formatted memory card normally and without difficulty. There were 127 still photographs and 9 movies files stored on the memory card. Of these, two photographs were taken on the day of the accident, and the date stamp was correct, though the time stamp was incorrect. Both of the pictures were of a sign inside a restaurant at the Albert Whitted Airport in St. Petersburg Florida Further review of the pictures taken during a flight in the accident airplane on July 22, 2011, depict the instrument panel or portions of it. One picture which clearly shows the analog oil pressure and temperature gauge depict both needles in the green arc range.",
+              "textSha": "112aaf7210e984e41a5b25a293bc2abf7bdae82425f67ff97f1c57cf23c4a072"
+            },
+            {
+              "passageId": "64bcd57d80c61655d0798785cf79e49c3ae1a17f6ed87b8e132542b3a0666ef0",
+              "ntsbNo": "ERA11FA414",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA11FA414:probable_cause/aircraft-1",
+              "revisionId": "a34e65c7926fbf5bc801861b1617bb3e2e42787370b0b05a65a527b75ce39cb9",
+              "sectionSha": "bc6fce9fea773757958a8116bced730b6273fb3434a34e81aa4bb5959d51f976",
+              "sectionStart": 0,
+              "text": "The pilot’s failure to maintain adequate airspeed while maneuvering for a forced landing, resulting in an inadvertent aerodynamic stall. Contributing to the accident were the pilot’s failure to secure the oil gauge rod and cap assembly before flight and his decision not to land immediately following loss of oil pressure, which resulted in the total loss of engine power due to oil starvation.",
+              "textSha": "bc6fce9fea773757958a8116bced730b6273fb3434a34e81aa4bb5959d51f976"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN24LA152",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BELLANCA",
+              "model": "17-30A"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "9d34762287867f60bd3933181e54c8b958988547ecb16e3fb1937c5c5fff5c57",
+              "ntsbNo": "CEN24LA152",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN24LA152:probable_cause/aircraft-1",
+              "revisionId": "78cac02b117b95b90abed9bb751ec94fef73de03fe41b3217147fa1e1ef15457",
+              "sectionSha": "e8e53174676009f3051f9cdbdf03592a3997a2c0150e38d097d9adaccc595750",
+              "sectionStart": 0,
+              "text": "Maintenance personnel’s failure to properly secure the oil filter adapter when replacing the oil filter adapter gasket which resulted in the filter becoming loose, resulting in the loss of engine oil, and the subsequent total loss of engine power.",
+              "textSha": "e8e53174676009f3051f9cdbdf03592a3997a2c0150e38d097d9adaccc595750"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA12LA469",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-28-180"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "a0f213d1557f3f93de17109f164d5aa283a11257dc67e5da01475b2adac959e3",
+              "ntsbNo": "ERA12LA469",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 3,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA12LA469:analysis/aircraft-1",
+              "revisionId": "98da37ef7079c6f6d335432956f9d08598c956460fb5e2c9f91fd9ecdc2c7b34",
+              "sectionSha": "8aa91b1eb715ce2943b6a0df52be63297699754fbe557435c3027e0e9ed8ab3f",
+              "sectionStart": 0,
+              "text": "About 5 minutes after takeoff, the airplane experienced a total loss of engine power and impacted a row of trees during the resultant forced landing. The accident flight was the first following a 100-hour maintenance inspection. The pilot/mechanic reported that he had changed the engine oil and oil filter as part of that inspection; however, he did not utilize a torque wrench to tighten the filter as required. Oil was noted on the ground, beginning in the area outside of the hangar doors where the maintenance was performed to the departure runway. Postaccident examination revealed that the filter was secured in place with a safety wire; however, it was able to be freely rotated by hand to the extent of that wire. It is likely that during the operation of the engine on the accident flight, oil escaped around the oil filter, which resulted in oil exhaustion and subsequent seizure of the engine.",
+              "textSha": "8aa91b1eb715ce2943b6a0df52be63297699754fbe557435c3027e0e9ed8ab3f"
+            },
+            {
+              "passageId": "0d8091e9bc5dca8637e4742f4e8a3573804b92c754a6894e5ccbb9984cf8130e",
+              "ntsbNo": "ERA12LA469",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 35,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA12LA469:probable_cause/aircraft-1",
+              "revisionId": "7bd10111be7d9901fffc143ca1eec06ca4717dc4fd4be42d3dccebc671fd392c",
+              "sectionSha": "5983a9d5ff0154a5853491e21c9deb29348a134efa711885e4ff0add2fa24572",
+              "sectionStart": 0,
+              "text": "A total loss of engine power as a result of oil exhaustion due to the mechanic's failure to apply appropriate torque to the oil filter.",
+              "textSha": "5983a9d5ff0154a5853491e21c9deb29348a134efa711885e4ff0add2fa24572"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN23LA246",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA46"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "6e938bdd3343507d5a3f53e56130fc317da43fab1ba7ad4aa3940a04a09e20f6",
+              "ntsbNo": "CEN23LA246",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN23LA246:analysis/aircraft-1",
+              "revisionId": "6967ab10081fe4228ecee392df0d993f6fab081ccad03cd2654236ff53cdda85",
+              "sectionSha": "058c3925db5a57a11c1ef574bb971244c7936410327711dd25091484bac76cfa",
+              "sectionStart": 0,
+              "text": "While climbing the airplane to cruise altitude after takeoff, the pilot observed an increase in engine oil temperature above the normal range and requested to return to the departure airport. While receiving vectors for an instrument approach, the pilot saw smoke in the cabin and the engine lost total power. Unable to glide to any runway, the pilot selected a field for the forced landing, during which the airplane sustained substantial damage to the wings and fuselage.\n\nPostaccident examination revealed that about 2 quarts of oil remained in the engine, and the recovered oil displayed evidence of metal contamination. There was evidence of an oil leak in the engine compartment and along the lower fuselage. There was evidence of a crankcase fracture near the oil dip stick port; however, a laboratory examination determined the fracture to be consistent with overload and likely due to impact-related damage. The engine exhibited no evidence of any loose or disconnected oil lines. The oil filter was removed, and the filter material was found to be saturated with metallic particles.\n\nThe oil suction screen plug, located on the oil sump, was not secured with safety wire as required per the manufacturer’s maintenance manual. There was no evidence that the plug or required safety wire was damaged by other objects. The oil suction screen plug was found to be loose, with engine oil observed below the oil suction screen plug. The crush washer behind the oil screen plug was intact and exhibited no damage.\n\nLaboratory analysis of the metallic debris recovered from the oil suction screen was consistent with connecting rod material as well as steel from fittings, fasteners, and brackets. The metallic debris found in the recovered oil, oil filter, and oil suction screen was likely due to mechanical damage associated with oil starvation.\n\nEleven days before the accident flight, the pilot observed decreased engine manifold pressure and a partial loss of engine power. He diverted to an airport, where he had the turbocharger replaced by an aviation mechanic. In addition to replacing the turbocharger, the mechanic also drained and replaced the engine oil, which included removal and reinstallation of the oil suction screen plug. \n\nThe loss of engine power was likely due to a loss of oil during the flight that led to oil starvation within the engine. The loose oil suction screen plug, the absence of safety wire on the plug, and the evidence of an oil leak beneath the plug were consistent with the mechanic’s failure to properly secure the oil suction screen plug during recent maintenance.",
+              "textSha": "058c3925db5a57a11c1ef574bb971244c7936410327711dd25091484bac76cfa"
+            },
+            {
+              "passageId": "4f7d780e4114e2e009d76a229fd6123fc005ea69fa297f599ea61241346fd990",
+              "ntsbNo": "CEN23LA246",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN23LA246:probable_cause/aircraft-1",
+              "revisionId": "c9feb06125317647409af175f6de81531defac3d46c9b4ad444d22081ed17804",
+              "sectionSha": "76953ef91041dbb21fd7243e973a5d8ed22cbc15536d5c39c43e19e82863ea75",
+              "sectionStart": 0,
+              "text": "The mechanic’s failure to properly secure the oil suction screen plug during recent maintenance, which resulted in an oil leak and subsequent loss of engine power due to oil starvation.",
+              "textSha": "76953ef91041dbb21fd7243e973a5d8ed22cbc15536d5c39c43e19e82863ea75"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN20LA014",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "Cessna",
+              "model": "172"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "8e349109bbec31ab470b42c86292ddc992b9d4bfacbd9b7ea4acd523e94784eb",
+              "ntsbNo": "CEN20LA014",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN20LA014:analysis/aircraft-1",
+              "revisionId": "bd5800e0e7064c69e3361483bb86a08989bb57878eb45d79224be832c52b5140",
+              "sectionSha": "b1a4c622e97bc1529165755bbfdf4d7aaf537a30dd1be41d83b7c2683120f479",
+              "sectionStart": 0,
+              "text": "The pilot conducted a preflight inspection of the airplane in preparation for a night cross-country flight, during which he added a half quart of oil to the engine. During the flight, the pilot noticed that the oil pressure gauge was near zero. The pilot diverted back to his departure airport; the engine started to shake, then lost all power, and he subsequently conducted a forced landing to a road. Examination of the airplane noted substantial damage to the fuselage and engine oil on the side of the cowling; the engine oil filler cap/dipstick was located 2 to 3 ft in front of the airplane. Borescope examination of the engine revealed scoring on the Nos. 2 and 4 cylinders, consistent with inadequate lubrication. \nIn a follow-up interview with the pilot, he stated that he typically placed the oil filler cap/dipstick in the wing's tie-down loop when checking the engine oil level or adding oil. It is likely that the pilot forgot to replace the dipstick during his preflight inspection, which resulted in the loss of engine oil in flight and a subsequent total loss of engine power due to oil starvation.",
+              "textSha": "72bd86814a837ae41e4557799635a96bdd168339a2a2df14ef4f382735f6915c"
+            },
+            {
+              "passageId": "8c40f5a2be65d65da7d75c1e5943f3b7f4e1b0a1d4d07b4f183d6be6be4fffa9",
+              "ntsbNo": "CEN20LA014",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 81,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN20LA014:probable_cause/aircraft-1",
+              "revisionId": "9804e47024ad16a4719cff87b32567145421cfa63719dc4d6a7be8fe443483f9",
+              "sectionSha": "76efd917545cc73fffff6823034cbd8a697128b83bb7b39ae26fc686bfc6aa10",
+              "sectionStart": 0,
+              "text": "The pilot's failure to replace the oil filler cap during his preflight inspection, which resulted in oil starvation and a subsequent total loss of engine power.",
+              "textSha": "33c98dbcb5fed3879c7e91450e41e26914543828f7cd21afdf8e7dccd65f80e8"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN19LA320",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "Cirrus",
+              "model": "SR22"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "3e93025784fde78a38ab0097fd1dabbb44613ab56a89e805fc5bca5591d84b70",
+              "ntsbNo": "CEN19LA320",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN19LA320:factual/aircraft-1",
+              "revisionId": "4570c96c9f30f1efde7df3393695dc48f1406a2247f38cd4925ea0c2bfb7a909",
+              "sectionSha": "5f208e53055b54198e0fc1082a16713f3cf9b9c822d4216bd6c2c937339afe65",
+              "sectionStart": 2613,
+              "text": "The data from the accident flight revealed that the oil pressure was between 40 and 50 psi during the flight until about 39 minutes into the flight. At that point, the data showed that oil pressure, fuel flow, and engine rpm decreased to 0. There were subsequent changes in fuel flow consistent with the pilot’s attempts to restart the engine. \n AIRCRAFT INFORMATIONAt the time of the annual inspection, the Hobbs meter indicated 3,891.5 hours, and the engine had accumulated 1,199.5 hours total time since new. The logbook entry for the annual inspection stated that the oil and filter were changed and that the filter was cut open and no abnormalities were noted. Additionally, the engine oil was analyzed routinely during oil changes. According to an oil analysis report dated May 29, 2019, the sample indicated the best “wear-rate” results from the engine; the amount of iron detected was a “bit” more than average for the type of engine, but “not far enough out of line to call a problem.”\nAccording to the engine manufacturer’s maintenance manual directions current at the time of the accident, the minimum requirement is to change the oil and filter every 50 hours and/or 4 months on engines with full flow oil filters and on engines with a large or small replaceable oil filter cartridge. Manufacturer guidance stated that oil screens and filter elements should be inspected at each oil change, and that oil analysis may be used in addition to the oil screen or filter element inspection, but not as a replacement for inspection.\nAccording to the engine’s illustrated parts catalogue, the accident engine type was equipped with a magnetic drain plug in the bottom drain hole of the oil sump pan and a quick drain coupling in a side port. Examination of the accident sump pan revealed that the magnetic drain plug was safety wired and mounted in the side port on the sump near the No. 1 cylinder and a quick drain coupling was mounted in the bottom drain hole.\nA logbook entry showed that the engine oil was changed on August 4, 2019, at a Hobbs meter time of 3,900.4 hours. When asked if the magnetic drain plug or the oil filter were examined as part of the oil change, the mechanic who performed the oil change indicated that the accident airplane's engine was not equipped with a magnetic drain plug and that he did not examine the oil filter, since it had only been a few hours since the annual inspection.\nThe accident engine’s cylinders had not been removed since the engine was installed. An engine cylinder assembly includes a piston, piston pin, and connecting rod. The connecting rod components include a piston pin bushing and a connecting rod bearing. The steel-backed bronze piston pin bushing, part number 530658, is designed to have a split line, is pressed into the connecting rod, and its split line is clocked in a specified 45° arc.",
+              "textSha": "73371f9695f3966c0228cd1d63f85e81e9b612c3c3ef80ad0dd0009ba5b8930e"
+            },
+            {
+              "passageId": "77b203dcf901b2139a1d33bc63ade31188d60b11fe9528afb648e07d43e75d7e",
+              "ntsbNo": "CEN19LA320",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN19LA320:probable_cause/aircraft-1",
+              "revisionId": "00f362e2fdd1829f6e5238476e88ee384b63f1d45ec9fb9259fbf3eb8cd3ae47",
+              "sectionSha": "aabf3c1cf61d141e826a75bcc71b48c7caa82fbe3a632e9f0b99087b5b886790",
+              "sectionStart": 0,
+              "text": "A catastrophic engine failure and forced landing due to the separation of the No. 1 connecting rod as a result of migration of the connecting rod piston pin bushing. Contributing to the accident was the mechanic’s failure to follow manufacturer guidance during the most recent oil change, which likely would have detected bushing material lost from the rod piston pin, which would have indicated impending migration and connecting rod failure.",
+              "textSha": "7266d09d54f0e7aff515685d41f248057b01a306cc11d8e35e89271f8fd323a9"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-engine-replaced",
+      "split": "holdout",
+      "cases": [
+        {
+          "ntsbNo": "CEN10LA123",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "172N"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "f0c0c7ad9e32da69d53cc47b068efee49fa305251d061a68ffac4bdc3fee0d37",
+              "ntsbNo": "CEN10LA123",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN10LA123:probable_cause/aircraft-1",
+              "revisionId": "d346a62eae97471f8a8051f7fbc761fd11051bafd66562b136a9e2f6af85216e",
+              "sectionSha": "8763bafc0d663511bfe76c3d112a74625acf1d99c96857b45bf1b02f2fd7c4da",
+              "sectionStart": 0,
+              "text": "A total loss of engine power due to the failure of the bolts that held in place the connecting rods to the engine's No. 3 and No. 4 cylinders as a result of the engine overhaul facility's improper installation of the bolts during a recent overhaul.",
+              "textSha": "8763bafc0d663511bfe76c3d112a74625acf1d99c96857b45bf1b02f2fd7c4da"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA13LA025",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-28-140"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "419f81d5155285083130020ec6f8bb4bdc228d91b56e7f7e7b549e06a05186bb",
+              "ntsbNo": "ERA13LA025",
+              "role": "retrieved",
+              "reserved": false,
+              "rank": 61,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA13LA025:factual/aircraft-1",
+              "revisionId": "1399e41fbff9811a843e268de714073b845a068f1001be81a620cae8285d69a0",
+              "sectionSha": "356ab621946b22e92dac96817e477de8b41246ac13ac73d465860ff2575cd4d4",
+              "sectionStart": 1394,
+              "text": "During a subsequent test-run of the engine, the engine lost all power whenever the right magneto was selected. Both magnetos were retained and forwarded to the NTSB Materials Laboratory, Washington, DC. \n\nLaboratory examination of the right magneto revealed that seven teeth from its drive gear were fractured and exhibited single-sided bending fatigue, consistent with applied force in one direction over a period of time. \n\nExamination of the left magneto revealed a loose drive gear with teeth worn along the top corner. The drive gear had not been fully seated on the drive shaft and was removed by hand. Additionally, the point cam was not fully installed and seated in the bottom of its slot and exhibited a wear scar where the cam contacted the points. The mis-installed cam prevented full seating of the drive gear onto the drive shaft. When the distributor cap was installed, the top corner of the drive gear contacted the distributor housing. When in operation, the wobbling action of the drive gear resulted in wear of the drive gear teeth; however, the mis-installation did not appear to prevent the left magneto from operating in its current condition (for more information, see Materials Laboratory Factual Report in the public docket). \n\nThe airplane was manufactured in 1972 and equipped with a Lycoming O-320-E3D, 150-horsepower engine. According to maintenance records and an FAA inspector, the airplane's most recent annual inspection was completed on August 22, 2012. The engine's most recent overhaul was completed on June 27, 2005. At the time of the accident, the engine had accumulated approximately 72 hours since the annual inspection and 2,300 hours since overhaul. The FAA inspector further reviewed the maintenance records and noted that the accident magnetos (Unison [Slick] model 4370 right, and model 4371 left) were installed at overhaul and had not been replaced or serviced during the time since overhaul. Additionally, when the inspector attempted to disassemble the magnetos for examination, he had to remove inspector's lacquer (yellow paint) from screw holes, which was also consistent with the magnetos never having been disassembled for inspection since overhaul. The engine manufacturer recommended overhauling the engine every 2,000 hours or 12 years, which would have included replacing the magnetos with new or overhauled units. Additionally, Slick service bulletin (SB-308A) recommended inspecting the magnetos every 500 hours.",
+              "textSha": "fd91dfa790bca11cefcd86b85ae7c5be8356695ff3818868102c1aff2d3bc435"
+            },
+            {
+              "passageId": "6a71f5d7379621f53900dab2179d21218a26d3c8c830677ce1ddc56da294a816",
+              "ntsbNo": "ERA13LA025",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA13LA025:analysis/aircraft-1",
+              "revisionId": "ec909b6fc408ebfd3aab74ad46a8586a6686fadaca98d5637fe91436448668eb",
+              "sectionSha": "44eee085f7c3c47017781054461583e339a48b88f4de9a66715850ebfd6fda49",
+              "sectionStart": 0,
+              "text": "During the initial climb, the engine lost partial power, and the flight instructor performed a forced landing into a cornfield. During a subsequent test-run of the engine, the engine would lose all power if only the right magneto was selected. Laboratory examination of the right magneto revealed that seven teeth from its drive gear were fractured and exhibited single-sided bending fatigue, consistent with applied force in one direction over a period of time. At the time of the accident, the engine had accumulated about 2,300 hours since overhaul, which had been completed about 7 years prior. The accident magnetos had not been replaced or serviced since they were installed during engine overhaul. The engine manufacturer recommended overhauling the engine every 2,000 hours or 12 years, which would have included replacing the magnetos with new or overhauled units. Additionally, a service bulletin issued by the magneto manufacturer recommended inspecting the magnetos every 500 hours; however, there was no evidence that an inspection was ever performed during the 2,300-hour life of the failed magneto.",
+              "textSha": "44eee085f7c3c47017781054461583e339a48b88f4de9a66715850ebfd6fda49"
+            },
+            {
+              "passageId": "662d19c519d7d890a122706bde18888bf0110ed14e0c8fdc41f796dd60af6cca",
+              "ntsbNo": "ERA13LA025",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA13LA025:probable_cause/aircraft-1",
+              "revisionId": "1101be0ba53e9b4c860fd2b84d7b9ff19c84ab3a4178b19e71414018ac2199ce",
+              "sectionSha": "e037d0b0e46b5ed1ea2fd5080141155ca354c82416127940aa0aa623984d4041",
+              "sectionStart": 0,
+              "text": "The operator's failure to perform magneto inspections per the manufacturer's recommendations and failure to comply with the engine manufacturer's recommended time interval for engine overhaul, which resulted in defects in the magnetos going undetected and the failure of the right magneto during initial climb.",
+              "textSha": "e037d0b0e46b5ed1ea2fd5080141155ca354c82416127940aa0aa623984d4041"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA10IA147",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-46-310P"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "2b5ece113ff50915307f1c805318077a84e3db9e224cb8f04fa02abe41fc70d5",
+              "ntsbNo": "ERA10IA147",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 3,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA10IA147:probable_cause/aircraft-1",
+              "revisionId": "b3074677ee645d22fec3c0acd74f891d3ee77943edcb6e051442c451092b2e83",
+              "sectionSha": "dff1b9ef543892a5e74cff5ff32fd16af5103d53b9b59069b733b524a2f53880",
+              "sectionStart": 0,
+              "text": "A loss of engine power due to the mechanic’s failure to properly secure the fuel control unit fuel lines after replacement of the starter adapter.",
+              "textSha": "dff1b9ef543892a5e74cff5ff32fd16af5103d53b9b59069b733b524a2f53880"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN17LA292",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA 46 350P"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "932b63329e789144b76f37f1d866fe186fb596be81a1c0ad1f7099ce9ec376d3",
+              "ntsbNo": "CEN17LA292",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN17LA292:analysis/aircraft-1",
+              "revisionId": "83ea45784386803df4ad767bc8ecc9ce90d21b6000076e827f197c2dd5f495fe",
+              "sectionSha": "71573dea1cad851337da9d35e03831f3157e1179738389941df409a23b370a68",
+              "sectionStart": 0,
+              "text": "The private pilot reported that he was in cruise flight when the engine experienced a total loss of power. Oil covered the windshield and smoke filled the cockpit, making it difficult for him to see out of the airplane. He attempted to land at an airport but conducted a forced landing to a field about 300 ft short of the runway. The right wing separated from the fuselage when it hit a hay bale. \n\nThe examination of the engine revealed a large hole in the engine case near the No. 2 cylinder. The engine maintenance records indicated that when the engine had a major overhaul about 8 years before the accident, the engine crankcase was repaired at a facility specializing in crankcase repairs. The facility typically used glass bead media to clean engine crankcases instead of \"mildly abrasive organic substances\" as required by the engine manufacturer. About 1 year before the accident, about 825 hours since the major overhaul, all 6 cylinders were replaced. The engine failure occurred about 198 hours after the cylinders were replaced.\n\nThe metallurgical examination of the eight through bolts revealed that two of the through bolts and the No. 2 cylinder studs had fracture surfaces that were consistent with fatigue. The fatigue in the studs and through bolts likely resulted from insufficient clamping force due to insufficient torque applied to the attachment nuts during installation or could have developed in service as asperities on the clamping surfaces worked down over time, leading to a reduction in clamping force.",
+              "textSha": "71573dea1cad851337da9d35e03831f3157e1179738389941df409a23b370a68"
+            },
+            {
+              "passageId": "465e265b058ba920c45edfdc1c176d7d7b2d7debdd408201da1d000cca298e1b",
+              "ntsbNo": "CEN17LA292",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN17LA292:probable_cause/aircraft-1",
+              "revisionId": "3b09de8b15be318eb618111b056f3ea6e91fceb27de656f5ba3cbc7dfb585b0f",
+              "sectionSha": "b2a991dea7d53f7cee5b3334219fb1558df93e140c700b146a291c1b619a4d49",
+              "sectionStart": 0,
+              "text": "The total loss of engine power, which resulted from fatigue failure of two engine through bolts and the No. 2 cylinder attachment studs due to the lack of sufficient clamping force.",
+              "textSha": "e855ec56fe923973da70db2921e55573004936cf23bc07f094124d135f1010f9"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN25LA401",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CubCrafters",
+              "model": "CCK-2000"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "3bf5d819f496866d72b01dd99ae3aeccc86ff57891517a649fe01b2129ded2d6",
+              "ntsbNo": "CEN25LA401",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN25LA401:probable_cause/aircraft-1",
+              "revisionId": "5fa260dca0db54d5f6e1c3ff2d02a0c99e0450e5db346142181a7d7b689b31cf",
+              "sectionSha": "e8c81f0c58c82ae4c1d1cd7abf3375546e3959f8aee13a209f4764524176ef1b",
+              "sectionStart": 0,
+              "text": "A total loss of engine power due to a lack of ignition resulting from a fractured alternator ring terminal and the builder’s incorrect installation of the wire connecting to the alternator. Contributing to the total loss of engine power was the failure of the ignition backup battery.",
+              "textSha": "e8c81f0c58c82ae4c1d1cd7abf3375546e3959f8aee13a209f4764524176ef1b"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA15LA377",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA 28RT-201T"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "69c6c602280f433847c996041990baed028a56644015f0b4436cc4f9053a499e",
+              "ntsbNo": "ERA15LA377",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA15LA377:analysis/aircraft-1",
+              "revisionId": "3947365d2d2bfaee4ee8ab181ac8a0d375bd70f60f7bb37a6237f836f4f83964",
+              "sectionSha": "a36efa3e1d7bba8afa0e82c8df69fc843f55d39ef60c9121d1ecdfe01fc929f3",
+              "sectionStart": 0,
+              "text": "The private pilot of the single-engine airplane was conducting an instrument flight rules flight. The pilot reported that, when the airplane was in cruise flight at 7,000 ft mean sea level, he heard two loud bangs, followed by a total loss of engine power, pieces of the engine exiting the cowling, and oil covering the windscreen. The pilot attempted to divert to another airport; however, after descending through a low cloud layer, he could not visually locate the turf runway, so he performed a forced landing to a field. \n\nTeardown examination of the engine revealed that a rear crankshaft counterweight had separated and that the adjacent (No. 2) connecting rod had separated at the connecting rod bolts. Metallurgical examination of the counterweight revealed fatigue cracking that had originated at the counterweight aft blade surface near a bushing hole, consistent with a loose bushing moving in the hole over a prolonged period of time.\n\nA review of maintenance records revealed that the engine had been operated for about 1,130 hours since its last overhaul, which was completed about 19 years before the accident; the engine was 7 years beyond the 12-year recommended time between overhaul (TBO). The engine manufacturer had previously issued a service bulletin, which included a warning that the improper installation of bushings during overhaul could cause engine failure. Although the failure mode evidence was consistent with a loose bushing, it was not likely due to improper installation given that the engine had operated for almost 7 years beyond its 12-year recommended TBO. If the engine had been overhauled at the recommended time, all of the bushings would have been required to be replaced with new bushings.",
+              "textSha": "a36efa3e1d7bba8afa0e82c8df69fc843f55d39ef60c9121d1ecdfe01fc929f3"
+            },
+            {
+              "passageId": "45b75af3f15cb1e96a8cf839ab25d71d62dfd962d93a4c12d999b68d8e6e6d72",
+              "ntsbNo": "ERA15LA377",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA15LA377:probable_cause/aircraft-1",
+              "revisionId": "8c61f391869a8db069809c1048d04ee61fd56af76f3cfa50815896cdc71f441e",
+              "sectionSha": "efd9b5d48674a9db91c16de706a7806f4c32c46677b834c015d4d04579593849",
+              "sectionStart": 0,
+              "text": "The fatigue failure of a crankshaft counterweight, which resulted in a total loss of engine power during cruise flight.",
+              "textSha": "efd9b5d48674a9db91c16de706a7806f4c32c46677b834c015d4d04579593849"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-fuel-line-fitting",
+      "split": "holdout",
+      "cases": [
+        {
+          "ntsbNo": "WPR25LA046",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-28R-200"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "f8cc8ade511d9a0f3d0e0abf0c91dc5b8a9e7df0bcb3c1e1ab62dd5bb2caafbf",
+              "ntsbNo": "WPR25LA046",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR25LA046:analysis/aircraft-1",
+              "revisionId": "cd9f99a00c632d1e95c70bcde5c33e13884cae0a8578c980e225ddd741007b14",
+              "sectionSha": "47a85837ddb766e25344dff5c966d932399ba12b069af466f41285567983ed33",
+              "sectionStart": 0,
+              "text": "Shortly after takeoff, the pilot smelled fuel and the engine began to lose power. The pilot initiated a turn back toward the airport, but the airplane was unable to maintain altitude. The airplane touched down in a field and collided with a fence. \n\nThe airplane had undergone maintenance a few days before the accident, which included repositioning the fuel line to the engine-driven fuel pump. A postaccident examination revealed that the B-nut securing the fuel line at the pump inlet was loose and could be rotated approximately one-half turn by hand before the fitting came off. Visible fuel staining and spray residue were present in the area of the pump inlet. The manufacturer’s specified torque specification for the aluminum-alloy fitting was 75 to 125 inch-pounds. The loss of engine power was consistent with fuel starvation due to the loose fitting, allowing air ingestion and interrupting normal fuel delivery.",
+              "textSha": "47a85837ddb766e25344dff5c966d932399ba12b069af466f41285567983ed33"
+            },
+            {
+              "passageId": "5f2925013ddae3a2e994a32fb1be5c800a8364663ca94b3d22549a0117f952b8",
+              "ntsbNo": "WPR25LA046",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR25LA046:probable_cause/aircraft-1",
+              "revisionId": "3fee5ab2b411cc959f888baf84cb687bd7b4c7a5783c1ac3476fc72349d3a9b5",
+              "sectionSha": "d147b65dbc8d8f57b77d3fcf6531cd54bb3e7068f392dd93ca458287e9af6497",
+              "sectionStart": 0,
+              "text": "A loss of engine power due to fuel starvation resulting from a loose B-nut at the engine-driven fuel-pump inlet.",
+              "textSha": "d147b65dbc8d8f57b77d3fcf6531cd54bb3e7068f392dd93ca458287e9af6497"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "LAX08LA269",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "TU206F"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "570ebb3c28b063acd155518d8c5137a2afa55e6d8112ec10223edeb3cdf80096",
+              "ntsbNo": "LAX08LA269",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "LAX08LA269:probable_cause/aircraft-1",
+              "revisionId": "312e90b01a9b462968569b0530d6b59036e2f38e1281e8760bd64271c5b84efd",
+              "sectionSha": "8c00b9a6852a1eee5af3261ac4c1401f6d66a44a8c0efd4e9dd56d8a0c6f1e8d",
+              "sectionStart": 0,
+              "text": "A loose fuel line fitting that resulted in a partial loss of engine power during the initial takeoff climb.  Contributing to the accident was inadequate maintenance installation of the fitting.",
+              "textSha": "8c00b9a6852a1eee5af3261ac4c1401f6d66a44a8c0efd4e9dd56d8a0c6f1e8d"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN12CA075",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "GLOBE",
+              "model": "GC-1B"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "50a2468a65b492617d4dc3de392e712742d029f7925684a3be2207c29d811927",
+              "ntsbNo": "CEN12CA075",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 3,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "CEN12CA075:probable_cause/aircraft-1",
+              "revisionId": "5024ec5a3f9a0d90d98513ffbd9ca6f5dfbc807b3188436d85505d8a7b27b984",
+              "sectionSha": "2a6b2ea90c3825a41a91c2709a0830d07623a366edeefb11f1e59386ef2ba9a9",
+              "sectionStart": 0,
+              "text": "A loss of engine power due to fuel starvation as a result of a loose fuel line fitting.",
+              "textSha": "2a6b2ea90c3825a41a91c2709a0830d07623a366edeefb11f1e59386ef2ba9a9"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA09LA163",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA28"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "42a3d61c9901547eb0704c6e1f8a5e141e2e3a20f475a1292d0f2f53f206424f",
+              "ntsbNo": "ERA09LA163",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA09LA163:factual/aircraft-1",
+              "revisionId": "bc2fbf4fe2bb3777dc8537bcc0e2bc85fe89e8588f9f5571ab461185f86eee05",
+              "sectionSha": "0107021c91efc957c57adbea4e2aac9bec45ea1962ce4ffa849e6e553196d580",
+              "sectionStart": 1922,
+              "text": "Evidence of a small fire was observed near the air box and upper right rear section of the engine, near the magneto and magneto harness. Examination of the airframe and flight controls revealed no evidence of a precrash mechanical failure or malfunction.\n\nThe engine assembly to the airframe structure and was compressed against the lower aircraft firewall. The structural mounts were bent downward and the exhaust system was partially crushed. A lighted \nborescope was used to examine the internal top end components. No preimpact anomalies were revealed. The spark plugs were removed and exhibited clean, light tan color combustion deposits. The crankshaft was rotated by hand and continuity of the crankshaft, camshaft, valve train, and accessory drives was established. Compression was present on all cylinders.\n\nExamination of the lubrication system, induction system, carburetor, ignition system, magnetos, harness leads, and spark plugs revealed no anomalies. Fuel was present within all of the fuel lines and components forward of the gascolator on the firewall. During removal of the fuel system hoses to the carburetor, a loose fuel hose B-nut was found. No impact or fire damage was noted in the area. \n\nThe loose fuel hose B-nut was found to be one-half turn counterclockwise off from the torqued position. It was located at the fitting from the fuel line that runs from the engine driven fuel pump to the carburetor. All of the other fuel hose connections in the engine compartment were found tight and secure when examined or removed.\n\nAccording to Lycoming Torque Value Recommendations (SSP1776), Pg. 2-23. Table IV, FLEXABLE HOSE OR TUBE FITTINGS: The required torque for a (-6), /3/8 Size is 35 in/lbs. \n\nRepresentatives from the airplane manufacturer conducted a follow up fuel line leak test on another Piper PA28-181, on February 23, 2009. The model of airplane used for the test had its T-fitting located at the carburetor. The fuel supply selector and electric boost pump were turned on. The fuel pressure gauge indicated 4.5 pounds-per-square-inch (PSI). The fuel line B-nut located at the exit side of the engine driven fuel pump was loosened. The fuel pressure then dropped 1.5 PSI with a recording of 3 PSI for 5 seconds. Subsequently, fuel was observed leaking from the loosened B-nut.",
+              "textSha": "f012ed519a125a5ad2c085391968eca229ef57ccea888859555e43c9391836f5"
+            },
+            {
+              "passageId": "3951723d58b04b04bf53fb5545743e592b14109731c2d07374022208119a2750",
+              "ntsbNo": "ERA09LA163",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA09LA163:probable_cause/aircraft-1",
+              "revisionId": "2fdfe51864d2e4f34ab52d61d90353560d9211d0323b8bfa2eca91f736f5c155",
+              "sectionSha": "d6a1d24811d816f14543b173370f2bb5604425b98d4b36a5cef3c0986eb380a3",
+              "sectionStart": 0,
+              "text": "A loss of engine power due to the improper tightening of a fuel hose B-nut by maintenance personnel during engine installation.",
+              "textSha": "d6a1d24811d816f14543b173370f2bb5604425b98d4b36a5cef3c0986eb380a3"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "ERA21LA127",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "VANS",
+              "model": "RV7"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "ba524ad3bcb784f3d307076430ac18d651511db8c4cd3cf1c9361efb52b3d575",
+              "ntsbNo": "ERA21LA127",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA21LA127:factual/aircraft-1",
+              "revisionId": "dcc8d92092216e6370410366ccbe700de8cbed2f7afc46ba8879e21121197f22",
+              "sectionSha": "77912cfe7b97397b677bc7e74d527b11257481259501af91f6eb174fd4ceffc0",
+              "sectionStart": 0,
+              "text": "On February 9, 2021, at 1453 eastern standard time, an experimental, amateur-built Vans RV7, N611E, was substantially damaged when it was involved in an accident near Thonotosassa, Florida. The private pilot sustained minor injuries. The airplane was operated as a Title 14 Code of Federal Regulations Part 91 test flight. \n\nThe pilot, who was the builder of the airplane, was completing Phase 1 flight testing of the airplane. He stated that, two days before the accident, the airplane experienced a loss of fuel pressure and a total loss of engine power. He completed a successful forced landing uninjured, and during the subsequent inspection of the airplane, no damage was found. Examination of the engine revealed that the fuel pressure adapter “t”-fitting, used to attach the fuel pressure line, had disconnected from the fuel pump elbow fitting. \n\nAccording to the pilot, the adapter fitting was adopted during the airplane’s construction for fitment in a confined space. Reattachment of the fitting was accomplished with a modified and shortened 5/8” spanner wrench for the 11/16” b-nut. The pilot departed the forced landing site and landed successfully at his destination. \n\nMinutes after departing on the accident flight, the airplane once again experienced a loss of fuel pressure and a total loss of engine power. During the subsequent forced landing, the pilot sustained minor injuries and the airplane was substantially damaged. Post-accident examination of the airplane revealed that the same fuel pump elbow fitting was disconnected from the adapter fitting. \n\nThe airplane’s airworthiness certificate was issued January 21, 2021. According to the pilot, the first loss of engine power occurred about 3.5 total aircraft hours. The second total power loss occurred about 4.1 total aircraft hours. \n\nA Federal Aviation Administration aviation safety inspector recovered the adapter fitting and performed some rudimentary, comparative, hand-tightened torque applications with the shortened, modified wrench, and a standard 11/16” spanner and recorded those tests. \n\nAccording to the pilot, the aluminum adapter fitting attached to the steel fuel pump elbow fitting was purchased at an automotive “speed shop.”\n\nIn the pilot’s NTSB Form 6120.1 Pilot/Operator Accident Report Form, the pilot stated, “Fuel line 'T' fitting disconnected from engine fuel pump fitting elbow most likely due to improper torquing.”\n\nThe fitting and associated parts were examined at the NTSB Materials Laboratory. Examination and research revealed material hardness below an Air Force Navy (AN) military specification for the aluminum adapter fitting. The manufacturer of this automotive fitting stated that there was no specified torque value, but that the fitting should be tightened to a “snug” condition. Multiple sources cited a 150 to 195-inch-pound torque value for the fitting or the “flats” method (1 to 1.5 flats past finger tight). When the flats method was attempted in the lab, two to three times the torque value specified was required to rotate one flat and, once the nut was removed, the shoulder of the adaptor body displayed damage. Further, the body of the adaptor fitting rotated when torque was applied to the nut. The movement of the adapter fitting created the potential for stresses in the fuel lines to apply force in the loosening direction.",
+              "textSha": "77912cfe7b97397b677bc7e74d527b11257481259501af91f6eb174fd4ceffc0"
+            },
+            {
+              "passageId": "202c21e1a6e398d7df652d55b469e25604fea05d47bc97b55a31d392d84ed0bb",
+              "ntsbNo": "ERA21LA127",
+              "role": "fill",
+              "reserved": false,
+              "rank": 86,
+              "sectionKind": "analysis",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA21LA127:analysis/aircraft-1",
+              "revisionId": "9d1e41c26b2375f981b38a964189b87687412f9a1226a220ea6abc14ff8c931c",
+              "sectionSha": "df87a17c069c0102af6bd1fd303746b1b9a07374dd88f1abbf6bffeee763f18e",
+              "sectionStart": 0,
+              "text": "During the previous flight, the experimental, amateur-built airplane lost total engine power, and the pilot, who was the builder of the airplane, completed a successful forced landing with no damage to the airplane. He found that the fuel pressure adapter “t”-fitting, used to attach the fuel pressure line, had disconnected from the fuel pump elbow fitting. The automotive adapter fitting was adopted during the airplane’s construction for fitment in a confined space and did not allow for measured torque application. The pilot reattached the fitting with a modified and shortened 5/8” spanner wrench for the 11/16” b-nut. The pilot departed the forced landing site and landed successfully at his destination. \nThe accident flight was the airplane’s next flight. Minutes after takeoff, the airplane once again experienced a loss of fuel pressure and a total loss of engine power. During the subsequent forced landing, the pilot sustained minor injuries and the airplane was substantially damaged. Post-accident examination of the airplane revealed that the same fuel pump elbow fitting was disconnected from the adapter fitting.\nExamination of the adapter revealed that its material was soft relative to materials used in Air Force-Navy (AN) standard fittings. As a result, the shoulder on the adapter body could have been deformed under the pressure of the retaining ring even when applying minimum torque values suggested for AN standard fittings made of aluminum alloys specified in military specification. This deformation may have inhibited the proper frictional resistance in the threads to prevent the nut from backing off in service. Additionally, the body of the adapter fitting tended to rotate when applying torque to the nut. If the body was not properly secured while torque was applied to the nut during field repairs, the twisting of the adapter fitting body could have produced stresses in the attached hoses in the assembly that may have worked to rotate the adapter fitting and nut in the loosening direction during operation.",
+              "textSha": "df87a17c069c0102af6bd1fd303746b1b9a07374dd88f1abbf6bffeee763f18e"
+            },
+            {
+              "passageId": "a42a11e7e789c65239684889be03f9afe7a0cd73872162c1e60dd1afbdd8314e",
+              "ntsbNo": "ERA21LA127",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 43,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "ERA21LA127:probable_cause/aircraft-1",
+              "revisionId": "f124ecc8aaaa0a5e5364a0da108560330b07effc89755570e26c2c61f8bfb61e",
+              "sectionSha": "07ee41c286590ec07b07f026f3d5e871871f0081ddc7f351682b15c21619e2cb",
+              "sectionStart": 0,
+              "text": "The pilot’s failure to apply adequate torque on the fuel pressure line aluminum adaptor fitting, which resulted in the loosening of the adapter, a loss of fuel flow, and a total loss of engine power. Contributing to the accident was the pilot’s choice of a soft aluminum automotive fitting, and the design, which required hand-tightening with a shortened, modified wrench that prevented a measured torque application.",
+              "textSha": "07ee41c286590ec07b07f026f3d5e871871f0081ddc7f351682b15c21619e2cb"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR14LA201",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "SCHWEIZER AIRCRAFT CORP",
+              "model": "G 164B"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "fc31e911db7f6b0428dc4b01eb992c5ebeffdc78a1577203af42fce45d134ea9",
+              "ntsbNo": "WPR14LA201",
+              "role": "retrieved",
+              "reserved": false,
+              "rank": 15,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR14LA201:factual/aircraft-1",
+              "revisionId": "ebdbad4cf938ebd6d8d29be4ec23868e227870f76c6f42ca34ae0d8f81ee6653",
+              "sectionSha": "eb0590c0ef2351216efa68007d46da6a12ae310905633807fc741179a0352ac7",
+              "sectionStart": 6612,
+              "text": "It additionally stated that after assembly the hose should be checked for cut, damage, or an imperfect hose inner tube.\n\nIn the troubleshooting portion of AFP501, it stated that if cut rubber is evident inside the hose that this could be caused by the following reasons:\n-machine chuck and socket vise out of line with one another, causing nipple to enter hose I.D. eccentrically.\n-hose bottomed tightly against socket shoulder, deforming hose I.D.\n-sharp edge or burr on nipple pilot.\n-insufficient lubricant used during nipple assembly. TESTS AND RESEARCHEngine Examination\n\nThe engine was sent to a repair facility for a teardown examination/repair and the related accessories were sent for functional evaluation. The engine was split at the C flange and the power section of the engine was removed for disassembly. It was noted that the exhaust duct was wrinkled due to impact and that the propeller shaft would not turn indicating the exhaust duct and power turbine was miss-aligned likely as a result of impact. The power section sustained crush damage. The accessory gearbox was found to exhibit corrosion signatures. All fuel related accessories were sent for functional evaluation and no anomalies were found. The engine examination report was reviewed by a representative from Pratt and Whitney. He stated that the there was no signatures indicated the engine had a mechanical malfunction.\n\nFuel Line\n\nThe drawings for the STC indicated that the fuel hose assembly from the firewall to the gascolator should be modified at installation. The part number indicated the hose required was an Integrated Aircraft 156F001-12D-0210. According to Stratoflex Products Division of Parker Hannifin Corporation, this hose would be a 156-12 (approximately 0.75 inch inside diameter) stainless-braided hose with a firesleeve and 21 inches length with straight fittings on both ends.\n\nThe hose removed from the airplane was a 111-12 black fabric-hose with no identification markings and had a straight fitting on one and a 90-degree fitting on the other. Overall length was 12.5 inches.  The fitting diameter is the same size for both hoses which will deliver a similar flow and pressure.\n\nThe STC indicated that the life limited parts/fluids service life for \"Engine Compartment Fuel Hose or Fuel Lines\" was to be \"replace at engine overhaul or on condition; maximum life 5 years.\" The logbooks did not show that the fuel line was replaced after the engine installation.",
+              "textSha": "82d48bd7e1980666127981a2420ec5b8ced1940d36e45afc813d8a525210946d"
+            },
+            {
+              "passageId": "e2c76e2fbac7f1325e86629f2f5ff7abb55db44385b616e686c4fd302873bdb0",
+              "ntsbNo": "WPR14LA201",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "factual",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR14LA201:factual/aircraft-1",
+              "revisionId": "ebdbad4cf938ebd6d8d29be4ec23868e227870f76c6f42ca34ae0d8f81ee6653",
+              "sectionSha": "eb0590c0ef2351216efa68007d46da6a12ae310905633807fc741179a0352ac7",
+              "sectionStart": 8695,
+              "text": "The fitting diameter is the same size for both hoses which will deliver a similar flow and pressure.\n\nThe STC indicated that the life limited parts/fluids service life for \"Engine Compartment Fuel Hose or Fuel Lines\" was to be \"replace at engine overhaul or on condition; maximum life 5 years.\" The logbooks did not show that the fuel line was replaced after the engine installation.\n\nThe operator received the newly-overhauled accident engine following the post-accident examination. During the installation and final rigging, the personnel performing the maintenance examined the fuel system in an effort to troubleshoot a fuel leak. Following the removal of the gascolator, the bypass valve appeared to operate normally and engine fuel hoses and lines were examined for proper flow capability. The fuel line from the firewall to the gascolator did not flow as expected and upon removal, maintenance personnel noticed that the hose appeared to be blocked. Compressed air was directed through one end of the hose and a black piece of material ejected out the opposite side. When flattened, the material was about one inch by one inch.\n\nThe hose and ejected material were sent to the NTSB investigator-in-charge (IIC), and examined at the facilities of Parker Hannifin Corporation/Parker Aerospace. The complete examination report with imbedded pictures detailing the findings is contained in the public docket of the accident.\n\nThe hose was constructed of a 90-degree fitting on the end connecting into the firewall and a straight-fitting connecting into the gascolator. From the pictures, it was apparent that the firesleeve was not equipped with hose clamps. The firesleeve did not have band clamps and there was no identification tag. The insides of the firesleeve were different on both ends: the straight-fitting end was white and fluffy, where the 90-degree side was matted and hard with a redish/orange coloration. Parker representatives stated this signature was indicative of the straight-fitting end not being dipped (a process in which the firesleeve is dipped in a high-temperature RTV silicone). This is consistent with reusing a firesleeve from another hose and cutting one end to resize it to the new hose without redipping it.\n\nThe internal examination of the hose assembly was done by utilizing a borescope. There were notable flaps of loose hose where the end of the 90-degree nipple rested against the inter hose walls. A piece of a flap was taken for material analysis to compare it to the larger ejected-flap material. They were similar in composition consistent with the ejected flap originating from the inside of the hose. The inter diameter (ID) of the hose was about 0.60 inches and the outer diameter (OD) of the nipple was 0.66 inches and its ID was 0.57 inches.",
+              "textSha": "8f364dd1ea5772a38e53d14c21164cd8b4003aff4b13ae9ad95071304fd92903"
+            },
+            {
+              "passageId": "0da8e838725f8a2d67cf01e3a14e3cdcec1561c91fe82d57b209fe1601c75087",
+              "ntsbNo": "WPR14LA201",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "aircraft",
+              "aircraftKey": 1,
+              "sectionId": "WPR14LA201:probable_cause/aircraft-1",
+              "revisionId": "92a073b58111dd8365735aee05cd8320aa41ae5a243bffe8e846738e4fd45925",
+              "sectionSha": "2011cb434214a73c91249b986bfa4f0e644b2ff9137724899a01c41fe18b4613",
+              "sectionStart": 0,
+              "text": "The assembler’s improper fabrication of a fuel line (hose) and the subsequent failure to verify that it was not occluded, which resulted in fuel starvation and a total loss of engine power during takeoff.",
+              "textSha": "c8629b3d907014fc779a2f7e5cd9218a8f9c13825c2416cfe9edb39d745d8573"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "question": "q-midair-maintenance",
+      "split": "holdout",
+      "cases": [
+        {
+          "ntsbNo": "ERA15MA259",
+          "rank": 1,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "CESSNA",
+              "model": "150M"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "LOCKHEED-MARTIN",
+              "model": "F-16CM"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "3e04e4f51bec390a4db6eb9d1ea74b1f4d4ef3c44f574c38d9ca3bd88c04a81a",
+              "ntsbNo": "ERA15MA259",
+              "role": "retrieved",
+              "reserved": true,
+              "rank": 1,
+              "sectionKind": "analysis",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "ERA15MA259:analysis/event-1",
+              "revisionId": "251b3075868010990dff30a133cb198db949057830ad7d40d3368ea88c717815",
+              "sectionSha": "4e07cfb56a1fd3e8af49215463cad5f23ab51e0c67572e898dbdb37185973dc8",
+              "sectionStart": 18900,
+              "text": "The information presented on the in-cockpit traffic display would have clearly indicated that the airplanes were on a collision course that might not be resolved by a left turn and that the vertical separation between the airplanes had decreased to 300 ft. \n\nConsequently, an in-cockpit traffic display could have helped the F-16 pilot recognize the potential for a collision in advance of the controller's instruction to turn left. The earlier warning also could have provided him additional time to conduct his visual search for the Cessna and potentially take other preemptive action to avoid the collision. Had the F-16 been equipped with a system that was able to provide the pilot with resolution advisories, the F-16 pilot could have taken action in response to that alarm to avoid the collision, even without acquiring the Cessna visually.\n\nPostaccident Actions\n\nIn November 2016, we issued safety recommendations to the FAA and Midwest Air Traffic Control, Robinson Aviation, and Serco (companies that operate federal contract towers) to (1) brief all air traffic controllers and their supervisors on the ATC errors in this midair collision and one that occurred on August 16, 2015, near San Diego, California; and (2) include these midair collisions as examples in instructor-led initial and recurrent training for air traffic controllers on controller judgment, vigilance, and/or safety awareness.\n\nIn November 2016, we also issued a safety alert titled \"Prevent Midair Collisions: Don't Depend on Vision Alone\" to inform pilots of the benefits of using technologies that provide traffic displays or alerts in the cockpit to help separate safely. (In May 2015 [revised in December 2015], we issued a safety alert titled \"See and Be Seen: Your Life Depends on It\" regarding the importance of maintaining adequate visual lookout.)\n\nAfter the accident, the Cessna's departure airport engaged in several outreach efforts (including posting midair collision avoidance materials locally and having outreach meetings with pilots) to raise awareness regarding midair collisions and encourage contact with ATC. The airport also updated its chart supplement to note the presence of military and other traffic arriving at and departing from CHS.",
+              "textSha": "bde95ba68738238613e5e7b9718ca18a6ae6e102e432f0782309e6fc6700d360"
+            },
+            {
+              "passageId": "7bae00a7b06e0659959a4d717fd22b83f778d515db0880352755b97858043058",
+              "ntsbNo": "ERA15MA259",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": null,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "ERA15MA259:probable_cause/event-1",
+              "revisionId": "62eaa3e59205cb65d4324f9f36ce884b44638c235d61b60e66bcf6091db87538",
+              "sectionSha": "1c51c75b46d65e2868d09d386e5bac87da9e4e5537af411bcef9ac8629a7b543",
+              "sectionStart": 0,
+              "text": "The approach controller's failure to provide an appropriate resolution to the conflict between the F-16 and the Cessna. Contributing to the accident were the inherent limitations of the see-and-avoid concept, resulting in both pilots' inability to take evasive action in time to avert the collision.",
+              "textSha": "1c51c75b46d65e2868d09d386e5bac87da9e4e5537af411bcef9ac8629a7b543"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR13LA004",
+          "rank": 2,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "PIPER",
+              "model": "PA-28-161"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "PIPER",
+              "model": "PA-28R-201"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "2537a97af3ce1e7e2dbb4383eb0a5dfa55d3f23ef1d32fa64c2501adff245043",
+              "ntsbNo": "WPR13LA004",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 2,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR13LA004:probable_cause/event-1",
+              "revisionId": "a3f563fd329240ce2ca8f3a23a694fd8c9664095d67afbab242a74f0cc3b92d8",
+              "sectionSha": "fe7f6efc70cf99a7bd974bd0bf77eea9225f5ce8d4b65d36e8f0678d82b22acd",
+              "sectionStart": 0,
+              "text": "The failure of both flight instructors to see and avoid the other airplane while providing instrument flight training, which resulted in a midair collision.",
+              "textSha": "fe7f6efc70cf99a7bd974bd0bf77eea9225f5ce8d4b65d36e8f0678d82b22acd"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN11LA296",
+          "rank": 3,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "AIR TRACTOR INC",
+              "model": "AT-802A"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "AIR TRACTOR INC",
+              "model": "AT-502B"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "17c80fcae8e149e19bcd3939858312b673f8459559e0a032de91cd5c05524ad8",
+              "ntsbNo": "CEN11LA296",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 3,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "CEN11LA296:probable_cause/event-1",
+              "revisionId": "cae952b282024765c3a341daaabe9f3a75c8942ba05d8c28b454a2227322de0f",
+              "sectionSha": "c1e5f9891acb1e20080a991d6386ad6387bd3b9305cbbcb6627a1f32e13ca8c4",
+              "sectionStart": 0,
+              "text": "The failure of both pilots to see and avoid the other airplane, which resulted in a midair collision.",
+              "textSha": "c1e5f9891acb1e20080a991d6386ad6387bd3b9305cbbcb6627a1f32e13ca8c4"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR12LA250",
+          "rank": 4,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "SCHEMPP-HIRTH",
+              "model": "STANDARD CIRRUS"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "CENTRAIR",
+              "model": "C101A"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "c8ae6406bce8fc3be019f090ab771740dc3a315fa0afaf9f187d2e84678ed015",
+              "ntsbNo": "WPR12LA250",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 4,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR12LA250:probable_cause/event-1",
+              "revisionId": "59e3abc6e88fbc4c19c94427df5cfa47b9fbe72a55d615c1f9443892bb02a060",
+              "sectionSha": "bf273290482cdfb10c86a74acca38249f49f0974edca2bf2bb919748876e81ef",
+              "sectionStart": 0,
+              "text": "The failure of both pilots to see and avoid each other, which resulted in a midair collision.",
+              "textSha": "bf273290482cdfb10c86a74acca38249f49f0974edca2bf2bb919748876e81ef"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "WPR19FA145",
+          "rank": 5,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "Grumman",
+              "model": "G164"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "Grumman",
+              "model": "G164"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "5eb3fe70e1993926849f7656828c5afc1b82a57b3986e7979446a26a7e20a2cc",
+              "ntsbNo": "WPR19FA145",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 5,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "WPR19FA145:probable_cause/event-1",
+              "revisionId": "dde6cf6fcd23e3ad02f11f463af3f7a107c7a35d741312b16b63f3dc68bb5e43",
+              "sectionSha": "9caabbad38d9f85df70dc823b387fee27eca69ce38286d47e25347b93cae5dbb",
+              "sectionStart": 0,
+              "text": "The failure of both pilots to see and avoid the other airplane, which resulted in a midair collision.",
+              "textSha": "c1e5f9891acb1e20080a991d6386ad6387bd3b9305cbbcb6627a1f32e13ca8c4"
+            }
+          ]
+        },
+        {
+          "ntsbNo": "CEN10LA099",
+          "rank": 6,
+          "aircraft": [
+            {
+              "aircraftKey": 1,
+              "make": "BUCKEYE AVIATION INC",
+              "model": "DM"
+            },
+            {
+              "aircraftKey": 2,
+              "make": "BUCKEYE AVIATION INC",
+              "model": "DM"
+            }
+          ],
+          "passages": [
+            {
+              "passageId": "4d1193ce967bf3cd257c710c6cfa4c33267440ee4fe7c19ee9a368a5472d40ba",
+              "ntsbNo": "CEN10LA099",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 6,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "CEN10LA099:probable_cause/event-1",
+              "revisionId": "d0b3fadf780d860bbc592502e6532c8362b554cf8d44861ed745680389a2d94f",
+              "sectionSha": "1b76c5140e778a1e3f4ff75059acc3a2f6f3d5c5c3023c930a7874da440bb185",
+              "sectionStart": 0,
+              "text": "The failure of both pilots to see and avoid the other aircraft, resulting in a midair collision while maneuvering at low altitude.",
+              "textSha": "31e26c37e26089b9696ef461c9797095a477af879d0066c117abe671e39f6b07"
+            },
+            {
+              "passageId": "35278ea6ccdc976018ce54f3e14225fef47afbce311e71e062b6adb5e4ce1d71",
+              "ntsbNo": "CEN10LA099",
+              "role": "probable_cause",
+              "reserved": true,
+              "rank": 7,
+              "sectionKind": "probable_cause",
+              "scope": "event",
+              "aircraftKey": null,
+              "sectionId": "CEN10LA099:probable_cause/event-2",
+              "revisionId": "025f5b23b95de98429fa67d97928ff7d5c82097b0b62d8a51eab88d6b4c9ae64",
+              "sectionSha": "73f38a9f37871d2077209c9adc7618aa7a73b4498e8850803aa4968fb93b49b8",
+              "sectionStart": 0,
+              "text": "The failure of both pilots to see and avoid the other aircraft, which resulted in a midair collision while maneuvering at low altitude.",
+              "textSha": "55becff650698c16dfe3906783fdd6be6297ce2f9213741aca241f5c8597ff2c"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

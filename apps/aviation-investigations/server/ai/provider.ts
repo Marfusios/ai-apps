@@ -147,16 +147,15 @@ export const CLAIM_KINDS = [
 ] as const;
 export type ClaimKind = (typeof CLAIM_KINDS)[number];
 
-export const CHECK_REASONS = [
-  'not_supported',
-  'contradicted',
-  'overstated_certainty',
-  'wrong_attribution',
-  'wrong_aircraft',
-  'timing_unsupported',
-  'out_of_context',
-  'out_of_scope',
-] as const;
+/**
+ * The checker's verdict on one claim (check.v4): `supported` (the passages the claim
+ * cites establish the whole claim and no supplied passage of its case conflicts with
+ * it), `contradicted` (a supplied passage of its case says otherwise) or
+ * `not_established` (neither). Only `supported` lets a claim be shown
+ * (server/briefs/verdicts.ts).
+ */
+export const CHECK_VERDICTS = ['supported', 'contradicted', 'not_established'] as const;
+export type CheckVerdict = (typeof CHECK_VERDICTS)[number];
 
 export const INJURY_CODES = ['FATL', 'SERS', 'MINR', 'NONE'] as const;
 export const WEATHER_CODES = ['VMC', 'IMC'] as const;
@@ -237,11 +236,40 @@ export type ScopeOutput = z.infer<typeof ScopeOutputSchema>;
 /** Failure-type readings the planner may offer (`ambiguity.type = failure_type`). */
 export const FAILURE_TYPE_VALUES = FAILURE_TYPES;
 
+/** Claims one check takes at most, and the server-issued claim id (`C1`..`C100`, in claim order). */
+export const MAX_CHECK_CLAIMS = 100;
+export const ClaimIdSchema = z.string().regex(/^C[1-9][0-9]{0,2}$/);
+/** Passages one verdict may rest on. */
+export const MAX_VERDICT_PASSAGES = 4;
+/** Contradiction quotes one check may return, and the longest. */
+export const MAX_CHECK_QUOTES = 8;
+export const CHECK_QUOTE_MAX = 200;
+
+/**
+ * The check stage's output (check.v4): exactly one verdict for every claim id it was
+ * given, each with the passages it rests on, and optionally the words that contradict a
+ * claim, copied from one of those passages. The schema bounds the shape only; the server
+ * decides completeness, references, quotes and the outcome (server/briefs/verdicts.ts).
+ */
 export const CheckOutputSchema = z.strictObject({
-  supported: z.boolean(),
-  problems: z
-    .array(z.strictObject({ claimIndex: z.number().int().min(0).max(99), reason: z.enum(CHECK_REASONS) }))
-    .max(100),
+  verdicts: z
+    .array(
+      z.strictObject({
+        claim: ClaimIdSchema,
+        verdict: z.enum(CHECK_VERDICTS),
+        passages: z.array(PassageId).max(MAX_VERDICT_PASSAGES),
+      }),
+    )
+    .max(MAX_CHECK_CLAIMS),
+  quotes: z
+    .array(
+      z.strictObject({
+        claim: ClaimIdSchema,
+        passage: PassageId,
+        text: z.string().min(1).max(CHECK_QUOTE_MAX),
+      }),
+    )
+    .max(MAX_CHECK_QUOTES),
 });
 export type CheckOutput = z.infer<typeof CheckOutputSchema>;
 
@@ -323,7 +351,9 @@ export type ComposeInput = z.infer<typeof ComposeInputSchema>;
 /**
  * Bounded claim/citation pairs, every verified passage of every case the claims are
  * about, and the reader's criteria as server templates; never the question, the
- * planner output or earlier answers.
+ * planner output or earlier answers. Each claim has a server-issued id (`C1`.., in
+ * order) that its verdict must name. An `absence` claim says something is not in the
+ * supplied passages of its case: it cites every one of them, so its scope is explicit.
  */
 export const CheckInputSchema = z
   .strictObject({
@@ -335,14 +365,16 @@ export const CheckInputSchema = z
     claims: z
       .array(
         z.strictObject({
+          id: ClaimIdSchema,
           kind: z.enum(CLAIM_KINDS),
           ntsbNo: CaseNumber.optional(),
           text: z.string().min(1).max(2_000),
           passageIds: z.array(PassageId).min(1).max(MAX_PASSAGES),
+          absence: z.boolean(),
         }),
       )
       .min(1)
-      .max(100),
+      .max(MAX_CHECK_CLAIMS),
   })
   .superRefine((input, ctx) => {
     const ids = new Set(input.passages.map((p) => p.passageId));
@@ -353,6 +385,7 @@ export const CheckInputSchema = z
         break;
       }
     }
+    if (input.claims.some((c, i) => c.id !== `C${i + 1}`)) ctx.addIssue({ code: 'custom', message: 'claim ids are C1.. in claim order' });
   });
 export type CheckInput = z.infer<typeof CheckInputSchema>;
 

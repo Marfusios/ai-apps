@@ -1,0 +1,107 @@
+/**
+ * The checker calibration's frozen evidence (`evidence.json`, Task 16c): the real
+ * retrieval bundles of `questions.ts` as the brief pipeline checked them (every passage
+ * resolved against its canonical row and section revision, `verifyBundle`), with the
+ * aircraft of each case. Public NTSB text. The builder rebuilds the pipeline's
+ * `VerifiedCase`s from it, so the calibration claims are rendered by production code.
+ */
+import { createHash } from 'node:crypto';
+import { z } from 'zod';
+import type { CaseSummary } from '../../server/briefs/evidence.js';
+import type { VerifiedCase } from '../../server/briefs/render.js';
+
+const Hex64 = z.string().regex(/^[0-9a-f]{64}$/);
+
+export const EvidencePassageSchema = z.strictObject({
+  passageId: Hex64,
+  ntsbNo: z.string().regex(/^[A-Z0-9]{6,16}$/),
+  role: z.enum(['retrieved', 'probable_cause', 'fill']),
+  reserved: z.boolean(),
+  rank: z.number().int().positive().nullable(),
+  sectionKind: z.enum(['factual', 'analysis', 'probable_cause']),
+  scope: z.enum(['aircraft', 'event']),
+  aircraftKey: z.number().int().nonnegative().nullable(),
+  sectionId: z.string().min(1),
+  revisionId: Hex64,
+  sectionSha: Hex64,
+  sectionStart: z.number().int().nonnegative(),
+  text: z.string().min(1),
+  /** sha256 of `text` (UTF-8), so a changed snapshot is caught offline. */
+  textSha: Hex64,
+});
+export type EvidencePassage = z.infer<typeof EvidencePassageSchema>;
+
+export const EvidenceCaseSchema = z.strictObject({
+  ntsbNo: z.string().regex(/^[A-Z0-9]{6,16}$/),
+  rank: z.number().int().positive(),
+  aircraft: z.array(z.strictObject({ aircraftKey: z.number().int().nonnegative(), make: z.string().nullable(), model: z.string().nullable() })).min(1),
+  passages: z.array(EvidencePassageSchema).min(1),
+});
+export type EvidenceCase = z.infer<typeof EvidenceCaseSchema>;
+
+export const EvidenceBundleSchema = z.strictObject({
+  question: z.string().min(1),
+  split: z.enum(['dev', 'holdout']),
+  cases: z.array(EvidenceCaseSchema).min(1).max(6),
+});
+export type EvidenceBundle = z.infer<typeof EvidenceBundleSchema>;
+
+export const EvidenceFileSchema = z.strictObject({
+  version: z.literal('checker-evidence-v1'),
+  source: z.strictObject({
+    generationId: z.number().int().positive(),
+    passagesIndex: z.string().min(1),
+    chunkerVersion: z.string().min(1),
+    retrievedAt: z.iso.datetime(),
+    note: z.string(),
+  }),
+  bundles: z.array(EvidenceBundleSchema).min(1),
+});
+export type EvidenceFile = z.infer<typeof EvidenceFileSchema>;
+
+export const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+/** The pipeline's verified cases of a frozen bundle (only the fields the check renderer and the criteria read). */
+export function verifiedCases(bundle: EvidenceBundle): VerifiedCase[] {
+  return bundle.cases.map((c) => ({
+    ntsbNo: c.ntsbNo,
+    rank: c.rank,
+    summary: { row: { aircraft: c.aircraft }, report: {}, aircraftNumbers: [] } as unknown as CaseSummary,
+    passages: c.passages.map((p) => ({
+      passageId: p.passageId,
+      role: p.role,
+      reserved: p.reserved,
+      rank: p.rank,
+      sectionKind: p.sectionKind,
+      allowed: {
+        ntsbNo: p.ntsbNo,
+        text: p.text,
+        sha: p.sectionSha,
+        sectionId: p.sectionId,
+        revisionId: p.revisionId,
+        sectionKind: p.sectionKind,
+        sectionStart: p.sectionStart,
+        scope: p.scope,
+        aircraftKey: p.aircraftKey,
+      },
+    })),
+  }));
+}
+
+/** Problems with a snapshot: a text that no longer hashes to its recorded sha, a case in two splits. */
+export function evidenceProblems(file: EvidenceFile): string[] {
+  const problems: string[] = [];
+  const splitOf = new Map<string, string>();
+  for (const b of file.bundles) {
+    for (const c of b.cases) {
+      const seen = splitOf.get(c.ntsbNo);
+      if (seen && seen !== b.split) problems.push(`case ${c.ntsbNo} is in both splits`);
+      splitOf.set(c.ntsbNo, b.split);
+      for (const p of c.passages) {
+        if (sha256(p.text) !== p.textSha) problems.push(`passage ${p.passageId.slice(0, 12)} text does not match its sha`);
+        if (p.ntsbNo !== c.ntsbNo) problems.push(`passage ${p.passageId.slice(0, 12)} is not of ${c.ntsbNo}`);
+      }
+    }
+  }
+  return problems;
+}

@@ -51,7 +51,7 @@
  * taxiway named by the reader or the record stays. Quotes are exempt.
  */
 import { createHash } from 'node:crypto';
-import { ComposeOutputSchema, type ComposeOutput, type GlyphKind } from '../../shared/contracts/briefs.js';
+import { BOUNDED_RELATIONS, ComposeOutputSchema, NUMBERED_RELATIONS, type ComposeOutput, type GlyphKind } from '../../shared/contracts/briefs.js';
 import { ambiguousBoundary, citationPlacement, splitSentences, summaryFormatProblem } from './sentences.js';
 
 export const QUOTE_MATCH_RULE_VERSION = 'quote-ws-v2';
@@ -142,6 +142,7 @@ export const VALIDATION_CODES = [
   'malformed_quote',
   'quote_not_found',
   'timing_precision',
+  'chronology_shape',
   'bad_marker',
   'marker_unknown_case',
   'uncited_summary',
@@ -405,10 +406,14 @@ function leakableAliases(allow: Allowlist, readerText: string): Set<string> {
   return out;
 }
 
-/** Allowed precision of timing values: one decimal place for flight hours, whole calendar days. */
-export function timingValueAllowed(basis: string, value: number): boolean {
-  if (basis === 'calendar_days') return Number.isInteger(value);
-  if (basis === 'flight_hours') return Number.isInteger(Math.round(value * 10)) && Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
+/**
+ * Allowed precision of chronology numbers: one decimal place for flight hours; whole
+ * calendar days and completed flights; a flight's ordinal is a whole number from 1.
+ */
+export function timingValueAllowed(relation: string, value: number): boolean {
+  if (relation === 'calendar_days' || relation === 'intervening_flights') return Number.isInteger(value);
+  if (relation === 'flight_ordinal') return Number.isInteger(value) && value >= 1;
+  if (relation === 'flight_hours') return Number.isInteger(Math.round(value * 10)) && Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
   return false;
 }
 
@@ -520,19 +525,16 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
       support(k.maintenance.passageIds, k.ntsbNo, `cases.${ci}.maintenance.passageIds`, cited ? 1 : 0);
     }
     if (k.symptom) support(k.symptom.passageIds, k.ntsbNo, `cases.${ci}.symptom.passageIds`, 1);
-    // Chronology: each stated fact cites the passages that state it; values at their precision.
-    const t = k.chronology;
-    const at = `cases.${ci}.chronology`;
-    if (t?.flightHours) {
-      support(t.flightHours.passageIds, k.ntsbNo, `${at}.flightHours.passageIds`, 1);
-      if (!timingValueAllowed('flight_hours', t.flightHours.value)) fail('timing_precision', `${at}.flightHours.value`);
-    }
-    if (t?.calendarDays) {
-      support(t.calendarDays.passageIds, k.ntsbNo, `${at}.calendarDays.passageIds`, 1);
-      if (!timingValueAllowed('calendar_days', t.calendarDays.value)) fail('timing_precision', `${at}.calendarDays.value`);
-    }
-    if (t?.flight) support(t.flight.passageIds, k.ntsbNo, `${at}.flight.passageIds`, 1);
-    if (t?.qualitative) support(t.qualitative.passageIds, k.ntsbNo, `${at}.qualitative.passageIds`, 1);
+    // Chronology: each stated fact cites the passages that state it, carries exactly the
+    // parts its relation takes (`chronology_shape`) and its number at its precision.
+    (k.chronology?.facts ?? []).forEach((f, fi) => {
+      const at = `cases.${ci}.chronology.facts.${fi}`;
+      support(f.passageIds, k.ntsbNo, `${at}.passageIds`, 1);
+      if ((f.anchor === 'other') !== (f.other !== undefined)) fail('chronology_shape', `${at}.other`);
+      if (NUMBERED_RELATIONS.has(f.relation) !== (f.value !== undefined)) fail('chronology_shape', `${at}.value`);
+      if (BOUNDED_RELATIONS.has(f.relation) !== (f.bound !== undefined)) fail('chronology_shape', `${at}.bound`);
+      if (f.value !== undefined && NUMBERED_RELATIONS.has(f.relation) && !timingValueAllowed(f.relation, f.value)) fail('timing_precision', `${at}.value`);
+    });
   });
 
   // Gaps: about a case in the bundle, resting on that case's passages.
@@ -560,13 +562,23 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
     });
   }
 
-  // Free text: every NTSB-number-shaped token is allowlisted; no links, markup or passage aliases.
+  // Free text: every NTSB-number-shaped token is allowlisted; no links, markup or passage
+  // aliases. The chronology's anchor wording is shown and checked inside server templates.
   const leakable = leakableAliases(allow, opts.readerText ?? '');
+  const anchors: [string, string][] = c.cases.flatMap((k, i): [string, string][] =>
+    k.chronology
+      ? [
+          [`cases.${i}.chronology.maintenance`, k.chronology.maintenance],
+          ...k.chronology.facts.flatMap((f, fi): [string, string][] => (f.other !== undefined ? [[`cases.${i}.chronology.facts.${fi}.other`, f.other]] : [])),
+        ]
+      : [],
+  );
   const texts: [string, string][] = [
     ['summary', c.summary],
     ...c.groups.map((g, gi): [string, string] => [`groups.${gi}.caseNumbers`, g.caseNumbers.join(' ')]),
     ...c.cases.map((k, i): [string, string] => [`cases.${i}.ntsbNo`, k.ntsbNo]),
     ...c.cases.map((k, i): [string, string] => [`cases.${i}.why`, k.why]),
+    ...anchors,
     ...c.gaps.map((g, i): [string, string] => [`gaps.${i}.ntsbNo`, g.ntsbNo]),
     ...c.gaps.map((g, i): [string, string] => [`gaps.${i}.note`, g.note]),
   ];
@@ -576,6 +588,7 @@ export function validateComposition(out: ComposeOutput, allow: Allowlist, opts: 
   for (const [path, text] of [
     ['summary', c.summary],
     ...c.cases.map((k, i) => [`cases.${i}.why`, k.why]),
+    ...anchors,
     ...c.gaps.map((g, i) => [`gaps.${i}.note`, g.note]),
   ] as [string, string][]) {
     if (LINK_OR_MARKUP.test(text)) fail('markup_or_link', path);

@@ -37,12 +37,12 @@ describe('PRICE_TABLE and caps', () => {
   it('holds the hard caps and reservations (calibrated with the provider counter, DESIGN §9)', () => {
     expect(STAGE_CAPS).toEqual({
       scope: { input: 6_500, output: 600 },
-      answer: { input: 28_000, output: 9_000 },
-      check: { input: 36_000, output: 3_000 },
+      answer: { input: 28_000, output: 11_000 },
+      check: { input: 40_000, output: 9_500 },
       embed: { input: 1_000, output: 0 },
     });
-    expect(CACHED_PREFIX_MAX).toBe(5_500);
-    expect(RESERVATIONS).toEqual({ [OPUS]: 0.31, [SONNET]: 0.16, [HAIKU]: 0.02 });
+    expect(CACHED_PREFIX_MAX).toBe(6_500);
+    expect(RESERVATIONS).toEqual({ [OPUS]: 0.35, [SONNET]: 0.18, [HAIKU]: 0.02 });
   });
 
   it('keeps every stage below the Haiku long-context threshold', () => {
@@ -52,38 +52,44 @@ describe('PRICE_TABLE and caps', () => {
 });
 
 describe('worstCaseRequestUsd', () => {
-  it('opus worst case ≈ 0.3038 and fits 0.31', () => {
+  it('opus worst case ≈ 0.3485 and fits 0.35', () => {
     const usd = worstCaseRequestUsd(withAnswer(OPUS));
-    expect(usd).toBeCloseTo(0.3038, 4);
-    // Answer $0.112 input + $0.18 output + $0.0055 prefix premium (5,500 × $1/M); Haiku scope
-    // $0.00065 + $0.0003 + $0.0001375 and check $0.0036 + $0.0015 + $0.0001375; embedding $0.00002.
-    expect(usd).toBeCloseTo(0.303845, 9);
-    expect(usd).toBeLessThanOrEqual(0.31);
-    expect(() => assertReservationCovers(withAnswer(OPUS), 0.31)).not.toThrow();
-    // Nine worst-case briefs fit the $3/day cap.
-    expect(Math.floor(3 / RESERVATIONS[OPUS]!)).toBe(9);
+    expect(usd).toBeCloseTo(0.3485, 4);
+    // Answer $0.112 input + $0.22 output + $0.0065 prefix premium (6,500 × $1/M); Haiku scope
+    // $0.00065 + $0.0003 + $0.0001625 and check $0.004 + $0.00475 + $0.0001625; embedding $0.00002.
+    expect(usd).toBeCloseTo(0.348545, 9);
+    expect(usd).toBeLessThanOrEqual(0.35);
+    expect(() => assertReservationCovers(withAnswer(OPUS), 0.35)).not.toThrow();
+    // Eight worst-case briefs fit the $3/day cap.
+    expect(Math.floor(3 / RESERVATIONS[OPUS]!)).toBe(8);
   });
 
-  it('sonnet ≈ 0.1551 fits 0.16', () => {
+  it('sonnet ≈ 0.1793 fits 0.18', () => {
     const usd = worstCaseRequestUsd(withAnswer(SONNET));
-    expect(usd).toBeCloseTo(0.1551, 4);
-    expect(usd).toBeCloseTo(0.155095, 9);
-    expect(() => assertReservationCovers(withAnswer(SONNET), 0.16)).not.toThrow();
+    expect(usd).toBeCloseTo(0.1793, 4);
+    expect(usd).toBeCloseTo(0.179295, 9);
+    expect(() => assertReservationCovers(withAnswer(SONNET), 0.18)).not.toThrow();
   });
 
-  it('haiku ≈ 0.0138 fits 0.02', () => {
+  it('haiku ≈ 0.0185 fits 0.02', () => {
     const usd = worstCaseRequestUsd(withAnswer(HAIKU));
-    expect(usd).toBeCloseTo(0.0138, 4);
-    expect(usd).toBeCloseTo(0.0137825, 9);
+    expect(usd).toBeCloseTo(0.0185, 4);
+    expect(usd).toBeCloseTo(0.0185075, 9);
     expect(() => assertReservationCovers(withAnswer(HAIKU), 0.02)).not.toThrow();
+  });
+
+  it('a Sonnet checker needs more than the Opus reservation holds (G6 #6)', () => {
+    const usd = worstCaseRequestUsd({ scope: HAIKU, answer: OPUS, check: SONNET });
+    expect(usd).toBeCloseTo(0.517883, 6);
+    expect(() => assertReservationCovers({ scope: HAIKU, answer: OPUS, check: SONNET }, RESERVATIONS[OPUS]!)).toThrow(PricingError);
   });
 
   it('sums every stage at its caps plus the cache-write premium on its prefix', () => {
     // The cached prefix is part of the input, so it never exceeds the stage's input cap.
-    expect(stageWorstCaseUsd(OPUS, STAGE_CAPS.answer)).toBeCloseTo(0.112 + 0.18 + 0.0055, 12);
-    expect(stageWorstCaseUsd(HAIKU, STAGE_CAPS.scope)).toBeCloseTo(0.00065 + 0.0003 + 0.0001375, 12);
-    expect(stageWorstCaseUsd(HAIKU, STAGE_CAPS.check)).toBeCloseTo(0.0036 + 0.0015 + 0.0001375, 12);
-    expect(stageWorstCaseUsd(OPUS, STAGE_CAPS.answer, 0)).toBeCloseTo(0.292, 12);
+    expect(stageWorstCaseUsd(OPUS, STAGE_CAPS.answer)).toBeCloseTo(0.112 + 0.22 + 0.0065, 12);
+    expect(stageWorstCaseUsd(HAIKU, STAGE_CAPS.scope)).toBeCloseTo(0.00065 + 0.0003 + 0.0001625, 12);
+    expect(stageWorstCaseUsd(HAIKU, STAGE_CAPS.check)).toBeCloseTo(0.004 + 0.00475 + 0.0001625, 12);
+    expect(stageWorstCaseUsd(OPUS, STAGE_CAPS.answer, 0)).toBeCloseTo(0.332, 12);
     expect(stageWorstCaseUsd(HAIKU, { input: 3_000, output: 0 })).toBeCloseTo((3_000 * 0.1 + 3_000 * 0.025) / 1e6, 12);
     expect(worstCaseRequestUsd(withAnswer(OPUS))).toBeCloseTo(
       stageWorstCaseUsd(HAIKU, STAGE_CAPS.scope) +
@@ -119,7 +125,7 @@ describe('worstCaseRequestUsd', () => {
 
 describe('assertReservationCovers', () => {
   it('throws when the sum exceeds the reservation', () => {
-    expect(() => assertReservationCovers(withAnswer(OPUS), 0.3)).toThrow(/exceeds the \$0\.30 reservation/);
+    expect(() => assertReservationCovers(withAnswer(OPUS), 0.34)).toThrow(/exceeds the \$0\.34 reservation/);
     expect(() => assertReservationCovers(withAnswer(OPUS), 0.16)).toThrow(PricingError);
     expect(() => assertReservationCovers(withAnswer(HAIKU), 0.01)).toThrow(PricingError);
   });
@@ -153,13 +159,13 @@ describe('startupAiCheck', () => {
     expect(check.enabled).toBe(true);
     expect(check.reason).toBeUndefined();
     expect(check.models).toEqual({ scope: HAIKU, answer: OPUS, check: HAIKU, embed: 'text-embedding-3-small' });
-    expect(check.reservationUsd).toBe(0.31);
-    expect(check.worstCaseUsd).toBeCloseTo(0.303845, 9);
+    expect(check.reservationUsd).toBe(0.35);
+    expect(check.worstCaseUsd).toBeCloseTo(0.348545, 9);
   });
 
   it('uses the answer model reservation', () => {
     const check = startupAiCheck(config({ ...keys, ANTHROPIC_ANSWER_MODEL: SONNET }));
-    expect(check).toMatchObject({ enabled: true, reservationUsd: 0.16 });
+    expect(check).toMatchObject({ enabled: true, reservationUsd: 0.18 });
   });
 
   it('stays disabled without provider keys, naming the setting but not its value', () => {
@@ -190,7 +196,7 @@ describe('startupAiCheck', () => {
 
   it('allows the fake provider only under NODE_ENV=test, without keys', () => {
     const fake = config({ AI_LLM_PROVIDER: 'fake', NODE_ENV: 'test' });
-    expect(startupAiCheck(fake)).toMatchObject({ enabled: true, provider: 'fake', reservationUsd: 0.31 });
+    expect(startupAiCheck(fake)).toMatchObject({ enabled: true, provider: 'fake', reservationUsd: 0.35 });
     const forced: Pick<AppConfig, 'nodeEnv' | 'ai'> = { ...fake, nodeEnv: 'production' };
     expect(startupAiCheck(forced).enabled).toBe(false);
   });

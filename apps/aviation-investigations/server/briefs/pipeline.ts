@@ -20,14 +20,17 @@
  *    (`no_supported_match`). The compose and check stages read passages under short
  *    aliases (`P1`..), mapped back to canonical ids before validation (aliases.ts).
  * 4. **Validate**: `validateComposition` (code); then the reader's criteria in code
- *    (server/briefs/criteria.ts: a presented case outside the timing window, first-flight
- *    requirement or failure type withholds the summary); then the model checker (12 s)
- *    over every claim, with every verified passage of each case and the criteria. Every
- *    criterion decision is a claim, an unconfirmed one included ("the passages do not
- *    establish whether..."), so a fact the composition left out settles nothing. Only
- *    `supported: true` with no problems passes. A check input over the checker's cap
- *    withholds the summary with the cap failure in the step's `meta`; the evidence is
- *    never cut to fit.
+ *    (server/briefs/criteria.ts, under the versioned timing rules: a presented case
+ *    outside the timing window, first-flight requirement or failure type withholds the
+ *    summary); then the model checker over every claim, with every verified passage of
+ *    each case and the criteria. Every criterion decision is a claim, an unconfirmed one
+ *    included ("under the timing rules, the supplied passages of this case do not settle
+ *    whether..."), so a fact the composition left out settles nothing. The checker returns
+ *    one verdict per server-issued claim id, judged in code (server/briefs/verdicts.ts):
+ *    the summary passes only when every claim has exactly one valid `supported` verdict.
+ *    A contradicted "do not settle" claim is recorded as `chronology_missed` and
+ *    withholds like any other. A check input over the checker's cap withholds the summary
+ *    with the cap failure in the step's `meta`; the evidence is never cut to fit.
  * 5. **Settle**: itemized ledger lines per stage; any call without reliable usage makes
  *    the settlement uncertain, charging the full reservation (Task 15).
  *
@@ -65,7 +68,7 @@ import {
 } from '../../shared/contracts/briefs.js';
 import type { Db } from '../db/client.js';
 import { stageCostUsd, STAGE_CAPS } from '../ai/pricing.js';
-import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v5.js';
+import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v6.js';
 import {
   StageError,
   stageCtx,
@@ -85,13 +88,14 @@ import { releaseQuota, type Admission } from '../quota/admit.js';
 import { settle, type SpendLine } from '../quota/settle.js';
 import { clarificationReadings, composeInterpretations, interpretationChips } from './clarify.js';
 import { checkForModel, citationsFromModel, composeForModel, compositionFromModel, passageAliases } from './aliases.js';
-import { criteriaLines, evaluateCase, type CriterionCheck } from './criteria.js';
+import { CHRONOLOGY_RULES_VERSION, criteriaLines, evaluateCase, type CriterionCheck } from './criteria.js';
 import { RetrievalFailure, type CaseCatalog, type EvidenceBundle, type EvidenceRetriever, type RetrievedEvidence } from './evidence.js';
 import { resolveIntent, retrievalText, scopeInput, type StepIntent, type StepRequest } from './intent.js';
-import { answerResult, checkInput, composeInput, noMatchResult, plainCard, storedDimensions, storedEvidence, type VerifiedCase } from './render.js';
+import { answerResult, caseEvidence, checkInput, composeInput, noMatchResult, plainCard, storedDimensions, storedEvidence, type VerifiedCase } from './render.js';
 import { clarificationReply, comparisonReply, operationalReply, outOfScopeReply, statisticsReply } from './static-replies.js';
 import { finishStep, readBrief, readStepById, writeStage, type StepDiagnostics, type StoredEvidence } from './store.js';
 import { QUOTE_MATCH_RULE_VERSION, resolvePassage, validateComposition, type AllowedPassage, type Allowlist } from './validate.js';
+import { judgeCheck } from './verdicts.js';
 
 /** Per-stage timeouts and the total deadline, in milliseconds (DESIGN §8). */
 export interface StageTimeouts {
@@ -199,9 +203,27 @@ interface Meta {
    * validator split the summary into (`summary.<i>` names sentence `i`, from 0).
    */
   validation?: { ruleVersion: string; codes: string[]; reasons: { code: string; path: string }[]; summarySentences: number };
-  criteria?: { ntsbNo: string; criterion: string; decision: string }[];
-  /** The checker's verdict; `claimIndex` names the claim in the step's diagnostics. */
-  check?: { supported: boolean; problems: { claimIndex: number; kind: string; reason: string }[] };
+  /**
+   * Every criterion decision, with the timing rules that decided it (`rules`) or why it
+   * stayed unknown (`reason`), under `criteriaRules` (CHRONOLOGY_RULES_VERSION).
+   */
+  criteria?: { ntsbNo: string; criterion: string; decision: string; rules: string[]; reason?: string }[];
+  criteriaRules?: string;
+  /**
+   * The checker's verdicts judged in code (server/briefs/verdicts.ts): `supported` only
+   * when every claim has one valid `supported` verdict; per-verdict counts; the codes;
+   * each problem with its claim id (`claim`, `claimIndex` naming the claim in the step's
+   * diagnostics) and kind; `chronologyMissed`: contradicted "do not settle" criterion
+   * claims (diagnostic).
+   */
+  check?: {
+    supported: boolean;
+    claims: number;
+    counts: Record<string, number>;
+    codes: string[];
+    problems: { claim: string; claimIndex: number; kind: string; code: string }[];
+    chronologyMissed: { claim: string; ntsbNo: string | null; criterion: string }[];
+  };
   settlement?: { status: string; uncertain?: boolean };
 }
 
@@ -672,12 +694,17 @@ class Run {
       summarySentences: checked.summarySentences.length,
     };
     // What a developer needs to see why a summary was withheld (server-side only).
-    const diagnostics = (reason: StepDiagnostics['reason'], claims?: StepDiagnostics['claims']): StepDiagnostics => ({
+    const diagnostics = (
+      reason: StepDiagnostics['reason'],
+      claims?: StepDiagnostics['claims'],
+      verdicts?: StepDiagnostics['verdicts'],
+    ): StepDiagnostics => ({
       reason,
       composition: written,
       aliases: Object.fromEntries(aliases.fromModel),
       summarySentences: checked.summarySentences,
       ...(claims ? { claims } : {}),
+      ...(verdicts ? { verdicts } : {}),
     });
     if (!checked.ok) {
       return this.withheldEnd('citation_check', cases, intent, { codes: reasons.map((r) => r.code), diagnostics: diagnostics('citation_check') });
@@ -689,11 +716,12 @@ class Run {
     const decisions = new Map<string, CriterionDecision[]>();
     const criterionChecks = new Map<string, CriterionCheck[]>();
     this.meta.criteria = [];
+    this.meta.criteriaRules = CHRONOLOGY_RULES_VERSION;
     let outside = false;
     for (const k of composition.cases) {
-      const checks = evaluateCase(intent.readings, k, intent.mechanicalCause, (byCase.get(k.ntsbNo)?.passages ?? []).map((p) => p.passageId));
+      const checks = evaluateCase(intent.readings, k, intent.mechanicalCause, caseEvidence(byCase.get(k.ntsbNo)));
       for (const d of checks) {
-        this.meta.criteria.push({ ntsbNo: k.ntsbNo, criterion: d.criterion, decision: d.decision });
+        this.meta.criteria.push({ ntsbNo: k.ntsbNo, criterion: d.criterion, decision: d.decision, rules: [...d.rules], ...(d.reason ? { reason: d.reason } : {}) });
         if (d.decision === 'does_not_match') outside = true;
       }
       decisions.set(
@@ -714,9 +742,9 @@ class Run {
       criteria: criteriaLines(intent.readings),
       criterionChecks,
     });
-    // The check input as the checker reads it (passage aliases); its claims, by index, are a withheld step's diagnostics.
+    // The check input as the checker reads it (passage aliases); its claims, by id, are a withheld step's diagnostics.
     const forModel = checkForModel(input, aliases);
-    const checkDiagnostics = () => diagnostics('evidence_check', forModel.claims);
+    const checkDiagnostics = (verdicts?: StepDiagnostics['verdicts']) => diagnostics('evidence_check', forModel.claims, verdicts);
     if (overflow) {
       // A claim that cannot be checked is never shown.
       this.meta.failure = { stage: 'check', category: 'claims_overflow' };
@@ -729,23 +757,30 @@ class Run {
         const out = await stageSpan('brief.check', { stage: 'check', provider: llm.name, model: llm.models.check }, (s) =>
           this.recorded(s, async () => {
             const r = await llm.check(forModel, stageCtx('check', signal, budget));
+            const judged = judgeCheck(forModel, r.output, claims);
             s.setAttrs({
               promptVersion: r.promptVersion,
               ...callAttrs(r.model, r.usage, r.stopReason, r.warnings),
-              outcome: r.output.supported && r.output.problems.length === 0 ? 'supported' : 'problems',
+              outcome: judged.ok ? 'supported' : 'problems',
             });
-            return r;
+            return { r, judged };
           }),
         );
-        this.charge('check', out);
+        this.charge('check', out.r);
         this.meta.timingsMs.check = Math.round(performance.now() - t0);
+        const j = out.judged;
         this.meta.check = {
-          supported: out.output.supported,
-          problems: out.output.problems.map((p) => ({ claimIndex: p.claimIndex, kind: claims[p.claimIndex]?.kind ?? 'unknown', reason: p.reason })),
+          supported: j.ok,
+          claims: forModel.claims.length,
+          counts: { ...j.counts },
+          codes: [...j.codes],
+          problems: j.problems.map((p) => ({ claim: p.claim, claimIndex: p.index, kind: p.kind, code: p.code })),
+          chronologyMissed: j.chronologyMissed.map((c) => ({ claim: c.claim, ntsbNo: c.ntsbNo, criterion: c.criterion })),
         };
-        // Conservative: any problem, or "supported" without being sure of every claim, withholds.
-        if (!out.output.supported || out.output.problems.length > 0) {
-          return this.withheldEnd('evidence_check', cases, intent, { codes: out.output.problems.map((p) => p.reason), diagnostics: checkDiagnostics() });
+        // Only every claim judged `supported`, completely and validly, lets the summary through.
+        if (!j.ok) {
+          const verdicts = { verdicts: out.r.output.verdicts.map((v) => ({ ...v, passages: [...v.passages] })), quotes: out.r.output.quotes.map((q) => ({ ...q })) };
+          return this.withheldEnd('evidence_check', cases, intent, { codes: j.codes, diagnostics: checkDiagnostics(verdicts) });
         }
       } catch (err) {
         // Over the checker's cap (counted, unbilled) or a failed call: withheld with the
@@ -815,48 +850,9 @@ class Run {
     }
   }
 
-  /**
-   * Check a bundle, fail closed (gate G6 #2, #4): at most 6 cases and 12 passages, each
-   * passage the canonical row it claims to be (`resolvePassage`), each case known to the
-   * dataset and holding its best retrieved passage (reserved, ranked) and every
-   * probable-cause passage it has. Any violation throws `BundleIntegrityError`; nothing is
-   * dropped or cut.
-   */
+  /** Check a bundle, fail closed (`verifyBundle`). */
   private async verify(bundle: EvidenceBundle, chunkerVersion: string): Promise<VerifiedCase[]> {
-    const { catalog } = this.deps;
-    const g = this.brief.generationId;
-    const all = bundle.cases.flatMap((c) => c.passages);
-    if (bundle.cases.length > MAX_BUNDLE_CASES) throw new BundleIntegrityError('too_many_cases');
-    if (all.length > MAX_BUNDLE_PASSAGES) throw new BundleIntegrityError('too_many_passages');
-    const numbers = bundle.cases.map((c) => c.ntsbNo);
-    if (new Set(numbers).size !== numbers.length) throw new BundleIntegrityError('duplicate_case');
-    if (new Set(all.map((p) => p.passageId)).size !== all.length) throw new BundleIntegrityError('duplicate_passage');
-    const [canonical, causes, summaries] = await Promise.all([
-      catalog.passages(g, chunkerVersion, all.map((p) => p.passageId)),
-      catalog.causePassageIds(g, chunkerVersion, numbers),
-      catalog.summaries(g, numbers),
-    ]);
-    const out: VerifiedCase[] = [];
-    for (const c of bundle.cases) {
-      const summary = summaries.get(c.ntsbNo);
-      if (!summary) throw new BundleIntegrityError('unknown_case');
-      if (c.passages.length === 0) throw new BundleIntegrityError('empty_case');
-      const passages: VerifiedCase['passages'] = [];
-      for (const p of c.passages) {
-        if (p.ntsbNo !== c.ntsbNo) throw new BundleIntegrityError('foreign_passage');
-        const r = resolvePassage(p, canonical.get(p.passageId));
-        if (!r.ok) throw new BundleIntegrityError(r.problem);
-        passages.push({ passageId: p.passageId, role: p.role, reserved: p.reserved, rank: p.rank, sectionKind: r.allowed.sectionKind, allowed: r.allowed });
-      }
-      // The case's justification survived: its best retrieved passage and every cause.
-      if (!passages.some((p) => p.reserved && p.rank !== null)) throw new BundleIntegrityError('missing_best_passage');
-      const held = new Set(passages.map((p) => p.passageId));
-      const required = causes.get(c.ntsbNo) ?? [];
-      if (required.length === 0) throw new BundleIntegrityError('no_cause');
-      if (required.some((id) => !held.has(id))) throw new BundleIntegrityError('missing_cause');
-      out.push({ ntsbNo: c.ntsbNo, rank: c.rank, summary, passages });
-    }
-    return out;
+    return verifyBundle(this.deps.catalog, this.brief.generationId, bundle, chunkerVersion);
   }
 
   private async finish(end: StageEnd): Promise<StepOutcome> {
@@ -936,6 +932,49 @@ class Run {
     );
     return { status: end.status, chargedUsd, released };
   }
+}
+
+/**
+ * Check a bundle, fail closed (gate G6 #2, #4): at most 6 cases and 12 passages, each
+ * passage the canonical row it claims to be (`resolvePassage`), each case known to the
+ * dataset and holding its best retrieved passage (reserved, ranked) and every
+ * probable-cause passage it has. Any violation throws `BundleIntegrityError`; nothing is
+ * dropped or cut. The checker calibration (evals/checker) builds its bundles with it too.
+ */
+export async function verifyBundle(catalog: CaseCatalog, generationId: number, bundle: EvidenceBundle, chunkerVersion: string): Promise<VerifiedCase[]> {
+  const g = generationId;
+  const all = bundle.cases.flatMap((c) => c.passages);
+  if (bundle.cases.length > MAX_BUNDLE_CASES) throw new BundleIntegrityError('too_many_cases');
+  if (all.length > MAX_BUNDLE_PASSAGES) throw new BundleIntegrityError('too_many_passages');
+  const numbers = bundle.cases.map((c) => c.ntsbNo);
+  if (new Set(numbers).size !== numbers.length) throw new BundleIntegrityError('duplicate_case');
+  if (new Set(all.map((p) => p.passageId)).size !== all.length) throw new BundleIntegrityError('duplicate_passage');
+  const [canonical, causes, summaries] = await Promise.all([
+    catalog.passages(g, chunkerVersion, all.map((p) => p.passageId)),
+    catalog.causePassageIds(g, chunkerVersion, numbers),
+    catalog.summaries(g, numbers),
+  ]);
+  const out: VerifiedCase[] = [];
+  for (const c of bundle.cases) {
+    const summary = summaries.get(c.ntsbNo);
+    if (!summary) throw new BundleIntegrityError('unknown_case');
+    if (c.passages.length === 0) throw new BundleIntegrityError('empty_case');
+    const passages: VerifiedCase['passages'] = [];
+    for (const p of c.passages) {
+      if (p.ntsbNo !== c.ntsbNo) throw new BundleIntegrityError('foreign_passage');
+      const r = resolvePassage(p, canonical.get(p.passageId));
+      if (!r.ok) throw new BundleIntegrityError(r.problem);
+      passages.push({ passageId: p.passageId, role: p.role, reserved: p.reserved, rank: p.rank, sectionKind: r.allowed.sectionKind, allowed: r.allowed });
+    }
+    // The case's justification survived: its best retrieved passage and every cause.
+    if (!passages.some((p) => p.reserved && p.rank !== null)) throw new BundleIntegrityError('missing_best_passage');
+    const held = new Set(passages.map((p) => p.passageId));
+    const required = causes.get(c.ntsbNo) ?? [];
+    if (required.length === 0) throw new BundleIntegrityError('no_cause');
+    if (required.some((id) => !held.has(id))) throw new BundleIntegrityError('missing_cause');
+    out.push({ ntsbNo: c.ntsbNo, rank: c.rank, summary, passages });
+  }
+  return out;
 }
 
 function usageAttrs(u: StageUsage) {

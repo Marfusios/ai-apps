@@ -52,25 +52,25 @@ describe('budget capacity (DESIGN §9)', () => {
     expect(budgets).toEqual({ monthlyUsd: 100, interactiveMonthlyUsd: 80, interactiveDailyUsd: 3, ingestionMonthlyUsd: 20, anonymousShare: 0.25 });
   });
 
-  it('Opus 5.5 answer model: about 22 a day rising to 25, about 708 a month, 4 to 5 anonymous searches a day', () => {
+  it('Opus 5.5 answer model: about 22 a day rising to 25, about 705 a month, 3 to 4 anonymous searches a day', () => {
     const days = admittedPerDay(RESERVATIONS['claude-opus-5-5']!, 0.11, 'signed-in');
     expect([days[0], days.at(-1), Math.min(...days), Math.max(...days)]).toEqual([22, 25, 22, 25]);
-    expect(sum(days)).toBe(708);
+    expect(sum(days)).toBe(705);
     const anonymous = admittedPerDay(RESERVATIONS['claude-opus-5-5']!, 0.11, 'anonymous');
-    expect([Math.min(...anonymous), Math.max(...anonymous)]).toEqual([4, 5]);
+    expect([Math.min(...anonymous), Math.max(...anonymous)]).toEqual([3, 4]);
   });
 
-  it('Sonnet 5.5 answer model: about 47 a day rising to 53, about 1,474 a month, 10 to 11 anonymous searches a day', () => {
+  it('Sonnet 5.5 answer model: about 47 a day rising to 53, about 1,472 a month, 10 to 11 anonymous searches a day', () => {
     const days = admittedPerDay(RESERVATIONS['claude-sonnet-5-5']!, 0.054, 'signed-in');
     expect([days[0], days.at(-1), Math.min(...days), Math.max(...days)]).toEqual([47, 53, 47, 53]);
-    expect(sum(days)).toBe(1_474);
+    expect(sum(days)).toBe(1_472);
     const anonymous = admittedPerDay(RESERVATIONS['claude-sonnet-5-5']!, 0.054, 'anonymous');
     expect([Math.min(...anonymous), Math.max(...anonymous)]).toEqual([10, 11]);
   });
 
-  it('a whole reservation of headroom: nine at once under $3, eight under a fresh month’s paced $2.67', () => {
+  it('a whole reservation of headroom: eight at once under $3, seven under a fresh month’s paced $2.67', () => {
     const opus = toMicros(RESERVATIONS['claude-opus-5-5']!);
-    expect(Math.floor(toMicros(3) / opus)).toBe(9);
-    expect(Math.floor(Math.floor(toMicros(80) / 30) / opus)).toBe(8);
+    expect(Math.floor(toMicros(3) / opus)).toBe(8);
+    expect(Math.floor(Math.floor(toMicros(80) / 30) / opus)).toBe(7);
   });
 });

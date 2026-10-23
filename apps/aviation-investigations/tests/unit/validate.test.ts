@@ -71,7 +71,7 @@ function composition(over: Partial<ComposeOutput> = {}): ComposeOutput {
         evidencePassageIds: ['p-dfw', 'p-dfw-cause'],
         maintenance: { relation: 'investigator_attributed', passageIds: ['p-dfw-cause'] },
         symptom: { value: 'total_power_loss', passageIds: ['p-dfw'] },
-        chronology: { flightHours: { value: 5.1, bound: 'exact', passageIds: ['p-dfw'] } },
+        chronology: { maintenance: 'the engine replacement', facts: [{ anchor: 'relevant_maintenance', relation: 'flight_hours', value: 5.1, bound: 'exact', passageIds: ['p-dfw'] }] },
       },
       {
         ntsbNo: 'DEN08LA103',
@@ -214,7 +214,7 @@ describe('validateComposition', () => {
     out.cases[0]!.quotes[0] = { passageId: 'p-none', quote: 'anything at all here', speaker: 'investigators' };
     expect(check(out)).toEqual(['unknown_passage']);
     const cited = composition();
-    cited.cases[0]!.chronology!.flightHours!.passageIds = ['p-den'];
+    cited.cases[0]!.chronology!.facts[0]!.passageIds = ['p-den'];
     expect(check(cited)).toEqual(['foreign_passage']);
     const invented = composition();
     invented.cases[0]!.maintenance!.passageIds = ['p-invented'];
@@ -227,14 +227,14 @@ describe('validateComposition', () => {
     expect(check(noSupport)).toEqual(['missing_support']);
     // Every stated chronology fact cites the passages that state it.
     for (const fact of [
-      { flightHours: { value: 5.1, bound: 'exact' as const, passageIds: [] } },
-      { calendarDays: { value: 40, bound: 'exact' as const, passageIds: [] } },
-      { flight: { value: 'later' as const, passageIds: [] } },
-      { qualitative: { passageIds: [] } },
+      { anchor: 'relevant_maintenance' as const, relation: 'flight_hours' as const, value: 5.1, bound: 'exact' as const, passageIds: [] },
+      { anchor: 'relevant_maintenance' as const, relation: 'previous_day' as const, passageIds: [] },
+      { anchor: 'relevant_maintenance' as const, relation: 'flight_ordinal' as const, value: 2, passageIds: [] },
+      { anchor: 'other' as const, other: 'the second flight', relation: 'words' as const, passageIds: [] },
     ]) {
       const timing = composition();
-      timing.cases[0]!.chronology = fact;
-      expect(check(timing), Object.keys(fact)[0]).toEqual(['missing_support']);
+      timing.cases[0]!.chronology = { maintenance: 'the engine replacement', facts: [fact] };
+      expect(check(timing), fact.relation).toEqual(['missing_support']);
     }
     const absent = composition();
     absent.cases[1]!.maintenance = { relation: 'no_evidence', passageIds: [] };
@@ -328,27 +328,52 @@ describe('validateComposition', () => {
     expect(check(out)).toEqual([]);
   });
 
-  it('chronology facts are independent, typed and at the allowed precision (one canonical number)', () => {
+  it('chronology facts are independent, typed, stored as their parts and at the allowed precision (one canonical number)', () => {
     const out = composition();
-    // "40 days and 20 flight hours" and "the second flight": three facts, each with its passages.
-    out.cases[0]!.chronology = {
-      flightHours: { value: 20, bound: 'exact', passageIds: ['p-dfw'] },
-      calendarDays: { value: 40, bound: 'exact', passageIds: ['p-dfw'] },
-      flight: { value: 'later', passageIds: ['p-dfw'] },
+    const relevant = { anchor: 'relevant_maintenance' as const, passageIds: ['p-dfw'] };
+    const with_ = (...facts: object[]) => {
+      out.cases[0]!.chronology = { maintenance: 'the engine replacement', facts: facts as never };
+      return check(out);
     };
-    expect(check(out)).toEqual([]);
-    out.cases[0]!.chronology = { flightHours: { bound: 'exact', passageIds: ['p-dfw'] } } as never;
-    expect(check(out)).toEqual(['schema']);
-    out.cases[0]!.chronology = { flight: { value: 'second', passageIds: ['p-dfw'] } } as never;
-    expect(check(out)).toEqual(['schema']);
-    out.cases[0]!.chronology = { flightHours: { value: 5.10001, bound: 'exact', passageIds: ['p-dfw'] } };
-    expect(check(out)).toEqual(['timing_precision']);
-    out.cases[0]!.chronology = { calendarDays: { value: 17.5, bound: 'about', passageIds: ['p-dfw'] } };
-    expect(check(out)).toEqual(['timing_precision']);
+    // "40 days and 20 flight hours" and "the second flight": three facts, each with its passages.
+    expect(
+      with_(
+        { ...relevant, relation: 'flight_hours', value: 20, bound: 'exact' },
+        { ...relevant, relation: 'calendar_days', value: 40, bound: 'exact' },
+        { ...relevant, relation: 'flight_ordinal', value: 2 },
+      ),
+    ).toEqual([]);
+    // "Two days later" after the second flight keeps its own anchor, named in the passage's words.
+    expect(with_({ anchor: 'other', other: 'the second test flight', relation: 'calendar_days', value: 2, bound: 'exact', passageIds: ['p-dfw'] })).toEqual([]);
+    expect(with_({ ...relevant, relation: 'previous_day' }, { ...relevant, relation: 'immediately_before' }, { ...relevant, relation: 'words' })).toEqual([]);
+    expect(with_({ ...relevant, relation: 'intervening_flights', value: 0, bound: 'exact' })).toEqual([]);
+    // Each relation takes exactly its parts.
+    expect(with_({ ...relevant, relation: 'flight_hours', bound: 'exact' })).toEqual(['chronology_shape']);
+    expect(with_({ ...relevant, relation: 'flight_hours', value: 3 })).toEqual(['chronology_shape']);
+    expect(with_({ ...relevant, relation: 'previous_day', value: 1, bound: 'exact' })).toEqual(['chronology_shape', 'chronology_shape']);
+    expect(with_({ ...relevant, relation: 'immediately_before', value: 0 })).toEqual(['chronology_shape']);
+    expect(with_({ ...relevant, relation: 'flight_ordinal', value: 1, bound: 'exact' })).toEqual(['chronology_shape']);
+    expect(with_({ ...relevant, other: 'the overhaul', relation: 'words' })).toEqual(['chronology_shape']);
+    expect(with_({ anchor: 'other', relation: 'words', passageIds: ['p-dfw'] })).toEqual(['chronology_shape']);
+    expect(with_({ ...relevant, relation: 'next_week' })).toEqual(['schema']);
+    // Precision: one decimal of flight hours, whole days and flights, an ordinal from 1.
+    expect(with_({ ...relevant, relation: 'flight_hours', value: 5.10001, bound: 'exact' })).toEqual(['timing_precision']);
+    expect(with_({ ...relevant, relation: 'calendar_days', value: 17.5, bound: 'about' })).toEqual(['timing_precision']);
+    expect(with_({ ...relevant, relation: 'flight_ordinal', value: 0 })).toEqual(['timing_precision']);
+    expect(with_({ ...relevant, relation: 'intervening_flights', value: 1.5, bound: 'about' })).toEqual(['timing_precision']);
+    // The anchor wording is checked like other free text.
+    out.cases[0]!.chronology = { maintenance: 'the overhaul in WPR19LA999', facts: [] };
+    expect(check(out)).toEqual(['unallowlisted_case_number']);
+    out.cases[0]!.chronology = { maintenance: 'the <b>overhaul</b>', facts: [] };
+    expect(check(out)).toEqual(['markup_or_link']);
+    out.cases[0]!.chronology = { maintenance: 'the overhaul', facts: [{ anchor: 'other', other: 'the flight in P1', relation: 'words', passageIds: ['p-dfw'] }] };
+    expect(check(out, allow([['P1', passage('DEN08LA103', 'Another passage of the bundle.')]]))).toEqual(['alias_in_text']);
     expect(timingValueAllowed('flight_hours', 5.1)).toBe(true);
     expect(timingValueAllowed('flight_hours', 12)).toBe(true);
     expect(timingValueAllowed('flight_hours', 0.05)).toBe(false);
     expect(timingValueAllowed('calendar_days', 60)).toBe(true);
+    expect(timingValueAllowed('flight_ordinal', 3)).toBe(true);
+    expect(timingValueAllowed('words', 3)).toBe(false);
   });
 
   it('gaps name a bundle case and cite its own passages', () => {

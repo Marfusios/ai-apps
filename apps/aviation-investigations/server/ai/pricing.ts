@@ -67,44 +67,50 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
 
 /**
  * Hard caps in provider tokens. Output includes thinking. Calibrated with the
- * provider's own counter (`messages.countTokens`, free) on 2026-10-22 against real
- * shared-dev passages (DESIGN §9 "Hard caps"; `pnpm worker ai-preflight` re-measures):
+ * provider's own counter (`messages.countTokens`, free) against real shared-dev passages
+ * (DESIGN §9 "Hard caps"; `pnpm worker ai-preflight` re-measures):
  *
- * - scope input: fixed part (system prompt + structured-output schema) 3,199; worst
+ * - scope input: fixed part (system prompt + structured-output schema) 3,204; worst
  *   refinement (prior question and refinement, every filter, readings, case numbers)
- *   5,155 → 6,500.
- * - answer input: fixed part 4,616; worst full bundle (12 passages at 9,416 `cl100k`
- *   evidence tokens, 400-character headers, the longest question and refinement) 22,096;
- *   the 10,000-token evidence budget at 1.75 Claude tokens per `cl100k` token bounds it
- *   at about 25,300 → 28,000: the measured stress cases fit without re-packing.
- * - check input: fixed part 1,939; complete evidence of a full bundle with 91 claims at
- *   their longest 28,020, bounded at about 30,400 → 36,000 (gate G6 ruling 5: the
- *   evidence is never cut to fit).
+ *   5,074 → 6,500.
+ * - answer input: fixed part 5,007 (`compose.v6`); a synthetic full bundle (12 passages at
+ *   9,403 `cl100k` evidence tokens, 400-character headers, the longest question and
+ *   refinement) 22,547; the 10,000-token evidence budget at 1.75 Claude tokens per
+ *   `cl100k` token bounds it near 25,600 → 28,000: the measured stress cases fit without
+ *   re-packing.
+ * - check input: fixed part 2,889 (`check.v4`); complete evidence of a full bundle with 91
+ *   claims at their longest 30,455 → 40,000 (gate G6 ruling 5: the evidence is never cut
+ *   to fit).
  * - outputs, counted as text at their schema bounds: scope 445 → 600; a composition at
- *   every bound 6,556 plus 1,500 for thinking (Opus cannot turn it off) → 9,000; a check
- *   listing a problem for each of 100 claims 2,414 → 3,000.
- *
- * With the `compose.v5` and `check.v3` prompts the preflight measures the answer's fixed
- * part at 4,752 and its synthetic full bundle at 22,292, and the check's fixed part at
- * 1,961 and its synthetic full bundle at 27,356: all well within the caps.
+ *   every bound (six cases, each with four chronology facts naming their anchors) 8,000
+ *   plus 1,500 for thinking (Opus cannot turn it off) → 11,000 (the offline sizing, at
+ *   1.8 tokens per `cl100k` token, puts it at 10,612); a check with a verdict for each of
+ *   100 claims, each naming four passages, and eight 200-character quotes 4,320, plus the
+ *   check stage's thinking allowance (`CHECK_THINKING_ALLOWANCE`, worker/ai-preflight.ts)
+ *   → 9,500 (offline 9,052).
  */
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
   scope: { input: 6_500, output: 600 },
-  answer: { input: 28_000, output: 9_000 },
-  check: { input: 36_000, output: 3_000 },
+  answer: { input: 28_000, output: 11_000 },
+  check: { input: 40_000, output: 9_500 },
   embed: { input: 1_000, output: 0 },
 };
 
 /**
  * Largest frozen prefix any stage caches (5-minute TTL): its system prompt with the
- * structured-output schema, measured at 4,628 tokens (`compose.v5`, the preflight).
+ * structured-output schema, measured at 4,883 tokens (`compose.v6`, the preflight).
  */
-export const CACHED_PREFIX_MAX = 5_500;
+export const CACHED_PREFIX_MAX = 6_500;
 
-/** Per-request reservation in USD, keyed by the answer model: the worst case rounded up (DESIGN §9). */
+/**
+ * Per-request reservation in USD, keyed by the answer model: the worst case rounded up
+ * (DESIGN §9), with a Haiku check. Provisional until the checker calibration
+ * (evals/checker) settles the check model and its caps; a check on Sonnet costs more,
+ * and with it the startup check refuses these reservations.
+ */
 export const RESERVATIONS: Readonly<Record<string, number>> = {
-  'claude-opus-5-5': 0.31,
-  'claude-sonnet-5-5': 0.16,
+  'claude-opus-5-5': 0.35,
+  'claude-sonnet-5-5': 0.18,
   'claude-haiku-5-5': 0.02,
 };
 

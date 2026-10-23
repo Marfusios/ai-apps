@@ -4,7 +4,8 @@
  * content-free reasons from its `meta` (validation codes with their paths, failed
  * criteria, check problems, the failure category) next to the text they point at, from
  * the step's server-side `diagnostics`: the offending summary sentence as the validator
- * split it, the `why` line, quote or note, the checker's claim. A withheld composition is
+ * split it, the `why` line, quote or note, the checker's claim with its verdict, the
+ * passages that verdict named and any contradiction quote. A withheld composition is
  * model output about public NTSB passages that may restate the reader's question, so it
  * is treated as user data: this command prints it to the operator's terminal and
  * nowhere else.
@@ -107,13 +108,33 @@ export function formatDiagnosis(step: StepRow, d: StepDiagnostics | null): strin
     if (!check) out.push(`check: no verdict (see the failure above); ${claims.length} claim(s) prepared`);
     else {
       const problems = asArray(check.problems).filter(isRecord);
-      out.push(`check: supported=${String(check.supported)}, ${problems.length} problem(s) over ${claims.length} claim(s)`);
+      const counts = isRecord(check.counts) ? check.counts : {};
+      const n = (k: string) => (typeof counts[k] === 'number' ? counts[k] : 0);
+      out.push(
+        `check: supported=${String(check.supported)}, ${claims.length} claim(s); verdicts supported ${n('supported')}, contradicted ${n('contradicted')}, not_established ${n('not_established')}; codes ${asArray(check.codes).join(', ') || 'none'}`,
+      );
+      // One block per claim with a problem, in claim order (an unknown id last).
+      const byClaim = new Map<string, { index: number; kind: string; codes: string[] }>();
       for (const p of problems) {
-        const i = typeof p.claimIndex === 'number' ? p.claimIndex : -1;
-        const claim = claims[i];
-        out.push(`  ${String(p.reason)} at claim ${i} (${String(p.kind)}${claim?.ntsbNo ? `, ${claim.ntsbNo}` : ''})`);
-        out.push(`    claim: ${show(claim?.text)}`);
-        if (claim) out.push(`    passages: ${claim.passageIds.map((a) => passage(a, d)).join('; ')}`);
+        const id = String(p.claim);
+        const entry = byClaim.get(id) ?? { index: typeof p.claimIndex === 'number' ? p.claimIndex : -1, kind: String(p.kind), codes: [] };
+        entry.codes.push(String(p.code));
+        byClaim.set(id, entry);
+      }
+      const verdicts = d.verdicts?.verdicts ?? [];
+      const quotes = d.verdicts?.quotes ?? [];
+      for (const [id, e] of [...byClaim].sort(([, a], [, b]) => (a.index < 0 ? 1e9 : a.index) - (b.index < 0 ? 1e9 : b.index))) {
+        const claim = e.index >= 0 ? claims[e.index] : undefined;
+        out.push(`  ${e.codes.join(' + ')} at ${id} (${e.kind}${claim?.ntsbNo ? `, ${claim.ntsbNo}` : ''})`);
+        if (claim) {
+          out.push(`    claim: ${show(claim.text)}`);
+          out.push(`    cites: ${claim.passageIds.map((a) => passage(a, d)).join('; ')}${claim.absence ? ' (absence claim: every supplied passage of its case)' : ''}`);
+        }
+        for (const v of verdicts.filter((x) => x.claim === id)) out.push(`    verdict: ${v.verdict}; passages ${v.passages.join(' ') || 'none'}`);
+        for (const q of quotes.filter((x) => x.claim === id)) out.push(`    quote from ${passage(q.passage, d)}: ${show(q.text)}`);
+      }
+      for (const c of asArray(check.chronologyMissed).filter(isRecord)) {
+        out.push(`  chronology_missed: ${String(c.ntsbNo)} ${String(c.criterion)} (${String(c.claim)}): the checker found timing the composition did not extract, or the checker erred; nothing was repaired`);
       }
     }
   }

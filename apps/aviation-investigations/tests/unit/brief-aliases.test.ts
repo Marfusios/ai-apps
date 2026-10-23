@@ -46,7 +46,7 @@ describe('passage aliases', () => {
       {
         criteria: [],
         passages: [{ passageId: hex(3), ntsbNo: 'DEN08LA103', section: 'Analysis', scope: 'event', text: 't' }],
-        claims: [{ kind: 'why', ntsbNo: 'DEN08LA103', text: 'w', passageIds: [hex(3), hex(1)] }],
+        claims: [{ id: 'C1', kind: 'why', ntsbNo: 'DEN08LA103', text: 'w', passageIds: [hex(3), hex(1)], absence: false }],
       },
       a,
     );
@@ -69,10 +69,13 @@ describe('passage aliases', () => {
           maintenance: { relation: 'investigator_attributed', passageIds: ['P2'] },
           symptom: { value: 'total_power_loss', passageIds: ['P1'] },
           chronology: {
-            flightHours: { value: 5.1, bound: 'exact', passageIds: ['P1'] },
-            calendarDays: { value: 3, bound: 'at_most', passageIds: ['P2'] },
-            flight: { value: 'first', passageIds: ['P1'] },
-            qualitative: { passageIds: ['P2'] },
+            maintenance: 'the engine change',
+            facts: [
+              { anchor: 'relevant_maintenance', relation: 'flight_hours', value: 5.1, bound: 'exact', passageIds: ['P1'] },
+              { anchor: 'relevant_maintenance', relation: 'calendar_days', value: 3, bound: 'at_most', passageIds: ['P2'] },
+              { anchor: 'relevant_maintenance', relation: 'flight_ordinal', value: 1, passageIds: ['P1'] },
+              { anchor: 'other', other: 'the test flight', relation: 'words', passageIds: ['P2'] },
+            ],
           },
         },
       ],
@@ -85,10 +88,13 @@ describe('passage aliases', () => {
     expect(k.maintenance!.passageIds).toEqual([hex(2)]);
     expect(k.symptom!.passageIds).toEqual([hex(1)]);
     expect(k.chronology).toEqual({
-      flightHours: { value: 5.1, bound: 'exact', passageIds: [hex(1)] },
-      calendarDays: { value: 3, bound: 'at_most', passageIds: [hex(2)] },
-      flight: { value: 'first', passageIds: [hex(1)] },
-      qualitative: { passageIds: [hex(2)] },
+      maintenance: 'the engine change',
+      facts: [
+        { anchor: 'relevant_maintenance', relation: 'flight_hours', value: 5.1, bound: 'exact', passageIds: [hex(1)] },
+        { anchor: 'relevant_maintenance', relation: 'calendar_days', value: 3, bound: 'at_most', passageIds: [hex(2)] },
+        { anchor: 'relevant_maintenance', relation: 'flight_ordinal', value: 1, passageIds: [hex(1)] },
+        { anchor: 'other', other: 'the test flight', relation: 'words', passageIds: [hex(2)] },
+      ],
     });
     expect(back.gaps[0]!.passageIds).toEqual([hex(3)]);
     // Everything else is untouched, free text included.
