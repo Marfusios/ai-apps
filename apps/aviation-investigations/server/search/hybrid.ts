@@ -62,7 +62,7 @@ import { MAX_CASES, MAX_PASSAGES } from '../ai/provider.js';
 import { countTokens } from '../ai/tokens.js';
 import { packEvidence, SECTION_ORDER, type PackOptions, type PackRole, type PassageKind, type SkipReason } from './evidence.js';
 import { RetrievalFiltersSchema, compileFilters, type Query, type RetrievalFilters } from './filters.js';
-import { IndexMetaError } from './index-meta.js';
+import { IndexMetaError, abortAwareBackoff } from './index-meta.js';
 import {
   PASSAGES_CONTRACTS,
   PassagesIndexIncompatibleError,
@@ -483,8 +483,11 @@ export interface CandidateResult {
   timingsMs: { embed: number; channels: number };
 }
 
-/** Transport options of one retrieval request: the per-request timeout and the request's signal. */
-export const transport = (p: Pick<RetrievalParams, 'timeoutMs'>, signal?: AbortSignal) => ({ requestTimeout: p.timeoutMs, ...(signal ? { signal } : {}) });
+/** Transport options of one retrieval request: the per-request timeout, the request's signal, and no retry wait once it aborted. */
+export const transport = (p: Pick<RetrievalParams, 'timeoutMs'>, signal?: AbortSignal) => ({
+  requestTimeout: p.timeoutMs,
+  ...(signal ? { signal, retryBackoff: abortAwareBackoff(signal) } : {}),
+});
 
 /**
  * Embed the query and report its usage through `onUsage` as soon as the embedder
