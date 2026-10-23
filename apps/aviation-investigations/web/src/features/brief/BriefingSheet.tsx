@@ -45,7 +45,15 @@ export function citationJoiner(segments: readonly SummarySegment[], i: number): 
   if (s.kind === 'case' && prev.kind === 'case') return ',\u2009';
   if (s.kind === 'case' && prev.kind === 'text' && !/[\s(\[“"'‘]$/.test(prev.text)) return ' ';
   if (s.kind === 'text' && prev.kind === 'case' && /^[\p{L}\p{N}]/u.test(s.text)) return ' ';
+  // A removed-statements marker (Task 16d) stands between whole sentences.
+  if (s.kind === 'removed' && !(prev.kind === 'text' && /\s$/.test(prev.text))) return ' ';
+  if (s.kind === 'text' && prev.kind === 'removed' && !/^\s/.test(s.text)) return ' ';
   return '';
+}
+
+/** Where the evidence check removed whole sentences (Task 16d, partial display): the count, never their text. */
+function RemovedMarker({ count }: { count: number }) {
+  return <span className="text-muted">[{count === 1 ? 'one statement' : `${count} statements`} not shown: the check could not confirm {count === 1 ? 'it' : 'them'}]</span>;
 }
 
 /** Summary text, rendered as text; citations are links built from server-owned case numbers. */
@@ -56,7 +64,7 @@ function Summary({ segments, caseTo }: { segments: readonly SummarySegment[]; ca
         {segments.map((s, i) => (
           <Fragment key={i}>
             {citationJoiner(segments, i)}
-            {s.kind === 'text' ? s.text : <Citation ntsbNo={s.ntsbNo} unconfirmed={s.unconfirmed} to={caseTo(s.ntsbNo)} />}
+            {s.kind === 'text' ? s.text : s.kind === 'removed' ? <RemovedMarker count={s.count} /> : <Citation ntsbNo={s.ntsbNo} unconfirmed={s.unconfirmed} to={caseTo(s.ntsbNo)} />}
           </Fragment>
         ))}
       </p>

@@ -29,7 +29,7 @@ export function checklistRows(checklist: ChecklistResults, stage: BriefStage, co
     checklist.question ? 'IN SCOPE' : null,
     checklist.searched ? `${plural(checklist.searched.cases, 'CASE')} · ${plural(checklist.searched.passages, 'PASSAGE')}` : null,
     checklist.written ? 'DONE' : null,
-    checklist.verified === 'passed' ? 'PASSED' : checklist.verified === 'withheld' ? 'WITHHELD' : null,
+    checklist.verified === 'passed' ? 'PASSED' : checklist.verified === 'partially_checked' ? 'PARTLY CHECKED' : checklist.verified === 'withheld' ? 'WITHHELD' : null,
   ];
   const spoken: (string | null)[] = [
     checklist.question ? 'Question: in scope.' : null,
@@ -37,7 +37,9 @@ export function checklistRows(checklist: ChecklistResults, stage: BriefStage, co
       ? `Search done: ${checklist.searched.cases} ${checklist.searched.cases === 1 ? 'case' : 'cases'}, ${checklist.searched.passages} ${checklist.searched.passages === 1 ? 'passage' : 'passages'}.`
       : null,
     checklist.written ? 'Answer written.' : null,
-    checklist.verified ? `Quotes verified: ${checklist.verified === 'passed' ? 'passed' : 'summary withheld'}.` : null,
+    checklist.verified
+      ? `Quotes verified: ${checklist.verified === 'passed' ? 'passed' : checklist.verified === 'partially_checked' ? 'partly checked, unconfirmed statements not shown' : 'summary withheld'}.`
+      : null,
   ];
   const at = ORDER.indexOf(stage);
   const challenges = ['Question', cohort === null ? 'Search investigations' : `Search ${formatCount(cohort)} investigations`, 'Write answer', 'Verify every quote'];
