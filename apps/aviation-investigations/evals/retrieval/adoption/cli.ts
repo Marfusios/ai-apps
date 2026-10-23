@@ -230,7 +230,7 @@ async function preflight(opts: { envFiles?: string; keysFile?: string; scopeSamp
     if ('refused' in run) throw new Error(`${run.refused}; nothing paid`);
     if (run.meta.fingerprint !== grid.frozen.passagesIndex.fingerprint) problems.push('target: the passages index fingerprint is not the frozen one');
     // The production lookup: the cases index this generation's manifest pairs with the passages index.
-    const casesIndex = await manifestCasesIndex(app, run.target.generationId, run.index);
+    const casesIndex = await manifestCasesIndex(app, run.target.generationId, run.index, { timeoutMs: 10_000 });
     if (casesIndex !== grid.frozen.casesIndex.name) problems.push(`target: the manifest pairs ${run.index} with ${casesIndex ?? 'no cases index'}`);
     const casesMeta = await readIndexMeta(es, grid.frozen.casesIndex.name);
     if (!isServableCasesIndex(casesMeta.indexVersion, casesMeta.fingerprint) || casesMeta.fingerprint !== grid.frozen.casesIndex.fingerprint) problems.push('target: the cases index is not the frozen servable version');
@@ -455,7 +455,7 @@ async function cmdLoad(ctx: Context, outDir: string, values: Record<string, stri
       es: ctx.es,
       dataset: { generationId: ctx.run.target.generationId, passagesIndex: ctx.run.index },
       casesIndex: ctx.casesIndex,
-      casesIndexOf: (d) => manifestCasesIndex(ctx.app, d.generationId, d.passagesIndex),
+      casesIndexOf: (d, signal) => manifestCasesIndex(ctx.app, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }),
       vectors,
       embedding: { model, dims, usdPerMillionTokens: 0 },
     },

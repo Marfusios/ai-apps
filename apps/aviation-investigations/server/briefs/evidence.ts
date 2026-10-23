@@ -113,6 +113,7 @@ export type RetrievalFailureKind = 'unavailable' | 'timeout' | 'failed';
 export type RetrievalFailureReason =
   | 'no_passages_index'
   | 'no_cases_index'
+  | 'cases_index_lookup'
   | 'index_mismatch'
   | 'aborted'
   | 'query_too_long'

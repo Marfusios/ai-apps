@@ -53,7 +53,8 @@ function briefServices(config: AppConfig, db: Db, es: Client): { services: Brief
       embedder,
       retrieval: retrievalConfig(config.retrieval.version),
       // The cases index of the manifest a brief's pinned passages index was published with.
-      casesIndexOf: (d) => manifestCasesIndex(db, d.generationId, d.passagesIndex),
+      // Bounded: a stalled pool or database ends the lookup (and the step) instead of holding it.
+      casesIndexOf: (d, signal) => manifestCasesIndex(db, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }),
     });
     return { services: createBriefServices(db, { retriever }), problem: null };
   } catch {

@@ -1156,7 +1156,7 @@ describe('admission order', () => {
 describe.each([RETRIEVAL_V1, RETRIEVAL_V2])('hybrid retrieval behind the port ($version)', (config) => {
   /** The binding under this version; the cases index comes from the manifest, as in the server. */
   const hybrid = (o: { es: Client; embedder: Embedder | QueryEmbedder }) =>
-    createHybridRetriever({ ...o, retrieval: config, casesIndexOf: (d) => manifestCasesIndex(appDb, d.generationId, d.passagesIndex) });
+    createHybridRetriever({ ...o, retrieval: config, casesIndexOf: (d, signal) => manifestCasesIndex(appDb, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }) });
   const caseLevel = config.fusion.level === 'case';
   /** The motivating question (DESIGN §3) as the scope stage reads it: 2008, keyword text for BM25. */
   const SEED_QUESTION = 'Find 2008 investigations involving engine power loss shortly after maintenance';

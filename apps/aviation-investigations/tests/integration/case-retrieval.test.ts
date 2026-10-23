@@ -23,9 +23,11 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Client, estypes } from '@elastic/elasticsearch';
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { queryEmbeddingInput } from '../../server/ai/embeddings.js';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
+import { BoundedReadTimeoutError, boundedRead } from '../../server/db/bounded-read.js';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
 import { manifestCasesIndex, publishManifest } from '../../server/db/generations.js';
 import { streamCaseRecords, type CaseRecord, type CaseRecordAircraft } from '../../server/db/queries/case-records.js';
@@ -392,12 +394,14 @@ describe('case-level retrieval on real Elasticsearch', () => {
 });
 
 describe('the binding with the manifest’s cases index', () => {
-  const hybrid = () => createHybridRetriever({ es: reader, embedder, retrieval: RETRIEVAL_V2, casesIndexOf: (d) => manifestCasesIndex(app, d.generationId, d.passagesIndex) });
+  const hybrid = () =>
+    createHybridRetriever({ es: reader, embedder, retrieval: RETRIEVAL_V2, casesIndexOf: (d, signal) => manifestCasesIndex(app, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }) });
+  const bound = { timeoutMs: 2_000 };
 
   it('serves only the pair the generation’s manifest publishes', async () => {
-    expect(await manifestCasesIndex(app, generationId, passagesV2)).toBe(casesIndex);
-    expect(await manifestCasesIndex(app, generationId, passagesV1)).toBeNull();
-    expect(await manifestCasesIndex(app, generationId + 1, passagesV2)).toBeNull();
+    expect(await manifestCasesIndex(app, generationId, passagesV2, bound)).toBe(casesIndex);
+    expect(await manifestCasesIndex(app, generationId, passagesV1, bound)).toBeNull();
+    expect(await manifestCasesIndex(app, generationId + 1, passagesV2, bound)).toBeNull();
     expect(await hybrid().available({ generationId, passagesIndex: passagesV2 })).toBe(true);
     // A brief pinned to a passages index its generation's manifest no longer names: no cases index, no v2 evidence.
     expect(await hybrid().available({ generationId, passagesIndex: passagesV1 })).toBe(false);
@@ -423,4 +427,63 @@ describe('the binding with the manifest’s cases index', () => {
       expect(c.passages.some((p) => p.role === 'probable_cause')).toBe(true);
     }
   });
+});
+
+describe('the manifest lookup is bounded on real PostgreSQL', () => {
+  const NAME = 'aviation-test-bounded-read';
+  /** A pool of one connection, so the test controls exhaustion exactly. */
+  const smallDb = () => createDb(testDbUrl('app'), { max: 1, applicationName: NAME });
+  const settledPool = (db: Db) => ({ total: db.$client.totalCount, idle: db.$client.idleCount, waiting: db.$client.waitingCount });
+  const activeSleeps = async () =>
+    Number(((await app.execute(sql`select count(*)::int as n from pg_stat_activity where application_name = ${NAME} and state = 'active' and query like '%pg_sleep%'`)).rows[0] as { n: number }).n);
+
+  it('ends a lookup that cannot get a connection within its bound, and leaks no connection', async () => {
+    const small = smallDb();
+    try {
+      const held = await small.$client.connect();
+      const t0 = performance.now();
+      const err = await manifestCasesIndex(small, generationId, passagesV2, { timeoutMs: 200 }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BoundedReadTimeoutError);
+      expect(performance.now() - t0).toBeLessThan(1_000);
+      // A cancel while waiting for a connection ends it too, with the caller's reason.
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new Error('cancelled by the reader')), 50);
+      await expect(manifestCasesIndex(small, generationId, passagesV2, { timeoutMs: 5_000, signal: controller.signal })).rejects.toThrow('cancelled by the reader');
+      // The late acquisitions go straight back: once the held connection is free, nothing waits and nothing is stranded.
+      held.release();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(settledPool(small)).toEqual({ total: 1, idle: 1, waiting: 0 });
+      expect(await manifestCasesIndex(small, generationId, passagesV2, { timeoutMs: 2_000 })).toBe(casesIndex);
+    } finally {
+      await closeDb(small);
+    }
+  });
+
+  it('ends a statement that runs too long: the connection is destroyed, the server stops it, and the slot is free', async () => {
+    const small = smallDb();
+    try {
+      const t0 = performance.now();
+      const err = await boundedRead(small.$client, 'select pg_sleep(5)', [], { timeoutMs: 300 }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BoundedReadTimeoutError);
+      expect(performance.now() - t0).toBeLessThan(1_500);
+      // Destroyed, not returned busy: the pool holds no connection now.
+      expect(small.$client.totalCount).toBe(0);
+      // On the server the statement ends within its own timeout.
+      await new Promise((r) => setTimeout(r, 700));
+      expect(await activeSleeps()).toBe(0);
+      // Cancelled by the caller mid-statement: the same.
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new Error('cancelled by the reader')), 100);
+      await expect(boundedRead(small.$client, 'select pg_sleep(5)', [], { timeoutMs: 2_000, signal: controller.signal })).rejects.toThrow('cancelled by the reader');
+      expect(small.$client.totalCount).toBe(0);
+      await new Promise((r) => setTimeout(r, 2_500));
+      expect(await activeSleeps()).toBe(0);
+      // The statement timeout never outlives its transaction: the pooled connection keeps the default.
+      expect(await boundedRead<{ t: string }>(small.$client, "select current_setting('statement_timeout') as t", [], { timeoutMs: 2_000 })).toEqual([{ t: expect.stringMatching(/^\d+ms$/) }]);
+      const plain = await small.$client.query<{ t: string }>("select current_setting('statement_timeout') as t");
+      expect(plain.rows[0]?.t).toBe('0');
+    } finally {
+      await closeDb(small);
+    }
+  }, 30_000);
 });

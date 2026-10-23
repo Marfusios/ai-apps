@@ -143,7 +143,7 @@ export interface LoadContext {
   es: Client;
   dataset: EvidenceDataset;
   casesIndex: string;
-  casesIndexOf: (d: EvidenceDataset) => Promise<string | null>;
+  casesIndexOf: (d: EvidenceDataset, signal: AbortSignal) => Promise<string | null>;
   vectors: ReadonlyMap<string, Float32Array>;
   embedding: Pick<Embedder, 'model' | 'dims' | 'usdPerMillionTokens'>;
 }

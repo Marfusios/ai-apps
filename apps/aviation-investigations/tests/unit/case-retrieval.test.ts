@@ -18,6 +18,7 @@ import { compileFilters } from '../../server/search/filters.js';
 import { IncompleteSearchError, RetrievalUnavailableError, fetchAndPack, retrievalParams, type QueryEmbeddingUsage } from '../../server/search/hybrid.js';
 import { PASSAGES_V2_CONTRACT } from '../../server/search/passages-contract.js';
 import { RETRIEVAL_V1, RETRIEVAL_V2, RETRIEVAL_V2_NF } from '../../server/search/retrieval-config.js';
+import { BoundedReadTimeoutError } from '../../server/db/bounded-read.js';
 import { CASES_INDEX_VERSION, casesIndexFingerprint } from '../../worker/index/cases-index.js';
 import { createFakeEmbedder, fakeVector } from '../../worker/index/embed.js';
 import { casePassages, createFakeEs, passage, type FakeEsOptions, type FakePassage } from '../support/fake-es.js';
@@ -368,11 +369,60 @@ describe('the binding under a case-level version', () => {
     const err = await none.retrieve(evidenceQuery(), live(), () => undefined).catch((e: unknown) => e);
     expect(err).toMatchObject({ kind: 'unavailable', embedding: 'none', reason: 'no_cases_index' });
     const broken = createHybridRetriever({ es: f.es, embedder, retrieval: RETRIEVAL_V2, casesIndexOf: async () => Promise.reject(new Error('SENTINEL db')) });
-    expect(await broken.retrieve(evidenceQuery(), live(), () => undefined).catch((e: unknown) => e)).toMatchObject({ kind: 'failed', embedding: 'none', reason: 'other' });
+    expect(await broken.retrieve(evidenceQuery(), live(), () => undefined).catch((e: unknown) => e)).toMatchObject({ kind: 'failed', embedding: 'none', reason: 'cases_index_lookup' });
     const other = createHybridRetriever({ es: f.es, embedder, retrieval: RETRIEVAL_V2, casesIndexOf: async () => 'test-cases-missing' });
     expect(await other.retrieve(evidenceQuery(), live(), () => undefined).catch((e: unknown) => e)).toMatchObject({ kind: 'unavailable', embedding: 'none', reason: 'index_mismatch' });
     expect(embedder.calls).toHaveLength(0);
     expect(f.calls).toHaveLength(0);
+  });
+
+  it('bounds the manifest lookup: a stalled lookup ends the request, sanitized, before anything is embedded', async () => {
+    // A lookup that only ends when its signal aborts, and one that ignores the signal entirely.
+    const seenSignals: AbortSignal[] = [];
+    const honours = (d: unknown, signal: AbortSignal) =>
+      new Promise<string | null>((_, reject) => {
+        seenSignals.push(signal);
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    const ignores = () => new Promise<string | null>(() => undefined);
+    for (const casesIndexOf of [honours, ignores]) {
+      const f = fake();
+      const embedder = createFakeEmbedder(DIMS, MODEL);
+      const make = () => createHybridRetriever({ es: f.es, embedder, retrieval: RETRIEVAL_V2, casesIndexOf, checkTimeoutMs: 100, lookupTimeoutMs: 100 });
+      // available(): false within its deadline.
+      let t0 = performance.now();
+      expect(await make().available(DATASET)).toBe(false);
+      expect(performance.now() - t0).toBeLessThan(1_000);
+      // retrieve(): the lookup's own bound elapsed; a sanitized timeout, nothing embedded or searched.
+      t0 = performance.now();
+      const timedOut = await make().retrieve(evidenceQuery(), live(), () => undefined).catch((e: unknown) => e);
+      expect(performance.now() - t0).toBeLessThan(1_000);
+      expect(timedOut).toBeInstanceOf(RetrievalFailure);
+      expect(timedOut).toMatchObject({ kind: 'timeout', embedding: 'none', reason: 'cases_index_lookup', message: 'retrieval failed: timeout (cases_index_lookup)' });
+      // retrieve(): cancelled while the lookup waits; the step's own timeout reason, nothing embedded.
+      const controller = new AbortController();
+      const pending = createHybridRetriever({ es: f.es, embedder, retrieval: RETRIEVAL_V2, casesIndexOf, lookupTimeoutMs: 60_000 }).retrieve(evidenceQuery(), controller.signal, () => undefined);
+      setTimeout(() => controller.abort(), 20);
+      t0 = performance.now();
+      expect(await pending.catch((e: unknown) => e)).toMatchObject({ kind: 'timeout', embedding: 'none', reason: 'aborted' });
+      expect(performance.now() - t0).toBeLessThan(1_000);
+      expect(embedder.calls).toHaveLength(0);
+      // The passages contract check ran for available(); no search was sent.
+      expect(f.calls).toHaveLength(0);
+    }
+    // The resolver was told: every signal it got has aborted.
+    expect(seenSignals.length).toBe(3);
+    for (const s of seenSignals) expect(s.aborted).toBe(true);
+  });
+
+  it('a failing lookup is a sanitized failure, its own timeout a sanitized timeout', async () => {
+    const f = fake();
+    const embedder = createFakeEmbedder(DIMS, MODEL);
+    const failing = createHybridRetriever({ es: f.es, embedder, retrieval: RETRIEVAL_V2, casesIndexOf: async () => Promise.reject(new Error('SENTINEL connection refused')) });
+    expect(await failing.retrieve(evidenceQuery(), live(), () => undefined).catch((e: unknown) => e)).toMatchObject({ kind: 'failed', embedding: 'none', reason: 'cases_index_lookup', message: 'retrieval failed: failed (cases_index_lookup)' });
+    const slow = createHybridRetriever({ es: f.es, embedder, retrieval: RETRIEVAL_V2, casesIndexOf: async () => Promise.reject(new BoundedReadTimeoutError(5)) });
+    expect(await slow.retrieve(evidenceQuery(), live(), () => undefined).catch((e: unknown) => e)).toMatchObject({ kind: 'timeout', embedding: 'none', reason: 'cases_index_lookup' });
+    expect(embedder.calls).toHaveLength(0);
   });
 
   it('is available only with a servable passages index and its paired, servable cases index', async () => {

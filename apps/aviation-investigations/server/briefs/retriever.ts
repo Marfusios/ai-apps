@@ -11,7 +11,13 @@
  *   brief's generation pairs with the brief's pinned passages index (`casesIndexOf`,
  *   PostgreSQL), resolved before anything is embedded: none is `unavailable`
  *   (`no_cases_index`), and retrieval then checks it against the generation and a
- *   servable cases version before embedding too.
+ *   servable cases version before embedding too. The lookup is bounded: by
+ *   `lookupTimeoutMs` and the request's signal in `retrieve` (a stalled pool or database
+ *   fails the step as `timeout`, reason `cases_index_lookup`, or `aborted` on a cancel or
+ *   deadline, with nothing embedded), and by `checkTimeoutMs` in `available`. The
+ *   resolver gets the signal (`manifestCasesIndex` bounds acquisition and the statement
+ *   and destroys an abandoned connection); the binding also stops waiting on its own, so
+ *   a resolver that ignores the signal cannot hold a request.
  *
  * - **Texts.** The dense channel embeds the question (with the text refinement in
  *   effect) as the pipeline gives it, cut to the query embedder's token cap when it is
@@ -52,6 +58,7 @@ import {
   type QueryEmbedder,
 } from '../ai/embeddings.js';
 import { countTokens } from '../ai/tokens.js';
+import { BoundedReadTimeoutError, untilAborted } from '../db/bounded-read.js';
 import { retrieveCandidatesWith, type StageOne } from '../search/case-retrieval.js';
 import { assertServableCasesIndex } from '../search/cases-channel.js';
 import {
@@ -84,12 +91,22 @@ export interface HybridRetrieverOptions {
   retrieval: RetrievalConfig;
   /**
    * The cases index the manifest of `dataset.generationId` pairs with
-   * `dataset.passagesIndex`, or null (`manifestCasesIndex`). Required by a version with
-   * the cases channel.
+   * `dataset.passagesIndex`, or null (`manifestCasesIndex`), ending its work when `signal`
+   * aborts. Required by a version with the cases channel.
    */
-  casesIndexOf?: (dataset: EvidenceDataset) => Promise<string | null>;
-  /** Bound of `available`'s checks (default 2 s). */
+  casesIndexOf?: (dataset: EvidenceDataset, signal: AbortSignal) => Promise<string | null>;
+  /** Bound of `available`'s checks, the manifest lookup included (default 2 s). */
   checkTimeoutMs?: number;
+  /** Bound of the manifest lookup in `retrieve` (default 2 s); the request's signal bounds it too. */
+  lookupTimeoutMs?: number;
+}
+
+/** The manifest lookup outran its own bound (the request was still live). */
+export class CasesIndexLookupTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`the cases index lookup did not finish within ${ms} ms`);
+    this.name = 'CasesIndexLookupTimeoutError';
+  }
 }
 
 /**
@@ -208,6 +225,18 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
   const casesIndexOf = opts.casesIndexOf;
   if (config.channels.cases && !casesIndexOf) throw new Error(`${config.version} searches the cases index: casesIndexOf is required`);
   const checkTimeoutMs = opts.checkTimeoutMs ?? 2_000;
+  const lookupTimeoutMs = opts.lookupTimeoutMs ?? 2_000;
+
+  /**
+   * The manifest's cases index within `ms` and `outer` (module comment): the resolver is
+   * told through the signal, and the wait ends with the bound whatever the resolver does.
+   */
+  const lookup = (resolve: NonNullable<HybridRetrieverOptions['casesIndexOf']>, dataset: EvidenceDataset, outer: AbortSignal, ms: number): Promise<string | null> => {
+    const timer = AbortSignal.timeout(ms);
+    const bound = AbortSignal.any([outer, timer]);
+    const work = Promise.resolve().then(() => resolve(dataset, bound));
+    return untilAborted(work, bound, (reason) => (outer.aborted ? reason : new CasesIndexLookupTimeoutError(ms)));
+  };
 
   return {
     version: config.version,
@@ -219,7 +248,7 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
         const pinned = { generationId: dataset.generationId, passagesIndex: dataset.passagesIndex };
         await assertServablePassagesIndex(es, pinned, embedder, { timeoutMs: checkTimeoutMs, signal });
         if (config.channels.cases && casesIndexOf) {
-          const casesIndex = await casesIndexOf(pinned);
+          const casesIndex = await lookup(casesIndexOf, pinned, signal, checkTimeoutMs);
           if (!casesIndex) return false;
           await assertServableCasesIndex(es, casesIndex, dataset.generationId, { timeoutMs: checkTimeoutMs, signal });
         }
@@ -247,9 +276,13 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
           if (!query.dataset.passagesIndex) throw new RetrievalFailure('unavailable', 'none', 'retrieval failed: unavailable (no_passages_index)', 'no_passages_index');
           try {
             signal.throwIfAborted();
-            casesIndex = await casesIndexOf(query.dataset);
+            casesIndex = await lookup(casesIndexOf, query.dataset, signal, lookupTimeoutMs);
           } catch (err) {
-            throw retrievalFailureOf(err, signal, 'none');
+            // A cancel or the stage deadline: `timeout` (`aborted`). Nothing was embedded.
+            if (signal.aborted) throw retrievalFailureOf(err, signal, 'none');
+            const timedOut = err instanceof CasesIndexLookupTimeoutError || err instanceof BoundedReadTimeoutError;
+            const kind = timedOut ? 'timeout' : 'failed';
+            throw new RetrievalFailure(kind, 'none', `retrieval failed: ${kind} (cases_index_lookup)`, 'cases_index_lookup');
           }
           if (!casesIndex) throw new RetrievalFailure('unavailable', 'none', 'retrieval failed: unavailable (no_cases_index)', 'no_cases_index');
         }

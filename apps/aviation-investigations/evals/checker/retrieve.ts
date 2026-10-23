@@ -69,7 +69,7 @@ export async function retrieveEvidence(
       es,
       embedder: precomputedEmbedder({ model, dims, usdPerMillionTokens: price }, vectors),
       retrieval: retrievalConfig(config.retrieval.version),
-      casesIndexOf: (d) => manifestCasesIndex(app, d.generationId, d.passagesIndex),
+      casesIndexOf: (d, signal) => manifestCasesIndex(app, d.generationId, d.passagesIndex, { timeoutMs: 5_000, signal }),
     });
     const catalog = createCaseCatalog(app);
     const bundles: EvidenceFile['bundles'] = [];
