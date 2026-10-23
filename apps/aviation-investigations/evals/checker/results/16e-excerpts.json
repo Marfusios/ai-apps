@@ -1,6 +1,238 @@
 {
   "rules": "excerpt-context-v1",
-  "note": "Task 16e: the excerpt-context policy on real NTSB excerpts. quotes: the calibration quotes of dataset v2 (a tuning corpus: the policy was written against them); sentences: 200 sentences of the development passages labelled before the policy ran on them (the measurement corpus). A false omission is a standalone excerpt omitted; a catch is an excerpt that needs context omitted. Counts, ids and problem codes only.",
+  "note": "Task 16e: the excerpt-context policy on real NTSB excerpts. blind16e: the measurement, 200 sentences of a fixed draw from the 16e evidence (passages in no earlier evidence file), labelled and committed before the frozen policy ran on them. sentences: 200 sentences of the development passages, labelled before a draft of the policy ran; the policy was then revised against them (development, not blind). quotes: the calibration quotes of dataset v2 (a tuning corpus). A false omission is a standalone excerpt omitted; a catch is an excerpt that needs context omitted. Counts, ids and problem codes only.",
+  "blind16e": {
+    "all": {
+      "items": 200,
+      "standalone": 166,
+      "needsContext": 34,
+      "falseOmissions": {
+        "k": 7,
+        "n": 166,
+        "rate": 0.04216867469879518,
+        "low": 0.020574244177110637,
+        "high": 0.08447348091200074
+      },
+      "catches": {
+        "k": 18,
+        "n": 34,
+        "rate": 0.5294117647058824,
+        "low": 0.36736712863069904,
+        "high": 0.6854849563344647
+      },
+      "falseOmissionIds": [
+        {
+          "id": "an27",
+          "problems": [
+            "relative_sequence"
+          ]
+        },
+        {
+          "id": "an38",
+          "problems": [
+            "relative_sequence"
+          ]
+        },
+        {
+          "id": "an65",
+          "problems": [
+            "relative_sequence"
+          ]
+        },
+        {
+          "id": "an68",
+          "problems": [
+            "comparison"
+          ]
+        },
+        {
+          "id": "an69",
+          "problems": [
+            "relative_sequence"
+          ]
+        },
+        {
+          "id": "fa41",
+          "problems": [
+            "relative_time"
+          ]
+        },
+        {
+          "id": "fa52",
+          "problems": [
+            "relative_time"
+          ]
+        }
+      ],
+      "missIds": [
+        "an49",
+        "an66",
+        "fa07",
+        "fa20",
+        "fa23",
+        "fa25",
+        "fa34",
+        "fa38",
+        "fa40",
+        "fa48",
+        "fa49",
+        "fa53",
+        "fa58",
+        "fa62",
+        "fa65",
+        "fa66"
+      ],
+      "problems": {
+        "leading_reference": 14,
+        "pronoun": 11,
+        "demonstrative": 3,
+        "relative_time": 2,
+        "relative_sequence": 7,
+        "comparison": 1
+      }
+    },
+    "bySection": {
+      "analysis": {
+        "items": 70,
+        "standalone": 57,
+        "needsContext": 13,
+        "falseOmissions": {
+          "k": 5,
+          "n": 57,
+          "rate": 0.08771929824561403,
+          "low": 0.03805167153710125,
+          "high": 0.1894487720058653
+        },
+        "catches": {
+          "k": 11,
+          "n": 13,
+          "rate": 0.8461538461538461,
+          "low": 0.5776536874893673,
+          "high": 0.9567418220347709
+        },
+        "falseOmissionIds": [
+          {
+            "id": "an27",
+            "problems": [
+              "relative_sequence"
+            ]
+          },
+          {
+            "id": "an38",
+            "problems": [
+              "relative_sequence"
+            ]
+          },
+          {
+            "id": "an65",
+            "problems": [
+              "relative_sequence"
+            ]
+          },
+          {
+            "id": "an68",
+            "problems": [
+              "comparison"
+            ]
+          },
+          {
+            "id": "an69",
+            "problems": [
+              "relative_sequence"
+            ]
+          }
+        ],
+        "missIds": [
+          "an49",
+          "an66"
+        ],
+        "problems": {
+          "leading_reference": 9,
+          "pronoun": 8,
+          "demonstrative": 1,
+          "relative_sequence": 7,
+          "comparison": 1
+        }
+      },
+      "factual": {
+        "items": 70,
+        "standalone": 49,
+        "needsContext": 21,
+        "falseOmissions": {
+          "k": 2,
+          "n": 49,
+          "rate": 0.04081632653061224,
+          "low": 0.01126563326469128,
+          "high": 0.1371303241389677
+        },
+        "catches": {
+          "k": 7,
+          "n": 21,
+          "rate": 0.3333333333333333,
+          "low": 0.1719475251228901,
+          "high": 0.5462654818728245
+        },
+        "falseOmissionIds": [
+          {
+            "id": "fa41",
+            "problems": [
+              "relative_time"
+            ]
+          },
+          {
+            "id": "fa52",
+            "problems": [
+              "relative_time"
+            ]
+          }
+        ],
+        "missIds": [
+          "fa07",
+          "fa20",
+          "fa23",
+          "fa25",
+          "fa34",
+          "fa38",
+          "fa40",
+          "fa48",
+          "fa49",
+          "fa53",
+          "fa58",
+          "fa62",
+          "fa65",
+          "fa66"
+        ],
+        "problems": {
+          "leading_reference": 5,
+          "pronoun": 3,
+          "demonstrative": 2,
+          "relative_time": 2
+        }
+      },
+      "probable_cause": {
+        "items": 60,
+        "standalone": 60,
+        "needsContext": 0,
+        "falseOmissions": {
+          "k": 0,
+          "n": 60,
+          "rate": 0,
+          "low": 0,
+          "high": 0.060171853034227174
+        },
+        "catches": {
+          "k": 0,
+          "n": 0,
+          "rate": null,
+          "low": null,
+          "high": null
+        },
+        "falseOmissionIds": [],
+        "missIds": [],
+        "problems": {}
+      }
+    }
+  },
   "sentences": {
     "all": {
       "items": 200,

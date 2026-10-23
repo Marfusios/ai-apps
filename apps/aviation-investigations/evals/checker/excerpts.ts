@@ -9,9 +9,13 @@
  *    (`quote_context_loss`) or a misleading excerpt (`misleading_excerpt`) needs context;
  *    every other quote is standalone (a wrong speaker does not make words depend on their
  *    surroundings), except the reviewed disputes below, reported both ways.
- * 2. **The sentence sample** (the measurement corpus, `excerpt-sentences.ts`): 200 whole
- *    sentences drawn at random from the development passages and labelled before the policy
- *    ran on them, read as the investigators' words.
+ * 2. **The development sentence sample** (`excerpt-sentences.ts`): 200 whole sentences
+ *    drawn at random from the development passages and labelled before a draft of the
+ *    policy ran on them; the policy was then revised against it, so it is development
+ *    material, not a blind measurement.
+ * 3. **The blind sample** (the measurement, `excerpt-sentences-16e.ts`): the 200 sentences
+ *    of a fixed draw from the 16e evidence (`excerpt-sample.ts`), labelled and committed
+ *    before the frozen policy ran on any of them, read as the investigators' words.
  *
  * A **false omission** is a standalone excerpt the policy omits; a **catch** is an excerpt
  * that needs context and is omitted; a **miss** is one that needs context and is kept (the
@@ -24,9 +28,10 @@ import { EXCERPT_CONTEXT_VERSION, EXCERPT_PROBLEMS, excerptProblems, type Excerp
 import { SPEAKER_CLAIM } from '../../server/briefs/render.js';
 import { matchQuote } from '../../server/briefs/validate.js';
 import { APP_DIR } from '../../worker/config.js';
-import { DATASET_V2_PATH, EVIDENCE_PATH, EVIDENCE_V2_PATH, readDatasetV2 } from './build.js';
-import { EXCERPT_SENTENCES } from './excerpt-sentences.js';
-import { EvidenceFileSchema, EvidenceV2FileSchema } from './evidence.js';
+import { DATASET_V2_PATH, EVIDENCE_PATH, EVIDENCE_V2_PATH, EVIDENCE_V3_PATH, readDatasetV2 } from './build.js';
+import { EXCERPT_SENTENCES, type ExcerptSentence } from './excerpt-sentences.js';
+import { EXCERPT_SENTENCES_16E } from './excerpt-sentences-16e.js';
+import { EvidenceFileSchema, EvidenceV2FileSchema, EvidenceV3FileSchema } from './evidence.js';
 import { rate, type Rate } from './metrics.js';
 
 export const EXCERPTS_RESULT_PATH = resolve(APP_DIR, 'evals/checker/results/16e-excerpts.json');
@@ -110,18 +115,29 @@ export function quoteCorpus(): CorpusItem[] {
 }
 
 /** The labelled sentence sample, located in its passages. */
+/** The development sentence sample, through the policy. */
 export function sentenceCorpus(): CorpusItem[] {
-  const passages = new Map<string, string>();
-  const aircraft = new Map<string, number>();
   const v1 = EvidenceFileSchema.parse(JSON.parse(readFileSync(EVIDENCE_PATH, 'utf8')));
   const v2 = EvidenceV2FileSchema.parse(JSON.parse(readFileSync(EVIDENCE_V2_PATH, 'utf8')));
-  for (const b of [...v1.bundles, ...v2.bundles]) {
+  return labelledCorpus(EXCERPT_SENTENCES, [...v1.bundles, ...v2.bundles]);
+}
+
+/** The blind sample (16e evidence), through the policy. */
+export function blindCorpus16e(): CorpusItem[] {
+  const v3 = EvidenceV3FileSchema.parse(JSON.parse(readFileSync(EVIDENCE_V3_PATH, 'utf8')));
+  return labelledCorpus(EXCERPT_SENTENCES_16E, v3.bundles);
+}
+
+function labelledCorpus(sentences: readonly ExcerptSentence[], bundles: readonly { cases: readonly { ntsbNo: string; aircraft: readonly unknown[]; passages: readonly { passageId: string; text: string }[] }[] }[]): CorpusItem[] {
+  const passages = new Map<string, string>();
+  const aircraft = new Map<string, number>();
+  for (const b of bundles) {
     for (const c of b.cases) {
       aircraft.set(c.ntsbNo, c.aircraft.length);
       for (const p of c.passages) passages.set(p.passageId, p.text);
     }
   }
-  return EXCERPT_SENTENCES.map((s) => {
+  return sentences.map((s) => {
     const text = passages.get(s.passageId);
     if (text === undefined) throw new Error(`${s.id}: no passage ${s.passageId.slice(0, 12)}`);
     const start = text.indexOf(s.text);
@@ -171,10 +187,12 @@ export function figures(items: readonly CorpusItem[], labelOf: (i: CorpusItem) =
 export function excerptReport() {
   const quotes = quoteCorpus();
   const sentences = sentenceCorpus();
+  const blind = blindCorpus16e();
   const strata = (items: readonly CorpusItem[]) => Object.fromEntries([...new Set(items.map((i) => i.stratum))].sort().map((s) => [s, figures(items.filter((i) => i.stratum === s))]));
   return {
     rules: EXCERPT_CONTEXT_VERSION,
-    note: 'Task 16e: the excerpt-context policy on real NTSB excerpts. quotes: the calibration quotes of dataset v2 (a tuning corpus: the policy was written against them); sentences: 200 sentences of the development passages labelled before the policy ran on them (the measurement corpus). A false omission is a standalone excerpt omitted; a catch is an excerpt that needs context omitted. Counts, ids and problem codes only.',
+    note: 'Task 16e: the excerpt-context policy on real NTSB excerpts. blind16e: the measurement, 200 sentences of a fixed draw from the 16e evidence (passages in no earlier evidence file), labelled and committed before the frozen policy ran on them. sentences: 200 sentences of the development passages, labelled before a draft of the policy ran; the policy was then revised against them (development, not blind). quotes: the calibration quotes of dataset v2 (a tuning corpus). A false omission is a standalone excerpt omitted; a catch is an excerpt that needs context omitted. Counts, ids and problem codes only.',
+    blind16e: { all: figures(blind), bySection: strata(blind) },
     sentences: { all: figures(sentences), bySection: strata(sentences) },
     quotes: {
       all: figures(quotes),
@@ -195,7 +213,9 @@ export function excerptsCommand(opts: { write: boolean; log: (m: string) => void
     `  catches ${pct(f.catches)}${f.missIds.length ? `; misses: ${f.missIds.join(', ')}` : ''}`,
   ];
   for (const l of [
-    ...lines('sentence sample (measurement)', r.sentences.all),
+    ...lines('blind sample, 16e evidence (measurement)', r.blind16e.all),
+    ...Object.entries(r.blind16e.bySection).flatMap(([s, f]) => lines(`  ${s}`, f)),
+    ...lines('development sentence sample (tuned against)', r.sentences.all),
     ...Object.entries(r.sentences.bySection).flatMap(([s, f]) => lines(`  ${s}`, f)),
     ...lines('calibration quotes (tuning)', r.quotes.all),
     ...lines('calibration quotes, labels before the disputes', r.quotes.originalLabels),

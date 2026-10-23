@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EXCERPT_CONTEXT_VERSION, excerptProblems, passageSentences, type ExcerptInput } from '../../server/briefs/excerpts.js';
-import { quoteCorpus, sentenceCorpus, figures } from '../../evals/checker/excerpts.js';
+import { blindCorpus16e, quoteCorpus, sentenceCorpus, figures } from '../../evals/checker/excerpts.js';
 import { drawBlindSample16e } from '../../evals/checker/excerpt-sample.js';
 import { EXCERPT_SENTENCES_16E } from '../../evals/checker/excerpt-sentences-16e.js';
 
@@ -168,5 +168,14 @@ describe('the blind sample (Task 16e): the labelled file is exactly the fixed dr
       draw.map(({ id, ntsbNo, passageId, section, text }) => ({ id, ntsbNo, passageId, section, text })),
     );
     for (const s of EXCERPT_SENTENCES_16E) if (s.label === 'needs_context') expect(s.reason, s.id).toBeTruthy();
+  });
+});
+
+describe('excerpt-context-v1 on the blind sample (the measurement)', () => {
+  it('records the frozen rule\'s measured figures: a changed rule needs a new blind sample', () => {
+    const f = figures(blindCorpus16e());
+    expect(f).toMatchObject({ items: 200, standalone: 166, needsContext: 34 });
+    expect(f.falseOmissions).toMatchObject({ k: 7, n: 166 });
+    expect(f.catches).toMatchObject({ k: 18, n: 34 });
   });
 });
