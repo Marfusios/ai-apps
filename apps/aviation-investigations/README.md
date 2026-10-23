@@ -795,13 +795,58 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
   P@6 and nDCG@6 with bounds over unknowns, supported P@6 (relevant and answerable in the
   delivered passages); comparisons bootstrap bounds on each question's improvement
   (jointly over shared unknowns for P@6, cross-endpoint for nDCG@6) and name a better
-  method only when the interval clears zero. Diagnostics: judged coverage, judge agreement
+  method only when the interval clears zero (a bound within 1e-9 of zero, which is
+  floating-point residue, counts as zero). Diagnostics: judged coverage, judge agreement
   (kappa with intervals, confusion matrices per tag and grade), candidate code-narrative
   discrepancies (final and per judge), and two disjoint audit samples (an AI audit and a
   non-expert owner audit) stratified by tag, label and agreement class. The report
   refuses judgment files made under another experiment identity, records that no longer
   match the dataset, pool or calibration, and conflicting records; it merges the records
   of resumed runs.
+- **Pooled result (2026-10-23)** (`results/pooled-2026-10.json`; model-judged, development
+  questions only, never a release evaluation). The pools hold 4,024 cases in 22 families
+  and 449 delivered bundles, built through the production retrievers and frozen in
+  `frozen-pools.json`. Stage 1 (1,397 pairs) and the answerability of every delivered
+  bundle were judged in full. In stage 2 both judges graded the other 2,627 pairs; the
+  $12 allocation's cap then stopped the escalations after one, leaving 455
+  disagreements unknown (443 benchmark pairs, 11.4% of the benchmark pools, none in a
+  bounded cohort). A later run on the same frozen pools pays only those escalations
+  (about $9.70), because every judge grade is cached. On the 25 benchmark questions
+  (14 bootstrap groups), `retrieval.v2` against `retrieval.v1`:
+  - strict P@6 39.6% against 35.1–35.8%: better (+3.8 to +4.4 points across the
+    unknowns; one-sided 95% lower bound +1.4);
+  - nDCG@6 49.6–50.1% against 41.0–41.8%: better (+7.9 to +9.1 points; lower bound +3.6);
+  - supported P@6 33.6% against 31.1%: +2.4 points, inconclusive (the one-sided lower
+    bound is exactly zero; the two-sided interval is [−0.5, +5.1]);
+  - Recall@20 on the five questions whose bounded cohorts hold 1–20 relevant cases
+    66.4% against 68.1%: −1.8 points, inconclusive (of the six cohorts, one holds 23
+    relevant cases and one none).
+
+  `retrieval.v2-nf` and `retrieval.v2` do not differ. Against `retrieval.v1`,
+  `retrieval.v2-nf` is better on all three precision measures, supported P@6 only just
+  (+2.7 points; lower bound +0.3). Of the fully relevant cases each version delivered
+  (158, 178 and 179), 88.6% (`retrieval.v1`), 84.8% (`retrieval.v2`) and 84.9%
+  (`retrieval.v2-nf`) are answerable from their delivered passages. Judge agreement is
+  κ 0.70 [0.61, 0.78] (85.2%) on relevance and κ 0.76 (85.3%) on answerability. The tags
+  with κ below 0.7 are negation, causal uncertainty, maintenance chronology, mechanical
+  and aircraft filters.
+
+  The pilot-decision regression holds on narrative labels: nDCG@6 is 72.1% under
+  `retrieval.v1` and 36.6% under both v2 versions (P@6 66.7% against 33.3%), with the
+  same runs in every sample. The three cases the v2 versions displace are relevant and
+  coded; of the three they admit, one is relevant, one partly relevant and one not. The
+  coded values reproduce task 10e's. No ordinary retrieval run needed the mapping. Of the
+  118 bundles the forced mapping diagnostic delivered, 15 are of relevant cases; 13 of
+  the 14 with a known answerability are answerable, and every answerable bundle rests on
+  a mapped passage, never only on the attached probable cause.
+
+  The audit packet (`results/audit-2026-10.json`) holds the stratified AI and owner
+  samples and two targeted selections: 107 pairs of the hour-window families (18
+  adjudicated) and 20 pilot-versus-investigator bundles. Three bundles of fully relevant
+  cases hold the investigation's finding but not the pilot's report: one is graded 1 and
+  two 0, the ambiguity behind the calibration holdout's one miss; supported P@6 counts
+  neither grade. The pooled run cost $11.57; with the calibration, the month's total is
+  $11.94 of the $12 allocation.
 
 ```sh
 pnpm eval:retrieval:narrative build --generation 1 --check        # the question set (DATABASE_URL, read-only)
