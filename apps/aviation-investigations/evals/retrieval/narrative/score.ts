@@ -388,6 +388,15 @@ export interface Coverage {
   notJudged: number;
 }
 
+/**
+ * The units of coverage: every pool case is a case–question-family pair (a case judged for one
+ * question family), and one investigation in several families counts once per family. The
+ * distinct investigations behind the pairs are counted alongside.
+ */
+export function coverageUnits(pools: readonly Pick<FamilyPool, 'family' | 'cases'>[]): { pairs: number; investigations: number } {
+  return { pairs: pools.reduce((n, p) => n + p.cases.length, 0), investigations: new Set(pools.flatMap((p) => p.cases.map((c) => c.ntsbNo))).size };
+}
+
 /** Judged coverage of a family's pool and, for a bounded cohort, of its cohort (protocol section 4: reported with every score). */
 export function judgedCoverage(pool: Pick<FamilyPool, 'cases'>, labels: ReadonlyMap<string, Label>, cohort: readonly string[] | null): { pool: Coverage; cohort: Coverage | null } {
   const of = (cases: readonly string[]): Coverage => {

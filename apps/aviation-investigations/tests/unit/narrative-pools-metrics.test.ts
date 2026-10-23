@@ -71,6 +71,7 @@ import {
   discoveryByDepth,
   discrepancies,
   familyReference,
+  coverageUnits,
   judgedCoverage,
   mappingDiagnosticReport,
   methodExclusive,
@@ -261,6 +262,13 @@ describe('references and run scores', () => {
       cohort: { cases: 4, known: 1, unresolved: 1, notJudged: 2 },
     });
     expect(judgedCoverage({ cases }, labels, null).cohort).toBeNull();
+  });
+
+  it('counts coverage in case–question-family pairs and the distinct investigations behind them', () => {
+    const casesOf = (...ns: string[]) => ns.map((n) => ({ ntsbNo: n, sources: [], bestRank: {}, lureRank: null, delivered: false }));
+    // B is in both families: two pairs, one investigation.
+    expect(coverageUnits([{ family: 'f1', cases: casesOf('A', 'B') }, { family: 'f2', cases: casesOf('B', 'C', 'D') }])).toEqual({ pairs: 5, investigations: 4 });
+    expect(coverageUnits([])).toEqual({ pairs: 0, investigations: 0 });
   });
 
   it('bounds supported P@6 by the unknowns of either judgment', () => {

@@ -136,6 +136,7 @@ import {
   discoveryByDepth,
   discrepancies,
   familyReference,
+  coverageUnits,
   judgedCoverage,
   mappingDiagnosticReport,
   methodExclusive,
@@ -733,7 +734,12 @@ function logPoolSummary(p: PoolFile, d: NarrativeDataset, log: (m: string) => vo
     log(`  ${f.family}${f.role === 'diagnostic' ? ' [diagnostic]' : ''}: ${f.cases} cases; ${v}; mapping diagnostic ${f.mappingDiagnostic.mapped}/${f.mappingDiagnostic.forced} mapped, ${f.mappingDiagnostic.delivered} delivered`);
   }
   const t = sum.total;
-  log(`pools: ${t.cases} cases in ${sum.families.length} families (${t.benchmarkCases} benchmark, ${t.cases - t.benchmarkCases} diagnostic); ${t.bundlePairs} answerability pairs; stage 1 ${t.stage1} relevance pairs`);
+  const all = coverageUnits(p.families);
+  const bench = coverageUnits(p.families.filter((f) => (d.questions.find((q) => q.id === f.family)?.role ?? 'benchmark') === 'benchmark'));
+  log(
+    `pools: ${t.cases} case–question-family pairs over ${all.investigations} distinct investigations in ${sum.families.length} families ` +
+      `(${t.benchmarkCases} benchmark pairs over ${bench.investigations} investigations, ${t.cases - t.benchmarkCases} diagnostic pairs); ${t.bundlePairs} answerability pairs; stage 1 ${t.stage1} relevance pairs`,
+  );
   for (const [m, x] of Object.entries(t.versions)) log(`  ${m}: ${x.cases} cases in its first ${POOL_RULE.depth} (summed over families), ${x.delivered} delivered; ${x.runsWithMapping} of ${x.runs} runs needed the mapping, ${x.mapped} case(s) mapped, ${x.unmapped} unmapped`);
   log(`  mapping diagnostic: ${t.mappingDiagnostic.forced} cases-channel-only cases forced through the mapping, ${t.mappingDiagnostic.mapped} mapped, ${t.mappingDiagnostic.delivered} delivered`);
 }
@@ -1522,8 +1528,14 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
       comparisons[pair] = { ...(comparisons[pair] ?? {}), [metric]: { ...compareMethods(list, (member) => groups.get(member) ?? member, boot), perQuestion: list } };
     }
     const flagged = (k: 'noPositivePossible' | 'abstention') => values.filter((v) => v[k]).map((v) => ({ member: v.member, method: v.method }));
+    const units = {
+      note: 'Coverage counts case–question-family pairs: a case judged for one question family. An investigation in several families counts once per family; the distinct investigations are counted alongside.',
+      benchmark: coverageUnits(pools.families.filter((p) => roleOf(p.family) === 'benchmark')),
+      all: coverageUnits(pools.families),
+    };
     out.relevance = {
       poolVersion: pools.version,
+      units,
       methods: pools.methods.map((m) => ({ ...m.retrieval, currentCode: poolMethods().find((x) => x.id === m.id)?.retrieval.sha256 === m.retrieval.sha256 })),
       values,
       comparisons: { note: 'Improvement bounds per question (joint over shared unknowns for P@6 and supported P@6, cross-endpoint for nDCG@6), group-bootstrapped; a method is better only when the whole interval clears zero.', ...comparisons },
@@ -1546,6 +1558,7 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
       agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(diagnosticRel, tagsOf) },
     };
     log(`relevance: ${rel.length} pair records over ${pools.families.length} families (${benchmarkRel.length} benchmark, ${diagnosticRel.length} diagnostic; ${joined.merged} duplicates merged, ${joined.superseded} superseded)`);
+    log(`coverage units: ${units.benchmark.pairs} benchmark case–question-family pairs over ${units.benchmark.investigations} distinct investigations; ${units.all.pairs} pairs over ${units.all.investigations} investigations in all`);
   }
   if (benchmarkAns.length > 0) out.answerability = { agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(benchmarkAns, tagsOf) }, audit: auditSamples(benchmarkAns, tagsOf) };
   const file = writeJson(opts.outDir, `narrative-report-${stamp(new Date())}.json`, out);
