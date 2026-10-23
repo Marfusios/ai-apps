@@ -1319,9 +1319,26 @@ inspection passage contradicts; the others are readings a reviewer could take ei
 (whether investigators established a fault as the cause or a defect as not causal, whether
 maintenance contributed). Read as `unknown` (a sensitivity reading, not a result), they leave
 22 false flags of 2,724 and only 4 wholly supported brief trials, too few to say anything about
-M2. These are the first calibration bundles retrieved under `retrieval.v2`, the production
-default; the development split stays `retrieval.v1`. Production keeps whole-brief display until
-gate G6 reviews these results.
+M2.
+
+A second finding after the run is a defect in `display-deps-v2` itself: its count pattern reads
+an aircraft model or race number before "case" or "airplane" ("In the Cessna 175 case", "the
+race 37 airplane") as a count of cases, so such a sentence depends on every presented case and
+goes with any of them. It can only remove more (nothing is shown through it, and production's
+`whole` mode is unaffected), but it cost retention: in the held-out fuel-quantity bundle every
+summary sentence names its case by model ("the Socata TBM 700 case"), so one rejected
+classification removed all three. Re-projecting the recorded verdicts with numbers after a name
+read as names (36 held-out and 62 development batches have such sentences, and none of them is a
+real count) gives M1 47.3% and M2 14 of 26 on the pilot, and M1 90.9% and M2 35 of 36 in the
+`medium` development round (the `low` round's supported briefs do not change), with M3, M4 and
+E1 unchanged. These are re-readings after the run, not results; a corrected rule is a new
+version (`display-deps-v3`) for the next pre-registered round.
+
+The held-out pilot's bundles are the first calibration bundles retrieved under `retrieval.v2`, the
+production default; the development split stays `retrieval.v1`. Each of their 54 cases also
+has a rank from the cases-index channel, but none reached its bundle through that channel
+alone, so cases only it nominates are still uncalibrated. Production keeps whole-brief display
+until gate G6 reviews these results.
 
 Network-independent tests run in CI. Prepared-dataset ("offline") evaluations can
 call real models: run them only as explicit, budgeted jobs, recording dataset,

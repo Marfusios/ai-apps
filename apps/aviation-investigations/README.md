@@ -812,8 +812,9 @@ items), no error in 108 error briefs and no unsupported claim among 1,993 shown.
 pilot (nine new `retrieval.v2` bundles, 105 calls, run once) is inconclusive by design and is
 not a pass: it showed none of 158 errors (every one of 44 critical items withheld) and no
 unsupported claim, but kept only 183 of 770 supported claims (23.8%) and 7 of 26
-supported-brief trials; eleven claims carry most of its false flags, and a reading after the
-run found several of them mislabelled (DESIGN §12). The pilot's checks took 23.3 s at p50 and
+supported-brief trials. A reading after the run found several of the eleven claims that carry
+most of its false flags mislabelled, and a defect in the display rules that only removes more: a
+model number before "case" ("the Cessna 175 case") is read as a count of cases (DESIGN §12). The pilot's checks took 23.3 s at p50 and
 31.7 s at p95; the 60-claim development checks took 39 to 51 s, one over the 45 s check
 timeout. Production keeps whole-brief display (`AI_PARTIAL_DISPLAY` off) until gate G6
 reviews these results.
