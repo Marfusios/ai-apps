@@ -70,6 +70,8 @@ export class MockGoogle {
   readonly tokenRequests: TokenRequest[] = [];
   /** Code exchanges waiting at the token endpoint while it is held. */
   waiting = 0;
+  /** Google redeems a code once; false stands in for a provider that would redeem it again. */
+  singleUseCodes = true;
   private held: Promise<void> | null = null;
   private readonly grants = new Map<string, Grant>();
   private readonly privateKey: KeyObject;
@@ -189,7 +191,7 @@ export class MockGoogle {
     if (req.grantType !== 'authorization_code') return fail('unsupported_grant_type');
     if (req.clientId !== this.client.clientId || !req.hasSecret) return fail('invalid_client');
     const grant = req.code ? this.grants.get(req.code) : undefined;
-    if (!grant || grant.used) return fail('invalid_grant');
+    if (!grant || (grant.used && this.singleUseCodes)) return fail('invalid_grant');
     grant.used = true;
     if (req.redirectUri !== grant.redirectUri) return fail('redirect_uri_mismatch');
     if (!req.codeVerifier || b64url(createHash('sha256').update(req.codeVerifier).digest()) !== grant.challenge) return fail('invalid_grant');

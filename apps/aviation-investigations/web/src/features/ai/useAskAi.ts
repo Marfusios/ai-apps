@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
+import { visitorGeneration } from '../auth/visitor';
 import { rememberQuestion } from '../brief/memory';
 import { forgetUnsettled, rememberUnsettled, unsettledId, unsettledKey } from './unsettled';
 import { newIdempotencyKey, useAiRequest } from './useAiRequest';
@@ -17,6 +18,10 @@ import { newIdempotencyKey, useAiRequest } from './useAiRequest';
  * nothing about the earlier send. A first send refused with a known outcome (a 4xx, or a
  * 503 `unavailable` or `ai_paused`, which release the admission) spent nothing and is
  * not remembered, so the next ask uses a new key.
+ *
+ * An ask belongs to the visitor it started under: if that visitor signs out or deletes the
+ * account (here or in another tab) before it ends, nothing of it is kept (no question in
+ * memory, no retry key) and the page does not open its brief.
  */
 export function useAskAi() {
   const request = useAiRequest();
@@ -30,8 +35,12 @@ export function useAskAi() {
         setNotice({ kind: 'empty' });
         return;
       }
+      // The visitor this ask is for, read before anything asynchronous.
+      const visitor = visitorGeneration();
+      const gone = (): boolean => visitorGeneration() !== visitor;
       // Requests with an unknown outcome are remembered for the tab, whichever control sent them.
       const id = await unsettledId({ kind: 'create', question: q, filters });
+      if (gone()) return;
       const earlier = unsettledKey(id);
       let idempotencyKey = earlier ?? newIdempotencyKey();
       const result = await run(
@@ -42,6 +51,7 @@ export function useAskAi() {
         },
         earlier
           ? {
+              visitor,
               replaying: true,
               // A replay answered 409: the earlier attempt never completed, so ask under a new key.
               onConflict: () => {
@@ -49,8 +59,10 @@ export function useAskAi() {
                 idempotencyKey = newIdempotencyKey();
               },
             }
-          : {},
+          : { visitor },
       );
+      // The visitor changed meanwhile: nothing of this ask is kept, and its brief is not opened.
+      if (gone() || (!result.ok && result.discarded)) return;
       if (!result.ok) {
         // Only an unknown outcome is remembered. Nothing sent, or a known refusal, settles
         // nothing about an earlier send: its key stays for the next ask.

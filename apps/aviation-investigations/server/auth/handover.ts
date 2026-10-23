@@ -23,9 +23,10 @@
  *    exists): the same browser's trial cookie must still prove that trial; then, under
  *    the account's lifecycle lock with its new session checked live (server/auth/
  *    lifecycle.ts) and with the brief locked, the compare-and-set moves the brief to the
- *    account. A callback is accepted once (its OAuth state is claimed atomically,
- *    server/auth/better-auth.ts), so a replay never gets here; two concurrent callbacks
- *    of two sign-ins (two tabs) both try, and only one moves the brief.
+ *    account. A callback is accepted once (its OAuth state is claimed atomically before a
+ *    user or session is made, server/auth/better-auth.ts), so a replay never gets here;
+ *    two concurrent callbacks of two sign-ins (two tabs) both try, and only one moves the
+ *    brief.
  * 3. **A signed-in request on a brief this browser's trial still owns** (a sign-in that
  *    started elsewhere): a refinement, admitted and billed to the account, or the retry of
  *    a request the trial made, takes the brief over by the same compare-and-set first,

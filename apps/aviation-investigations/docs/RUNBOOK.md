@@ -694,9 +694,11 @@ record, like the trials'. Revoking the client in Google stops new sign-ins; sess
 already issued last until they expire (7 days) unless their users sign out, or the
 secret is changed.
 
-At most 500 sign-ins may be in progress at once (each start keeps its OAuth state for 10
-minutes): past that, starting a sign-in answers 503 and the log says "too many sign-ins
-in progress" until some expire. It bounds what unauthenticated starts can write.
+Starting a sign-in writes nothing to the database: the OAuth state lives in an encrypted
+cookie for 10 minutes. Better Auth limits starts to 10 a minute per network identity (in
+each instance's memory). A deletion's re-authentication is counted per account instead,
+5 an hour, so other sign-in traffic from its network never holds it up; past that it
+answers 429 with Retry-After.
 
 **Deleting an account needs a recent Google sign-in** (server/auth/deletion.ts): a
 session signed in within the last 5 minutes may delete at once; any other is sent through

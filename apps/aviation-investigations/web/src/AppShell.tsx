@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { Outlet, ScrollRestoration } from 'react-router';
 import { configQuery } from './api';
 import { Footer } from './components/Footer';
@@ -7,6 +8,7 @@ import { AiCounter } from './features/ai/AiCounter';
 import { TurnstileGate } from './features/ai/TurnstileGate';
 import { HeaderAuth } from './features/auth/HeaderAuth';
 import { SignInProvider } from './features/auth/SignInDialog';
+import { listenForVisitorChanges } from './features/auth/visitor';
 import { Welcome } from './features/auth/Welcome';
 
 /**
@@ -14,10 +16,13 @@ import { Welcome } from './features/auth/Welcome';
  * `/api/config`, the AI counter from `/api/ai/status`, the header's sign-in slot from
  * `/api/account`. The sign-in dialog and the Turnstile gate wrap every page, so any
  * control can offer sign-in or ask for a check; a first sign-in's welcome shows on the
- * page it returns to.
+ * page it returns to. When another tab of the site signs out or deletes the account, this
+ * tab forgets that visitor's private data too (web/src/features/auth/visitor.ts).
  */
 export function AppShell() {
   const config = useQuery(configQuery());
+  const queryClient = useQueryClient();
+  useEffect(() => listenForVisitorChanges(queryClient), [queryClient]);
   return (
     <SignInProvider>
       <TurnstileGate>

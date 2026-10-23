@@ -16,8 +16,8 @@ import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { askAvailability } from '../../web/src/features/ai/status';
 import { LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
-import { rememberUnsettled, resetUnsettledForTests, unsettledKey } from '../../web/src/features/ai/unsettled';
-import { PRIVATE_QUERY_ROOTS, PUBLIC_QUERY_ROOTS, VisitorChangedError, forgetVisitor, privateRead } from '../../web/src/features/auth/visitor';
+import { rememberUnsettled, resetUnsettledForTests, unsettledId, unsettledKey } from '../../web/src/features/ai/unsettled';
+import { PRIVATE_QUERY_ROOTS, PUBLIC_QUERY_ROOTS, VISITOR_CHANNEL, VisitorChangedError, forgetVisitor, privateRead } from '../../web/src/features/auth/visitor';
 import { rememberQuestion, rememberedQuestion } from '../../web/src/features/brief/memory';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
@@ -34,23 +34,60 @@ function signedInApi(options: HandlerOptions = {}): void {
   server.use(...createHandlers({ googleEnabled: true, briefPolls: 1, ...options }));
 }
 
-/** A Turnstile stand-in: every widget answers with the test token; records how it was shown. */
-function installTurnstile(): { appearances: string[] } {
+/**
+ * A Turnstile stand-in: every widget answers with the test token (after `release()` when
+ * held), unless it was removed first; records how it was shown.
+ */
+function installTurnstile({ hold = false }: { hold?: boolean } = {}): { appearances: string[]; release: () => void } {
   const appearances: string[] = [];
+  const live = new Set<string>();
+  const waiting: (() => void)[] = [];
   let n = 0;
   const api: TurnstileApi = {
     render(host, params) {
       n += 1;
+      const id = `w${n}`;
+      live.add(id);
       appearances.push(params.appearance);
-      const box = document.createElement('div');
-      host.appendChild(box);
-      setTimeout(() => params.callback('XXXX.DUMMY.TOKEN.XXXX'), 20);
-      return `w${n}`;
+      host.appendChild(document.createElement('div'));
+      const answer = () => {
+        if (live.has(id)) params.callback('XXXX.DUMMY.TOKEN.XXXX');
+      };
+      if (hold) waiting.push(answer);
+      else setTimeout(answer, 20);
+      return id;
     },
-    remove() {},
+    remove(id) {
+      live.delete(id);
+    },
   };
   window.turnstile = api;
-  return { appearances };
+  return { appearances, release: () => waiting.splice(0).forEach((answer) => answer()) };
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A POST to `pattern` that waits until `release()`, then answers with `answer()`; counts its calls. */
+function holdPost(pattern: string, answer: () => Response) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  let calls = 0;
+  server.use(
+    http.post(pattern, async () => {
+      calls += 1;
+      await released;
+      return answer();
+    }),
+  );
+  return { release, calls: () => calls };
+}
+
+/** Another tab of the site announces a visitor change. */
+async function otherTabChangesVisitor(): Promise<void> {
+  const other = new BroadcastChannel(VISITOR_CHANNEL);
+  other.postMessage({ type: 'visitor-changed' });
+  other.close();
+  await act(() => sleep(50));
 }
 
 afterEach(() => {
@@ -229,4 +266,102 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
     expect(await screen.findByText("You were signed out, so this AI search didn't start. Sign in to ask again.")).toBeTruthy();
     await waitFor(() => expect(app.client.getQueryData(['account'])).toEqual({ signedIn: false }));
   });
+});
+
+describe('an AI request whose visitor changes before it ends keeps nothing (Task 20 gate)', () => {
+  const ANSWERED_ID = '00000000-0000-4000-8000-0000000000ff';
+
+  async function askHeld(answer: () => Response) {
+    const held = holdPost('*/api/briefs', answer);
+    const app = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+    await waitFor(() => expect(held.calls()).toBe(1));
+    return { ...app, held };
+  }
+
+  async function signOutHere(app: ReturnType<typeof renderApp>): Promise<void> {
+    await act(() => app.router.navigate('/account'));
+    fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
+    await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
+  }
+
+  it('a question answered after sign-out opens nothing and keeps neither the question nor a retry key', async () => {
+    signedInApi();
+    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    await signOutHere(app);
+    app.held.release();
+    await act(() => sleep(150));
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  });
+
+  it('a question whose answer is lost after sign-out keeps no retry key', async () => {
+    signedInApi();
+    const app = await askHeld(() => HttpResponse.error());
+    await signOutHere(app);
+    app.held.release();
+    await act(() => sleep(150));
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  });
+
+  it('a refinement whose answer is lost after the account is deleted keeps no retry key and moves nowhere', async () => {
+    signedInApi();
+    const app = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const briefId = currentUrl(app.router).split('/')[2]!;
+    const held = holdPost('*/api/briefs/:id/refine', () => HttpResponse.error());
+    fireEvent.change(screen.getByRole('textbox', { name: /^refine$/i }), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(held.calls()).toBe(1));
+    // Deleted meanwhile, from the account page.
+    await act(() => app.router.navigate('/account'));
+    fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    await screen.findByText(ACCOUNT_COPY.deleteAsk);
+    fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    await screen.findByText(ACCOUNT_COPY.deleted);
+    held.release();
+    await act(() => sleep(150));
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(unsettledKey(await unsettledId({ kind: 'refine', briefId, change: { kind: 'text', text: 'only helicopters' } }))).toBeNull();
+  }, 20_000);
+
+  it('a check still open when the visitor changes is cancelled, and nothing is sent', async () => {
+    signedInApi({ accountCheck: true });
+    const turnstile = installTurnstile({ hold: true });
+    let posts = 0;
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+    });
+    const app = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+    await waitFor(() => expect(turnstile.appearances).toHaveLength(1));
+    // Another tab signs out while the check is open.
+    await otherTabChangesVisitor();
+    turnstile.release();
+    await act(() => sleep(150));
+    expect(posts).toBe(0);
+    expect(currentUrl(app.router)).toBe('/');
+    server.events.removeAllListeners();
+  });
+});
+
+describe('every open tab forgets the previous visitor (Task 20 review N4)', () => {
+  it('another tab’s sign-out makes this tab drop the previous visitor’s brief and AI context', async () => {
+    signedInApi();
+    const app = await briefWithDrawer();
+    // The other tab signs out (the server's session ends) and says so.
+    await fetch(new URL('/api/auth/sign-out', window.location.href), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    await otherTabChangesVisitor();
+    await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
+    // What this tab still shows is read again as the new visitor: the brief is not theirs.
+    expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
+    expect(screen.queryByText('AI classified')).toBeNull();
+  }, 20_000);
 });

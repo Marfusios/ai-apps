@@ -6,11 +6,14 @@
  * - **One lock per account.** A transaction-level advisory lock keyed by the account's
  *   HMAC (`accountLockKey`; a re-registered account has the same HMAC, so the same lock).
  *   Account deletion holds it for its whole transaction (server/auth/deletion.ts), and so
- *   does every transaction that writes rows the account owns: the end of the admission of
- *   the account's paid request (before anything is reserved), the transaction that
+ *   does every transaction that writes rows the account owns: the admission of the
+ *   account's paid request (taken first, before the bucket rows and the spend lock other
+ *   accounts share, so waiting for it never stalls another account), the transaction that
  *   creates its brief or step (server/routes/briefs.ts), a signed-in takeover of a brief
  *   this browser's trial owns, and the sign-in callback's handover
- *   (server/auth/handover.ts).
+ *   (server/auth/handover.ts). After it, a writer locks a brief before its steps, and its
+ *   steps before the account's idempotency and anti-abuse records, as retention does
+ *   (migration 0019), so none of them can deadlock.
  * - **Revalidation under the lock.** Each of them first checks that the session the
  *   request was authenticated with still exists and has not expired, and that its user
  *   still exists (`lockLiveAccount`). Deletion removes the user, and with it every

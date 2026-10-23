@@ -15,14 +15,14 @@ import { sql } from 'drizzle-orm';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
-import { AccountResponseSchema, DELETE_REAUTH_PATH } from '../../shared/contracts/account.js';
+import { AccountResponseSchema, DELETE_REAUTH_PATH, RETURN_PATH_MAX } from '../../shared/contracts/account.js';
 import { TURNSTILE_ACTION } from '../../shared/contracts/ai.js';
 import { StartBriefResponseSchema, type StartBriefResponse } from '../../shared/contracts/briefs.js';
 import { createFakeProvider, type FakeProvider, type FakeScript } from '../../server/ai/fake.js';
 import type { ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime } from '../../server/ai/runtime.js';
 import { buildApp } from '../../server/app.js';
-import { AUTH_IP_HEADER, AUTH_STATE_CAP, GOOGLE_ISSUER, createAuthService, type AuthLog, type AuthService } from '../../server/auth/better-auth.js';
+import { AUTH_IP_HEADER, AUTH_REAUTH_HEADER, GOOGLE_ISSUER, createAuthService, type AuthLog, type AuthService } from '../../server/auth/better-auth.js';
 import { pruneAuth } from '../../server/auth/deletion.js';
 import { accountLockKey } from '../../server/auth/lifecycle.js';
 import { createBriefServices, type BriefServices } from '../../server/briefs/services.js';
@@ -352,8 +352,9 @@ describe('Google sign-in', () => {
     const sessions = await rows<{ ip_address: string | null; user_agent: string | null; days: number }>(sql`
       SELECT ip_address, user_agent, round(extract(epoch FROM expires_at - created_at) / 86400)::int AS days FROM auth_sessions`);
     expect(sessions).toEqual([{ ip_address: null, user_agent: null, days: 7 }]);
-    // The OAuth state was consumed.
+    // The OAuth state never reached the database; its use is recorded as a hash.
     expect(await count('auth_verifications')).toBe(0);
+    expect(await count('auth_state_uses')).toBe(1);
 
     // Signing in again: the same account, no welcome; a second session.
     const again = await signIn(h, jar, user, '/dashboard');
@@ -366,7 +367,8 @@ describe('Google sign-in', () => {
 
 const TRIAL = '__Host-aviation_trial';
 const SESSION = '__Host-aviation_session';
-const STATE = '__Host-aviation_auth_state';
+/** The OAuth state: encrypted in this cookie (Better Auth's cookie strategy), never stored in the database. */
+const STATE = '__Host-aviation_oauth_state';
 
 /** A browser holding only this browser's trial cookie (signed out, or another profile with the cookie copied). */
 function trialOnly(jar: CookieJar): CookieJar {
@@ -481,8 +483,13 @@ describe('sign-in protections', () => {
     const start = await send(h, 'POST', '/api/auth/sign-in/social', { jar, body: signInBody('/') });
     const state = cookieNamed(start.setCookies, STATE);
     expect(state).toBeDefined();
-    for (const attr of [/;\s*Max-Age=300(;|$)/i, /;\s*Path=\/(;|$)/i, /;\s*HttpOnly(;|$)/i, /;\s*Secure(;|$)/i, /;\s*SameSite=Lax(;|$)/i]) expect(state).toMatch(attr);
+    for (const attr of [/;\s*Max-Age=600(;|$)/i, /;\s*Path=\/(;|$)/i, /;\s*HttpOnly(;|$)/i, /;\s*Secure(;|$)/i, /;\s*SameSite=Lax(;|$)/i]) expect(state).toMatch(attr);
     expect(state).not.toMatch(/;\s*Domain=/i);
+    // Encrypted: neither the nonce nor the state value is readable in it.
+    const asked = MockGoogle.parse((start.json as { url: string }).url);
+    expect(state).not.toContain(asked.nonce!);
+    expect(state).not.toContain(asked.state!);
+    expect(await count('auth_verifications')).toBe(0);
     const back = await callback(h, jar, google.authorize((start.json as { url: string }).url, newUser()));
     const session = cookieNamed(back.setCookies, SESSION);
     expect(session).toBeDefined();
@@ -505,7 +512,7 @@ describe('sign-in protections', () => {
     const jar = new CookieJar();
     const start = await send(h, 'POST', '/api/auth/sign-in/social', { jar, body: signInBody('/'), headers: { origin: 'http://localhost:3000' } });
     expect(start.status).toBe(200);
-    const state = cookieNamed(start.setCookies, 'aviation_auth_state');
+    const state = cookieNamed(start.setCookies, 'aviation_oauth_state');
     expect(state).toBeDefined();
     expect(state).not.toMatch(/;\s*Secure/i);
   });
@@ -597,7 +604,7 @@ describe('sign-in protections', () => {
     expect(google.tokenRequests).toHaveLength(0);
   });
 
-  it('state: a callback without it, from another browser, twice, or after Google refused creates no session', async () => {
+  it('state: a callback without it, from another browser, with a forged one, twice, or after Google refused creates no session', async () => {
     const h = harness();
     const jar = new CookieJar();
     const user = newUser();
@@ -611,12 +618,17 @@ describe('sign-in protections', () => {
     const path = google.authorize(url, user);
     const stranger = await callback(h, new CookieJar(), path);
     expect(stranger.status).toBe(302);
-    expect(stranger.headers.location).toBe('/briefs-page?signin=failed&error=state_mismatch');
+    expect(stranger.headers.location).toBe('/account?signin=failed&error=state_mismatch');
+    // A state cookie that is not this server's encryption fails too.
+    const forged = new CookieJar();
+    forged.set(STATE, 'not-an-encrypted-state');
+    expect((await callback(h, forged, path)).headers.location).toBe('/account?signin=failed&error=state_invalid');
     expect(google.tokenRequests).toHaveLength(0);
 
     // The browser that started it completes it once; a replay of the same callback fails.
     const ok = await callback(h, jar, path);
     expect(ok.headers.location).toBe('/briefs-page?welcome=1');
+    expect(jar.get(STATE)).toBeUndefined();
     const replay = await callback(h, jar, path);
     expect(replay.status).toBe(302);
     expect(replay.headers.location).toMatch(/[?&]signin=failed&error=state_mismatch$/);
@@ -631,45 +643,109 @@ describe('sign-in protections', () => {
     expect(await count('auth_sessions')).toBe(1);
   });
 
-  it('a callback is used once: a second one with the same state is refused before Google is called', async () => {
+  it('the encrypted state cookie stays within a browser’s 4096 bytes for the longest return paths and a handover', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    const { briefId } = await trialBrief(h, browser);
+    // The longest return path the contract allows once sign-in adds its own parameter.
+    const base = `/briefs/${briefId}?q=`;
+    const longest = `${base}${'x'.repeat(RETURN_PATH_MAX - '&signin=failed'.length - base.length)}`;
+    const r = await send(h, 'POST', '/api/auth/sign-in/social', { jar: browser, body: signInBody(longest) });
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    const cookie = cookieNamed(r.setCookies, STATE)!;
+    const pair = cookie.split(';', 1)[0]!;
+    expect(pair.length).toBeLessThan(4000);
+    // One character more is refused before anything is set.
+    const tooLong = await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody(`${longest}x`) });
+    expect([400, 403]).toContain(tooLong.status);
+  });
+
+  it('a callback is used once: a second one with the same state is refused before a user or a session, even if Google redeemed its code again', async () => {
     const h = harness();
     const jar = new CookieJar();
     const url = await startSignIn(h, jar, '/dashboard');
     const path = google.authorize(url, newUser());
-    // The first callback has read the state and waits to delete it (Better Auth reads, then deletes).
-    const locker = await holdLocks('LOCK TABLE auth_verifications IN EXCLUSIVE MODE');
-    let first: Promise<Sent> | null = null;
-    try {
-      first = callback(h, jar.clone(), path);
-      await untilBlocked();
-      // A second callback with the same state and code still finds the state, but it is claimed.
-      const second = await callback(h, jar.clone(), path);
-      expect(second.headers.location).toBe('/dashboard?signin=failed&error=state_mismatch');
-      await locker.commit();
-    } finally {
-      await locker.rollback();
-    }
-    expect((await first!).headers.location).toBe('/dashboard?welcome=1');
-    expect(google.tokenRequests).toHaveLength(1);
+    // A provider that would redeem the code twice: only the state's claim stops the second.
+    google.singleUseCodes = false;
+    const [a, b] = await Promise.all([callback(h, jar.clone(), path), callback(h, jar.clone(), path)]);
+    expect([String(a.headers.location), String(b.headers.location)].sort()).toEqual([
+      '/dashboard?signin=failed&error=unable_to_get_user_info',
+      '/dashboard?welcome=1',
+    ]);
+    expect(google.tokenRequests.filter((t) => t.status === 200)).toHaveLength(2);
+    expect(await count('auth_users')).toBe(1);
     expect(await count('auth_sessions')).toBe(1);
     expect(h.logs.some((l) => (JSON.parse(l) as { signIn?: string }).signIn === 'state_reused')).toBe(true);
     // A SHA-256 of the state is kept until the state would have expired; never the state.
     expect(await rows(sql`SELECT state_hash FROM auth_state_uses`)).toEqual([
       { state_hash: createHash('sha256').update(MockGoogle.parse(url).state!).digest('hex') },
     ]);
+    // With Google's single-use codes, ten together: one session.
+    google.singleUseCodes = true;
+    const jar2 = new CookieJar();
+    const path2 = google.authorize(await startSignIn(h, jar2, '/'), newUser());
+    const all = await Promise.all(Array.from({ length: 10 }, () => callback(h, jar2.clone(), path2)));
+    expect(all.filter((r) => r.headers.location === '/?welcome=1')).toHaveLength(1);
+    expect(await count('auth_sessions')).toBe(2);
   });
 
-  it('at most AUTH_STATE_CAP sign-ins may be in progress at once, whoever started them', async () => {
+  it('a flood of sign-in starts from one /48 writes nothing and holds up neither another network nor a deletion re-authentication', async () => {
+    const h = harness({}, { rateLimits: { signIn: 10 } });
+    // Better Auth's limiter keeps its counts per process: the owner signs in from an address no other test uses.
+    const owner = new CookieJar();
+    const ownerUrl = await startSignIn(h, owner, '/', { from: '192.0.2.201' });
+    await callback(h, owner, google.authorize(ownerUrl, newUser()), { from: '192.0.2.201' });
+    expect(await account(h, owner)).toMatchObject({ signedIn: true });
+    // Deleting needs Google again: the owner's sign-in is older than 5 minutes.
+    await ageSessions(10);
+    const statuses: Record<number, number> = {};
+    for (let n = 0; n < 50; n++) {
+      for (let i = 0; i < 10; i++) {
+        const r = await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/'), from: `2001:db8:abcd:${n.toString(16)}::1` });
+        statuses[r.status] = (statuses[r.status] ?? 0) + 1;
+      }
+    }
+    expect(statuses).toEqual({ 200: 500 });
+    // Nothing was written for them: there is no store of pending sign-ins to fill.
+    expect(await count('auth_verifications')).toBe(0);
+    expect(await count('auth_state_uses')).toBe(1);
+    // The flooding /64 is at its own limit; other networks are not.
+    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/'), from: '2001:db8:abcd:0::99' })).status).toBe(429);
+    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/'), from: '198.51.100.7' })).status).toBe(200);
+    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/'), from: '2001:db8:beef::1' })).status).toBe(200);
+    // A deletion's re-authentication from that same /64 still starts, counted for its account instead.
+    const reauth = await send(h, 'POST', '/api/auth/sign-in/social', { jar: owner, body: signInBody(DELETE_REAUTH_PATH), from: '2001:db8:abcd:0::99' });
+    expect(reauth.status, JSON.stringify(reauth.json)).toBe(200);
+    expect(MockGoogle.parse((reauth.json as { url: string }).url).loginHint).toMatch(/^\d+$/);
+    // A client cannot claim that exemption with its own header.
+    const spoofed = await send(h, 'POST', '/api/auth/sign-in/social', {
+      jar: new CookieJar(),
+      body: signInBody('/'),
+      from: '2001:db8:abcd:0::99',
+      headers: { [AUTH_REAUTH_HEADER]: '1' },
+    });
+    expect(spoofed.status).toBe(429);
+  });
+
+  it('deletion re-authentication starts are counted per account: exactly 5 an hour, even sent together; other accounts are not affected', async () => {
     const h = harness();
-    await migrator.execute(sql`
-      INSERT INTO auth_verifications (identifier, value, expires_at, created_at, updated_at)
-      SELECT 'auth-state:filler-' || g, '{}', now() + interval '10 minutes', now(), now() FROM generate_series(1, ${AUTH_STATE_CAP}) g`);
-    const busy = await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/') });
-    expect(busy.status).toBe(503);
-    expect(await count('auth_verifications')).toBe(AUTH_STATE_CAP);
-    // Expired state does not count.
-    await migrator.execute(sql`UPDATE auth_verifications SET expires_at = now() - interval '1 minute' WHERE identifier = 'auth-state:filler-1'`);
-    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: new CookieJar(), body: signInBody('/') })).status).toBe(200);
+    const owner = new CookieJar();
+    await signIn(h, owner, newUser());
+    const sent = await Promise.all(
+      Array.from({ length: 8 }, () => send(h, 'POST', '/api/auth/sign-in/social', { jar: owner.clone(), body: signInBody(DELETE_REAUTH_PATH) })),
+    );
+    expect(sent.map((r) => r.status).sort()).toEqual([200, 200, 200, 200, 200, 429, 429, 429]);
+    const refused = sent.find((r) => r.status === 429)!;
+    expect(errorOf(refused)).toEqual([429, 'rate_limited']);
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+    // Another account starts its own; an ordinary sign-in start of the same browser is not counted.
+    const other = new CookieJar();
+    await signIn(h, other, newUser());
+    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: other, body: signInBody(DELETE_REAUTH_PATH) })).status).toBe(200);
+    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: owner.clone(), body: signInBody('/') })).status).toBe(200);
+    // The next hour, it may start again.
+    advance(60 * MIN);
+    expect((await send(h, 'POST', '/api/auth/sign-in/social', { jar: owner.clone(), body: signInBody(DELETE_REAUTH_PATH) })).status).toBe(200);
   });
 
   it('nonce and claims: an ID token without this flow’s nonce, for another client, expired, or with an unverified email stores nothing', async () => {
@@ -1359,23 +1435,27 @@ describe('races with account deletion: nothing is created or taken over for a de
     await signIn(h, browser, user);
     const locker = await holdLocks(`SELECT pg_advisory_xact_lock(${SPEND_LOCK_KEY})`);
     let pending: Promise<Sent> | null = null;
+    let deletion: Promise<Sent> | null = null;
     try {
       advance(MIN);
-      // Admission waits for the spend lock, after the session was read.
+      // Admission holds the account's lock and waits for the spend lock.
       pending = ask(h, browser, 'PRIVATE question asked during deletion', { token: false });
       await untilBlocked();
-      expect((await deleteAccount(h, browser.clone())).status).toBe(200);
-      expect(await count('auth_users')).toBe(0);
+      // The deletion waits for that admission, then runs before the question's step can be written.
+      deletion = deleteAccount(h, browser.clone());
+      await untilBlocked(2);
       await locker.commit();
     } finally {
       await locker.rollback();
     }
+    expect((await deletion!).status).toBe(200);
     expect(errorOf(await pending!)).toEqual([403, 'signed_out']);
     await h.svc.settled();
     expect(await count('briefs')).toBe(0);
-    expect(await count('reservations')).toBe(0);
     expect(await count('idempotency')).toBe(0);
     expect(h.llm.calls).toHaveLength(0);
+    // Admitted, then given back before any step: settled at zero, the search returned.
+    expect(await reservationsNow()).toEqual([{ principal_kind: 'account', status: 'settled', quota_counted: false, charged: '0.000000' }]);
     // The same Google account signs up again: nothing from before is there.
     const again = new CookieJar();
     await signIn(h, again, user);
@@ -1509,6 +1589,84 @@ describe('races with account deletion: nothing is created or taken over for a de
   });
 });
 
+/** The spend lock (a single-key advisory lock) as pg_locks shows it: held by any session? */
+async function spendLockHeld(): Promise<boolean> {
+  const high = Math.floor(SPEND_LOCK_KEY / 2 ** 32);
+  const low = SPEND_LOCK_KEY % 2 ** 32;
+  const held = await rows<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM pg_locks
+    WHERE locktype = 'advisory' AND classid = ${high} AND objid = ${low} AND objsubid = 1 AND granted`);
+  return held[0]!.n > 0;
+}
+
+describe('lock order: no deadlock and no stall across accounts', () => {
+  it('account deletion and retention take a brief before its steps: deleting during a maintenance pass does not deadlock', async () => {
+    const h = harness({ scope: OFF_TOPIC });
+    const browser = new CookieJar();
+    // The account's brief is created 25 hours before the database's clock: retention sees it expired.
+    const dbNow = Number((await rows<{ ms: string }>(sql`SELECT (extract(epoch FROM now()) * 1000)::bigint AS ms`))[0]!.ms);
+    clock = new Date(dbNow - 25 * 3_600_000);
+    await signIn(h, browser, newUser());
+    expect((await ask(h, browser, 'Write me a poem about the sea', { token: false })).status).toBe(200);
+    await h.svc.settled();
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).json).toMatchObject({ next: 'confirm' });
+    // Retention's brief statements, in the order prune_controls() runs them (read from the function itself).
+    const source = (await rows<{ src: string }>(sql`SELECT pg_get_functiondef('prune_controls()'::regprocedure) AS src`))[0]!.src;
+    const statements = [/PERFORM 1 FROM briefs[^;]*;/, /DELETE FROM brief_steps[^;]*;/, /DELETE FROM briefs[^;]*;/]
+      .map((re) => re.exec(source))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .sort((a, b) => a.index - b.index)
+      .map((m) => m[0].replace(/^PERFORM/, 'SELECT'));
+    expect(statements.length).toBeGreaterThanOrEqual(2);
+    const locker = await holdLocks(`SELECT set_config('aviation.pruning_controls', 'on', true)`);
+    let deletion: Promise<Sent> | null = null;
+    try {
+      await locker.query(statements[0]!);
+      // The deletion starts while retention is under way, and waits for it.
+      deletion = send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+      await untilBlocked();
+      for (const statement of statements.slice(1)) await locker.query(statement);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect((await deletion!).status).toBe(200);
+    expect(await count('auth_users')).toBe(0);
+    expect(await count('briefs')).toBe(0);
+  });
+
+  it('an account’s admission waits for its own lock before taking anything shared: another account is not stalled', async () => {
+    const h = harness({ scope: [OFF_TOPIC, OFF_TOPIC] });
+    const waiting = new CookieJar();
+    const waitingUser = newUser();
+    await signIn(h, waiting, waitingUser);
+    const other = new CookieJar();
+    await signIn(h, other, newUser());
+    advance(MIN);
+    // A stand-in for a deletion of the first account, holding its lifecycle lock.
+    const [classId, objectId] = accountLockKey(accountHash(waitingUser.sub));
+    const locker = await holdLocks(`SELECT pg_advisory_xact_lock(${classId}, ${objectId})`);
+    let pending: Promise<Sent> | null = null;
+    let settledFirst = false;
+    try {
+      pending = ask(h, waiting, 'Write me a poem about the sea', { token: false }).finally(() => {
+        settledFirst = true;
+      });
+      await untilBlocked();
+      // It waits holding nothing other accounts need: not the spend lock (nor the shared buckets before it).
+      expect(await spendLockHeld()).toBe(false);
+      // Another account on another network is admitted and answered while it still waits.
+      const answered = await send(h, 'POST', '/api/briefs', { jar: other, from: '198.51.100.77', body: { question: 'Write me a poem about the moon', idempotencyKey: key() } });
+      expect(answered.status).toBe(200);
+      expect(settledFirst).toBe(false);
+      await locker.commit();
+    } finally {
+      await locker.rollback();
+    }
+    expect((await pending!).status).toBe(200);
+  });
+});
+
 describe('storage', () => {
   it('aviation_ingest sees nothing; aviation_app updates nothing and cannot keep tokens, pictures or addresses', async () => {
     const h = harness();
@@ -1540,7 +1698,6 @@ describe('storage', () => {
     const h = harness();
     const jar = new CookieJar();
     await signIn(h, jar, newUser());
-    await startSignIn(h, new CookieJar(), '/');
     const userId = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
     await migrator.execute(sql`
       INSERT INTO auth_sessions (token, user_id, expires_at, created_at, updated_at)
@@ -1548,9 +1705,14 @@ describe('storage', () => {
     await migrator.execute(sql`
       INSERT INTO auth_verifications (identifier, value, expires_at, created_at, updated_at)
       VALUES ('auth-state:old', '{}', now() - interval '1 hour', now() - interval '2 hours', now() - interval '2 hours')`);
-    expect(await pruneAuth(appDb)).toEqual({ sessions: 1, verifications: 1, stateUses: 0, confirmations: 0 });
+    await migrator.execute(sql`
+      INSERT INTO auth_state_uses (state_hash, used_at, expires_at)
+      VALUES (${'e'.repeat(64)}, now() - interval '2 hours', now() - interval '1 hour')`);
+    expect(await pruneAuth(appDb)).toEqual({ sessions: 1, verifications: 1, stateUses: 1, confirmations: 0 });
     expect(await count('auth_sessions')).toBe(1);
-    expect(await count('auth_verifications')).toBe(1);
+    expect(await count('auth_verifications')).toBe(0);
+    // The live use of the sign-in above stays until its state would have expired.
+    expect(await count('auth_state_uses')).toBe(1);
     expect(await account(h, jar)).toMatchObject({ signedIn: true });
   });
 

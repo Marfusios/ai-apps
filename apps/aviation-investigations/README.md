@@ -1392,7 +1392,8 @@ AI is available only while the dataset reports the active passages index servabl
 UI_DESIGN §4.8 and §5). The tables (`auth_users`, `auth_accounts`, `auth_sessions`,
 `auth_verifications`), their grants and the deletion function are in migration 0017;
 the used-state and deletion-confirmation tables, the brief lock, the operator's
-signed-in check switch and the locking deletion function in migration 0018.
+signed-in check switch and the locking deletion function in migration 0018; retention's
+lock order in migration 0019.
 
 - **Configuration.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (a Google OAuth client
   of type *Web application* whose authorized redirect URI is
@@ -1407,13 +1408,15 @@ signed-in check switch and the locking deletion function in migration 0018.
   dot segment or an encoded slash) and opens the URL it gets: scopes
   `openid email profile`, PKCE (S256), a state bound to the browser by a signed cookie
   and stored for 10 minutes, and a nonce the server adds to the request and checks in
-  the ID token. At most 500 sign-ins may be in progress at once (503 past that). Google
-  sends the browser to `GET /api/auth/callback/google`, which signs in and returns to
-  the page, with `welcome=1` after a first sign-in (the welcome dialog) or
-  `signin=failed` (the dialog again, saying so). A callback is accepted once: it claims
-  its state atomically before Better Auth reads it, so a second one, even arriving at the
-  same time, is refused before Google is called. `POST /api/auth/sign-out` ends the
-  session. No other Better Auth endpoint is served.
+  the ID token. The OAuth state rides in an encrypted, HttpOnly cookie
+  (`__Host-aviation_oauth_state`, 10 minutes), so starting a sign-in writes nothing to the
+  database and a flood of starts cannot block anyone else's sign-in. Google sends the
+  browser to `GET /api/auth/callback/google`, which signs in and returns to the page,
+  with `welcome=1` after a first sign-in (the welcome dialog) or `signin=failed` (the
+  dialog again, saying so). A callback is accepted once: the first to get through the
+  code exchange and the ID-token checks claims its state atomically, and a second one,
+  even arriving at the same time, is refused before a user or session is made.
+  `POST /api/auth/sign-out` ends the session. No other Better Auth endpoint is served.
 - **What is accepted and kept.** An ID token from Google's token endpoint (the only
   source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
   this client and no other audience, with finite `exp` (not passed) and `iat` (not in
@@ -1424,9 +1427,9 @@ signed-in check switch and the locking deletion function in migration 0018.
   a password, and the session's IP address and user agent. Sessions last 7 days and are
   never extended; there is no session cookie cache, so sign-out and deletion take effect
   on the next request.
-- **Cookies.** `__Host-aviation_session` and the OAuth state's `__Host-aviation_auth_state`:
-  Secure, HttpOnly, SameSite=Lax, Path=/, host-only (plain names without Secure on a local
-  http `APP_URL`).
+- **Cookies.** `__Host-aviation_session` and the OAuth state's encrypted
+  `__Host-aviation_oauth_state`: Secure, HttpOnly, SameSite=Lax, Path=/, host-only (plain
+  names without Secure on a local http `APP_URL`).
 - **Requests.** `/api/auth/*` passes Better Auth a rebuilt request: the `APP_URL` origin,
   the allowlisted path, the cookies, origin and fetch metadata, and the network identity
   as its rate limiter's address (10 sign-ins and 10 callbacks per minute per identity,
@@ -1443,11 +1446,14 @@ signed-in check switch and the locking deletion function in migration 0018.
   always` (`server/identity/step-up.ts`, DESIGN §8). The status then says `check: true`,
   so the page takes the check at click time.
 - **The account lifecycle** (`server/auth/lifecycle.ts`). Deleting an account, and every
-  transaction that writes rows the account owns (the end of its admission, its new brief
-  or step, a takeover of the browser's trial brief, the callback's handover), hold one
-  lock per account and first check that the request's session and user still exist. A
-  request paused while its account was deleted creates nothing, takes nothing over,
-  calls no model and gives back any admission (403 `signed_out`).
+  transaction that writes rows the account owns (its admission, which takes the lock
+  before anything accounts share, its new brief or step, a takeover of the browser's
+  trial brief, the callback's handover), hold one lock per account and first check that
+  the request's session and user still exist. A request paused while its account was
+  deleted creates nothing, takes nothing over, calls no model and gives back any
+  admission (403 `signed_out`). Every writer, retention included, then locks a brief
+  before its steps (migration 0019), so deletion never deadlocks with the maintenance
+  pass.
 - **Handover** (`server/auth/handover.ts`). Signing in from `/briefs/<id>` while this
   browser's trial owns that live brief moves the brief's read owner to the account, by
   one compare-and-set, at the callback, when the same browser's trial cookie still
@@ -1474,7 +1480,10 @@ signed-in check switch and the locking deletion function in migration 0018.
   buckets stay (HMACs and amounts only); signing up again with the same Google account
   finds the same counts. The response expires this browser's session cookie; every other
   session ends with the user. The page then forgets everything private it held
-  (`web/src/features/auth/visitor.ts`), as it does on sign-out.
+  (`web/src/features/auth/visitor.ts`), as it does on sign-out, in every open tab of the
+  site (a `BroadcastChannel`); an AI request still under way is discarded without
+  restoring a question, a retry key or a navigation. A deletion's re-authentication is
+  counted per account (5 an hour), not per network.
 - **Backups** never hold the rows of the sign-in tables, the briefs or the idempotency
   records (`server/db/backup.ts`; RUNBOOK, "Backups"), so a restore cannot bring back a
   deleted account, its content, a session or OAuth state; `pnpm worker restore-check`

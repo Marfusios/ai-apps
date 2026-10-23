@@ -167,10 +167,12 @@ would bring deleted accounts back, deletion with any session, no check of suspic
 signed-in activity, and loose ID-token claim checks; the fixes below are not yet
 re-reviewed. The implementation review must cover in particular:
 
-- the OAuth flow: the state (stored server-side, bound to the browser by a signed
-  cookie, and claimed once, atomically, by the callback that brings it back from that
-  browser), PKCE, the nonce this app adds through Better Auth hooks (its Google provider
-  sends none in the redirect flow), and the ID-token checks: an RS256 header with a
+- the OAuth flow: the state (encrypted and authenticated in this browser's HttpOnly cookie,
+  so starting a sign-in writes nothing to the database, and claimed once, atomically, by
+  the first callback that gets through Google's code exchange and the ID-token checks,
+  before any user, session or handover), PKCE, the nonce this app adds through Better
+  Auth hooks (its Google provider sends none in the redirect flow), and the ID-token
+  checks: an RS256 header with a
   signature part, this client as the only audience, `azp`, finite `exp` and `iat`, the
   issuer, `sub`, a verified email and the nonce. The signature itself is not verified,
   which OIDC Core 3.1.3.7 step 6 allows only because the token comes straight from
@@ -181,16 +183,20 @@ re-reviewed. The implementation review must cover in particular:
 - that only sign-in, Google's callback and sign-out are reachable, the request the route
   rebuilds for Better Auth (the `APP_URL` origin, the header allowlist, the network
   identity for its rate limiter), return paths without dot segments or encoded
-  separators, and the cap of 500 sign-ins in progress;
+  separators (at most 384 characters, so the state cookie stays under 4 KB), and that a
+  deletion's re-authentication is counted per account (5 an hour) and exempt from the
+  per-network limit, so no flood of other sign-ins can hold it up;
 - the handover's compare-and-set at the callback and at signed-in refinements and
   retries (the latter beyond UI_DESIGN §5's wording, pending the owner's sign-off), the
   403 `moved` answer to the old trial, that billing principals and charges never move,
   that reads check the owner in the statement that reads the content, and that a
   refinement or a cancel locks the brief (`lock_brief()`) and checks its owner first;
-- the account lifecycle lock (`server/auth/lifecycle.ts`): deletion, the end of an
-  account's admission, its step transactions, takeovers and the callback's handover
-  serialize on it and recheck the session, so nothing is created or moved for a deleted
-  account and an admission is given back without a model call;
+- the account lifecycle lock (`server/auth/lifecycle.ts`): deletion, an account's
+  admission (where it is taken first, before anything accounts share), its step
+  transactions, takeovers and the callback's handover serialize on it and recheck the
+  session, so nothing is created or moved for a deleted account and an admission is given
+  back without a model call; and the lock order after it (brief, steps, idempotency,
+  anti-abuse record), which retention follows too (migration 0019);
 - account deletion: a recent Google sign-in first (5 minutes; otherwise Google again for
   the same account, which confirms that session once for 5 minutes and ends the old
   session; Google offers no `max_age` or `prompt=login`, so a person signed in to Google
@@ -202,8 +208,10 @@ re-reviewed. The implementation review must cover in particular:
 - signed-in AI checks (`server/identity/step-up.ts`): the signals and thresholds, the
   operator's `always` mode, that ordinary use takes no check, and that the anonymous
   retry check spends nothing;
-- the page forgetting the previous visitor on sign-out and deletion (every private query,
-  late answers dropped, the questions and retry keys);
+- the page forgetting the previous visitor on sign-out and deletion, in every open tab
+  (every private query, late answers dropped, the questions and retry keys; an AI request
+  under way is discarded, its open Turnstile check cancelled, and it never restores a
+  question, a retry key or a navigation);
 - storage and backups: no provider tokens, scopes, picture, IP address or user agent
   (database hooks clear them, CHECK constraints refuse them), the app role's grants on
   the auth tables (no UPDATE; no DELETE of an account link on its own), backups without

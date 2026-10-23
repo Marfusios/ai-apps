@@ -551,15 +551,20 @@ days, are never extended and have no cookie cache. The ID token from Google's to
 endpoint (its only source) is accepted on its RS256 form, its claims (issuer, this client
 as the only audience and `azp`, finite `exp` and `iat`, `sub`, `email_verified`) and a
 nonce the app adds to the redirect flow, which Better Auth's Google provider does not
-send; only the subject, name and email are stored. A callback is used once: it claims its
-OAuth state atomically before Better Auth reads it. At most 500 sign-ins may be in
-progress at once. The handover runs at the callback when sign-in started from the brief's
+send; only the subject, name and email are stored. The OAuth state lives in an encrypted
+cookie, so starting a sign-in writes nothing to the database and no flood of starts can
+block anyone's sign-in; a callback is used once: the first to get through the code
+exchange and the ID-token checks claims its state atomically, before any user, session or
+handover. A deletion's re-authentication is counted per account (5 an hour), never per
+network. The handover runs at the callback when sign-in started from the brief's
 page and the browser's trial cookie still proves its owner, or at a signed-in refinement
 or retry on a brief the browser's trial owns; a retry from the old trial alone answers 403
 `moved`. Reads check the read owner in the statement that reads the content; a refinement
 or a cancel locks the brief and checks its owner before it writes. Deletion and everything
 that writes rows an account owns hold one lock per account and recheck the session first,
-so nothing is created or taken over for a deleted account. A re-registered account is a
+so nothing is created or taken over for a deleted account; admission takes it before any
+lock other accounts share, and every writer, retention included, then locks a brief before
+its steps and the account's other records, so none of them can deadlock. A re-registered account is a
 new account (the new-account allowance applies again) that finds its usage. Deletion
 needs a recent Google sign-in (OWASP re-authentication): within 5 minutes of signing in
 the account page confirms at once; otherwise it sends the person through Google again,

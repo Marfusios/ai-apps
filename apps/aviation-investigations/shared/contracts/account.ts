@@ -26,15 +26,22 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)|%2f|%5c/i;
 
 /**
+ * The longest return path. A sign-in carries three of them (to come back to, for a new
+ * account, on failure) in its encrypted state cookie, which must stay within a browser's
+ * 4096 bytes (server/auth/better-auth.ts); the page drops a longer query.
+ */
+export const RETURN_PATH_MAX = 384;
+
+/**
  * A page of this site to come back to: a root-relative path with an optional query, never
  * `//host`, an empty or dot segment (`/.//host` would resolve to `//host`), an encoded
- * slash, a backslash or a control character, at most 512 characters. Better Auth checks
- * the same against the trusted origin; the server checks this first.
+ * slash, a backslash or a control character, at most `RETURN_PATH_MAX` characters. Better
+ * Auth checks the same against the trusted origin; the server checks this first.
  */
 export const ReturnPathSchema = z
   .string()
   .min(1)
-  .max(512)
+  .max(RETURN_PATH_MAX)
   .refine(
     (p) => {
       const path = p.split('?', 1)[0]!;

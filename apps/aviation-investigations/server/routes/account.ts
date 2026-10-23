@@ -8,7 +8,11 @@
  * answers 404 to anything else, and to everything while sign-in is off:
  *
  * - `POST /api/auth/sign-in/social` and `POST /api/auth/sign-out`: refused when
- *   cross-site (403) or not JSON (400) before Better Auth sees them;
+ *   cross-site (403) or not JSON (400) before Better Auth sees them. A sign-in that
+ *   re-authenticates a deletion (`DELETE_REAUTH_PATH`, from a signed-in browser) is counted
+ *   per account here (at most 5 an hour, 429 past that) and marked for Better Auth
+ *   (`AUTH_REAUTH_HEADER`), whose per-network limit then skips it: sign-in traffic from
+ *   others on the same network never holds it up;
  * - `GET /api/auth/callback/google`: Google's redirect back.
  *
  * Better Auth gets a request rebuilt from an allowlist: the APP_URL origin with the
@@ -29,13 +33,16 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AccountResponseSchema,
+  DELETE_REAUTH_PATH,
   DeleteAccountRequestSchema,
   DeleteAccountResponseSchema,
   DeleteStartRequestSchema,
   DeleteStartResponseSchema,
+  SignInRequestSchema,
 } from '../../shared/contracts/account.js';
-import { AUTH_IP_HEADER, authClientIp } from '../auth/better-auth.js';
-import { deleteAccount, deletionConfirmedUntil, issueDeletionConfirmation } from '../auth/deletion.js';
+import { AUTH_IP_HEADER, AUTH_REAUTH_HEADER, authClientIp } from '../auth/better-auth.js';
+import { deleteAccount, deletionConfirmedUntil, issueDeletionConfirmation, reauthStartAllowed } from '../auth/deletion.js';
+import { retryAfterSeconds } from '../identity/gate.js';
 import { crossSite, isJsonRequest } from '../http/origin.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import type { ApiContext } from './context.js';
@@ -89,6 +96,20 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
       if (typeof value === 'string') headers.set(name, value);
     }
     headers.set(AUTH_IP_HEADER, authClientIp(networkId));
+    // A deletion's re-authentication: counted per account, never per network.
+    if (path === '/api/auth/sign-in/social') {
+      const body = SignInRequestSchema.safeParse(request.body);
+      const signedIn = body.success && body.data.callbackURL === DELETE_REAUTH_PATH ? await auth.signedIn(request.headers.cookie) : null;
+      if (signedIn) {
+        const allowed = await reauthStartAllowed(ctx.db, signedIn.hash, now());
+        if (!allowed.ok) {
+          const seconds = retryAfterSeconds(allowed.retryAt, now());
+          reply.header('retry-after', String(seconds));
+          return sendError(reply, 429, 'rate_limited', { retryAfter: seconds });
+        }
+        headers.set(AUTH_REAUTH_HEADER, '1');
+      }
+    }
     const response = await auth.handle(
       new Request(`${appOrigin}${path}${queryOf(request.url)}`, {
         method: request.method,

@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SignInRequestSchema } from '../../shared/contracts/account';
+import { RETURN_PATH_MAX, SignInRequestSchema } from '../../shared/contracts/account';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { AiNoticeBox } from '../../web/src/features/ai/AiNoticeBox';
 import { reauthRequest, returnPath, signInNavigation, signInRequest } from '../../web/src/features/auth/api';
@@ -118,6 +118,13 @@ describe('sign-in dialog (UI_DESIGN §4.8)', () => {
     expect(returnPath('/explore', '?q=icing&welcome=1&signin=failed&error=state_mismatch')).toBe('/explore?q=icing');
     expect(returnPath('//evil', '')).toBe('/');
     expect(SignInRequestSchema.safeParse(signInRequest('/explore?q=icing')).success).toBe(true);
+    // Too long for the sign-in's state cookie: the query is dropped, then the path.
+    const long = returnPath('/explore', `?q=${'x'.repeat(400)}`);
+    expect(long).toBe('/explore');
+    expect(returnPath(`/${'p'.repeat(400)}`, '')).toBe('/');
+    const fits = returnPath('/explore', `?q=${'x'.repeat(RETURN_PATH_MAX - '/explore?q=&signin=failed'.length)}`);
+    expect(fits.startsWith('/explore?q=x')).toBe(true);
+    expect(SignInRequestSchema.safeParse(signInRequest(fits)).success).toBe(true);
   });
 });
 

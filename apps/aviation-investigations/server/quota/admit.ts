@@ -1,6 +1,10 @@
 /**
  * Interactive admission (DESIGN §7–§8). One short transaction:
  *
+ * 0. The caller's precondition, if any, first (for a signed-in account: its lifecycle lock
+ *    and a check that its session still exists, server/auth/lifecycle.ts), before any lock
+ *    other accounts share: waiting for one account's lock never stalls another account's
+ *    admission. A failure rolls everything back (`signed_out`).
  * 1. Kill switch, and the login-required emergency mode for trial principals.
  * 2. Lock the principal, network and global buckets in key order.
  * 3. Idempotency, scoped to the principal: the same key and request hash replays the
@@ -13,11 +17,11 @@
  *    as an exhausted quota); then the principal's quota (trial searches, account
  *    daily/monthly searches), the anonymous share, and the total and anonymous
  *    in-flight limits (two in total, one anonymous).
- * 6. The caller's precondition, if any (for a signed-in account: its lifecycle lock and
- *    a check that its session still exists, server/auth/lifecycle.ts); a failure rolls
- *    everything back (`signed_out`).
- * 7. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
+ * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
  *    (90 s) with a fencing token. Commit before any provider call.
+ *
+ * Lock order: the account's lock (step 0), the bucket rows in key order, the spend lock.
+ * Nothing takes buckets or the spend lock and then an account's lock.
  *
  * Lock waits are bounded (2 s); a timeout rolls back and returns `busy`.
  *
@@ -87,11 +91,12 @@ export interface AdmissionInput {
   requestId?: string;
   now?: Date;
   /**
-   * Checked last in the admission's transaction, once every limit has passed and before
-   * anything is reserved. False refuses the request (`signed_out`) and rolls the whole
-   * transaction back, attempt counters included. For an account, the route passes its
-   * lifecycle lock and session check (server/auth/lifecycle.ts), so a request whose
-   * account was deleted meanwhile reserves nothing.
+   * Checked first in the admission's transaction, before any lock that other accounts
+   * share (bucket rows, the spend lock). False refuses the request (`signed_out`) and
+   * rolls the transaction back. For an account, the route passes its lifecycle lock and
+   * session check (server/auth/lifecycle.ts): the lock is held to the commit, so a
+   * request whose account was deleted before reserves nothing, and a deletion waits for an
+   * admission under way (bounded by its lock wait).
    */
   precondition?: (tx: DbOrTx) => Promise<boolean>;
 }
@@ -313,6 +318,8 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
   try {
     return await db.transaction(async (tx): Promise<AdmissionResult> => {
       await setLockTimeout(tx);
+      // The account's own lock before anything shared (see the module comment).
+      if (a.precondition && !(await a.precondition(tx))) throw new PreconditionFailed('admission precondition failed');
       const aiSwitch = await readAiSwitch(tx);
       if (!aiSwitch.enabled) return { ok: false, reason: 'global_paused', pause: 'maintenance' };
       if (principal.kind === 'trial' && !aiSwitch.anonymousEnabled) return { ok: false, reason: 'login_required' };
@@ -361,7 +368,6 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
       if (flight.total >= l.globalInFlight || (anonymous && flight.anonymous >= l.anonymousInFlight)) {
         return { ok: false, reason: 'concurrency' };
       }
-      if (a.precondition && !(await a.precondition(tx))) throw new PreconditionFailed('admission precondition failed');
 
       const leaseExpiresAt = new Date(now.getTime() + policy.leaseTtlMs);
       const accountingDay = utcDay(now);

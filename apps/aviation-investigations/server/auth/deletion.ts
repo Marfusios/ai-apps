@@ -48,12 +48,20 @@ import { sql } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../db/client.js';
 import type { RunningStep } from '../briefs/services.js';
 import { accountRequestBuckets } from '../quota/admit.js';
+import { addToBuckets, bucketRef, countsOf, lockBuckets } from '../quota/buckets.js';
+import { isLockTimeout, setLockTimeout } from '../quota/locks.js';
 import { lockAccount, sessionLive, type AccountSession } from './lifecycle.js';
 
 /** A session's Google sign-in counts as recent this long (the re-authentication window). */
 export const RECENT_SIGN_IN_SECONDS = 300;
 /** A deletion confirmation lives this long. */
 export const DELETION_CONFIRMATION_SECONDS = 300;
+/**
+ * A signed-in account may start at most this many re-authentications for a deletion per
+ * UTC hour. They are counted per account, not per network, so other sign-in traffic on its
+ * network never holds them up (server/routes/account.ts).
+ */
+export const REAUTH_STARTS_PER_HOUR = 5;
 /** Deletion waits at most this long for the account's lock (requests hold it for milliseconds). */
 const DELETION_LOCK_TIMEOUT = '5s';
 
@@ -96,6 +104,28 @@ export async function issueDeletionConfirmation(db: Db, session: Pick<AccountSes
     const row = res.rows[0] as { expires_ms: string } | undefined;
     return row ? new Date(Number(row.expires_ms)) : null;
   });
+}
+
+/**
+ * Count one start of a deletion's re-authentication for this account, unless it already
+ * made `REAUTH_STARTS_PER_HOUR` this UTC hour: then when it may try again. One short
+ * transaction on the account's usage bucket row (locked), so concurrent starts never
+ * exceed the limit. A lock wait that times out refuses (fail closed).
+ */
+export async function reauthStartAllowed(db: Db, accountHash: string, now: Date): Promise<{ ok: true } | { ok: false; retryAt: Date }> {
+  const ref = bucketRef('principal', `reauth:${accountHash}`, 'hour', now);
+  try {
+    return await db.transaction(async (tx) => {
+      await setLockTimeout(tx);
+      const counts = await lockBuckets(tx, [ref]);
+      if (countsOf(counts, ref).attempts >= REAUTH_STARTS_PER_HOUR) return { ok: false as const, retryAt: ref.end };
+      await addToBuckets(tx, [ref], 'attempts', 1);
+      return { ok: true as const };
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) return { ok: false, retryAt: new Date(now.getTime() + 60_000) };
+    throw err;
+  }
 }
 
 /** Until when this session's deletion confirmation lives, or null. */

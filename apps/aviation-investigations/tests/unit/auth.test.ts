@@ -8,7 +8,14 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
-import { AccountResponseSchema, DELETE_REAUTH_PATH, DeleteStartResponseSchema, ReturnPathSchema, SignInRequestSchema } from '../../shared/contracts/account.js';
+import {
+  AccountResponseSchema,
+  DELETE_REAUTH_PATH,
+  DeleteStartResponseSchema,
+  RETURN_PATH_MAX,
+  ReturnPathSchema,
+  SignInRequestSchema,
+} from '../../shared/contracts/account.js';
 import { PRIVACY_NOTICE } from '../../shared/privacy.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { ConfigResponseSchema } from '../../shared/contracts/config.js';
@@ -166,8 +173,8 @@ describe('configuration', () => {
   });
 
   it('cookie names carry __Host- over https only', () => {
-    expect(authCookieNames(true)).toMatchObject({ session_token: '__Host-aviation_session', state: '__Host-aviation_auth_state' });
-    expect(authCookieNames(false)).toMatchObject({ session_token: 'aviation_session', state: 'aviation_auth_state' });
+    expect(authCookieNames(true)).toMatchObject({ session_token: '__Host-aviation_session', oauth_state: '__Host-aviation_oauth_state' });
+    expect(authCookieNames(false)).toMatchObject({ session_token: 'aviation_session', oauth_state: 'aviation_oauth_state' });
   });
 
   it('Better Auth’s limiter gets the network identity as an address; an IPv6 /64 as its network address', () => {
@@ -211,7 +218,7 @@ describe('contracts and copy', () => {
     for (const ok of ['/', '/briefs/x?step=2', '/account?signin=failed', DELETE_REAUTH_PATH, '/files/a.b', '/x?next=//y', '/.well']) {
       expect(ReturnPathSchema.safeParse(ok).success, ok).toBe(true);
     }
-    for (const bad of ['', 'https://evil.example/', '//evil.example', '/\\evil', '/a#b', 'javascript:alert(1)', `/${'x'.repeat(512)}`, '/a\nb']) {
+    for (const bad of ['', 'https://evil.example/', '//evil.example', '/\\evil', '/a#b', 'javascript:alert(1)', `/${'x'.repeat(RETURN_PATH_MAX)}`, '/a\nb']) {
       expect(ReturnPathSchema.safeParse(bad).success, bad).toBe(false);
     }
     // Dot segments and encoded separators: `/.//evil.example/x` resolves to `//evil.example/x`.

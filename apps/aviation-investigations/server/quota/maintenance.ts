@@ -1,9 +1,10 @@
 /**
  * Periodic upkeep of the control tables, run inside the API server: expire the leases of
- * reservations nobody settled (`expireLeases`), mark brief steps whose process died as
- * failed once their reservation is closed (`failOrphanedSteps`), apply retention
- * (`pruneControls`), and delete expired sign-in sessions, OAuth state, claimed states and
- * deletion confirmations (`pruneAuth`, server/auth/deletion.ts).
+ * reservations nobody settled (`expireLeases`), apply retention (`pruneControls`), mark
+ * brief steps whose process died as failed once their reservation is closed
+ * (`failOrphanedSteps`), and delete expired sign-in sessions, OAuth state, claimed states
+ * and deletion confirmations (`pruneAuth`, server/auth/deletion.ts), in that order: the
+ * pass takes brief locks (retention) before any step lock, as everything else does.
  *
  * All are available to the app role (`prune_controls()` is granted to `aviation_app` in
  * migration 0008; `expireLeases` and `pruneAuth` need only the table privileges the app
@@ -58,18 +59,21 @@ export async function runControlMaintenance(db: Db, log: MaintenanceLog, now: Da
         failed.push('expireLeases');
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: lease expiry failed');
       }
+      // Retention before the orphaned steps: it locks expired briefs before their steps (the
+      // order account deletion and every brief change use), and this pass must not hold a
+      // step's lock when it asks for a brief's (migration 0019).
+      try {
+        pruned = await tx.transaction((sp) => pruneControls(sp));
+      } catch (err) {
+        failed.push('pruneControls');
+        log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: retention failed');
+      }
       // After lease expiry, so a step whose lease just ran out is closed in the same pass.
       try {
         orphanedSteps = await tx.transaction((sp) => failOrphanedSteps(sp, now));
       } catch (err) {
         failed.push('failOrphanedSteps');
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: orphaned brief steps failed');
-      }
-      try {
-        pruned = await tx.transaction((sp) => pruneControls(sp));
-      } catch (err) {
-        failed.push('pruneControls');
-        log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: retention failed');
       }
       try {
         authPruned = await tx.transaction((sp) => pruneAuth(sp));

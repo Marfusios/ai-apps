@@ -10,7 +10,8 @@
  *   backup that held them would bring back an account deleted after it was taken.
  * - `auth_sessions`, `auth_verifications`, `auth_state_uses`,
  *   `auth_deletion_confirmations`: sessions (a token that, with BETTER_AUTH_SECRET, signs a
- *   valid cookie), OAuth state with PKCE verifiers, used states and deletion confirmations.
+ *   valid cookie), Better Auth's verification rows (unused: OAuth state lives in an
+ *   encrypted cookie), the hashes of used OAuth states and deletion confirmations.
  * - `briefs`, `brief_steps`: questions, answers, evidence and diagnostics, held 24 hours.
  * - `idempotency`: hashes of requests, deleted with an account.
  *

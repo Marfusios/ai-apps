@@ -134,6 +134,13 @@
       "when": 1792745962638,
       "tag": "0018_auth_races",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792751160501,
+      "tag": "0019_lock_order",
+      "breakpoints": true
     }
   ]
 }

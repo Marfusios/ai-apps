@@ -15,12 +15,13 @@
  *   tried to store one would fail sign-in instead of keeping it.
  * - `auth_sessions`: the database session behind the session cookie and its fixed
  *   expiry. No IP address or user agent (CHECK).
- * - `auth_verifications`: OAuth state for at most 10 minutes (the PKCE verifier, the
- *   return paths, the ID-token nonce, the brief a sign-in may take over and a deletion's
- *   re-authentication), deleted when the callback consumes it.
- * - `auth_state_uses`: a SHA-256 of each OAuth state brought back to the callback, until
- *   the state would have expired, so a callback is accepted once even when two arrive
- *   together (Better Auth looks the state up and deletes it in two steps).
+ * - `auth_verifications`: Better Auth's verification rows. Unused: the OAuth state (the
+ *   PKCE verifier, the return paths, the ID-token nonce, the brief a sign-in may take over
+ *   and a deletion's re-authentication) lives in an encrypted cookie instead
+ *   (server/auth/better-auth.ts), so starting a sign-in writes nothing here.
+ * - `auth_state_uses`: a SHA-256 of each OAuth state a callback used, written once the
+ *   code exchange and the ID-token checks passed and kept until the state would have
+ *   expired, so a callback is accepted once even when two arrive together.
  * - `auth_deletion_confirmations`: a single-use, 5-minute confirmation that the person
  *   deleting an account signed in with that Google account just now, bound to the
  *   session that did and to the account; it goes with either.

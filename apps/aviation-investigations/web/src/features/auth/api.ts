@@ -17,6 +17,7 @@ import {
   DELETE_REAUTH_PATH,
   DeleteAccountResponseSchema,
   DeleteStartResponseSchema,
+  RETURN_PATH_MAX,
   SIGN_IN_ERROR_PARAM,
   SignInResponseSchema,
   WELCOME_PARAM,
@@ -41,12 +42,23 @@ export const accountQuery = () =>
 /** Parameters sign-in adds to the page it returns to; they never go round again. */
 const RETURN_PARAMS = [WELCOME_PARAM, SIGN_IN_ERROR_PARAM, 'error', 'error_description'];
 
-/** The page to come back to: this path and query, without sign-in's own parameters. */
+/** Room left for the parameter sign-in adds to a return path (`&signin=failed` is the longest). */
+const RETURN_SUFFIX = `&${SIGN_IN_ERROR_PARAM}=failed`.length;
+
+/**
+ * The page to come back to: this path and query, without sign-in's own parameters. A path
+ * and query too long for the sign-in's state cookie (`RETURN_PATH_MAX`) come back without
+ * the query; a path too long by itself, to the home page.
+ */
 export function returnPath(pathname: string, search: string): string {
   const params = new URLSearchParams(search);
   for (const name of RETURN_PARAMS) params.delete(name);
   const query = params.toString();
-  return `${pathname.startsWith('/') && !pathname.startsWith('//') ? pathname : '/'}${query ? `?${query}` : ''}`;
+  const path = pathname.startsWith('/') && !pathname.startsWith('//') ? pathname : '/';
+  const room = RETURN_PATH_MAX - RETURN_SUFFIX;
+  const full = `${path}${query ? `?${query}` : ''}`;
+  if (full.length <= room) return full;
+  return path.length <= room ? path : '/';
 }
 
 function withParam(path: string, name: string, value: string): string {

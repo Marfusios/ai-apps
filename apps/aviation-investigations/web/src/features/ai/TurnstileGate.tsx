@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { TURNSTILE_ACTION } from '../../../../shared/contracts/ai';
 import { configQuery } from '../../api';
+import { onVisitorChange } from '../auth/visitor';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
 import { useTheme } from '../../theme';
@@ -295,6 +296,10 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
   }, [mode]);
 
   useEffect(() => () => removeWidget(null), [removeWidget]);
+
+  // A check still open when the visitor changes (signed out or deleted, here or in another
+  // tab) was for the previous visitor: it is cancelled, and its request sends nothing.
+  useEffect(() => onVisitorChange(cancelCurrent), [cancelCurrent]);
 
   const value = useMemo<AiCheck>(() => ({ session }), [session]);
   const open = mode !== null;

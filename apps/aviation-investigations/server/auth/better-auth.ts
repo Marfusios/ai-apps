@@ -30,12 +30,25 @@
  * and of the provider response nothing else: no tokens, no scopes (database hooks clear
  * them, and CHECK constraints in migration 0017 refuse them).
  *
- * **One use per callback.** Better Auth looks the OAuth state up and deletes it in two
- * steps, so two callbacks with one state could both pass it. A `before` hook on the
- * callback claims the state first (a SHA-256 of it in `auth_state_uses`, one row per
- * state, inserted only while the state is stored and live): the first callback goes on,
- * any other is sent back to the sign-in's error page before Google is called. Google's
- * authorization code is single-use as well.
+ * **The OAuth state lives in an encrypted cookie** (Better Auth's `cookie` strategy):
+ * starting a sign-in writes nothing to the database. The state (its random value, the
+ * PKCE verifier, the return paths, an expiry 10 minutes out and the server context: the
+ * nonce, the brief a sign-in may take over, a deletion's re-authentication) is encrypted
+ * and authenticated with a key derived from BETTER_AUTH_SECRET into the HttpOnly
+ * `__Host-aviation_oauth_state` cookie; the client cannot read or change it. Nobody can
+ * fill a store of pending sign-ins, so no cap is needed and no flood can block anyone's
+ * sign-in (the Task 20 review's N1).
+ *
+ * **One use per callback.** A callback is accepted only with this browser's state cookie
+ * for the state Google returns (Better Auth decrypts and compares it, then expires the
+ * cookie). The first callback to get through the code exchange and the ID-token checks
+ * claims the state in `getUserInfo` (`claimState`: a SHA-256 of the state in
+ * `auth_state_uses`, one row per state, until the state would have expired); any other
+ * callback with the same state is refused there, before a user, a session or a handover
+ * is made. Only a browser holding the cookie, with Google's code for it, can claim it, so
+ * a stranger cannot spend someone's sign-in, and the rows grow only with sign-ins Google
+ * completed. Google's authorization code is single-use as well, so a duplicate normally
+ * fails at its code exchange already.
  *
  * **Sessions.** Database sessions with a fixed 7-day lifetime: no refresh, and no cookie
  * cache, so sign-out, deletion and expiry take effect on the next request. Sessions keep
@@ -50,22 +63,23 @@
  *
  * **Cookies.** Host-only, HttpOnly, SameSite=Lax, Path=/; over https Secure with the
  * `__Host-` prefix (`__Host-aviation_session`, the OAuth state's
- * `__Host-aviation_auth_state`), plain names for local http. The session cookie is
- * signed by Better Auth with BETTER_AUTH_SECRET.
+ * `__Host-aviation_oauth_state`), plain names for local http. The session cookie is
+ * signed by Better Auth with BETTER_AUTH_SECRET; the state cookie is encrypted with it.
  *
  * **CSRF and origins.** Better Auth's checks stay on and are set explicitly (its own
  * default turns them off under NODE_ENV=test): the request `Origin` must be APP_URL's
  * whenever cookies are sent, and every return path must be on APP_URL. Before Better Auth
  * sees a POST, the route refuses cross-site requests (`Sec-Fetch-Site`, else `Origin`) and
- * non-JSON bodies. The OAuth state is bound to the browser by a signed cookie and stored
- * server-side for 10 minutes; a callback without it, or with another browser's, fails.
+ * non-JSON bodies. The OAuth state rides only in this browser's encrypted cookie for 10
+ * minutes; a callback without it, or with another browser's, fails.
  *
  * **Rate limits.** Better Auth's limiter, per network identity: the route passes the
  * validated identity of server/http/network-identity.ts (never `request.ip` or a client
  * header; any client header of that name is dropped) as `AUTH_IP_HEADER`. On top of the
- * API's own limit per network identity. Starting a sign-in writes the OAuth state, so at
- * most `AUTH_STATE_CAP` states may be live at once, whoever started them: past it,
- * sign-in answers 503 until some expire (10 minutes).
+ * API's own limit per network identity. A deletion's re-authentication is never held up
+ * by other sign-in traffic on its network: the route counts it per account instead
+ * (server/auth/deletion.ts `reauthStartAllowed`) and marks it with `AUTH_REAUTH_HEADER`,
+ * which only the route can set, and Better Auth's per-network limit skips it.
  *
  * **Logging.** Better Auth's log lines go to the server log as their message only, with
  * any email address replaced; never the values it attaches (errors may quote a row).
@@ -77,7 +91,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, addOAuthServerContext, createAuthMiddleware, getOAuthState } from 'better-auth/api';
 import { sql } from 'drizzle-orm';
 import type { AppConfig } from '../../shared/config.js';
-import { DELETE_REAUTH_PATH, ReturnPathSchema, SignInRequestSchema } from '../../shared/contracts/account.js';
+import { DELETE_REAUTH_PATH, SignInRequestSchema } from '../../shared/contracts/account.js';
 import { PRIVACY_NOTICE } from '../../shared/privacy.js';
 import type { Db } from '../db/client.js';
 import { AUTH_PROVIDER, AUTH_SCHEMA } from '../db/schema/auth.js';
@@ -104,8 +118,12 @@ export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const NONCE_CONTEXT_KEY = 'aviationNonce';
 /** The OAuth-state key of a deletion's re-authentication: the user and session it started from, and the subject to ask Google for. */
 export const REAUTH_CONTEXT_KEY = 'aviationReauth';
-/** At most this many OAuth states may be live at once (each sign-in start writes one for 10 minutes). */
-export const AUTH_STATE_CAP = 500;
+/**
+ * Request header the route sets on a deletion's re-authentication start it has counted
+ * per account (only the route sets it: client headers of that name are never forwarded);
+ * Better Auth's per-network limit skips such a start.
+ */
+export const AUTH_REAUTH_HEADER = 'x-aviation-reauth';
 /** Allowed difference between our clock and Google's. */
 const CLOCK_SKEW_MS = 60_000;
 
@@ -283,11 +301,6 @@ function parseReauthIntent(value: unknown): ReauthIntent | null {
   return typeof userId === 'string' && uuid.test(userId) && typeof sessionId === 'string' && uuid.test(sessionId) ? { userId, sessionId } : null;
 }
 
-/** `path` with `name=value` appended to its query. */
-function withQueryParam(path: string, name: string, value: string): string {
-  return `${path}${path.includes('?') ? '&' : '?'}${name}=${encodeURIComponent(value)}`;
-}
-
 /** Session storage failed: the request is refused (503), never treated as signed out. */
 export class AuthUnavailableError extends Error {
   override readonly name = 'AuthUnavailableError';
@@ -362,6 +375,11 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
             log.warn({ signIn: 'refused', reason: verdict.reason }, 'Google sign-in refused');
             return null;
           }
+          // One use per state (see the module comment): only the first callback gets past here.
+          if (!(await claimState(state))) {
+            log.warn({ signIn: 'state_reused' }, 'Google sign-in refused: the callback was already used');
+            return null;
+          }
           return { user: verdict.user, data: verdict.claims as never };
         },
       },
@@ -371,7 +389,8 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
       accountLinking: { enabled: false, disableImplicitLinking: true },
       updateAccountOnSignIn: false,
       encryptOAuthTokens: true,
-      storeStateStrategy: 'database',
+      // The OAuth state in an encrypted cookie: a sign-in start writes nothing to the database.
+      storeStateStrategy: 'cookie',
       skipStateCookieCheck: false,
       storeAccountCookie: false,
     },
@@ -386,7 +405,9 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
       window: 60,
       max: 60,
       customRules: {
-        '/sign-in/social': { window: 60, max: limits.signIn },
+        // A deletion's re-authentication, already counted per account by the route, is not
+        // held up by other sign-ins from its network.
+        '/sign-in/social': (request) => (request.headers.get(AUTH_REAUTH_HEADER) === '1' ? false : { window: 60, max: limits.signIn }),
         '/callback/*': { window: 60, max: limits.callback },
         '/sign-out': { window: 60, max: limits.signOut },
       },
@@ -424,17 +445,9 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path === '/callback/:id') {
-          await claimCallbackState(ctx);
-          return;
-        }
         if (ctx.path !== '/sign-in/social') return;
         const body = SignInRequestSchema.safeParse(ctx.body);
         if (!body.success) throw new APIError('BAD_REQUEST', { message: 'This sign-in request is not valid.' });
-        if (await tooManyLiveStates()) {
-          log.warn({ signIn: 'busy' }, 'Google sign-in refused: too many sign-ins in progress');
-          throw new APIError('SERVICE_UNAVAILABLE', { message: 'Sign-in is busy. Try again in a few minutes.' });
-        }
         const cookie = ctx.headers?.get('cookie') ?? null;
         const candidate = await handoverCandidate(handover, cookie, body.data.callbackURL);
         // Deleting the account: Google again, for the account this browser is signed in to.
@@ -511,54 +524,21 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
 
   const expire = (name: string) => `${name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
 
-  /** True when `AUTH_STATE_CAP` OAuth states are live: no new sign-in may start. */
-  async function tooManyLiveStates(): Promise<boolean> {
-    const res = await deps.db.execute(sql`
-      SELECT count(*)::int AS n FROM (
-        SELECT 1 FROM auth_verifications WHERE identifier LIKE 'auth-state:%' AND expires_at > now() LIMIT ${AUTH_STATE_CAP}
-      ) live`);
-    return ((res.rows[0] as { n: number } | undefined)?.n ?? 0) >= AUTH_STATE_CAP;
-  }
-
   /**
-   * The callback's OAuth state is used once (see the module comment): claim it before
-   * Better Auth reads it, but only from the browser that started the sign-in (its signed
-   * state cookie names this state), so a stranger's callback cannot spend it. A stored,
-   * live state claimed already sends this callback to the sign-in's error page; anything
-   * else (no or another state cookie, an unknown or expired state) is left to Better Auth,
-   * which refuses it.
+   * Claim the callback's OAuth state for this callback (see the module comment): true for
+   * the first claim of a state, false for any later one or a state without its value or
+   * expiry. Rows live until the state would have expired.
    */
-  async function claimCallbackState(ctx: {
-    query?: Record<string, unknown>;
-    redirect: (url: string) => unknown;
-    getSignedCookie: (name: string, secret: string) => Promise<string | null | false | undefined>;
-  }): Promise<void> {
-    const state = ctx.query?.state;
-    if (typeof state !== 'string' || state.length === 0 || state.length > 128) return;
-    if ((await ctx.getSignedCookie(names.state, config.auth.secret!)) !== state) return;
+  async function claimState(state: Awaited<ReturnType<typeof getOAuthState>>): Promise<boolean> {
+    const value = (state as { oauthState?: unknown } | null | undefined)?.oauthState;
+    const expiresAt = (state as { expiresAt?: unknown } | null | undefined)?.expiresAt;
+    if (typeof value !== 'string' || value.length === 0 || typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return false;
     const res = await deps.db.execute(sql`
-      WITH stored AS (
-        SELECT value, expires_at FROM auth_verifications
-        WHERE identifier = ${`auth-state:${state}`} AND expires_at > now()
-        ORDER BY expires_at DESC LIMIT 1
-      ), claimed AS (
-        INSERT INTO auth_state_uses (state_hash, used_at, expires_at)
-        SELECT ${createHash('sha256').update(state).digest('hex')}, now(), stored.expires_at FROM stored
-        ON CONFLICT (state_hash) DO NOTHING
-        RETURNING 1
-      )
-      SELECT (SELECT value FROM stored) AS value, EXISTS (SELECT 1 FROM claimed) AS claimed`);
-    const row = res.rows[0] as { value: string | null; claimed: boolean } | undefined;
-    if (!row || row.value === null || row.claimed) return;
-    log.warn({ signIn: 'state_reused' }, 'Google sign-in refused: the callback was already used');
-    let errorURL = '/account?signin=failed';
-    try {
-      const stored = (JSON.parse(row.value) as { errorURL?: unknown }).errorURL;
-      if (ReturnPathSchema.safeParse(stored).success) errorURL = stored as string;
-    } catch {
-      // The default error page.
-    }
-    throw ctx.redirect(withQueryParam(errorURL, 'error', 'state_mismatch'));
+      INSERT INTO auth_state_uses (state_hash, used_at, expires_at)
+      VALUES (${createHash('sha256').update(value).digest('hex')}, now(), greatest(to_timestamp(${expiresAt / 1000}), now() + interval '1 second'))
+      ON CONFLICT (state_hash) DO NOTHING
+      RETURNING 1`);
+    return res.rows.length === 1;
   }
 
   const service: AuthService = {
