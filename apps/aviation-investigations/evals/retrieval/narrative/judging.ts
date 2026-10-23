@@ -27,7 +27,11 @@
  * sent, and settles with its billed cost (zero when nothing can have been billed, the
  * full reservation when it is uncertain). Before each reservation the run stops if it
  * would take the run's spend log above its limit or the ledger's remaining evaluation
- * allowance (the $20 monthly indexing and evaluation allowance) below zero.
+ * allowance (the $20 monthly indexing and evaluation allowance) below zero. A budget
+ * stop starts nothing new and keeps what the run has: pairs both judges finished are
+ * recorded (escalations the stop prevented are `escalation-budget-exhausted`), pairs
+ * not judged are left out (no judgment is `unknown`), and every finished outcome is in
+ * the cache, so the next run continues where this one stopped without paying again.
  *
  * **Cache.** Judge outcomes are keyed by (kind, question version, rubric version, case,
  * complete-input or bundle fingerprint, provider, model with its frozen settings, prompt
@@ -573,13 +577,29 @@ export const adjudicationOrder = (s: Pick<Subject, 'ntsbNo' | 'ref' | 'kind'>): 
   parseInt(sha256(`${s.kind}|${s.ref.family}|${s.ntsbNo}`).slice(0, 8), 16) % 2 === 0 ? [0, 1] : [1, 0];
 
 /** Judge every pair, then escalate disagreements in priority order (module comment). */
-export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptions): Promise<PairRecord[]> {
+export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptions): Promise<{ records: PairRecord[]; stopped: string | null }> {
   const log = o.log ?? (() => undefined);
+  let stopped: string | null = null;
+  /** A budget stop is recorded (the run starts nothing new); any other error propagates. */
+  const budgetStop = (err: unknown): void => {
+    if (!(err instanceof BudgetStop)) throw err;
+    stopped ??= err.message;
+  };
   const results: { item: PairPlanItem; outcomes: [Awaited<ReturnType<typeof judgeOnce>>, Awaited<ReturnType<typeof judgeOnce>>] }[] = [];
   await runPool(items, o.concurrency, async (item) => {
-    const [a, b] = await Promise.all([judgeOnce(o, item.subject, o.judges[0]), judgeOnce(o, item.subject, o.judges[1])]);
-    results.push({ item, outcomes: [a, b] });
-    log(`judged ${item.subject.kind} ${item.subject.ref.family} ${item.subject.ntsbNo}: ${a.outcome.status}/${b.outcome.status}`);
+    if (stopped !== null) return;
+    const settled = await Promise.allSettled([judgeOnce(o, item.subject, o.judges[0]), judgeOnce(o, item.subject, o.judges[1])]);
+    const [a, b] = settled;
+    if (a?.status === 'fulfilled' && b?.status === 'fulfilled') {
+      results.push({ item, outcomes: [a.value, b.value] });
+      log(`judged ${item.subject.kind} ${item.subject.ref.family} ${item.subject.ntsbNo}: ${a.value.outcome.status}/${b.value.outcome.status}`);
+      return;
+    }
+    // A fatal error wins over a budget stop; a judge that finished is in the cache.
+    const errors = settled.flatMap((x) => (x.status === 'rejected' ? [x.reason as unknown] : []));
+    const fatal = errors.find((e) => !(e instanceof BudgetStop));
+    if (fatal !== undefined) throw fatal;
+    budgetStop(errors[0]);
   });
   const share = o.maxEscalationShare ?? MAX_ESCALATION_SHARE;
   const cap = Math.floor(share * items.length);
@@ -641,7 +661,8 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
     escalated += 1;
     toAdjudicate.push({ r, record });
   }
-  await runPool(toAdjudicate, o.concurrency, async ({ r, record }) => {
+  /** One escalation: the adjudicator's blind grade, then its decision (module comment). */
+  const adjudicate = async (r: (typeof ordered)[number], record: PairRecord): Promise<void> => {
     const s = r.item.subject;
     const [a, b] = r.outcomes;
     const order = adjudicationOrder(s);
@@ -698,6 +719,19 @@ export async function judgePairs(items: readonly PairPlanItem[], o: JudgingOptio
       record.status = 'adjudication-unjudgeable';
     }
     log(`adjudicated ${s.kind} ${s.ref.family} ${s.ntsbNo}: ${record.status}`);
+  };
+  await runPool(toAdjudicate, o.concurrency, async ({ r, record }) => {
+    if (stopped !== null) {
+      record.status = 'escalation-budget-exhausted';
+      return;
+    }
+    try {
+      await adjudicate(r, record);
+    } catch (err) {
+      budgetStop(err);
+      record.status = 'escalation-budget-exhausted';
+      record.adjudication = null;
+    }
   });
-  return records;
+  return { records, stopped };
 }

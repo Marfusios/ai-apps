@@ -38,6 +38,7 @@ import {
   relevanceSubject,
   type FamilyRef,
   type PairPlanItem,
+  type PairRecord,
 } from '../../evals/retrieval/narrative/judging.js';
 import { runJudging } from '../../evals/retrieval/narrative/commands.js';
 import { relevanceRequest, type JudgeRequest } from '../../evals/retrieval/narrative/prompts.js';
@@ -260,7 +261,7 @@ describe('judging pairs', () => {
     const a = createFakeJudge(HAIKU, reply([VERDICT.relevant]));
     const b = createFakeJudge(LUNA, reply([VERDICT.relevant]));
     const adj = createFakeJudge(SONNET, reply([VERDICT.relevant]));
-    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 2 });
+    const [r] = (await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 2 })).records;
     expect(r).toMatchObject({ label: 2, status: 'agreed', adjudication: null });
     expect(adj.calls).toHaveLength(0);
     expect(h.gate.records).toHaveLength(2);
@@ -273,7 +274,7 @@ describe('judging pairs', () => {
     const a = createFakeJudge(HAIKU, reply([VERDICT.relevant]));
     const b = createFakeJudge(LUNA, reply([VERDICT.partial]));
     const adj = createFakeJudge(SONNET, reply([VERDICT.partial, VERDICT.relevant]));
-    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 1, maxEscalationShare: 1 });
+    const [r] = (await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 1, maxEscalationShare: 1 })).records;
     expect(r).toMatchObject({ label: 2, status: 'adjudicated', adjudication: { initial: 1, final: 2, status: 'valid' } });
     const [first, second] = adj.calls;
     const text = (x: JudgeRequest | undefined) => (x?.blocks ?? []).map((b2) => b2.text).join('\n');
@@ -289,14 +290,14 @@ describe('judging pairs', () => {
   it('turns an abstention, an invalid adjudication and two unjudgeable judges into unknown', async () => {
     const run = async (aSeq: unknown[], bSeq: unknown[], adjSeq: unknown[]) => {
       const h = harness();
-      const [r] = await judgePairs([{ subject: subject(), priority: 0 }], {
+      const [r] = (await judgePairs([{ subject: subject(), priority: 0 }], {
         judges: [createFakeJudge(HAIKU, reply(aSeq)), createFakeJudge(LUNA, reply(bSeq))],
         adjudicator: createFakeJudge(SONNET, reply(adjSeq)),
         sender: h.sender,
         cache: h.cache,
         concurrency: 1,
         maxEscalationShare: 1,
-      });
+      })).records;
       return r;
     };
     expect(await run([VERDICT.relevant], [VERDICT.partial], [VERDICT.partial, VERDICT.abstain])).toMatchObject({ label: 'unknown', status: 'abstained' });
@@ -309,7 +310,7 @@ describe('judging pairs', () => {
     const a = createFakeJudge(HAIKU, reply([VERDICT.invalid, VERDICT.relevant]));
     const b = createFakeJudge(LUNA, reply([VERDICT.invalid, VERDICT.invalid]));
     const adj = createFakeJudge(SONNET, reply([VERDICT.relevant, VERDICT.relevant]));
-    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 1, maxEscalationShare: 1 });
+    const [r] = (await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, b], adjudicator: adj, sender: h.sender, cache: h.cache, concurrency: 1, maxEscalationShare: 1 })).records;
     expect(a.calls).toHaveLength(2);
     expect(a.calls[1]?.blocks.at(-1)?.text).toContain('quote_not_found:S1');
     expect(b.calls).toHaveLength(2);
@@ -321,14 +322,14 @@ describe('judging pairs', () => {
   it('bounds escalations to a share of the pairs, in priority order', async () => {
     const h = harness();
     const items: PairPlanItem[] = [3, 0, 2, 1].map((priority, i) => ({ subject: subject({ family: `f-${i}` }), priority }));
-    const records = await judgePairs(items, {
+    const records = (await judgePairs(items, {
       judges: [createFakeJudge(HAIKU, reply([VERDICT.relevant])), createFakeJudge(LUNA, reply([VERDICT.partial]))],
       adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])),
       sender: h.sender,
       cache: h.cache,
       concurrency: 2,
       maxEscalationShare: 0.25,
-    });
+    })).records;
     expect(records.map((r) => [r.family, r.status])).toEqual([
       ['f-1', 'adjudicated'],
       ['f-3', 'escalation-budget-exhausted'],
@@ -341,12 +342,12 @@ describe('judging pairs', () => {
   it('retries transient failures, then leaves the pair incomplete and uncached', async () => {
     const h = harness();
     const flaky = createFakeJudge(HAIKU, reply([new JudgeCallError('overloaded', { kind: 'none' }), VERDICT.relevant]));
-    const [ok] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [flaky, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h.sender, cache: h.cache, concurrency: 1 });
+    const [ok] = (await judgePairs([{ subject: subject(), priority: 0 }], { judges: [flaky, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h.sender, cache: h.cache, concurrency: 1 })).records;
     expect(ok).toMatchObject({ status: 'agreed', label: 2 });
     expect(flaky.calls).toHaveLength(2);
     const down = createFakeJudge(HAIKU, reply([new JudgeCallError('network', { kind: 'uncertain' })]));
     const h2 = harness();
-    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [down, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h2.sender, cache: h2.cache, concurrency: 1 });
+    const [r] = (await judgePairs([{ subject: subject(), priority: 0 }], { judges: [down, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h2.sender, cache: h2.cache, concurrency: 1 })).records;
     expect(r).toMatchObject({ status: 'incomplete', label: 'unknown' });
     expect(down.calls).toHaveLength(3);
     expect(h2.cache.size).toBe(1);
@@ -361,14 +362,36 @@ describe('judging pairs', () => {
   });
 
   it('stops before a reservation above the run limit or the remaining evaluation allowance', async () => {
-    for (const h of [harness({ limit: 0.000001 }), harness({ allowance: 0.000001 })]) {
+    for (const [h, why] of [[harness({ limit: 0.000001 }), /above its limit/], [harness({ allowance: 0.000001 }), /remains of the evaluation allowance/]] as const) {
       const a = createFakeJudge(HAIKU, reply([VERDICT.relevant]));
-      await expect(
-        judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h.sender, cache: h.cache, concurrency: 1 }),
-      ).rejects.toBeInstanceOf(BudgetStop);
+      const out = await judgePairs([{ subject: subject(), priority: 0 }], { judges: [a, createFakeJudge(LUNA, reply([VERDICT.relevant]))], adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])), sender: h.sender, cache: h.cache, concurrency: 1 });
+      expect(out.records).toEqual([]);
+      expect(out.stopped).toMatch(why);
       expect(a.calls).toHaveLength(0);
       expect(h.gate.records).toHaveLength(0);
     }
+  });
+
+  it('keeps what a budget stop leaves: judged pairs recorded, stopped escalations unknown, outcomes cached for the next run', async () => {
+    // Three pairs: the same case under three question versions (distinct cache keys).
+    const make = (n: number) => Array.from({ length: n }, (_, i) => ({ subject: subject({ family: `fam-${i}`, questionVersion: `q-000000000000000${i}` }), priority: i }));
+    const disagree = () => [createFakeJudge(HAIKU, () => VERDICT.relevant), createFakeJudge(LUNA, () => VERDICT.partial)] as const;
+    // Room for the first pairs' judges, not for every adjudication: the stop comes in the escalations.
+    const probe = harness();
+    const one = (await judgePairs(make(1), { judges: disagree(), adjudicator: createFakeJudge(SONNET, () => VERDICT.relevant), sender: probe.sender, cache: new JudgmentCache(null), concurrency: 1, maxEscalationShare: 1 })).records[0] as PairRecord;
+    const judgesUsd = one.attempts.filter((x) => x.role !== 'adjudicator').reduce((n, x) => n + x.reservedUsd, 0);
+    const h = harness({ limit: judgesUsd * 3.2 });
+    const cache = new JudgmentCache(null);
+    const out = await judgePairs(make(3), { judges: disagree(), adjudicator: createFakeJudge(SONNET, () => VERDICT.relevant), sender: h.sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(out.stopped).toMatch(/above its limit/);
+    expect(out.records).toHaveLength(3);
+    expect(out.records.every((r) => r.status === 'escalation-budget-exhausted' && r.label === 'unknown')).toBe(true);
+    // The next run reuses every judge outcome and pays only for what is left.
+    const next = disagree();
+    const again = await judgePairs(make(3), { judges: next, adjudicator: createFakeJudge(SONNET, () => VERDICT.relevant), sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    expect(next[0].calls.length + next[1].calls.length).toBe(0);
+    expect(again).toMatchObject({ stopped: null });
+    expect(again.records.map((r) => r.status)).toEqual(['adjudicated', 'adjudicated', 'adjudicated']);
   });
 
   it('reuses cached outcomes, and re-judges when the rubric version changes', async () => {
@@ -379,7 +402,7 @@ describe('judging pairs', () => {
     await judgePairs([{ subject: subject(), priority: 0 }], { judges: first, adjudicator: adj, sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
     const second = make();
     const adj2 = createFakeJudge(SONNET, reply([VERDICT.relevant, VERDICT.relevant]));
-    const [r] = await judgePairs([{ subject: subject(), priority: 0 }], { judges: second, adjudicator: adj2, sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 });
+    const [r] = (await judgePairs([{ subject: subject(), priority: 0 }], { judges: second, adjudicator: adj2, sender: harness().sender, cache, concurrency: 1, maxEscalationShare: 1 })).records;
     expect(second[0].calls.length + second[1].calls.length + adj2.calls.length).toBe(0);
     expect(r).toMatchObject({ status: 'adjudicated', label: 2 });
     expect(r?.judges.every((j) => j.cached)).toBe(true);

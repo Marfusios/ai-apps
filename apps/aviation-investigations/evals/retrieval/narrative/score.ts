@@ -21,7 +21,8 @@
  * **Comparisons.** Paired group bootstrap by connected case group (`stats.ts`), on the
  * lower and the upper bounds separately.
  *
- * **Diagnostics.** Discovery as depth grows; method-exclusive relevant cases; the tail
+ * **Diagnostics.** Judged coverage of each pool and bounded cohort (known, unresolved
+ * and not yet judged); discovery as depth grows; method-exclusive relevant cases; the tail
  * samples' relevant share with Wilson intervals scaled to their strata (coverage, never a
  * bound); judge-judge Cohen's kappa (unweighted and linear-weighted) with group-bootstrap
  * intervals, agreement with Wilson intervals and confusion matrices, per tag and per
@@ -275,6 +276,26 @@ export function tailEstimate(pool: FamilyPool, labels: ReadonlyMap<string, Label
       estimatedMissed: relevant.lower === null || relevant.upper === null ? null : [Math.round(relevant.lower * size), Math.round(relevant.upper * size)],
     };
   });
+}
+
+export interface Coverage {
+  cases: number;
+  /** A grade 0, 1 or 2. */
+  known: number;
+  /** Judged but unresolved (unjudgeable, abstained, escalation budget exhausted, uncovered). */
+  unresolved: number;
+  /** No judgment yet (a stopped or partial run): unknown as well. */
+  notJudged: number;
+}
+
+/** Judged coverage of a family's pool and, for a bounded cohort, of its cohort (protocol section 4: reported with every score). */
+export function judgedCoverage(pool: Pick<FamilyPool, 'cases'>, labels: ReadonlyMap<string, Label>, cohort: readonly string[] | null): { pool: Coverage; cohort: Coverage | null } {
+  const of = (cases: readonly string[]): Coverage => {
+    const known = cases.filter((n) => { const l = labels.get(n); return l !== undefined && l !== 'unknown'; }).length;
+    const judged = cases.filter((n) => labels.has(n)).length;
+    return { cases: cases.length, known, unresolved: judged - known, notJudged: cases.length - judged };
+  };
+  return { pool: of(pool.cases.map((c) => c.ntsbNo)), cohort: cohort === null ? null : of(cohort) };
 }
 
 // ---------------------------------------------------------------------------

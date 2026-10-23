@@ -24,6 +24,7 @@ import {
   discoveryByDepth,
   discrepancies,
   familyReference,
+  judgedCoverage,
   methodExclusive,
   questionValues,
   scoreRuns,
@@ -126,6 +127,16 @@ describe('references and run scores', () => {
     const broad = familyReference({ type: 'broad', cases: [{ ntsbNo: 'A', sources: [], bestRank: {}, lureRank: null, delivered: false }] }, new Map([['A', 1]]));
     expect(broad.unlisted).toBe('unknown');
     expect(broad.exhaustive).toBe(false);
+  });
+
+  it('reports judged coverage of the pool and of a bounded cohort, unresolved and unjudged cases apart', () => {
+    const cases = ['A', 'B', 'C'].map((n) => ({ ntsbNo: n, sources: [], bestRank: {}, lureRank: null, delivered: false }));
+    const labels = new Map<string, Label>([['A', 2], ['B', 'unknown']]);
+    expect(judgedCoverage({ cases }, labels, ['A', 'B', 'C', 'D'])).toEqual({
+      pool: { cases: 3, known: 1, unresolved: 1, notJudged: 1 },
+      cohort: { cases: 4, known: 1, unresolved: 1, notJudged: 2 },
+    });
+    expect(judgedCoverage({ cases }, labels, null).cohort).toBeNull();
   });
 
   it('bounds supported P@6 by the unknowns of either judgment', () => {

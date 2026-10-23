@@ -44,7 +44,7 @@ import { attemptReserveUsd, createAnthropicJudge, createOpenAIJudge, type JudgeC
 import { ADJUDICATOR, DEFAULT_CONCURRENCY, JUDGE_A, JUDGE_B, JUDGE_TIMEOUT_MS, RUN_LIMITS_USD } from './config.js';
 import { NarrativeDatasetSchema, families, narrativeDatasetProblems, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { CASE_TOKEN_BUDGET, bundleFingerprint, fingerprint, loadCaseEvidence, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
-import { AttemptSender, BudgetStop, JudgmentCache, answerabilitySubject, judgePairs, relevanceSubject, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
+import { AttemptSender, JudgmentCache, answerabilitySubject, judgePairs, relevanceSubject, type FamilyRef, type PairPlanItem, type PairRecord } from './judging.js';
 import {
   ASSUMPTIONS,
   addRuns,
@@ -75,6 +75,7 @@ import {
   discoveryByDepth,
   discrepancies,
   familyReference,
+  judgedCoverage,
   methodExclusive,
   questionGroups,
   questionValues,
@@ -632,14 +633,7 @@ export async function runJudging(
   try {
     const sender = new AttemptSender({ gate: ledger.gate, limitUsd: opts.limitUsd, spendLog: resolve(opts.outDir, 'spend.jsonl'), run: runId }, JUDGE_TIMEOUT_MS);
     const cache = new JudgmentCache(resolve(opts.outDir, 'cache.jsonl'));
-    let records: PairRecord[] = [];
-    let stopped: string | null = null;
-    try {
-      records = await judgePairs(items, { judges: callers.judges, adjudicator: callers.adjudicator, sender, cache, concurrency: opts.concurrency, maxEscalationShare: opts.maxEscalationShare, log: (m) => console.error(m) });
-    } catch (err) {
-      if (!(err instanceof BudgetStop)) throw err;
-      stopped = err.message;
-    }
+    const { records, stopped } = await judgePairs(items, { judges: callers.judges, adjudicator: callers.adjudicator, sender, cache, concurrency: opts.concurrency, maxEscalationShare: opts.maxEscalationShare, log: (m) => console.error(m) });
     const file = writeJson(opts.outDir, `narrative-judgments-${opts.set}-${stamp(new Date())}.json`, { kind: 'track-n-judgments', set: opts.set, reference: opts.reference, run: runId, git: gitState(), stopped, records });
     log(`${records.length} pair records; spend ${usd(sender.spentUsd)}; ${stopped ? `stopped: ${stopped}; ` : ''}${file}`);
     return stopped ? 1 : 0;
@@ -748,7 +742,7 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
       const ref = familyReference({ type: pool.type, cases: pool.cases, cohort: f?.cohort.cases ?? null }, l);
       const runs = scoreRuns(pool, ref, answer.get(pool.family) ?? new Map());
       values.push(...questionValues(pool, runs));
-      diagnostics.push({ family: pool.family, discovery: discoveryByDepth(pool, l), exclusive: methodExclusive(pool, l), tail: tailEstimate(pool, l) });
+      diagnostics.push({ family: pool.family, coverage: judgedCoverage(pool, l, f?.cohort.cases ?? null), discovery: discoveryByDepth(pool, l), exclusive: methodExclusive(pool, l), tail: tailEstimate(pool, l) });
     }
     const boot = { resamples: 10_000, seed: 20261023 };
     const methods = [...POOL_RULE.methods];
