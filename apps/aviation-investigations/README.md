@@ -726,7 +726,8 @@ for the candidate frozen in `selection.v3.json`, and a unit test holds productio
 that selection. The 16d runner (`run.ts`, protocol v2) stays as the record.
 
 - **Protocol v3.1** (`protocol.v3.ts`, Task 16e, committed before any paid 16e call and
-  before the 16e held-out set existed; amended once, before any paid call, when authoring
+  before the 16e held-out set existed; amended once, before any checker call (after only
+  the $0.000004 embedding of the 16e questions for their evidence), when authoring
   the held-out set showed the ordinal rule reading "had not flown in 22 years" as a
   count): two candidates, `check.v9` at effort `low` and at effort `medium`; the frozen
   rule versions (`quote-ws-v2`, `excerpt-context-v1`, `ordinal-evidence-v2`,

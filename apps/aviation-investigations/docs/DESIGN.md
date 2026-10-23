@@ -229,7 +229,7 @@ and is never shown; in `whole` mode an abstention withholds the summary like any
   `why` line or gap note stating an ordinal without it is never shown (an ordinal in a
   "whether" clause is asked, not stated). The rule is a necessary condition only: it does
   not check what the ordinal is counted from, which the checker judges. Version 2 (before
-  any paid 16e call) stopped reading "had not flown in 22 years" or "the previous two
+  any 16e checker call) stopped reading "had not flown in 22 years" or "the previous two
   flights" as counts.
 
 **Claim-level display** (Task 16d, versioned dependency rules **`display-deps-v2`** since Task
@@ -1251,7 +1251,8 @@ these results.
 
 **Deterministic rules and re-calibration** (Task 16e, gate G6's 16d verdict;
 `evals/checker/protocol.v3.ts`, protocol v3.1: committed before any paid 16e call and before
-the 16e held-out set existed, and amended once, before any paid call, to ordinal rule v2).
+the 16e held-out set existed, and amended once, before any checker call, to ordinal rule
+v2; the only paid call before it embedded the 16e questions to retrieve their evidence).
 The check now runs behind §3's deterministic rules (`excerpt-context-v1`,
 `ordinal-evidence-v2`), with `check-judgement-v2` (a `supported` verdict naming a passage
 outside the claim's citations does not confirm it), `display-deps-v2`, `check.v9` and
@@ -1263,7 +1264,7 @@ beside them. Without an eligible candidate the order is critical regressions, M4
 family's M3, M2, M1, then the lower effort. Every 16c and 16d item is development now (labels
 v3: the errata overlay `checker-errata-v1`, each correction with its source and reason).
 
-Offline, before any paid call, the 16d recordings of `haiku-think-v8` went through the 16e
+Offline, before any checker call, the 16d recordings of `haiku-think-v8` went through the 16e
 projection with labels v3 (`results/16e-simulation.json`). Development: 1 of 227 errors shown,
 no error brief showing an error (36), all 11 critical items withheld, M1 323 of 396 (81.6%), M2
 15 of 18. The 16d held-out pilot: 0 of 183 errors shown (16d showed two context-losing
