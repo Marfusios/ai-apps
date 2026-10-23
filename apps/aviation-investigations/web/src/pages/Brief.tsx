@@ -226,6 +226,12 @@ export function Brief() {
     if (document.activeElement === document.body || document.activeElement === null) resultHeading.current?.focus({ preventScroll: true });
   }, [step, finished]);
 
+  // Reads of the running step on screen keep failing (a network or server error, a read
+  // that timed out; not a refusal such as a 404 or a 429, which stop or wait): the page
+  // keeps trying, and the checklist says so until a read gets through.
+  const pollError = stepMissing ? fallback.error : query.error;
+  const pollTrouble = step !== undefined && !finished && pollError !== null && !(pollError instanceof ApiError && pollError.status < 500);
+
   // A failed read that is not a 404. While `?step=n` past the last step falls back to the
   // latest step, only the fallback's own failure counts (the first 404 is expected).
   const loadError = stepMissing
@@ -375,6 +381,7 @@ export function Brief() {
             cohort={config?.coverage.defaultCohort ?? null}
             onCancel={() => void cancel()}
             cancelling={cancelling}
+            trouble={pollTrouble}
           />
         ) : (
           <section aria-labelledby="result-heading" className="mt-1">

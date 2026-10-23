@@ -5,6 +5,8 @@ import { formatCount } from '../../lib/format';
 
 export const CHECKLIST_TITLE = 'Answer checklist';
 export const CHECKLIST_NOTE = 'Nothing is shown until each quote matches the report text word for word. Up to a minute.';
+/** While reads of the running step fail (Builder copy, Task 22 review W-3; for the owner's review). */
+export const POLL_TROUBLE = 'Still checking… connection trouble.';
 
 type RowState = 'done' | 'current' | 'todo';
 
@@ -99,6 +101,8 @@ export interface ChecklistProps {
   cohort: number | null;
   onCancel: () => void;
   cancelling: boolean;
+  /** Reads of the running step are failing (the page keeps trying): a muted line says so. */
+  trouble?: boolean;
 }
 
 /**
@@ -108,8 +112,9 @@ export interface ChecklistProps {
  * timer is not announced. The server sends stage status and counts, plus, once the scope
  * stage is done, its readings and filters as server templates (`interpretation`: the
  * chips above this card show them, the rows here do not); never partial answer text.
+ * While reads of the step keep failing, a muted line says so (`trouble`).
  */
-export function Checklist({ checklist, stage, startedAt, cohort, onCancel, cancelling }: ChecklistProps) {
+export function Checklist({ checklist, stage, startedAt, cohort, onCancel, cancelling, trouble = false }: ChecklistProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -170,6 +175,10 @@ export function Checklist({ checklist, stage, startedAt, cohort, onCancel, cance
       </p>
       <p aria-live="polite" className="sr-only">
         {announcement}
+      </p>
+      {/* Rendered empty first, so the line is announced when reads start failing. */}
+      <p aria-live="polite" data-poll-trouble="" className={cx('text-meta text-muted', trouble && 'mt-1')}>
+        {trouble ? POLL_TROUBLE : ''}
       </p>
     </section>
   );

@@ -29,6 +29,14 @@ export class ApiError extends Error {
 
 export const isNotFound = (err: unknown): boolean => err instanceof ApiError && err.status === 404;
 
+/** How long a read that repeats by itself (a brief poll, the AI status) waits for an answer. */
+export const READ_TIMEOUT_MS = 15_000;
+
+/** A read that got no answer in time: a failure like a network error (no ApiError). */
+export class ReadTimeoutError extends Error {
+  override readonly name = 'ReadTimeoutError';
+}
+
 /** Delay-seconds form of `Retry-After` (the server never sends the date form). */
 function retryAfterHeader(response: Response): number | null {
   const raw = response.headers.get('retry-after');
@@ -46,13 +54,44 @@ async function errorOf(response: Response): Promise<ApiError> {
   return new ApiError(response.status, body, body?.retryAfter ?? retryAfterHeader(response));
 }
 
-export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(new URL(path, window.location.origin), {
-    signal,
-    headers: { Accept: 'application/json' },
-  });
-  if (!response.ok) throw await errorOf(response);
-  return schema.parse(await response.json());
+export interface ReadOptions {
+  /**
+   * Give up when the whole answer (headers and body) has not arrived within this many
+   * milliseconds (`ReadTimeoutError`). For reads that repeat by themselves: a stalled
+   * connection would otherwise hold the next one back until the browser gives up. Never
+   * for a POST: an aborted paid request must stay an unknown outcome.
+   */
+  timeoutMs?: number;
+}
+
+export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal, { timeoutMs }: ReadOptions = {}): Promise<T> {
+  // The caller's signal (TanStack's cancel) still aborts the read; the timer adds its own.
+  const timer = timeoutMs === undefined ? null : new AbortController();
+  const follow = (): void => timer?.abort(signal?.reason);
+  let timedOut = false;
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  if (timer) {
+    if (signal?.aborted) follow();
+    else signal?.addEventListener('abort', follow, { once: true });
+    handle = setTimeout(() => {
+      timedOut = true;
+      timer.abort(new ReadTimeoutError(`no answer within ${timeoutMs} ms`));
+    }, timeoutMs);
+  }
+  try {
+    const response = await fetch(new URL(path, window.location.origin), {
+      signal: timer?.signal ?? signal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw await errorOf(response);
+    return schema.parse(await response.json());
+  } catch (err) {
+    if (timedOut) throw new ReadTimeoutError(`no answer within ${timeoutMs} ms`);
+    throw err;
+  } finally {
+    clearTimeout(handle);
+    signal?.removeEventListener('abort', follow);
+  }
 }
 
 /**
@@ -121,12 +160,13 @@ export const dashboardQuery = (cohort: DashboardRequest['cohort']) =>
 /**
  * AI availability for this visitor (UI_DESIGN §5): the header counter and the Ask AI
  * label read it before anyone clicks. Per visitor and never cached by the server;
- * refetch it after an AI request. A private read (web/src/features/auth/visitor.ts).
+ * refetch it after an AI request. A private read (web/src/features/auth/visitor.ts). A
+ * read that gets no answer gives up after `READ_TIMEOUT_MS`.
  */
 export const aiStatusQuery = () =>
   queryOptions({
     queryKey: ['ai-status'],
-    queryFn: ({ signal }) => privateRead(() => getJson('/api/ai/status', AiStatusResponseSchema, signal)),
+    queryFn: ({ signal }) => privateRead(() => getJson('/api/ai/status', AiStatusResponseSchema, signal, { timeoutMs: READ_TIMEOUT_MS })),
     staleTime: 30_000,
     retry,
   });

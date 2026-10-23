@@ -22,7 +22,7 @@ import {
   type AiCheck,
   type TurnstileApi,
 } from '../../web/src/features/ai/TurnstileGate';
-import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, type PollState } from '../../web/src/features/brief/api';
+import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, briefStepQuery, type PollState } from '../../web/src/features/brief/api';
 import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
 import { attributionAmbiguous, evidenceAttribution, quoteAttribution, unconfirmedLines } from '../../web/src/features/brief/display';
 import { exploreHref } from '../../web/src/features/brief/filters';
@@ -39,9 +39,9 @@ import {
 } from '../../web/src/features/ai/unsettled';
 import { canonicalFilters as serverCanonicalFilters } from '../../server/briefs/intent';
 import { IDEMPOTENCY_TTL_MS } from '../../server/quota/policy';
-import { ApiError } from '../../web/src/api';
+import { ApiError, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery } from '../../web/src/api';
 import { chipsContext } from '../../web/src/pages/Brief';
-import { Checklist, CHECKLIST_NOTE } from '../../web/src/features/brief/Checklist';
+import { Checklist, CHECKLIST_NOTE, POLL_TROUBLE } from '../../web/src/features/brief/Checklist';
 import { WithheldNotice, withheldText } from '../../web/src/features/brief/WithheldNotice';
 import { PassageText, cleanSpans, paragraphRanges } from '../../web/src/features/case/BriefContext';
 import { TURNSTILE_TEST_SITE_KEY, createHandlers } from '../../web/src/mocks/handlers';
@@ -106,6 +106,7 @@ function installTurnstile(delay = 20, { hold = false }: { hold?: boolean } = {})
 afterEach(() => {
   delete window.turnstile;
   resetUnsettledForTests();
+  vi.useRealTimers();
 });
 
 /** A fresh mock API (trial, briefs) for one test. */
@@ -625,6 +626,59 @@ describe('Polling (stops, honours Retry-After, backs off)', () => {
     expect(briefPollDelay(q)).toBe(BRIEF_POLL_MS);
     q.state = { ...q.state, status: 'error', error: new TypeError('network'), errorUpdateCount: 8 };
     expect(briefPollDelay(q)).toBe(2_000);
+  });
+
+  it('a read that gets no answer gives up after READ_TIMEOUT_MS and counts as a failed read (review W-3)', async () => {
+    // Stalled, not failed: the connection stays open and nothing comes back.
+    server.use(
+      http.get('*/api/briefs/:id', () => new Promise<Response>(() => {})),
+      http.get('*/api/ai/status', () => new Promise<Response>(() => {})),
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const context = { signal: new AbortController().signal } as Parameters<NonNullable<ReturnType<typeof briefStepQuery>['queryFn']>>[0];
+      const poll = (briefStepQuery(running.briefId, null).queryFn as (c: typeof context) => Promise<unknown>)(context).then(
+        () => 'answered',
+        (err: unknown) => err,
+      );
+      const status = (aiStatusQuery().queryFn as (c: typeof context) => Promise<unknown>)(context).then(
+        () => 'answered',
+        (err: unknown) => err,
+      );
+      await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 100);
+      let settled = false;
+      void poll.then(() => (settled = true));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      const [pollErr, statusErr] = await Promise.all([poll, status]);
+      expect(pollErr).toBeInstanceOf(ReadTimeoutError);
+      expect(statusErr).toBeInstanceOf(ReadTimeoutError);
+      // Not an ApiError: polling backs off and tries again, as after any failed read.
+      expect(briefPollDelay(query({ data: running, dataUpdatedAt: 1, status: 'error', error: pollErr, errorUpdateCount: 1 }))).toBe(2_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('while polls of a running step fail, a muted line says so; the next good read clears it (review W-3)', { timeout: 20_000 }, async () => {
+    let fail = false;
+    server.use(
+      http.get('*/api/briefs/:id', () =>
+        fail ? HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 }) : HttpResponse.json({ ...running, startedAt: new Date().toISOString() }),
+      ),
+    );
+    renderApp(`/briefs/${running.briefId}`);
+    const checklist = await screen.findByRole('region', { name: /answer checklist/i });
+    const line = within(checklist).getByText((_, el) => el?.getAttribute('data-poll-trouble') !== null && el?.tagName === 'P');
+    expect(line.textContent).toBe('');
+    expect(line.getAttribute('aria-live')).toBe('polite');
+    fail = true;
+    await waitFor(() => expect(line.textContent).toBe(POLL_TROUBLE), { timeout: 8_000 });
+    // The checklist stays as it was: nothing else changes while the page keeps trying.
+    expect(within(checklist).getAllByRole('listitem')).toHaveLength(4);
+    fail = false;
+    await waitFor(() => expect(line.textContent).toBe(''), { timeout: 10_000 });
   });
 
   it('an expired brief is read once, then left alone', { timeout: 10_000 }, async () => {
