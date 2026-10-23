@@ -55,21 +55,24 @@ import { assembleInputs, inputSamples, inputsEmbedder, keywordTextsOf, membersTo
 import { CASE_TOKEN_BUDGET, bundleFingerprint, fingerprint, loadCaseEvidence, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
 import {
   AttemptSender,
+  FILE_WRITER,
   JudgmentCache,
   answerabilitySubject,
   bundleKeyOf,
   byPriority,
   judgePairs,
-  lockAllocation,
+  holdingAllocation,
   loggedSpendUsd,
   openAllocation,
   recoverAllocation,
   relevanceSubject,
   type Allocation,
+  type ChargeWriter,
   type FamilyRef,
   type PairPlanItem,
   type PairRecord,
   type RecoveryLedger,
+  type RunBooks,
   type RunReservation,
 } from './judging.js';
 import {
@@ -695,10 +698,82 @@ function logPoolSummary(p: PoolFile, d: NarrativeDataset, log: (m: string) => vo
   log(`  mapping diagnostic: ${t.mappingDiagnostic.forced} cases-channel-only cases forced through the mapping, ${t.mappingDiagnostic.mapped} mapped, ${t.mappingDiagnostic.delivered} delivered`);
 }
 
+/** What the paid part of `pools` pays for and how (round 5: each charge in the allocation's log before anything more is paid). */
+export interface PoolPayment {
+  allocation: Allocation;
+  run: string;
+  /** The run's own spend log. */
+  spendLog: string;
+  /** The run's books (`holdingAllocation`). */
+  books: RunBooks;
+  /** How charges are written (default the files; tests inject failures). */
+  writer?: ChargeWriter;
+  /** The scope samples on the ledger, and the ledger connection's close. */
+  scope: { model: string; take: () => Promise<ScopeRun>; close: () => Promise<void> };
+  /** The query embeddings on the ledger (their own connection is opened and closed inside); null when every vector is reused. */
+  embed: { model: string; reserveUsd: number; take: () => Promise<{ vectors: ReadonlyMap<string, Float32Array>; usd: number; requests: number }> } | null;
+}
+
+/**
+ * The paid part of `pools`: the scope samples, then the query embeddings. Each is a paid
+ * operation in the run's books from before its first reservation until its charge is in
+ * the allocation's log (written before the run's spend log). A failure on the way (the
+ * provider, the ledger connection's close, a log write) leaves the operation open or the
+ * books failed, so the run keeps its lock for `recover`; an accounting failure also stops
+ * the run before it pays for anything more.
+ */
+export async function payForPoolInputs(p: PoolPayment): Promise<{ run: ScopeRun; vectors: Map<string, Float32Array>; embedded: { usd: number; requests: number } }> {
+  const writer = p.writer ?? FILE_WRITER;
+  const charge = (entry: Record<string, unknown>) => {
+    const line = `${JSON.stringify({ at: new Date().toISOString(), run: p.run, ...entry })}\n`;
+    // The allocation's log first: its cap counts it. A failed write leaves the operation open (the lock stays).
+    try {
+      writer.append(p.allocation.log, line);
+    } catch (err) {
+      p.books.fail(`a charge could not be written to the allocation's log: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
+    p.books.recorded();
+    try {
+      writer.append(p.spendLog, line);
+    } catch (err) {
+      p.books.fail(`the run's spend log could not be written: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
+  };
+  const stopOnFailure = () => {
+    if (p.books.failure !== null) throw new Error(`an accounting step failed (${p.books.failure}); nothing more is paid`);
+  };
+  p.books.begin();
+  let run: ScopeRun;
+  try {
+    run = await p.scope.take();
+  } finally {
+    try {
+      await p.scope.close();
+    } catch (err) {
+      p.books.fail(`the scope run's ledger connection did not close: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  charge({ purpose: 'scope', provider: 'anthropic', model: p.scope.model, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd });
+  stopOnFailure();
+  const vectors = new Map<string, Float32Array>();
+  let embedded = { usd: 0, requests: 0 };
+  if (p.embed) {
+    p.books.begin();
+    const e = await p.embed.take();
+    charge({ purpose: 'embed', provider: 'openai', model: p.embed.model, reservedUsd: p.embed.reserveUsd, chargedUsd: e.usd });
+    for (const [k, v] of e.vectors) vectors.set(k, v);
+    embedded = { usd: e.usd, requests: e.requests };
+  }
+  return { run, vectors, embedded };
+}
+
 /**
  * `pools`: the cached inputs (paid: scope samples, query embeddings, each reserved per
- * attempt; or `--inputs <file>`, nothing paid), then the production retrievers' runs on
- * them (Elasticsearch reads), the pool file and its frozen identity (`freezePools`).
+ * attempt, the run holding its allocation's lock until its books balance; or
+ * `--inputs <file>`, nothing paid), then the production retrievers' runs on them
+ * (Elasticsearch reads), the pool file and its frozen identity (`freezePools`).
  */
 export async function poolsCommand(
   opts: CommandOptions & {
@@ -721,114 +796,99 @@ export async function poolsCommand(
     const d = ctx.dataset;
     const { embeddingModel: model, embeddingDimensions: dims } = ctx.config.ai.openai;
     let inputs: PoolInputs;
-    let held: { release: () => void } | null = null;
-    // A paid step that fails before its charges reach the allocation's log keeps the lock: `recover` reconciles them from the ledger.
-    let keepLock = false;
-    try {
-      if (opts.inputs) {
-        inputs = readPoolInputs(opts.inputs);
-        log(`inputs: ${inputs.scope.samples.length} scope samples and ${inputs.embedding.vectors.length} query vectors from the saved file (version ${inputs.version.slice(0, 12)}); nothing is paid`);
-      } else {
-        const a = ctx.config.ai.anthropic;
-        if (!a.apiKey) throw new Error('ANTHROPIC_API_KEY is required (pass --keys-file)');
-        const adapter = createAnthropicProvider({ apiKey: a.apiKey, models: { scope: a.scopeModel, answer: a.answerModel, check: a.checkModel } });
-        const caller = providerScopeCaller(adapter);
-        const items = scopeItems(d);
-        const inventory = await scopeInventory(caller, items, opts.samples);
-        const saved = opts.vectors ? savedVectors(opts.vectors, model, dims) : new Map<string, Float32Array>();
-        const questions = [...new Set(d.questions.map((q) => q.question))];
-        const reuse = questions.filter((q) => saved.has(queryEmbeddingInput(q)));
-        const emb = planQueryEmbeddings(
-          questions.filter((q) => !saved.has(queryEmbeddingInput(q))),
-          model,
-          dims,
-        );
-        log(
-          `scope samples: ${inventory.calls} calls (${items.length} questions x ${opts.samples}; ${d.questions.length - items.length} diagnostic question(s) keep their frozen scope output), reservations ${usd(inventory.reserveUsd)}; ` +
-            `${describePlan(emb)}${reuse.length > 0 ? `; ${reuse.length} query vector(s) reused from the saved file` : ''}`,
-        );
-        if (!opts.confirm) {
-          log('nothing sent: run with --confirm-cost to take the scope samples and embed the questions; the pools are then built from those cached inputs (or later with --inputs <file>, for free)');
-          return 0;
-        }
-        if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
-        const allocation = openAllocation(opts.outDir, opts.allocation, opts.allocationUsd);
-        const purpose = `eval-10c2-pools-${stamp(new Date())}`;
-        // One run at a time per allocation (review N12): the lock is held from before the allocation's spend is read until the run ends.
-        held = lockAllocation(allocation, purpose);
-        const spendLog = runSpendLog(opts.outDir, purpose);
+    if (opts.inputs) {
+      inputs = readPoolInputs(opts.inputs);
+      log(`inputs: ${inputs.scope.samples.length} scope samples and ${inputs.embedding.vectors.length} query vectors from the saved file (version ${inputs.version.slice(0, 12)}); nothing is paid`);
+    } else {
+      const a = ctx.config.ai.anthropic;
+      if (!a.apiKey) throw new Error('ANTHROPIC_API_KEY is required (pass --keys-file)');
+      const adapter = createAnthropicProvider({ apiKey: a.apiKey, models: { scope: a.scopeModel, answer: a.answerModel, check: a.checkModel } });
+      const caller = providerScopeCaller(adapter);
+      const items = scopeItems(d);
+      const inventory = await scopeInventory(caller, items, opts.samples);
+      const saved = opts.vectors ? savedVectors(opts.vectors, model, dims) : new Map<string, Float32Array>();
+      const questions = [...new Set(d.questions.map((q) => q.question))];
+      const reuse = questions.filter((q) => saved.has(queryEmbeddingInput(q)));
+      const emb = planQueryEmbeddings(
+        questions.filter((q) => !saved.has(queryEmbeddingInput(q))),
+        model,
+        dims,
+      );
+      log(
+        `scope samples: ${inventory.calls} calls (${items.length} questions x ${opts.samples}; ${d.questions.length - items.length} diagnostic question(s) keep their frozen scope output), reservations ${usd(inventory.reserveUsd)}; ` +
+          `${describePlan(emb)}${reuse.length > 0 ? `; ${reuse.length} query vector(s) reused from the saved file` : ''}`,
+      );
+      if (!opts.confirm) {
+        log('nothing sent: run with --confirm-cost to take the scope samples and embed the questions; the pools are then built from those cached inputs (or later with --inputs <file>, for free)');
+        return 0;
+      }
+      if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
+      const ingestUrl = ctx.config.databaseIngestUrl;
+      if (!ingestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
+      const allocation = openAllocation(opts.outDir, opts.allocation, opts.allocationUsd);
+      const purpose = `eval-10c2-pools-${stamp(new Date())}`;
+      // One run at a time per allocation (review N12): the lock is held from before the allocation's spend is read until the run's books balance (round 5).
+      inputs = await holdingAllocation(allocation, purpose, async (books) => {
         const limit = Math.min(opts.maxUsd ?? RUN_LIMITS_USD.pools, allocation.capUsd - loggedSpendUsd(allocation.log));
         if (inventory.reserveUsd + emb.reserveUsd > limit + 1e-12) throw new Error(`the pool reservations ($${(inventory.reserveUsd + emb.reserveUsd).toFixed(6)}) exceed the run limit or what remains of allocation ${allocation.name} ($${limit.toFixed(6)}); nothing sent`);
-        if (!ctx.config.databaseIngestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
-        const ingest = createDb(ctx.config.databaseIngestUrl, { max: 2, applicationName: 'aviation-eval-narrative-ledger' });
-        const interrupted = (step: string, err: unknown): Error => {
-          keepLock = true;
-          return new Error(
-            `the ${step} stopped (${err instanceof Error ? err.message : String(err)}); what it paid is on the ledger, not yet in allocation ${allocation.name}'s log: ` +
-              `reconcile it with \`recover --allocation ${allocation.name} --run ${purpose} --confirm\`, which also removes the lock`,
-          );
-        };
-        let run: ScopeRun;
-        try {
-          const gate = createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' });
-          run = await runScopeSamples(caller, gate, items, { samples: opts.samples, retries: 1, maxUsd: limit - emb.reserveUsd, purpose, log });
-        } catch (err) {
-          throw interrupted('scope run', err);
-        } finally {
-          await closeDb(ingest);
-        }
-        const charge = (entry: Record<string, unknown>) => {
-          for (const file of [spendLog, allocation.log]) {
-            mkdirSync(dirname(file), { recursive: true });
-            appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, ...entry })}\n`);
-          }
-        };
-        charge({ purpose: 'scope', provider: 'anthropic', model: a.scopeModel, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd });
-        const vectors = new Map(saved);
-        let billed = { usd: 0, requests: 0 };
-        if (emb.inputs.length > 0) {
-          let paid: Awaited<ReturnType<typeof embedPlan>>;
-          try {
-            paid = await embedPlan(emb, { fake: false, config: ctx.config, purpose, log });
-          } catch (err) {
-            throw interrupted('query embedding', err);
-          }
-          charge({ purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: paid.billed.usd });
-          billed = { usd: paid.billed.usd, requests: paid.billed.requests };
-          for (const input of emb.inputs) vectors.set(input, (await paid.embedder.embed([input])).vectors[0] as Float32Array);
-        }
-        inputs = assembleInputs({
+        const ingest = createDb(ingestUrl, { max: 2, applicationName: 'aviation-eval-narrative-ledger' });
+        const paid = await payForPoolInputs({
+          allocation,
+          run: purpose,
+          spendLog: runSpendLog(opts.outDir, purpose),
+          books,
+          scope: {
+            model: a.scopeModel,
+            take: () => runScopeSamples(caller, createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' }), items, { samples: opts.samples, retries: 1, maxUsd: limit - emb.reserveUsd, purpose, log }),
+            close: () => closeDb(ingest),
+          },
+          embed:
+            emb.inputs.length === 0
+              ? null
+              : {
+                  model: emb.model,
+                  reserveUsd: emb.reserveUsd,
+                  take: async () => {
+                    const e = await embedPlan(emb, { fake: false, config: ctx.config, purpose, log });
+                    const vectors = new Map<string, Float32Array>();
+                    for (const input of emb.inputs) vectors.set(input, (await e.embedder.embed([input])).vectors[0] as Float32Array);
+                    return { vectors, usd: e.billed.usd, requests: e.billed.requests };
+                  },
+                },
+        });
+        const run = paid.run;
+        const assembled = assembleInputs({
           dataset: d,
           generationId: ctx.source.generationId,
           scope: { model: run.model, promptVersion: run.promptVersion, samples: inputSamples(d, run) },
           embedding: { model, dims },
-          vectors,
+          vectors: new Map([...saved, ...paid.vectors]),
           provenance: {
             run: purpose,
             scope: { calls: run.attempts, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd, failedSamples: run.samples.filter((x) => x.status !== 'ok').length },
-            embedding: { embedded: emb.inputs.length, reused: reuse.length, requests: billed.requests, chargedUsd: billed.usd },
+            embedding: { embedded: emb.inputs.length, reused: reuse.length, requests: paid.embedded.requests, chargedUsd: paid.embedded.usd },
           },
         });
-        log(`inputs: ${writeJson(opts.outDir, `narrative-pool-inputs-${stamp(new Date())}.json`, inputs)} (scope ${usd(run.chargedUsd)}, embeddings ${usd(billed.usd)})`);
-      }
-      const problems = poolInputsProblems(inputs, d, { generationId: ctx.source.generationId, model, dims });
-      if (problems.length > 0) throw new Error(`the inputs cannot be used:\n  ${problems.slice(0, 10).join('\n  ')}`);
-      const pools = await buildPoolFile(ctx, inputs, log);
-      const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, pools);
-      logPoolSummary(pools, d, log);
-      log(`pool file ${file}: version ${pools.version}`);
-      const frozenFile = opts.frozenPools ?? FROZEN_POOLS_FILE;
-      try {
-        const outcome = freezePools(frozenFile, pools);
-        log(outcome === 'recorded' ? `frozen: the pool identity is recorded in ${frozenFile}; commit it before any judging` : `frozen: this is the pool identity already frozen in ${frozenFile}`);
-      } catch (err) {
-        log(`not frozen: ${(err as Error).message}`);
-        return 1;
-      }
-      return 0;
-    } finally {
-      if (!keepLock) held?.release();
+        log(`inputs: ${writeJson(opts.outDir, `narrative-pool-inputs-${stamp(new Date())}.json`, assembled)} (scope ${usd(run.chargedUsd)}, embeddings ${usd(paid.embedded.usd)})`);
+        return assembled;
+      });
     }
+    // Free from here: the pools from the cached inputs, then their frozen identity.
+    const problems = poolInputsProblems(inputs, d, { generationId: ctx.source.generationId, model, dims });
+    if (problems.length > 0) throw new Error(`the inputs cannot be used:\n  ${problems.slice(0, 10).join('\n  ')}`);
+    const pools = await buildPoolFile(ctx, inputs, log);
+    const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, pools);
+    logPoolSummary(pools, d, log);
+    log(`pool file ${file}: version ${pools.version}`);
+    const frozenFile = opts.frozenPools ?? FROZEN_POOLS_FILE;
+    try {
+      const outcome = freezePools(frozenFile, pools);
+      log(outcome === 'recorded' ? `frozen: the pool identity is recorded in ${frozenFile}; commit it before any judging` : `frozen: this is the pool identity already frozen in ${frozenFile}`);
+    } catch (err) {
+      log(`not frozen: ${(err as Error).message}`);
+      return 1;
+    }
+    return 0;
   } finally {
     await closeContext(ctx);
   }
@@ -969,6 +1029,8 @@ export interface JudgingDeps {
   callers: () => { judges: readonly [JudgeCaller, JudgeCaller]; adjudicator: JudgeCaller };
   /** The evaluation ledger's gates (opened only after `--confirm-cost`). */
   ledger: () => { gate: SpendGate | ((c: JudgeCaller['config']) => SpendGate); close: () => Promise<void> };
+  /** How charges are written (default the files; tests inject failures). */
+  writer?: ChargeWriter;
 }
 
 /** What a judgment run records about its schedule: the version, the stage and the pairs per tier. */
@@ -988,7 +1050,10 @@ export const scheduleInfo = (items: readonly PairPlanItem[], stage: Stage | null
  * The paid part of `judge` and `answerability`: without `confirm` it prints the plan and
  * creates nothing (no client, no ledger connection); with it, every pair is judged in the
  * schedule's order with per-attempt reservations against the run's own limit, its
- * allocation and the ledger, and a budget stop ends the run with its records kept.
+ * allocation and the ledger, and a budget stop ends the run with its records kept. The
+ * run holds its allocation's lock until its books balance (`holdingAllocation`): every
+ * attempt's charge in the allocation's log, every settlement and the ledger connection's
+ * close done; otherwise the lock stays for `recover` (round 5).
  */
 export async function runJudging(
   items: readonly PairPlanItem[],
@@ -1017,37 +1082,38 @@ export async function runJudging(
   if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
   const allocation: Allocation = openAllocation(opts.outDir, opts.allocation.name, opts.allocation.capUsd);
   const runId = `eval-10c2-${opts.set}-${stamp(new Date())}`;
-  // One run at a time per allocation (review N12): held from before the allocation's spend is read until the run ends.
-  const held = lockAllocation(allocation, runId);
+  // One run at a time per allocation (review N12): held from before the allocation's spend is read until the run's books balance (round 5).
   let ledger: ReturnType<JudgingDeps['ledger']> | null = null;
-  try {
-    const callers = deps.callers();
-    ledger = deps.ledger();
-    const sender = new AttemptSender({ gate: ledger.gate, limitUsd: opts.limitUsd, spendLog: runSpendLog(opts.outDir, runId), allocation, run: runId }, JUDGE_TIMEOUT_MS);
-    log(`allocation ${allocation.name}: $${sender.allocationSpentUsd.toFixed(4)} of $${allocation.capUsd} spent before this run`);
-    const cache = new JudgmentCache(resolve(opts.outDir, 'cache.jsonl'));
-    const { records, stopped } = await judgePairs(items, { judges: callers.judges, adjudicator: callers.adjudicator, sender, cache, concurrency: opts.concurrency, maxEscalationShare: opts.maxEscalationShare, log: (m) => console.error(m) });
-    const file = writeJson(opts.outDir, `narrative-judgments-${opts.set}-${stamp(new Date())}.json`, {
-      kind: 'track-n-judgments',
-      set: opts.set,
-      reference: opts.reference,
-      run: runId,
-      allocation: allocation.name,
-      git: gitState(),
-      ...(opts.experiment ? { experiment: opts.experiment } : {}),
-      schedule: opts.schedule,
-      stopped,
-      records,
-    });
-    log(`${records.length} pair records; run spend ${usd(sender.spentUsd)}; allocation ${allocation.name} ${usd(sender.allocationSpentUsd)} of $${allocation.capUsd}; ${stopped ? `stopped: ${stopped}; ` : ''}${file}`);
-    return stopped ? 1 : 0;
-  } finally {
-    try {
-      await ledger?.close();
-    } finally {
-      held.release();
-    }
-  }
+  return holdingAllocation(
+    allocation,
+    runId,
+    async (books) => {
+      const callers = deps.callers();
+      ledger = deps.ledger();
+      const sender = new AttemptSender(
+        { gate: ledger.gate, limitUsd: opts.limitUsd, spendLog: runSpendLog(opts.outDir, runId), allocation, run: runId, books, ...(deps.writer ? { writer: deps.writer } : {}) },
+        JUDGE_TIMEOUT_MS,
+      );
+      log(`allocation ${allocation.name}: $${sender.allocationSpentUsd.toFixed(4)} of $${allocation.capUsd} spent before this run`);
+      const cache = new JudgmentCache(resolve(opts.outDir, 'cache.jsonl'));
+      const { records, stopped } = await judgePairs(items, { judges: callers.judges, adjudicator: callers.adjudicator, sender, cache, concurrency: opts.concurrency, maxEscalationShare: opts.maxEscalationShare, log: (m) => console.error(m) });
+      const file = writeJson(opts.outDir, `narrative-judgments-${opts.set}-${stamp(new Date())}.json`, {
+        kind: 'track-n-judgments',
+        set: opts.set,
+        reference: opts.reference,
+        run: runId,
+        allocation: allocation.name,
+        git: gitState(),
+        ...(opts.experiment ? { experiment: opts.experiment } : {}),
+        schedule: opts.schedule,
+        stopped,
+        records,
+      });
+      log(`${records.length} pair records; run spend ${usd(sender.spentUsd)}; allocation ${allocation.name} ${usd(sender.allocationSpentUsd)} of $${allocation.capUsd}; ${stopped ? `stopped: ${stopped}; ` : ''}${file}`);
+      return stopped ? 1 : 0;
+    },
+    { cleanup: async () => ledger?.close() },
+  );
 }
 
 /** What a holdout run records in the lock. */
@@ -1322,7 +1388,13 @@ export async function recoverCommand(opts: CommandOptions & { allocation: string
         `${l.openPastLease.count} open past their lease, which the ledger charges in full (${usd(l.openPastLease.usd)}); the run's ledger charges ${usd(l.chargedUsd)}`,
     );
     log(`allocation log: ${usd(r.loggedUsd)} for the run; reconciliation: ${r.appendedUsd > 0 ? `append ${usd(r.appendedUsd)}` : 'nothing to append'}${r.surplusUsd > 0 ? ` (the log holds ${usd(r.surplusUsd)} more than the ledger charged; kept)` : ''}`);
-    if (r.recovered) log(`recovered: ${r.appendedUsd > 0 ? `appended ${usd(r.appendedUsd)} to ${allocation.log} and the run's spend log, ` : ''}lock removed; the allocation now counts ${usd(loggedSpendUsd(allocation.log))} of $${allocation.capUsd}`);
+    if (r.spendLog) log(`the run's spend log: ${usd(r.spendLog.loggedUsd)} for the run; reconciliation: ${r.spendLog.appendedUsd > 0 ? `append ${usd(r.spendLog.appendedUsd)}` : 'nothing to append'}`);
+    if (r.recovered) {
+      log(
+        `recovered: ${r.appendedUsd > 0 ? `appended ${usd(r.appendedUsd)} to ${allocation.log}, ` : ''}${r.spendLog && r.spendLog.appendedUsd > 0 ? `${usd(r.spendLog.appendedUsd)} to the run's spend log, ` : ''}` +
+          `lock removed; the allocation now counts ${usd(loggedSpendUsd(allocation.log))} of $${allocation.capUsd}`,
+      );
+    }
     else log('nothing changed: rerun with --confirm to append the reconciliation and remove the lock');
     return 0;
   } finally {

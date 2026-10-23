@@ -33,6 +33,13 @@
  * not judged are left out (no judgment is `unknown`), and every finished outcome is in
  * the cache, so the next run continues where this one stopped without paying again.
  *
+ * **Books** (round 5). A run releases its allocation's lock only when its books balance
+ * (`RunBooks`, `holdingAllocation`): every paid operation is opened before its reservation
+ * is taken and closed once its charge is in the allocation's log (written before the
+ * run's own spend log), and no accounting step failed (a charge that could not be
+ * written, a ledger settlement or a connection that could not close). Otherwise the lock
+ * stays and `recover` reconciles each log with the run's ledger charges.
+ *
  * **Cache.** Judge outcomes are keyed by (kind, question version, rubric version, case,
  * complete-input or bundle fingerprint, provider, model with its frozen settings and
  * caps, prompt version, the pinned request-format and schema hashes, validator version,
@@ -142,13 +149,129 @@ export interface SpendLogEntry {
   chargedUsd: number;
 }
 
-/** Logged spend of a spend or allocation log (0 when missing; header lines carry no charge). */
-export function loggedSpendUsd(path: string | null): number {
-  if (!path || !existsSync(path)) return 0;
+/** A spend or allocation log's records; an incomplete line (an interrupted write) is refused with its place, never skipped. */
+function logEntries(path: string): Partial<SpendLogEntry>[] {
   return readFileSync(path, 'utf8')
     .split('\n')
     .filter((l) => l.trim() !== '')
-    .reduce((n, l) => n + ((JSON.parse(l) as Partial<SpendLogEntry>).chargedUsd ?? 0), 0);
+    .map((l, i) => {
+      try {
+        return JSON.parse(l) as Partial<SpendLogEntry>;
+      } catch {
+        throw new Error(`${path}: line ${i + 1} is not a complete record (an interrupted write?): repair the log before any run or recovery reads it`);
+      }
+    });
+}
+
+/** Logged spend of a spend or allocation log (0 when missing; header lines carry no charge). */
+export function loggedSpendUsd(path: string | null): number {
+  if (!path || !existsSync(path)) return 0;
+  return logEntries(path).reduce((n, e) => n + (e.chargedUsd ?? 0), 0);
+}
+
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Writes a charge to a log (the files; tests inject failures). */
+export interface ChargeWriter {
+  append(path: string, line: string): void;
+}
+
+export const FILE_WRITER: ChargeWriter = {
+  append(path, line) {
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, line);
+  },
+};
+
+/**
+ * A run's books against its allocation (the gate's round-4 item): every paid operation
+ * is opened (`begin`) before its reservation is taken and closed (`recorded`) once its
+ * charge is in the allocation's log; a reservation the ledger refused paid nothing
+ * (`cancelled`). An accounting step that failed (a charge that could not be written, a
+ * ledger settlement, a connection that could not close) is kept with `fail`. The books
+ * balance only when nothing is open and nothing failed; only then may the run release its
+ * allocation's lock (`holdingAllocation`).
+ */
+export class RunBooks {
+  private openOperations = 0;
+  private readonly failures: string[] = [];
+
+  begin(): void {
+    this.openOperations += 1;
+  }
+
+  recorded(): void {
+    if (this.openOperations === 0) throw new Error('no paid operation is open');
+    this.openOperations -= 1;
+  }
+
+  cancelled(): void {
+    this.recorded();
+  }
+
+  fail(reason: string): void {
+    this.failures.push(reason);
+  }
+
+  /** Paid operations whose charge is not in the allocation's log yet. */
+  get open(): number {
+    return this.openOperations;
+  }
+
+  /** The first accounting failure, if any. */
+  get failure(): string | null {
+    return this.failures[0] ?? null;
+  }
+
+  get balanced(): boolean {
+    return this.openOperations === 0 && this.failures.length === 0;
+  }
+
+  describe(): string {
+    return [...(this.openOperations > 0 ? [`${this.openOperations} paid operation(s) without a charge in the allocation's log`] : []), ...this.failures].join('; ');
+  }
+}
+
+/** A run kept its allocation's lock because its books do not balance (`holdingAllocation`); `recover` reconciles them. */
+export class UnrecordedSpendError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = 'UnrecordedSpendError';
+  }
+}
+
+/**
+ * Run `body` holding the allocation's lock (one run at a time, `lockAllocation`) with the
+ * run's books. `cleanup` runs after `body`, whatever happened; its failure is an
+ * accounting failure. The lock is released only when the books balance, and `body`'s
+ * error, if any, propagates. Otherwise the lock is kept, and an `UnrecordedSpendError`
+ * names what is unbalanced and the recovery, with `body`'s error first.
+ */
+export async function holdingAllocation<T>(a: Allocation, run: string, body: (books: RunBooks) => Promise<T>, opts: { cleanup?: () => Promise<void> } = {}): Promise<T> {
+  const books = new RunBooks();
+  const held = lockAllocation(a, run);
+  let outcome: { ok: true; value: T } | { ok: false; error: unknown };
+  try {
+    outcome = { ok: true, value: await body(books) };
+  } catch (error) {
+    outcome = { ok: false, error };
+  }
+  if (opts.cleanup) {
+    try {
+      await opts.cleanup();
+    } catch (err) {
+      books.fail(`the run's ledger connection did not close: ${messageOf(err)}`);
+    }
+  }
+  if (books.balanced) {
+    held.release();
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
+  }
+  const how =
+    `allocation ${a.name} keeps its lock: ${books.describe()}. What the run paid is on the evaluation ledger; ` +
+    `reconcile it with \`pnpm eval:retrieval:narrative recover --allocation ${a.name} --run ${run} --confirm\`, which then removes the lock`;
+  throw new UnrecordedSpendError(outcome.ok ? how : `${messageOf(outcome.error)}; ${how}`, outcome.ok ? undefined : outcome.error);
 }
 
 /**
@@ -303,8 +426,10 @@ export interface AllocationRecovery {
   };
   /** The run's charges in the allocation's log before the recovery. */
   loggedUsd: number;
-  /** The difference appended to the allocation's log (and the run's spend log), so the allocation counts every ledger charge. */
+  /** The difference appended to the allocation's log, so the allocation counts every ledger charge. */
   appendedUsd: number;
+  /** The run's own spend log, reconciled on its own: its charges for the run before the recovery, and the difference appended (null without a spend log). */
+  spendLog: { loggedUsd: number; appendedUsd: number } | null;
   /** The allocation's log held more for the run than the ledger charged (kept: the allocation stays conservative). */
   surplusUsd: number;
   /** True when the reconciliation was written and the lock removed (`confirm`). */
@@ -314,10 +439,7 @@ export interface AllocationRecovery {
 /** A run's charges in an allocation or spend log. */
 export function loggedRunUsd(path: string | null, run: string): number {
   if (!path || !existsSync(path)) return 0;
-  return readFileSync(path, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim() !== '')
-    .map((l) => JSON.parse(l) as Partial<SpendLogEntry>)
+  return logEntries(path)
     .filter((e) => e.run === run)
     .reduce((n, e) => n + (e.chargedUsd ?? 0), 0);
 }
@@ -331,9 +453,11 @@ export function loggedRunUsd(path: string | null, run: string): number {
  * within its lease. It then reconciles: the run's charges on the ledger (settled costs,
  * full reservations of uncertain, expired and lease-expired open ones) against what the
  * allocation's log holds for the run, and with `confirm` appends the difference to the
- * allocation's log (and the run's own spend log) before it removes the lock. Without
- * `confirm` it changes nothing and reports what it would reconcile. It never writes to
- * the ledger: the ledger charges every unsettled reservation in full by itself.
+ * allocation's log before it removes the lock. The run's own spend log is reconciled on
+ * its own the same way (round 5), so a charge either log already holds is never counted
+ * twice. Without `confirm` it changes nothing and reports what it would reconcile. It
+ * never writes to the ledger: the ledger charges every unsettled reservation in full by
+ * itself.
  */
 export async function recoverAllocation(
   a: Allocation,
@@ -383,25 +507,26 @@ export async function recoverAllocation(
       chargedUsd: 0,
     };
     ledgerSummary.chargedUsd = ledgerSummary.settled.usd + ledgerSummary.chargedInFull.usd + ledgerSummary.openPastLease.usd;
+    const missing = (logged: number) => {
+      const difference = ledgerSummary.chargedUsd - logged;
+      return difference > 1e-9 ? difference : 0;
+    };
     const loggedUsd = loggedRunUsd(a.log, run);
-    const difference = ledgerSummary.chargedUsd - loggedUsd;
-    const appendedUsd = difference > 1e-9 ? difference : 0;
-    const surplusUsd = difference < -1e-9 ? -difference : 0;
+    const appendedUsd = missing(loggedUsd);
+    const surplusUsd = ledgerSummary.chargedUsd - loggedUsd < -1e-9 ? loggedUsd - ledgerSummary.chargedUsd : 0;
+    const spendLogged = opts.spendLog ? loggedRunUsd(opts.spendLog, run) : null;
+    const spendLog = spendLogged === null ? null : { loggedUsd: spendLogged, appendedUsd: missing(spendLogged) };
     if (opts.confirm) {
       // Only this recovery (it holds the claim) can remove the lock, and no run replaces an existing one.
       const again = readLockHolder(path);
       if (!again || again.run !== holder.run || again.pid !== holder.pid || again.at !== holder.at) throw new Error(`the lock of allocation ${a.name} changed during the recovery: nothing changed`);
-      if (appendedUsd > 0) {
-        const entry = { at: now.toISOString(), run, purpose: 'recovery', provider: 'ledger', model: 'reconciled', reservedUsd: appendedUsd, chargedUsd: appendedUsd, reservations: rows.length };
-        for (const log of [a.log, opts.spendLog ?? null]) {
-          if (!log) continue;
-          mkdirSync(dirname(log), { recursive: true });
-          appendFileSync(log, `${JSON.stringify(entry)}\n`);
-        }
-      }
+      const entry = (usd: number) => `${JSON.stringify({ at: now.toISOString(), run, purpose: 'recovery', provider: 'ledger', model: 'reconciled', reservedUsd: usd, chargedUsd: usd, reservations: rows.length })}\n`;
+      // The allocation's log first (what its cap counts); each log gets its own difference to the ledger.
+      if (appendedUsd > 0) FILE_WRITER.append(a.log, entry(appendedUsd));
+      if (opts.spendLog && spendLog && spendLog.appendedUsd > 0) FILE_WRITER.append(opts.spendLog, entry(spendLog.appendedUsd));
       unlinkSync(path);
     }
-    return { allocation: a.name, run, holder, ledger: ledgerSummary, loggedUsd, appendedUsd, surplusUsd, recovered: opts.confirm };
+    return { allocation: a.name, run, holder, ledger: ledgerSummary, loggedUsd, appendedUsd, spendLog, surplusUsd, recovered: opts.confirm };
   } finally {
     if (claimed) {
       try {
@@ -423,6 +548,10 @@ export interface RunMoney {
   /** The allocation this run spends from, shared with the other runs of its phase or month; null in tests. */
   allocation: Allocation | null;
   run: string;
+  /** The run's books (`holdingAllocation`); a sender without them keeps its own. */
+  books?: RunBooks;
+  /** How charges are written (default the files; tests inject failures). */
+  writer?: ChargeWriter;
 }
 
 /** Sends attempts with their reservations (module comment). */
@@ -433,6 +562,8 @@ export class AttemptSender {
   private inFlight = 0;
   /** A ledger settle failed: the run sends nothing more (the reservation stays open, which keeps the ledger conservative). */
   private ledgerFailure: string | null = null;
+  private readonly books: RunBooks;
+  private readonly writer: ChargeWriter;
   constructor(
     private readonly money: RunMoney,
     private readonly timeoutMs: number,
@@ -440,6 +571,8 @@ export class AttemptSender {
   ) {
     this.spent = loggedSpendUsd(money.spendLog);
     this.allocationSpent = money.allocation ? loggedSpendUsd(money.allocation.log) : 0;
+    this.books = money.books ?? new RunBooks();
+    this.writer = money.writer ?? FILE_WRITER;
   }
 
   get spentUsd(): number {
@@ -456,6 +589,7 @@ export class AttemptSender {
 
   async send(caller: JudgeCaller, req: JudgeRequest): Promise<{ output: unknown; record: AttemptRecord } | { error: JudgeCallError; record: AttemptRecord }> {
     if (this.ledgerFailure !== null) throw new FatalJudgeError(`the evaluation ledger could not settle an attempt (${this.ledgerFailure}); the run stops`);
+    if (this.books.failure !== null) throw new FatalJudgeError(`an accounting step failed (${this.books.failure}); the run sends nothing more`);
     const c = caller.config;
     let counted: number | null = null;
     for (let i = 0; counted === null; i += 1) {
@@ -500,11 +634,18 @@ export class AttemptSender {
     if (reserve > remaining + 1e-12) {
       throw new BudgetStop(`the next attempt's reservation ($${reserve.toFixed(6)}) is more than what remains of the evaluation allowance ($${remaining.toFixed(6)})`);
     }
+    // A paid operation from here until its charge is in the allocation's log (`RunBooks`).
+    this.books.begin();
     let reservation;
     try {
       reservation = await gate.reserve({ category: 'evaluation', usd: reserve, purpose: `${this.money.run}-${req.purpose}-${c.role}`.slice(0, 200) });
     } catch (err) {
-      if (err instanceof SpendRefusedError) throw new BudgetStop(err.message);
+      if (err instanceof SpendRefusedError) {
+        // Refused: nothing was reserved, so nothing was paid.
+        this.books.cancelled();
+        throw new BudgetStop(err.message);
+      }
+      // Whether a reservation was taken is unknown: the operation stays open, so the lock stays and `recover` reads the ledger.
       throw err;
     }
     const t0 = performance.now();
@@ -538,15 +679,31 @@ export class AttemptSender {
     this.spent += out.record.chargedUsd;
     this.allocationSpent += out.record.chargedUsd;
     const entry: SpendLogEntry = { at: new Date().toISOString(), run: this.money.run, purpose: req.purpose, provider: c.provider, model: c.model, reservedUsd: reserve, chargedUsd: out.record.chargedUsd };
-    for (const log of [this.money.spendLog, this.money.allocation?.log ?? null]) {
-      if (!log) continue;
-      mkdirSync(dirname(log), { recursive: true });
-      appendFileSync(log, `${JSON.stringify(entry)}\n`);
+    const line = `${JSON.stringify(entry)}\n`;
+    // The allocation's log first: its cap counts it. A failed write leaves the operation open (the lock stays) and stops the run.
+    if (this.money.allocation) {
+      try {
+        this.writer.append(this.money.allocation.log, line);
+      } catch (err) {
+        this.books.fail(`a charge could not be written to the allocation's log: ${messageOf(err)}`);
+        throw err;
+      }
+    }
+    this.books.recorded();
+    if (this.money.spendLog) {
+      try {
+        this.writer.append(this.money.spendLog, line);
+      } catch (err) {
+        this.books.fail(`the run's spend log could not be written: ${messageOf(err)}`);
+        throw err;
+      }
     }
     try {
       await gate.settle(reservation, settlement);
     } catch (err) {
-      this.ledgerFailure = err instanceof Error ? err.message : String(err);
+      this.ledgerFailure = messageOf(err);
+      // The ledger will charge the open reservation in full: an accounting failure (the lock stays for `recover`).
+      this.books.fail(`the evaluation ledger could not settle an attempt: ${this.ledgerFailure}`);
     }
     return out;
   }

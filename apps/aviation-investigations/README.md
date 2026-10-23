@@ -824,18 +824,22 @@ Paid commands print their plan and send nothing without `--confirm-cost`. Each a
 reserves its worst case on the evaluation ledger (`DATABASE_INGEST_URL`) and settles; a
 run stops before a reservation would take its own spend above its limit (`--max-usd`),
 its allocation above the cap fixed when the allocation was created (`--allocation`,
-shared by the runs of one phase or month, one run at a time: a run holds the
-allocation's lock until it ends), or the ledger below what remains of the monthly
-indexing and evaluation allowance. A lock is never removed automatically: a run
-refuses any existing lock, and the lock of an interrupted run stays until `recover`
-removes it. `recover` refuses while that run's process still runs on this host or one of
-its ledger reservations is still within its lease, and takes an exclusive claim, so two
-recoveries cannot both proceed. It reconciles the run's ledger charges (settled costs,
-full reservations of uncertain, expired and lease-expired ones) with what the
-allocation's log holds for the run, prints both, and with `--confirm` appends the
-difference to the log before it removes the lock. A `pools` run whose scope stage or
-embedding stops before its charges reach the allocation's log keeps the lock, so
-`recover` reconciles them from the ledger. A budget stop keeps the run's records, and
+shared by the runs of one phase or month, one run at a time), or the ledger below what
+remains of the monthly indexing and evaluation allowance. Every paid command
+(calibration, relevance and answerability judging, `pools`) holds its allocation's
+lock from before its first reservation until its books balance: each paid operation's
+charge written to the allocation's log (before the run's own spend log), and no
+accounting step failed (a log write, a ledger settlement, a ledger connection's close).
+Otherwise the run keeps the lock, sends nothing more, and its error names the `recover`
+command. A lock is never removed automatically: a run refuses any existing lock, and
+the lock of an interrupted run stays until `recover` removes it. `recover` refuses while
+that run's process still runs on this host or one of its ledger reservations is still
+within its lease, and takes an exclusive claim, so two recoveries cannot both proceed.
+It reconciles the run's ledger charges (settled costs, full reservations of uncertain,
+expired and lease-expired ones) with what the allocation's log holds for the run, and
+the run's own spend log with them on its own, prints both, and with `--confirm` appends
+each log's difference before it removes the lock, so a charge a log already holds is
+never counted twice. A budget stop keeps the run's records, and
 the judgment cache, shared by every run and allocation, lets the next run (or month)
 continue without paying again. A rejected request stops the run: its own attempt is not
 billed, but the other judge's concurrent attempts are, so the canary runs one pair with

@@ -15,7 +15,9 @@ import OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
 import { createAnthropicProvider } from '../../server/ai/anthropic.js';
 import { StageError, stageCtx } from '../../server/ai/provider.js';
-import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
+import { createMemorySpendGate, type MemorySpendGate, type SpendGate } from '../../worker/index/spend-gate.js';
+import { createFakeProvider } from '../../server/ai/fake.js';
+import { providerScopeCaller, runScopeSamples } from '../../evals/retrieval/experiments/scope.js';
 import {
   JudgeCallError,
   attemptReserveUsd,
@@ -31,8 +33,12 @@ import { fingerprint, planChunks } from '../../evals/retrieval/narrative/evidenc
 import {
   AttemptSender,
   BudgetStop,
+  FILE_WRITER,
   FatalJudgeError,
   JudgmentCache,
+  RunBooks,
+  UnrecordedSpendError,
+  holdingAllocation,
   adjudicationOrder,
   judgePairs,
   lockAllocation,
@@ -41,13 +47,14 @@ import {
   openAllocation,
   recoverAllocation,
   relevanceSubject,
+  type ChargeWriter,
   type RecoveryLedger,
   type RunReservation,
   type FamilyRef,
   type PairPlanItem,
   type PairRecord,
 } from '../../evals/retrieval/narrative/judging.js';
-import { runJudging, scheduleInfo } from '../../evals/retrieval/narrative/commands.js';
+import { payForPoolInputs, runJudging, scheduleInfo } from '../../evals/retrieval/narrative/commands.js';
 import { SCHEDULE, casePriority, tierOf } from '../../evals/retrieval/narrative/pool.js';
 import { relevanceRequest, type JudgeRequest } from '../../evals/retrieval/narrative/prompts.js';
 import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
@@ -594,7 +601,9 @@ describe('the paid judging step', () => {
       // The allocation now counts every ledger charge of the run, and the earlier run's spend is untouched.
       expect(loggedRunUsd(a.log, 'crashed')).toBeCloseTo(0.13, 9);
       expect(loggedSpendUsd(a.log)).toBeCloseTo(0.33, 9);
-      expect(loggedRunUsd(spendLog, 'crashed')).toBeCloseTo(0.12, 9);
+      // The run's spend log is reconciled to the ledger on its own (it held none of the run's charges here).
+      expect(done.spendLog).toEqual({ loggedUsd: 0, appendedUsd: expect.closeTo(0.13, 9) as unknown as number });
+      expect(loggedRunUsd(spendLog, 'crashed')).toBeCloseTo(0.13, 9);
       await expect(recoverAllocation(a, 'crashed', ledgerOf(LEDGER), { confirm: true, now: NOW })).rejects.toThrow(/not locked/);
     });
 
@@ -731,5 +740,306 @@ describe('the attempt sender', () => {
     // Settled, the first's charge (below its reservation) leaves room under the limit again.
     expect(sender.spentUsd).toBeLessThanOrEqual(one);
     await expect(sender.send(caller, req)).resolves.toMatchObject({ record: { status: 'ok' } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 5: a run keeps its allocation's lock until every charge is in the allocation's log
+
+/** The run's reservations on a memory ledger as `recover` reads them (an open one is past its lease). */
+const ledgerFromGate = (gate: MemorySpendGate): RecoveryLedger => ({
+  runReservations: async (run) =>
+    gate.records
+      .filter((r) => r.purpose === run || r.purpose.startsWith(`${run}-`))
+      .map((r, i) => ({
+        id: String(i),
+        requestId: r.purpose,
+        status: r.status === 'open' ? 'open' : 'settled',
+        reservedUsd: r.reservedUsd,
+        chargedUsd: r.status === 'open' ? null : r.chargedUsd,
+        uncertain: r.status === 'open' ? null : r.status === 'uncertain',
+        leaseExpiresAt: new Date(0),
+      })),
+});
+/** What the ledger charges a run: settled costs, uncertain and open reservations in full. */
+const ledgerTotal = (gate: MemorySpendGate, run: string) => gate.records.filter((r) => r.purpose === run || r.purpose.startsWith(`${run}-`)).reduce((n, r) => n + r.chargedUsd, 0);
+/** The files, except that the `nth` write to a matching log fails, as a full disk does. */
+const failingWriter = (match: (path: string) => boolean, nth = 1): ChargeWriter => {
+  let seen = 0;
+  return {
+    append(path, line) {
+      if (match(path)) {
+        seen += 1;
+        if (seen === nth) throw new Error('ENOSPC: no space left on device, write');
+      }
+      FILE_WRITER.append(path, line);
+    },
+  };
+};
+const lockOf = (dir: string, name: string) => join(dir, 'allocations', `${name}.lock`);
+const heldBy = (dir: string, name: string) => (JSON.parse(readFileSync(lockOf(dir, name), 'utf8')) as { run: string }).run;
+/** The run's process has ended (the CLI exits after the error): its lock now names a process that no longer runs. */
+const ended = (dir: string, name: string): string => {
+  const holder = JSON.parse(readFileSync(lockOf(dir, name), 'utf8')) as { run: string };
+  writeFileSync(lockOf(dir, name), JSON.stringify({ ...holder, pid: 999_999_999 }));
+  return holder.run;
+};
+
+describe('the run books (round 5)', () => {
+  it('balance only when every paid operation is recorded and nothing failed', () => {
+    const b = new RunBooks();
+    expect(b.balanced).toBe(true);
+    b.begin();
+    b.begin();
+    expect(b).toMatchObject({ balanced: false, open: 2, failure: null });
+    b.recorded();
+    b.cancelled();
+    expect(b.balanced).toBe(true);
+    expect(() => b.recorded()).toThrow(/no paid operation is open/);
+    b.begin();
+    b.fail('the ledger connection did not close');
+    expect(b.describe()).toBe("1 paid operation(s) without a charge in the allocation's log; the ledger connection did not close");
+    b.recorded();
+    expect(b).toMatchObject({ balanced: false, open: 0, failure: 'the ledger connection did not close' });
+  });
+
+  it('release the lock when they balance, error or not; otherwise keep it and name the recovery', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'narrative-books-'));
+    const a = openAllocation(dir, 'books', 1);
+    expect(await holdingAllocation(a, 'run-ok', async () => 7)).toBe(7);
+    expect(existsSync(lockOf(dir, 'books'))).toBe(false);
+    // A failure that paid nothing: the original error, and the lock released.
+    await expect(holdingAllocation(a, 'run-refused', async () => Promise.reject(new BudgetStop('over the limit')))).rejects.toBeInstanceOf(BudgetStop);
+    expect(existsSync(lockOf(dir, 'books'))).toBe(false);
+    // A paid operation never recorded: the lock stays, and the error says how to recover.
+    const open = await failure(holdingAllocation(a, 'run-open', async (books) => books.begin()));
+    expect(open).toBeInstanceOf(UnrecordedSpendError);
+    expect((open as Error).message).toMatch(/allocation books keeps its lock: 1 paid operation\(s\) without a charge in the allocation's log.*recover --allocation books --run run-open --confirm/);
+    expect(heldBy(dir, 'books')).toBe('run-open');
+    writeFileSync(lockOf(dir, 'books'), JSON.stringify({ run: 'gone', pid: 999_999_999, host: hostname(), at: 'x' }));
+    await recoverAllocation(a, 'gone', { runReservations: async () => [] }, { confirm: true });
+    // A cleanup that fails (the ledger connection) keeps the lock even when the body succeeded.
+    const close = await failure(holdingAllocation(a, 'run-close', async () => 1, { cleanup: async () => Promise.reject(new Error('connection reset')) }));
+    expect((close as Error).message).toMatch(/^allocation books keeps its lock: the run's ledger connection did not close: connection reset/);
+    expect(heldBy(dir, 'books')).toBe('run-close');
+  });
+});
+
+describe('accounting failures keep the lock until recover reconciles, never counting twice (round 5)', () => {
+  const tmp = () => mkdtempSync(join(tmpdir(), 'narrative-accounting-'));
+
+  // ---- Pools: the scope calls, then the embedding calls.
+  const ITEMS = [{ id: 'q-one', question: 'Which accidents involved a loss of engine power?' }];
+  const scopeCaller = () =>
+    providerScopeCaller(createFakeProvider({ scope: { output: { intent: 'case_search', mechanicalCause: false, filters: {}, keywordText: 'engine power loss' }, usage: { inputTokens: 1_500, outputTokens: 80 } } }));
+  const embedOn = (gate: SpendGate, run: string, after?: () => void) => async () => {
+    const r = await gate.reserve({ category: 'evaluation', usd: 0.0002, purpose: run });
+    await gate.settle(r, { usd: 0.00003 });
+    after?.();
+    return { vectors: new Map([['input', Float32Array.from([1, 0])]]), usd: 0.00003, requests: 1 };
+  };
+  const pay = (dir: string, gate: MemorySpendGate, run: string, over: { writer?: ChargeWriter; close?: () => Promise<void>; embedAfter?: () => void } = {}) => {
+    const a = openAllocation(dir, 'pools', 1);
+    const spendLog = join(dir, 'spend', `${run}.jsonl`);
+    const result = holdingAllocation(a, run, (books) =>
+      payForPoolInputs({
+        allocation: a,
+        run,
+        spendLog,
+        books,
+        ...(over.writer ? { writer: over.writer } : {}),
+        scope: { model: 'claude-haiku-5-5', take: () => runScopeSamples(scopeCaller(), gate, ITEMS, { samples: 1, retries: 0, maxUsd: 1, purpose: run }), close: over.close ?? (async () => undefined) },
+        embed: { model: 'text-embedding-3-small', reserveUsd: 0.0002, take: embedOn(gate, run, over.embedAfter) },
+      }),
+    );
+    return { a, spendLog, result };
+  };
+  /** Recover the run, then check each log holds exactly the ledger's charges and the allocation is free again. */
+  const recoverAndCheck = async (dir: string, gate: MemorySpendGate, run: string, a: ReturnType<typeof openAllocation>, spendLog: string) => {
+    expect(ended(dir, a.name)).toBe(run);
+    const before = loggedRunUsd(a.log, run);
+    const r = await recoverAllocation(a, run, ledgerFromGate(gate), { confirm: true, spendLog });
+    const total = ledgerTotal(gate, run);
+    expect(r.appendedUsd).toBeCloseTo(total - before, 9);
+    expect(loggedRunUsd(a.log, run)).toBeCloseTo(total, 9);
+    expect(loggedRunUsd(spendLog, run)).toBeCloseTo(total, 9);
+    expect(existsSync(lockOf(dir, a.name))).toBe(false);
+    await expect(recoverAllocation(a, run, ledgerFromGate(gate), { confirm: true, spendLog })).rejects.toThrow(/not locked/);
+    return { r, before, total };
+  };
+
+  it('pools: a scope ledger connection that fails to close after the scope calls keeps the lock and pays nothing more', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const run = 'eval-10c2-pools-close';
+    const { a, spendLog, result } = pay(dir, gate, run, { close: async () => Promise.reject(new Error('connection reset while closing')) });
+    const err = await failure(result);
+    expect(err).toBeInstanceOf(UnrecordedSpendError);
+    expect((err as Error).message).toMatch(/connection reset while closing.*keeps its lock.*recover --allocation pools --run eval-10c2-pools-close --confirm/);
+    expect(heldBy(dir, 'pools')).toBe(run);
+    // The scope calls were paid and their charge written; no embedding was paid after the failure.
+    expect(gate.records.map((r) => r.purpose)).toEqual([`${run}-q-one-s1-a1`]);
+    const { r, before, total } = await recoverAndCheck(dir, gate, run, a, spendLog);
+    // Only the ledger's rounding to the micro-dollar is added: the logged scope charge is not counted twice.
+    expect(before).toBeGreaterThan(0);
+    expect(r.appendedUsd).toBeLessThan(1e-6);
+    expect(total).toBeCloseTo(before, 5);
+  });
+
+  it('pools: a scope charge that cannot be written to the allocation\'s log keeps the lock; recover adds it once', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const run = 'eval-10c2-pools-scope-write';
+    const { a, spendLog, result } = pay(dir, gate, run, { writer: failingWriter((p) => p.endsWith(join('allocations', 'pools.jsonl'))) });
+    const err = await failure(result);
+    expect((err as Error).message).toMatch(/ENOSPC.*keeps its lock: 1 paid operation\(s\) without a charge in the allocation's log; a charge could not be written to the allocation's log/);
+    expect(gate.records).toHaveLength(1);
+    const { r, before, total } = await recoverAndCheck(dir, gate, run, a, spendLog);
+    expect(before).toBe(0);
+    expect(r.appendedUsd).toBeCloseTo(total, 9);
+  });
+
+  it('pools: an embedding charge that cannot be written keeps the lock; recover adds the embedding only, the logged scope charge once', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const run = 'eval-10c2-pools-embed-write';
+    const { a, spendLog, result } = pay(dir, gate, run, { writer: failingWriter((p) => p.endsWith(join('allocations', 'pools.jsonl')), 2) });
+    const err = await failure(result);
+    expect(err).toBeInstanceOf(UnrecordedSpendError);
+    const scopeLogged = loggedRunUsd(a.log, run);
+    expect(scopeLogged).toBeGreaterThan(0);
+    const { r } = await recoverAndCheck(dir, gate, run, a, spendLog);
+    // The embedding's ledger charge (and the scope's rounding to the micro-dollar), never the scope charge again.
+    expect(r.appendedUsd).toBeCloseTo(0.00003, 5);
+    expect(r.appendedUsd).toBeLessThan(scopeLogged);
+  });
+
+  it('pools: an embedding step that paid and then failed (its own connection) keeps the lock; recover adds its charge', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const run = 'eval-10c2-pools-embed-close';
+    const { a, spendLog, result } = pay(dir, gate, run, {
+      embedAfter: () => {
+        throw new Error('the embedding ledger connection did not close');
+      },
+    });
+    const err = await failure(result);
+    expect((err as Error).message).toMatch(/did not close.*1 paid operation\(s\) without a charge/);
+    const { r } = await recoverAndCheck(dir, gate, run, a, spendLog);
+    expect(r.appendedUsd).toBeCloseTo(0.00003, 5);
+  });
+
+  it('pools: a payment that records every charge releases the lock with each charge logged once', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const run = 'eval-10c2-pools-ok';
+    const { a, spendLog, result } = pay(dir, gate, run);
+    const paid = await result;
+    expect(paid.embedded).toEqual({ usd: 0.00003, requests: 1 });
+    expect(existsSync(lockOf(dir, 'pools'))).toBe(false);
+    expect(loggedRunUsd(a.log, run)).toBeCloseTo(paid.run.chargedUsd + 0.00003, 12);
+    expect(loggedRunUsd(spendLog, run)).toBeCloseTo(loggedRunUsd(a.log, run), 12);
+  });
+
+  // ---- Judging attempts (calibration, relevance and answerability share runJudging).
+  const items = (): PairPlanItem[] => [{ subject: subject(), priority: 0 }];
+  const fakes = () => ({ judges: [createFakeJudge(HAIKU, reply([VERDICT.relevant])), createFakeJudge(LUNA, reply([VERDICT.relevant]))] as const, adjudicator: createFakeJudge(SONNET, reply([VERDICT.relevant])) });
+  const opts = (outDir: string): Parameters<typeof runJudging>[1] => ({
+    set: 'relevance' as const,
+    confirm: true,
+    limitUsd: 1,
+    allocation: { name: 'judging', capUsd: 1 },
+    maxEscalationShare: 1,
+    concurrency: 1,
+    outDir,
+    reference: 'model-judged',
+    schedule: scheduleInfo(items(), 1),
+    log: () => undefined,
+  });
+  const judging = async (dir: string, gate: SpendGate, over: { writer?: ChargeWriter; close?: () => Promise<void> } = {}) =>
+    runJudging(items(), opts(dir), { callers: fakes, ledger: () => ({ gate, close: over.close ?? (async () => undefined) }), ...(over.writer ? { writer: over.writer } : {}) });
+  const runLog = (dir: string, run: string) => join(dir, 'spend', `${run}.jsonl`);
+
+  it('judging: an attempt whose charge cannot be written to the allocation\'s log keeps the lock; recover adds exactly what is missing', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const err = await failure(judging(dir, gate, { writer: failingWriter((p) => p.endsWith(join('allocations', 'judging.jsonl'))) }));
+    expect(err).toBeInstanceOf(UnrecordedSpendError);
+    expect((err as Error).message).toMatch(/ENOSPC.*allocation judging keeps its lock.*recover --allocation judging --run eval-10c2-relevance-/);
+    // A later run is refused until the recovery.
+    await expect(judging(dir, gate)).rejects.toThrow(/held by run eval-10c2-relevance-/);
+    const run = ended(dir, 'judging');
+    const a = openAllocation(dir, 'judging', undefined);
+    const before = loggedRunUsd(a.log, run);
+    const r = await recoverAllocation(a, run, ledgerFromGate(gate), { confirm: true, spendLog: runLog(dir, run) });
+    const total = ledgerTotal(gate, run);
+    // The unwritten attempt was never settled: the ledger charges its reservation in full, and the allocation now counts it once.
+    expect(gate.records.some((x) => x.purpose.startsWith(run) && x.status === 'open')).toBe(true);
+    expect(r.appendedUsd).toBeCloseTo(total - before, 9);
+    expect(loggedRunUsd(a.log, run)).toBeCloseTo(total, 9);
+    expect(loggedRunUsd(runLog(dir, run), run)).toBeCloseTo(total, 9);
+    expect(existsSync(lockOf(dir, 'judging'))).toBe(false);
+    await expect(recoverAllocation(a, run, ledgerFromGate(gate), { confirm: true })).rejects.toThrow(/not locked/);
+    // The allocation is free again, and its count already includes the recovered run.
+    expect(await judging(dir, createMemorySpendGate(20))).toBe(0);
+  });
+
+  it('judging: a spend-log write that fails after the allocation\'s keeps the lock; recover tops the allocation up to the ledger and fills the spend log, nothing twice', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const err = await failure(judging(dir, gate, { writer: failingWriter((p) => p.includes(`${join('spend', 'eval-10c2-relevance-')}`)) }));
+    expect((err as Error).message).toMatch(/ENOSPC.*keeps its lock: the run's spend log could not be written/);
+    const run = ended(dir, 'judging');
+    const a = openAllocation(dir, 'judging', undefined);
+    const allocated = loggedRunUsd(a.log, run);
+    expect(allocated).toBeGreaterThan(0);
+    const r = await recoverAllocation(a, run, ledgerFromGate(gate), { confirm: true, spendLog: runLog(dir, run) });
+    const total = ledgerTotal(gate, run);
+    // The allocation already held the attempt's cost: only the rest of the unsettled reservation is added.
+    expect(r.appendedUsd).toBeCloseTo(total - allocated, 9);
+    expect(loggedRunUsd(a.log, run)).toBeCloseTo(total, 9);
+    expect(loggedRunUsd(runLog(dir, run), run)).toBeCloseTo(total, 9);
+  });
+
+  it('judging: a ledger connection that fails to close keeps the lock although every charge was written; recover adds only rounding', async () => {
+    const dir = tmp();
+    const gate = createMemorySpendGate(20);
+    const err = await failure(judging(dir, gate, { close: async () => Promise.reject(new Error('connection reset while closing')) }));
+    expect((err as Error).message).toMatch(/^allocation judging keeps its lock: the run's ledger connection did not close: connection reset while closing/);
+    // The run finished: its records are written.
+    expect(readdirSync(dir).some((f) => f.startsWith('narrative-judgments-relevance-'))).toBe(true);
+    const run = ended(dir, 'judging');
+    const a = openAllocation(dir, 'judging', undefined);
+    const before = loggedRunUsd(a.log, run);
+    const r = await recoverAllocation(a, run, ledgerFromGate(gate), { confirm: true, spendLog: runLog(dir, run) });
+    expect(r.appendedUsd).toBeLessThan(2e-6);
+    expect(loggedRunUsd(a.log, run)).toBeCloseTo(ledgerTotal(gate, run), 9);
+    expect(before).toBeCloseTo(ledgerTotal(gate, run), 5);
+  });
+
+  it('judging: a settlement the ledger refused keeps the lock; recover adds the rest of the reservation the ledger charges in full', async () => {
+    const dir = tmp();
+    const base = createMemorySpendGate(20);
+    let settles = 0;
+    const gate: MemorySpendGate = {
+      ...base,
+      records: base.records,
+      settle: async (res, outcome) => {
+        settles += 1;
+        if (settles === 1) throw new Error('settle failed: connection reset');
+        return base.settle(res, outcome);
+      },
+    };
+    const err = await failure(judging(dir, gate));
+    expect((err as Error).message).toMatch(/keeps its lock: the evaluation ledger could not settle an attempt: settle failed/);
+    const run = ended(dir, 'judging');
+    const a = openAllocation(dir, 'judging', undefined);
+    const allocated = loggedRunUsd(a.log, run);
+    const r = await recoverAllocation(a, run, ledgerFromGate(gate), { confirm: true, spendLog: runLog(dir, run) });
+    const total = ledgerTotal(gate, run);
+    expect(total).toBeGreaterThan(allocated);
+    expect(r.appendedUsd).toBeCloseTo(total - allocated, 9);
+    expect(loggedRunUsd(a.log, run)).toBeCloseTo(total, 9);
+    expect(loggedRunUsd(runLog(dir, run), run)).toBeCloseTo(total, 9);
   });
 });
