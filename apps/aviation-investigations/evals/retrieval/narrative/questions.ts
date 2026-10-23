@@ -55,6 +55,11 @@ const POWER_LOSS_RECORDED =
  * so the branches never overlap. Intervals keep their clock: flight, Hobbs, tachometer
  * and engine hours and calendar time are never converted into one another, and a number
  * of flights is never worked out from hours (or hours from a number of flights).
+ *
+ * Fix round 2 (the gate's item 5): an hour window holds when one clock gives the interval
+ * inside the limit with both ends on it (or the first flight after the work has a stated
+ * flight time inside it) and no clock gives more; clocks that disagree, or that give no
+ * interval at all, are partial; every clock beyond the limit is grade 0.
  */
 const CLOCKS =
   'Hours are never converted between clocks, and never worked out from calendar time or from a number of flights.';
@@ -97,21 +102,22 @@ export const NARRATIVE_QUESTIONS: readonly NarrativeQuestionSpec[] = [
     filters: { purpose: ['ASHO'] },
     rubric: {
       relevant:
-        'The accident happened on an air show or air race flight (a performance, a practice for one, or the race), AND the investigators state that they could not determine why it happened (why the aircraft departed controlled flight, struck the ground or an obstacle, collided, broke up or lost power), and they name no reason as likely or most likely (for example, "for reasons that could not be determined", "the investigation could not determine why the pilot did not recover").',
+        'The accident happened on an air show or air race flight (a performance, a practice for one, or the race), AND the investigators state that they could not determine why it happened (why the aircraft departed controlled flight, struck the ground or an obstacle, collided, broke up or lost power), and they name no reason as likely or most likely (for example, "for reasons that could not be determined", "the investigation could not determine why the pilot did not recover"). A probable cause that names what the pilot did or did not do and states that why could not be determined counts (for example, "the pilot\'s failure to begin the recovery at a sufficient altitude for reasons that could not be determined").',
       partial:
         'Grade 2 does not hold, and the investigators give a likely, probable or possible reason without establishing it ("likely", "may have", "could not be ruled out"), including when they say the reason could not be determined but name a most likely one; or they name several possible reasons and decide on none of them while calling one more likely; or the record states no reason at all and does not say that the reason was undetermined.',
       notRelevant:
-        "Anything else, including: the investigators established the reason (for example, the pilot's failure to maintain altitude or clearance during a maneuver, an aerodynamic stall, a structural failure found at examination, fuel exhaustion), even when some details remain unknown.",
+        "Anything else, including: the investigators established the reason and do not say that why it happened could not be determined (for example, the pilot's failure to maintain altitude or clearance during a maneuver, an aerodynamic stall, a structural failure found at examination, fuel exhaustion).",
       edgeCases: [
         { situation: 'The airplane did not recover from a vertical downline, and the investigation could not determine why the pilot did not begin the recovery.', grade: 2, why: 'Explicitly undetermined, no likely reason named.' },
         { situation: 'The investigation could not determine whether a control jam or the pilot\'s incapacitation caused the loss of control, and named neither as more likely.', grade: 2, why: 'Undetermined between alternatives.' },
         { situation: 'The pilot likely experienced G-induced loss of consciousness during the pull-up.', grade: 1, why: 'A likely reason, not an established one.' },
         { situation: 'The reason for the loss of control could not be determined, although pilot incapacitation was the most likely explanation.', grade: 1, why: 'A most likely reason is named.' },
         { situation: "The pilot's failure to maintain adequate altitude while performing a low-level roll.", grade: 0, why: 'An established reason.' },
+        { situation: "The probable cause is the pilot's failure to maintain clearance from the ground during a low pass for reasons that could not be determined.", grade: 2, why: 'What the pilot did is established; why is stated as undetermined, and no likely reason is named.' },
       ],
     },
     lure: 'air show aerobatic maneuver pilot failure to maintain altitude excessive load factor aerodynamic stall probable cause',
-    note: 'Purpose ASHO (air race or show) bounds the cohort. Causal uncertainty about why an air show or race flight crashed, not limited to engine power. Fix round 1: replaces the banner-tow power-loss question so that fewer families turn on engine power (review M12).',
+    note: 'Purpose ASHO (air race or show) bounds the cohort. Causal uncertainty about why an air show or race flight crashed, not limited to engine power. Fix round 1: replaces the banner-tow power-loss question so that fewer families turn on engine power (review M12). Fix round 2: "the pilot\'s failure to ... for reasons that could not be determined", common in this cohort, is undetermined (grade 2), not an established reason (review N6).',
   },
   {
     id: 'mc-ag-arkansas-engine-after-maintenance',
@@ -121,24 +127,26 @@ export const NARRATIVE_QUESTIONS: readonly NarrativeQuestionSpec[] = [
     filters: { far_part: ['137'], state: ['AR'] },
     rubric: {
       relevant:
-        'The record reports a loss of engine power (total or partial), AND maintenance on that engine: an overhaul, a repair, an adjustment, or a part or accessory replaced or installed (an annual, 100-hour or other inspection counts only when the record says it included such work on the engine), AND an interval of 25 hours or less between that maintenance and the power loss on one of the aircraft\'s clocks: flight hours, tachometer hours, Hobbs hours or the engine\'s hours since the work, with both ends read on the same clock (for example, a tachometer reading at the work and another at the accident) and no other clock the record gives above 25 hours; or the power loss happened on the first flight after the work and the record states how long that flight had lasted. The investigators need not link the maintenance to the power loss. ' +
-        POWER_LOSS_RECORDED,
+        "The record reports a loss of engine power (total or partial), AND maintenance on that engine: an overhaul, a repair, an adjustment, or a part or accessory replaced or installed (an annual, 100-hour or other inspection counts only when the record says it included such work on the engine), AND an interval of 25 hours or less between that maintenance and the power loss, with no clock the record gives showing more than 25 hours: either on one of the aircraft's clocks (flight hours, tachometer hours, Hobbs hours or the engine's hours since the work), with both ends read on that clock (for example, a tachometer reading at the work and another at the accident) or the interval stated in that clock's hours (for example, 'the engine had 12.4 hours since the overhaul'), or as the stated flight time of the first flight after the work, 25 hours or less (for example, 'about 40 minutes after takeoff on the first flight after the overhaul'). An approximate value counts when it is clearly inside the limit ('about 12 hours'). The investigators need not link the maintenance to the power loss. " +
+          POWER_LOSS_RECORDED,
       partial:
-        'Grade 2 does not hold, but the record reports a loss of engine power and maintenance on the engine (or an inspection that may have included it) before the accident, and the interval is not shown to be more than 25 hours on any clock: it is given only in calendar time ("two weeks before"), as an approximate value near the limit ("about 25 hours"), only as a number of flights or as the first flight without that flight\'s duration, from readings on two different clocks, by two clocks on either side of 25 hours, or not at all; or the only maintenance within 25 hours is a general inspection whose engine work the record does not describe.',
+        'Grade 2 does not hold, the record reports a loss of engine power and maintenance on the engine (or an inspection that may have included it) before it, and the interval is not settled: (a) no clock gives it: it is stated only in calendar time ("two weeks before"), only as a number of flights, as the first flight after the work without that flight\'s duration, from readings on two different clocks (one end on each), or not at all; (b) it is stated only approximately, near 25 hours ("about 25 hours"); or (c) the clocks disagree: one clock gives 25 hours or less and another more than 25. Also partial: the only maintenance within 25 hours is a general inspection whose engine work the record does not describe.',
       notRelevant:
-        `Anything else, including: no loss of engine power; no maintenance on the engine is stated; the stated interval since the engine maintenance is more than 25 hours on the clock the record uses; or the maintenance concerned only the airframe, the propeller or other systems that are not part of the engine. ${CLOCKS}`,
+        `Anything else, including: no loss of engine power; no maintenance on the engine is stated; at least one clock gives the interval and every clock that gives it shows more than 25 hours (an approximate value clearly beyond the limit, such as "about 40 hours", included); or the maintenance concerned only the airframe, the propeller or other systems that are not part of the engine. ${CLOCKS}`,
       edgeCases: [
         { situation: 'The engine had accumulated 12.4 hours since a major overhaul when it lost power.', grade: 2, why: "An interval of 25 hours or less on the engine's own clock." },
         { situation: 'The overhauled engine was installed at a tachometer time of 3,402.1 hours, and the tachometer read 3,420.6 hours at the accident.', grade: 2, why: '18.5 hours, both ends on the tachometer.' },
         { situation: 'A cylinder was replaced about 40 flight hours before the power loss.', grade: 0, why: 'More than 25 hours.' },
         { situation: 'The last 100-hour inspection was 6 hours before the accident; the record does not describe any engine work during it.', grade: 1, why: 'A general inspection whose engine work is not described.' },
         { situation: 'The fuel control unit was replaced, and the power loss happened on the first flight afterwards; how long the flight had lasted is not stated.', grade: 1, why: 'A first flight without its duration does not state the interval.' },
+        { situation: 'The fuel control unit was replaced, and the power loss happened about 30 minutes after takeoff on the first flight afterwards.', grade: 2, why: "The first flight's stated flight time is inside the window." },
         { situation: 'The magneto was replaced at a Hobbs reading of 1,200.0; the tachometer read 2,215.4 at the accident.', grade: 1, why: 'Readings on different clocks are never compared.' },
+        { situation: 'A cylinder was replaced 22.0 tachometer hours before the power loss; the Hobbs meter shows 27.5 hours over the same period.', grade: 1, why: 'The clocks disagree: one inside the window, one outside.' },
         { situation: 'The engine had 15 hours since overhaul, but the airplane struck a power line and no loss of engine power is reported.', grade: 0, why: 'No loss of engine power.' },
       ],
     },
     lure: 'agricultural airplane engine overhauled years before the accident total time since overhaul hours engine power',
-    note: 'Part 137 (agricultural) in Arkansas bounds the cohort. Maintenance chronology: an interval of 25 hours or less on one of the record\'s clocks, never converted; calendar time, flight counts, a first flight without its duration and mixed clocks are partial. Fix round 1: reworded from "25 flight hours", which other clocks could not establish (gate item 1).',
+    note: 'Part 137 (agricultural) in Arkansas bounds the cohort. Maintenance chronology: an interval of 25 hours or less on one of the record\'s clocks (or the stated flight time of the first flight after the work), never converted; calendar time, flight counts, a first flight without its duration, readings on two clocks and clocks that disagree are partial. Fix round 1: reworded from "25 flight hours", which other clocks could not establish (gate item 1). Fix round 2: grade 1 no longer contradicts itself on clocks either side of the limit, and the first-flight route needs a stated flight time (the gate\'s item 5).',
   },
   {
     id: 'op-balloon-power-lines',
@@ -224,18 +232,19 @@ export const NARRATIVE_QUESTIONS: readonly NarrativeQuestionSpec[] = [
         'The record reports a loss of engine power (total or partial), AND states that the weather conditions at the time (temperature and dew point, or the carburetor icing probability chart) were not conducive or not favorable to carburetor icing at the power setting in use. ' +
         POWER_LOSS_RECORDED,
       partial:
-        "Grade 2 does not hold, the record reports a loss of engine power and discusses carburetor icing, and the conditions are not stated as conducive at the power setting in use: the statement is mixed or qualified without saying which power setting applied (for example, conducive at glide power but not at cruise power, with the setting in use not stated), or carburetor icing is ruled out for a reason other than the weather (the engine was fuel injected, carburetor heat was applied).",
+        "Grade 2 does not hold, the record reports a loss of engine power and discusses carburetor icing, and the conditions are not stated as conducive at the power setting in use: the statement is mixed or qualified without saying which power setting applied (for example, conducive at glide power but not at cruise power, with the setting in use not stated); the conditions are given only for a power setting other than the one in use (for example, \"conducive to serious carburetor icing at glide power\" for a loss in cruise, with nothing said about cruise power); or carburetor icing is ruled out for a reason other than the weather (the engine was fuel injected, carburetor heat was applied).",
       notRelevant:
         'Anything else, including: no loss of engine power; the conditions were conducive to carburetor icing at the power setting in use; or carburetor icing is not discussed.',
       edgeCases: [
         { situation: 'Power loss in cruise; the temperature and dew point were "not conducive to carburetor icing at any power setting".', grade: 2, why: 'Explicitly not conducive.' },
         { situation: 'Power loss during the descent; "conditions were conducive to serious carburetor icing at glide power".', grade: 0, why: 'Conducive at the power setting in use.' },
         { situation: 'Power loss in cruise; the chart showed icing only at glide power, not at cruise power.', grade: 2, why: 'Not conducive at the cruise power in use.' },
+        { situation: 'Power loss in cruise; the conditions were "conducive to serious carburetor icing at glide power", and nothing is said about cruise power.', grade: 1, why: 'Conducive only at another power setting; the setting in use is not addressed.' },
         { situation: 'Power loss; the engine was fuel injected, so carburetor icing could not occur.', grade: 1, why: 'Icing ruled out, but not by the weather.' },
       ],
     },
     lure: 'loss of engine power temperature dew point conditions conducive to serious carburetor icing at glide power',
-    note: 'Airplanes with reciprocating engines. Negation against the coded concept: Track C labels "conducive to carburetor icing"; here the relevant cases say the opposite, and the conducive cases are the hard negatives.',
+    note: 'Airplanes with reciprocating engines. Negation against the coded concept: Track C labels "conducive to carburetor icing"; here the relevant cases say the opposite, and the conducive cases are the hard negatives. Fix round 2: conditions given only for another power setting are partial (review N6).',
   },
   {
     id: 'ng-gear-collapse-no-defect',
@@ -294,11 +303,11 @@ export const NARRATIVE_QUESTIONS: readonly NarrativeQuestionSpec[] = [
     filters: { category: ['HELI'] },
     rubric: {
       relevant:
-        "The record states maintenance (a repair, a replacement, an adjustment or rigging, or an installation) on a flight control component (cyclic, collective, pedals, servos, control linkages, swashplate) or a rotor system component (main or tail rotor blades, hubs, pitch links, gearboxes, drive shafts), AND an interval of 10 hours or less between that maintenance and the accident on one of the aircraft's clocks (flight hours, the hour meter, Hobbs or tachometer hours), with both ends read on the same clock and no other clock the record gives above 10 hours; or the accident happened on the first flight after the work and the record states how long that flight had lasted. A link to the accident is not required.",
+        "The record states maintenance (a repair, a replacement, an adjustment or rigging, or an installation) on a flight control component (cyclic, collective, pedals, servos, control linkages, swashplate) or a rotor system component (main or tail rotor blades, hubs, pitch links, gearboxes, drive shafts), AND an interval of 10 hours or less between that maintenance and the accident, with no clock the record gives showing more than 10 hours: either on one of the aircraft's clocks (flight hours, the hour meter, Hobbs or tachometer hours), with both ends read on that clock (for example, Hobbs readings at the work and at the accident) or the interval stated in that clock's hours (for example, '2.1 flight hours before the accident'), or as the stated flight time of the first flight after the work, 10 hours or less (for example, 'about 20 minutes into the first flight after the swashplate was replaced'). An approximate value counts when it is clearly inside the limit ('about 3 hours'). A link to the accident is not required.",
       partial:
-        'Grade 2 does not hold, but such maintenance (or a general inspection) is stated before the accident and the interval is not shown to be more than 10 hours on any clock: it is given only in calendar time ("three days before"), as an approximate value near the limit ("about 10 hours"), only as a number of flights or as the first flight without that flight\'s duration, from readings on two different clocks, by two clocks on either side of 10 hours, or not at all; or the only maintenance within 10 hours is a general inspection (annual, 100-hour) whose work on the controls or rotor system the record does not describe.',
+        'Grade 2 does not hold, such maintenance (or a general inspection) is stated before the accident, and the interval is not settled: (a) no clock gives it: it is stated only in calendar time ("three days before"), only as a number of flights, as the first flight after the work without that flight\'s duration, from readings on two different clocks (one end on each), or not at all; (b) it is stated only approximately, near 10 hours ("about 10 hours"); or (c) the clocks disagree: one clock gives 10 hours or less and another more than 10. Also partial: the only maintenance within 10 hours is a general inspection (annual, 100-hour) whose work on the controls or rotor system the record does not describe.',
       notRelevant:
-        `Anything else, including: no maintenance on the flight controls or rotor system is stated; the interval since it is more than 10 hours on the clock the record uses; or the maintenance concerned only the engine, the airframe or the avionics. ${CLOCKS}`,
+        `Anything else, including: no maintenance on the flight controls or rotor system is stated; at least one clock gives the interval and every clock that gives it shows more than 10 hours (an approximate value clearly beyond the limit, such as "about 300 hours", included); or the maintenance concerned only the engine, the airframe or the avionics. ${CLOCKS}`,
       edgeCases: [
         { situation: 'The tail rotor pitch link bearings were replaced 2.1 flight hours before the accident.', grade: 2, why: 'Rotor system work inside the window.' },
         { situation: 'The main rotor blades were installed at a Hobbs reading of 412.0, and the Hobbs meter read 418.6 at the accident.', grade: 2, why: '6.6 hours, both ends on one clock.' },
@@ -308,7 +317,7 @@ export const NARRATIVE_QUESTIONS: readonly NarrativeQuestionSpec[] = [
       ],
     },
     lure: 'helicopter main rotor blades replaced hundreds of hours before the accident maintenance records total time',
-    note: 'Helicopters. Maintenance chronology with a component scope (controls or rotor system); engine-only work is excluded. Fix round 1: reworded from "10 flight hours" (gate item 1).',
+    note: 'Helicopters. Maintenance chronology with a component scope (controls or rotor system); engine-only work is excluded. Fix round 1: reworded from "10 flight hours" (gate item 1). Fix round 2: the same interval definition as the agricultural question, with a 10-hour limit (the gate\'s item 5).',
   },
   {
     id: 'cu-inflight-fire-origin-undetermined',
