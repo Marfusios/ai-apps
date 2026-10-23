@@ -154,19 +154,8 @@ export interface JudgeCaller {
 export const SCHEMAS: Readonly<Record<OutputKind, z.ZodType>> = { verdict: VerdictSchema, chunk: ChunkVerdictSchema, answerability: AnswerabilitySchema };
 const SCHEMA_NAME: Readonly<Record<OutputKind, string>> = { verdict: 'verdict', chunk: 'chunk_verdict', answerability: 'answerability' };
 
-/**
- * Claude Sonnet 5.5's published cache-read rate, USD per million tokens. The repository
- * row says 0.10 until task 16d's correction lands; costs here never use less.
- */
-export const SONNET_CACHE_READ_USD = 0.2;
-
-/** The actual cost of one call (the repository prices, with Sonnet cache reads at no less than the published rate). */
-export const judgeCostUsd = (model: string, usage: JudgeUsage): number => {
-  const base = stageCostUsd(model, usage);
-  if (model !== 'claude-sonnet-5-5') return base;
-  const row = llmPrice(model).cacheRead;
-  return base + (Math.max(row, SONNET_CACHE_READ_USD) - row) * (usage.cacheReadTokens / 1e6);
-};
+/** The actual cost of one call. */
+export const judgeCostUsd = (model: string, usage: JudgeUsage): number => stageCostUsd(model, usage);
 
 /** The reservation of one attempt: its input tokens and the output cap at the full rates, plus the cache-write premium on its prefix. */
 export const attemptReserveUsd = (c: Pick<JudgeModelConfig, 'model' | 'maxOutputTokens'>, inputTokens: number): number =>

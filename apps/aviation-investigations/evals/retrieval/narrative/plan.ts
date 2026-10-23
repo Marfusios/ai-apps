@@ -34,7 +34,7 @@ import { compileFilters } from '../../../server/search/filters.js';
 import { assertCompleteResponse, keywordChannelBody, toHit } from '../../../server/search/hybrid.js';
 import { uniqueTop } from '../metrics.js';
 import { controlEvidence, seededSample, type CalibrationDataset } from './calibration.js';
-import { SONNET_CACHE_READ_USD, attemptReserveUsd, estimateOpenAIInput, type JudgeCaller, type JudgeModelConfig } from './clients.js';
+import { attemptReserveUsd, estimateOpenAIInput, type JudgeCaller, type JudgeModelConfig } from './clients.js';
 import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from './config.js';
 import { families, membersOf, type NarrativeDataset, type NarrativeItem } from './dataset.js';
 import { loadCaseEvidence, planChunks, renderBundleCase, type CaseEvidence } from './evidence.js';
@@ -56,8 +56,6 @@ export const ASSUMPTIONS = Object.freeze({
   calibrationDisagreement: 0.25,
   /** Judge calls retried after an invalid output. */
   invalidRetryShare: 0.05,
-  /** Sonnet 5.5 cache reads at the published $0.20 per million (the repository row is being corrected in task 16d). */
-  sonnetCacheRead: SONNET_CACHE_READ_USD,
 });
 
 export type Samples = 1 | 3;
@@ -95,11 +93,15 @@ export function poolEstimates(d: NarrativeDataset, samples: Samples): FamilyPool
 // ---------------------------------------------------------------------------
 // Prices and calls
 
-/** USD per token (estimate overrides applied). */
+/**
+ * USD per token, from the repository price rows (`server/ai/pricing.ts`) with no override:
+ * the estimate and the ledger settlement use the same prices. Claude Sonnet 5.5 cache
+ * reads are $0.10 per million (0.05 times its input price), as Anthropic's pricing page
+ * (platform.claude.com/docs/en/about-claude/pricing) listed on 2026-10-23.
+ */
 export function rates(model: string): { input: number; output: number; cacheWrite: number; cacheRead: number } {
   const p = llmPrice(model);
-  const cacheRead = model === 'claude-sonnet-5-5' ? Math.max(p.cacheRead, ASSUMPTIONS.sonnetCacheRead) : p.cacheRead;
-  return { input: p.input / 1e6, output: p.output / 1e6, cacheWrite: p.cacheWrite / 1e6, cacheRead: cacheRead / 1e6 };
+  return { input: p.input / 1e6, output: p.output / 1e6, cacheWrite: p.cacheWrite / 1e6, cacheRead: p.cacheRead / 1e6 };
 }
 
 /** One call's expected cost: its family prefix read from the cache, the rest at the input rate, the expected output. */

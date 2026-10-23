@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { main, USAGE } from '../../evals/retrieval/narrative/cli.js';
 import type { CalibrationItem } from '../../evals/retrieval/narrative/calibration.js';
 import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from '../../evals/retrieval/narrative/config.js';
+import { llmPrice } from '../../server/ai/pricing.js';
 import { NarrativeDatasetSchema, type NarrativeItem } from '../../evals/retrieval/narrative/dataset.js';
 import type { PairRecord } from '../../evals/retrieval/narrative/judging.js';
 import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, caseCost, poolEstimates, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
@@ -308,8 +309,10 @@ describe('the dry run arithmetic', () => {
     expect(poolEstimates(d, 1).reduce((n, x) => n + x.mean, 0)).toBeLessThan(e.reduce((n, x) => n + x.mean, 0));
   });
 
-  it('prices calls with the cached prefix and the published Sonnet cache-read rate', () => {
-    expect(rates('claude-sonnet-5-5').cacheRead).toBeCloseTo(ASSUMPTIONS.sonnetCacheRead / 1e6, 12);
+  it('prices calls with the cached prefix at the repository rates, with no override', () => {
+    // Anthropic's pricing page (2026-10-23): Sonnet 5.5 cache reads $0.10 per million, 0.05 times input.
+    expect(rates('claude-sonnet-5-5').cacheRead).toBeCloseTo(llmPrice('claude-sonnet-5-5').cacheRead / 1e6, 15);
+    expect(llmPrice('claude-sonnet-5-5').cacheRead).toBeCloseTo(0.05 * llmPrice('claude-sonnet-5-5').input, 12);
     expect(callUsd('claude-haiku-5-5', 5_000, 2_000, 1_800)).toBeCloseTo((3_000 * 0.1 + 2_000 * 0.01 + 1_800 * 0.5) / 1e6, 12);
     const m: Measured = { ntsbNo: 'X', family: 'f', claude: [5_000], openai: [4_000], caseTokens: 3_000, chunks: 1, uncovered: false };
     const c = caseCost(m, { claude: 2_000, openai: 1_800 }, 900);
