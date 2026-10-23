@@ -335,7 +335,8 @@ aircraft counts once in each bucket, so buckets can sum to more than the total.
 **Versions.** The current version is `cases-v3`: v2 introduced text arrays and KStem
 (G3), and v3 added the glued-heading filter. The index `_meta` records the version, a
 fingerprint of the settings and mapping, the generation and the build ID. The API
-also serves `cases-v2`, but only at its exact recorded fingerprint.
+also serves `cases-v2` to keyword search, but only at its exact recorded fingerprint;
+AI retrieval's cases channel (`retrieval.v2`) reads `cases-v3` only.
 
 **Build.** Pin the verified generation, then stream its US cases from one snapshot in
 batches of 500 with refresh off. Then check documents, nested aircraft, eligible and
@@ -628,10 +629,12 @@ The cases index, built for keyword search with one document per accident, now al
 helps choose which accidents an AI brief looks at. Three searches run for each
 question: a word search over the passages (with the search terms the scope stage
 extracted), a meaning search over the passages (with the question's embedding), and
-a word search over each accident's whole narrative in the cases index (the same
-search terms). Each search returns its 200 best matches; each list is reduced to its
-accidents, and the three lists are combined so that an accident several searches
-agree on comes first. The cases index never supplies the evidence itself: an
+a word search over each accident's narrative fields in the cases index (the same
+search terms over the probable cause, the analysis and the factual narrative; an
+accident scores by its best-matching field, not by the narrative as a whole). Each
+search returns its 200 best matches; each list is reduced to its accidents, and the
+three lists are combined so that an accident several searches agree on comes first.
+The cases index never supplies the evidence itself: an
 accident it finds is shown only through its own passages from the passages index,
 under the same filters, with every probable cause attached. When none of its
 passages was among the passage searches' matches, the passages closest in meaning to
@@ -641,7 +644,15 @@ US, answer-eligible accidents with at least one aircraft, and the same rules for
 aircraft filters (a multi-aircraft accident counts only when every aircraft matches,
 and only on a `passages-v2` index). Only the cases index that the brief's dataset
 manifest published with its passages index is used, checked against the generation
-first. Nothing in either index changes.
+first, and only a `cases-v3` index (the version the validation covered; a manifest
+that pairs the passages with a `cases-v2` index makes AI retrieval unavailable
+rather than run an unvalidated channel). Each brief step records the cases index it
+read (name and version) in its private metadata. The manifest pairing ties a cases
+index to a generation, not to a brief: re-publishing the passages index invalidates
+the briefs made from the old one (their later steps find no cases index paired with
+their passages index and are unavailable), while re-publishing only the cases index
+can change what later retrieval for the same question returns. Nothing in either
+index changes.
 
 - **Contract first.** Retrieval refuses (`RetrievalUnavailableError`) when the
   dataset has no passages index or the index breaks the passages contract. It checks
@@ -691,7 +702,13 @@ first. Nothing in either index changes.
   `retrieval.v2` adds the cases channel (200 cases, BM25 over `probable_cause`,
   `analysis` and `factual`), collapses each channel to its unique cases (in a total
   order: score, then id), and fuses the case lists with exact fractions and a total
-  tie order (best rank, ranks channel by channel, case number). Its filter is the
+  tie order (best rank, ranks channel by channel, case number). **Cutoffs:** both
+  BM25 channels send `sort: [_score desc, passage_id | ntsb_no asc]`, so Elasticsearch
+  decides equal scores at the 200th place by the id while it collects the top 200
+  (an integration test with 201 equal scores in two insertion orders); the kNN
+  channel is approximate discovery (HNSW, int8 quantization per segment), so its set
+  and scores belong to one index state and a rebuilt copy may differ. Fusion is exact
+  over whatever the channels returned. Its filter is the
   passages filter restated on the cases index: compulsory `country` and
   `answer_eligible`, `aircraft_count >= 1`, the same event facets and years, and the
   passages contract's aircraft rule on the nested `aircraft` (one aircraft meeting
@@ -700,9 +717,14 @@ first. Nothing in either index changes.
   filter and an independent reference on adversarial selections for both contract
   versions, and the validation's preflight checks it on the target for every
   evaluation and scope-inferred filter. The leading 12 cases no passage channel
-  returned are mapped: the count of each case's passages under the passages filter,
-  then a kNN for that case with `num_candidates` equal to the count (an exact search)
-  and k = 3, verified case by case; an unmapped case is reported and never packed.
+  returned are mapped: the count of each case's passages under the passages filter
+  (`n`), then a kNN for that case with k = `num_candidates` = `n`, an exact search
+  over all of them. The answer must hold exactly the `n` passages, all of that case,
+  each once and scored; anything else fails the whole retrieval like an incomplete
+  search. The best 3 by score, then passage id, are kept. A case with no passages
+  under the filter, or more than 1,000 (the mapping-size limit; the largest `dev`
+  case holds 63), is reported unmapped and never packed. The first failed mapping
+  request cancels the others.
 - **Stage 2, packing.** At most 6 cases, 12 passages, 3 passages per case and 10,000
   `cl100k_base` passage-text tokens. Each selected case first reserves its
   justification: its best retrieved passage and every probable-cause variant it has
@@ -868,7 +890,9 @@ deterministic, exact case-level fusion; a mapping that reuses the query vector a
 verifies every case; unchanged packing guarantees; failures that still settle the
 paid embedding once; and validation against the deployed retrieval, end to end with
 inferred filters, on delivered evidence, on the regression question and under
-concurrent load. The implementation goes back to that review before it merges.
+concurrent load. The implementation review asked for a bounded manifest lookup, a
+mapping that fails the retrieval on an inconsistent answer, and cutoffs decided by
+the id inside Elasticsearch; fix round 1 makes those changes and goes back to it.
 
 ## 6. Known limits and open owner items
 

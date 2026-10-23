@@ -392,9 +392,21 @@ are the same for every version. `retrieval.v2` reads the cases index the active
 manifest already serves, so it needs nothing beyond a published manifest: the brief's
 generation must still have its manifest row pairing that cases index with the brief's
 passages index (`worker publish` writes both together), and the cases index must be a
-servable version of that generation (cases-v3, or cases-v2). If either fails, AI
-answers 503 `unavailable` (status `dependency`) and steps fail with
-`meta.failure.reason` `no_cases_index` or `index_mismatch`.
+servable `cases-v3` index of that generation: the version the validation covered. A
+`cases-v2` index still serves keyword search but not AI retrieval; republish with a
+`cases-v3` index first. If either fails, AI answers 503 `unavailable` (status
+`dependency`) and steps fail with `meta.failure.reason` `no_cases_index` or
+`index_mismatch`. The manifest lookup is bounded (2 s, and the request's cancel); a
+lookup that fails or times out fails the step with `cases_index_lookup` before the
+question is embedded.
+
+Each step under `retrieval.v2` records the cases index it read in its private
+`meta.retrieval` (`casesIndex`, `casesIndexVersion`, with the mapping counts). The
+pairing ties a cases index to a generation, not to a brief: republishing the passages
+index invalidates the briefs made from the old one (their later steps fail
+`no_cases_index`), and republishing only the cases index can change what later
+retrieval returns for the same question (compare a step's `meta.retrieval.casesIndex`
+with the manifest when that matters).
 
 To switch, or to roll back:
 

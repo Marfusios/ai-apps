@@ -324,11 +324,13 @@ stage's span ends with status error.
 (`RETRIEVAL_VERSIONS`: `retrieval.v1`, `retrieval.v2`, `retrieval.v2-nf`; anything
 else is dropped), set when the span starts, so a failed retrieval carries it too. The
 step's `meta.retrievalVersion` holds the same value, and under a case-level version
-`meta.retrieval` holds the mapping counts (`{mapped, unmapped}`: leading candidate
-cases no passage channel returned that got their own passages, and those that could
-not and were never packed). Evaluation reports name the version they measured with its
-configuration sha256 (`retrievalIdentity`), so numbers from different versions are
-never mixed.
+`meta.retrieval` holds the cases index the step read and the mapping counts
+(`{casesIndex, casesIndexVersion, mapped, unmapped}`: the index name and its `_meta`
+version, then the leading candidate cases no passage channel returned that got their
+own passages, and those that could not and were never packed). The index name stays in
+the step's private metadata: no response or span carries it. Evaluation reports name
+the version they measured with its configuration sha256 (`retrievalIdentity`), so
+numbers from different versions are never mixed.
 
 `thinkingTokens` is the provider's reported reasoning share of a stage's output
 (`usage.output_tokens_details.thinking_tokens`), when it reports one; it is also kept

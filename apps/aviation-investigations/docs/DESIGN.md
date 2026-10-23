@@ -318,7 +318,17 @@ recorded with every brief step, on its retrieval span and in evaluation reports.
   under the passages contract's aircraft semantics, and a nominated case reaches the
   answer only through its own passages under the passages filter (mapped by the same
   query vector when no passage channel returned it), with every probable-cause
-  variant. A case-level match is never evidence by itself.
+  variant. A case-level match is never evidence by itself. The cases channel reads
+  only the cases index version the validation covered (`cases-v3`); the cases index a
+  step read (name and version) is recorded in its private metadata.
+- **Cutoffs.** Candidate discovery and fusion are kept apart. Both BM25 channels ask
+  Elasticsearch to sort by score, then passage id or case number, while it collects
+  their top 200, so equal scores at the cut are decided by the id. The kNN channel is
+  approximate discovery: which neighbours it finds, and their quantized scores, belong
+  to one index state, so a rebuilt copy of the same documents can return a different
+  set. A mapped case's passages are all scored exactly and cut by score, then id.
+  Fusion is exact and totally ordered over whatever the channels returned; it is
+  reproducible for one index state, not across rebuilds.
 - **`retrieval.v2-nf`** (experimental, never on `live`): also searches the coded
   `findings_text`; its coded-reference gain rests on the field the coded labels come
   from, so its value waits for narrative-relevance evaluation (Track N).
