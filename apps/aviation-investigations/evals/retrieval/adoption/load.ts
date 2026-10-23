@@ -12,11 +12,13 @@
  *
  * - **Cells.** Each arm (retrieval version) at each concurrency (at most 8 workers),
  *   until `maxRequests` requests finished or `durationMs` passed, whichever first;
- *   the arms of a concurrency run one after the other.
+ *   the arms of a concurrency run one after the other, in consecutive blocks, not
+ *   interleaved: noise on a shared cluster during one block falls on that block's arm.
  * - **Cold.** Before the cells, one pass over every distinct request in a fresh process,
- *   one at a time, with the remembered index checks forgotten for each arm: no index
- *   check cached in the process and no request seen before in it. Elasticsearch's and
- *   the operating system's caches cannot be cleared read-only; they may be warm.
+ *   one at a time: no request was seen before in the process, and the remembered index
+ *   checks are forgotten once per arm, so only an arm's first request checks the indexes
+ *   cold. Elasticsearch's and the operating system's caches cannot be cleared read-only
+ *   and are likely warm.
  * - **Cancellation.** A share of requests is aborted after a random delay; the time from
  *   the abort to the request's end is recorded.
  * - **Partial failures.** A share of requests has one search fail (the cases channel,
@@ -25,7 +27,9 @@
  *   settlements (exactly one) are recorded.
  * - **Mapping at its bound.** For a share of case-level requests the mapping of all the
  *   leading `packCandidates` cases (as if no passage channel had returned any) runs
- *   right after, under the same load, and is timed apart.
+ *   right after, under the same load, and is timed apart: a request's own latency
+ *   includes a mapping only when its candidates need one, which no development question
+ *   does, so no measured request tail includes a mapping.
  */
 import type { Client, estypes } from '@elastic/elasticsearch';
 import { countTokens } from '../../../server/ai/tokens.js';
