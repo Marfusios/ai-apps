@@ -1,0 +1,265 @@
+{
+  "kind": "track-n-annotations",
+  "date": "2026-10-23",
+  "annotates": {
+    "results": "pooled-2026-10.json",
+    "audit": "audit-2026-10.json",
+    "report": "narrative-report-20261023T113404Z.json",
+    "poolVersion": "e6d3f39d76d83c7c59aa065b003906e689ea903b211ecc75b7eafb2cb9583298"
+  },
+  "note": "Annotations beside the frozen October snapshot. They qualify and correct how it is read; no judgment, label, pool, prompt, configuration or result value is changed, and the frozen files stay as they were written.",
+  "status": "Provisional evaluation (model-judged, development questions only). retrieval.v2 stays the provisional default; retrieval.v2-nf stays experimental.",
+  "reading": {
+    "retrieval.v2": "Against retrieval.v1, retrieval.v2 improves first-six relevance: strict P@6 and nDCG@6 are better under the frozen rule. Improved supported P@6 (relevant and answerable from the delivered passages) is unproven: its one-sided 95% lower bound is exactly zero. Recall@20 on the exhaustive cohorts is inconclusive.",
+    "retrieval.v2-nf": "retrieval.v2-nf has no demonstrated incremental advantage over retrieval.v2: every comparison between them is inconclusive, and an inconclusive comparison does not establish that they are equivalent.",
+    "pilotDecisionRegression": "Task 10e's regression stands on narrative labels: on per-pilot-decision-cause-weight-shift, nDCG@6 is 72.1% under retrieval.v1 and 36.6% under both v2 versions (P@6 66.7% against 33.3%).",
+    "forcedMapping": "Encouraging but small: 13 known successes among the 15 relevant bundles the forced mapping diagnostic delivered, one of them unknown. It establishes neither that the mapping is reliable in general nor how often production maps (no ordinary run mapped)."
+  },
+  "errata": [
+    {
+      "id": "track-n-2026-10-e1",
+      "kind": "agreed-label error",
+      "set": "relevance",
+      "family": "cu-inflight-fire-origin-undetermined",
+      "ntsbNo": "WPR23FA044",
+      "frozenLabel": 2,
+      "judges": {
+        "judge-a": 2,
+        "judge-b": 2
+      },
+      "status": "agreed",
+      "finding": "Both judges graded 2 while both rationales conclude partial relevance: the investigators name a likely origin (near the turbocharger), which the rubric makes partial (grade 1).",
+      "gradeTheRationalesSupport": 1,
+      "applied": false,
+      "inDeliveredBundle": false,
+      "effect": "No headline or compared value changes. The case is in no delivered bundle of any version or sample (its best rank is 11), the family is not a bounded cohort, and 44 other fully relevant cases keep its ideal first six at grade 2, so P@6, supported P@6, nDCG@6 and Recall@20 are unchanged. Only the family diagnostic recall over the pool would move, by 0.1 to 0.6 points, and the family would count 44 fully relevant cases instead of 45.",
+      "source": "audit-2026-10.json, the stratified relevance AI sample (stratum causal_uncertainty, label 2, agreed)"
+    }
+  ],
+  "qualifications": {
+    "knownLabelErrors": "Unknown-label bounds cover unresolved labels only, never an erroneous known label (erratum e1 is one). Judge agreement and the calibration are supporting diagnostics, not proof that a known label is correct.",
+    "intervals": "The confidence intervals condition on the frozen grouping: 14 groups of questions, joined by the fully relevant cases they are known to share. Unresolved labels could join more of them.",
+    "groupingSensitivity": {
+      "note": "A sensitivity check, not a replacement for the frozen analysis. Every unresolved label is treated as possibly fully relevant for the grouping only (values and bounds unchanged). That joins the 25 benchmark questions into 5 groups, 20 of them in one, and the same paired group bootstrap (10,000 resamples, seed 20261023) runs on that grouping. The P@6 and nDCG@6 advantages of both v2 versions over retrieval.v1 hold under it. Supported P@6 for retrieval.v2 would also clear zero under it, but the frozen conclusion (inconclusive) stands: with five groups the bootstrap is coarse, and its intervals are no more trustworthy than the frozen ones.",
+      "groups": {
+        "frozen": 14,
+        "sensitivity": 5
+      },
+      "comparisons": {
+        "retrieval.v2 vs retrieval.v1": {
+          "p6": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.0378,
+              "ci95": [
+                0.0093,
+                0.0615
+              ],
+              "lower95": 0.0139,
+              "conclusion": "b-better"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0.0185,
+                0.1
+              ],
+              "lower95": 0.0278,
+              "conclusion": "b-better"
+            }
+          },
+          "ndcg6": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.0787,
+              "ci95": [
+                0.0273,
+                0.1215
+              ],
+              "lower95": 0.0365,
+              "conclusion": "b-better"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0.0592,
+                0.1842
+              ],
+              "lower95": 0.062,
+              "conclusion": "b-better"
+            }
+          },
+          "supported": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.0244,
+              "ci95": [
+                -0.0046,
+                0.0513
+              ],
+              "lower95": 0.0,
+              "conclusion": "inconclusive"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0.0139,
+                0.1
+              ],
+              "lower95": 0.0155,
+              "conclusion": "b-better"
+            }
+          }
+        },
+        "retrieval.v2-nf vs retrieval.v1": {
+          "p6": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.04,
+              "ci95": [
+                0.0123,
+                0.0641
+              ],
+              "lower95": 0.0167,
+              "conclusion": "b-better"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0.0185,
+                0.1
+              ],
+              "lower95": 0.0301,
+              "conclusion": "b-better"
+            }
+          },
+          "ndcg6": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.0823,
+              "ci95": [
+                0.032,
+                0.1253
+              ],
+              "lower95": 0.0413,
+              "conclusion": "b-better"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0.0628,
+                0.1842
+              ],
+              "lower95": 0.0662,
+              "conclusion": "b-better"
+            }
+          },
+          "supported": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.0267,
+              "ci95": [
+                -0.0024,
+                0.0535
+              ],
+              "lower95": 0.0028,
+              "conclusion": "b-better"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0.0162,
+                0.1
+              ],
+              "lower95": 0.0181,
+              "conclusion": "b-better"
+            }
+          }
+        },
+        "retrieval.v2-nf vs retrieval.v2": {
+          "p6": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.0022,
+              "ci95": [
+                0,
+                0.0083
+              ],
+              "lower95": 0,
+              "conclusion": "inconclusive"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0,
+                0.0027
+              ],
+              "lower95": 0,
+              "conclusion": "inconclusive"
+            }
+          },
+          "ndcg6": {
+            "frozen": {
+              "groups": 14,
+              "delta": -0.0006,
+              "ci95": [
+                -0.009,
+                0.007
+              ],
+              "lower95": -0.0074,
+              "conclusion": "inconclusive"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                -0.0008,
+                0
+              ],
+              "lower95": -0.0008,
+              "conclusion": "inconclusive"
+            }
+          },
+          "supported": {
+            "frozen": {
+              "groups": 14,
+              "delta": 0.0022,
+              "ci95": [
+                0,
+                0.0083
+              ],
+              "lower95": 0,
+              "conclusion": "inconclusive"
+            },
+            "sensitivity": {
+              "groups": 5,
+              "ci95": [
+                0,
+                0.0027
+              ],
+              "lower95": 0,
+              "conclusion": "inconclusive"
+            }
+          }
+        }
+      }
+    },
+    "coverageUnits": {
+      "unit": "case–question-family pair",
+      "note": "Coverage counts case–question-family pairs: a case judged for one question family. An investigation in several families counts once per family.",
+      "benchmark": {
+        "pairs": 3893,
+        "investigations": 3368,
+        "unresolvedPairs": 447,
+        "unresolvedInvestigations": 438
+      },
+      "all": {
+        "pairs": 4024,
+        "investigations": 3494
+      }
+    }
+  },
+  "nextRun": {
+    "frozenEvaluation": "Resume the 455 escalations with the same pools, prompts, model configuration, cache and priority order, under a fresh bounded allocation within the shared ledger, re-planned from the measured adjudication cost, at concurrency 3 or lower until the ledger connection pressure is fixed. Unresolved outcomes are kept, and a completion report is published beside this snapshot.",
+    "answerabilityRubric": "Examination-only bundles get a separately versioned answerability rubric (both required sides supported 2; one supported and the other absent 1; an explicit contradiction or neither supported 0; failed or incomplete judging unknown), with new controls, recalibration and rejudging under a new identity, never mixed into this frozen run."
+  }
+}

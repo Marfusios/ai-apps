@@ -645,7 +645,10 @@ than the frozen one, and write their reports to `--out-dir`.
 
 The experiments' `applyRule` ranks qualifying variants by the improvement on each
 variant's own declared target metric (task 10e); phase A's variants all declared
-narrow Recall@20, so its selection is unchanged. Case-level fusion in the experiments
+narrow Recall@20, so its selection is unchanged. Its zero comparisons (the rule's lower
+bound and the pool recommendation) count a bound within 1e-9 of zero as zero, as Track N
+does (`PREREG.md`, amendment 2). Re-scored offline from phase A's saved dev and holdout
+runs, no conclusion changes. Case-level fusion in the experiments
 uses production's comparator (`exactRrf`: exact fractions, the same total tie order),
 with fractional channel weights scaled to integers (at most six decimals), so a
 variant orders tied cases exactly as the adopted code would; a case-level variant
@@ -796,49 +799,68 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
   delivered passages); comparisons bootstrap bounds on each question's improvement
   (jointly over shared unknowns for P@6, cross-endpoint for nDCG@6) and name a better
   method only when the interval clears zero (a bound within 1e-9 of zero, which is
-  floating-point residue, counts as zero). Diagnostics: judged coverage, judge agreement
+  floating-point residue, counts as zero). Diagnostics: judged coverage (in
+  case–question-family pairs, with the distinct investigations behind them), judge agreement
   (kappa with intervals, confusion matrices per tag and grade), candidate code-narrative
   discrepancies (final and per judge), and two disjoint audit samples (an AI audit and a
   non-expert owner audit) stratified by tag, label and agreement class. The report
   refuses judgment files made under another experiment identity, records that no longer
   match the dataset, pool or calibration, and conflicting records; it merges the records
   of resumed runs.
-- **Pooled result (2026-10-23)** (`results/pooled-2026-10.json`; model-judged, development
-  questions only, never a release evaluation). The pools hold 4,024 cases in 22 families
-  and 449 delivered bundles, built through the production retrievers and frozen in
+- **Pooled result (2026-10-23)**, a provisional evaluation (`results/pooled-2026-10.json`;
+  model-judged, development questions only, never a release evaluation; read it with
+  `results/annotations-2026-10.json`). `retrieval.v2` stays the provisional default and
+  `retrieval.v2-nf` experimental. The pools hold 4,024 case–question-family pairs (a case
+  judged for one question family; 3,494 distinct investigations) in 22 families and 449
+  delivered bundles, built through the production retrievers and frozen in
   `frozen-pools.json`. Stage 1 (1,397 pairs) and the answerability of every delivered
   bundle were judged in full. In stage 2 both judges graded the other 2,627 pairs; the
   $12 allocation's cap then stopped the escalations after one, leaving 455
-  disagreements unknown (443 benchmark pairs, 11.4% of the benchmark pools, none in a
-  bounded cohort). A later run on the same frozen pools pays only those escalations
-  (about $9.70), because every judge grade is cached. On the 25 benchmark questions
-  (14 bootstrap groups), `retrieval.v2` against `retrieval.v1`:
+  disagreements unknown: 443 of the 3,893 benchmark pairs (3,368 investigations), none
+  in a bounded cohort. A later run on the same frozen pools pays only those escalations
+  (about $9.70), because every judge grade is cached.
+
+  On the 25 benchmark questions, `retrieval.v2` improves first-six relevance over
+  `retrieval.v1`; improved supported P@6 is unproven, and the pilot-decision regression
+  below stands:
   - strict P@6 39.6% against 35.1–35.8%: better (+3.8 to +4.4 points across the
     unknowns; one-sided 95% lower bound +1.4);
   - nDCG@6 49.6–50.1% against 41.0–41.8%: better (+7.9 to +9.1 points; lower bound +3.6);
-  - supported P@6 33.6% against 31.1%: +2.4 points, inconclusive (the one-sided lower
-    bound is exactly zero; the two-sided interval is [−0.5, +5.1]);
+  - supported P@6 33.6% against 31.1%: +2.4 points, unproven (the one-sided lower bound
+    is exactly zero; the two-sided interval is [−0.5, +5.1]);
   - Recall@20 on the five questions whose bounded cohorts hold 1–20 relevant cases
     66.4% against 68.1%: −1.8 points, inconclusive (of the six cohorts, one holds 23
     relevant cases and one none).
 
-  `retrieval.v2-nf` and `retrieval.v2` do not differ. Against `retrieval.v1`,
-  `retrieval.v2-nf` is better on all three precision measures, supported P@6 only just
-  (+2.7 points; lower bound +0.3). Of the fully relevant cases each version delivered
-  (158, 178 and 179), 88.6% (`retrieval.v1`), 84.8% (`retrieval.v2`) and 84.9%
-  (`retrieval.v2-nf`) are answerable from their delivered passages. Judge agreement is
-  κ 0.70 [0.61, 0.78] (85.2%) on relevance and κ 0.76 (85.3%) on answerability. The tags
-  with κ below 0.7 are negation, causal uncertainty, maintenance chronology, mechanical
-  and aircraft filters.
+  `retrieval.v2-nf` has no demonstrated incremental advantage over `retrieval.v2`: every
+  comparison between them is inconclusive, which does not make them equivalent. Against
+  `retrieval.v1`, `retrieval.v2-nf` is better on all three precision measures, supported
+  P@6 only just (+2.7 points; lower bound +0.3). The intervals condition on the frozen
+  grouping, 14 groups of questions joined by the fully relevant cases they are known to
+  share; unresolved labels could join more. Treating every unresolved label as a possible
+  join leaves 5 groups, under which the P@6 and nDCG@6 advantages hold. That is a
+  sensitivity check, not a replacement for the frozen analysis.
+
+  Of the fully relevant cases each version delivered (158, 178 and 179), 88.6%
+  (`retrieval.v1`), 84.8% (`retrieval.v2`) and 84.9% (`retrieval.v2-nf`) are answerable
+  from their delivered passages. Judge agreement is κ 0.70 [0.61, 0.78] (85.2%) on
+  relevance and κ 0.76 (85.3%) on answerability. The tags with κ below 0.7 are negation,
+  causal uncertainty, maintenance chronology, mechanical and aircraft filters. The
+  unknown-label bounds do not cover erroneous known labels, and agreement and calibration
+  support the labels without proving them. The annotations record one agreed-label error:
+  WPR23FA044, graded 2 by both judges although both rationales conclude partial
+  relevance. It is in no delivered bundle and changes no reported value.
 
   The pilot-decision regression holds on narrative labels: nDCG@6 is 72.1% under
   `retrieval.v1` and 36.6% under both v2 versions (P@6 66.7% against 33.3%), with the
   same runs in every sample. The three cases the v2 versions displace are relevant and
   coded; of the three they admit, one is relevant, one partly relevant and one not. The
-  coded values reproduce task 10e's. No ordinary retrieval run needed the mapping. Of the
-  118 bundles the forced mapping diagnostic delivered, 15 are of relevant cases; 13 of
-  the 14 with a known answerability are answerable, and every answerable bundle rests on
-  a mapped passage, never only on the attached probable cause.
+  coded values reproduce task 10e's. The forced mapping result is encouraging but small.
+  Of the 118 bundles the mapping diagnostic delivered, 15 are of relevant cases: 13 are
+  answerable, one is partly answerable and one is unknown, and every answerable bundle
+  rests on a mapped passage, never only on the attached probable cause. It shows neither
+  that the mapping is reliable in general nor how often production maps; no ordinary
+  retrieval run needed it.
 
   The audit packet (`results/audit-2026-10.json`) holds the stratified AI and owner
   samples and two targeted selections: 107 pairs of the hour-window families (18
@@ -847,6 +869,15 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
   two 0, the ambiguity behind the calibration holdout's one miss; supported P@6 counts
   neither grade. The pooled run cost $11.57; with the calibration, the month's total is
   $11.94 of the $12 allocation.
+- **Next run.** The 455 escalations resume with the same pools, prompts, model
+  configuration, cache and priority order under a fresh bounded allocation, re-planned
+  from the measured adjudication cost and at concurrency 3 or lower until the ledger's
+  connection pressure is fixed; unresolved outcomes are kept, and a completion report is
+  published beside October's snapshot. A revised answerability rubric for
+  examination-only bundles is versioned separately (both required sides supported 2; one
+  supported and the other absent 1; an explicit contradiction or neither supported 0;
+  failed or incomplete judging unknown), with new controls, recalibration and rejudging
+  under a new identity, never mixed into the frozen run.
 
 ```sh
 pnpm eval:retrieval:narrative build --generation 1 --check        # the question set (DATABASE_URL, read-only)
