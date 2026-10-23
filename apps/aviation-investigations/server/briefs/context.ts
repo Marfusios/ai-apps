@@ -10,14 +10,15 @@
  * note is about has a context; a withheld step returns the NTSB passages with no
  * reading.
  */
-import type {
-  CaseContextResponse,
-  CaseReading,
-  CriterionDecision,
-  GlyphKind,
-  MaintenanceRelation,
-  Symptom,
-  TimingChip,
+import {
+  FAILURE_TYPE_LABELS,
+  type CaseContextResponse,
+  type CaseReading,
+  type CriterionDecision,
+  type GlyphKind,
+  type MaintenanceRelation,
+  type Symptom,
+  type TimingChip,
 } from '../../shared/contracts/briefs.js';
 import { timingValueText } from './render.js';
 import type { StepRow, StoredDimensions } from './store.js';
@@ -35,12 +36,12 @@ const MAINTENANCE_LINE: Readonly<Record<Exclude<MaintenanceRelation, 'unknown'>,
   no_evidence: 'No relevant maintenance in the supplied passages',
 };
 
-const SYMPTOM_LINE: Readonly<Record<Exclude<Symptom, 'other'>, string>> = {
-  total_power_loss: 'Total loss of engine power',
-  partial_power_loss: 'Partial loss of engine power',
-  rough_running: 'Engine running rough',
-  failure_to_climb: 'Unable to climb',
-};
+/**
+ * The SYMPTOM line says the symptom in the same words as the failure-type chip and
+ * reading (the contract's one table), so a label edited there changes both. `other` has
+ * no line; the type fails to compile if a symptom is added without a label.
+ */
+const SYMPTOM_LINE: Readonly<Record<Exclude<Symptom, 'other'>, string>> = FAILURE_TYPE_LABELS;
 
 /**
  * Definite wording only for a decision the facts settle (an approximate value never

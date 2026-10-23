@@ -80,7 +80,8 @@ export type FailureType = (typeof FAILURE_TYPES)[number];
 /**
  * The reader's words for each failure type: the one table that the server's templates
  * (interpretation chips and clarification readings in server/briefs/clarify.ts, step
- * origins in server/routes/briefs.ts) and the web client's chip editor use.
+ * origins in server/routes/briefs.ts, the case drawer's SYMPTOM line in
+ * server/briefs/context.ts) and the web client's chip editor use.
  */
 export const FAILURE_TYPE_LABELS: Readonly<Record<FailureType, string>> = {
   total_power_loss: 'Total loss of engine power',

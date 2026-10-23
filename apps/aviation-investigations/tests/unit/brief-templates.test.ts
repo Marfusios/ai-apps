@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChronologyAmount, ComposeCase, ComposeOutput } from '../../shared/contracts/briefs.js';
+import { FAILURE_TYPE_LABELS, SYMPTOMS, type ChronologyAmount, type ComposeCase, type ComposeOutput } from '../../shared/contracts/briefs.js';
 import { ScopeOutputSchema, type ScopeOutput } from '../../server/ai/provider.js';
 import {
   clarificationReadings,
@@ -454,5 +454,13 @@ describe('the reader’s criteria (server-owned, decided in code, every decision
       criteria: [{ criterion: 'failure_type', decision: 'matches', passageIds: ['p1', 'p2', 'p3'] }],
     });
     expect(lines).toEqual([{ label: 'CRITERIA', text: 'The failure you asked about', passageIds: ['p1', 'p2', 'p3'] }]);
+  });
+
+  it('the SYMPTOM line uses the contract’s failure-type words; `other` has none', () => {
+    const reading = { glyph: null, why: 'w', timing: [], quotes: [], evidence: { scope: 'event' as const, multiAircraft: false }, criteria: [] };
+    for (const value of SYMPTOMS) {
+      const lines = readingLines(reading, { ntsbNo: 'DFW08TA066', evidencePassageIds: [], symptom: { value, passageIds: ['ps'] } });
+      expect(lines, value).toEqual(value === 'other' ? [] : [{ label: 'SYMPTOM', text: FAILURE_TYPE_LABELS[value], passageIds: ['ps'] }]);
+    }
   });
 });
