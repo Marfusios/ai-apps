@@ -547,6 +547,14 @@ an expired brief (exit 1) unless you pass `--include-expired`, and after the pas
 nothing. A summary withheld because the answer call failed (`compose_failed`) has no
 composition; the command prints the failure and the stop reason instead.
 
+The same command reads an answer that was shown with claims removed (Task 16d's
+claim-level display, `meta.display`; its diagnostics have the reason `partial_display`):
+it prints the display projection (rules, mode, what was removed and why, by claim key)
+beside the raw verdicts. Claim-level display stays off in production until gate G6 clears
+it: with `AI_PARTIAL_DISPLAY` unset the projection runs in `whole` mode, and any claim
+the check did not confirm withholds the summary as before (code `display_whole_brief`).
+Do not set `AI_PARTIAL_DISPLAY` on a shared or public environment without that decision.
+
 ## Costs of the opt-in commands
 
 Nothing in the test suite or in a default command calls a paid provider. These do,
@@ -558,8 +566,8 @@ and each needs an explicit flag or key:
 | `pnpm eval:retrieval --confirm-cost` (README, "Evidence retrieval") | embeddings of the evaluation queries (69 questions) | about $0.00002 |
 | `pnpm eval:retrieval --track coded --confirm-cost` (README, "Coded-reference track") | embeddings of the 43 coded-reference questions | about $0.00002 |
 | `pnpm eval:retrieval:experiments ... --confirm-cost` (README, "Retrieval experiments") | query embeddings, and three scope-stage samples per question (each attempt reserved at the stage's worst case) | about $0.03 for the dev questions; refused above the registered phase limit ($0.50) |
-| `pnpm eval:checker retrieve --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9) | about $0.000005 |
-| `pnpm eval:checker run --config <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input (37 to 42 calls) | about $0.04 (Haiku), $0.09 (Haiku with thinking) or $0.76 (Sonnet) a development pass; `inventory` (free) prints it first; stops at $3 logged in total |
+| `pnpm eval:checker retrieve [--questions 16d] --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9; 17 with `--questions 16d`) | about $0.000005 |
+| `pnpm eval:checker run --candidate <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input of a split (84 development or 123 held-out calls, Task 16d) | $0.20 (`check.v7`) and $0.22 (`check.v8`) a development pass, $0.35 the held-out pilot; `inventory` (free) prints the expected and worst-case cost first; stops before a call that would take the logged 16d total above $1.50 |
 | AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
 | `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |

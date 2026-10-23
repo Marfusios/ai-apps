@@ -70,7 +70,9 @@ export const THINKING_ALLOWANCE = 1_500;
  * calls of 1 to 44 claims): at most 5,545 thinking tokens (held out; 4,915 in development),
  * at most about 146 a claim on checks of 30 claims or more and 222 on a 17-claim batch; at
  * the 60-claim bound (`MAX_CHECK_CLAIMS`) that is at most 13,320 → 15,000. Task 16d
- * re-measures it with the production caps.
+ * re-measured it with the production caps (168 development calls, `check.v7` and `check.v8`):
+ * at most 8,178 thinking tokens, on a 60-claim check (6,730 on the 123 held-out calls of at
+ * most 44 claims).
  */
 export const CHECK_THINKING_ALLOWANCE = 15_000;
 

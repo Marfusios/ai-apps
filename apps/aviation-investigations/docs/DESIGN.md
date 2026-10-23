@@ -125,35 +125,56 @@ calendar days OR 10 flight hours**, plus an optional first-flight constraint.
 Qualitative intervals remain a separate “timing not quantified” group. Never
 silently substitute inspection date or hours since inspection for maintenance.
 
-**Chronology** (compose v6, Task 16c, gate G6). A case's chronology names its relevant
-maintenance once and lists each stated time relation that ends at the event flight as
-its own fact, stored as parts: the anchor (the relevant maintenance, or another event in
-the passage's own words, so "the accident flight was conducted 2 days later" after the
-second test flight keeps that flight as its antecedent), the relation and its value and
-bound (`exact`, `about`, `at_most`, `at_least`), and the passages that state it. The
-attribution (one aircraft, or the whole event) is never written by the model: the server
-derives it from the cited passages' verified scope. A fact no passage states is left out,
-and leaving one out never makes a case match. The reader's criteria are decided in code by
-the versioned timing rules **`chronology-rules-v1`** (server/briefs/criteria.ts; the
-check prompt states the same rules):
+**Chronology** (compose v6 and later, Tasks 16c and 16d, gate G6). A case's chronology
+names its relevant maintenance once and lists each stated time relation that ends at the
+event flight as its own fact, stored as parts: the anchor (the relevant maintenance, or
+another event in the passage's own words, so "the accident flight was conducted 2 days
+later" after the second test flight keeps that flight as its antecedent), the relation and
+its value and bound (`exact`, `about`, `at_most`, `at_least`), and the passages that
+state it. Hours a passage does not call flight hours (engine, tachometer or Hobbs time,
+time in service, plain "hours") are their own relation, `operating_hours`, never flight
+hours. The attribution (one aircraft, or the whole event) is never written by the model:
+the server derives it from the cited passages' verified scope. A fact no passage states
+is left out, and leaving one out never makes a case match. The reader's criteria are
+decided in code by the versioned timing rules **`chronology-rules-v2`**
+(server/briefs/criteria.ts; the check prompt states the same rules). Each fact is read as
+a constraint on one quantity (calendar days, flight hours, operating hours, completed
+flights):
 
-- Only a fact from the relevant maintenance to the event flight decides anything; in an
-  event with more than one aircraft, only a fact cited from one aircraft's passages.
-- Calendar days and flight hours are compared on their own basis, bound-aware: an exact
-  value decides, `at most` can only match, `at least` can only fail, `about` decides
-  nothing (no tolerance is assumed), and neither does wording without a number. Days
-  counted from stated dates are exact.
-- "The same day" and "the day before" are one calendar date (0 or 1): within any
-  calendar-day window, never a number of hours. Maintenance completed immediately before
-  the event flight is within any calendar-day window and establishes the first flight;
-  it is never a zero-day or zero-hour interval.
-- Which flight it was (the first flight, or zero completed flights in between) decides
-  only the first-flight criterion, and calendar days or flight hours never decide which
-  flight it was. The first flight alone never establishes a calendar-day window.
+- **Anchor and aircraft.** Only a fact from the relevant maintenance to the event flight
+  decides anything; a bound worked out from a time measured from something else decides
+  nothing. In an event with more than one aircraft, only a fact cited from one aircraft's
+  passages counts, facts about different aircraft are never compared or combined, and
+  facts naming more than one aircraft decide nothing.
+- **Conflicts first.** Before any decision, all the facts on one quantity (one anchor,
+  one aircraft, one unit) must hold together: their ranges must overlap, or the quantity
+  decides nothing whatever the window ("exact 20 days" and "at least 40 days" conflict
+  under a 50-day window as under a 30-day one). Units are never mixed.
+- **Approximation.** "About N" decides nothing; for the conflict test it counts as exactly
+  N, with no tolerance, so it can only turn a decision into `unknown`.
+- **Numbers.** With the facts consistent, the non-approximate ones narrow a quantity to one
+  range: within the limit when the whole range is, outside when all of it is beyond, else
+  undecided. Days counted from dates the passages state are exact; a date only in the
+  case header is never combined with a passage date. Wording without a number decides
+  nothing, and zero calendar days, flight hours or operating hours are refused at
+  validation (the same day is `same_day`, just before the flight `immediately_before`).
+- **Calendar dates.** "The same day" and "the day before" are one calendar date (0 or 1):
+  within any calendar-day window, never a number of hours. Maintenance completed
+  immediately before the event flight is within any calendar-day window and establishes
+  the first flight; it is never a zero-day or zero-hour interval.
+- **Operating hours** decide no flight-hour window.
+- **Which flight** (the first flight, or zero completed flights in between) decides only
+  the first-flight criterion, and calendar days or flight hours never decide which flight
+  it was. The first flight alone never establishes a calendar-day or flight-hour window.
 - A window matches when either unit is within; it fails only when every unit it names is
-  outside; conflicting facts decide nothing. Anything else is `unknown`, with a
-  content-free reason (`unstated`, `other_anchor`, `ambiguous_attribution`,
-  `approximate`, `insufficient_bound`, `not_settling`, `conflict`).
+  outside; a conflict on a quantity it reads decides nothing. Anything else is `unknown`,
+  with a content-free reason (`unstated`, `other_anchor`, `ambiguous_attribution`,
+  `approximate`, `insufficient_bound`, `not_settling`, `operating_hours`, `conflict`).
+
+Version 1 (Task 16c) compared facts only after reducing each to within, outside or
+unknown, so an approximate or bounded fact that conflicted with the deciding one went
+unnoticed (16c review I3); version 2 also adds the one-aircraft rule, operating hours and
+the zero-interval refusal.
 
 A case whose passages do not settle a criterion is shown labelled unconfirmed, never as a
 match; the copy says this analysis could not establish the timing from the supplied
@@ -161,8 +182,50 @@ passages, never that the investigation has none. Every decision, `unknown` inclu
 becomes a server-template claim ("Under the timing rules, the supplied passages of this
 case do not settle whether …") that the evidence checker judges against every supplied
 passage of the case; a contradiction of a "do not settle" claim is recorded as
-`chronology_missed` (a likely extraction miss) and withholds the summary like any other
-contradiction. There is no repair call.
+`chronology_missed` (a likely extraction miss). A decision is shown as decided only while
+its own claim and the facts it rests on are confirmed; the display never recomputes it,
+so a removal can only downgrade it to unconfirmed (claim-level display, below). There is
+no repair call.
+
+**Claim-level display** (Task 16d, versioned dependency rules **`display-deps-v1`**,
+server/briefs/display.ts). After the evidence check (§5), one pure function decides what may be
+shown, from dependencies the server derives from the composition's structure and never from the
+model. A claim is shown only with exactly one valid `supported` verdict, and only while
+everything it depends on is shown; removal is of whole sentences and whole fields, never
+spliced or reworded.
+
+- **Reading.** A presented case's AI reading needs a confirmed `why` line, at least one
+  confirmed quote and no contradicted criterion claim (a contradicted decision has no
+  direction: the case may be outside the reader's criteria). Every other statement of the case
+  depends on it.
+- **Basis.** A contradicted essential claim of a case (its `why` line, classification,
+  maintenance relation, a timing fact, a criterion decision, a quote attribution, or a summary
+  sentence citing it) suppresses the case's summary sentences, its group placement and every
+  comparison citing it, whatever the thresholds below. Symptoms and gap notes are not
+  essential.
+- **Group.** A case keeps its group only with its reading, its basis and (mechanical grouping)
+  its confirmed classification; otherwise it is shown unclassified, never in another group.
+- **Criteria.** A decision is shown as decided only when its own claim is confirmed and the
+  facts it reads are shown (every timing fact for the timing window and the first flight; the
+  symptom for a failure type); otherwise it is shown unconfirmed and marked not verified.
+  Decisions are never recomputed, so a removal only ever downgrades one.
+- **Summary sentences.** A sentence depends on the reading and basis of every case it cites,
+  and on every earlier sentence when it refers outside itself (a conservative lexicon:
+  "this", "these", "such", "also", "however", a sentence opening with "it", "they", "then" and
+  similar). A case's own sentences stand or fall together. A comparison citing two or more
+  cases also depends on every statement and group placement of those cases, on their own
+  sentences and on other comparisons sharing a case; removing a comparison never removes a
+  case's own sentences. Gap notes depend on nothing else.
+- **Whole output.** A failed check call, a check input over its limits, or a structurally
+  unusable verdict set withholds everything. After the cascade, more than a third of the
+  summary's sentences removed, or two or more contradicted claims, withholds the whole output
+  (pre-registered experimental usability defaults, not safety guarantees). Minimum useful
+  content is one shown summary sentence and one presented case with its reading; a marker-only
+  summary is never shown.
+- **Copy.** A removed run of sentences leaves a count marker; a removed field or decision is
+  marked as not verified ("the check could not confirm this against the cited passages"),
+  never as evidence the NTSB record lacks. The result is "partially checked", with counts by
+  kind, never a blanket "passed".
 
 The [data assessment](DATA_REVIEW.md) gives four real seed cases. DFW08TA066
 supports a maintenance-related causal fault; DEN08LA103 an undetermined cause
@@ -367,12 +430,33 @@ The online pipeline is fixed:
    the cases they are about, and a fixed policy, not the raw user question/history or
    planner instructions. It returns exactly one verdict per claim id (`supported`,
    `contradicted` or `not_established`) with the passages it rests on and, for a
-   contradiction, the decisive words, which code finds in the passage. Code decides the
-   outcome (server/briefs/verdicts.ts): a missing, duplicate or unknown id, a verdict
-   naming passages outside the claim's cases (or, for `supported`, outside its own
-   citations), an unverifiable quote, a truncated or malformed response, and any verdict
-   but `supported` withhold the summary; an absence claim ("none of the supplied passages
-   mentions maintenance"), which cites every passage of its case, needs `supported` too.
+   contradiction, the decisive words, which code finds in the passage. The check input
+   also carries a server-built header per case (aircraft, place and date from the coded
+   record, since `check.v7`): a claim may name a case by it, and it supports nothing else. Code
+   decides the outcome (server/briefs/verdicts.ts, server/briefs/display.ts): a missing,
+   duplicate or unknown id, a verdict naming passages outside the claim's cases (or, for
+   `supported`, outside its own citations), an unverifiable quote, and a failed,
+   truncated or malformed response withhold everything generated. A claim is confirmed
+   only by exactly one valid `supported` verdict; an absence claim ("none of the supplied
+   passages mentions maintenance"), which cites every passage of its case, needs
+   `supported` too. What is shown is decided by one pure function, the **display
+   projection** (`display-deps-v1`, Task 16d; the rules in §3), from dependencies the server derives from
+   the composition's structure, never from the model: a case's reading needs its
+   confirmed why line and at least one confirmed quote and no contradicted criterion; a
+   contradicted essential claim of a case (why, classification, maintenance, timing,
+   criterion, quote attribution, or a summary sentence citing it) suppresses its summary
+   sentences, its group placement and every comparison citing it; a decision is shown as
+   decided only while its claim and the facts it rests on are confirmed (never
+   recomputed, so it can only be downgraded to unconfirmed); a case's own sentences stand
+   or fall together, a comparison depends on everything about the cases it cites, and a
+   sentence that refers outside itself depends on the sentences before it. Whole
+   sentences only: nothing is spliced or reworded. More than a third of the summary's
+   sentences removed, two or more contradictions, or no shown sentence and case reading
+   withhold the whole output (pre-registered usability defaults, not safety guarantees).
+   Every response surface (the step, the stored dimensions, the case context, refinement
+   inputs) is rendered from the projection; diagnostics keep the raw verdicts. Until gate
+   G6 clears partial display, production runs the projection in `whole` mode
+   (`AI_PARTIAL_DISPLAY` unset): any removal withholds the summary, as in Task 16c.
    Validate referenced case identifiers
    in free text too; an unallowlisted identifier rejects the whole generated answer
    and falls back to retrieved case cards. Render labels/links from server-owned fields. The checker
@@ -591,9 +675,15 @@ does not prove an individual request was free. Provider organization/admin billi
 credentials, if needed, belong to operator tooling, never the public app/worker.
 User credit refunds are separate from actual provider-spend accounting.
 
-Give each lease an ownership/fencing token. Enforce a total 90-second application
-pipeline deadline (60 seconds until the calibrated checker, Task 16c, needed up to 45
-seconds of it), per-stage timeouts within it, and a longer lease TTL (120 seconds). Settlements/releases require the current ownership token. A retry
+Give each lease an ownership/fencing token. Enforce a total application pipeline
+deadline of 100 seconds (`PIPELINE_DEADLINE_MS`: the sum of the stage timeouts, scope 10,
+retrieval 8, answer 35 and check 45 seconds, plus 2 seconds of margin, so the check always
+gets its full timeout after slow earlier stages; Task 16c's 90 seconds were less than that
+sum), per-stage timeouts within it (each cut to what is left), and a longer lease TTL
+(120 seconds; a running step is stale after 150). A call that runs out of time settles
+uncertain and is charged its whole reservation, because the provider may still bill it.
+The check timeout is the one the calibration ran with (Task 16d gate condition 4).
+Settlements/releases require the current ownership token. A retry
 finding running/expired work returns its state/result, never silently starts a
 second pipeline. Expiry can free a local execution slot but not reserved money.
 Aborting a connection cannot guarantee remote inference stopped; the conservative
@@ -673,8 +763,8 @@ free) on 2026-10-22 against real shared-dev passages; `claude-haiku-5-5` and
 tokens of the same NTSB text (median 1.59, 90th percentile 1.68, maximum 1.89 over
 100 passages; 1.62 over a 12-passage bundle), and a structured-output schema costs
 about 2.5× its JSON size. Each stage's fixed request (system prompt and schema) is
-3,204 tokens for scope, 5,007 for the answer and 3,421 for the check (the `compose.v6`
-and `check.v5` prompts, measured by the preflight on 2026-10-23). A typical request,
+3,204 tokens for scope, 5,411 for the answer and 4,649 for the check (the `compose.v7`
+and `check.v8` prompts, measured by the preflight on 2026-10-23). A typical request,
 estimated from those sizes and, for the check, from the calibration's settled usage
 (about 30 claims; Haiku thinks adaptively):
 
@@ -682,7 +772,7 @@ estimated from those sizes and, for the check, from the calibration's settled us
 | --- | --- | --- |
 | Scope | 3,250 / 150 | $0.0004 |
 | Answer | 13,000 / 2,600, including about 800 thinking tokens | $0.104 on Opus 5.5 |
-| Check | 14,000 / 4,000, including about 2,500 thinking tokens | $0.0034 |
+| Check | 10,400 (4,500 of it the cached prefix) / 3,900, including about 3,100 thinking tokens | $0.0026 |
 | Embedding | — | ~$0 |
 
 Total per request:
@@ -703,8 +793,8 @@ synthetic worst cases of `pnpm worker ai-preflight`):
 | Stage | Input | Output | Largest measured request |
 | --- | --- | --- | --- |
 | Scope | 6,500 | 600 | fixed 3,204; the longest refinement 5,055 (English) and 5,074 (dense text at the query-embedding cap); output at its schema bounds 445 |
-| Answer | 28,000 | 11,000, including thinking | fixed 5,007 (`compose.v6`); a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,547 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,600, and the measured stress cases fit without re-packing; output at its schema bounds (six cases, each with four chronology facts naming their anchors) 8,000 plus 1,500 for thinking |
-| Check | 40,000 | 21,500, including thinking | fixed 3,421 (`check.v5`); a full bundle's complete evidence with 91 claims 30,987 synthetic; a verdict for each of 100 claims, each naming four passages, and eight 200-character quotes 4,320, plus the calibrated checker's 15,000-token thinking allowance (the development split measured at most 4,915 thinking tokens, about 140 a claim on the larger checks) |
+| Answer | 28,000 | 11,000, including thinking | fixed 5,411 (`compose.v7`); a full bundle (12 passages, about 9,400 `cl100k` evidence tokens) 22,951 synthetic; the 10,000-token evidence budget at 1.75× bounds it near 25,600, and the measured stress cases fit without re-packing; output at its schema bounds (six cases, each with four chronology facts naming their anchors) 8,000 plus 1,500 for thinking |
+| Check | 40,000 | 24,500, including thinking | fixed 4,649 (`check.v8`); a full bundle's complete evidence with 60 claims (`MAX_CHECK_CLAIMS`) 26,934; the visible output at its schema bounds (a verdict for each of 60 claims, each naming 12 passages, and eight 1,000-character quotes) 6,461, plus a 15,000-token thinking allowance (the most measured: 8,178 thinking tokens on a 60-claim check in the Task 16d development rounds, against 4,915 and 5,545 on 16c's development and held-out checks) |
 | Embedding | 1,000 | — | — |
 
 The models read passage ids as short aliases (`P1`..`P12`): a 64-character id costs
@@ -804,8 +894,9 @@ from measured request sizes; the paid runs' settled usage replaces them.
 **Capacity trade-off** (the owner's decision after the paid run): the Opus answer
 model's $0.36 reservation is mostly its output cap (11,000 tokens, including room for
 thinking), so it admits about 21 briefs and 3 to 4 anonymous searches a day. The
-calibrated checker (Haiku with adaptive thinking, Task 16c) adds about $0.002 to a typical
-brief, and its 15,000-token thinking allowance about $0.0075 to the worst case. Sonnet roughly
+calibrated checker (Haiku with adaptive thinking, `check.v8` since Task 16d) adds about
+$0.003 to a typical brief, and its 15,000-token thinking allowance about $0.0075 to the worst
+case. Sonnet roughly
 doubles both at half the cost per brief; a lower answer output cap or a larger anonymous
 share would also raise them, at the cost of truncated answers or of signed-in capacity.
 The anonymous share and daily caps stay as they are. Opus 5.5 stays the default answer
@@ -1000,13 +1091,20 @@ regression withheld in every trial. Labels are constructed or model-reviewed, ne
 expert ground truth; tuning used the development split only, at most two prompt
 revisions.
 
-| Run (development; 21 supported-brief trials, 92 errors, 8 critical) | False withholding | Detection | Critical | Cost / brief | p50 / p95 latency |
-| --- | --- | --- | --- | --- | --- |
-| Haiku 5.5, no thinking, `check.v4` / v5 / v6 | 20, 18, 21 of 21 | 69, 68, 74 of 92 | 2, 3, 3 | $0.0009 | 3.4 / 4.4 s |
-| Haiku 5.5, adaptive thinking, `check.v4` | 9 of 21 | 87 of 92 | 5 | $0.0020 | 14.5 / 22.2 s |
-| **Haiku 5.5, adaptive thinking, `check.v5`** (frozen) | 7 of 21 (33%) | 92 of 92 | 8 | $0.0018 | 13.3 / 20.1 s |
-| Haiku 5.5, adaptive thinking, `check.v6` | 6 of 21 | 87 of 92 | 6 | $0.0018 | 13.4 / 21.3 s |
-| Sonnet 5.5, no thinking, `check.v4` / v5 | 18, 18 of 21 | 86, 84 of 92 | 4, 3 | $0.0172 | 5.0 / 9.0 s |
+| Run (development; 21 supported-brief trials, 92 errors, 8 critical) | False withholding | Detection as published | Semantic detection (16d correction) | Critical | Cost / brief | p50 / p95 latency |
+| --- | --- | --- | --- | --- | --- | --- |
+| Haiku 5.5, no thinking, `check.v4` / v5 / v6 | 20, 18, 21 of 21 | 69, 68, 74 of 92 | 69 of 92; 66 of 90 (2 blocked); 52 of 70 (22 blocked) | 2, 3, 3 | $0.0009 | 3.4 / 4.4 s |
+| Haiku 5.5, adaptive thinking, `check.v4` | 9 of 21 | 87 of 92 | 66 of 71 (21 blocked) | 5 | $0.0020 | 14.5 / 22.2 s |
+| **Haiku 5.5, adaptive thinking, `check.v5`** (frozen) | 7 of 21 (33%) | 92 of 92 | 91 of 91 (1 blocked) | 8 | $0.0018 | 13.3 / 20.1 s |
+| Haiku 5.5, adaptive thinking, `check.v6` | 6 of 21 | 87 of 92 | 87 of 92 | 6 | $0.0018 | 13.4 / 21.3 s |
+| Sonnet 5.5, no thinking, `check.v4` / v5 | 18, 18 of 21 | 86, 84 of 92 | 86, 84 of 92 | 4, 3 | $0.0172 | 5.0 / 9.0 s |
+
+**Correction (Task 16d, 16c review I2).** Task 16c counted an error claim in a failed
+check call (a refusal, a truncated or invalid output) as detected, because a failed call
+withholds the brief. That is blocked output, not detection: the "Semantic detection"
+column counts only error claims the checker actually judged, with the failed calls'
+claims apart ("blocked"). The published column is kept as the record. The ranking and the
+frozen choice do not change; the inflated runs are the ones with many failed calls.
 
 No run met every target, so the fallback order (critical regressions, then the lowest
 family detection, then false withholding) froze Haiku 5.5 with adaptive thinking on
@@ -1020,6 +1118,72 @@ include the first flight. Production runs the frozen configuration and fails clo
 withheld summary returns the case cards. Shipping summaries needs a checker that passes
 these gates on fresh held-out data (the gate's decision).
 
+**Claim-level display calibration** (Task 16d, gate G6; `evals/checker/protocol.v2.ts`,
+committed before any paid 16d call with the complete candidates, the targets and the selection
+code). Every judged trial runs through the production display projection (`display-deps-v1`,
+`claims` mode). Targets: M1 at least 90% of supported claims shown in wholly supported briefs,
+M2 at least 90% of those briefs shown with minimum useful content, M3 at most 5% of error claims
+shown in each family with every critical regression never shown, M4 at most 5% of one-error and
+mixed-error briefs showing an error, M5 no dependency violation; exposure E1 (unsupported among
+shown claims) and E2 (shown briefs carrying one) are reported beside them. Semantic detection
+counts judged claims only. Intervals are clustered by source bundle; a gate is inconclusive while
+its clustered interval straddles the threshold. Both 16c splits are development now (labels v2),
+with the 16d context-loss regressions and three 60-claim inputs for latency.
+
+| Development run (21 supported-brief trials, 194 errors, 11 critical) | M1 | M2 | M3 shown: timing; attribution; contradiction; addition | Critical never shown | M4 | E1; E2 | Semantic detection | p50 / p95 / max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Haiku 5.5, adaptive thinking, `check.v7` (round 1) | 463 of 495 (93.5%) | 20 of 21 | 1 of 55; 8 of 51; 2 of 51; 2 of 37 | 9 of 11 | 1 of 30 | 1 of 1,205; 1 of 50 | 181 of 194 | 14.3 / 27.7 / 35.1 s |
+| Haiku 5.5, adaptive thinking, `check.v8` (round 2) | 407 of 495 (82.2%) | 19 of 21 | 2 of 55; 1 of 51; 0 of 51; 0 of 37 | 10 of 11 | 0 of 30 | 0 of 1,244; 0 of 55 | 190 of 194 | 15.1 / 30.0 / 39.4 s |
+
+The same trials under whole-brief display (16c's rule) show 12 of 21 supported briefs in both
+rounds. In round 1, adaptive thinking at effort `low` did not think at all on 14 of 84 calls,
+and those calls carried 10 of the 13 errors shown; `check.v8` asks for a pass over every claim
+before the verdicts (in round 2 only 4 calls went without thinking, all two-claim
+abstentions), spells out pointing words and cut excerpts, and keeps the header's date out of
+day counts. It also showed one critical regression
+(a "two days after the installation" wrong anchor, likely from its own narrated-flights
+example) and removed more supported claims. Neither run met every target; the pre-registered
+fallback (critical regressions first) froze `haiku-think-v8` (`selection.v2.json`), which
+production runs. The 60-claim checks took 26 to 39 seconds (0 timeouts at 45 s), with at most
+8,178 thinking tokens.
+
+**Held-out pilot** (run once with `haiku-think-v8`; `results/16d-holdout-haiku-think-v8.json`):
+nine new retrieval bundles whose 54 cases are in neither 16c split, each with a brief as
+`compose.v7` would write it, its one-error, mixed-error and reading variants and a claim batch
+(97 batches, 123 calls, 2,903 claims, 171 errors, 58 critical items), labels frozen before any
+16d checker output. With nine source bundles it is inconclusive by design (about 73 independent
+trials a family are needed for a 5% bound), and nothing in it is a pass.
+
+| Held-out pilot (39 supported-brief trials, 171 errors, 58 critical, 9 bundles) | Result | Clustered 95% |
+| --- | --- | --- |
+| M1 supported claims shown | 890 of 1,194 (74.5%) | 45–97% |
+| M2 supported briefs shown (whole-brief rule: 22 of 39) | 32 of 39 (82.1%) | 45–100% |
+| M3 errors shown: timing; attribution; contradiction; addition | 0 of 78; 2 of 36; 0 of 35; 0 of 22 | upper bounds 30%; 43%; 30%; 30% |
+| Critical regressions never shown | 56 of 58 | |
+| M4 error briefs showing an error | 2 of 75 (2.7%) | 0–30% |
+| E1 unsupported among shown claims; E2 shown briefs carrying one | 2 of 1,961; 2 of 72 | 0–30% each |
+| Semantic detection; false flags | 169 of 171; 179 of 3,528 (5.1%) | |
+| p50 / p95 / max | 15.7 / 23.3 / 31.4 s, no timeout | |
+
+The two errors shown are critical context-losing excerpts, each confirmed in one trial: "The
+accident flight was the first flight after completion of this work." and "… the last 100-Hour
+inspection was approximately 29 hours earlier." Every timing, contradiction and
+unsupported-addition error was withheld, the 51 critical timing mutations included. The
+withheld supported briefs are in two bundles (5 of the 6 trials of the previous-day bundle, 2 of
+the 3 of the throttle-linkage bundle; the other seven bundles showed all 30). In four of the
+first five, the checker contradicted a case's "do not settle" classification, reading "the
+limited examination did not reveal any pre-impact abnormalities" as an examination that found no
+fault, where the probable cause says the reasons "could not be determined because thermal damage
+to the engine prevented a complete examination"; the fifth did not think at all. In the throttle
+bundle it would not confirm when a linkage "came loose" relative to the maintenance. Seven of the
+123 calls did not think at all and carried 83 of the 179 false flags.
+
+Every calibration bundle, development and held-out, was retrieved under `retrieval.v1`, before
+task 10e made `retrieval.v2` the default. The check input's form does not depend on the
+retrieval version, but `retrieval.v2` bundles can hold cases the cases-index channel nominated,
+which the calibration has not seen. Production keeps whole-brief display until gate G6 reviews
+these results.
+
 Network-independent tests run in CI. Prepared-dataset ("offline") evaluations can
 call real models: run them only as explicit, budgeted jobs, recording dataset,
 corpus, prompt, model, evaluator, and code versions. Missing/failed required scores
@@ -1028,7 +1192,8 @@ indexing/evaluation allocation and shared paid-call gate; Langfuse cost charts d
 not enforce the app's spending limit. Aim for
 subsecond cached browsing and roughly ten-second AI responses, then measure on
 the target host; these are targets, not observed benchmarks. The calibrated checker alone
-takes 12 to 26 seconds (p50 to p95), so a brief takes longer than that today.
+takes about 15 to 30 seconds (p50 to p95 in the Task 16d runs), so a brief takes longer than
+that today.
 
 ## 13. Delivery plan
 

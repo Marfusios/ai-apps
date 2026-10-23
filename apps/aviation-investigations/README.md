@@ -692,61 +692,84 @@ pnpm eval:retrieval:adoption load --scope-samples <file> --vectors <file from de
 
 ### Checker calibration
 
-`evals/checker/` calibrates the evidence checker (Task 16c, gate G6): which model,
-thinking and prompt judge claims well enough to show a summary. Every check input is
-rendered by the production code from real retrieval bundles, so the checker reads what
-it reads in a brief.
+`evals/checker/` calibrates the evidence checker (Tasks 16c and 16d, gate G6): which model,
+thinking and prompt judge claims well enough to show a summary, and, since Task 16d, what
+the display projection would show with that judgement. Every check input is rendered by
+the production code from real retrieval bundles, so the checker reads what it reads in a
+brief.
 
 ```sh
-pnpm eval:checker retrieve                    # plan only; --confirm-cost embeds 9 questions (about $0.000005) and writes evidence.json
-pnpm eval:checker build                       # evidence.json + items/ → dataset.json (labels hashed); --check compares instead
-pnpm eval:checker inventory --config haiku-think --split dev   # free: provider token counts, expected and worst-case cost
-pnpm eval:checker run --config haiku-think --split dev --confirm-cost   # paid, on the evaluation ledger
-pnpm eval:checker select data/work/checker/*-dev-*.summary.json        # the frozen selection rule → selection.json
+pnpm eval:checker retrieve --questions 16d    # plan only; --confirm-cost embeds the 17 Task 16d questions and writes evidence-16d.json
+pnpm eval:checker headers                     # free: the case header of every calibration case (read-only), into evidence-16d.json
+pnpm eval:checker build                       # evidence + items → dataset.v2.json (labels hashed per split); --check compares instead
+pnpm eval:checker simulate                    # free: the 16c recordings through the display projection → results/16d-simulation.json
+pnpm eval:checker inventory --candidate haiku-think-v8 --split dev   # free: provider token counts, expected and worst-case cost
+pnpm eval:checker run --candidate haiku-think-v8 --split dev --confirm-cost   # paid, on the evaluation ledger
+pnpm eval:checker select data/work/checker/dev-*.summary.json        # the frozen selection rule → selection.v2.json
 ```
 
 All take `--env-files a,b` and `--keys-file <file>` (only `ANTHROPIC_API_KEY` and
-`OPENAI_API_KEY` are read from it, never over a nonempty process value). A run reserves
-each call's worst case on the evaluation ledger (`DATABASE_INGEST_URL`), settles it,
-appends it to `data/work/checker/spend.jsonl` and stops before a call that would take the
-logged total above `CALIBRATION_LIMIT_USD` ($3); trials and a counts-only summary go to
-`data/work/checker/`, and `--resume <trials.jsonl>` continues a run a crash interrupted.
-The held-out split runs once, for the configuration frozen in `selection.json`.
+`OPENAI_API_KEY` are read from it, never over a nonempty process value). A run is bound
+to a manifest (`manifest.ts`: the candidate's complete configuration, the dataset and
+label hashes and the planned slots), reserves each call's worst case on the evaluation
+ledger (`DATABASE_INGEST_URL`), settles it, appends it to
+`data/work/checker/spend-16d.jsonl`, and stops before a call that would take the logged
+total above `BUDGET_V2_USD` ($1.50); `--resume <manifest>` continues only an identical
+run. The candidates run the production adapter with the production caps, call timeout
+and maximum claim count (a call that runs out of time is a failed call, as in
+production). The held-out split runs once, for the candidate frozen in
+`selection.v2.json`, and a unit test holds production to that selection.
 
-- **Evidence** (`evidence.json`): nine real hybrid-retrieval bundles from the served
-  passages index, verified like a brief's (`verifyBundle`); five development and four
-  held-out bundles, split by case (no case in both). `retrieve` runs the configured
-  retrieval version and records it in `source.retrievalVersion`; the committed file
-  predates retrieval versions and was retrieved under `retrieval.v1`.
-- **Items** (`items/`): the first paid brief's 35 claims, verbatim, as regressions
-  (`paid-run.ts`; the six known critical errors marked); controls by family and mutation
-  (`dev.ts`, `holdout.ts`: negations, the wrong aircraft in multi-aircraft events, hours
-  and days, before and after, wrong anchors, "the day before" as 24 hours, the first
-  flight as a window, causal overstatement, unsupported additions, compound claims,
-  correct statements with the wrong citation, misleading and context-losing excerpts, the
-  wrong speaker or actor); and complete briefs (`briefs.ts`), each wholly supported, with
-  reading variants and with exactly one known error (an edit the builder proves changes
-  exactly one rendered claim). 51 check inputs, 487 distinct claims over 46 cases.
-- **Labels** are `constructed` (by how a claim was made, checked against the complete
-  supplied passages) or `model-reviewed`; none is expert ground truth, and three
-  unresolved ones are `unknown` and count nowhere. `labels.sha256` froze them before any
-  checker output was compared; `protocol.ts` froze the configurations, trials, targets and
-  selection rule with them.
-- **Figures** (`metrics.ts`, judged by the production `judgeCheck`): whole-brief false
-  withholding on wholly supported briefs (target at most 10%), detection per family
-  (timing, attribution, contradiction, unsupported addition; at least 95%), critical
-  regressions withheld in every trial, false flags by claim kind, `chronology_missed`,
-  cost and latency, with Wilson 95% intervals. Run summaries are in
+- **Protocol** (`protocol.v2.ts`, committed before any paid 16d call): the complete
+  candidate definitions (model, thinking, effort, prompt and its hash, output schema and
+  its hash, caps, timeout, maximum claims), the trials per batch, the targets and the
+  selection code. `protocol.ts` and `v1.ts` keep 16c's protocol and selection as the
+  record.
+- **Dataset v2** (`dataset.v2.json`; `dataset.json` stays the frozen 16c set): both 16c
+  splits are development now, with the labels corrected in `labels.v2.ts` (each with its
+  reason), the 16d context-loss regressions (`items/v2-dev.ts`) and three maximum-size
+  inputs (60 claims, for latency and caps, kept out of the accuracy figures). The
+  held-out split is new (`items/v2-holdout.ts`, `evidence-16d.json`): nine bundles whose
+  cases are in neither 16c split, each with a brief as compose.v7 would write it, one-error
+  and mixed-error variants, reading variants and a claim batch; every critical timing
+  mutation is in at least two bundles. Labels are `constructed` or `model-reviewed`, never
+  expert ground truth; a claim review cannot settle is `unknown`, and a brief with one is
+  never wholly supported. `retrieve` runs the configured retrieval version
+  (`AVIATION_RETRIEVAL_VERSION`) and records it in `source.retrievalVersion`; both
+  committed evidence files predate retrieval versions and were retrieved under
+  `retrieval.v1`.
+- **Figures** (`metrics.ts`). Verdicts: semantic detection per family (failed calls
+  apart, as blocked output, never as detections), false flags by claim kind, critical
+  regressions, `chronology_missed`. Display, through the production projection
+  (`display-deps-v1`, `claims` mode, and `whole` for comparison): M1 supported claims
+  shown, M2 wholly supported briefs shown with minimum useful content, M3 error claims
+  shown per family, M4 error briefs showing an error, M5 dependency violations, and the
+  exposure figures. Intervals are clustered by source bundle. Latency and output size
+  are reported by claim count and for the maximum-size inputs. Run summaries are in
   `evals/checker/results/`.
 
-**Result** (2026-10-23, $1.98 of the $3 limit): no configuration met every target. Eight
-development runs (Haiku 5.5 without thinking, with adaptive thinking, and Sonnet 5.5
+**Task 16c result** (2026-10-23, $1.98 of its $3 limit): no configuration met every target.
+Eight development runs (Haiku 5.5 without thinking, with adaptive thinking, and Sonnet 5.5
 without thinking; prompts `check.v4` to `check.v6`) went through the fallback order, which
-froze Haiku 5.5 with adaptive thinking on `check.v5` (every critical regression and all 92
-development errors withheld; 7 of 21 supported-brief trials withheld). The held-out split
-did not confirm it: 17 of 21 supported-brief trials withheld (81%), detection 81 of 86
-(attribution 15 of 18). Production runs that configuration; most summaries will be
-withheld until a better checker passes the gate (DESIGN §12).
+froze Haiku 5.5 with adaptive thinking on `check.v5`: every critical regression withheld,
+and 91 of the 91 development errors it judged detected (the published "92 of 92" counted
+one more error claim whose call failed: blocked output, not a detection; 16c review I2); 7
+of 21 supported-brief trials withheld. The held-out split did not confirm it: 17 of 21
+supported-brief trials withheld (81%), detection 81 of 86 (attribution 15 of 18).
+
+**Task 16d result** (2026-10-23, $0.76 of its $1.50 limit; summaries in
+`evals/checker/results/16d-*.json`): the checker measured through the display projection
+(`display-deps-v1`, claim-level display). Neither development candidate (Haiku 5.5 with adaptive
+thinking on `check.v7`, then on `check.v8`) met every target, and the pre-registered fallback
+froze `haiku-think-v8`, which production runs: in development it showed 19 of 21 supported-brief
+trials (12 of 21 under the whole-brief rule), 82.2% of their supported claims, one of 11 critical
+regressions, no error in 30 error briefs and no unsupported claim among 1,244 shown. The held-out
+pilot (nine new bundles, 123 calls, run once) is inconclusive by design and is not a pass: 32 of
+39 supported-brief trials shown (22 under the whole-brief rule), 74.5% of their supported claims,
+2 of 171 errors shown (both critical context-losing excerpts; every timing error withheld), 2 of
+75 error briefs showing an error, 2 unsupported claims among 1,961 shown; p50 15.7 s, p95 23.3 s.
+Production keeps whole-brief display (`AI_PARTIAL_DISPLAY` off) until gate G6 reviews these
+results (DESIGN §12).
 
 ### Web client
 
@@ -1024,7 +1047,7 @@ reset `aviation_test`'s corpus, so do not run them at the same time.
 `server/ai/` holds the provider interface (`provider.ts`) that the scope, compose
 and check stages call, the Anthropic adapter (`anthropic.ts`), a deterministic fake
 for tests (`fake.ts`, allowed only with `NODE_ENV=test`) and versioned prompts
-(`prompts/scope.v2.ts`, `compose.v6.ts`, `check.v5.ts`; earlier versions are in the git
+(`prompts/scope.v2.ts`, `compose.v7.ts`, `check.v8.ts`; `check.v7.ts` stays as the checker calibration's round-1 candidate; earlier versions are in the git
 history, each file's header says what changed). The scope stage
 returns the intent, validated filters, a `keywordText` query for the keyword channel
 and at most one ambiguity as allowlisted tokens. Each stage validates its bounded input, sends the question and
@@ -1262,29 +1285,38 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    sentence except a decimal point (`ambiguous_boundary`), so "1,000 ft.", "St. Louis",
    "a.m." or ".3" withholds the summary (the compose prompt asks for words written out);
    each stated
-   chronology fact (compose v6: the relevant maintenance named once, each fact with its
-   anchor, relation, value and bound, and passages; `chronology_shape` when a fact's parts
-   do not fit its relation) cites its own passages, with one decimal place for flight
-   hours and whole days; every NTSB-number-shaped token in generated text must be
-   allowlisted). Then the reader's criteria in code (`criteria.ts`, the timing rules
-   `chronology-rules-v1`, DESIGN §3: only facts from the relevant maintenance decide,
-   bound-aware; "the day before" and "immediately before" are calendar dates, never
-   hours; the first flight never settles a window; an approximate value or wording
-   without a number decides nothing; a presented case outside the criteria withholds the
-   summary). Every decision is then a server-template claim, including "under the timing
-   rules, the supplied passages of this case do not settle whether…", so a fact the
-   composition left out settles nothing. The check stage (`check.v5`, 45 s; Haiku 5.5
-   with adaptive thinking, the configuration the checker calibration froze, below) gives
-   every claim, by its server-issued id, exactly one verdict (`supported`, `contradicted`
-   or `not_established`) against every verified passage of each case. Code judges the
-   answer (`verdicts.ts`): only a `supported` verdict for every claim, naming passages the
-   claim cites (none for an absence claim, which cites every passage of its case), shows
-   the summary; a missing, duplicate or unknown id, an invalid passage or quote, and any
-   other verdict withhold it (`CHECK_CODES`), and a contradicted "do not settle" claim is
-   recorded as `chronology_missed`. A check input over its cap withholds too (recorded in
-   the step's `meta`, the evidence never cut to fit). A case whose passages do not settle
-   a criterion is shown labelled unconfirmed, on its card and its summary citations: this
-   analysis could not establish it from the supplied passages. There is no repair loop.
+   chronology fact (compose v7: the relevant maintenance named once, each fact with its
+   anchor, relation, value and bound, and passages, hours a passage does not call flight
+   hours as `operating_hours`; `chronology_shape` when a fact's parts do not fit its
+   relation, `zero_interval` for a zero number of days or hours) cites its own passages,
+   with one decimal place for hours and whole days; every NTSB-number-shaped token in
+   generated text must be allowlisted). Then the reader's criteria in code
+   (`criteria.ts`, the timing rules `chronology-rules-v2`, DESIGN §3: only facts from the
+   relevant maintenance decide, one aircraft at a time; facts that cannot hold together
+   decide nothing, checked before any decision; "the day before" and "immediately
+   before" are calendar dates, never hours; operating hours never decide flight hours; the
+   first flight never settles a window; an approximate value or wording without a number
+   decides nothing; a presented case outside the criteria withholds the summary). Every
+   decision is then a server-template claim, including "under the timing rules, the
+   supplied passages of this case do not settle whether…", so a fact the composition
+   left out settles nothing. The check stage (`check.v8`, 45 s, at most 60 claims;
+   Haiku 5.5 with adaptive thinking, the configuration the checker calibration froze,
+   below) reads a server-built header per case (aircraft, place, date) and gives every
+   claim, by its server-issued id, exactly one verdict (`supported`, `contradicted` or
+   `not_established`) against every verified passage of each case. Code judges it
+   (`verdicts.ts`): a claim is confirmed only by a valid `supported` verdict naming
+   passages it cites (none for an absence claim, which cites every passage of its case);
+   a missing, duplicate or unknown id, an invalid passage or quote, or a failed call
+   withholds everything, and a contradicted "do not settle" claim is recorded as
+   `chronology_missed`. What is shown is then decided by the display projection
+   (`display.ts`, `display-deps-v1`, DESIGN §5): with `AI_PARTIAL_DISPLAY` unset (the
+   default until gate G6 clears partial display), any claim the check did not confirm
+   withholds the summary, as before; with it set, only the unconfirmed claims and what
+   depends on them are removed, whole sentences only, and the step says it was partially
+   checked. A check input over its cap withholds too (recorded in the step's `meta`, the
+   evidence never cut to fit). A case whose passages do not settle a criterion is shown
+   labelled unconfirmed, on its card and its summary citations: this analysis could not
+   establish it from the supplied passages. There is no repair loop.
    A withheld summary is diagnosable: the step's `meta` lists each validation reason
    with its path (`summary.2`, `cases.1.why`) and the summary's sentence count, the
    judged check's codes per claim id, the criteria's rules and reasons, and each stage's
