@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EXCERPT_CONTEXT_VERSION, excerptProblems, passageSentences, type ExcerptInput } from '../../server/briefs/excerpts.js';
 import { quoteCorpus, sentenceCorpus, figures } from '../../evals/checker/excerpts.js';
+import { drawBlindSample16e } from '../../evals/checker/excerpt-sample.js';
+import { EXCERPT_SENTENCES_16E } from '../../evals/checker/excerpt-sentences-16e.js';
 
 /** The excerpt `quote` of `passage` (its first occurrence), as the investigators' words in a single-aircraft event unless `over` says otherwise. */
 function x(passage: string, quote: string = passage, over: Partial<ExcerptInput> = {}): ExcerptInput {
@@ -155,5 +157,16 @@ describe('excerpt-context-v1 on its corpora (evals/checker/excerpts.ts)', () => 
     const f = figures(sentenceCorpus());
     expect(f.items).toBe(200);
     expect(f.falseOmissions.rate!).toBeLessThanOrEqual(0.02);
+  });
+});
+
+describe('the blind sample (Task 16e): the labelled file is exactly the fixed draw', () => {
+  it('holds the 200 drawn sentences, in order, each labelled', () => {
+    const draw = drawBlindSample16e();
+    expect(draw).toHaveLength(200);
+    expect(EXCERPT_SENTENCES_16E.map(({ id, ntsbNo, passageId, section, text }) => ({ id, ntsbNo, passageId, section, text }))).toEqual(
+      draw.map(({ id, ntsbNo, passageId, section, text }) => ({ id, ntsbNo, passageId, section, text })),
+    );
+    for (const s of EXCERPT_SENTENCES_16E) if (s.label === 'needs_context') expect(s.reason, s.id).toBeTruthy();
   });
 });
