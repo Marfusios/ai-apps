@@ -639,7 +639,13 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
   expected, unknown and missing counted wrong). A holdout run records its items, labels
   and configuration in `holdout-runs.jsonl` next to the calibration file (commit it after
   the run), whatever `--out-dir` is used; another configuration on any case already held
-  out, or a changed label of an item already run, is refused.
+  out, or a changed label of an item already run, is refused. **Result (2026-10-23):**
+  the configured judges were selected on dev (99 of 99 final labels; `frozen-configuration.json`)
+  and the holdout ran once (`holdout-runs.jsonl`): 102 of 103 final labels (Wilson lower
+  bound 0.947), judge A 96 and judge B 101 of 103, no failed or unjudgeable outcome, every
+  family above its floor, so the frozen criteria pass. The labels are constructed
+  (synthetic controls and coded rows): this measures the judges, not retrieval, and is
+  never an expert's validation. The calibration cost $0.38 in all.
 - **Pools** (`pool.ts`): per family, the union of the first 100 unique cases of
   `p50-kt`, `c200+n-kt` and `c200+nf-kt` (the experiment harness, cached scope outputs),
   every bounded-cohort case, related-code positives, lure hard negatives and a seeded tail
