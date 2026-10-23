@@ -36,6 +36,7 @@ import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
+import { PRODUCTION_CHECK_PROMPT } from '../../server/ai/anthropic.js';
 import { startTracing } from '../../server/observability/tracing.js';
 import type { CheckInput, CheckOutput, CheckVerdict, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
 import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../server/ai/runtime.js';
@@ -285,7 +286,7 @@ type Claim = CheckInput['claims'][number];
 type Judged = CheckVerdict | { verdict: CheckVerdict; passages?: string[]; quote?: { passage: string; text: string } };
 
 /**
- * The checker's answer as check.v7 returns it: one verdict per claim id, from `judge`
+ * The checker's answer as check.v7 and later return it: one verdict per claim id, from `judge`
  * (default `supported`). A supported claim names its first cited passages (an absence
  * claim none), a contradicted one its first cited passage unless `judge` names others.
  */
@@ -695,7 +696,7 @@ describe('POST /api/briefs: the pipeline', () => {
     const row = await stepRow(briefId);
     expect(row).toMatchObject({ status: 'answered', stage: 'done', cost_usd: res!.charged });
     expect(row.meta).toMatchObject({
-      promptVersions: { scope: 'scope.v2', compose: 'compose.v7', check: 'check.v7' },
+      promptVersions: { scope: 'scope.v2', compose: 'compose.v7', check: PRODUCTION_CHECK_PROMPT.version },
       validation: { ruleVersion: 'quote-ws-v2', codes: [] },
       criteriaRules: 'chronology-rules-v2',
       check: { supported: true, claims: check.claims.length, counts: { supported: check.claims.length, contradicted: 0, not_established: 0 }, codes: [], problems: [], chronologyMissed: [] },
