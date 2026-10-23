@@ -1624,7 +1624,8 @@ describe('checklist interpretation: the chips stay on top while a step runs (UI_
     checking.open();
     await h.svc.settled();
     const done = (await read(h, briefId, cookie)).json;
-    expect(done).toMatchObject({ stage: 'done', checklist: { verified: 'passed' }, result: { kind: 'answer' } });
+    // Task 16d: an answer is described as partially checked, never with a blanket "passed".
+    expect(done).toMatchObject({ stage: 'done', checklist: { verified: 'partially_checked' }, result: { kind: 'answer' } });
     if (done.result?.kind !== 'answer') throw new Error(`expected an answer, got ${done.result?.kind}`);
     expect(done.checklist.interpretation).toEqual({ interpretations: done.result.interpretations, filters: done.result.filters });
     expect(done.checklist.interpretation).toEqual(interpretation);
