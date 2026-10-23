@@ -10,7 +10,10 @@ import type { StageModels, StageUsage } from './provider.js';
 export interface TokenRates {
   readonly input: number;
   readonly output: number;
-  /** 5-minute cache write, the only TTL the adapters use. */
+  /**
+   * The cache write at the TTL the provider's adapter uses: Anthropic's 5-minute write;
+   * OpenAI's 30-minute write (its default lifetime), which the Track N evaluation judge uses.
+   */
   readonly cacheWrite: number;
   readonly cacheRead: number;
 }
@@ -49,9 +52,22 @@ export const PRICE_TABLE: Readonly<Record<string, PriceRow>> = {
   },
   'claude-sonnet-5-5': { kind: 'llm', provider: 'anthropic', input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.1 },
   'claude-opus-5-5': { kind: 'llm', provider: 'anthropic', input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 },
-  // Rows for the future OpenAI adapter (not implemented). Cache rates are not
-  // verified, so they are priced at the full input rate as an upper bound.
-  'gpt-5.6-luna': { kind: 'llm', provider: 'openai', input: 0.2, output: 1.2, cacheWrite: 0.2, cacheRead: 0.2 },
+  // OpenAI rows. No production adapter uses them (the OpenAI language-model adapter is
+  // not implemented); the Track N evaluation judge does (evals/retrieval/narrative).
+  // gpt-5.6-luna checked on 2026-10-23 against OpenAI's published standard-tier prices:
+  // input $0.20, cached input $0.02, cache write $0.25 (30-minute lifetime, the default:
+  // 1.25 times the input rate), output $1.20 (reported output tokens include reasoning); above
+  // 272K input tokens $0.40 / $0.04 / $0.50 / $1.80. gpt-5.4-mini's cache rates are not
+  // verified for this dated snapshot, so they stay at the full input rate (an upper bound).
+  'gpt-5.6-luna': {
+    kind: 'llm',
+    provider: 'openai',
+    input: 0.2,
+    output: 1.2,
+    cacheWrite: 0.25,
+    cacheRead: 0.02,
+    longContext: { thresholdTokens: 272_000, input: 0.4, output: 1.8, cacheWrite: 0.5, cacheRead: 0.04 },
+  },
   'gpt-5.4-mini-2026-03-17': {
     kind: 'llm',
     provider: 'openai',

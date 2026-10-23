@@ -1,0 +1,70 @@
+{
+  "kind": "track-n-frozen-configuration",
+  "version": "track-n-frozen-configuration-v1",
+  "selectedAt": "2026-10-23T08:23:50.679Z",
+  "commit": "6a7290f71ae26e672fce3dcf26eb273e80e048a7",
+  "note": "Selected on the dev split only (D3): one candidate, the configured judges, prompts and settings; the frozen pass criteria applied to dev (the per-family item minimum is a holdout rule). The holdout runs once for this configuration; holdout-runs.jsonl records the same configuration hash. Labels are constructed; the scores are model-judged, never expert-adjudicated.",
+  "experimentSha256": "f35c9fed0d8a06c0d9d2faf54d75cf29cee993bd1a0fcb2f52f38b6599b43dba",
+  "experiment": {
+    "track": "track-n",
+    "set": "calibration",
+    "judges": {
+      "version": "track-n-judges-v1",
+      "judgeA": "anthropic:claude-haiku-5-5:{\"maxInputTokens\":32000,\"maxOutputTokens\":8000,\"settings\":{\"effort\":\"low\",\"thinking\":\"adaptive\"}}",
+      "judgeB": "openai:gpt-5.6-luna:{\"maxInputTokens\":32000,\"maxOutputTokens\":8000,\"settings\":{\"reasoning\":\"low\"}}",
+      "adjudicator": "anthropic:claude-sonnet-5-5:{\"maxInputTokens\":40000,\"maxOutputTokens\":3000,\"settings\":{\"effort\":\"low\",\"thinking\":\"off\"}}"
+    },
+    "prompts": {
+      "judge": "track-n-judge.v3",
+      "adjudicate": "track-n-adjudicate.v2",
+      "answerability": "track-n-answerability.v3",
+      "requestsSha256": "705e188c6248bfb57ce1e2aa68d39fa5c872851d8ac32c09b77642fc139c9908"
+    },
+    "schemasSha256": "8f2c3ad326bbb8def6d1155addac0e379f88f07d06fd9783ba3fee51ea045e85",
+    "validator": "track-n-validate.v1+quote-ws-v2",
+    "input": {
+      "version": "judge-input-v3",
+      "vocabularySha256": "a1109e135e336bf4b4048a5fd2e856020cbba9e6993cd7bdbba6da24b168cd8b",
+      "caseTokenBudget": 12000
+    },
+    "data": {
+      "calibrationVersion": "track-n-calibration-v3",
+      "labelsSha256": "f8b8e3f12b35670dab29dabe5dab8424eb2f721542c03e5891cac9ec7d86a425",
+      "criteriaSha256": "639c5c418bb8582a884a4e3c193a351460ec762cfea7af23d6b5909804e4c25c"
+    }
+  },
+  "holdout": {
+    "holdoutSha256": "b0983ec69978658be8ae3a3059584c2aa68e6b6c5371aefffbcdde1e14d5f63b",
+    "configurationSha256": "e453cf933be55649805ff89b8fda0c38f0ade925977cbbe71f391929dec736b1",
+    "items": 103
+  },
+  "selection": {
+    "split": "dev",
+    "runs": [
+      "eval-10c2-calibration-20261023T081637Z",
+      "eval-10c2-calibration-20261023T081726Z"
+    ],
+    "candidates": 1,
+    "criteria": "track-n-calibration-criteria-v1 thresholds on dev (per-family item minimum not applied)",
+    "result": "pass",
+    "items": 99,
+    "finalLabels": {
+      "correct": 99,
+      "accuracy": 1,
+      "wilsonLower": 0.963,
+      "coverage": 1
+    },
+    "judgeA": {
+      "correct": 95,
+      "wilsonLower": 0.901,
+      "failureRate": 0
+    },
+    "judgeB": {
+      "correct": 98,
+      "wilsonLower": 0.945,
+      "failureRate": 0
+    },
+    "escalations": 5,
+    "judgeJudgeKappa": 0.922
+  }
+}

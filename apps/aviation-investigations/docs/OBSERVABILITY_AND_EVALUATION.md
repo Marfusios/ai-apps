@@ -176,6 +176,25 @@ dataset hashes and planned slots, and resumes only an identical run. It is meter
 evaluation ledger, and every paid call is logged. Results and the frozen choice: DESIGN
 §12; commands: README "Checker calibration".
 
+**Retrieval relevance without an expert** (task 10c protocol). Track C scores retrieval
+of coded facts exactly (`coded-reference`); Track N (`evals/retrieval/narrative`) scores
+narrative relevance and bundle answerability with two model judges from different
+providers and an adjudicator (`model-judged`). Neither is presented as expert-adjudicated
+accuracy. Track N's judges read the complete case record, cite quotes checked against the
+stored text, and are calibrated on frozen constructed labels (code-reading items and
+synthetic controls) against frozen pass criteria on a holdout that runs once per
+configuration (a committed lock keyed on the holdout's own items refuses another
+configuration or a relabelled holdout); agreement figures are diagnostics with
+investigation thresholds (kappa
+0.7, agreement 0.8), never validation. Unknown judgments keep their ranks and stay in
+every denominator, with metric-specific bounds; reports refuse judgments made under
+another experiment identity and compare methods only by bounds on the improvement. The
+judged pools are built through the production retrieval versions on identical cached
+inputs, each version's configuration hash recorded, and their identity is committed
+before judging; diagnostics (task 10e's regression question under comparison rules
+frozen before judging, and a labelled mapping diagnostic) are reported apart from the
+benchmark.
+
 ## Production feedback and evaluations
 
 Retain deterministic validation outcomes and sampled operational traces. Start

@@ -1,0 +1,2875 @@
+{
+  "kind": "track-n-pooled-result",
+  "reference": "model-judged",
+  "caveat": "Model-judged labels (claude-haiku-5-5 and gpt-5.6-luna judging, claude-sonnet-5-5 adjudicating), calibrated on constructed labels; never expert-adjudicated. Unknown labels stay in every denominator as bounds. Development questions only: not a release evaluation.",
+  "date": "2026-10-23",
+  "pool": {
+    "version": "e6d3f39d76d83c7c59aa065b003906e689ea903b211ecc75b7eafb2cb9583298",
+    "rule": "track-n-pool-v2",
+    "schedule": "track-n-schedule-v2",
+    "inputsVersion": "da0d6fa4de56bb206fd4dbb1907865f7f870f39a5db33f8fc86c36897bc8a29e",
+    "retrieval": {
+      "retrieval.v1": "e1aa0f589c7b958ead6aa85ae08974a48a62ee03c74b26e01000055effa778e2",
+      "retrieval.v2": "a147b486c5f4fb6496a1743d6ceaf433a9070f8120494d5ca2bf172f64418029",
+      "retrieval.v2-nf": "df83bc51c526cc87ea10e2b734f9079f8a4505eba2fb5c5e420e61b8207237d9"
+    },
+    "counts": {
+      "cases": 4024,
+      "answerabilityPairs": 449
+    }
+  },
+  "allocation": {
+    "name": "track-n-2026-10",
+    "capUsd": 12,
+    "spentUsd": 11.943116,
+    "calibrationUsd": 0.37549
+  },
+  "steps": [
+    {
+      "step": "pools (scope samples and query embeddings; the pools built from them through the production retrievers)",
+      "run": "eval-10c2-pools-20261023T100757Z",
+      "spend": {
+        "attempts": 2,
+        "usd": 0.007183,
+        "byPurpose": {
+          "embed": 9e-06,
+          "scope": 0.007174
+        }
+      },
+      "scope": {
+        "calls": 78,
+        "reservedUsd": 0.0867750000000001,
+        "chargedUsd": 0.007174380000000002,
+        "failedSamples": 1
+      },
+      "embedding": {
+        "embedded": 25,
+        "reused": 1,
+        "requests": 1,
+        "chargedUsd": 8.82e-06
+      }
+    },
+    {
+      "step": "relevance, stage 1",
+      "run": "eval-10c2-relevance-20261023T101508Z",
+      "judgments": "narrative-judgments-relevance-20261023T103437Z.json",
+      "statuses": {
+        "agreed": 1191,
+        "adjudicated": 204,
+        "uncovered": 1,
+        "adjudication-unjudgeable": 1
+      },
+      "stopped": null,
+      "spend": {
+        "attempts": 3492,
+        "usd": 6.387699,
+        "byRole": {
+          "adjudicator": 4.352781,
+          "judges": 2.034918
+        },
+        "byPurpose": {
+          "adjudicate-final": 1.161211,
+          "adjudicate-initial": 2.600074,
+          "chunk": 0.688194,
+          "consolidate": 0.060355,
+          "relevance": 1.877865
+        }
+      }
+    },
+    {
+      "step": "answerability",
+      "run": "eval-10c2-answerability-20261023T103530Z",
+      "judgments": "narrative-judgments-answerability-20261023T104037Z.json",
+      "statuses": {
+        "agreed": 384,
+        "adjudicated": 64,
+        "abstained": 1
+      },
+      "stopped": null,
+      "spend": {
+        "attempts": 1071,
+        "usd": 1.076472,
+        "byRole": {
+          "adjudicator": 0.744394,
+          "judges": 0.332078
+        },
+        "byPurpose": {
+          "adjudicate-final": 0.328316,
+          "adjudicate-initial": 0.416078,
+          "answerability": 0.332078
+        }
+      }
+    },
+    {
+      "step": "relevance, stage 2: first run (a ledger connection timed out after 3,937 attempts; the run kept its lock, and recover reconciled $0.001878 of micro-dollar rounding before removing it; no judgments file: its outcomes are in the cache)",
+      "run": "eval-10c2-relevance-20261023T104140Z",
+      "spend": {
+        "attempts": 3938,
+        "usd": 2.861904,
+        "byRole": {
+          "judges": 2.860026,
+          "recovery": 0.001878
+        },
+        "byPurpose": {
+          "chunk": 0.172336,
+          "consolidate": 0.013414,
+          "recovery": 0.001878,
+          "relevance": 2.674276
+        }
+      }
+    },
+    {
+      "step": "relevance, stage 2: resumed from the cache at concurrency 3, stopped at the allocation cap",
+      "run": "eval-10c2-relevance-20261023T110642Z",
+      "judgments": "narrative-judgments-relevance-20261023T112527Z.json",
+      "statuses": {
+        "agreed": 3360,
+        "adjudicated": 205,
+        "uncovered": 1,
+        "adjudication-unjudgeable": 1,
+        "escalation-budget-exhausted": 455,
+        "unjudgeable": 2
+      },
+      "stopped": "the next attempt's reservation ($0.043632) would take allocation track-n-2026-10 ($11.867032 spent, $0.125320 open) above its cap of $12",
+      "spend": {
+        "attempts": 1854,
+        "usd": 1.234367,
+        "byRole": {
+          "adjudicator": 0.076084,
+          "judges": 1.158283
+        },
+        "byPurpose": {
+          "adjudicate-final": 0.006149,
+          "adjudicate-initial": 0.069935,
+          "chunk": 0.089789,
+          "consolidate": 0.011432,
+          "relevance": 1.057063
+        }
+      }
+    }
+  ],
+  "leftForNextMonth": {
+    "escalations": 455,
+    "benchmark": 443,
+    "diagnostic": 12,
+    "blindStepCached": 1,
+    "estimatedUsd": 9.66,
+    "note": "Every judge grade is cached, so a later run with the same frozen pools pays only these escalations. The estimate uses stage 1's adjudicator spend per escalation."
+  },
+  "scoring": {
+    "report": "narrative-report-20261023T113404Z.json",
+    "note": "Scored at commit 2d8e221, after a floating-point fix found while writing up: retrieval.v2's one-sided 95% lower bound against retrieval.v1 on supported P@6 is exactly zero but was computed as 3.5e-18, which the rule 'above zero' counted as better. Bounds within 1e-9 of zero now count as zero. The fix changed that one conclusion, from b-better to inconclusive, and nothing else in the report."
+  },
+  "report": {
+    "inputs": {
+      "files": [
+        {
+          "file": "narrative-judgments-relevance-20261023T103437Z.json",
+          "set": "relevance",
+          "run": "eval-10c2-relevance-20261023T101508Z",
+          "records": 1397,
+          "stopped": null
+        },
+        {
+          "file": "narrative-judgments-answerability-20261023T104037Z.json",
+          "set": "answerability",
+          "run": "eval-10c2-answerability-20261023T103530Z",
+          "records": 449,
+          "stopped": null
+        },
+        {
+          "file": "narrative-judgments-relevance-20261023T112527Z.json",
+          "set": "relevance",
+          "run": "eval-10c2-relevance-20261023T110642Z",
+          "records": 4024,
+          "stopped": "the next attempt's reservation ($0.043632) would take allocation track-n-2026-10 ($11.867032 spent, $0.125320 open) above its cap of $12"
+        }
+      ],
+      "merged": 1397,
+      "superseded": 0
+    },
+    "createdAt": "2026-10-23T11:34:03.368Z",
+    "git": {
+      "commit": "2d8e221a319ec6e6b838e8d99a13841a786bec01",
+      "dirty": false
+    },
+    "headline": {
+      "retrieval.v1": {
+        "members": 25,
+        "recallGate": {
+          "questions": 5,
+          "mean": 0.6814285714285715
+        },
+        "p6": {
+          "lower": 0.3511111111111111,
+          "upper": 0.3577777777777778
+        },
+        "ndcg6": {
+          "questions": 25,
+          "lower": 0.4096723172033979,
+          "upper": 0.417699096859156
+        },
+        "supported": {
+          "lower": 0.311111111111111,
+          "upper": 0.311111111111111
+        }
+      },
+      "retrieval.v2": {
+        "members": 25,
+        "recallGate": {
+          "questions": 5,
+          "mean": 0.6638095238095237
+        },
+        "p6": {
+          "lower": 0.39555555555555555,
+          "upper": 0.39555555555555555
+        },
+        "ndcg6": {
+          "questions": 25,
+          "lower": 0.49638728330430787,
+          "upper": 0.5006703221679856
+        },
+        "supported": {
+          "lower": 0.33555555555555555,
+          "upper": 0.33555555555555555
+        }
+      },
+      "retrieval.v2-nf": {
+        "members": 25,
+        "recallGate": {
+          "questions": 5,
+          "mean": 0.6638095238095237
+        },
+        "p6": {
+          "lower": 0.3977777777777778,
+          "upper": 0.3977777777777778
+        },
+        "ndcg6": {
+          "questions": 25,
+          "lower": 0.500024943154067,
+          "upper": 0.5045614069794249
+        },
+        "supported": {
+          "lower": 0.3377777777777778,
+          "upper": 0.3377777777777778
+        }
+      }
+    },
+    "comparisons": {
+      "retrieval.v2 vs retrieval.v1": {
+        "recallGate": {
+          "questions": 5,
+          "conclusion": "inconclusive",
+          "lowerBounds": {
+            "delta": -0.01761904761904764,
+            "ci95": [
+              -0.0523809523809524,
+              0.005555555555555536
+            ],
+            "lower95": -0.04940476190476194,
+            "groups": 4
+          },
+          "upperBounds": {
+            "delta": -0.01761904761904764,
+            "ci95": [
+              -0.0523809523809524,
+              0.005555555555555536
+            ]
+          }
+        },
+        "p6": {
+          "questions": 25,
+          "conclusion": "b-better",
+          "lowerBounds": {
+            "delta": 0.03777777777777778,
+            "ci95": [
+              0.009259259259259262,
+              0.061509277134277125
+            ],
+            "lower95": 0.01388888888888889,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.044444444444444446,
+            "ci95": [
+              0.017361111111111112,
+              0.06521739130434784
+            ]
+          }
+        },
+        "ndcg6": {
+          "questions": 25,
+          "conclusion": "b-better",
+          "lowerBounds": {
+            "delta": 0.0786881864451518,
+            "ci95": [
+              0.02730806993981782,
+              0.12152516645766634
+            ],
+            "lower95": 0.036489604579581204,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.09099800496458758,
+            "ci95": [
+              0.04225945840438707,
+              0.13365444358438833
+            ]
+          }
+        },
+        "supported": {
+          "questions": 25,
+          "conclusion": "inconclusive",
+          "lowerBounds": {
+            "delta": 0.024444444444444446,
+            "ci95": [
+              -0.004629629629629616,
+              0.05128205128205128
+            ],
+            "lower95": 3.4592426962125834e-18,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.024444444444444446,
+            "ci95": [
+              -0.004629629629629616,
+              0.05128205128205128
+            ]
+          }
+        }
+      },
+      "retrieval.v2-nf vs retrieval.v1": {
+        "recallGate": {
+          "questions": 5,
+          "conclusion": "inconclusive",
+          "lowerBounds": {
+            "delta": -0.01761904761904764,
+            "ci95": [
+              -0.0523809523809524,
+              0.005555555555555536
+            ],
+            "lower95": -0.04940476190476194,
+            "groups": 4
+          },
+          "upperBounds": {
+            "delta": -0.01761904761904764,
+            "ci95": [
+              -0.0523809523809524,
+              0.005555555555555536
+            ]
+          }
+        },
+        "p6": {
+          "questions": 25,
+          "conclusion": "b-better",
+          "lowerBounds": {
+            "delta": 0.04,
+            "ci95": [
+              0.01234567901234568,
+              0.06410256410256411
+            ],
+            "lower95": 0.01666666666666667,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.04666666666666667,
+            "ci95": [
+              0.020467836257309944,
+              0.06725146198830409
+            ]
+          }
+        },
+        "ndcg6": {
+          "questions": 25,
+          "conclusion": "b-better",
+          "lowerBounds": {
+            "delta": 0.08232584629491094,
+            "ci95": [
+              0.031995713164968034,
+              0.12528449776196085
+            ],
+            "lower95": 0.041260168518738094,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.09488908977602696,
+            "ci95": [
+              0.04710262329498524,
+              0.13804006021625356
+            ]
+          }
+        },
+        "supported": {
+          "questions": 25,
+          "conclusion": "b-better",
+          "lowerBounds": {
+            "delta": 0.02666666666666667,
+            "ci95": [
+              -0.002415458937198066,
+              0.053497942386831275
+            ],
+            "lower95": 0.0027777777777777874,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.02666666666666667,
+            "ci95": [
+              -0.002415458937198066,
+              0.053497942386831275
+            ]
+          }
+        }
+      },
+      "retrieval.v2-nf vs retrieval.v2": {
+        "recallGate": {
+          "questions": 5,
+          "conclusion": "inconclusive",
+          "lowerBounds": {
+            "delta": 0,
+            "ci95": [
+              0,
+              0
+            ],
+            "lower95": 0,
+            "groups": 4
+          },
+          "upperBounds": {
+            "delta": 0,
+            "ci95": [
+              0,
+              0
+            ]
+          }
+        },
+        "p6": {
+          "questions": 25,
+          "conclusion": "inconclusive",
+          "lowerBounds": {
+            "delta": 0.0022222222222222222,
+            "ci95": [
+              0,
+              0.008333333333333333
+            ],
+            "lower95": 0,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.0022222222222222222,
+            "ci95": [
+              0,
+              0.008333333333333333
+            ]
+          }
+        },
+        "ndcg6": {
+          "questions": 25,
+          "conclusion": "inconclusive",
+          "lowerBounds": {
+            "delta": -0.0006453790139185167,
+            "ci95": [
+              -0.00903793616132968,
+              0.007046494746417873
+            ],
+            "lower95": -0.007406201900774472,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.008174123675117044,
+            "ci95": [
+              -0.00034584458193376804,
+              0.02580475616723791
+            ]
+          }
+        },
+        "supported": {
+          "questions": 25,
+          "conclusion": "inconclusive",
+          "lowerBounds": {
+            "delta": 0.0022222222222222222,
+            "ci95": [
+              0,
+              0.008333333333333333
+            ],
+            "lower95": 0,
+            "groups": 14
+          },
+          "upperBounds": {
+            "delta": 0.0022222222222222222,
+            "ci95": [
+              0,
+              0.008333333333333333
+            ]
+          }
+        }
+      }
+    },
+    "coverage": {
+      "pool": {
+        "cases": 3893,
+        "known": 3446,
+        "unresolved": 447,
+        "notJudged": 0
+      },
+      "boundedCohorts": {
+        "cases": 581,
+        "known": 581,
+        "unresolved": 0,
+        "notJudged": 0
+      }
+    },
+    "noPositivePossible": 0,
+    "abstentions": 0,
+    "agreement": {
+      "n": 3802,
+      "kappa": 0.7008750251383556,
+      "weightedKappa": 0.7679940891054164,
+      "kappaInterval": [
+        0.6058649463777873,
+        0.7786497342118277
+      ],
+      "agreement": {
+        "k": 3241,
+        "n": 3802,
+        "rate": 0.8524460810099947,
+        "lower": 0.8408168977977725,
+        "upper": 0.8633637491319369
+      },
+      "confusion": [
+        [
+          2340,
+          194,
+          57
+        ],
+        [
+          129,
+          280,
+          111
+        ],
+        [
+          48,
+          22,
+          621
+        ]
+      ],
+      "statuses": {
+        "agreed": 3241,
+        "adjudicated": 205,
+        "escalation-budget-exhausted": 443,
+        "uncovered": 1,
+        "unjudgeable": 2,
+        "adjudication-unjudgeable": 1
+      },
+      "adjudicator": {
+        "adjudicated": 205,
+        "withA": {
+          "k": 92,
+          "n": 198,
+          "rate": 0.46464646464646464,
+          "lower": 0.3965090868515115,
+          "upper": 0.5341295921918572
+        },
+        "withB": {
+          "k": 99,
+          "n": 183,
+          "rate": 0.5409836065573771,
+          "lower": 0.4686821681436322,
+          "upper": 0.6115997390975818
+        },
+        "changedFromInitial": {
+          "k": 38,
+          "n": 205,
+          "rate": 0.18536585365853658,
+          "lower": 0.138132638228986,
+          "upper": 0.24417433509433653
+        },
+        "abstained": 0
+      }
+    },
+    "lowConfidenceTags": {
+      "aircraft_filter": {
+        "n": 2125,
+        "kappa": 0.6748769570513262,
+        "agreement": 0.8545882352941176
+      },
+      "causal_uncertainty": {
+        "n": 545,
+        "kappa": 0.5929977156914429,
+        "agreement": 0.8128440366972477
+      },
+      "maintenance_chronology": {
+        "n": 533,
+        "kappa": 0.6289535360410881,
+        "agreement": 0.8311444652908068
+      },
+      "mechanical": {
+        "n": 1746,
+        "kappa": 0.6469639945358824,
+        "agreement": 0.8310423825887744
+      },
+      "negation": {
+        "n": 1043,
+        "kappa": 0.6406337797999998,
+        "agreement": 0.7948226270373921
+      }
+    },
+    "discrepancies": 276,
+    "audit": {
+      "ai": {
+        "rows": 79,
+        "strata": 81
+      },
+      "owner": {
+        "rows": 72,
+        "strata": 81
+      }
+    },
+    "answerabilityAgreement": {
+      "n": 320,
+      "kappa": 0.7583935742971886,
+      "agreement": {
+        "k": 273,
+        "n": 320,
+        "rate": 0.853125,
+        "lower": 0.8101550683998912,
+        "upper": 0.8877169776868378
+      },
+      "statuses": {
+        "agreed": 273,
+        "adjudicated": 49
+      }
+    },
+    "diagnostics": {
+      "note": "Diagnostics, reported apart from the benchmark: never in its values, comparisons, agreement figures or audit samples. The regression diagnostics follow the comparison rules frozen with them; the mapping diagnostic is labelled and forced (each case-level run's first cases-channel-only cases mapped and packed by the production code).",
+      "regression": [
+        {
+          "family": "per-pilot-decision-cause-weight-shift",
+          "question": "Which weight-shift-control aircraft accidents have a probable cause that cites the pilot's decision making?",
+          "origin": "Task 10e kept this question as a regression case (REGRESSION_CASES, evals/retrieval/adoption/validate.ts): on Track C's coded labels its nDCG@6 fell from 65.8% under retrieval.v1 to 25.9% under retrieval.v2 and retrieval.v2-nf, in every scope sample (the task 10e report, section 5).",
+          "comparison": {
+            "base": "retrieval.v1",
+            "variants": [
+              "retrieval.v2",
+              "retrieval.v2-nf"
+            ],
+            "primary": "ndcg6",
+            "reported": [
+              "ndcg6",
+              "p6",
+              "supported"
+            ],
+            "rule": "For each variant against the base: the difference of the means over the scope samples, with bounds over the unknown labels as the benchmark computes them (cross-endpoint for nDCG@6, joint over shared unknowns for P@6 and supported P@6), and the same per sample. The conclusion rests on the primary metric's mean difference: 'regression' when its upper bound is below zero, 'no-regression' when its lower bound is at or above zero, 'inconclusive' otherwise. The other metrics are reported and never change it. The cases each variant's bundle displaced from the base's, and admitted, are listed per sample with their labels and coded status. The result is reported apart from the benchmark: never in its aggregates, comparisons, agreement figures or audit samples.",
+            "reproduction": {
+              "metric": "coded-ndcg6",
+              "expected": {
+                "retrieval.v1": 0.658,
+                "retrieval.v2": 0.259,
+                "retrieval.v2-nf": 0.259
+              },
+              "tolerance": 0.0005,
+              "source": "The task 10e report, section 5: the coded nDCG@6 of every scope sample, to 0.1 point."
+            }
+          },
+          "scope": "Phase A's cached development scope samples of this question (task 10d), the input task 10e measured the regression with; the three samples are identical.",
+          "coverage": {
+            "pool": {
+              "cases": 131,
+              "known": 119,
+              "unresolved": 12,
+              "notJudged": 0
+            },
+            "cohort": null
+          },
+          "methods": {
+            "retrieval.v1": {
+              "ndcg6": {
+                "lower": 0.7214182157979702,
+                "upper": 0.7214182157979702
+              },
+              "p6": {
+                "lower": 0.6666666666666666,
+                "upper": 0.6666666666666666
+              },
+              "supported": {
+                "lower": 0.6666666666666666,
+                "upper": 0.6666666666666666
+              },
+              "codedNdcg6": 0.6577779270716587
+            },
+            "retrieval.v2": {
+              "ndcg6": {
+                "lower": 0.3661719053036861,
+                "upper": 0.3661719053036861
+              },
+              "p6": {
+                "lower": 0.3333333333333333,
+                "upper": 0.3333333333333333
+              },
+              "supported": {
+                "lower": 0.3333333333333333,
+                "upper": 0.3333333333333333
+              },
+              "codedNdcg6": 0.2590903612739177
+            },
+            "retrieval.v2-nf": {
+              "ndcg6": {
+                "lower": 0.3661719053036861,
+                "upper": 0.3661719053036861
+              },
+              "p6": {
+                "lower": 0.3333333333333333,
+                "upper": 0.3333333333333333
+              },
+              "supported": {
+                "lower": 0.3333333333333333,
+                "upper": 0.3333333333333333
+              },
+              "codedNdcg6": 0.2590903612739177
+            }
+          },
+          "reproduction": {
+            "metric": "coded-ndcg6",
+            "expected": {
+              "retrieval.v1": 0.658,
+              "retrieval.v2": 0.259,
+              "retrieval.v2-nf": 0.259
+            },
+            "observed": {
+              "retrieval.v1": 0.6577779270716587,
+              "retrieval.v2": 0.2590903612739177,
+              "retrieval.v2-nf": 0.2590903612739177
+            },
+            "tolerance": 0.0005,
+            "reproduced": true,
+            "source": "The task 10e report, section 5: the coded nDCG@6 of every scope sample, to 0.1 point."
+          },
+          "comparisons": {
+            "retrieval.v2": {
+              "conclusion": "regression",
+              "metrics": {
+                "ndcg6": {
+                  "lower": -0.35524631049428407,
+                  "upper": -0.35524631049428407,
+                  "method": "exact"
+                },
+                "p6": {
+                  "lower": -0.3333333333333333,
+                  "upper": -0.3333333333333333,
+                  "method": "exact"
+                },
+                "supported": {
+                  "lower": -0.3333333333333333,
+                  "upper": -0.3333333333333333,
+                  "method": "exact"
+                }
+              }
+            },
+            "retrieval.v2-nf": {
+              "conclusion": "regression",
+              "metrics": {
+                "ndcg6": {
+                  "lower": -0.35524631049428407,
+                  "upper": -0.35524631049428407,
+                  "method": "exact"
+                },
+                "p6": {
+                  "lower": -0.3333333333333333,
+                  "upper": -0.3333333333333333,
+                  "method": "exact"
+                },
+                "supported": {
+                  "lower": -0.3333333333333333,
+                  "upper": -0.3333333333333333,
+                  "method": "exact"
+                }
+              }
+            }
+          },
+          "perSample": [
+            {
+              "sample": 1,
+              "methods": {
+                "retrieval.v1": {
+                  "ndcg6": {
+                    "lower": 0.7214182157979703,
+                    "upper": 0.7214182157979703
+                  },
+                  "p6": {
+                    "lower": 0.6666666666666666,
+                    "upper": 0.6666666666666666
+                  },
+                  "supported": {
+                    "lower": 0.6666666666666666,
+                    "upper": 0.6666666666666666
+                  },
+                  "codedNdcg6": 0.6577779270716587,
+                  "bundle": [
+                    {
+                      "ntsbNo": "GAA17CA198",
+                      "caseRank": 1,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 6,
+                        "vector": 1,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 3,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "WPR16LA071",
+                      "caseRank": 4,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 10,
+                        "vector": 4,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 5,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA22FA387",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 8,
+                        "vector": 9,
+                        "cases": null
+                      }
+                    }
+                  ]
+                },
+                "retrieval.v2": {
+                  "ndcg6": {
+                    "lower": 0.36617190530368615,
+                    "upper": 0.36617190530368615
+                  },
+                  "p6": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "supported": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "codedNdcg6": 0.2590903612739177,
+                  "bundle": [
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 1,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": 1
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": 5
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA15LA339",
+                      "caseRank": 3,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 5,
+                        "vector": 18,
+                        "cases": 4
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN21LA181",
+                      "caseRank": 4,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 2,
+                        "vector": 31,
+                        "cases": 3
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN09CA366",
+                      "caseRank": 5,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 3,
+                        "vector": 41,
+                        "cases": 2
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": 25
+                      }
+                    }
+                  ]
+                },
+                "retrieval.v2-nf": {
+                  "ndcg6": {
+                    "lower": 0.36617190530368615,
+                    "upper": 0.36617190530368615
+                  },
+                  "p6": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "supported": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "codedNdcg6": 0.2590903612739177,
+                  "bundle": [
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 1,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": 1
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": 5
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA15LA339",
+                      "caseRank": 3,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 5,
+                        "vector": 18,
+                        "cases": 4
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN21LA181",
+                      "caseRank": 4,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 2,
+                        "vector": 31,
+                        "cases": 3
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN09CA366",
+                      "caseRank": 5,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 3,
+                        "vector": 41,
+                        "cases": 2
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": 25
+                      }
+                    }
+                  ]
+                }
+              },
+              "differences": {
+                "retrieval.v2": {
+                  "ndcg6": {
+                    "lower": -0.3552463104942841,
+                    "upper": -0.3552463104942841,
+                    "method": "exact"
+                  },
+                  "p6": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  },
+                  "supported": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  }
+                },
+                "retrieval.v2-nf": {
+                  "ndcg6": {
+                    "lower": -0.3552463104942841,
+                    "upper": -0.3552463104942841,
+                    "method": "exact"
+                  },
+                  "p6": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  },
+                  "supported": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  }
+                }
+              },
+              "displaced": {
+                "retrieval.v2": [
+                  {
+                    "ntsbNo": "GAA17CA198",
+                    "caseRank": 1,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 6,
+                      "vector": 1,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "WPR16LA071",
+                    "caseRank": 4,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 10,
+                      "vector": 4,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "ERA22FA387",
+                    "caseRank": 6,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 8,
+                      "vector": 9,
+                      "cases": null
+                    }
+                  }
+                ],
+                "retrieval.v2-nf": [
+                  {
+                    "ntsbNo": "GAA17CA198",
+                    "caseRank": 1,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 6,
+                      "vector": 1,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "WPR16LA071",
+                    "caseRank": 4,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 10,
+                      "vector": 4,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "ERA22FA387",
+                    "caseRank": 6,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 8,
+                      "vector": 9,
+                      "cases": null
+                    }
+                  }
+                ]
+              },
+              "admitted": {
+                "retrieval.v2": [
+                  {
+                    "ntsbNo": "ERA15LA339",
+                    "caseRank": 3,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 5,
+                      "vector": 18,
+                      "cases": 4
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN21LA181",
+                    "caseRank": 4,
+                    "label": 1,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 2,
+                      "vector": 31,
+                      "cases": 3
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN09CA366",
+                    "caseRank": 5,
+                    "label": 0,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 3,
+                      "vector": 41,
+                      "cases": 2
+                    }
+                  }
+                ],
+                "retrieval.v2-nf": [
+                  {
+                    "ntsbNo": "ERA15LA339",
+                    "caseRank": 3,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 5,
+                      "vector": 18,
+                      "cases": 4
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN21LA181",
+                    "caseRank": 4,
+                    "label": 1,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 2,
+                      "vector": 31,
+                      "cases": 3
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN09CA366",
+                    "caseRank": 5,
+                    "label": 0,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 3,
+                      "vector": 41,
+                      "cases": 2
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "sample": 2,
+              "methods": {
+                "retrieval.v1": {
+                  "ndcg6": {
+                    "lower": 0.7214182157979703,
+                    "upper": 0.7214182157979703
+                  },
+                  "p6": {
+                    "lower": 0.6666666666666666,
+                    "upper": 0.6666666666666666
+                  },
+                  "supported": {
+                    "lower": 0.6666666666666666,
+                    "upper": 0.6666666666666666
+                  },
+                  "codedNdcg6": 0.6577779270716587,
+                  "bundle": [
+                    {
+                      "ntsbNo": "GAA17CA198",
+                      "caseRank": 1,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 6,
+                        "vector": 1,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 3,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "WPR16LA071",
+                      "caseRank": 4,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 10,
+                        "vector": 4,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 5,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA22FA387",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 8,
+                        "vector": 9,
+                        "cases": null
+                      }
+                    }
+                  ]
+                },
+                "retrieval.v2": {
+                  "ndcg6": {
+                    "lower": 0.36617190530368615,
+                    "upper": 0.36617190530368615
+                  },
+                  "p6": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "supported": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "codedNdcg6": 0.2590903612739177,
+                  "bundle": [
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 1,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": 1
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": 5
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA15LA339",
+                      "caseRank": 3,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 5,
+                        "vector": 18,
+                        "cases": 4
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN21LA181",
+                      "caseRank": 4,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 2,
+                        "vector": 31,
+                        "cases": 3
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN09CA366",
+                      "caseRank": 5,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 3,
+                        "vector": 41,
+                        "cases": 2
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": 25
+                      }
+                    }
+                  ]
+                },
+                "retrieval.v2-nf": {
+                  "ndcg6": {
+                    "lower": 0.36617190530368615,
+                    "upper": 0.36617190530368615
+                  },
+                  "p6": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "supported": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "codedNdcg6": 0.2590903612739177,
+                  "bundle": [
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 1,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": 1
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": 5
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA15LA339",
+                      "caseRank": 3,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 5,
+                        "vector": 18,
+                        "cases": 4
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN21LA181",
+                      "caseRank": 4,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 2,
+                        "vector": 31,
+                        "cases": 3
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN09CA366",
+                      "caseRank": 5,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 3,
+                        "vector": 41,
+                        "cases": 2
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": 25
+                      }
+                    }
+                  ]
+                }
+              },
+              "differences": {
+                "retrieval.v2": {
+                  "ndcg6": {
+                    "lower": -0.3552463104942841,
+                    "upper": -0.3552463104942841,
+                    "method": "exact"
+                  },
+                  "p6": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  },
+                  "supported": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  }
+                },
+                "retrieval.v2-nf": {
+                  "ndcg6": {
+                    "lower": -0.3552463104942841,
+                    "upper": -0.3552463104942841,
+                    "method": "exact"
+                  },
+                  "p6": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  },
+                  "supported": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  }
+                }
+              },
+              "displaced": {
+                "retrieval.v2": [
+                  {
+                    "ntsbNo": "GAA17CA198",
+                    "caseRank": 1,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 6,
+                      "vector": 1,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "WPR16LA071",
+                    "caseRank": 4,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 10,
+                      "vector": 4,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "ERA22FA387",
+                    "caseRank": 6,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 8,
+                      "vector": 9,
+                      "cases": null
+                    }
+                  }
+                ],
+                "retrieval.v2-nf": [
+                  {
+                    "ntsbNo": "GAA17CA198",
+                    "caseRank": 1,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 6,
+                      "vector": 1,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "WPR16LA071",
+                    "caseRank": 4,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 10,
+                      "vector": 4,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "ERA22FA387",
+                    "caseRank": 6,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 8,
+                      "vector": 9,
+                      "cases": null
+                    }
+                  }
+                ]
+              },
+              "admitted": {
+                "retrieval.v2": [
+                  {
+                    "ntsbNo": "ERA15LA339",
+                    "caseRank": 3,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 5,
+                      "vector": 18,
+                      "cases": 4
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN21LA181",
+                    "caseRank": 4,
+                    "label": 1,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 2,
+                      "vector": 31,
+                      "cases": 3
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN09CA366",
+                    "caseRank": 5,
+                    "label": 0,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 3,
+                      "vector": 41,
+                      "cases": 2
+                    }
+                  }
+                ],
+                "retrieval.v2-nf": [
+                  {
+                    "ntsbNo": "ERA15LA339",
+                    "caseRank": 3,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 5,
+                      "vector": 18,
+                      "cases": 4
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN21LA181",
+                    "caseRank": 4,
+                    "label": 1,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 2,
+                      "vector": 31,
+                      "cases": 3
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN09CA366",
+                    "caseRank": 5,
+                    "label": 0,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 3,
+                      "vector": 41,
+                      "cases": 2
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "sample": 3,
+              "methods": {
+                "retrieval.v1": {
+                  "ndcg6": {
+                    "lower": 0.7214182157979703,
+                    "upper": 0.7214182157979703
+                  },
+                  "p6": {
+                    "lower": 0.6666666666666666,
+                    "upper": 0.6666666666666666
+                  },
+                  "supported": {
+                    "lower": 0.6666666666666666,
+                    "upper": 0.6666666666666666
+                  },
+                  "codedNdcg6": 0.6577779270716587,
+                  "bundle": [
+                    {
+                      "ntsbNo": "GAA17CA198",
+                      "caseRank": 1,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 6,
+                        "vector": 1,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 3,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "WPR16LA071",
+                      "caseRank": 4,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 10,
+                        "vector": 4,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 5,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": null
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA22FA387",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 8,
+                        "vector": 9,
+                        "cases": null
+                      }
+                    }
+                  ]
+                },
+                "retrieval.v2": {
+                  "ndcg6": {
+                    "lower": 0.36617190530368615,
+                    "upper": 0.36617190530368615
+                  },
+                  "p6": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "supported": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "codedNdcg6": 0.2590903612739177,
+                  "bundle": [
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 1,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": 1
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": 5
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA15LA339",
+                      "caseRank": 3,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 5,
+                        "vector": 18,
+                        "cases": 4
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN21LA181",
+                      "caseRank": 4,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 2,
+                        "vector": 31,
+                        "cases": 3
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN09CA366",
+                      "caseRank": 5,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 3,
+                        "vector": 41,
+                        "cases": 2
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": 25
+                      }
+                    }
+                  ]
+                },
+                "retrieval.v2-nf": {
+                  "ndcg6": {
+                    "lower": 0.36617190530368615,
+                    "upper": 0.36617190530368615
+                  },
+                  "p6": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "supported": {
+                    "lower": 0.3333333333333333,
+                    "upper": 0.3333333333333333
+                  },
+                  "codedNdcg6": 0.2590903612739177,
+                  "bundle": [
+                    {
+                      "ntsbNo": "ERA19LA286",
+                      "caseRank": 1,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 1,
+                        "vector": 13,
+                        "cases": 1
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA19LA132",
+                      "caseRank": 2,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 9,
+                        "vector": 3,
+                        "cases": 5
+                      }
+                    },
+                    {
+                      "ntsbNo": "ERA15LA339",
+                      "caseRank": 3,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 5,
+                        "vector": 18,
+                        "cases": 4
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN21LA181",
+                      "caseRank": 4,
+                      "label": 1,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 2,
+                        "vector": 31,
+                        "cases": 3
+                      }
+                    },
+                    {
+                      "ntsbNo": "CEN09CA366",
+                      "caseRank": 5,
+                      "label": 0,
+                      "coded": false,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 3,
+                        "vector": 41,
+                        "cases": 2
+                      }
+                    },
+                    {
+                      "ntsbNo": "ANC19LA004",
+                      "caseRank": 6,
+                      "label": 2,
+                      "coded": true,
+                      "mapped": false,
+                      "channels": {
+                        "keyword": 4,
+                        "vector": 10,
+                        "cases": 25
+                      }
+                    }
+                  ]
+                }
+              },
+              "differences": {
+                "retrieval.v2": {
+                  "ndcg6": {
+                    "lower": -0.3552463104942841,
+                    "upper": -0.3552463104942841,
+                    "method": "exact"
+                  },
+                  "p6": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  },
+                  "supported": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  }
+                },
+                "retrieval.v2-nf": {
+                  "ndcg6": {
+                    "lower": -0.3552463104942841,
+                    "upper": -0.3552463104942841,
+                    "method": "exact"
+                  },
+                  "p6": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  },
+                  "supported": {
+                    "lower": -0.3333333333333333,
+                    "upper": -0.3333333333333333,
+                    "method": "exact"
+                  }
+                }
+              },
+              "displaced": {
+                "retrieval.v2": [
+                  {
+                    "ntsbNo": "GAA17CA198",
+                    "caseRank": 1,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 6,
+                      "vector": 1,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "WPR16LA071",
+                    "caseRank": 4,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 10,
+                      "vector": 4,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "ERA22FA387",
+                    "caseRank": 6,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 8,
+                      "vector": 9,
+                      "cases": null
+                    }
+                  }
+                ],
+                "retrieval.v2-nf": [
+                  {
+                    "ntsbNo": "GAA17CA198",
+                    "caseRank": 1,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 6,
+                      "vector": 1,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "WPR16LA071",
+                    "caseRank": 4,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 10,
+                      "vector": 4,
+                      "cases": null
+                    }
+                  },
+                  {
+                    "ntsbNo": "ERA22FA387",
+                    "caseRank": 6,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 8,
+                      "vector": 9,
+                      "cases": null
+                    }
+                  }
+                ]
+              },
+              "admitted": {
+                "retrieval.v2": [
+                  {
+                    "ntsbNo": "ERA15LA339",
+                    "caseRank": 3,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 5,
+                      "vector": 18,
+                      "cases": 4
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN21LA181",
+                    "caseRank": 4,
+                    "label": 1,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 2,
+                      "vector": 31,
+                      "cases": 3
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN09CA366",
+                    "caseRank": 5,
+                    "label": 0,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 3,
+                      "vector": 41,
+                      "cases": 2
+                    }
+                  }
+                ],
+                "retrieval.v2-nf": [
+                  {
+                    "ntsbNo": "ERA15LA339",
+                    "caseRank": 3,
+                    "label": 2,
+                    "coded": true,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 5,
+                      "vector": 18,
+                      "cases": 4
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN21LA181",
+                    "caseRank": 4,
+                    "label": 1,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 2,
+                      "vector": 31,
+                      "cases": 3
+                    }
+                  },
+                  {
+                    "ntsbNo": "CEN09CA366",
+                    "caseRank": 5,
+                    "label": 0,
+                    "coded": false,
+                    "mapped": false,
+                    "channels": {
+                      "keyword": 3,
+                      "vector": 41,
+                      "cases": 2
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "ordinaryMapping": {
+        "retrieval.v1": {
+          "runs": 78,
+          "runsWithMapping": 0,
+          "mapped": 0,
+          "unmapped": {},
+          "deliveredMapped": 0,
+          "questions": []
+        },
+        "retrieval.v2": {
+          "runs": 78,
+          "runsWithMapping": 0,
+          "mapped": 0,
+          "unmapped": {},
+          "deliveredMapped": 0,
+          "questions": []
+        },
+        "retrieval.v2-nf": {
+          "runs": 78,
+          "runsWithMapping": 0,
+          "mapped": 0,
+          "unmapped": {},
+          "deliveredMapped": 0,
+          "questions": []
+        }
+      },
+      "mapping": {
+        "note": "Labelled diagnostic, forced: each case-level run's first cases that only the cases channel returned were mapped (`mapCasesToPassages`) and packed (`fetchAndPack`) by the production code as leading candidates. It measures what the mapping delivers for real questions, not how often production maps. Model-judged; reported apart from the benchmark.",
+        "runs": 156,
+        "forced": 117,
+        "mapped": 117,
+        "unmapped": {},
+        "delivered": 118,
+        "relevance": {
+          "0": 98,
+          "1": 5,
+          "2": 15,
+          "unknown": 0
+        },
+        "answerability": {
+          "0": 96,
+          "1": 6,
+          "2": 15,
+          "unknown": 1
+        },
+        "crossTab": {
+          "0": {
+            "0": 95,
+            "1": 1,
+            "2": 2
+          },
+          "1": {
+            "0": 1,
+            "1": 4
+          },
+          "2": {
+            "1": 1,
+            "2": 13,
+            "unknown": 1
+          }
+        },
+        "supportedAmongRelevant": {
+          "k": 13,
+          "n": 14,
+          "rate": 0.9285714285714286,
+          "lower": 0.6853073044604219,
+          "upper": 0.9872781138877085,
+          "unknown": 1
+        },
+        "restsOnMappedPassage": {
+          "answerable": 15,
+          "mappedPassage": 15,
+          "causeOnly": 0,
+          "unread": 0
+        },
+        "perFamily": [
+          {
+            "family": "ng-skydiving-power-loss-no-anomaly",
+            "forced": 5,
+            "mapped": 5,
+            "delivered": 5,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "cu-air-show-undetermined",
+            "forced": 4,
+            "mapped": 4,
+            "delivered": 4,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "mc-ag-arkansas-engine-after-maintenance",
+            "forced": 3,
+            "mapped": 3,
+            "delivered": 3,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "op-balloon-power-lines",
+            "forced": 0,
+            "mapped": 0,
+            "delivered": 0,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "op-external-load-line-strike",
+            "forced": 2,
+            "mapped": 2,
+            "delivered": 2,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "me-powered-parachute-propeller-strike",
+            "forced": 3,
+            "mapped": 3,
+            "delivered": 3,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "ng-carb-icing-not-conducive",
+            "forced": 6,
+            "mapped": 6,
+            "delivered": 6,
+            "relevant": 1,
+            "supported": 1
+          },
+          {
+            "family": "ng-gear-collapse-no-defect",
+            "forced": 9,
+            "mapped": 9,
+            "delivered": 9,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "mc-first-flight-after-annual",
+            "forced": 16,
+            "mapped": 16,
+            "delivered": 16,
+            "relevant": 3,
+            "supported": 3
+          },
+          {
+            "family": "mc-helicopter-control-rotor-maintenance-10h",
+            "forced": 4,
+            "mapped": 4,
+            "delivered": 4,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "cu-inflight-fire-origin-undetermined",
+            "forced": 10,
+            "mapped": 10,
+            "delivered": 11,
+            "relevant": 1,
+            "supported": 1
+          },
+          {
+            "family": "cu-competing-explanations",
+            "forced": 5,
+            "mapped": 5,
+            "delivered": 5,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "pv-pilot-reported-failure-not-confirmed",
+            "forced": 6,
+            "mapped": 6,
+            "delivered": 6,
+            "relevant": 3,
+            "supported": 3
+          },
+          {
+            "family": "pv-recorded-data-contradicts-pilot",
+            "forced": 6,
+            "mapped": 6,
+            "delivered": 6,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "pv-helicopter-tail-rotor-claim",
+            "forced": 6,
+            "mapped": 6,
+            "delivered": 6,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "ma-airplane-collision-student-pilot",
+            "forced": 4,
+            "mapped": 4,
+            "delivered": 4,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "ma-taxiing-strikes-stationary",
+            "forced": 3,
+            "mapped": 3,
+            "delivered": 3,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "ma-midair-pattern-nontowered",
+            "forced": 4,
+            "mapped": 4,
+            "delivered": 4,
+            "relevant": 0,
+            "supported": 0
+          },
+          {
+            "family": "op-night-vfr-into-clouds",
+            "forced": 4,
+            "mapped": 4,
+            "delivered": 4,
+            "relevant": 4,
+            "supported": 3
+          },
+          {
+            "family": "me-gear-up-mechanical",
+            "forced": 8,
+            "mapped": 8,
+            "delivered": 8,
+            "relevant": 1,
+            "supported": 1
+          },
+          {
+            "family": "me-helicopter-tail-rotor-drive-failure",
+            "forced": 7,
+            "mapped": 7,
+            "delivered": 7,
+            "relevant": 1,
+            "supported": 1
+          },
+          {
+            "family": "per-pilot-decision-cause-weight-shift",
+            "forced": 2,
+            "mapped": 2,
+            "delivered": 2,
+            "relevant": 0,
+            "supported": 0
+          }
+        ]
+      },
+      "agreement": {
+        "note": "Diagnostics, not validation: agreement between model judges (and with the adjudicator) measures their consistency, not their correctness; kappa 0.7 and agreement 0.8 are investigation thresholds.",
+        "judgeJudge": {
+          "all": {
+            "n": 131,
+            "lowConfidence": false,
+            "agreement": {
+              "k": 119,
+              "n": 131,
+              "rate": 0.9083969465648855,
+              "lower": 0.8467012569932881,
+              "upper": 0.9468224033607864
+            },
+            "kappa": 0.771843251088534,
+            "weightedKappa": 0.8378426171529617,
+            "kappaInterval": null,
+            "confusion": [
+              [
+                94,
+                0,
+                2
+              ],
+              [
+                7,
+                5,
+                3
+              ],
+              [
+                0,
+                0,
+                20
+              ]
+            ]
+          },
+          "byTag": {
+            "aircraft_filter": {
+              "n": 131,
+              "lowConfidence": false,
+              "agreement": {
+                "k": 119,
+                "n": 131,
+                "rate": 0.9083969465648855,
+                "lower": 0.8467012569932881,
+                "upper": 0.9468224033607864
+              },
+              "kappa": 0.771843251088534,
+              "weightedKappa": 0.8378426171529617,
+              "kappaInterval": null,
+              "confusion": [
+                [
+                  94,
+                  0,
+                  2
+                ],
+                [
+                  7,
+                  5,
+                  3
+                ],
+                [
+                  0,
+                  0,
+                  20
+                ]
+              ]
+            },
+            "operational": {
+              "n": 131,
+              "lowConfidence": false,
+              "agreement": {
+                "k": 119,
+                "n": 131,
+                "rate": 0.9083969465648855,
+                "lower": 0.8467012569932881,
+                "upper": 0.9468224033607864
+              },
+              "kappa": 0.771843251088534,
+              "weightedKappa": 0.8378426171529617,
+              "kappaInterval": null,
+              "confusion": [
+                [
+                  94,
+                  0,
+                  2
+                ],
+                [
+                  7,
+                  5,
+                  3
+                ],
+                [
+                  0,
+                  0,
+                  20
+                ]
+              ]
+            },
+            "pilot_vs_investigator": {
+              "n": 131,
+              "lowConfidence": false,
+              "agreement": {
+                "k": 119,
+                "n": 131,
+                "rate": 0.9083969465648855,
+                "lower": 0.8467012569932881,
+                "upper": 0.9468224033607864
+              },
+              "kappa": 0.771843251088534,
+              "weightedKappa": 0.8378426171529617,
+              "kappaInterval": null,
+              "confusion": [
+                [
+                  94,
+                  0,
+                  2
+                ],
+                [
+                  7,
+                  5,
+                  3
+                ],
+                [
+                  0,
+                  0,
+                  20
+                ]
+              ]
+            }
+          },
+          "byGrade": {
+            "0": {
+              "n": 94,
+              "lowConfidence": true,
+              "agreement": {
+                "k": 94,
+                "n": 94,
+                "rate": 1,
+                "lower": 0.9607365374237544,
+                "upper": 1
+              },
+              "kappa": null,
+              "weightedKappa": null,
+              "kappaInterval": null,
+              "confusion": [
+                [
+                  94,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  0
+                ]
+              ]
+            },
+            "1": {
+              "n": 5,
+              "lowConfidence": true,
+              "agreement": {
+                "k": 5,
+                "n": 5,
+                "rate": 1,
+                "lower": 0.5655085052479191,
+                "upper": 1
+              },
+              "kappa": null,
+              "weightedKappa": null,
+              "kappaInterval": null,
+              "confusion": [
+                [
+                  0,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  5,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  0
+                ]
+              ]
+            },
+            "2": {
+              "n": 20,
+              "lowConfidence": true,
+              "agreement": {
+                "k": 20,
+                "n": 20,
+                "rate": 1,
+                "lower": 0.8388698745050667,
+                "upper": 1
+              },
+              "kappa": null,
+              "weightedKappa": null,
+              "kappaInterval": null,
+              "confusion": [
+                [
+                  0,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  20
+                ]
+              ]
+            },
+            "unknown": {
+              "n": 12,
+              "lowConfidence": true,
+              "agreement": {
+                "k": 0,
+                "n": 12,
+                "rate": 0,
+                "lower": 0,
+                "upper": 0.2425007574992425
+              },
+              "kappa": -0.1076923076923077,
+              "weightedKappa": -0.20000000000000012,
+              "kappaInterval": null,
+              "confusion": [
+                [
+                  0,
+                  0,
+                  2
+                ],
+                [
+                  7,
+                  0,
+                  3
+                ],
+                [
+                  0,
+                  0,
+                  0
+                ]
+              ]
+            }
+          }
+        },
+        "judgeAdjudicator": {
+          "adjudicated": 0,
+          "withA": {
+            "k": 0,
+            "n": 0,
+            "rate": null,
+            "lower": null,
+            "upper": null
+          },
+          "withB": {
+            "k": 0,
+            "n": 0,
+            "rate": null,
+            "lower": null,
+            "upper": null
+          },
+          "changedFromInitial": {
+            "k": 0,
+            "n": 0,
+            "rate": null,
+            "lower": null,
+            "upper": null
+          },
+          "abstained": 0,
+          "byTag": {
+            "aircraft_filter": {
+              "adjudicated": 0,
+              "withA": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "withB": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "changedFromInitial": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "abstained": 0
+            },
+            "operational": {
+              "adjudicated": 0,
+              "withA": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "withB": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "changedFromInitial": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "abstained": 0
+            },
+            "pilot_vs_investigator": {
+              "adjudicated": 0,
+              "withA": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "withB": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "changedFromInitial": {
+                "k": 0,
+                "n": 0,
+                "rate": null,
+                "lower": null,
+                "upper": null
+              },
+              "abstained": 0
+            }
+          }
+        },
+        "statuses": {
+          "agreed": 119,
+          "escalation-budget-exhausted": 12
+        }
+      }
+    }
+  },
+  "answerabilityByVersion": {
+    "benchmark": {
+      "retrieval.v1": {
+        "delivered": 450,
+        "relevance=2": 158,
+        "relevant: answerability=2": 140,
+        "relevant or partial: answerability=2": 146,
+        "relevance=1": 58,
+        "relevant or partial: answerability=1": 49,
+        "relevance=0": 231,
+        "relevant or partial: answerability=0": 21,
+        "relevant: answerability=1": 14,
+        "relevant: answerability=0": 4,
+        "relevance=unknown": 3
+      },
+      "retrieval.v2": {
+        "delivered": 450,
+        "relevance=2": 178,
+        "relevant: answerability=2": 151,
+        "relevant or partial: answerability=2": 157,
+        "relevance=1": 76,
+        "relevant or partial: answerability=1": 69,
+        "relevance=0": 196,
+        "relevant: answerability=1": 19,
+        "relevant or partial: answerability=0": 28,
+        "relevant: answerability=0": 8
+      },
+      "retrieval.v2-nf": {
+        "delivered": 450,
+        "relevance=2": 179,
+        "relevant: answerability=2": 152,
+        "relevant or partial: answerability=2": 157,
+        "relevance=1": 81,
+        "relevant or partial: answerability=1": 75,
+        "relevance=0": 190,
+        "relevant: answerability=1": 19,
+        "relevant or partial: answerability=0": 28,
+        "relevant: answerability=0": 8
+      }
+    },
+    "diagnostic": {
+      "retrieval.v1": {
+        "delivered": 18,
+        "relevance=2": 12,
+        "relevant: answerability=2": 12,
+        "relevant or partial: answerability=2": 12,
+        "relevance=1": 3,
+        "relevant or partial: answerability=1": 3,
+        "relevance=0": 3
+      },
+      "retrieval.v2": {
+        "delivered": 18,
+        "relevance=0": 6,
+        "relevance=1": 6,
+        "relevant or partial: answerability=1": 6,
+        "relevance=2": 6,
+        "relevant: answerability=2": 6,
+        "relevant or partial: answerability=2": 6
+      },
+      "retrieval.v2-nf": {
+        "delivered": 18,
+        "relevance=0": 6,
+        "relevance=1": 6,
+        "relevant or partial: answerability=1": 6,
+        "relevance=2": 6,
+        "relevant: answerability=2": 6,
+        "relevant or partial: answerability=2": 6
+      }
+    }
+  },
+  "audit": {
+    "packet": "audit-2026-10.json"
+  }
+}

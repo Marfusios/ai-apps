@@ -225,7 +225,8 @@ const toItem = (q: CodedItem): ExperimentItem => ({
   relevant: q.relevant,
 });
 
-function gitState(): { commit: string | null; dirty: boolean | null } {
+/** The checked-out commit and whether the tree has changes (provenance of an output file). */
+export function gitState(): { commit: string | null; dirty: boolean | null } {
   const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: APP_DIR, encoding: 'utf8' });
   const status = spawnSync('git', ['status', '--porcelain'], { cwd: APP_DIR, encoding: 'utf8' });
   return { commit: head.status === 0 ? head.stdout.trim() : null, dirty: status.status === 0 ? status.stdout.trim() !== '' : null };

@@ -30,7 +30,8 @@ describe('PRICE_TABLE and caps', () => {
     expect(PRICE_TABLE[SONNET]).toMatchObject({ kind: 'llm', input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.1 });
     expect(PRICE_TABLE[OPUS]).toMatchObject({ kind: 'llm', input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 });
     expect(PRICE_TABLE['text-embedding-3-small']).toEqual({ kind: 'embedding', provider: 'openai', input: 0.02 });
-    expect(PRICE_TABLE['gpt-5.6-luna']).toMatchObject({ provider: 'openai', input: 0.2, output: 1.2 });
+    expect(PRICE_TABLE['gpt-5.6-luna']).toMatchObject({ provider: 'openai', input: 0.2, output: 1.2, cacheWrite: 0.25, cacheRead: 0.02 });
+    expect((PRICE_TABLE['gpt-5.6-luna'] as { longContext?: unknown }).longContext).toEqual({ thresholdTokens: 272_000, input: 0.4, output: 1.8, cacheWrite: 0.5, cacheRead: 0.04 });
     expect(PRICE_TABLE['gpt-5.4-mini-2026-03-17']).toMatchObject({ provider: 'openai', input: 0.75, output: 4.5 });
   });
 
