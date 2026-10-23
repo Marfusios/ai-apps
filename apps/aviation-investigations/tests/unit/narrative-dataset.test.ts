@@ -2,7 +2,8 @@
  * The narrative-relevance question set (Track N): cohort derivation with the passages
  * index semantics (event facets, aircraft facets, every aircraft of a multi-aircraft
  * event), the spec and dataset checks, assembly (versions, paraphrase families, bounded
- * and broad cohorts, related-code positives) and the committed dataset.
+ * and broad cohorts, related-code positives, diagnostics apart from the benchmark) and the
+ * committed dataset with its regression diagnostic.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -11,7 +12,9 @@ import { buildNarrativeFromCorpus, COHORT_QUERIES, type NarrativeCorpus } from '
 import {
   NarrativeDatasetSchema,
   assembleNarrative,
+  benchmarkFamilies,
   deriveCohort,
+  diagnosticFamilies,
   families,
   inCohort,
   membersOf,
@@ -19,7 +22,9 @@ import {
   type CohortCase,
   type NarrativeDataset,
 } from '../../evals/retrieval/narrative/dataset.js';
-import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
+import { NARRATIVE_DIAGNOSTICS, NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
+import { CODED_QUESTIONS } from '../../evals/retrieval/coded/questions.js';
+import { REGRESSION_CASES, pipelineIntent } from '../../evals/retrieval/adoption/validate.js';
 import {
   BOUNDED_MAX,
   CAVEAT,
@@ -30,6 +35,7 @@ import {
   questionVersion,
   rubricVersion,
   specSha256,
+  type NarrativeDiagnosticSpec,
   type NarrativeParaphraseSpec,
   type NarrativeQuestionSpec,
 } from '../../evals/retrieval/narrative/spec.js';
@@ -128,8 +134,29 @@ const spec = (id: string, over: Partial<NarrativeQuestionSpec> = {}): NarrativeQ
 });
 
 describe('spec checks', () => {
-  it('passes the committed questions', () => {
+  it('passes the committed questions and diagnostics', () => {
     expect(narrativeSpecProblems(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES)).toEqual([]);
+    expect(narrativeSpecProblems(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES, NARRATIVE_DIAGNOSTICS)).toEqual([]);
+  });
+
+  it('checks a diagnostic as a question and its frozen definition, outside the set\'s minimums', () => {
+    const d = NARRATIVE_DIAGNOSTICS[0] as NarrativeDiagnosticSpec;
+    const c = d.diagnostic.comparison;
+    const bad: NarrativeDiagnosticSpec = {
+      ...d,
+      id: 'z-diag',
+      tags: ['negation'],
+      diagnostic: { ...d.diagnostic, comparison: { ...c, variants: ['retrieval.v1', 'retrieval.v9'], primary: 'p6', reported: ['ndcg6'], reproduction: { ...c.reproduction, expected: { 'retrieval.v3': 0.5 } } } },
+    };
+    const problems = narrativeSpecProblems(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES, [bad]);
+    expect(problems).toContain('z-diag: tagged aircraft_filter exactly when it filters on an aircraft facet');
+    expect(problems).toContain('z-diag: retrieval.v9 is not a retrieval version');
+    expect(problems).toContain('z-diag: the variants are distinct and exclude the base');
+    expect(problems).toContain('z-diag: the primary metric is among the reported ones');
+    expect(problems).toContain('z-diag: the reproduction names retrieval.v3, which is not compared');
+    expect(narrativeSpecProblems(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES, [{ ...d, id: NARRATIVE_QUESTIONS[0]?.id as string }])).toContain(`duplicate question id ${NARRATIVE_QUESTIONS[0]?.id}`);
+    // A diagnostic never makes up for a benchmark minimum.
+    expect(narrativeSpecProblems(NARRATIVE_QUESTIONS.slice(0, 3), [], NARRATIVE_DIAGNOSTICS).some((p) => p.startsWith('only '))).toBe(true);
   });
 
   it('finds duplicate ids, missing aircraft-filter tags, one-sided edge cases and unknown paraphrase targets', () => {
@@ -203,6 +230,25 @@ describe('assembly', () => {
     expect(p?.tags).toContain('paraphrase');
     expect(p?.cohort).toEqual(byId.get('a-one')?.cohort);
     expect(built.dataset.source.specSha256).toBe(specSha256(specs, [{ id: 'p-one', of: 'a-one', question: 'Which accidents look like that?', note: 'Lay wording.' }]));
+    expect(built.dataset.questions.every((q) => q.role === 'benchmark' && q.diagnostic === undefined)).toBe(true);
+  });
+
+  it('builds a diagnostic as a question with its definition, apart from the benchmark, and hashes it into the spec', () => {
+    const d = { ...(NARRATIVE_DIAGNOSTICS[0] as NarrativeDiagnosticSpec), id: 'c-diag', relatedCodes: undefined, filters: {}, tags: ['negation' as const] };
+    const specs = [spec('a-one', { type: 'bounded-cohort' }), spec('b-two')];
+    const built = assembleNarrative(source, specs, [], new Map([['a-one', small], ['b-two', big], ['c-diag', big]]), new Map(), [d]);
+    const q = built.dataset.questions.find((x) => x.id === 'c-diag');
+    expect(q?.role).toBe('diagnostic');
+    expect(q?.diagnostic).toEqual(d.diagnostic);
+    expect(benchmarkFamilies(built.dataset).map((x) => x.id)).toEqual(['a-one', 'b-two']);
+    expect(diagnosticFamilies(built.dataset).map((x) => x.id)).toEqual(['c-diag']);
+    expect(built.dataset.source.specSha256).toBe(specSha256(specs, [], [d]));
+    expect(specSha256(specs, [], [d])).not.toBe(specSha256(specs, []));
+    // Without diagnostics the hash is the one a set without them always had.
+    expect(specSha256(specs, [], [])).toBe(specSha256(specs, []));
+    expect(narrativeDatasetProblems({ ...built.dataset, questions: built.dataset.questions.map((x) => (x.id === 'c-diag' ? { ...x, diagnostic: undefined } : x)) })).toContain(
+      'c-diag: a diagnostic, and only a diagnostic, carries its definition',
+    );
   });
 
   it('refuses a bounded cohort above the limit and a broad question within it', () => {
@@ -227,7 +273,7 @@ describe('assembly', () => {
       cohort: [kase('FIX16TX001'), kase('FIX17TX002', { aircraft: [aircraft({ purpose: 'SKYD' })] })],
       coded: null,
     };
-    const built = buildNarrativeFromCorpus(corpus, [spec('a-one', { type: 'bounded-cohort', filters: { purpose: ['SKYD'] }, tags: ['negation', 'aircraft_filter'] })], []);
+    const built = buildNarrativeFromCorpus(corpus, [spec('a-one', { type: 'bounded-cohort', filters: { purpose: ['SKYD'] }, tags: ['negation', 'aircraft_filter'] })], [], []);
     expect(built.dataset.questions[0]?.cohort).toEqual({ size: 1, cases: ['FIX17TX002'] });
     expect(built.dataset.source.answerEligibleCases).toBe(2);
   });
@@ -237,17 +283,39 @@ describe('the committed dataset', () => {
   const d = committed();
 
   it('is the build of the committed specs, without problems', () => {
-    expect(d.source.specSha256).toBe(specSha256(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES));
+    expect(d.source.specSha256).toBe(specSha256(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES, NARRATIVE_DIAGNOSTICS));
     expect(narrativeDatasetProblems(d)).toEqual([]);
   });
 
-  it('has about 24 questions, at least four bounded cohorts within the limit, and every tag', () => {
-    expect(d.questions.length).toBeGreaterThanOrEqual(22);
-    expect(d.questions.length).toBeLessThanOrEqual(28);
-    const bounded = families(d).filter((q) => q.type === 'bounded-cohort');
+  it('has about 24 benchmark questions, at least four bounded cohorts within the limit, and every tag', () => {
+    const benchmark = d.questions.filter((q) => q.role === 'benchmark');
+    expect(benchmark.length).toBeGreaterThanOrEqual(22);
+    expect(benchmark.length).toBeLessThanOrEqual(28);
+    const bounded = benchmarkFamilies(d).filter((q) => q.type === 'bounded-cohort');
     expect(bounded.length).toBeGreaterThanOrEqual(MIN_BOUNDED);
     for (const q of bounded) expect(q.cohort.size).toBeLessThanOrEqual(BOUNDED_MAX);
-    for (const tag of TAGS) expect(d.questions.some((q) => q.tags.includes(tag))).toBe(true);
+    for (const tag of TAGS) expect(benchmark.some((q) => q.tags.includes(tag))).toBe(true);
+  });
+
+  it("holds task 10e's regression case as a diagnostic: Track C's question, filters and code set, phase A's frozen scope output, rules frozen", () => {
+    const [diag, ...rest] = diagnosticFamilies(d);
+    expect(rest).toEqual([]);
+    const coded = CODED_QUESTIONS.find((q) => q.id === REGRESSION_CASES[0].id);
+    expect(diag?.id).toBe(REGRESSION_CASES[0].id);
+    expect(diag?.question).toBe(coded?.question);
+    expect(diag?.filters).toEqual(coded?.filters);
+    expect(diag?.relatedCodes).toEqual(coded?.codeSet);
+    expect(diag?.type).toBe('broad');
+    expect(diag?.cohort.size).toBe(185);
+    expect(diag?.relatedPositives).toHaveLength(27);
+    expect(membersOf(d, diag?.id as string)).toHaveLength(1);
+    const c = diag?.diagnostic?.comparison;
+    expect(c).toMatchObject({ base: 'retrieval.v1', variants: ['retrieval.v2', 'retrieval.v2-nf'], primary: 'ndcg6', reported: ['ndcg6', 'p6', 'supported'] });
+    expect(c?.reproduction.expected).toEqual({ 'retrieval.v1': 0.658, 'retrieval.v2': 0.259, 'retrieval.v2-nf': 0.259 });
+    const samples = diag?.diagnostic?.scope?.samples ?? [];
+    expect(samples).toHaveLength(3);
+    for (const s of samples) expect(pipelineIntent(diag?.question as string, s).keywordText).toBe(s.keywordText);
+    expect(new Set(samples.map((s) => s.keywordText))).toEqual(new Set(['weight-shift pilot decision making probable cause judgment']));
   });
 
   it('judges every paraphrase under its family question and rubric', () => {

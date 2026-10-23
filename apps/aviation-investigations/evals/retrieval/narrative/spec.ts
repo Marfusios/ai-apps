@@ -29,6 +29,11 @@
  * question's filters, type and rubric, and its cases are judged against the original
  * question (the family's), so a paraphrase family shares one set of judgments.
  *
+ * A **diagnostic** is a question of the same shape with a frozen diagnostic definition
+ * (`NarrativeDiagnosticSchema`): judged with the same judges, prompts and schedule, and
+ * reported apart from the benchmark aggregate under comparison rules fixed before any
+ * judging. It never counts toward the set's minimums.
+ *
  * **Versions.** A judgment depends on the judged question and the rubric:
  * `questionVersion` hashes the family's question text and filters, `rubricVersion`
  * the rubric. Both enter the judgment cache key, so editing either re-judges.
@@ -36,6 +41,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { BLANK } from '../../../shared/contracts/search.js';
+import { RETRIEVAL_VERSIONS } from '../../../shared/contracts/retrieval.js';
 import { AIRCRAFT_FACET_KEYS, RetrievalFiltersSchema, type RetrievalFilters } from '../../../server/search/filters.js';
 import { CodeSetSchema, CodedFiltersSchema } from '../coded/coded.js';
 
@@ -132,6 +138,59 @@ export const NarrativeParaphraseSpecSchema = z.strictObject({
 export type NarrativeParaphraseSpec = z.infer<typeof NarrativeParaphraseSpecSchema>;
 
 // ---------------------------------------------------------------------------
+// Diagnostics
+
+/** What a diagnostic compares (the benchmark's own metrics, `score.ts`). */
+export const DIAGNOSTIC_METRICS = ['ndcg6', 'p6', 'supported'] as const;
+
+/** One cached scope-stage output a diagnostic is frozen with: the planner's output and the keyword text the pipeline resolves from it. */
+export const DiagnosticScopeSampleSchema = z.strictObject({
+  sample: z.number().int().positive(),
+  intent: z.string().min(1),
+  plannerKeywordText: z.string().nullable(),
+  plannerFilters: z.record(z.string(), z.unknown()),
+  keywordText: z.string().min(1),
+});
+export type DiagnosticScopeSample = z.infer<typeof DiagnosticScopeSampleSchema>;
+
+/**
+ * A regression diagnostic: a question a retrieval version was seen to lose, judged like
+ * every benchmark question and reported apart from the benchmark aggregate, under
+ * comparison rules frozen with it before any judging (`score.ts`, `regressionDiagnostic`).
+ */
+export const NarrativeDiagnosticSchema = z.strictObject({
+  kind: z.literal('regression'),
+  /** Where the regression was seen, and its size there. */
+  origin: z.string().min(20).max(600),
+  /**
+   * The cached scope outputs the diagnostic runs with, the same for every retrieval
+   * version (the runs that showed the regression); null: the pool's own scope samples.
+   */
+  scope: z.strictObject({ source: z.string().min(10).max(400), samples: z.array(DiagnosticScopeSampleSchema).min(1) }).nullable(),
+  comparison: z.strictObject({
+    /** The retrieval version the variants are compared with. */
+    base: z.string().min(1),
+    variants: z.array(z.string().min(1)).min(1),
+    /** The metric the conclusion rests on; the others are reported only. */
+    primary: z.enum(DIAGNOSTIC_METRICS),
+    reported: z.array(z.enum(DIAGNOSTIC_METRICS)).min(1),
+    rule: z.string().min(40).max(1200),
+    /** The coded-reference values the runs should reproduce (the regression as first measured). */
+    reproduction: z.strictObject({
+      metric: z.literal('coded-ndcg6'),
+      expected: z.record(z.string(), z.number().min(0).max(1)),
+      tolerance: z.number().positive(),
+      source: z.string().min(10).max(300),
+    }),
+  }),
+});
+export type NarrativeDiagnostic = z.infer<typeof NarrativeDiagnosticSchema>;
+
+/** A diagnostic question: a question spec with its frozen diagnostic definition. */
+export const NarrativeDiagnosticSpecSchema = z.strictObject({ ...NarrativeQuestionSpecSchema.shape, diagnostic: NarrativeDiagnosticSchema });
+export type NarrativeDiagnosticSpec = z.infer<typeof NarrativeDiagnosticSpecSchema>;
+
+// ---------------------------------------------------------------------------
 // Versions
 
 /** JSON with object keys sorted at every level (stable hashing). */
@@ -159,20 +218,44 @@ export const questionVersion = (q: { question: string; filters: RetrievalFilters
 /** The rubric's identity. */
 export const rubricVersion = (r: Rubric): string => `r-${sha256(canonicalJson(r)).slice(0, 16)}`;
 
-/** sha256 over the question and paraphrase specs: changes whenever a question, rubric, filter or lure does. */
-export const specSha256 = (specs: readonly NarrativeQuestionSpec[], paraphrases: readonly NarrativeParaphraseSpec[]): string =>
-  sha256(canonicalJson({ specs, paraphrases }));
+/**
+ * sha256 over the question, paraphrase and diagnostic specs: changes whenever a question,
+ * rubric, filter, lure or diagnostic definition does (a set without diagnostics hashes as
+ * it did before diagnostics existed).
+ */
+export const specSha256 = (specs: readonly NarrativeQuestionSpec[], paraphrases: readonly NarrativeParaphraseSpec[], diagnostics: readonly NarrativeDiagnosticSpec[] = []): string =>
+  sha256(canonicalJson({ specs, paraphrases, diagnostics: diagnostics.length > 0 ? diagnostics : undefined }));
 
 export const hasAircraftFacet = (f: RetrievalFilters): boolean => AIRCRAFT_FACET_KEYS.some((k) => (f[k] ?? []).length > 0);
 
 // ---------------------------------------------------------------------------
 // Checks
 
-/** Problems with the committed specs (beyond their cohorts). Empty when usable. */
-export function narrativeSpecProblems(specs: readonly NarrativeQuestionSpec[], paraphrases: readonly NarrativeParaphraseSpec[]): string[] {
+/** Problems of a diagnostic's own definition (its question is checked as every question is). */
+function diagnosticProblems(d: NarrativeDiagnosticSpec): string[] {
+  const problems: string[] = [];
+  const parsed = NarrativeDiagnosticSchema.safeParse(d.diagnostic);
+  if (!parsed.success) return parsed.error.issues.map((i) => `${d.id}: diagnostic.${i.path.join('.')}: ${i.message}`);
+  const c = d.diagnostic.comparison;
+  const versions = RETRIEVAL_VERSIONS as readonly string[];
+  for (const v of [c.base, ...c.variants]) if (!versions.includes(v)) problems.push(`${d.id}: ${v} is not a retrieval version`);
+  if (c.variants.includes(c.base) || new Set(c.variants).size !== c.variants.length) problems.push(`${d.id}: the variants are distinct and exclude the base`);
+  if (!c.reported.includes(c.primary)) problems.push(`${d.id}: the primary metric is among the reported ones`);
+  for (const k of Object.keys(c.reproduction.expected)) if (k !== c.base && !c.variants.includes(k)) problems.push(`${d.id}: the reproduction names ${k}, which is not compared`);
+  if (d.diagnostic.scope && d.diagnostic.scope.samples.some((s, i) => s.sample !== i + 1)) problems.push(`${d.id}: the frozen scope samples are numbered 1, 2, ...`);
+  return problems;
+}
+
+/**
+ * Problems with the committed specs (beyond their cohorts). Empty when usable. Diagnostics
+ * are checked as questions (and for their definition), but the set's minimums (questions,
+ * paraphrases, bounded cohorts, tags) count benchmark questions only.
+ */
+export function narrativeSpecProblems(specs: readonly NarrativeQuestionSpec[], paraphrases: readonly NarrativeParaphraseSpec[], diagnostics: readonly NarrativeDiagnosticSpec[] = []): string[] {
   const problems: string[] = [];
   const ids = new Set<string>();
-  for (const s of specs) {
+  for (const d of diagnostics) problems.push(...diagnosticProblems(d));
+  for (const s of [...specs, ...diagnostics.map(({ diagnostic: _d, ...q }) => q)]) {
     const parsed = NarrativeQuestionSpecSchema.safeParse(s);
     if (!parsed.success) problems.push(...parsed.error.issues.map((i) => `${s.id}: ${i.path.join('.')}: ${i.message}`));
     if (ids.has(s.id)) problems.push(`duplicate question id ${s.id}`);

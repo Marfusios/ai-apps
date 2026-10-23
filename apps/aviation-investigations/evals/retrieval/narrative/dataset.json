@@ -1,7 +1,7 @@
 {
   "version": "narrative-v1",
   "reference": "model-judged",
-  "description": "Narrative-relevance retrieval set (Track N, task 10c protocol v4): development questions over negation, maintenance chronology, causal uncertainty, pilot-versus-investigator attribution, paraphrase, multi-aircraft and aircraft filters, operational and mechanical concepts, each with a written rubric (2/1/0 with edge cases). Bounded cohorts list every answer-eligible case their filters reach (all judged); broad questions are judged on a pool. Labels are model-judged, never expert-adjudicated. Rebuild with pnpm eval:retrieval:narrative build.",
+  "description": "Narrative-relevance retrieval set (Track N, task 10c protocol v4): development questions over negation, maintenance chronology, causal uncertainty, pilot-versus-investigator attribution, paraphrase, multi-aircraft and aircraft filters, operational and mechanical concepts, each with a written rubric (2/1/0 with edge cases). Bounded cohorts list every answer-eligible case their filters reach (all judged); broad questions are judged on a pool. Diagnostic questions are judged the same way and reported apart from the benchmark. Labels are model-judged, never expert-adjudicated. Rebuild with pnpm eval:retrieval:narrative build.",
   "caveat": "Model-judged labels: two judges from different providers (claude-haiku-5-5, gpt-5.6-luna) grade each case 0/1/2 against the question's written rubric on the case's complete record, and claude-sonnet-5-5 adjudicates their disagreements. Unjudgeable, unresolved and abstained cases are unknown and stay in every denominator. These are model judgments, never expert-adjudicated relevance.",
   "source": {
     "generationId": 1,
@@ -11,7 +11,7 @@
     "citationTextVersion": "v1",
     "answerEligibleCases": 24291,
     "builder": "evals/retrieval/narrative/build.ts",
-    "specSha256": "a9af0e699d16690ac1b24dcba0257e06684040a64cc6d1a120bb66d6278df5c3"
+    "specSha256": "3d5a487e61f92cbd039cd6bd12c11f3cf79d547306dd33370df98324125a283f"
   },
   "limits": {
     "boundedMax": 150,
@@ -21,6 +21,7 @@
     {
       "id": "ng-skydiving-power-loss-no-anomaly",
       "question": "Which skydiving flights lost engine power even though the engine examination afterwards found nothing mechanically wrong?",
+      "role": "benchmark",
       "family": "ng-skydiving-power-loss-no-anomaly",
       "tags": [
         "negation",
@@ -197,6 +198,7 @@
     {
       "id": "cu-air-show-undetermined",
       "question": "Which air show or air race flights crashed for a reason the investigation could not determine?",
+      "role": "benchmark",
       "family": "cu-air-show-undetermined",
       "tags": [
         "causal_uncertainty",
@@ -355,6 +357,7 @@
     {
       "id": "mc-ag-arkansas-engine-after-maintenance",
       "question": "Which agricultural flights in Arkansas lost engine power within 25 hours of operation after maintenance on the engine?",
+      "role": "benchmark",
       "family": "mc-ag-arkansas-engine-after-maintenance",
       "tags": [
         "maintenance_chronology",
@@ -530,6 +533,7 @@
     {
       "id": "op-balloon-power-lines",
       "question": "Which hot air balloon flights since 2018 struck power lines?",
+      "role": "benchmark",
       "family": "op-balloon-power-lines",
       "tags": [
         "operational",
@@ -698,6 +702,7 @@
     {
       "id": "op-external-load-line-strike",
       "question": "Which external-load helicopter flights had the longline, sling or load strike the helicopter?",
+      "role": "benchmark",
       "family": "op-external-load-line-strike",
       "tags": [
         "operational",
@@ -857,6 +862,7 @@
     {
       "id": "me-powered-parachute-propeller-strike",
       "question": "Which powered parachute accidents involved the wing, its lines or loose gear getting into the propeller?",
+      "role": "benchmark",
       "family": "me-powered-parachute-propeller-strike",
       "tags": [
         "mechanical",
@@ -1015,6 +1021,7 @@
     {
       "id": "ng-carb-icing-not-conducive",
       "question": "Which airplane engine power losses happened in weather that was not conducive to carburetor icing?",
+      "role": "benchmark",
       "family": "ng-carb-icing-not-conducive",
       "tags": [
         "negation",
@@ -1076,6 +1083,7 @@
     {
       "id": "ng-gear-collapse-no-defect",
       "question": "Which airplane landing gear collapses happened even though no pre-existing defect was found in the gear?",
+      "role": "benchmark",
       "family": "ng-gear-collapse-no-defect",
       "tags": [
         "negation",
@@ -1135,6 +1143,7 @@
     {
       "id": "mc-first-flight-after-annual",
       "question": "Which accidents happened on the first flight after an annual inspection?",
+      "role": "benchmark",
       "family": "mc-first-flight-after-annual",
       "tags": [
         "maintenance_chronology"
@@ -1192,6 +1201,7 @@
     {
       "id": "mc-helicopter-control-rotor-maintenance-10h",
       "question": "Which helicopter accidents happened within 10 hours of operation after maintenance on the flight controls or rotor system?",
+      "role": "benchmark",
       "family": "mc-helicopter-control-rotor-maintenance-10h",
       "tags": [
         "maintenance_chronology",
@@ -1250,6 +1260,7 @@
     {
       "id": "cu-inflight-fire-origin-undetermined",
       "question": "Which in-flight fires had an origin the investigators could not determine?",
+      "role": "benchmark",
       "family": "cu-inflight-fire-origin-undetermined",
       "tags": [
         "causal_uncertainty",
@@ -1298,6 +1309,7 @@
     {
       "id": "cu-competing-explanations",
       "question": "In which accidents did investigators name more than one possible cause without deciding which it was?",
+      "role": "benchmark",
       "family": "cu-competing-explanations",
       "tags": [
         "causal_uncertainty"
@@ -1350,6 +1362,7 @@
     {
       "id": "pv-pilot-reported-failure-not-confirmed",
       "question": "In which accidents did the pilot report a mechanical failure that the investigation did not confirm?",
+      "role": "benchmark",
       "family": "pv-pilot-reported-failure-not-confirmed",
       "tags": [
         "pilot_vs_investigator",
@@ -1405,6 +1418,7 @@
     {
       "id": "pv-recorded-data-contradicts-pilot",
       "question": "Which accidents had a pilot's account of the flight that recorded data, such as GPS or engine monitor data, contradicted?",
+      "role": "benchmark",
       "family": "pv-recorded-data-contradicts-pilot",
       "tags": [
         "pilot_vs_investigator"
@@ -1454,6 +1468,7 @@
     {
       "id": "pv-helicopter-tail-rotor-claim",
       "question": "Which helicopter accidents involved a pilot reporting a tail rotor failure that investigators did not find?",
+      "role": "benchmark",
       "family": "pv-helicopter-tail-rotor-claim",
       "tags": [
         "pilot_vs_investigator",
@@ -1507,6 +1522,7 @@
     {
       "id": "ma-airplane-collision-student-pilot",
       "question": "In which collisions between two airplanes was one of them flown by a student pilot?",
+      "role": "benchmark",
       "family": "ma-airplane-collision-student-pilot",
       "tags": [
         "multi_aircraft",
@@ -1559,6 +1575,7 @@
     {
       "id": "ma-taxiing-strikes-stationary",
       "question": "Which ground collisions happened when a taxiing aircraft struck a parked or stopped aircraft?",
+      "role": "benchmark",
       "family": "ma-taxiing-strikes-stationary",
       "tags": [
         "multi_aircraft",
@@ -1607,6 +1624,7 @@
     {
       "id": "ma-midair-pattern-nontowered",
       "question": "Which midair collisions between airplanes happened in the traffic pattern at an airport without an operating control tower?",
+      "role": "benchmark",
       "family": "ma-midair-pattern-nontowered",
       "tags": [
         "multi_aircraft",
@@ -1665,6 +1683,7 @@
     {
       "id": "op-night-vfr-into-clouds",
       "question": "Which night flights under visual flight rules continued into clouds or fog before crashing?",
+      "role": "benchmark",
       "family": "op-night-vfr-into-clouds",
       "tags": [
         "operational"
@@ -1718,6 +1737,7 @@
     {
       "id": "me-gear-up-mechanical",
       "question": "Since 2015, which airplanes landed with the landing gear up because a mechanical, hydraulic or electrical problem kept it from extending?",
+      "role": "benchmark",
       "family": "me-gear-up-mechanical",
       "tags": [
         "mechanical",
@@ -1858,6 +1878,7 @@
     {
       "id": "me-helicopter-tail-rotor-drive-failure",
       "question": "Which helicopters lost tail rotor drive in flight because a drive shaft, coupling or gearbox failed?",
+      "role": "benchmark",
       "family": "me-helicopter-tail-rotor-drive-failure",
       "tags": [
         "mechanical",
@@ -1977,6 +1998,7 @@
     {
       "id": "para-inflight-fire-origin-undetermined",
       "question": "Which aircraft caught fire while flying, without anyone figuring out what started it?",
+      "role": "benchmark",
       "family": "cu-inflight-fire-origin-undetermined",
       "tags": [
         "causal_uncertainty",
@@ -2027,6 +2049,7 @@
     {
       "id": "para-first-flight-after-annual",
       "question": "Which aircraft crashed the very first time they flew after coming out of their yearly inspection?",
+      "role": "benchmark",
       "family": "mc-first-flight-after-annual",
       "tags": [
         "maintenance_chronology",
@@ -2086,6 +2109,7 @@
     {
       "id": "para-pilot-reported-failure-not-confirmed",
       "question": "When did a pilot say something on the aircraft broke, but the examiners found it working fine?",
+      "role": "benchmark",
       "family": "pv-pilot-reported-failure-not-confirmed",
       "tags": [
         "pilot_vs_investigator",
@@ -2143,6 +2167,7 @@
     {
       "id": "para-powered-parachute-propeller-strike",
       "question": "Which powered parachutes got their canopy lines or other gear sucked into the prop?",
+      "role": "benchmark",
       "family": "me-powered-parachute-propeller-strike",
       "tags": [
         "mechanical",
@@ -2299,6 +2324,181 @@
       "relatedPositives": [],
       "note": "Paraphrase of me-powered-parachute-propeller-strike. A paraphrase of a bounded cohort, so its Recall@20 is defined once the cohort is judged.",
       "paraphrase_of": "me-powered-parachute-propeller-strike"
+    },
+    {
+      "id": "per-pilot-decision-cause-weight-shift",
+      "question": "Which weight-shift-control aircraft accidents have a probable cause that cites the pilot's decision making?",
+      "role": "diagnostic",
+      "family": "per-pilot-decision-cause-weight-shift",
+      "tags": [
+        "pilot_vs_investigator",
+        "operational",
+        "aircraft_filter"
+      ],
+      "type": "broad",
+      "filters": {
+        "category": [
+          "WSFT"
+        ]
+      },
+      "questionVersion": "q-c173a446e320787e",
+      "memberVersion": "q-c173a446e320787e",
+      "rubric": {
+        "relevant": "The probable cause the investigators state for the accident (the probable cause statement, with any factor it names as contributing) cites a decision or judgment of the pilot in command of the weight-shift-control aircraft as a cause or a contributing factor: a decision or choice to do or not to do something (for example, to take off, to continue the flight, to fly at a low altitude or to attempt a maneuver; wording such as 'decision', 'elected', 'chose' or 'continued flight into' counts), or the pilot's poor, improper or inadequate judgment or decision-making. A flight instructor in command counts as the pilot.",
+        "partial": "Grade 2 does not hold, and either: the investigators' analysis or findings, outside the probable cause statement, say that a decision or judgment of the pilot contributed to the accident while the probable cause names only what followed (for example, a loss of control or an encounter with turbulence); or the probable cause cites such a decision or judgment only as possible or likely ('likely', 'may have'); or it cites a decision or judgment of someone other than the pilot in command (for example, the operator or a person on the ground).",
+        "notRelevant": "Anything else, including: the probable cause cites only what the pilot did or failed to do without presenting it as a decision or choice (for example, a failure to maintain control, an improper landing flare, an inadequate preflight inspection or inadequate fuel planning), a mechanical failure, the weather, or a reason the investigators could not determine; or a decision appears only in the pilot's own account and the investigators do not adopt it.",
+        "edgeCases": [
+          {
+            "situation": "The probable cause is the pilot's decision to take off in gusting crosswind conditions, which resulted in a loss of control during the takeoff roll.",
+            "grade": 2,
+            "why": "A decision of the pilot is cited in the probable cause."
+          },
+          {
+            "situation": "The probable cause is the pilot's poor judgment in performing low-altitude maneuvers, which resulted in a collision with power lines.",
+            "grade": 2,
+            "why": "Poor judgment is cited in the probable cause."
+          },
+          {
+            "situation": "The probable cause is the pilot's continued flight into deteriorating weather, which resulted in a loss of control.",
+            "grade": 2,
+            "why": "Continuing the flight is a choice the probable cause faults."
+          },
+          {
+            "situation": "The probable cause is the pilot's loss of control in gusting wind; the analysis says the pilot chose to fly although strong winds were forecast.",
+            "grade": 1,
+            "why": "The decision is in the analysis, not in the probable cause."
+          },
+          {
+            "situation": "The probable cause is the pilot's failure to maintain control during the landing flare.",
+            "grade": 0,
+            "why": "An action not presented as a decision or choice."
+          },
+          {
+            "situation": "The probable cause is a total loss of engine power due to fuel exhaustion as a result of the pilot's inadequate fuel planning.",
+            "grade": 0,
+            "why": "Planning that the probable cause does not present as a decision."
+          },
+          {
+            "situation": "The pilot said he decided to land in a field after the engine lost power; the probable cause is a loss of engine power for reasons that could not be determined.",
+            "grade": 0,
+            "why": "The decision is only in the pilot's account and is not cited as a cause."
+          }
+        ]
+      },
+      "rubricVersion": "r-49b5e622b73a87c3",
+      "lure": "weight-shift trike pilot loss of control gusting wind landing flare engine power loss undetermined",
+      "relatedCodes": {
+        "clauses": [
+          {
+            "kind": "finding",
+            "codes": [
+              "0204152044"
+            ],
+            "inProbableCause": true
+          }
+        ],
+        "attribution": "same-aircraft"
+      },
+      "cohort": {
+        "size": 185,
+        "cases": null
+      },
+      "relatedPositives": [
+        "ANC10FA022",
+        "ANC19LA004",
+        "CEN10LA074",
+        "CEN10LA339",
+        "CEN14LA419",
+        "CEN17LA307",
+        "CEN22LA087",
+        "ERA13CA130",
+        "ERA15CA118",
+        "ERA15LA339",
+        "ERA16LA305",
+        "ERA18LA188",
+        "ERA22FA387",
+        "GAA17CA198",
+        "GAA19CA002",
+        "MIA08LA161",
+        "SEA08CA189",
+        "WPR10CA224",
+        "WPR11FA225",
+        "WPR11LA081",
+        "WPR13LA313",
+        "WPR16FA086",
+        "WPR16LA071",
+        "WPR18LA109",
+        "WPR20CA150",
+        "WPR23FA138",
+        "WPR23LA051"
+      ],
+      "note": "Task 10e's regression case on narrative labels: Track C's question text and filter (category WSFT), the Track C code set as related codes (its coded positives join the pool, never as labels), a rubric anchored on the probable cause statement. The contrast is a probable cause that names only an action, a loss of control, a failure or an undetermined reason.",
+      "diagnostic": {
+        "kind": "regression",
+        "origin": "Task 10e kept this question as a regression case (REGRESSION_CASES, evals/retrieval/adoption/validate.ts): on Track C's coded labels its nDCG@6 fell from 65.8% under retrieval.v1 to 25.9% under retrieval.v2 and retrieval.v2-nf, in every scope sample (the task 10e report, section 5).",
+        "scope": {
+          "source": "Phase A's cached development scope samples of this question (task 10d), the input task 10e measured the regression with; the three samples are identical.",
+          "samples": [
+            {
+              "sample": 1,
+              "intent": "case_search",
+              "plannerKeywordText": "weight-shift pilot decision making probable cause judgment",
+              "plannerFilters": {
+                "category": [
+                  "WSFT"
+                ]
+              },
+              "keywordText": "weight-shift pilot decision making probable cause judgment"
+            },
+            {
+              "sample": 2,
+              "intent": "case_search",
+              "plannerKeywordText": "weight-shift pilot decision making probable cause judgment",
+              "plannerFilters": {
+                "category": [
+                  "WSFT"
+                ]
+              },
+              "keywordText": "weight-shift pilot decision making probable cause judgment"
+            },
+            {
+              "sample": 3,
+              "intent": "case_search",
+              "plannerKeywordText": "weight-shift pilot decision making probable cause judgment",
+              "plannerFilters": {
+                "category": [
+                  "WSFT"
+                ]
+              },
+              "keywordText": "weight-shift pilot decision making probable cause judgment"
+            }
+          ]
+        },
+        "comparison": {
+          "base": "retrieval.v1",
+          "variants": [
+            "retrieval.v2",
+            "retrieval.v2-nf"
+          ],
+          "primary": "ndcg6",
+          "reported": [
+            "ndcg6",
+            "p6",
+            "supported"
+          ],
+          "rule": "For each variant against the base: the difference of the means over the scope samples, with bounds over the unknown labels as the benchmark computes them (cross-endpoint for nDCG@6, joint over shared unknowns for P@6 and supported P@6), and the same per sample. The conclusion rests on the primary metric's mean difference: 'regression' when its upper bound is below zero, 'no-regression' when its lower bound is at or above zero, 'inconclusive' otherwise. The other metrics are reported and never change it. The cases each variant's bundle displaced from the base's, and admitted, are listed per sample with their labels and coded status. The result is reported apart from the benchmark: never in its aggregates, comparisons, agreement figures or audit samples.",
+          "reproduction": {
+            "metric": "coded-ndcg6",
+            "expected": {
+              "retrieval.v1": 0.658,
+              "retrieval.v2": 0.259,
+              "retrieval.v2-nf": 0.259
+            },
+            "tolerance": 0.0005,
+            "source": "The task 10e report, section 5: the coded nDCG@6 of every scope sample, to 0.1 point."
+          }
+        }
+      }
     }
   ]
 }

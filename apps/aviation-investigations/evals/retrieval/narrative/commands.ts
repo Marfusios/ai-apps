@@ -3,7 +3,8 @@
  * paid commands (`pools`, `judge`, `answerability`), which print their plan and pay
  * nothing without `--confirm-cost`. Read-only against the target: Elasticsearch with the
  * read key, PostgreSQL with the app role; the only writes are the evaluation ledger's
- * reservations (`DATABASE_INGEST_URL`) and files under `--out-dir`.
+ * reservations (`DATABASE_INGEST_URL`), files under `--out-dir` and the frozen pool
+ * identity (`frozen-pools.json`, which `pools` records and judging requires committed).
  *
  * **Preflight** (every command, before anything is paid): the dataset parses, has no
  * problems and was built from the committed specs; the calibration labels are the frozen
@@ -23,12 +24,14 @@
  * evaluation allowance on the ledger. The judgment cache (`<out-dir>/cache.jsonl`) is
  * shared by every run and allocation, so a new month resumes from it under its own cap.
  */
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { createAnthropicProvider } from '../../../server/ai/anthropic.js';
+import { queryEmbeddingInput } from '../../../server/ai/embeddings.js';
 import { closeDb, createDb, type Db } from '../../../server/db/client.js';
 import { getActiveManifest } from '../../../server/db/generations.js';
 import { readIndexMeta } from '../../../server/search/index-meta.js';
@@ -39,17 +42,16 @@ import { isServableCasesIndex } from '../../../worker/index/cases-index.js';
 import { createLedgerSpendGate, type SpendGate } from '../../../worker/index/spend-gate.js';
 import { readGenerationSource, type GenerationSource } from '../generation.js';
 import { describePlan, embedPlan, indexReport, planQueryEmbeddings, resolveRunTarget, stamp, type RunTarget } from '../harness.js';
-import { BASELINE_CONFIG, experimentConfig } from '../experiments/config.js';
-import { DEFAULT_GRID, filterConsistency, gitState } from '../experiments/cli.js';
-import { loadGrid } from '../experiments/grid.js';
+import { filterConsistency, gitState } from '../experiments/cli.js';
 import { providerScopeCaller, runScopeSamples, scopeInventory, type ScopeRun } from '../experiments/scope.js';
-import { DEFAULT_CALIBRATION, DEFAULT_NARRATIVE_DATASET, HOLDOUT_LOCK_FILE } from './build.js';
+import { DEFAULT_CALIBRATION, DEFAULT_NARRATIVE_DATASET, FROZEN_POOLS_FILE, HOLDOUT_LOCK_FILE } from './build.js';
 import { CalibrationDatasetSchema, calibrationProblems, controlEvidence, itemKey, itemPassages, resolveRecord, type CalibrationDataset, type ControlBundle } from './calibration.js';
 import { CALIBRATION_CRITERIA, CRITERIA_SHA256 } from './criteria.js';
 import { experimentIdentity, joinJudgments, type ExperimentData, type JudgmentFile, type JudgmentSet } from './identity.js';
 import { attemptReserveUsd, createAnthropicJudge, createOpenAIJudge, type JudgeCaller } from './clients.js';
 import { ADJUDICATOR, DEFAULT_CONCURRENCY, JUDGE_A, JUDGE_B, JUDGE_TIMEOUT_MS, RUN_LIMITS_USD } from './config.js';
-import { NarrativeDatasetSchema, families, narrativeDatasetProblems, type NarrativeDataset, type NarrativeItem } from './dataset.js';
+import { NarrativeDatasetSchema, diagnosticFamilies, families, narrativeDatasetProblems, type NarrativeDataset, type NarrativeItem } from './dataset.js';
+import { assembleInputs, inputSamples, inputsEmbedder, keywordTextsOf, membersToSample, poolInputsProblems, readPoolInputs, savedVectors, type PoolInputs } from './inputs.js';
 import { CASE_TOKEN_BUDGET, bundleFingerprint, fingerprint, loadCaseEvidence, planChunks, type CaseEvidence, type DeliveredPassage } from './evidence.js';
 import {
   AttemptSender,
@@ -97,8 +99,26 @@ import {
   protocolArithmetic,
   type MeasuredUsage,
 } from './plan.js';
-import { POOL_RULE, SCHEDULE, buildPools, bundlePairs, casePriority, indexCohort, poolFileVersion, tierOf, verifyPoolFile, withFingerprints, type FamilyPool, type PoolFile, type Stage } from './pool.js';
-import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
+import {
+  POOL_RULE,
+  SCHEDULE,
+  buildPools,
+  bundlePairs,
+  casePriority,
+  freezePools,
+  frozenPoolsProblems,
+  indexCohort,
+  poolFileVersion,
+  poolMethods,
+  poolSummary,
+  tierOf,
+  verifyPoolFile,
+  withFingerprints,
+  type FamilyPool,
+  type PoolFile,
+  type Stage,
+} from './pool.js';
+import { NARRATIVE_DIAGNOSTICS, NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
 import {
   agreementReport,
   auditSamples,
@@ -112,9 +132,12 @@ import {
   discrepancies,
   familyReference,
   judgedCoverage,
+  mappingDiagnosticReport,
   methodExclusive,
+  ordinaryMapping,
   questionGroups,
   questionValues,
+  regressionDiagnostic,
   relevanceLabels,
   scoreRuns,
   tailEstimate,
@@ -158,7 +181,7 @@ export async function openContext(config: AppConfig, log: (m: string) => void): 
   const dataset = readDataset();
   const calibration = readCalibration();
   const problems: string[] = [...narrativeDatasetProblems(dataset), ...calibrationProblems(calibration)];
-  if (dataset.source.specSha256 !== specSha256(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES)) problems.push('dataset: built from other question specs than the committed ones (rebuild it)');
+  if (dataset.source.specSha256 !== specSha256(NARRATIVE_QUESTIONS, NARRATIVE_PARAPHRASES, NARRATIVE_DIAGNOSTICS)) problems.push('dataset: built from other question specs than the committed ones (rebuild it)');
   if (!config.databaseUrl) throw new Error('DATABASE_URL is not set');
   const app = createDb(config.databaseUrl, { max: 2, applicationName: 'aviation-eval-narrative' });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 60_000 });
@@ -245,14 +268,16 @@ async function remainingAllowance(ctx: NarrativeContext): Promise<number | null>
 // ---------------------------------------------------------------------------
 // plan (free)
 
-/** The members (questions) of the dataset as scope-stage items. */
-const scopeItems = (d: NarrativeDataset) => d.questions.map((q) => ({ id: q.id, question: q.question }));
+/** The members (questions) whose scope outputs the pools sample, as scope-stage items (a diagnostic with a frozen scope output is not sampled). */
+const scopeItems = (d: NarrativeDataset) => membersToSample(d).map((q) => ({ id: q.id, question: q.question }));
 
 export async function planCommand(
   opts: CommandOptions & {
     samples: Samples;
     broadSample: { bm25: number; lure: number; random: number };
     allocationUsd?: number;
+    /** An existing allocation (under `--out-dir`) whose spend so far the remaining sequence is set against (read only). */
+    allocation?: string;
     /** Judgment files whose records give the measured output tokens and disagreement (review N13). */
     measured?: string[];
     /** Mean output tokens per judge call (visible plus thinking or reasoning), judge A and judge B. */
@@ -277,13 +302,20 @@ export async function planCommand(
     const scope = await scopeInventory(caller, scopeItems(d), opts.samples);
     const inventory = scope;
     const emb = planQueryEmbeddings(d.questions.map((q) => q.question), ctx.config.ai.openai.embeddingModel, ctx.config.ai.openai.embeddingDimensions);
-    log(`pool building: scope stage ${scope.model}, ${scope.calls} calls (${d.questions.length} questions x ${opts.samples} samples), ${scope.inputTokens} input tokens counted; at most ${usd(scope.upperUsd)} at the output cap, reservations ${usd(scope.reserveUsd)}`);
+    log(`pool building: scope stage ${scope.model}, ${scope.calls} calls (${scopeItems(d).length} questions x ${opts.samples} samples; ${d.questions.length - scopeItems(d).length} diagnostic question(s) keep their frozen scope output), ${scope.inputTokens} input tokens counted; at most ${usd(scope.upperUsd)} at the output cap, reservations ${usd(scope.reserveUsd)}`);
     log(`pool building: ${describePlan(emb)}`);
     // Pool sizes.
     const estimates = { 1: poolEstimates(d, 1), 3: poolEstimates(d, 3) } as const;
     const sum = (s: Samples, k: 'mean' | 'max') => estimates[s].reduce((n, e) => n + e[k], 0);
     const pairsAns = (s: Samples, k: 'mean' | 'max') => estimates[s].reduce((n, e) => n + e.answerabilityPairs[k], 0);
-    log(`pools (rule ${POOL_RULE.version}): relevance pairs about ${Math.round(sum(opts.samples, 'mean'))} (largest ${Math.round(sum(opts.samples, 'max'))}); answerability pairs about ${Math.round(pairsAns(opts.samples, 'mean'))}`);
+    log(`pools (rule ${POOL_RULE.version}, ${POOL_RULE.methods.join(', ')} through the production retrievers): relevance pairs about ${Math.round(sum(opts.samples, 'mean'))} (largest ${Math.round(sum(opts.samples, 'max'))}); answerability pairs about ${Math.round(pairsAns(opts.samples, 'mean'))}`);
+    {
+      const e = estimates[opts.samples];
+      const diag = e.filter((x) => x.role === 'diagnostic');
+      const add = (xs: readonly number[]) => Math.round(xs.reduce((n, x) => n + x, 0));
+      for (const x of diag) log(`  diagnostic ${x.family}: about ${x.mean} relevance pairs (stage 1 about ${x.stage1.mean}), ${Math.round(x.answerabilityPairs.mean)} answerability pairs`);
+      log(`  mapping diagnostic (labelled, forced): about ${add(e.map((x) => x.mappingDiagnostic.mean))} delivered bundles (largest ${add(e.map((x) => x.mappingDiagnostic.max))}), each an answerability pair and a stage 1 relevance pair`);
+    }
     // Samples of judge inputs.
     const qualification = ctx.run.contract.eventAircraftQualification;
     const samples: CaseSample[] = [];
@@ -411,15 +443,30 @@ export async function planCommand(
       protocol: protocolArithmetic(),
     };
     // The month's sequence (the gate's ruling): canary, dev calibration, holdout once, pools, relevance stage 1, answerability.
+    // The calibration steps are done once the holdout lock records the current configuration.
+    const calibrationDone = holdoutRecorded(HOLDOUT_LOCK_FILE, holdoutIdentity(ctx.calibration, experimentIdentity('calibration', experimentData('calibration', d, ctx.calibration, null) as ExperimentData)));
     const sequence = [
-      { step: `canary: one dev calibration pair (--max-pairs 1 --max-usd ${canary.maxUsd.toFixed(2)})`, expectedUsd: canary.expectedUsd, boundUsd: canary.maxUsd },
-      { step: 'calibration, dev split, the rest, one pair at a time (--concurrency 1)', expectedUsd: calibrationDev.usd.total - canary.expectedUsd, boundUsd: calibrationDev.totalAtBoundUsd - canary.adjudicatedUsd },
-      { step: 'calibration, holdout split, once', expectedUsd: calibrationHoldout.usd.total, boundUsd: calibrationHoldout.totalAtBoundUsd },
-      { step: 'pools (scope samples and query embeddings)', expectedUsd: poolBuilding, boundUsd: scope.reserveUsd + emb.reserveUsd },
-      { step: 'relevance, stage 1 (bounded cohorts; broad delivered and first-20 cases)', expectedUsd: stage1.usd.total, boundUsd: stage1.totalAtBoundUsd },
-      { step: 'answerability (every delivered bundle)', expectedUsd: answerability.usd.total, boundUsd: answerability.totalAtBoundUsd },
+      { step: `canary: one dev calibration pair (--max-pairs 1 --max-usd ${canary.maxUsd.toFixed(2)})`, expectedUsd: canary.expectedUsd, boundUsd: canary.maxUsd, done: calibrationDone },
+      { step: 'calibration, dev split, the rest, one pair at a time (--concurrency 1)', expectedUsd: calibrationDev.usd.total - canary.expectedUsd, boundUsd: calibrationDev.totalAtBoundUsd - canary.adjudicatedUsd, done: calibrationDone },
+      { step: 'calibration, holdout split, once', expectedUsd: calibrationHoldout.usd.total, boundUsd: calibrationHoldout.totalAtBoundUsd, done: calibrationDone },
+      { step: 'pools (scope samples and query embeddings)', expectedUsd: poolBuilding, boundUsd: scope.reserveUsd + emb.reserveUsd, done: false },
+      { step: 'relevance, stage 1 (bounded cohorts; broad delivered and first-20 cases; the diagnostics)', expectedUsd: stage1.usd.total, boundUsd: stage1.totalAtBoundUsd, done: false },
+      { step: 'answerability (every delivered bundle, the mapping diagnostic\'s included)', expectedUsd: answerability.usd.total, boundUsd: answerability.totalAtBoundUsd, done: false },
     ];
     const sequenceTotal = { expectedUsd: sequence.reduce((n, x) => n + x.expectedUsd, 0), boundUsd: sequence.reduce((n, x) => n + x.boundUsd, 0) };
+    const rest = sequence.filter((x) => !x.done);
+    const restTotal = { expectedUsd: rest.reduce((n, x) => n + x.expectedUsd, 0), boundUsd: rest.reduce((n, x) => n + x.boundUsd, 0) };
+    const restWithStage2 = { expectedUsd: restTotal.expectedUsd + stage2.usd.total, boundUsd: restTotal.boundUsd + stage2.totalAtBoundUsd };
+    const allocationState = (() => {
+      if (!opts.allocation) return null;
+      try {
+        const a = openAllocation(opts.outDir, opts.allocation, undefined);
+        const spentUsd = loggedSpendUsd(a.log);
+        return { name: a.name, capUsd: a.capUsd, spentUsd, leftUsd: a.capUsd - spentUsd };
+      } catch (err) {
+        return { name: opts.allocation, error: (err as Error).message };
+      }
+    })();
     // Sensitivity of the pooled run (relevance and answerability, the chosen samples): judges' thinking or reasoning tokens, escalation share, batch pricing.
     const pooledWith = (reasoning: number, escalation: number) =>
       addRuns([
@@ -470,7 +517,16 @@ export async function planCommand(
       perFamily,
       sensitivity,
       stages: { schedule: SCHEDULE, stage1: { pairs: stage1.pairs, run: stage1 }, stage2: { pairs: stage2.pairs, run: stage2 } },
-      month: { allocationUsd: opts.allocationUsd ?? null, sequence, total: sequenceTotal, nextMonth: { step: 'relevance, stage 2 (the rest of the pools)', expectedUsd: stage2.usd.total, boundUsd: stage2.totalAtBoundUsd } },
+      month: {
+        allocationUsd: opts.allocationUsd ?? null,
+        allocation: allocationState,
+        calibrationDone,
+        sequence,
+        total: sequenceTotal,
+        remaining: restTotal,
+        remainingWithStage2: restWithStage2,
+        nextMonth: { step: 'relevance, stage 2 (the rest of the pools)', expectedUsd: stage2.usd.total, boundUsd: stage2.totalAtBoundUsd },
+      },
       breakdown,
       costs: {
         calibration,
@@ -529,9 +585,21 @@ export async function planCommand(
     for (const x of sequence) {
       running += x.expectedUsd;
       runningBound += x.boundUsd;
-      log(`  ${x.step.padEnd(76)} expected ${usd(x.expectedUsd).padStart(9)} (cumulative ${usd(running)}), bound ${usd(x.boundUsd).padStart(9)} (cumulative ${usd(runningBound)})`);
+      log(`  ${x.step.padEnd(92)} expected ${usd(x.expectedUsd).padStart(9)} (cumulative ${usd(running)}), bound ${usd(x.boundUsd).padStart(9)} (cumulative ${usd(runningBound)})${x.done ? '  done' : ''}`);
     }
     if (opts.allocationUsd !== undefined) log(`  the sequence ${sequenceTotal.expectedUsd <= opts.allocationUsd ? 'fits' : 'does not fit'} the allocation at the expected cost (${usd(sequenceTotal.expectedUsd)}); at its bounds ${usd(sequenceTotal.boundUsd)}`);
+    if (calibrationDone) log('  the calibration steps are done: the holdout lock records this configuration');
+    const fits = (x: number, left: number) => (x <= left ? 'fits' : 'does not fit');
+    const left = allocationState?.leftUsd ?? null;
+    log(
+      `  what remains (${rest.map((x) => x.step.split(' (')[0]).join('; ')}): expected ${usd(restTotal.expectedUsd)}, bound ${usd(restTotal.boundUsd)}` +
+        (left !== null ? `; allocation ${opts.allocation}: ${usd(allocationState?.spentUsd ?? 0)} spent, ${usd(left)} left: ${fits(restTotal.expectedUsd, left)} at the expected cost, ${fits(restTotal.boundUsd, left)} at its bounds` : ''),
+    );
+    log(
+      `  with relevance stage 2 as well: expected ${usd(restWithStage2.expectedUsd)}, bound ${usd(restWithStage2.boundUsd)}` +
+        (left !== null ? ` (${fits(restWithStage2.expectedUsd, left)} the allocation at the expected cost, ${fits(restWithStage2.boundUsd, left)} at its bounds; the reservations stop a run at the cap)` : ''),
+    );
+    if (allocationState?.error) log(`  allocation ${allocationState.name}: ${allocationState.error}`);
     log(`  next month, from the cache: relevance stage 2 expected ${usd(stage2.usd.total)}, at the escalation bound ${usd(stage2.totalAtBoundUsd)}`);
     log('sensitivity of the full pooled run (judges\' thinking or reasoning tokens per call, escalation share; batch pricing halves every model call):');
     for (const x of sensitivity) log(`  reasoning ${String(x.reasoningTokens).padStart(5)}  escalation ${(x.escalation * 100).toFixed(0).padStart(2)}%  ${usd(x.totalUsd).padStart(9)}  with batch APIs ${usd(x.withBatchApisUsd)}`);
@@ -564,94 +632,202 @@ function ledgerGates(ingest: Db, config: AppConfig): (c: JudgeCaller['config']) 
   };
 }
 
-/** `pools`: scope samples and query embeddings (paid, reserved per attempt), then the method runs (Elasticsearch reads) and the pool file. */
-export async function poolsCommand(opts: CommandOptions & { samples: Samples; maxUsd?: number; allocation?: string; allocationUsd?: number }): Promise<number> {
+/** Whether `file` is tracked by git and unchanged against HEAD (the frozen pool identity must be committed before judging). */
+export function isCommitted(file: string): boolean {
+  const cwd = dirname(file);
+  const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', file], { cwd, encoding: 'utf8' });
+  if (tracked.status !== 0) return false;
+  const status = spawnSync('git', ['status', '--porcelain', '--', file], { cwd, encoding: 'utf8' });
+  return status.status === 0 && status.stdout.trim() === '';
+}
+
+/** The pool file from cached inputs (Elasticsearch and PostgreSQL reads only; nothing paid). */
+async function buildPoolFile(ctx: NarrativeContext, inputs: PoolInputs, log: (m: string) => void): Promise<PoolFile> {
+  const d = ctx.dataset;
+  const built = await buildPools(
+    { es: ctx.es, dataset: ctx.run.target, passagesIndex: ctx.run.index, casesIndex: ctx.casesIndex, eventAircraftQualification: ctx.run.contract.eventAircraftQualification },
+    d,
+    inputsEmbedder(inputs),
+    keywordTextsOf(inputs),
+    log,
+  );
+  // Every pool case's complete-input fingerprint, from one read-only snapshot: the evidence identity the judgments must match.
+  const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-pools' });
+  await client.connect();
+  let fingerprints: Map<string, string>;
+  try {
+    const loaded = await loadCaseEvidence(client, ctx.source.generationId, [...new Set(built.flatMap((f) => f.cases.map((c) => c.ntsbNo)))]);
+    if (loaded.integrity.length > 0) log(`warning: ${loaded.integrity.length} pool case(s) failed the section hash check and stay unknown: ${loaded.integrity.slice(0, 5).map((x) => x.ntsbNo).join(', ')}`);
+    fingerprints = new Map([...loaded.evidence.entries()].map(([n, e]) => [n, fingerprint(e)]));
+  } finally {
+    await client.end();
+  }
+  const cases = ctx.preflight.casesIndex as { index: string; indexVersion: string | null; fingerprint: string | null };
+  const body: Omit<PoolFile, 'version' | 'git'> = {
+    kind: 'track-n-pools',
+    rule: POOL_RULE,
+    datasetSpecSha256: d.source.specSha256,
+    generationId: ctx.source.generationId,
+    target: { ...indexReport(ctx.run), casesIndex: { name: cases.index, version: cases.indexVersion, fingerprint: cases.fingerprint } },
+    inputs: {
+      version: inputs.version,
+      scope: { model: inputs.scope.model, promptVersion: inputs.scope.promptVersion },
+      embedding: { model: inputs.embedding.model, dims: inputs.embedding.dims, inputTemplate: inputs.embedding.inputTemplate },
+    },
+    methods: poolMethods(),
+    families: built.map((f) => withFingerprints(POOL_RULE, f, fingerprints)),
+  };
+  return { ...body, version: poolFileVersion(body), git: gitState() };
+}
+
+/** What `pools` prints about a pool file: per family and retrieval version, the cases and the mapping, natural and forced. */
+function logPoolSummary(p: PoolFile, d: NarrativeDataset, log: (m: string) => void): void {
+  const sum = poolSummary(p, new Map(d.questions.map((q) => [q.id, q.role])));
+  for (const f of sum.families) {
+    const v = Object.entries(f.versions)
+      .map(([m, x]) => `${m} ${x.cases} cases (${x.delivered} delivered, ${x.runsWithMapping}/${x.runs} runs mapped ${x.mapped}${x.unmapped > 0 ? `, ${x.unmapped} unmapped` : ''})`)
+      .join('; ');
+    log(`  ${f.family}${f.role === 'diagnostic' ? ' [diagnostic]' : ''}: ${f.cases} cases; ${v}; mapping diagnostic ${f.mappingDiagnostic.mapped}/${f.mappingDiagnostic.forced} mapped, ${f.mappingDiagnostic.delivered} delivered`);
+  }
+  const t = sum.total;
+  log(`pools: ${t.cases} cases in ${sum.families.length} families (${t.benchmarkCases} benchmark, ${t.cases - t.benchmarkCases} diagnostic); ${t.bundlePairs} answerability pairs; stage 1 ${t.stage1} relevance pairs`);
+  for (const [m, x] of Object.entries(t.versions)) log(`  ${m}: ${x.cases} cases in its first ${POOL_RULE.depth} (summed over families), ${x.delivered} delivered; ${x.runsWithMapping} of ${x.runs} runs needed the mapping, ${x.mapped} case(s) mapped, ${x.unmapped} unmapped`);
+  log(`  mapping diagnostic: ${t.mappingDiagnostic.forced} cases-channel-only cases forced through the mapping, ${t.mappingDiagnostic.mapped} mapped, ${t.mappingDiagnostic.delivered} delivered`);
+}
+
+/**
+ * `pools`: the cached inputs (paid: scope samples, query embeddings, each reserved per
+ * attempt; or `--inputs <file>`, nothing paid), then the production retrievers' runs on
+ * them (Elasticsearch reads), the pool file and its frozen identity (`freezePools`).
+ */
+export async function poolsCommand(
+  opts: CommandOptions & {
+    samples: Samples;
+    maxUsd?: number;
+    allocation?: string;
+    allocationUsd?: number;
+    /** Build from a saved inputs file; nothing is paid. */
+    inputs?: string;
+    /** Saved query vectors to reuse (an adoption vectors file or a Track N inputs file). */
+    vectors?: string;
+    /** The frozen pool identity (tests only; runs use `FROZEN_POOLS_FILE`). */
+    frozenPools?: string;
+  },
+): Promise<number> {
   const { log } = opts;
   const ctx = await openContext(opts.config, log);
   try {
     if (ctx.problems.length > 0) throw new Error(`preflight failed; nothing paid:\n  ${ctx.problems.join('\n  ')}`);
     const d = ctx.dataset;
-    const a = ctx.config.ai.anthropic;
-    if (!a.apiKey) throw new Error('ANTHROPIC_API_KEY is required (pass --keys-file)');
-    const adapter = createAnthropicProvider({ apiKey: a.apiKey, models: { scope: a.scopeModel, answer: a.answerModel, check: a.checkModel } });
-    const caller = providerScopeCaller(adapter);
-    const items = scopeItems(d);
-    const inventory = await scopeInventory(caller, items, opts.samples);
-    const emb = planQueryEmbeddings(d.questions.map((q) => q.question), ctx.config.ai.openai.embeddingModel, ctx.config.ai.openai.embeddingDimensions);
-    log(`scope samples: ${inventory.calls} calls, reservations ${usd(inventory.reserveUsd)}; ${describePlan(emb)}`);
-    const { grid } = loadGrid(DEFAULT_GRID, BASELINE_CONFIG);
-    const methods = POOL_RULE.methods.map((id) => {
-      const v = grid.variants.find((x) => x.id === id);
-      if (!v) throw new Error(`method ${id} is not in the experiments grid`);
-      return { id, config: experimentConfig(v.config) };
-    });
-    if (!opts.confirm) {
-      log('nothing sent: run with --confirm-cost to take the scope samples, embed the questions and build the pools');
-      return 0;
-    }
-    if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
-    const allocation = openAllocation(opts.outDir, opts.allocation, opts.allocationUsd);
-    const purpose = `eval-10c2-pools-${stamp(new Date())}`;
-    // One run at a time per allocation (review N12): the lock is held from before the allocation's spend is read until the run ends.
-    const held = lockAllocation(allocation, purpose);
+    const { embeddingModel: model, embeddingDimensions: dims } = ctx.config.ai.openai;
+    let inputs: PoolInputs;
+    let held: { release: () => void } | null = null;
+    // A paid step that fails before its charges reach the allocation's log keeps the lock: `recover` reconciles them from the ledger.
+    let keepLock = false;
     try {
-      const spendLog = runSpendLog(opts.outDir, purpose);
-      const limit = Math.min(opts.maxUsd ?? RUN_LIMITS_USD.pools, allocation.capUsd - loggedSpendUsd(allocation.log));
-      if (inventory.reserveUsd + emb.reserveUsd > limit + 1e-12) throw new Error(`the pool reservations ($${(inventory.reserveUsd + emb.reserveUsd).toFixed(6)}) exceed the run limit or what remains of allocation ${allocation.name} ($${limit.toFixed(6)}); nothing sent`);
-      if (!ctx.config.databaseIngestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
-      const ingest = createDb(ctx.config.databaseIngestUrl, { max: 2, applicationName: 'aviation-eval-narrative-ledger' });
-      let run: ScopeRun;
-      try {
-        const gate = createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' });
-        run = await runScopeSamples(caller, gate, items, { samples: opts.samples, retries: 1, maxUsd: limit - emb.reserveUsd, purpose, log });
-      } finally {
-        await closeDb(ingest);
-      }
-      const charge = (entry: Record<string, unknown>) => {
-        for (const file of [spendLog, allocation.log]) {
-          mkdirSync(dirname(file), { recursive: true });
-          appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, ...entry })}\n`);
+      if (opts.inputs) {
+        inputs = readPoolInputs(opts.inputs);
+        log(`inputs: ${inputs.scope.samples.length} scope samples and ${inputs.embedding.vectors.length} query vectors from the saved file (version ${inputs.version.slice(0, 12)}); nothing is paid`);
+      } else {
+        const a = ctx.config.ai.anthropic;
+        if (!a.apiKey) throw new Error('ANTHROPIC_API_KEY is required (pass --keys-file)');
+        const adapter = createAnthropicProvider({ apiKey: a.apiKey, models: { scope: a.scopeModel, answer: a.answerModel, check: a.checkModel } });
+        const caller = providerScopeCaller(adapter);
+        const items = scopeItems(d);
+        const inventory = await scopeInventory(caller, items, opts.samples);
+        const saved = opts.vectors ? savedVectors(opts.vectors, model, dims) : new Map<string, Float32Array>();
+        const questions = [...new Set(d.questions.map((q) => q.question))];
+        const reuse = questions.filter((q) => saved.has(queryEmbeddingInput(q)));
+        const emb = planQueryEmbeddings(
+          questions.filter((q) => !saved.has(queryEmbeddingInput(q))),
+          model,
+          dims,
+        );
+        log(
+          `scope samples: ${inventory.calls} calls (${items.length} questions x ${opts.samples}; ${d.questions.length - items.length} diagnostic question(s) keep their frozen scope output), reservations ${usd(inventory.reserveUsd)}; ` +
+            `${describePlan(emb)}${reuse.length > 0 ? `; ${reuse.length} query vector(s) reused from the saved file` : ''}`,
+        );
+        if (!opts.confirm) {
+          log('nothing sent: run with --confirm-cost to take the scope samples and embed the questions; the pools are then built from those cached inputs (or later with --inputs <file>, for free)');
+          return 0;
         }
-      };
-      charge({ purpose: 'scope', provider: 'anthropic', model: a.scopeModel, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd });
-      const { embedder, billed } = await embedPlan(emb, { fake: false, config: ctx.config, purpose, log });
-      charge({ purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: billed.usd });
-      const texts = new Map<string, string[]>();
-      for (const q of d.questions) texts.set(q.id, run.samples.filter((s) => s.id === q.id).sort((x, y) => x.sample - y.sample).map((s) => s.keywordText));
-      const built = await buildPools(
-        { es: ctx.es, dataset: ctx.run.target, passagesIndex: ctx.run.index, casesIndex: ctx.casesIndex, eventAircraftQualification: ctx.run.contract.eventAircraftQualification },
-        d,
-        embedder,
-        methods,
-        texts,
-        log,
-      );
-      // Every pool case's complete-input fingerprint, from one read-only snapshot: the evidence identity the judgments must match.
-      const client = new pg.Client({ connectionString: ctx.config.databaseUrl as string, application_name: 'aviation-eval-narrative-pools' });
-      await client.connect();
-      let fingerprints: Map<string, string>;
-      try {
-        const loaded = await loadCaseEvidence(client, ctx.source.generationId, [...new Set(built.flatMap((f) => f.cases.map((c) => c.ntsbNo)))]);
-        if (loaded.integrity.length > 0) log(`warning: ${loaded.integrity.length} pool case(s) failed the section hash check and stay unknown: ${loaded.integrity.slice(0, 5).map((x) => x.ntsbNo).join(', ')}`);
-        fingerprints = new Map([...loaded.evidence.entries()].map(([n, e]) => [n, fingerprint(e)]));
-      } finally {
-        await client.end();
+        if (!opts.allocation) throw new Error('--allocation is required for a paid command (the phase or month budget it spends from); nothing sent');
+        const allocation = openAllocation(opts.outDir, opts.allocation, opts.allocationUsd);
+        const purpose = `eval-10c2-pools-${stamp(new Date())}`;
+        // One run at a time per allocation (review N12): the lock is held from before the allocation's spend is read until the run ends.
+        held = lockAllocation(allocation, purpose);
+        const spendLog = runSpendLog(opts.outDir, purpose);
+        const limit = Math.min(opts.maxUsd ?? RUN_LIMITS_USD.pools, allocation.capUsd - loggedSpendUsd(allocation.log));
+        if (inventory.reserveUsd + emb.reserveUsd > limit + 1e-12) throw new Error(`the pool reservations ($${(inventory.reserveUsd + emb.reserveUsd).toFixed(6)}) exceed the run limit or what remains of allocation ${allocation.name} ($${limit.toFixed(6)}); nothing sent`);
+        if (!ctx.config.databaseIngestUrl) throw new Error('DATABASE_INGEST_URL is not set (the evaluation ledger)');
+        const ingest = createDb(ctx.config.databaseIngestUrl, { max: 2, applicationName: 'aviation-eval-narrative-ledger' });
+        const interrupted = (step: string, err: unknown): Error => {
+          keepLock = true;
+          return new Error(
+            `the ${step} stopped (${err instanceof Error ? err.message : String(err)}); what it paid is on the ledger, not yet in allocation ${allocation.name}'s log: ` +
+              `reconcile it with \`recover --allocation ${allocation.name} --run ${purpose} --confirm\`, which also removes the lock`,
+          );
+        };
+        let run: ScopeRun;
+        try {
+          const gate = createLedgerSpendGate(ingest, { budgets: ctx.config.ai.budgets, provider: 'anthropic', model: a.scopeModel, stage: 'scope' });
+          run = await runScopeSamples(caller, gate, items, { samples: opts.samples, retries: 1, maxUsd: limit - emb.reserveUsd, purpose, log });
+        } catch (err) {
+          throw interrupted('scope run', err);
+        } finally {
+          await closeDb(ingest);
+        }
+        const charge = (entry: Record<string, unknown>) => {
+          for (const file of [spendLog, allocation.log]) {
+            mkdirSync(dirname(file), { recursive: true });
+            appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), run: purpose, ...entry })}\n`);
+          }
+        };
+        charge({ purpose: 'scope', provider: 'anthropic', model: a.scopeModel, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd });
+        const vectors = new Map(saved);
+        let billed = { usd: 0, requests: 0 };
+        if (emb.inputs.length > 0) {
+          let paid: Awaited<ReturnType<typeof embedPlan>>;
+          try {
+            paid = await embedPlan(emb, { fake: false, config: ctx.config, purpose, log });
+          } catch (err) {
+            throw interrupted('query embedding', err);
+          }
+          charge({ purpose: 'embed', provider: 'openai', model: emb.model, reservedUsd: emb.reserveUsd, chargedUsd: paid.billed.usd });
+          billed = { usd: paid.billed.usd, requests: paid.billed.requests };
+          for (const input of emb.inputs) vectors.set(input, (await paid.embedder.embed([input])).vectors[0] as Float32Array);
+        }
+        inputs = assembleInputs({
+          dataset: d,
+          generationId: ctx.source.generationId,
+          scope: { model: run.model, promptVersion: run.promptVersion, samples: inputSamples(d, run) },
+          embedding: { model, dims },
+          vectors,
+          provenance: {
+            run: purpose,
+            scope: { calls: run.attempts, reservedUsd: run.reservedUsd, chargedUsd: run.chargedUsd, failedSamples: run.samples.filter((x) => x.status !== 'ok').length },
+            embedding: { embedded: emb.inputs.length, reused: reuse.length, requests: billed.requests, chargedUsd: billed.usd },
+          },
+        });
+        log(`inputs: ${writeJson(opts.outDir, `narrative-pool-inputs-${stamp(new Date())}.json`, inputs)} (scope ${usd(run.chargedUsd)}, embeddings ${usd(billed.usd)})`);
       }
-      const pools = built.map((f) => withFingerprints(POOL_RULE, f, fingerprints));
-      const body: Omit<PoolFile, 'version'> = {
-        kind: 'track-n-pools',
-        rule: POOL_RULE,
-        datasetSpecSha256: d.source.specSha256,
-        generationId: ctx.source.generationId,
-        target: { ...indexReport(ctx.run), casesIndex: ctx.casesIndex, scope: { model: a.scopeModel, promptVersion: run.promptVersion, samples: run.samples.map((s) => ({ id: s.id, sample: s.sample, status: s.status, keywordTextSha256: sha256(s.keywordText) })) } },
-        methods,
-        families: pools,
-      };
-      const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, { ...body, version: poolFileVersion(body), git: gitState() });
-      log(`pools: ${pools.reduce((n, p) => n + p.cases.length, 0)} cases in ${pools.length} families; ${file}`);
+      const problems = poolInputsProblems(inputs, d, { generationId: ctx.source.generationId, model, dims });
+      if (problems.length > 0) throw new Error(`the inputs cannot be used:\n  ${problems.slice(0, 10).join('\n  ')}`);
+      const pools = await buildPoolFile(ctx, inputs, log);
+      const file = writeJson(opts.outDir, `narrative-pools-${stamp(new Date())}.json`, pools);
+      logPoolSummary(pools, d, log);
+      log(`pool file ${file}: version ${pools.version}`);
+      const frozenFile = opts.frozenPools ?? FROZEN_POOLS_FILE;
+      try {
+        const outcome = freezePools(frozenFile, pools);
+        log(outcome === 'recorded' ? `frozen: the pool identity is recorded in ${frozenFile}; commit it before any judging` : `frozen: this is the pool identity already frozen in ${frozenFile}`);
+      } catch (err) {
+        log(`not frozen: ${(err as Error).message}`);
+        return 1;
+      }
       return 0;
     } finally {
-      held.release();
+      if (!keepLock) held?.release();
     }
   } finally {
     await closeContext(ctx);
@@ -775,10 +951,10 @@ export async function answerabilitySubjects(ctx: NarrativeContext, pools: PoolFi
           problems.push(`${x.ntsbNo}: passage ${p.passageId.slice(0, 12)} does not match its stored section text`);
           continue;
         }
-        passages.push({ ...p, text });
+        passages.push({ passageId: p.passageId, sectionId: p.sectionId, revisionId: p.revisionId, kind: p.kind, scope: p.scope, aircraftKey: p.aircraftKey, start: p.start, end: p.end, text });
       }
       if (passages.length !== x.passages.length) continue;
-      // Every delivered bundle case is tier 0 of the schedule, ordered by its best case rank.
+      // Every delivered bundle case (retrieval runs and the mapping diagnostic) is tier 0 of the schedule, ordered by its best case rank.
       const best = Math.min(...x.runs.map((r) => r.caseRank));
       items.push({ subject: answerabilitySubject(refOf(f, f.id), e, passages, bundleFingerprint(e.ntsbNo, e.event, e.aircraft, passages)), priority: best });
     }
@@ -903,6 +1079,16 @@ export function holdoutIdentity(calibration: Pick<CalibrationDataset, 'items'>, 
   };
 }
 
+/** Whether the holdout lock records a run of this holdout under this configuration (the calibration is done). */
+export function holdoutRecorded(lockFile: string, id: Omit<HoldoutRun, 'kind' | 'at'>): boolean {
+  if (!existsSync(lockFile)) return false;
+  return readFileSync(lockFile, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => JSON.parse(l) as HoldoutRun)
+    .some((r) => r.holdoutSha256 === id.holdoutSha256 && r.configurationSha256 === id.configurationSha256);
+}
+
 /**
  * D3 (criteria.ts): the holdout runs once per frozen configuration. A holdout run records
  * the holdout split's identity, its configuration and its labels in the fixed lock
@@ -954,6 +1140,8 @@ export async function judgeCommand(
     maxPairs?: number;
     /** The holdout lock (tests only; runs use `HOLDOUT_LOCK_FILE`). */
     holdoutLock?: string;
+    /** The frozen pool identity and how its commit is checked (tests only; runs use `FROZEN_POOLS_FILE` and git). */
+    frozenPools?: { file: string; committed: (file: string) => boolean };
   },
 ): Promise<number> {
   const { log } = opts;
@@ -971,6 +1159,12 @@ export async function judgeCommand(
       if (!opts.pools) throw new Error('--pools is required');
       pools = readPools(opts.pools);
       if (pools.datasetSpecSha256 !== ctx.dataset.source.specSha256 || pools.generationId !== ctx.source.generationId) throw new Error('the pool file is of another dataset or generation; nothing paid');
+      // The pool identity is frozen (and committed) before any pool is judged.
+      const frozen = frozenPoolsProblems(opts.frozenPools?.file ?? FROZEN_POOLS_FILE, pools, opts.frozenPools?.committed ?? isCommitted);
+      if (frozen.length > 0) {
+        if (opts.confirm) throw new Error(`${frozen.join('; ')}; nothing paid`);
+        for (const f of frozen) log(`warning: ${f} (a paid run refuses it)`);
+      }
       if (opts.set === 'relevance') {
         const r = await poolSubjects(ctx, pools);
         if (r.missing.length > 0) log(`warning: ${r.missing.length} pool case(s) without usable evidence are unknown: ${r.missing.slice(0, 5).join(', ')}`);
@@ -1173,17 +1367,24 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
   }
   const rel = joined.records.relevance;
   const ans = joined.records.answerability;
+  // The benchmark's sections count benchmark families only; diagnostics are reported apart (round 4).
+  const roleOf = (family: string) => d.questions.find((q) => q.id === family)?.role ?? 'benchmark';
+  const benchmark = (r: PairRecord) => roleOf(r.family) === 'benchmark';
+  // Answerability of a bundle only the mapping diagnostic delivered is the diagnostic's, not the benchmark's.
+  const runBundles = new Set((pools?.families ?? []).flatMap((f) => bundlePairs({ runs: f.runs, mappingDiagnostic: [] }).map((x) => `${f.family}|${x.ntsbNo}|${bundleKeyOf(x.passages)}`)));
+  const benchmarkAns = ans.filter((r) => benchmark(r) && (pools === null || runBundles.has(`${r.family}|${r.ntsbNo}|${r.bundleKey ?? ''}`)));
   if (rel.length > 0) {
     if (!pools) throw new Error('--pools is required to score relevance judgments');
     const labels = relevanceLabels(rel);
     const answer = answerabilityLabels(ans);
-    const groups = questionGroups(d, labels);
+    const benchmarkRel = rel.filter(benchmark);
+    const groups = questionGroups(d, new Map([...labels].filter(([family]) => roleOf(family) === 'benchmark')));
     const values: QuestionValue[] = [];
     const diagnostics: Record<string, unknown>[] = [];
-    const methods = [...POOL_RULE.methods];
+    const methods = [...pools.rule.methods] as string[];
     const metrics: CompareMetric[] = ['recallGate', 'p6', 'ndcg6', 'supported'];
     const diffs = new Map<string, DifferenceBounds[]>();
-    for (const pool of pools.families) {
+    for (const pool of pools.families.filter((p) => roleOf(p.family) === 'benchmark')) {
       const f = families(d).find((x) => x.id === pool.family);
       const l = labels.get(pool.family) ?? new Map();
       const ref = familyReference({ type: pool.type, cases: pool.cases, cohort: f?.cohort.cases ?? null }, l);
@@ -1211,18 +1412,30 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
     const flagged = (k: 'noPositivePossible' | 'abstention') => values.filter((v) => v[k]).map((v) => ({ member: v.member, method: v.method }));
     out.relevance = {
       poolVersion: pools.version,
+      methods: pools.methods.map((m) => ({ ...m.retrieval, currentCode: poolMethods().find((x) => x.id === m.id)?.retrieval.sha256 === m.retrieval.sha256 })),
       values,
       comparisons: { note: 'Improvement bounds per question (joint over shared unknowns for P@6 and supported P@6, cross-endpoint for nDCG@6), group-bootstrapped; a method is better only when the whole interval clears zero.', ...comparisons },
       noPositivePossible: flagged('noPositivePossible'),
       abstentions: flagged('abstention'),
       diagnostics,
-      agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(rel, tagsOf) },
-      discrepancies: discrepancies(d, rel),
-      audit: auditSamples(rel, tagsOf),
+      agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(benchmarkRel, tagsOf) },
+      discrepancies: discrepancies(d, benchmarkRel),
+      audit: auditSamples(benchmarkRel, tagsOf),
     };
-    log(`relevance: ${rel.length} pair records over ${pools.families.length} families (${joined.merged} duplicates merged, ${joined.superseded} superseded)`);
+    const diagnosticRel = rel.filter((r) => !benchmark(r));
+    out.diagnostics = {
+      note: 'Diagnostics, reported apart from the benchmark: never in its values, comparisons, agreement figures or audit samples. The regression diagnostics follow the comparison rules frozen with them; the mapping diagnostic is labelled and forced (each case-level run\'s first cases-channel-only cases mapped and packed by the production code).',
+      regression: diagnosticFamilies(d).flatMap((f) => {
+        const pool = pools.families.find((p) => p.family === f.id);
+        return pool ? [regressionDiagnostic(pool, f, labels.get(f.id) ?? new Map(), answer.get(f.id) ?? new Map())] : [];
+      }),
+      ordinaryMapping: ordinaryMapping(pools.families),
+      mapping: mappingDiagnosticReport(pools.families, labels, answer, ans),
+      agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(diagnosticRel, tagsOf) },
+    };
+    log(`relevance: ${rel.length} pair records over ${pools.families.length} families (${benchmarkRel.length} benchmark, ${diagnosticRel.length} diagnostic; ${joined.merged} duplicates merged, ${joined.superseded} superseded)`);
   }
-  if (ans.length > 0) out.answerability = { agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(ans, tagsOf) }, audit: auditSamples(ans, tagsOf) };
+  if (benchmarkAns.length > 0) out.answerability = { agreement: { note: DIAGNOSTIC_NOTE, ...agreementReport(benchmarkAns, tagsOf) }, audit: auditSamples(benchmarkAns, tagsOf) };
   const file = writeJson(opts.outDir, `narrative-report-${stamp(new Date())}.json`, out);
   log(`report: ${file}`);
   return 0;

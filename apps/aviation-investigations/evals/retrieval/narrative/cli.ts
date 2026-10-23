@@ -4,9 +4,13 @@
  *
  *   build         [--generation <id>] [--out <file>] [--dry-run | --check]   the question set (PostgreSQL, read-only)
  *   calibration   --generation <id> [--out <file>] [--check]                 the calibration sets, labels frozen
- *   plan          [--samples 1|3] [--allocation-usd <usd>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>]
- *                 the free dry run: preflight, inventory, cost, the month's sequence; measured usage replaces the assumptions
- *   pools         [--samples 1|3] [--confirm-cost --allocation <name>]       paid: scope samples and query embeddings; builds the pools
+ *   plan          [--samples 1|3] [--allocation-usd <usd>] [--allocation <name>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>]
+ *                 the free dry run: preflight, inventory, cost, the month's sequence (what remains of it set against an existing
+ *                 allocation's spend, read only); measured usage replaces the assumptions
+ *   pools         [--samples 1|3] [--vectors <file>] [--confirm-cost --allocation <name>]
+ *                 paid: the cached inputs (scope samples, query embeddings), then the pools through the production
+ *                 retrievers and their frozen identity (frozen-pools.json, committed before judging)
+ *   pools         --inputs <file>                                            free: the pools again from saved inputs
  *   judge         --set calibration --split dev|holdout [--max-pairs <n>] [--confirm-cost --allocation <name>]
  *   judge         --set relevance --pools <file> [--stage 1|2] [--confirm-cost --allocation <name>]
  *   answerability --pools <file> [--confirm-cost --allocation <name>]
@@ -34,8 +38,9 @@ import { judgeCommand, planCommand, poolsCommand, recoverCommand, reportCommand 
 export const USAGE = [
   'usage: pnpm eval:retrieval:narrative build [--env-files <a,b>] [--generation <id>] [--out <file>] [--dry-run | --check]',
   '       pnpm eval:retrieval:narrative calibration [--env-files <a,b>] --generation <id> [--out <file>] [--check]',
-  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--allocation-usd <usd>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>] [--out-dir <dir>]',
-  '       pnpm eval:retrieval:narrative pools [--samples 1|3] [--max-usd <usd>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
+  '       pnpm eval:retrieval:narrative plan [--env-files <a,b>] [--keys-file <file>] [--samples 1|3] [--allocation-usd <usd>] [--allocation <name>] [--measured <judgments,...>] [--output-tokens <a,b>] [--disagreement <share>] [--out-dir <dir>]',
+  '       pnpm eval:retrieval:narrative pools [--samples 1|3] [--vectors <file>] [--max-usd <usd>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
+  '       pnpm eval:retrieval:narrative pools --inputs <file> ...',
   '       pnpm eval:retrieval:narrative judge --set calibration --split dev|holdout [--max-pairs <n>] [--max-usd <usd>] [--concurrency <n>] [--confirm-cost --allocation <name> [--allocation-usd <usd>]] ...',
   '       pnpm eval:retrieval:narrative judge --set relevance --pools <file> [--stage 1|2] [--max-usd <usd>] [--concurrency <n>] [--max-escalation-share <share>] [--confirm-cost --allocation <name>] ...',
   '       pnpm eval:retrieval:narrative answerability --pools <file> [--confirm-cost --allocation <name>] ...',
@@ -82,6 +87,8 @@ export async function main(argv: string[]): Promise<number> {
       disagreement: { type: 'string' },
       run: { type: 'string' },
       confirm: { type: 'boolean' },
+      inputs: { type: 'string' },
+      vectors: { type: 'string' },
     },
     allowPositionals: true,
     strict: true,
@@ -165,13 +172,20 @@ export async function main(argv: string[]): Promise<number> {
       samples,
       broadSample: { bm25: 30, lure: 5, random: 5 },
       ...(allocationUsd !== undefined ? { allocationUsd } : {}),
+      ...(values.allocation ? { allocation: values.allocation } : {}),
       ...(values.measured ? { measured: values.measured.split(',').map((f) => f.trim()).filter(Boolean) } : {}),
       ...(outputTokens ? { outputTokens } : {}),
       ...(disagreement !== undefined ? { disagreement } : {}),
     });
   }
   const allocation = { ...(values.allocation ? { allocation: values.allocation } : {}), ...(allocationUsd !== undefined ? { allocationUsd } : {}) };
-  if (command === 'pools') return poolsCommand({ ...base, samples, ...(maxUsd !== undefined ? { maxUsd } : {}), ...allocation });
+  if (command === 'pools') {
+    if (values.inputs && (values['confirm-cost'] || values.vectors)) {
+      console.error('pools --inputs <file> builds from saved inputs and pays nothing: it takes neither --confirm-cost nor --vectors');
+      return 2;
+    }
+    return poolsCommand({ ...base, samples, ...(maxUsd !== undefined ? { maxUsd } : {}), ...allocation, ...(values.inputs ? { inputs: values.inputs } : {}), ...(values.vectors ? { vectors: values.vectors } : {}) });
+  }
   const set = command === 'answerability' ? 'answerability' : values.set;
   if (set !== 'calibration' && set !== 'relevance' && set !== 'answerability') {
     console.error('judge needs --set calibration or relevance');

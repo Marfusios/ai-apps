@@ -23,8 +23,8 @@ import { readGenerationSource, type GenerationSource } from '../generation.js';
 import { CODE_READING_SPECS, itemFamily, assembleCalibration, codedQuestions, drawCodeReading } from './calibration.js';
 import { assembleNarrative, deriveCohort, type CohortAircraft, type CohortCase, type NarrativeBuild, type NarrativeDataset } from './dataset.js';
 import { loadCaseEvidence } from './evidence.js';
-import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
-import type { NarrativeParaphraseSpec, NarrativeQuestionSpec } from './spec.js';
+import { NARRATIVE_DIAGNOSTICS, NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
+import type { NarrativeDiagnosticSpec, NarrativeParaphraseSpec, NarrativeQuestionSpec } from './spec.js';
 
 export const DEFAULT_NARRATIVE_DATASET = resolve(APP_DIR, 'evals/retrieval/narrative/dataset.json');
 export const BUILDER = 'evals/retrieval/narrative/build.ts';
@@ -114,17 +114,18 @@ export async function loadNarrativeCorpus(client: pg.ClientBase, generationId: n
   }
 }
 
-/** Pure: every family's cohort and related positives, then the dataset. */
+/** Pure: every family's cohort and related positives (benchmark questions and diagnostics), then the dataset. */
 export function buildNarrativeFromCorpus(
   corpus: NarrativeCorpus,
   specs: readonly NarrativeQuestionSpec[] = NARRATIVE_QUESTIONS,
   paraphrases: readonly NarrativeParaphraseSpec[] = NARRATIVE_PARAPHRASES,
+  diagnostics: readonly NarrativeDiagnosticSpec[] = NARRATIVE_DIAGNOSTICS,
 ): NarrativeBuild {
   const cohorts = new Map<string, string[]>();
   const related = new Map<string, string[]>();
   const index = corpus.coded ? indexCorpus(corpus.coded) : null;
   const relatedProblems: string[] = [];
-  for (const s of specs) {
+  for (const s of [...specs, ...diagnostics]) {
     cohorts.set(s.id, deriveCohort(corpus.cohort, s.filters));
     if (!s.relatedCodes) continue;
     const filters = CodedFiltersSchema.safeParse(s.filters);
@@ -134,12 +135,12 @@ export function buildNarrativeFromCorpus(
     }
     related.set(s.id, deriveQuestion(index, { filters: filters.data, codeSet: s.relatedCodes }).relevant);
   }
-  const built = assembleNarrative({ ...corpus.source, answerEligibleCases: corpus.cohort.length, builder: BUILDER }, specs, paraphrases, cohorts, related);
+  const built = assembleNarrative({ ...corpus.source, answerEligibleCases: corpus.cohort.length, builder: BUILDER }, specs, paraphrases, cohorts, related, diagnostics);
   return { dataset: built.dataset, problems: [...new Set([...relatedProblems, ...built.problems])] };
 }
 
 export async function buildNarrative(client: pg.ClientBase, generationId: number): Promise<NarrativeBuild> {
-  const corpus = await loadNarrativeCorpus(client, generationId, NARRATIVE_QUESTIONS.some((s) => s.relatedCodes !== undefined));
+  const corpus = await loadNarrativeCorpus(client, generationId, [...NARRATIVE_QUESTIONS, ...NARRATIVE_DIAGNOSTICS].some((s) => s.relatedCodes !== undefined));
   return buildNarrativeFromCorpus(corpus);
 }
 
@@ -152,15 +153,17 @@ export function printNarrativeBuild(built: NarrativeBuild, log: (m: string) => v
       `mapping ${d.source.mappingVersion}, normalization ${d.source.fieldNormalizationVersion}, citation text ${d.source.citationTextVersion})`,
   );
   for (const q of d.questions) {
-    const extra = [q.paraphrase_of ? `paraphrase of ${q.paraphrase_of}` : '', q.relatedPositives.length > 0 ? `${q.relatedPositives.length} related positives` : '']
+    const extra = [q.role === 'diagnostic' ? 'diagnostic' : '', q.paraphrase_of ? `paraphrase of ${q.paraphrase_of}` : '', q.relatedPositives.length > 0 ? `${q.relatedPositives.length} related positives` : '']
       .filter(Boolean)
       .join('; ');
     log(`  ${String(q.cohort.size).padStart(6)}  ${q.type.padEnd(14)} ${q.id}  [${q.tags.join(', ')}]${extra ? ` (${extra})` : ''}`);
   }
-  const originals = d.questions.filter((q) => !q.paraphrase_of);
+  const benchmark = d.questions.filter((q) => q.role === 'benchmark');
+  const originals = benchmark.filter((q) => !q.paraphrase_of);
   log(
-    `questions: ${d.questions.length} (${originals.length} families, ${d.questions.length - originals.length} paraphrases); ` +
-      `bounded cohorts: ${originals.filter((q) => q.type === 'bounded-cohort').length} families, ${originals.filter((q) => q.type === 'bounded-cohort').reduce((n, q) => n + q.cohort.size, 0)} cases`,
+    `benchmark questions: ${benchmark.length} (${originals.length} families, ${benchmark.length - originals.length} paraphrases); ` +
+      `bounded cohorts: ${originals.filter((q) => q.type === 'bounded-cohort').length} families, ${originals.filter((q) => q.type === 'bounded-cohort').reduce((n, q) => n + q.cohort.size, 0)} cases; ` +
+      `diagnostics: ${d.questions.length - benchmark.length}`,
   );
 }
 
@@ -215,6 +218,12 @@ export const DEFAULT_CALIBRATION = resolve(APP_DIR, 'evals/retrieval/narrative/c
  * it with the run's report.
  */
 export const HOLDOUT_LOCK_FILE = resolve(APP_DIR, 'evals/retrieval/narrative/holdout-runs.jsonl');
+/**
+ * The frozen pool identity (round 4, pool.ts `freezePools`): `pools` records the pool
+ * file's identity here, it is committed, and relevance and answerability judging refuse
+ * any other pool file.
+ */
+export const FROZEN_POOLS_FILE = resolve(APP_DIR, 'evals/retrieval/narrative/frozen-pools.json');
 
 /**
  * `calibration` (cli.ts): draw the code-reading items from the generation (the Track C

@@ -1,11 +1,13 @@
 /**
- * Track N pools, metrics and the dry run's arithmetic: the pool rule (method union by
- * unique cases, bounded cohorts, related positives, hard negatives by the lure's order,
- * the seeded near and far tail), priorities and bundle pairs; references with unknown
- * grades kept in every denominator, supported P@6 bounds, kappa and Wilson intervals,
- * discovery by depth, method-exclusive hits, the tail estimate, the agreement and
- * calibration figures and the discrepancy log; pool and cost estimates; and the CLI's
- * usage errors (nothing contacted).
+ * Track N pools, metrics and the dry run's arithmetic: the pool rule (union of the
+ * retrieval versions' first cases, bounded cohorts, related positives, hard negatives by
+ * the lure's order, the mapping diagnostic, the seeded near and far tail), priorities and
+ * bundle pairs, the retrieval versions' configuration identities and the frozen pool
+ * identity; references with unknown grades kept in every denominator, supported P@6
+ * bounds, kappa and Wilson intervals, discovery by depth, version-exclusive hits, the tail
+ * estimate, the agreement and calibration figures and the discrepancy log; the
+ * diagnostics (the regression's frozen rules, the mapping's natural and forced outcomes);
+ * pool and cost estimates; and the CLI's usage errors (nothing contacted).
  */
 import { describe, expect, it } from 'vitest';
 import { main, USAGE } from '../../evals/retrieval/narrative/cli.js';
@@ -14,9 +16,46 @@ import { ADJUDICATOR, EXPECTED_OUTPUT, JUDGE_A, JUDGE_B } from '../../evals/retr
 import { llmPrice } from '../../server/ai/pricing.js';
 import { NarrativeDatasetSchema, type NarrativeItem } from '../../evals/retrieval/narrative/dataset.js';
 import type { PairRecord } from '../../evals/retrieval/narrative/judging.js';
-import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, canaryOf, caseCost, fullEscalationUsd, measuredUsage, outputsFor, planInputs, poolEstimates, protocolArithmetic, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
+import {
+  ASSUMPTIONS,
+  PRODUCTION_BUNDLE_PAIRS,
+  PRODUCTION_MAPPING_DIAGNOSTIC,
+  PRODUCTION_TOP20,
+  PRODUCTION_UNION,
+  addRuns,
+  callUsd,
+  canaryOf,
+  caseCost,
+  fullEscalationUsd,
+  measuredUsage,
+  outputsFor,
+  planInputs,
+  poolEstimates,
+  protocolArithmetic,
+  rates,
+  scaleRun,
+  statsOf,
+  type Measured,
+} from '../../evals/retrieval/narrative/plan.js';
 import { attemptReserveUsd } from '../../evals/retrieval/narrative/clients.js';
-import { POOL_RULE, assemblePool, bundlePairs, casePriority, poolFileVersion, verifyPoolFile, withFingerprints, type PoolFile, type PoolRun } from '../../evals/retrieval/narrative/pool.js';
+import {
+  POOL_RULE,
+  SCHEDULE,
+  assemblePool,
+  bundlePairs,
+  casePriority,
+  freezePools,
+  frozenPoolsProblems,
+  poolFileVersion,
+  poolMethods,
+  poolSummary,
+  tierOf,
+  verifyPoolFile,
+  withFingerprints,
+  type MappingDiagnosticRun,
+  type PoolFile,
+  type PoolRun,
+} from '../../evals/retrieval/narrative/pool.js';
 import { bundleKeyOf } from '../../evals/retrieval/narrative/judging.js';
 import {
   agreementClass,
@@ -31,15 +70,21 @@ import {
   discrepancies,
   familyReference,
   judgedCoverage,
+  mappingDiagnosticReport,
   methodExclusive,
+  ordinaryMapping,
   questionValues,
+  regressionConclusion,
+  regressionDiagnostic,
   scoreRuns,
   supportedAt6,
   tailEstimate,
   wilson,
 } from '../../evals/retrieval/narrative/score.js';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { codedReference, scoreQuestion } from '../../evals/retrieval/metrics.js';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { Label } from '../../evals/retrieval/metrics.js';
 
 const APP_DIR = resolve(import.meta.dirname, '../..');
@@ -49,6 +94,7 @@ const RUBRIC = { relevant: 'All conditions are stated.', partial: 'Some conditio
 const item = (over: Partial<NarrativeItem> = {}): NarrativeItem => ({
   id: 'fam',
   question: 'Which accidents match?',
+  role: 'benchmark',
   family: 'fam',
   tags: ['negation'],
   type: 'broad',
@@ -64,30 +110,72 @@ const item = (over: Partial<NarrativeItem> = {}): NarrativeItem => ({
   ...over,
 });
 const COHORT = Array.from({ length: 40 }, (_, i) => `C${String(i).padStart(3, '0')}XX`);
-const run = (method: string, sample: number, ranking: string[], bundle: string[] = ranking.slice(0, 2)): PoolRun => ({
-  member: 'fam',
+const passageOf = (n: string, over: Partial<PoolRun['bundle'][number]['passages'][number]> = {}): PoolRun['bundle'][number]['passages'][number] => ({
+  passageId: `p-${n}`,
+  sectionId: `${n}:factual/aircraft-1`,
+  revisionId: 'r',
+  kind: 'factual',
+  scope: 'aircraft',
+  aircraftKey: 1,
+  start: 0,
+  end: 10,
+  textSha256: `s-${n}`,
+  role: 'retrieved',
+  reserved: true,
+  fusedRank: 1,
+  ...over,
+});
+const run = (method: string, sample: number, ranking: string[], bundle: string[] = ranking.slice(0, 2), member = 'fam'): PoolRun => ({
+  member,
   method,
   sample,
   ranking,
-  bundle: bundle.map((n, i) => ({ ntsbNo: n, caseRank: i + 1, passages: [{ passageId: `p-${n}`, sectionId: `${n}:factual/aircraft-1`, revisionId: 'r', kind: 'factual', scope: 'aircraft', aircraftKey: 1, start: 0, end: 10, textSha256: `s-${n}` }] })),
+  bundle: bundle.map((n, i) => ({ ntsbNo: n, caseRank: i + 1, mapped: false, channels: { keyword: i + 1, vector: null, cases: null }, passages: [passageOf(n)] })),
+  mapping: method === 'retrieval.v1' ? null : [],
+});
+/** A mapping diagnostic run: `cases` forced through the mapping, `delivered` packed with a mapped passage and the attached cause. */
+const forced = (method: string, sample: number, cases: string[], delivered: string[] = cases, unmapped: string[] = []): MappingDiagnosticRun => ({
+  member: 'fam',
+  method,
+  sample,
+  cases: cases.map((n, i) => ({ ntsbNo: n, fusedRank: 50 + i, casesRank: 10 + i })),
+  mapping: cases.map((n) => (unmapped.includes(n) ? { ntsbNo: n, status: 'unmapped', reason: 'no_passages', passagesUnderFilter: 0, returned: 0 } : { ntsbNo: n, status: 'mapped', reason: null, passagesUnderFilter: 5, returned: 5 })),
+  bundle: delivered.map((n, i) => ({
+    ntsbNo: n,
+    caseRank: 50 + i,
+    mapped: true,
+    channels: { keyword: null, vector: null, cases: 10 + i },
+    passages: [passageOf(n, { passageId: `m-${n}`, fusedRank: 400 + i }), passageOf(n, { passageId: `c-${n}`, kind: 'probable_cause', role: 'probable_cause', fusedRank: null })],
+  })),
+  skipped: unmapped.map((n, i) => ({ ntsbNo: n, caseRank: 60 + i, reason: 'no_retrieved_passage' as const })),
 });
 const RULE = { ...POOL_RULE, depth: 5, hardNegatives: 2, lureDepth: 50, tail: { nearFrom: 6, nearTo: 10, near: 2, far: 3 } };
+const INPUTS = { version: 'i'.repeat(64), scope: { model: 'scope-model', promptVersion: 'scope.v2' }, embedding: { model: 'embedding-model', dims: 4, inputTemplate: 'query-v1' } };
 
 describe('the pool rule', () => {
-  const runs = [run('p50-kt', 1, COHORT.slice(0, 12)), run('c200+n-kt', 1, [...COHORT.slice(3, 8), ...COHORT.slice(20, 30)])];
+  const runs = [run('retrieval.v1', 1, COHORT.slice(0, 12)), run('retrieval.v2', 1, [...COHORT.slice(3, 8), ...COHORT.slice(20, 30)])];
 
-  it('unions each method\'s first unique cases, adds lure hard negatives and a seeded near and far tail', () => {
+  it('compares the production retrieval versions, each with its configuration identity', () => {
+    expect([...POOL_RULE.methods]).toEqual(['retrieval.v1', 'retrieval.v2', 'retrieval.v2-nf']);
+    expect(POOL_RULE.version).toBe('track-n-pool-v2');
+    const methods = poolMethods();
+    expect(methods.map((m) => [m.id, m.retrieval.version, m.config.version])).toEqual(POOL_RULE.methods.map((v) => [v, v, v]));
+    for (const m of methods) expect(m.retrieval.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(new Set(methods.map((m) => m.retrieval.sha256)).size).toBe(3);
+  });
+
+  it('unions each version\'s first unique cases, adds lure hard negatives and a seeded near and far tail', () => {
     const p = assemblePool({ family: item(), members: [item()], runs, cohort: COHORT, lure: ['C001XX', 'C039XX', 'C038XX', 'C037XX'], rule: RULE as never });
     const methodCases = p.cases.filter((c) => c.sources.includes('method')).map((c) => c.ntsbNo);
     expect(methodCases).toEqual([...COHORT.slice(0, 8)]);
-    expect(p.cases.find((c) => c.ntsbNo === 'C003XX')?.bestRank).toEqual({ 'p50-kt': 4, 'c200+n-kt': 1, 'c200+nf-kt': null });
+    expect(p.cases.find((c) => c.ntsbNo === 'C003XX')?.bestRank).toEqual({ 'retrieval.v1': 4, 'retrieval.v2': 1, 'retrieval.v2-nf': null });
     expect(p.cases.filter((c) => c.sources.includes('hard-negative')).map((c) => [c.ntsbNo, c.lureRank])).toEqual([
       ['C038XX', 3],
       ['C039XX', 2],
     ]);
     expect(p.tail.near).toHaveLength(2);
     expect(p.tail.far).toHaveLength(3);
-    // Ranks 6 to 10 outside the pool: p50-kt's C008 and C009 (C005 to C007 are c200+n-kt's first five), c200+n-kt's C020 to C024.
+    // Ranks 6 to 10 outside the pool: retrieval.v1's C008 and C009 (C005 to C007 are retrieval.v2's first five), retrieval.v2's C020 to C024.
     for (const n of p.tail.near) expect([...COHORT.slice(8, 10), ...COHORT.slice(20, 25)]).toContain(n);
     expect(p.tail.nearSize).toBe(7);
     expect(assemblePool({ family: item(), members: [item()], runs, cohort: COHORT, lure: ['C001XX', 'C039XX', 'C038XX', 'C037XX'], rule: RULE as never })).toEqual(p);
@@ -104,15 +192,17 @@ describe('the pool rule', () => {
     const a = assemblePool({ family: item(), members: [item()], runs, cohort: COHORT, lure: [], rule: RULE as never });
     const b = assemblePool({ family: item(), members: [item()], runs: [runs[0] as PoolRun], cohort: COHORT, lure: [], rule: RULE as never });
     expect(a.version).not.toBe(b.version);
-    const body = { kind: 'track-n-pools' as const, rule: POOL_RULE, datasetSpecSha256: 'x', generationId: 1, target: {}, methods: [], families: [a] };
+    const body = { kind: 'track-n-pools' as const, rule: POOL_RULE, datasetSpecSha256: 'x', generationId: 1, target: {}, inputs: INPUTS, methods: [], families: [a] };
     expect(poolFileVersion(body)).not.toBe(poolFileVersion({ ...body, families: [b] }));
+    // The inputs every version ran with are part of the identity.
+    expect(poolFileVersion(body)).not.toBe(poolFileVersion({ ...body, inputs: { ...INPUTS, version: 'j'.repeat(64) } }));
   });
 
   it('recomputes every family version on load: a changed ranking, case or fingerprint is caught although the stored hashes are kept', () => {
     const rule = RULE as never;
     const a = withFingerprints(rule, assemblePool({ family: item(), members: [item()], runs, cohort: COHORT, lure: [], rule }), new Map([['C000XX', 'f0'], ['C001XX', 'f1']]));
     expect(a.fingerprints).toEqual({ C000XX: 'f0', C001XX: 'f1' });
-    const body = { kind: 'track-n-pools' as const, rule, datasetSpecSha256: 'x', generationId: 1, target: {}, methods: [], families: [a] };
+    const body = { kind: 'track-n-pools' as const, rule, datasetSpecSha256: 'x', generationId: 1, target: {}, inputs: INPUTS, methods: [], families: [a] };
     const file = { ...body, version: poolFileVersion(body) } as PoolFile;
     expect(verifyPoolFile(file)).toEqual([]);
     const tamperedRun = { ...file, families: [{ ...a, runs: a.runs.map((r, i) => (i === 0 ? { ...r, ranking: [...r.ranking].reverse() } : r)) }] };
@@ -123,14 +213,25 @@ describe('the pool rule', () => {
     expect(verifyPoolFile(tamperedVersion)).toEqual(['the pool file version does not match its families']);
   });
 
+  it('checks each retrieval version\'s recorded identity against its recorded configuration', () => {
+    const methods = poolMethods();
+    const body = { kind: 'track-n-pools' as const, rule: POOL_RULE, datasetSpecSha256: 'x', generationId: 1, target: {}, inputs: INPUTS, methods, families: [] };
+    const file = { ...body, version: poolFileVersion(body) } as PoolFile;
+    expect(verifyPoolFile(file)).toEqual([]);
+    const edited = methods.map((m, i) => (i === 1 ? { ...m, config: { ...m.config, params: { ...m.config.params, perChannel: 199 } } } : m));
+    const tampered = { ...body, methods: edited };
+    expect(verifyPoolFile({ ...tampered, version: poolFileVersion(tampered) } as PoolFile)).toEqual(['method retrieval.v2: its configuration identity does not match its configuration']);
+  });
+
   it('orders escalations: delivered, then the first 20, then bounded cohorts, then the rest; bundle pairs are distinct', () => {
     const base = { ntsbNo: 'X', sources: ['method' as const], lureRank: null, delivered: false };
+    expect(SCHEDULE.version).toBe('track-n-schedule-v2');
     expect(casePriority({ ...base, bestRank: { a: 3 }, delivered: true }, 'broad')).toBe(3);
     expect(casePriority({ ...base, bestRank: { a: 15 } }, 'broad')).toBe(10_015);
     expect(casePriority({ ...base, bestRank: { a: 60 } }, 'bounded-cohort')).toBe(20_060);
     expect(casePriority({ ...base, bestRank: { a: 60 } }, 'broad')).toBe(30_060);
     expect(casePriority({ ...base, sources: ['hard-negative'], bestRank: { a: null }, lureRank: 4 }, 'broad')).toBe(40_004);
-    const p = assemblePool({ family: item(), members: [item()], runs: [...runs, run('c200+n-kt', 2, COHORT.slice(0, 5))], cohort: COHORT, lure: [], rule: RULE as never });
+    const p = assemblePool({ family: item(), members: [item()], runs: [...runs, run('retrieval.v2', 2, COHORT.slice(0, 5))], cohort: COHORT, lure: [], rule: RULE as never });
     const pairs = bundlePairs(p);
     expect(pairs.map((x) => x.ntsbNo)).toEqual(['C000XX', 'C001XX', 'C003XX', 'C004XX']);
     expect(pairs.find((x) => x.ntsbNo === 'C000XX')?.runs).toHaveLength(2);
@@ -173,7 +274,7 @@ describe('references and run scores', () => {
     const pool = assemblePool({
       family: item({ type: 'bounded-cohort', cohort: { size: 8, cases: cohort } }),
       members: [item()],
-      runs: [run('p50-kt', 1, cohort), run('p50-kt', 2, [...cohort].reverse())],
+      runs: [run('retrieval.v1', 1, cohort), run('retrieval.v1', 2, [...cohort].reverse())],
       cohort,
       lure: [],
     });
@@ -360,7 +461,7 @@ describe('method comparisons', () => {
   it('bounds supported P@6 jointly over relevance and each bundle\'s answerability', () => {
     // Same relevant case K delivered by both methods with different passages: only the bundles' answerability differs.
     const a = runAt('a', 1, ['K']);
-    const b = { ...runAt('b', 1, ['K']), bundle: [{ ...(runAt('b', 1, ['K']).bundle[0] as PoolRun['bundle'][number]), passages: [{ passageId: 'p-other', sectionId: 'K:factual/aircraft-1', revisionId: 'r', kind: 'factual' as const, scope: 'aircraft' as const, aircraftKey: 1, start: 20, end: 30, textSha256: 's-other' }] }] };
+    const b = { ...runAt('b', 1, ['K']), bundle: [{ ...(runAt('b', 1, ['K']).bundle[0] as PoolRun['bundle'][number]), passages: [passageOf('K', { passageId: 'p-other', start: 20, end: 30, textSha256: 's-other' })] }] };
     const pool = poolOf([a, b], ['K']);
     const ref = familyReference({ ...pool, cohort: null }, new Map<string, Label>([['K', 2]]));
     const keyA = bundleKeyOf(a.bundle[0]?.passages ?? []);
@@ -383,7 +484,7 @@ describe('method comparisons', () => {
 });
 
 describe('pool diagnostics', () => {
-  const runs = [run('p50-kt', 1, ['A', 'B', 'C', 'D']), run('c200+n-kt', 1, ['B', 'E', 'F', 'A'])];
+  const runs = [run('retrieval.v1', 1, ['A', 'B', 'C', 'D']), run('retrieval.v2', 1, ['B', 'E', 'F', 'A'])];
   const pool = assemblePool({ family: item(), members: [item()], runs, cohort: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], lure: [], rule: { ...RULE, depth: 4, tail: { nearFrom: 5, nearTo: 6, near: 0, far: 2 } } as never });
   const labels = new Map<string, Label>([['A', 2], ['B', 2], ['C', 0], ['E', 2], ['F', 1]]);
 
@@ -393,7 +494,7 @@ describe('pool diagnostics', () => {
       { depth: 2, relevant: 3, added: 1 },
       { depth: 4, relevant: 3, added: 0 },
     ]);
-    expect(methodExclusive(pool, labels, 4)).toEqual({ 'c200+n-kt': ['E'] });
+    expect(methodExclusive(pool, labels, 4)).toEqual({ 'retrieval.v2': ['E'] });
   });
 
   it('estimates missed relevant cases from the tail samples, never guessing unknowns', () => {
@@ -407,15 +508,182 @@ describe('pool diagnostics', () => {
 
 // ---------------------------------------------------------------------------
 
+describe('the mapping diagnostic in the pool', () => {
+  const runs = [run('retrieval.v1', 1, COHORT.slice(0, 6)), run('retrieval.v2', 1, COHORT.slice(0, 6))];
+  const mapping = [forced('retrieval.v2', 1, ['C030XX', 'C031XX'], ['C030XX'], ['C031XX']), forced('retrieval.v2-nf', 1, ['C030XX', 'C032XX'])];
+  const p = assemblePool({ family: item(), members: [item()], runs, mapping, cohort: COHORT, lure: [], rule: RULE as never });
+
+  it('adds its delivered cases to the pool, never to the tail, judged in the first tier', () => {
+    const diag = p.cases.filter((c) => c.sources.includes('mapping-diagnostic')).map((c) => c.ntsbNo);
+    expect(diag).toEqual(['C030XX', 'C032XX']);
+    // An unmapped case was not delivered, so it is not pooled by the diagnostic.
+    expect(p.cases.some((c) => c.ntsbNo === 'C031XX' && c.sources.includes('mapping-diagnostic'))).toBe(false);
+    for (const n of diag) {
+      expect([...p.tail.near, ...p.tail.far]).not.toContain(n);
+      const c = p.cases.find((x) => x.ntsbNo === n);
+      expect(tierOf(casePriority(c as never, 'broad'))).toBe(0);
+    }
+    expect(p.mappingDiagnostic.map((r) => r.method)).toEqual(['retrieval.v2', 'retrieval.v2-nf']);
+  });
+
+  it('versions the pool with its runs, and pairs its bundles for answerability apart from the retrieval runs\' ', () => {
+    const without = assemblePool({ family: item(), members: [item()], runs, mapping: mapping.slice(0, 1), cohort: COHORT, lure: [], rule: RULE as never });
+    expect(without.version).not.toBe(p.version);
+    const pairs = bundlePairs(p);
+    const c030 = pairs.find((x) => x.ntsbNo === 'C030XX');
+    expect(c030?.runs.map((r) => r.source)).toEqual(['mapping-diagnostic', 'mapping-diagnostic']);
+    expect(pairs.filter((x) => x.runs.every((r) => r.source === 'run')).map((x) => x.ntsbNo)).toEqual(['C000XX', 'C001XX']);
+  });
+
+  it('summarises each version\'s cases and mapping, natural and forced', () => {
+    const natural = { ...run('retrieval.v2', 2, COHORT.slice(0, 6)), mapping: [{ ntsbNo: 'C005XX', status: 'mapped' as const, reason: null, passagesUnderFilter: 3, returned: 3 }, { ntsbNo: 'C039XX', status: 'unmapped' as const, reason: 'too_many_passages' as const, passagesUnderFilter: 1_200, returned: 0 }] };
+    const q = assemblePool({ family: item(), members: [item()], runs: [...runs, natural], mapping, cohort: COHORT, lure: [], rule: RULE as never });
+    const sum = poolSummary({ rule: POOL_RULE, families: [q] }, new Map([['fam', 'benchmark']]));
+    const f = sum.families[0] as (typeof sum.families)[number];
+    expect(f.versions['retrieval.v1']).toEqual({ cases: 5, delivered: 2, runs: 1, runsWithMapping: 0, mapped: 0, unmapped: 0 });
+    expect(f.versions['retrieval.v2']).toMatchObject({ runs: 2, runsWithMapping: 1, mapped: 1, unmapped: 1 });
+    expect(f.mappingDiagnostic).toEqual({ forced: 3, mapped: 2, delivered: 2 });
+    expect(f.stage1).toBe(q.cases.filter((c) => tierOf(casePriority(c, 'broad')) <= 2).length);
+    expect(sum.total.benchmarkCases).toBe(q.cases.length);
+    expect(ordinaryMapping([q])['retrieval.v2']).toEqual({ runs: 2, runsWithMapping: 1, mapped: 1, unmapped: { too_many_passages: 1 }, deliveredMapped: 0, questions: ['fam'] });
+    expect(ordinaryMapping([q])['retrieval.v1']).toMatchObject({ runs: 1, runsWithMapping: 0 });
+  });
+});
+
+describe('the frozen pool identity', () => {
+  const pool = assemblePool({ family: item(), members: [item()], runs: [run('retrieval.v1', 1, COHORT.slice(0, 4))], cohort: COHORT, lure: [], rule: RULE as never });
+  const body = { kind: 'track-n-pools' as const, rule: POOL_RULE, datasetSpecSha256: 'x', generationId: 1, target: {}, inputs: INPUTS, methods: poolMethods(), families: [pool] };
+  const file = { ...body, version: poolFileVersion(body) } as PoolFile;
+
+  it('is recorded once, accepted again unchanged, and another identity is refused', () => {
+    const frozen = join(mkdtempSync(join(tmpdir(), 'track-n-frozen-')), 'frozen-pools.json');
+    expect(freezePools(frozen, file, new Date('2026-10-23T12:00:00Z'))).toBe('recorded');
+    const record = JSON.parse(readFileSync(frozen, 'utf8'));
+    expect(record).toMatchObject({ kind: 'track-n-frozen-pools', poolVersion: file.version, rule: 'track-n-pool-v2', schedule: 'track-n-schedule-v2', inputsVersion: INPUTS.version, families: { fam: pool.version } });
+    expect(Object.keys(record.retrieval)).toEqual(['retrieval.v1', 'retrieval.v2', 'retrieval.v2-nf']);
+    expect(freezePools(frozen, file)).toBe('unchanged');
+    const other = { ...file, version: 'e'.repeat(64) };
+    expect(() => freezePools(frozen, other)).toThrow(/differs from the frozen one/);
+    expect(JSON.parse(readFileSync(frozen, 'utf8')).poolVersion).toBe(file.version);
+  });
+
+  it('lets judging proceed only on the frozen identity, committed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'track-n-frozen-'));
+    const frozen = join(dir, 'frozen-pools.json');
+    expect(frozenPoolsProblems(frozen, file, () => true)[0]).toMatch(/no pool identity is frozen/);
+    freezePools(frozen, file);
+    expect(frozenPoolsProblems(frozen, file, () => true)).toEqual([]);
+    expect(frozenPoolsProblems(frozen, { version: 'e'.repeat(64) }, () => true)[0]).toMatch(/is not the frozen pool identity/);
+    expect(frozenPoolsProblems(frozen, file, () => false)[0]).toMatch(/is not committed/);
+  });
+});
+
+describe('the diagnostics', () => {
+  const d = dataset();
+  const diag = d.questions.find((q) => q.role === 'diagnostic') as NarrativeItem;
+  const R = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
+  const X = ['X1', 'X2', 'X3', 'X4', 'X5', 'X6'];
+  const labels = new Map<string, Label>([...R.map((n) => [n, 2] as const), ...X.map((n) => [n, 0] as const)]);
+  const member = diag.id;
+  const pool = (variantBundle: string[]) =>
+    assemblePool({
+      family: { ...diag, relatedPositives: ['R1', 'R2', 'R3', 'R4'] },
+      members: [diag],
+      runs: [1, 2].flatMap((sample) => [
+        run('retrieval.v1', sample, [...R.slice(0, 4), 'X1', 'X2', ...R.slice(4), ...X.slice(2)], [...R.slice(0, 4), 'X1', 'X2'], member),
+        run('retrieval.v2', sample, [...variantBundle, ...R, ...X].filter((n, i, a) => a.indexOf(n) === i), variantBundle, member),
+        run('retrieval.v2-nf', sample, [...variantBundle, ...R, ...X].filter((n, i, a) => a.indexOf(n) === i), variantBundle, member),
+      ]),
+      cohort: [...R, ...X],
+      lure: [],
+    });
+
+  it('concludes on the primary metric only: regression when the upper bound is below zero', () => {
+    expect(regressionConclusion({ lower: -0.4, upper: -0.01 })).toBe('regression');
+    expect(regressionConclusion({ lower: 0, upper: 0.2 })).toBe('no-regression');
+    expect(regressionConclusion({ lower: -0.1, upper: 0.1 })).toBe('inconclusive');
+    expect(regressionConclusion(null)).toBe('inconclusive');
+  });
+
+  it('applies the frozen comparison to the regression question, with the displaced and admitted cases and the coded reproduction', () => {
+    const p = pool(['X1', 'X2', 'X3', 'R1', 'X4', 'X5']);
+    const family = { ...diag, relatedPositives: ['R1', 'R2', 'R3', 'R4'] };
+    const coded = scoreQuestion(p.runs[0]?.ranking ?? [], (p.runs[0]?.bundle ?? []).map((b) => b.ntsbNo), codedReference(family.relatedPositives)).ndcg.bounds?.lower as number;
+    const def = family.diagnostic as NonNullable<NarrativeItem['diagnostic']>;
+    const expected = { 'retrieval.v1': coded, 'retrieval.v2': 0.25, 'retrieval.v2-nf': 0.25 };
+    const rep = regressionDiagnostic(p, { ...family, diagnostic: { ...def, comparison: { ...def.comparison, reproduction: { ...def.comparison.reproduction, expected } } } }, labels, new Map());
+    expect(rep.comparison.base).toBe('retrieval.v1');
+    expect(rep.comparisons['retrieval.v2']?.conclusion).toBe('regression');
+    expect(rep.comparisons['retrieval.v2-nf']?.conclusion).toBe('regression');
+    expect(Object.keys(rep.comparisons['retrieval.v2']?.metrics ?? {})).toEqual(['ndcg6', 'p6', 'supported']);
+    expect(rep.methods['retrieval.v1']?.p6).toEqual({ lower: 4 / 6, upper: 4 / 6 });
+    expect(rep.reproduction.observed['retrieval.v1']).toBeCloseTo(coded, 12);
+    // retrieval.v2's coded value is not 0.25 here: not reproduced.
+    expect(rep.reproduction.reproduced).toBe(false);
+    expect(rep.perSample.map((s) => s.sample)).toEqual([1, 2]);
+    const s1 = rep.perSample[0] as (typeof rep.perSample)[number];
+    expect(s1.displaced['retrieval.v2']?.map((b) => [b.ntsbNo, b.label, b.coded])).toEqual([
+      ['R2', 2, true],
+      ['R3', 2, true],
+      ['R4', 2, true],
+    ]);
+    expect(s1.admitted['retrieval.v2']?.map((b) => b.ntsbNo)).toEqual(['X3', 'X4', 'X5']);
+    // The same bundles: no regression on these labels, and the coded values reproduce.
+    const same = pool([...R.slice(0, 4), 'X1', 'X2']);
+    const repSame = regressionDiagnostic(same, { ...family, diagnostic: { ...def, comparison: { ...def.comparison, reproduction: { ...def.comparison.reproduction, expected: { 'retrieval.v1': coded, 'retrieval.v2': coded, 'retrieval.v2-nf': coded } } } } }, labels, new Map());
+    expect(repSame.comparisons['retrieval.v2']?.conclusion).toBe('no-regression');
+    expect(repSame.reproduction.reproduced).toBe(true);
+  });
+
+  it('keeps unknown labels as bounds: an unjudged admitted case leaves the conclusion open', () => {
+    const p = pool(['R1', 'R2', 'R3', 'U1', 'X1', 'X2']);
+    const rep = regressionDiagnostic(p, { ...diag, relatedPositives: [] }, labels, new Map());
+    const m = rep.comparisons['retrieval.v2']?.metrics.ndcg6;
+    expect(m?.method).toBe('cross-endpoint');
+    expect(rep.comparisons['retrieval.v2']?.conclusion).toBe('inconclusive');
+  });
+
+  it('reports the forced mapping: outcomes, relevance by answerability, and whether a supported bundle rests on a mapped passage', () => {
+    const mapping = [forced('retrieval.v2', 1, ['M1', 'M2', 'M3'], ['M1', 'M2'], ['M3']), forced('retrieval.v2-nf', 1, ['M1', 'M4'])];
+    const p = { family: 'fam', mappingDiagnostic: mapping };
+    const key = (n: string) => `m-${n}:s-${n},c-${n}:s-${n}`;
+    const rel = new Map([['fam', new Map<string, Label>([['M1', 2], ['M2', 2], ['M4', 0]])]]);
+    const ans = new Map([['fam', new Map<string, Label>([[`M1|${key('M1')}`, 2], [`M2|${key('M2')}`, 0], [`M4|${key('M4')}`, 0]])]]);
+    const verdict = (passageId: string) => ({ grade: 2, evidence: [{ source: 'P1', kind: 'passage', quote: 'x', passageId }], absent: false, absentWhat: null, rationale: 'r' });
+    const records = [
+      { kind: 'answerability', family: 'fam', ntsbNo: 'M1', bundleKey: key('M1'), adjudication: null, verdicts: [{ role: 'judge-a', verdict: verdict('m-M1') }, { role: 'judge-b', verdict: verdict('c-M1') }] },
+    ] as never[];
+    const r = mappingDiagnosticReport([p], rel, ans, records);
+    expect(r).toMatchObject({ runs: 2, forced: 4, mapped: 3, unmapped: { no_passages: 1 }, delivered: 3 });
+    expect(r.relevance).toEqual({ '2': 2, '1': 0, '0': 1, unknown: 0 });
+    expect(r.crossTab).toEqual({ '2': { '2': 1, '0': 1 }, '0': { '0': 1 } });
+    expect(r.supportedAmongRelevant).toMatchObject({ k: 1, n: 2, unknown: 0 });
+    expect(r.restsOnMappedPassage).toEqual({ answerable: 1, mappedPassage: 1, causeOnly: 0, unread: 0 });
+    const causeOnly = [{ ...(records[0] as unknown as object), verdicts: [{ role: 'judge-a', verdict: verdict('c-M1') }, { role: 'judge-b', verdict: verdict('c-M1') }] }] as never[];
+    expect(mappingDiagnosticReport([p], rel, ans, causeOnly).restsOnMappedPassage).toEqual({ answerable: 1, mappedPassage: 0, causeOnly: 1, unread: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe('the dry run arithmetic', () => {
-  it('estimates pools: exact bounded cohorts, phase A unions for broad questions', () => {
+  it('estimates pools: exact bounded cohorts, the production retrievers\' unions for broad questions, the mapping diagnostic in stage 1', () => {
     const d = dataset();
     const e = poolEstimates(d, 3);
     const bounded = e.filter((x) => x.type === 'bounded-cohort');
     for (const b of bounded) expect(b.mean).toBe(d.questions.find((q) => q.id === b.family)?.cohort.size);
-    const broad = e.find((x) => x.type === 'broad' && x.members === 1) as (typeof e)[number];
-    expect(broad.mean).toBe(Math.round(PHASE_A_UNION[3].mean + POOL_RULE.hardNegatives + POOL_RULE.tail.near + POOL_RULE.tail.far + (d.questions.find((q) => q.id === broad.family)?.relatedPositives.length ?? 0) / 2));
+    const broad = e.find((x) => x.type === 'broad' && x.members === 1 && x.role === 'benchmark') as (typeof e)[number];
+    const m = PRODUCTION_MAPPING_DIAGNOSTIC[3];
+    expect(broad.mean).toBe(Math.round(PRODUCTION_UNION[3].mean + POOL_RULE.hardNegatives + POOL_RULE.tail.near + POOL_RULE.tail.far + (d.questions.find((q) => q.id === broad.family)?.relatedPositives.length ?? 0) / 2 + m.newCases.mean));
+    expect(broad.stage1.mean).toBe(Math.round(PRODUCTION_TOP20[3].mean + m.delivered.mean));
+    expect(broad.mappingDiagnostic).toEqual({ mean: m.delivered.mean, max: m.delivered.max });
+    expect(broad.answerabilityPairs.mean).toBeCloseTo(PRODUCTION_BUNDLE_PAIRS[3].mean + m.delivered.mean, 10);
     expect(poolEstimates(d, 1).reduce((n, x) => n + x.mean, 0)).toBeLessThan(e.reduce((n, x) => n + x.mean, 0));
+    // The regression diagnostic runs with its frozen scope output, one distinct keyword text: the one-sample figures, whatever the plan's samples.
+    const diag = e.find((x) => x.role === 'diagnostic') as (typeof e)[number];
+    expect(diag.family).toBe('per-pilot-decision-cause-weight-shift');
+    expect(diag).toEqual(poolEstimates(d, 1).find((x) => x.role === 'diagnostic'));
+    expect(diag.mappingDiagnostic.mean).toBe(PRODUCTION_MAPPING_DIAGNOSTIC[1].delivered.mean);
   });
 
   it("splits each family's pairs into the schedule's stage 1 and the rest, and reproduces the protocol's own estimate", () => {
@@ -495,6 +763,17 @@ describe('the dry run arithmetic', () => {
 
 describe('the CLI', () => {
   it('refuses unknown commands and bad options before contacting anything', async () => {
+    const errors0: string[] = [];
+    const original0 = console.error;
+    console.error = (m: string) => errors0.push(m);
+    try {
+      // Saved inputs pay nothing: no --confirm-cost, no --vectors.
+      expect(await main(['pools', '--inputs', 'inputs.json', '--confirm-cost'])).toBe(2);
+      expect(await main(['pools', '--inputs', 'inputs.json', '--vectors', 'vectors.json'])).toBe(2);
+    } finally {
+      console.error = original0;
+    }
+    expect(errors0[0]).toMatch(/pays nothing/);
     const errors: string[] = [];
     const original = console.error;
     console.error = (m: string) => errors.push(m);

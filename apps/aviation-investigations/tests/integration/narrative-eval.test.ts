@@ -7,9 +7,12 @@
  * - the complete case evidence loads in one read-only snapshot: every section in record
  *   order with its hash checked, findings without `cause_factor`, occurrences, stable
  *   fingerprints;
- * - pools build from the experiment harness's runs (case-level fusion with the cases
- *   channel, scope keyword text given), the lure's hard negatives and the tail sample,
- *   and every delivered passage's text is the stored section text at its offsets;
+ * - pools build through the production retrievers (retrieval.v1, retrieval.v2 and
+ *   retrieval.v2-nf on the same keyword texts and query vector), with each case-level
+ *   run's mapping outcomes, the lure's hard negatives in the production cases channel's
+ *   order and the tail sample, and every delivered passage's text is the stored section
+ *   text at its offsets; the mapping diagnostic forces a run's cases-channel-only cases
+ *   through the production mapping and packing;
  * - an interrupted run's allocation is recovered against the ledger: its evaluation
  *   reservations (and only its own) are read, an open one blocks the recovery within its
  *   lease and counts in full after it, and the allocation's log gains the difference.
@@ -29,13 +32,14 @@ import { rebuildCasesIndex } from '../../worker/index/cases-index.js';
 import { createFakeEmbedder } from '../../worker/index/embed.js';
 import { PASSAGES_EMBEDDING_DIMS, rebuildPassagesIndex } from '../../worker/index/passages-index.js';
 import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
-import { experimentConfig } from '../../evals/retrieval/experiments/config.js';
 import { loadNarrativeCorpus } from '../../evals/retrieval/narrative/build.js';
 import { deriveCohort, type NarrativeItem } from '../../evals/retrieval/narrative/dataset.js';
 import { fingerprint, loadCaseEvidence, EVIDENCE_QUERIES } from '../../evals/retrieval/narrative/evidence.js';
 import { ledgerRecovery } from '../../evals/retrieval/narrative/commands.js';
 import { allocationLockPath, loggedRunUsd, openAllocation, recoverAllocation } from '../../evals/retrieval/narrative/judging.js';
-import { assemblePool, bundlePairs, indexCohort, lureCases, poolRun } from '../../evals/retrieval/narrative/pool.js';
+import { POOL_RULE, assemblePool, bundlePairs, indexCohort, lureCases, poolRun } from '../../evals/retrieval/narrative/pool.js';
+import { retrievalParams } from '../../server/search/hybrid.js';
+import { RETRIEVAL_V2, retrievalConfig, type RetrievalConfig } from '../../server/search/retrieval-config.js';
 import { questionVersion, rubricVersion, sha256 } from '../../evals/retrieval/narrative/spec.js';
 import { NARRATIVE_QUESTIONS } from '../../evals/retrieval/narrative/questions.js';
 import { makeExtractDir, removeDir } from '../support/extract-dir.js';
@@ -133,13 +137,13 @@ describe('complete case evidence', () => {
 });
 
 describe('pools', () => {
-  it('build from the experiment harness runs, the lure and the tail, with delivered passages that match the stored text', async () => {
-    const corpus = await withClient((c) => loadNarrativeCorpus(c, generationId, false));
+  const family = (): NarrativeItem => {
     const template = NARRATIVE_QUESTIONS.find((q) => q.type === 'broad' && Object.keys(q.filters).length === 0) as (typeof NARRATIVE_QUESTIONS)[number];
     const v = questionVersion(template);
-    const family: NarrativeItem = {
+    return {
       id: template.id,
       question: 'engine power loss examination revealed no anomalies',
+      role: 'benchmark',
       family: template.id,
       tags: [...template.tags],
       type: 'broad',
@@ -153,24 +157,37 @@ describe('pools', () => {
       relatedPositives: [],
       note: 'fixture',
     };
-    const ctx = { es, dataset: { generationId, passagesIndex }, passagesIndex, casesIndex, eventAircraftQualification: true };
-    const methods = [
-      { id: 'p50-kt', config: experimentConfig({ keywordText: 'scope' }) },
-      { id: 'c200+n-kt', config: experimentConfig({ fusion: 'case', perChannel: 200, caseChannel: { fields: 'narratives', depth: 200, role: 'third' }, keywordText: 'scope' }) },
-    ];
+  };
+  const context = () => ({ es, dataset: { generationId, passagesIndex }, passagesIndex, casesIndex, eventAircraftQualification: true });
+
+  it('build through the production retrievers on identical cached inputs, with the mapping, the lure and the tail, and delivered passages that match the stored text', async () => {
+    const f = family();
+    const ctx = context();
     const runs = [];
-    for (const m of methods) for (const [sample, text] of ['engine power loss', 'loss of engine power examination'].entries()) runs.push(await poolRun(ctx, embedder, family, m, sample + 1, text));
-    const cohort = await indexCohort(es, passagesIndex, family, true);
-    const lure = await lureCases(es, casesIndex, family);
-    const pool = assemblePool({ family, members: [family], runs, cohort, lure, rule: { version: 'track-n-pool-v1', depth: 3, methods: ['p50-kt', 'c200+n-kt'], scopeSamples: 2, hardNegatives: 2, lureDepth: 200, tail: { nearFrom: 4, nearTo: 8, near: 2, far: 2 }, keepRanks: 300 } as never });
+    const mapping = [];
+    for (const [sample, text] of ['engine power loss', 'loss of engine power examination'].entries()) {
+      for (const version of POOL_RULE.methods) {
+        const r = await poolRun(ctx, embedder, f, retrievalConfig(version), sample + 1, text, { mappingDiagnostic: version === 'retrieval.v1' ? 0 : 2 });
+        expect(r.run.method).toBe(version);
+        // retrieval.v1 has no cases channel and no mapping; a case-level version records its mapping outcomes, none needed here.
+        expect(r.run.mapping).toEqual(version === 'retrieval.v1' ? null : []);
+        expect(r.diagnostic === null).toBe(version === 'retrieval.v1');
+        runs.push(r.run);
+        if (r.diagnostic) mapping.push(r.diagnostic);
+      }
+    }
+    const cohort = await indexCohort(es, passagesIndex, f, true);
+    const lure = await lureCases(es, casesIndex, f, true);
+    const pool = assemblePool({ family: f, members: [f], runs, mapping, cohort, lure, rule: { ...POOL_RULE, depth: 3, hardNegatives: 2, tail: { nearFrom: 4, nearTo: 8, near: 2, far: 2 } } as never });
     expect(runs.every((r) => r.ranking.length > 0 && r.bundle.length > 0)).toBe(true);
+    for (const r of runs.filter((x) => x.method !== 'retrieval.v1')) for (const b of r.bundle) expect(b.channels.keyword !== null || b.channels.vector !== null || b.mapped).toBe(true);
     const ids = pool.cases.map((c) => c.ntsbNo);
     expect(new Set(ids).size).toBe(ids.length);
     for (const c of pool.cases) expect(cohort).toContain(c.ntsbNo);
     expect(pool.cases.filter((c) => c.sources.includes('hard-negative')).length).toBeLessThanOrEqual(2);
     expect(pool.tail.near.length + pool.tail.far.length).toBeGreaterThan(0);
     expect(pool.version).toMatch(/^[0-9a-f]{64}$/);
-    // Every delivered passage is the stored section text at its offsets.
+    // Every delivered passage, the retrieval runs' and the mapping diagnostic's, is the stored section text at its offsets.
     const pairs = bundlePairs(pool);
     const loaded = await withClient((c) => loadCaseEvidence(c, generationId, pairs.map((p) => p.ntsbNo)));
     for (const p of pairs) {
@@ -179,6 +196,32 @@ describe('pools', () => {
         const s = e?.sections.find((sec) => sec.sectionId === x.sectionId && sec.revisionId === x.revisionId);
         expect(sha256((s?.text ?? '').slice(x.start, x.end))).toBe(x.textSha256);
       }
+    }
+  }, 120_000);
+
+  it('force the mapping diagnostic through the production mapping and packing, and record a run\'s natural mapping', async () => {
+    const f = family();
+    // One passage per passage channel leaves most cases to the cases channel, as the case-retrieval test forces the mapping.
+    const narrow: RetrievalConfig = { ...RETRIEVAL_V2, params: retrievalParams({ ...RETRIEVAL_V2.params, perChannel: 1 }) };
+    const r = await poolRun(context(), embedder, f, narrow, 1, 'engine power loss', { mappingDiagnostic: 2 });
+    // The run's own leading cases without a passage were mapped by retrieval, and are delivered as mapped.
+    const natural = (r.run.mapping ?? []).filter((m) => m.status === 'mapped').map((m) => m.ntsbNo);
+    expect(natural.length).toBeGreaterThan(0);
+    for (const b of r.run.bundle) expect(b.mapped).toBe(natural.includes(b.ntsbNo));
+    // The diagnostic: the run's first cases-channel-only cases, mapped and packed by the production code.
+    const d = r.diagnostic;
+    expect(d?.cases).toHaveLength(2);
+    for (const c of d?.cases ?? []) expect(c.fusedRank).toBeGreaterThan(0);
+    expect(d?.mapping.map((m) => m.ntsbNo)).toEqual(d?.cases.map((c) => c.ntsbNo));
+    const mapped = (d?.mapping ?? []).filter((m) => m.status === 'mapped');
+    for (const m of mapped) expect(m.returned).toBe(m.passagesUnderFilter);
+    expect(d?.bundle.map((b) => b.ntsbNo).sort()).toEqual(mapped.map((m) => m.ntsbNo).sort());
+    for (const b of d?.bundle ?? []) {
+      expect(b.mapped).toBe(true);
+      expect(b.channels).toMatchObject({ keyword: null, vector: null });
+      // Its own passages: mapped ones (ranked after every fused passage) and its attached causes.
+      expect(b.passages.some((p) => p.role !== 'probable_cause')).toBe(true);
+      for (const p of b.passages.filter((x) => x.role !== 'probable_cause')) expect(p.fusedRank).toBeGreaterThan(1);
     }
   }, 120_000);
 });

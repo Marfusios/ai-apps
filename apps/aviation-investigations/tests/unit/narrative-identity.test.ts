@@ -172,7 +172,10 @@ describe('record checks against the current data', () => {
   const d = readDataset();
   const c = readCalibration();
   const fam = families(d)[0] as ReturnType<typeof families>[number];
-  const passages = [{ passageId: 'p1', sectionId: 's', revisionId: 'r', kind: 'factual' as const, scope: 'aircraft' as const, aircraftKey: 1, start: 0, end: 5, textSha256: 'x' }];
+  const passage = (id: string) => ({ passageId: id, sectionId: 's', revisionId: 'r', kind: 'factual' as const, scope: 'aircraft' as const, aircraftKey: 1, start: 0, end: 5, textSha256: 'x', role: 'retrieved' as const, reserved: true, fusedRank: 1 });
+  const passages = [passage('p1')];
+  const mappedPassages = [passage('p9')];
+  const channels = { keyword: 1, vector: null, cases: 2 };
   const pool = {
     family: fam.id,
     questionVersion: fam.questionVersion,
@@ -182,9 +185,23 @@ describe('record checks against the current data', () => {
     memberVersions: { [fam.id]: fam.memberVersion },
     fingerprints: { CASE1: 'fp-pool' },
     cohortSize: 1,
-    cases: [{ ntsbNo: 'CASE1', sources: ['method'], bestRank: {}, lureRank: null, delivered: true }],
+    cases: [
+      { ntsbNo: 'CASE1', sources: ['method'], bestRank: {}, lureRank: null, delivered: true },
+      { ntsbNo: 'CASE9', sources: ['mapping-diagnostic'], bestRank: {}, lureRank: null, delivered: false },
+    ],
     tail: { nearSize: 0, farSize: 0, near: [], far: [] },
-    runs: [{ member: fam.id, method: 'p50-kt', sample: 1, ranking: ['CASE1'], bundle: [{ ntsbNo: 'CASE1', caseRank: 1, passages }] }],
+    runs: [{ member: fam.id, method: 'retrieval.v2', sample: 1, ranking: ['CASE1'], bundle: [{ ntsbNo: 'CASE1', caseRank: 1, mapped: false, channels, passages }], mapping: [] }],
+    mappingDiagnostic: [
+      {
+        member: fam.id,
+        method: 'retrieval.v2',
+        sample: 1,
+        cases: [{ ntsbNo: 'CASE9', fusedRank: 40, casesRank: 3 }],
+        mapping: [{ ntsbNo: 'CASE9', status: 'mapped', reason: null, passagesUnderFilter: 4, returned: 4 }],
+        bundle: [{ ntsbNo: 'CASE9', caseRank: 40, mapped: true, channels: { keyword: null, vector: null, cases: 3 }, passages: mappedPassages }],
+        skipped: [],
+      },
+    ],
     version: 'v',
   } as FamilyPool;
   const check = recordCheck(d, c, { families: [pool] } as unknown as PoolFile);
@@ -197,8 +214,9 @@ describe('record checks against the current data', () => {
     expect(check('relevance', record({ ...ours, ntsbNo: 'CASE2' }))).toMatch(/not in the family's pool/);
   });
 
-  it('accepts an answerability record of a delivered bundle only', () => {
+  it('accepts an answerability record of a delivered bundle only (a retrieval run\'s or the mapping diagnostic\'s)', () => {
     expect(check('answerability', record({ ...ours, kind: 'answerability', bundleKey: bundleKeyOf(passages) }))).toBeNull();
+    expect(check('answerability', record({ ...ours, ntsbNo: 'CASE9', kind: 'answerability', bundleKey: bundleKeyOf(mappedPassages) }))).toBeNull();
     expect(check('answerability', record({ ...ours, kind: 'answerability', bundleKey: 'other' }))).toMatch(/not a delivered bundle/);
   });
 

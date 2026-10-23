@@ -25,7 +25,8 @@
  * anything. A finding code reads category-subcategory-section-subsection-modifier.
  */
 import type { Clause, CodeSet } from '../coded/coded.js';
-import type { NarrativeParaphraseSpec, NarrativeQuestionSpec } from './spec.js';
+import { CODED_QUESTIONS } from '../coded/questions.js';
+import type { DiagnosticScopeSample, NarrativeDiagnosticSpec, NarrativeParaphraseSpec, NarrativeQuestionSpec } from './spec.js';
 
 const finding = (codes: readonly string[], inProbableCause = false): Clause => ({ kind: 'finding', codes: [...codes], inProbableCause });
 const one = (clause: Clause): CodeSet => ({ clauses: [clause], attribution: 'same-aircraft' });
@@ -603,5 +604,91 @@ export const NARRATIVE_PARAPHRASES: readonly NarrativeParaphraseSpec[] = [
     of: 'me-powered-parachute-propeller-strike',
     question: 'Which powered parachutes got their canopy lines or other gear sucked into the prop?',
     note: 'A paraphrase of a bounded cohort, so its Recall@20 is defined once the cohort is judged.',
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+
+/** Task 10e's regression question, as Track C defines it (`evals/retrieval/coded/questions.ts`). */
+const REGRESSION_ID = 'per-pilot-decision-cause-weight-shift';
+const regressionCoded = (() => {
+  const q = CODED_QUESTIONS.find((x) => x.id === REGRESSION_ID);
+  if (!q) throw new Error(`the Track C question ${REGRESSION_ID} is missing`);
+  return q;
+})();
+
+/**
+ * Phase A's cached development scope output for the regression question (task 10d), the
+ * input task 10e measured the regression with: the same planner output in all three
+ * samples. Frozen here so the diagnostic's runs are task 10e's, whatever a new scope
+ * sample would say.
+ */
+const PHASE_A_REGRESSION_SCOPE: readonly DiagnosticScopeSample[] = [1, 2, 3].map((sample) => ({
+  sample,
+  intent: 'case_search',
+  plannerKeywordText: 'weight-shift pilot decision making probable cause judgment',
+  plannerFilters: { category: ['WSFT'] },
+  keywordText: 'weight-shift pilot decision making probable cause judgment',
+}));
+
+/**
+ * Diagnostics (task 10c-2, round 4; the gate's second item): questions judged with the
+ * benchmark's judges, prompts, rubric conventions and schedule, and reported apart from
+ * the benchmark aggregate under the comparison rules written here before any judging.
+ *
+ * `per-pilot-decision-cause-weight-shift` is the regression task 10e kept by name
+ * (`REGRESSION_CASES`): Track C's question text and filters, with a narrative rubric. The
+ * rubric was written from general knowledge of how probable causes are worded. Its author
+ * had read the task 10e report, which quotes several of this cohort's probable causes, so
+ * the edge cases are generic and none restates one of them.
+ */
+export const NARRATIVE_DIAGNOSTICS: readonly NarrativeDiagnosticSpec[] = [
+  {
+    id: REGRESSION_ID,
+    question: regressionCoded.question,
+    tags: ['pilot_vs_investigator', 'operational', 'aircraft_filter'],
+    type: 'broad',
+    filters: { category: ['WSFT'] },
+    rubric: {
+      relevant:
+        "The probable cause the investigators state for the accident (the probable cause statement, with any factor it names as contributing) cites a decision or judgment of the pilot in command of the weight-shift-control aircraft as a cause or a contributing factor: a decision or choice to do or not to do something (for example, to take off, to continue the flight, to fly at a low altitude or to attempt a maneuver; wording such as 'decision', 'elected', 'chose' or 'continued flight into' counts), or the pilot's poor, improper or inadequate judgment or decision-making. A flight instructor in command counts as the pilot.",
+      partial:
+        "Grade 2 does not hold, and either: the investigators' analysis or findings, outside the probable cause statement, say that a decision or judgment of the pilot contributed to the accident while the probable cause names only what followed (for example, a loss of control or an encounter with turbulence); or the probable cause cites such a decision or judgment only as possible or likely ('likely', 'may have'); or it cites a decision or judgment of someone other than the pilot in command (for example, the operator or a person on the ground).",
+      notRelevant:
+        "Anything else, including: the probable cause cites only what the pilot did or failed to do without presenting it as a decision or choice (for example, a failure to maintain control, an improper landing flare, an inadequate preflight inspection or inadequate fuel planning), a mechanical failure, the weather, or a reason the investigators could not determine; or a decision appears only in the pilot's own account and the investigators do not adopt it.",
+      edgeCases: [
+        { situation: "The probable cause is the pilot's decision to take off in gusting crosswind conditions, which resulted in a loss of control during the takeoff roll.", grade: 2, why: 'A decision of the pilot is cited in the probable cause.' },
+        { situation: "The probable cause is the pilot's poor judgment in performing low-altitude maneuvers, which resulted in a collision with power lines.", grade: 2, why: 'Poor judgment is cited in the probable cause.' },
+        { situation: "The probable cause is the pilot's continued flight into deteriorating weather, which resulted in a loss of control.", grade: 2, why: 'Continuing the flight is a choice the probable cause faults.' },
+        { situation: "The probable cause is the pilot's loss of control in gusting wind; the analysis says the pilot chose to fly although strong winds were forecast.", grade: 1, why: 'The decision is in the analysis, not in the probable cause.' },
+        { situation: "The probable cause is the pilot's failure to maintain control during the landing flare.", grade: 0, why: 'An action not presented as a decision or choice.' },
+        { situation: "The probable cause is a total loss of engine power due to fuel exhaustion as a result of the pilot's inadequate fuel planning.", grade: 0, why: 'Planning that the probable cause does not present as a decision.' },
+        { situation: 'The pilot said he decided to land in a field after the engine lost power; the probable cause is a loss of engine power for reasons that could not be determined.', grade: 0, why: "The decision is only in the pilot's account and is not cited as a cause." },
+      ],
+    },
+    lure: 'weight-shift trike pilot loss of control gusting wind landing flare engine power loss undetermined',
+    relatedCodes: regressionCoded.codeSet,
+    note: "Task 10e's regression case on narrative labels: Track C's question text and filter (category WSFT), the Track C code set as related codes (its coded positives join the pool, never as labels), a rubric anchored on the probable cause statement. The contrast is a probable cause that names only an action, a loss of control, a failure or an undetermined reason.",
+    diagnostic: {
+      kind: 'regression',
+      origin:
+        "Task 10e kept this question as a regression case (REGRESSION_CASES, evals/retrieval/adoption/validate.ts): on Track C's coded labels its nDCG@6 fell from 65.8% under retrieval.v1 to 25.9% under retrieval.v2 and retrieval.v2-nf, in every scope sample (the task 10e report, section 5).",
+      scope: { source: "Phase A's cached development scope samples of this question (task 10d), the input task 10e measured the regression with; the three samples are identical.", samples: [...PHASE_A_REGRESSION_SCOPE] },
+      comparison: {
+        base: 'retrieval.v1',
+        variants: ['retrieval.v2', 'retrieval.v2-nf'],
+        primary: 'ndcg6',
+        reported: ['ndcg6', 'p6', 'supported'],
+        rule:
+          "For each variant against the base: the difference of the means over the scope samples, with bounds over the unknown labels as the benchmark computes them (cross-endpoint for nDCG@6, joint over shared unknowns for P@6 and supported P@6), and the same per sample. The conclusion rests on the primary metric's mean difference: 'regression' when its upper bound is below zero, 'no-regression' when its lower bound is at or above zero, 'inconclusive' otherwise. The other metrics are reported and never change it. The cases each variant's bundle displaced from the base's, and admitted, are listed per sample with their labels and coded status. The result is reported apart from the benchmark: never in its aggregates, comparisons, agreement figures or audit samples.",
+        reproduction: {
+          metric: 'coded-ndcg6',
+          expected: { 'retrieval.v1': 0.658, 'retrieval.v2': 0.259, 'retrieval.v2-nf': 0.259 },
+          tolerance: 0.0005,
+          source: 'The task 10e report, section 5: the coded nDCG@6 of every scope sample, to 0.1 point.',
+        },
+      },
+    },
   },
 ];

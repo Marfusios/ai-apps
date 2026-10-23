@@ -16,6 +16,10 @@
  * A bounded cohort records every case (it is judged completely); a broad question
  * records only its size. Related-code positives come from the Track C derivation
  * (`deriveQuestion`) under the question's filters, and must lie in the cohort.
+ *
+ * **Roles.** A `benchmark` question counts in the benchmark's aggregates; a `diagnostic`
+ * one (`NARRATIVE_DIAGNOSTICS`) carries its frozen diagnostic definition, is pooled and
+ * judged the same way, and is reported apart (`benchmarkFamilies`, `diagnosticFamilies`).
  */
 import { z } from 'zod';
 import type { RetrievalFilters } from '../../../server/search/filters.js';
@@ -31,6 +35,7 @@ import {
   MIN_PER_TAG,
   MIN_QUESTIONS,
   NARRATIVE_VERSION,
+  NarrativeDiagnosticSchema,
   NarrativeFiltersSchema,
   QUESTION_TYPES,
   QuestionIdSchema,
@@ -41,6 +46,7 @@ import {
   questionVersion,
   rubricVersion,
   specSha256,
+  type NarrativeDiagnosticSpec,
   type NarrativeParaphraseSpec,
   type NarrativeQuestionSpec,
 } from './spec.js';
@@ -123,9 +129,13 @@ export function deriveCohort(cases: readonly CohortCase[], f: RetrievalFilters):
 // ---------------------------------------------------------------------------
 // Dataset
 
+export const ITEM_ROLES = ['benchmark', 'diagnostic'] as const;
+
 export const NarrativeItemSchema = z.strictObject({
   id: QuestionIdSchema,
   question: z.string().min(15).max(400),
+  /** `benchmark`: in the benchmark's aggregates; `diagnostic`: reported apart under its frozen definition. */
+  role: z.enum(ITEM_ROLES),
   /** The original question whose rubric and judgments this question shares (itself for an original). */
   family: QuestionIdSchema,
   paraphrase_of: QuestionIdSchema.optional(),
@@ -149,6 +159,8 @@ export const NarrativeItemSchema = z.strictObject({
   /** Coded positives of the related codes under the filters, sorted (empty without related codes). */
   relatedPositives: z.array(CaseNoSchema),
   note: z.string(),
+  /** A diagnostic's frozen definition (role `diagnostic` only). */
+  diagnostic: NarrativeDiagnosticSchema.optional(),
 });
 export type NarrativeItem = z.infer<typeof NarrativeItemSchema>;
 
@@ -173,8 +185,9 @@ export const DESCRIPTION =
   'Narrative-relevance retrieval set (Track N, task 10c protocol v4): development questions over negation, maintenance ' +
   'chronology, causal uncertainty, pilot-versus-investigator attribution, paraphrase, multi-aircraft and aircraft ' +
   'filters, operational and mechanical concepts, each with a written rubric (2/1/0 with edge cases). Bounded cohorts ' +
-  'list every answer-eligible case their filters reach (all judged); broad questions are judged on a pool. Labels ' +
-  'are model-judged, never expert-adjudicated. Rebuild with pnpm eval:retrieval:narrative build.';
+  'list every answer-eligible case their filters reach (all judged); broad questions are judged on a pool. Diagnostic ' +
+  'questions are judged the same way and reported apart from the benchmark. Labels are model-judged, never ' +
+  'expert-adjudicated. Rebuild with pnpm eval:retrieval:narrative build.';
 
 const sortedUnique = (xs: readonly string[]): boolean => xs.every((x, i) => i === 0 || (xs[i - 1] as string) < x);
 
@@ -187,6 +200,8 @@ export function narrativeDatasetProblems(d: NarrativeDataset): string[] {
     byId.set(q.id, q);
   }
   for (const q of d.questions) {
+    if ((q.role === 'diagnostic') !== (q.diagnostic !== undefined)) problems.push(`${q.id}: a diagnostic, and only a diagnostic, carries its definition`);
+    if (q.role === 'diagnostic' && q.paraphrase_of !== undefined) problems.push(`${q.id}: a diagnostic has no paraphrases`);
     if (q.rubricVersion !== rubricVersion(q.rubric)) problems.push(`${q.id}: rubric version differs from its rubric`);
     if (q.memberVersion !== questionVersion(q)) problems.push(`${q.id}: member version differs from its text and filters`);
     const family = byId.get(q.family);
@@ -202,7 +217,7 @@ export function narrativeDatasetProblems(d: NarrativeDataset): string[] {
       if (q.paraphrase_of !== q.family) problems.push(`${q.id}: a paraphrase's family is its original`);
       if (family.paraphrase_of !== undefined) problems.push(`${q.id}: paraphrase of a paraphrase`);
       if (!q.tags.includes('paraphrase')) problems.push(`${q.id}: a paraphrase carries the paraphrase tag`);
-      for (const field of ['filters', 'type', 'rubric', 'rubricVersion', 'questionVersion', 'cohort', 'relatedPositives', 'relatedCodes', 'lure'] as const) {
+      for (const field of ['role', 'filters', 'type', 'rubric', 'rubricVersion', 'questionVersion', 'cohort', 'relatedPositives', 'relatedCodes', 'lure'] as const) {
         if (JSON.stringify(q[field]) !== JSON.stringify(family[field])) problems.push(`${q.id}: ${field} differs from ${family.id}`);
       }
     }
@@ -219,14 +234,16 @@ export function narrativeDatasetProblems(d: NarrativeDataset): string[] {
     if (q.relatedPositives.length > d.limits.maxRelatedPositives) problems.push(`${q.id}: ${q.relatedPositives.length} related positives (at most ${d.limits.maxRelatedPositives}); narrow the related codes`);
     if (q.relatedCodes === undefined && q.relatedPositives.length > 0) problems.push(`${q.id}: related positives without related codes`);
   }
-  const originals = d.questions.filter((q) => q.paraphrase_of === undefined);
-  const paraphrases = d.questions.filter((q) => q.paraphrase_of !== undefined);
-  if (d.questions.length < MIN_QUESTIONS) problems.push(`only ${d.questions.length} questions (at least ${MIN_QUESTIONS})`);
+  // The set's minimums count benchmark questions only.
+  const benchmark = d.questions.filter((q) => q.role === 'benchmark');
+  const originals = benchmark.filter((q) => q.paraphrase_of === undefined);
+  const paraphrases = benchmark.filter((q) => q.paraphrase_of !== undefined);
+  if (benchmark.length < MIN_QUESTIONS) problems.push(`only ${benchmark.length} questions (at least ${MIN_QUESTIONS})`);
   if (paraphrases.length < MIN_PARAPHRASES) problems.push(`only ${paraphrases.length} paraphrases (at least ${MIN_PARAPHRASES})`);
   const bounded = originals.filter((q) => q.type === 'bounded-cohort').length;
   if (bounded < MIN_BOUNDED) problems.push(`only ${bounded} bounded cohorts (at least ${MIN_BOUNDED})`);
   for (const tag of TAGS) {
-    const n = d.questions.filter((q) => q.tags.includes(tag)).length;
+    const n = benchmark.filter((q) => q.tags.includes(tag)).length;
     if (n < MIN_PER_TAG) problems.push(`only ${n} question(s) tagged ${tag} (at least ${MIN_PER_TAG})`);
   }
   return [...new Set(problems)];
@@ -238,8 +255,9 @@ export interface NarrativeBuild {
 }
 
 /**
- * Pure: the dataset from the specs, each family's cohort (sorted case numbers) and
- * related-code positives (Track C derivation under the family's filters).
+ * Pure: the dataset from the specs (benchmark questions, their paraphrases, then the
+ * diagnostics), each family's cohort (sorted case numbers) and related-code positives
+ * (Track C derivation under the family's filters).
  */
 export function assembleNarrative(
   source: GenerationSource & { answerEligibleCases: number; builder: string },
@@ -247,11 +265,13 @@ export function assembleNarrative(
   paraphrases: readonly NarrativeParaphraseSpec[],
   cohorts: ReadonlyMap<string, readonly string[]>,
   related: ReadonlyMap<string, readonly string[]>,
+  diagnostics: readonly NarrativeDiagnosticSpec[] = [],
 ): NarrativeBuild {
-  const problems = narrativeSpecProblems(specs, paraphrases);
+  const problems = narrativeSpecProblems(specs, paraphrases, diagnostics);
   const items: NarrativeItem[] = [];
   const byId = new Map<string, NarrativeItem>();
-  for (const s of specs) {
+  const diagnosticOf = new Map(diagnostics.map((d) => [d.id, d.diagnostic]));
+  const asItem = (s: NarrativeQuestionSpec): NarrativeItem => {
     const cohort = cohorts.get(s.id);
     if (!cohort) throw new Error(`no cohort for ${s.id}`);
     const positives = [...(related.get(s.id) ?? [])].sort();
@@ -261,9 +281,11 @@ export function assembleNarrative(
     const outside = positives.filter((n) => !inCohortSet.has(n));
     if (outside.length > 0) problems.push(`${s.id}: ${outside.length} related positive(s) outside the cohort (${outside.slice(0, 3).join(', ')}): the derivations disagree`);
     const v = questionVersion(s);
+    const diagnostic = diagnosticOf.get(s.id);
     const item: NarrativeItem = {
       id: s.id,
       question: s.question,
+      role: diagnostic ? 'diagnostic' : 'benchmark',
       family: s.id,
       tags: [...s.tags],
       type: s.type,
@@ -277,8 +299,13 @@ export function assembleNarrative(
       cohort: { size: cohort.length, cases: s.type === 'bounded-cohort' ? [...cohort] : null },
       relatedPositives: positives,
       note: s.note,
+      ...(diagnostic ? { diagnostic } : {}),
     };
     if (s.type === 'bounded-cohort' && cohort.length > BOUNDED_MAX) problems.push(`${s.id}: a bounded cohort reaches ${cohort.length} cases (at most ${BOUNDED_MAX})`);
+    return item;
+  };
+  for (const s of specs) {
+    const item = asItem(s);
     items.push(item);
     byId.set(item.id, item);
   }
@@ -296,6 +323,10 @@ export function assembleNarrative(
       note: `Paraphrase of ${of.id}. ${p.note}`,
     });
   }
+  for (const d of diagnostics) {
+    const { diagnostic: _definition, ...spec } = d;
+    items.push(asItem(spec));
+  }
   const dataset: NarrativeDataset = {
     version: NARRATIVE_VERSION,
     reference: REFERENCE,
@@ -309,7 +340,7 @@ export function assembleNarrative(
       citationTextVersion: source.citationTextVersion,
       answerEligibleCases: source.answerEligibleCases,
       builder: source.builder,
-      specSha256: specSha256(specs, paraphrases),
+      specSha256: specSha256(specs, paraphrases, diagnostics),
     },
     limits: { boundedMax: BOUNDED_MAX, maxRelatedPositives: MAX_RELATED_POSITIVES },
     questions: items,
@@ -319,8 +350,14 @@ export function assembleNarrative(
   return { dataset, problems: [...new Set(problems)] };
 }
 
-/** Each family's judged question and rubric (one entry per original). */
+/** Each family's judged question and rubric (one entry per original), diagnostics included. */
 export const families = (d: NarrativeDataset): NarrativeItem[] => d.questions.filter((q) => q.paraphrase_of === undefined);
+
+/** The benchmark's families: what its aggregates, comparisons, agreement figures and audit samples count. */
+export const benchmarkFamilies = (d: NarrativeDataset): NarrativeItem[] => families(d).filter((q) => q.role === 'benchmark');
+
+/** The diagnostic families, reported apart under their frozen definitions. */
+export const diagnosticFamilies = (d: NarrativeDataset): NarrativeItem[] => families(d).filter((q) => q.role === 'diagnostic');
 
 /** The members of a family (the original first, then its paraphrases). */
 export const membersOf = (d: NarrativeDataset, family: string): NarrativeItem[] => d.questions.filter((q) => q.family === family);

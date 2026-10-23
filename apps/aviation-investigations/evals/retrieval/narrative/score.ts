@@ -34,12 +34,21 @@
  * class (agreements as well as disagreements), with the stratum sizes so findings can be
  * weighted back. They audit model-judged labels (do the cited quotes entail the grade?);
  * neither audit is expert adjudication.
+ *
+ * **Diagnostics** (task 10c-2 round 4), reported apart from the benchmark: a regression
+ * diagnostic under the comparison rules frozen with its question (`regressionDiagnostic`:
+ * each variant against the base per sample and on the mean, the conclusion on the primary
+ * metric only, the displaced and admitted cases, the coded values set against the ones
+ * that first showed the regression); the retrieval runs' own mapping (`ordinaryMapping`);
+ * and the labelled, forced mapping diagnostic (`mappingDiagnosticReport`: its outcomes,
+ * relevance on the complete record against the delivered bundle's answerability, and
+ * whether a supported bundle rests on a mapped passage or only on the attached cause).
  */
-import { makeReference, scoreQuestion, uniqueTop, type Bounds, type Label, type ProtocolScore, type Reference } from '../metrics.js';
+import { codedReference, makeReference, scoreQuestion, uniqueTop, type Bounds, type Label, type ProtocolScore, type Reference } from '../metrics.js';
 import { mulberry32, pairedGroupBootstrap, percentile, type BootstrapResult } from '../experiments/stats.js';
 import { itemFamily, itemKey, seededSample, type CalibrationItem } from './calibration.js';
 import { CALIBRATION_CRITERIA } from './criteria.js';
-import type { NarrativeDataset } from './dataset.js';
+import type { NarrativeDataset, NarrativeItem } from './dataset.js';
 import type { PairRecord } from './judging.js';
 import { bundleKeyOf } from './judging.js';
 import type { FamilyPool, PoolRun } from './pool.js';
@@ -795,4 +804,282 @@ export function auditSamples(records: readonly PairRecord[], tagsOf: (family: st
   };
   const ai = draw('ai');
   return { ai, owner: draw('owner') };
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics (task 10c-2 round 4): reported apart from the benchmark aggregate
+
+export type RegressionConclusion = 'regression' | 'no-regression' | 'inconclusive';
+
+/** The frozen rule's conclusion from the primary metric's mean difference (variant minus base): regression only when its upper bound is below zero. */
+export const regressionConclusion = (d: { lower: number; upper: number } | null): RegressionConclusion =>
+  d === null ? 'inconclusive' : d.upper < 0 ? 'regression' : d.lower >= 0 ? 'no-regression' : 'inconclusive';
+
+export interface RegressionMethodValue {
+  ndcg6: Bounds | null;
+  p6: Bounds;
+  supported: Bounds;
+  /** On the related codes' positives (the regression as first measured), exact. */
+  codedNdcg6: number | null;
+}
+
+export interface RegressionBundleCase {
+  ntsbNo: string;
+  caseRank: number;
+  label: Label;
+  coded: boolean;
+  mapped: boolean;
+  channels: PoolRun['bundle'][number]['channels'];
+}
+
+export interface RegressionDiagnosticReport {
+  family: string;
+  question: string;
+  origin: string;
+  /** The comparison rules frozen with the question. */
+  comparison: NonNullable<NarrativeItem['diagnostic']>['comparison'];
+  scope: string | null;
+  coverage: ReturnType<typeof judgedCoverage>;
+  /** Each retrieval version's means over the scope samples. */
+  methods: Record<string, RegressionMethodValue>;
+  reproduction: { metric: 'coded-ndcg6'; expected: Record<string, number>; observed: Record<string, number | null>; tolerance: number; reproduced: boolean; source: string };
+  /** Each variant against the base: the difference bounds per reported metric and the conclusion on the primary. */
+  comparisons: Record<string, { conclusion: RegressionConclusion; metrics: Record<string, { lower: number; upper: number; method: DifferenceBounds['method'] } | null> }>;
+  perSample: {
+    sample: number;
+    methods: Record<string, RegressionMethodValue & { bundle: RegressionBundleCase[] }>;
+    differences: Record<string, Record<string, { lower: number; upper: number; method: DifferenceBounds['method'] } | null>>;
+    /** In the base's bundle, not in the variant's. */
+    displaced: Record<string, RegressionBundleCase[]>;
+    /** In the variant's bundle, not in the base's. */
+    admitted: Record<string, RegressionBundleCase[]>;
+  }[];
+}
+
+const metricOf = (v: QuestionValue, m: string): Bounds | null => (m === 'ndcg6' ? v.ndcg6 : m === 'p6' ? v.p6 : m === 'supported' ? v.supported : null);
+
+/** One regression diagnostic under its frozen comparison rules (module section comment; `NarrativeDiagnosticSchema`). */
+export function regressionDiagnostic(pool: FamilyPool, family: NarrativeItem, labels: ReadonlyMap<string, Label>, answerability: ReadonlyMap<string, Label>): RegressionDiagnosticReport {
+  const def = family.diagnostic;
+  if (!def) throw new Error(`${family.id} is not a diagnostic`);
+  const c = def.comparison;
+  const ref = familyReference({ type: pool.type, cases: pool.cases, cohort: family.cohort.cases }, labels);
+  const label = (n: string): Label => ref.labels.get(n) ?? ref.unlisted;
+  const coded = codedReference(family.relatedPositives);
+  const codedSet = new Set(family.relatedPositives);
+  const methods = [c.base, ...c.variants];
+  const codedOf = (run: PoolRun): number | null => scoreQuestion(run.ranking, run.bundle.map((b) => b.ntsbNo), coded).ndcg.bounds?.lower ?? null;
+  const valuesOf = (p: FamilyPool) => questionValues(p, scoreRuns(p, ref, answerability));
+  const valueOf = (p: FamilyPool, values: readonly QuestionValue[], m: string): RegressionMethodValue | null => {
+    const v = values.find((x) => x.member === family.id && x.method === m);
+    if (!v) return null;
+    const codes = p.runs.filter((r) => r.member === family.id && r.method === m).map(codedOf);
+    return { ndcg6: v.ndcg6, p6: v.p6, supported: v.supported, codedNdcg6: codes.every((x): x is number => x !== null) && codes.length > 0 ? meanOf(codes) : null };
+  };
+  const differencesOf = (p: FamilyPool, values: readonly QuestionValue[]) =>
+    Object.fromEntries(
+      c.variants.map((variant) => [
+        variant,
+        Object.fromEntries(
+          c.reported.map((metric) => {
+            const d = methodDifferences(p, ref, answerability, values, c.base, variant, metric).find((x) => x.member === family.id);
+            return [metric, d ? { lower: d.lower, upper: d.upper, method: d.method } : null];
+          }),
+        ),
+      ]),
+    ) as Record<string, Record<string, { lower: number; upper: number; method: DifferenceBounds['method'] } | null>>;
+  const values = valuesOf(pool);
+  const means = Object.fromEntries(methods.flatMap((m) => {
+    const v = valueOf(pool, values, m);
+    return v ? [[m, v]] : [];
+  })) as Record<string, RegressionMethodValue>;
+  const differences = differencesOf(pool, values);
+  const observed = Object.fromEntries(Object.keys(c.reproduction.expected).map((m) => [m, means[m]?.codedNdcg6 ?? null]));
+  const bundleOf = (run: PoolRun | undefined): RegressionBundleCase[] =>
+    (run?.bundle ?? []).map((b) => ({ ntsbNo: b.ntsbNo, caseRank: b.caseRank, label: label(b.ntsbNo), coded: codedSet.has(b.ntsbNo), mapped: b.mapped, channels: b.channels }));
+  const samples = [...new Set(pool.runs.filter((r) => r.member === family.id).map((r) => r.sample))].sort((a, b) => a - b);
+  return {
+    family: family.id,
+    question: family.question,
+    origin: def.origin,
+    comparison: c,
+    scope: def.scope?.source ?? null,
+    coverage: judgedCoverage(pool, labels, family.cohort.cases),
+    methods: means,
+    reproduction: {
+      metric: c.reproduction.metric,
+      expected: c.reproduction.expected,
+      observed,
+      tolerance: c.reproduction.tolerance,
+      reproduced: Object.entries(c.reproduction.expected).every(([m, want]) => {
+        const got = observed[m];
+        return got !== null && got !== undefined && Math.abs(got - want) <= c.reproduction.tolerance;
+      }),
+      source: c.reproduction.source,
+    },
+    comparisons: Object.fromEntries(c.variants.map((v) => [v, { conclusion: regressionConclusion(differences[v]?.[c.primary] ?? null), metrics: differences[v] ?? {} }])),
+    perSample: samples.map((sample) => {
+      const sub: FamilyPool = { ...pool, runs: pool.runs.filter((r) => r.sample === sample) };
+      const subValues = valuesOf(sub);
+      const runOf = (m: string) => sub.runs.find((r) => r.member === family.id && r.method === m);
+      const base = bundleOf(runOf(c.base));
+      return {
+        sample,
+        methods: Object.fromEntries(methods.flatMap((m) => {
+          const v = valueOf(sub, subValues, m);
+          return v ? [[m, { ...v, bundle: bundleOf(runOf(m)) }]] : [];
+        })),
+        differences: differencesOf(sub, subValues),
+        displaced: Object.fromEntries(c.variants.map((v) => {
+          const mine = new Set(bundleOf(runOf(v)).map((b) => b.ntsbNo));
+          return [v, base.filter((b) => !mine.has(b.ntsbNo))];
+        })),
+        admitted: Object.fromEntries(c.variants.map((v) => {
+          const theirs = new Set(base.map((b) => b.ntsbNo));
+          return [v, bundleOf(runOf(v)).filter((b) => !theirs.has(b.ntsbNo))];
+        })),
+      };
+    }),
+  };
+}
+
+/** The retrieval runs' own mapping, per version: how often a run needed it, and its outcomes (the pools as built, no labels). */
+export function ordinaryMapping(pools: readonly Pick<FamilyPool, 'family' | 'runs'>[]): Record<string, { runs: number; runsWithMapping: number; mapped: number; unmapped: Record<string, number>; deliveredMapped: number; questions: string[] }> {
+  const out: Record<string, { runs: number; runsWithMapping: number; mapped: number; unmapped: Record<string, number>; deliveredMapped: number; questions: string[] }> = {};
+  for (const p of pools) {
+    for (const r of p.runs) {
+      const v = (out[r.method] ??= { runs: 0, runsWithMapping: 0, mapped: 0, unmapped: {}, deliveredMapped: 0, questions: [] });
+      v.runs += 1;
+      const entries = r.mapping ?? [];
+      if (entries.length > 0) {
+        v.runsWithMapping += 1;
+        if (!v.questions.includes(r.member)) v.questions.push(r.member);
+      }
+      for (const e of entries) {
+        if (e.status === 'mapped') v.mapped += 1;
+        else v.unmapped[e.reason ?? 'unknown'] = (v.unmapped[e.reason ?? 'unknown'] ?? 0) + 1;
+      }
+      v.deliveredMapped += r.bundle.filter((b) => b.mapped).length;
+    }
+  }
+  for (const v of Object.values(out)) v.questions.sort();
+  return out;
+}
+
+const tally = (labels: readonly Label[]): Record<string, number> => {
+  const out: Record<string, number> = { '2': 0, '1': 0, '0': 0, unknown: 0 };
+  for (const l of labels) out[String(l)] = (out[String(l)] ?? 0) + 1;
+  return out;
+};
+
+export interface MappingDiagnosticReport {
+  note: string;
+  runs: number;
+  /** Distinct (family, case) pairs forced through the mapping, and their outcomes. */
+  forced: number;
+  mapped: number;
+  unmapped: Record<string, number>;
+  /** Distinct delivered (family, case, passages) bundles: the answerability pairs. */
+  delivered: number;
+  /** Each delivered bundle's case relevance on its complete record, and the bundle's answerability. */
+  relevance: Record<string, number>;
+  answerability: Record<string, number>;
+  /** Relevance (rows) by answerability (columns), unknown included. */
+  crossTab: Record<string, Record<string, number>>;
+  /** Of the fully relevant mapped cases, how many bundles establish it (answerability 2); unknowns left out and counted. */
+  supportedAmongRelevant: Rate & { unknown: number };
+  /** Of the bundles judged answerable (2), how many rest on a mapped passage rather than only on the attached probable cause. */
+  restsOnMappedPassage: { answerable: number; mappedPassage: number; causeOnly: number; unread: number };
+  perFamily: { family: string; forced: number; mapped: number; delivered: number; relevant: number; supported: number }[];
+}
+
+/** The labelled mapping diagnostic (pool.ts module comment): what the production mapping delivered for real questions, judged. */
+export function mappingDiagnosticReport(
+  pools: readonly Pick<FamilyPool, 'family' | 'mappingDiagnostic'>[],
+  labels: ReadonlyMap<string, ReadonlyMap<string, Label>>,
+  answerability: ReadonlyMap<string, ReadonlyMap<string, Label>>,
+  records: readonly PairRecord[],
+): MappingDiagnosticReport {
+  const byPair = new Map(records.filter((r) => r.kind === 'answerability').map((r) => [`${r.family}|${r.ntsbNo}|${r.bundleKey ?? ''}`, r]));
+  const rel: Label[] = [];
+  const ans: Label[] = [];
+  const crossTab: Record<string, Record<string, number>> = {};
+  const unmapped: Record<string, number> = {};
+  const rests = { answerable: 0, mappedPassage: 0, causeOnly: 0, unread: 0 };
+  let relevant = 0;
+  let supported = 0;
+  let unknownRelevant = 0;
+  let runs = 0;
+  let forced = 0;
+  let mapped = 0;
+  let delivered = 0;
+  const perFamily: MappingDiagnosticReport['perFamily'] = [];
+  for (const p of pools) {
+    runs += p.mappingDiagnostic.length;
+    const outcome = new Map<string, { status: string; reason: string | null }>();
+    for (const r of p.mappingDiagnostic) for (const e of r.mapping) outcome.set(e.ntsbNo, { status: e.status, reason: e.reason });
+    const famMapped = [...outcome.values()].filter((o) => o.status === 'mapped').length;
+    forced += outcome.size;
+    mapped += famMapped;
+    for (const o of outcome.values()) if (o.status !== 'mapped') unmapped[o.reason ?? 'unknown'] = (unmapped[o.reason ?? 'unknown'] ?? 0) + 1;
+    const pairs = bundlePairsOf(p.mappingDiagnostic);
+    delivered += pairs.length;
+    let famRelevant = 0;
+    let famSupported = 0;
+    for (const x of pairs) {
+      const r = labels.get(p.family)?.get(x.ntsbNo) ?? 'unknown';
+      const a = answerability.get(p.family)?.get(`${x.ntsbNo}|${x.key}`) ?? 'unknown';
+      rel.push(r);
+      ans.push(a);
+      const row = (crossTab[String(r)] ??= {});
+      row[String(a)] = (row[String(a)] ?? 0) + 1;
+      if (r === 2) {
+        if (a === 'unknown') unknownRelevant += 1;
+        else {
+          relevant += 1;
+          famRelevant += 1;
+          if (a === 2) {
+            supported += 1;
+            famSupported += 1;
+          }
+        }
+      }
+      if (a === 2) {
+        rests.answerable += 1;
+        const rec = byPair.get(`${p.family}|${x.ntsbNo}|${x.key}`);
+        const mappedIds = new Set(x.passages.filter((q) => q.role !== 'probable_cause').map((q) => q.passageId));
+        const deciding = rec ? (rec.adjudication?.final !== null && rec.adjudication !== null ? rec.verdicts.filter((v) => v.role === 'adjudicator-final') : rec.verdicts.filter((v) => v.role === 'judge-a' || v.role === 'judge-b')) : [];
+        if (deciding.length === 0) rests.unread += 1;
+        else if (deciding.some((v) => v.verdict.evidence.some((e) => e.passageId !== undefined && mappedIds.has(e.passageId)))) rests.mappedPassage += 1;
+        else rests.causeOnly += 1;
+      }
+    }
+    perFamily.push({ family: p.family, forced: outcome.size, mapped: famMapped, delivered: pairs.length, relevant: famRelevant, supported: famSupported });
+  }
+  return {
+    note: 'Labelled diagnostic, forced: each case-level run\'s first cases that only the cases channel returned were mapped (`mapCasesToPassages`) and packed (`fetchAndPack`) by the production code as leading candidates. It measures what the mapping delivers for real questions, not how often production maps. Model-judged; reported apart from the benchmark.',
+    runs,
+    forced,
+    mapped,
+    unmapped,
+    delivered,
+    relevance: tally(rel),
+    answerability: tally(ans),
+    crossTab,
+    supportedAmongRelevant: { ...wilson(supported, relevant), unknown: unknownRelevant },
+    restsOnMappedPassage: rests,
+    perFamily,
+  };
+}
+
+/** The distinct delivered (case, passages) bundles of mapping diagnostic runs. */
+function bundlePairsOf(runs: FamilyPool['mappingDiagnostic']): { ntsbNo: string; key: string; passages: PoolRun['bundle'][number]['passages'] }[] {
+  const out = new Map<string, { ntsbNo: string; key: string; passages: PoolRun['bundle'][number]['passages'] }>();
+  for (const r of runs) {
+    for (const b of r.bundle) {
+      const key = bundleKeyOf(b.passages);
+      out.set(`${b.ntsbNo}|${key}`, { ntsbNo: b.ntsbNo, key, passages: b.passages });
+    }
+  }
+  return [...out.values()].sort((a, b) => (a.ntsbNo < b.ntsbNo ? -1 : a.ntsbNo > b.ntsbNo ? 1 : a.key < b.key ? -1 : 1));
 }
