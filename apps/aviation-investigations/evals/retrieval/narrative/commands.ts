@@ -68,6 +68,7 @@ import { POOL_RULE, buildPools, bundlePairs, casePriority, indexCohort, poolFile
 import { NARRATIVE_PARAPHRASES, NARRATIVE_QUESTIONS } from './questions.js';
 import {
   agreementReport,
+  auditSamples,
   answerabilityLabels,
   calibrationReport,
   compareMethods,
@@ -758,11 +759,11 @@ export async function reportCommand(opts: { outDir: string; pools?: string; judg
         comparisons[`${b} vs ${a}`] = Object.fromEntries((['recallGate', 'p6', 'ndcg6', 'supported'] as const).map((m) => [m, compareMethods(values, (member) => groups.get(member) ?? member, a, b, m, boot)]));
       }
     }
-    out.relevance = { poolVersion: pools.version, values, comparisons, diagnostics, agreement: agreementReport(rel, tagsOf), discrepancies: discrepancies(d, rel) };
+    out.relevance = { poolVersion: pools.version, values, comparisons, diagnostics, agreement: agreementReport(rel, tagsOf), discrepancies: discrepancies(d, rel), audit: auditSamples(rel, tagsOf) };
     log(`relevance: ${rel.length} pair records over ${pools.families.length} families`);
   }
   const ans = records('answerability');
-  if (ans.length > 0) out.answerability = { agreement: agreementReport(ans, tagsOf) };
+  if (ans.length > 0) out.answerability = { agreement: agreementReport(ans, tagsOf), audit: auditSamples(ans, tagsOf) };
   const file = writeJson(opts.outDir, `narrative-report-${stamp(new Date())}.json`, out);
   log(`report: ${file}`);
   return 0;

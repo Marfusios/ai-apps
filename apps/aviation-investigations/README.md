@@ -619,8 +619,9 @@ disagreements. Nothing is expert-adjudicated, and no label waits for a person.
   sample, versioned by content. **Metrics** (`score.ts`): Recall@20 on exhaustive bounded
   cohorts only, strict P@6 and nDCG@6 with bounds over unknowns, supported P@6 (relevant and
   answerable in the delivered passages), group bootstrap, judge agreement (kappa with
-  intervals, confusion matrices per tag and grade) and candidate code-narrative
-  discrepancies.
+  intervals, confusion matrices per tag and grade), candidate code-narrative
+  discrepancies, and two disjoint audit samples (an AI audit and a non-expert owner
+  audit) stratified by tag, label and agreement class.
 
 ```sh
 pnpm eval:retrieval:narrative build --generation 1 --check        # the question set (DATABASE_URL, read-only)

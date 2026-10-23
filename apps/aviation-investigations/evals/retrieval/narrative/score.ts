@@ -27,10 +27,16 @@
  * intervals, agreement with Wilson intervals and confusion matrices, per tag and per
  * grade; judge-adjudicator agreement; calibration accuracy against the frozen labels;
  * and candidate code-narrative discrepancies (logged, never applied to any label).
+ *
+ * **Audit samples.** Two disjoint samples of judged pairs, one for the AI audit and one
+ * for the non-expert owner audit, each stratified by tag, final label and agreement
+ * class (agreements as well as disagreements), with the stratum sizes so findings can be
+ * weighted back. They audit model-judged labels (do the cited quotes entail the grade?);
+ * neither audit is expert adjudication.
  */
 import { makeReference, scoreQuestion, uniqueTop, type Bounds, type Label, type ProtocolScore, type Reference } from '../metrics.js';
 import { mulberry32, pairedGroupBootstrap, percentile, type BootstrapResult } from '../experiments/stats.js';
-import type { CalibrationItem } from './calibration.js';
+import { seededSample, type CalibrationItem } from './calibration.js';
 import type { NarrativeDataset } from './dataset.js';
 import type { PairRecord } from './judging.js';
 import { bundleKeyOf } from './judging.js';
@@ -454,4 +460,77 @@ export function discrepancies(d: NarrativeDataset, records: readonly PairRecord[
     if (!coded.has(r.ntsbNo) && r.label === 2) out.push({ family: r.family, ntsbNo: r.ntsbNo, kind: 'relevant-not-coded', label: r.label });
   }
   return out.sort((a, b) => (a.family < b.family ? -1 : a.family > b.family ? 1 : a.ntsbNo < b.ntsbNo ? -1 : 1));
+}
+
+// ---------------------------------------------------------------------------
+// Audit samples
+
+/** The audit sampling rule (module comment): one pair per stratum per auditor. */
+export const AUDIT_RULE = Object.freeze({ version: 'track-n-audit-v1', perStratum: 1, seed: 'track-n-audit' });
+
+export type AgreementClass = 'agreed' | 'disagreed' | 'judge-missing';
+
+/** Both judges' valid grades equal (`agreed`), differ (`disagreed`), or a judge gave none (`judge-missing`). */
+export function agreementClass(r: PairRecord): AgreementClass {
+  const [a, b] = r.judges;
+  if (a?.grade === null || a?.grade === undefined || b?.grade === null || b?.grade === undefined) return 'judge-missing';
+  return a.grade === b.grade ? 'agreed' : 'disagreed';
+}
+
+export interface AuditStratum {
+  tag: string;
+  label: string;
+  agreement: AgreementClass;
+  /** Pairs in the stratum (a pair counts once for each of its family's tags) and sampled from it. */
+  population: number;
+  sampled: number;
+}
+
+export interface AuditSample {
+  auditor: 'ai' | 'owner';
+  rule: typeof AUDIT_RULE;
+  reference: typeof REFERENCE;
+  note: string;
+  strata: AuditStratum[];
+  /** The sampled pairs whole: grades, adjudication and the validated verdicts with their canonical quotes. */
+  rows: (PairRecord & { stratum: { tag: string; label: string; agreement: AgreementClass } })[];
+}
+
+const pairId = (r: PairRecord) => `${r.kind}|${r.family}|${r.ntsbNo}|${r.bundleKey ?? ''}`;
+
+/** The AI-audit and owner-audit samples of a set of pair records (module comment). Deterministic for a rule. */
+export function auditSamples(records: readonly PairRecord[], tagsOf: (family: string) => readonly string[], rule = AUDIT_RULE): { ai: AuditSample; owner: AuditSample } {
+  const strata = new Map<string, PairRecord[]>();
+  for (const r of [...records].sort((x, y) => (pairId(x) < pairId(y) ? -1 : 1))) {
+    for (const tag of tagsOf(r.family)) {
+      const key = `${tag}|${String(r.label)}|${agreementClass(r)}`;
+      strata.set(key, [...(strata.get(key) ?? []), r]);
+    }
+  }
+  const keys = [...strata.keys()].sort();
+  const taken = new Set<string>();
+  const draw = (auditor: 'ai' | 'owner'): AuditSample => {
+    const rows: AuditSample['rows'] = [];
+    const counts: AuditStratum[] = [];
+    for (const key of keys) {
+      const [tag, label, agreement] = key.split('|') as [string, string, AgreementClass];
+      const members = strata.get(key) as PairRecord[];
+      const picks = seededSample(members.filter((r) => !taken.has(pairId(r))), rule.perStratum, `${rule.seed}|${auditor}|${key}`);
+      for (const r of picks) {
+        taken.add(pairId(r));
+        rows.push({ ...r, stratum: { tag, label, agreement } });
+      }
+      counts.push({ tag, label, agreement, population: members.length, sampled: picks.length });
+    }
+    return {
+      auditor,
+      rule,
+      reference: REFERENCE,
+      note: `${auditor === 'ai' ? 'AI audit' : 'Non-expert owner audit'} sample of model-judged labels, stratified by tag, final label and agreement class (agreements as well as disagreements); disjoint from the other audit's sample. Not expert adjudication.`,
+      strata: counts,
+      rows,
+    };
+  };
+  const ai = draw('ai');
+  return { ai, owner: draw('owner') };
 }

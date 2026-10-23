@@ -16,7 +16,9 @@ import type { PairRecord } from '../../evals/retrieval/narrative/judging.js';
 import { ASSUMPTIONS, PHASE_A_UNION, addRuns, callUsd, caseCost, poolEstimates, rates, scaleRun, statsOf, type Measured } from '../../evals/retrieval/narrative/plan.js';
 import { POOL_RULE, assemblePool, bundlePairs, casePriority, poolFileVersion, type PoolRun } from '../../evals/retrieval/narrative/pool.js';
 import {
+  agreementClass,
   agreementReport,
+  auditSamples,
   calibrationReport,
   cohenKappa,
   discoveryByDepth,
@@ -215,6 +217,29 @@ describe('agreement and calibration figures', () => {
     expect(r.bySet['narrative-control/dev']).toMatchObject({ n: 2, unknown: 1 });
     expect(r.bySet['narrative-control/dev']?.accuracy.k).toBe(2);
     expect(r.missing).toEqual([]);
+  });
+
+  it('draws disjoint AI and owner audit samples by tag, label and agreement class, agreements included', () => {
+    const many = [
+      ...records,
+      record('f1', 'F', 2, 2, 2, 'agreed'),
+      record('f1', 'G', 2, 1, 2, 'adjudicated', adj(2, 2)),
+      record('f1', 'H', 2, 1, 1, 'adjudicated', adj(1, 1)),
+    ];
+    const tagsOf = (f: string) => (f === 'f1' ? ['negation'] : ['chronology', 'paraphrase']);
+    const s = auditSamples(many, tagsOf);
+    const ids = (x: typeof s.ai) => x.rows.map((r) => r.ntsbNo);
+    expect(new Set([...ids(s.ai), ...ids(s.owner)]).size).toBe(ids(s.ai).length + ids(s.owner).length);
+    // Negation, label 2: two agreements (A, F) and one disagreement (G); each audit gets one agreement, the AI audit the disagreement.
+    expect(s.ai.strata.find((x) => x.tag === 'negation' && x.label === '2' && x.agreement === 'agreed')).toMatchObject({ population: 2, sampled: 1 });
+    expect(s.owner.strata.find((x) => x.tag === 'negation' && x.label === '2' && x.agreement === 'agreed')).toMatchObject({ population: 2, sampled: 1 });
+    expect(s.ai.rows.map((r) => r.stratum.agreement)).toEqual(expect.arrayContaining(['agreed', 'disagreed', 'judge-missing']));
+    // A pair of a two-tag family is sampled once, under its first stratum.
+    expect(ids(s.ai).filter((n) => n === 'E')).toHaveLength(1);
+    expect(s.ai.rows.find((r) => r.ntsbNo === 'E')?.stratum).toEqual({ tag: 'chronology', label: 'unknown', agreement: 'judge-missing' });
+    expect(agreementClass(record('x', 'Y', 1, 1, 1, 'agreed'))).toBe('agreed');
+    expect(s.ai.note).toMatch(/Not expert adjudication/);
+    expect(auditSamples(many, tagsOf)).toEqual(s);
   });
 
   it('logs candidate code-narrative discrepancies without changing any label', () => {
