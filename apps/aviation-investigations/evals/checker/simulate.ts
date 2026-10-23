@@ -8,9 +8,9 @@
  * inputs (`v1Plans`, `v2Plans`, which first prove they render exactly the frozen claims), and
  * counted by `checker-metrics-v3`. Every figure is a **server-projection metric**.
  *
- * For each recorded run, with each label set (the frozen labels, labels v2 for the 16c
- * inputs, labels v3 with the errata overlay, and labels v3 with the disputed labels read as
- * `unknown`):
+ * For each recorded run, with each label set (labels v2; labels v3 with the errata overlay;
+ * for the 16d recordings also labels v3 with the disputed labels read as `unknown`, since
+ * every disputed label is in a 16d item):
  * - the verdict figures (`rawReport`: semantic detection from actual verdicts only, blocked
  *   output apart, production withholding from the projection);
  * - the display figures (`displayReport`, `claims` mode: answer retention against the static
@@ -72,8 +72,8 @@ export function simulate(dirs: { '16c': string; '16d': string } = DEFAULT_RECORD
   const v1p = v1Plans(v1);
   const v2 = readDatasetV2();
   const v2p = v2Plans(v2);
+  // The 16c recordings under labels v2 (the 16d corrections; the 16d simulation also shows labels v1) and labels v3.
   const sets16c: [string, CalibrationDataset][] = [
-    ['labels v1', v1],
     ['labels v2', v1LabelsV2(v1)],
     ['labels v3', v1LabelsV3(v1)],
   ];
@@ -90,10 +90,12 @@ export function simulate(dirs: { '16c': string; '16d': string } = DEFAULT_RECORD
       const batches = d.batches.filter((b) => b.split === r.split && !b.maxSize);
       const ids = new Set(batches.map((b) => b.id));
       const trials = r.trials.filter((t) => ids.has(t.batch));
+      const whole = displayReport(batches, trials, { mode: 'whole', plans });
       return {
         raw: rawReport(batches, trials, STAGE_TIMEOUTS.check, { plans }),
         display: displayReport(batches, trials, { mode: 'claims', plans }),
-        whole: displayReport(batches, trials, { mode: 'whole', plans }),
+        // Whole mode (the production default): its headline figures.
+        whole: { m2Displayed: whole.m2Displayed, m3: whole.m3.all, m4: whole.m4, e2: whole.e2, critical: whole.critical, withheld: whole.withheld },
       };
     };
     const sets = r.task === '16c' ? sets16c : sets16d;

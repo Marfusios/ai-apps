@@ -1,0 +1,330 @@
+{
+  "rules": "excerpt-context-v1",
+  "note": "Task 16e: the excerpt-context policy on real NTSB excerpts. quotes: the calibration quotes of dataset v2 (a tuning corpus: the policy was written against them); sentences: 200 sentences of the development passages labelled before the policy ran on them (the measurement corpus). A false omission is a standalone excerpt omitted; a catch is an excerpt that needs context omitted. Counts, ids and problem codes only.",
+  "sentences": {
+    "all": {
+      "items": 200,
+      "standalone": 164,
+      "needsContext": 36,
+      "falseOmissions": {
+        "k": 1,
+        "n": 164,
+        "rate": 0.006097560975609756,
+        "low": 0.001077181378562938,
+        "high": 0.033726251100103175
+      },
+      "catches": {
+        "k": 25,
+        "n": 36,
+        "rate": 0.6944444444444444,
+        "low": 0.5314372701821003,
+        "high": 0.819955484830002
+      },
+      "falseOmissionIds": [
+        {
+          "id": "fa18",
+          "problems": [
+            "comparison"
+          ]
+        }
+      ],
+      "missIds": [
+        "fa05",
+        "fa13",
+        "fa14",
+        "fa19",
+        "fa34",
+        "fa38",
+        "fa43",
+        "fa47",
+        "fa59",
+        "fa61",
+        "fa62"
+      ],
+      "problems": {
+        "partial_sentence": 1,
+        "leading_reference": 12,
+        "pronoun": 7,
+        "demonstrative": 7,
+        "relative_time": 2,
+        "relative_sequence": 4,
+        "comparison": 2
+      }
+    },
+    "bySection": {
+      "analysis": {
+        "items": 70,
+        "standalone": 56,
+        "needsContext": 14,
+        "falseOmissions": {
+          "k": 0,
+          "n": 56,
+          "rate": 0,
+          "low": 0,
+          "high": 0.06419393766646092
+        },
+        "catches": {
+          "k": 14,
+          "n": 14,
+          "rate": 1,
+          "low": 0.7846891945970195,
+          "high": 0.9999999999999999
+        },
+        "falseOmissionIds": [],
+        "missIds": [],
+        "problems": {
+          "leading_reference": 9,
+          "pronoun": 2,
+          "demonstrative": 5,
+          "relative_time": 1,
+          "relative_sequence": 2,
+          "comparison": 1
+        }
+      },
+      "factual": {
+        "items": 70,
+        "standalone": 49,
+        "needsContext": 21,
+        "falseOmissions": {
+          "k": 1,
+          "n": 49,
+          "rate": 0.02040816326530612,
+          "low": 0.003611672549881484,
+          "high": 0.10693521629394014
+        },
+        "catches": {
+          "k": 10,
+          "n": 21,
+          "rate": 0.47619047619047616,
+          "low": 0.28344005975415376,
+          "high": 0.6763046555309483
+        },
+        "falseOmissionIds": [
+          {
+            "id": "fa18",
+            "problems": [
+              "comparison"
+            ]
+          }
+        ],
+        "missIds": [
+          "fa05",
+          "fa13",
+          "fa14",
+          "fa19",
+          "fa34",
+          "fa38",
+          "fa43",
+          "fa47",
+          "fa59",
+          "fa61",
+          "fa62"
+        ],
+        "problems": {
+          "partial_sentence": 1,
+          "leading_reference": 3,
+          "pronoun": 5,
+          "demonstrative": 2,
+          "relative_sequence": 2,
+          "comparison": 1
+        }
+      },
+      "probable_cause": {
+        "items": 60,
+        "standalone": 59,
+        "needsContext": 1,
+        "falseOmissions": {
+          "k": 0,
+          "n": 59,
+          "rate": 0,
+          "low": 0,
+          "high": 0.06112937143219893
+        },
+        "catches": {
+          "k": 1,
+          "n": 1,
+          "rate": 1,
+          "low": 0.2065493117918027,
+          "high": 1
+        },
+        "falseOmissionIds": [],
+        "missIds": [],
+        "problems": {
+          "relative_time": 1
+        }
+      }
+    }
+  },
+  "quotes": {
+    "all": {
+      "items": 167,
+      "standalone": 138,
+      "needsContext": 29,
+      "falseOmissions": {
+        "k": 0,
+        "n": 138,
+        "rate": 0,
+        "low": 1.734723475976807e-18,
+        "high": 0.027082764881252615
+      },
+      "catches": {
+        "k": 29,
+        "n": 29,
+        "rate": 1,
+        "low": 0.8830301998708162,
+        "high": 0.9999999999999999
+      },
+      "falseOmissionIds": [],
+      "missIds": [],
+      "problems": {
+        "partial_sentence": 16,
+        "leading_reference": 10,
+        "pronoun": 3,
+        "demonstrative": 10,
+        "relative_time": 3,
+        "relative_sequence": 2,
+        "comparison": 1
+      }
+    },
+    "originalLabels": {
+      "items": 167,
+      "standalone": 141,
+      "needsContext": 26,
+      "falseOmissions": {
+        "k": 3,
+        "n": 141,
+        "rate": 0.02127659574468085,
+        "low": 0.007261943820072135,
+        "high": 0.06068447813195688
+      },
+      "catches": {
+        "k": 26,
+        "n": 26,
+        "rate": 1,
+        "low": 0.871271076371412,
+        "high": 1
+      },
+      "falseOmissionIds": [
+        {
+          "id": "dev.ff/C32",
+          "problems": [
+            "partial_sentence"
+          ]
+        },
+        {
+          "id": "holdout.fuel/C28",
+          "problems": [
+            "partial_sentence"
+          ]
+        },
+        {
+          "id": "holdout16d.throttle/C35",
+          "problems": [
+            "comparison"
+          ]
+        }
+      ],
+      "missIds": [],
+      "problems": {
+        "partial_sentence": 16,
+        "leading_reference": 10,
+        "pronoun": 3,
+        "demonstrative": 10,
+        "relative_time": 3,
+        "relative_sequence": 2,
+        "comparison": 1
+      }
+    },
+    "disputes": [
+      "\"the same mechanic\": the same as whom is in the sentence before it (16d held-out throttle bundle, ERA13LA342)",
+      "the excerpt drops \"The pilot reported that\": given as the investigators' own words it loses its source (16c dev.ff, ANC21LA096)",
+      "the excerpt drops \"the pilot stated\": given as the investigators' own words it loses its source (16c holdout.fuel)"
+    ],
+    "byOrigin": {
+      "16c": {
+        "items": 82,
+        "standalone": 67,
+        "needsContext": 15,
+        "falseOmissions": {
+          "k": 0,
+          "n": 67,
+          "rate": 0,
+          "low": 0,
+          "high": 0.054226140200371364
+        },
+        "catches": {
+          "k": 15,
+          "n": 15,
+          "rate": 1,
+          "low": 0.7961166964035129,
+          "high": 1
+        },
+        "falseOmissionIds": [],
+        "missIds": [],
+        "problems": {
+          "partial_sentence": 14,
+          "leading_reference": 3,
+          "pronoun": 2,
+          "demonstrative": 2,
+          "relative_time": 2
+        }
+      },
+      "16d": {
+        "items": 81,
+        "standalone": 71,
+        "needsContext": 10,
+        "falseOmissions": {
+          "k": 0,
+          "n": 71,
+          "rate": 0,
+          "low": 0,
+          "high": 0.051327952965064906
+        },
+        "catches": {
+          "k": 10,
+          "n": 10,
+          "rate": 1,
+          "low": 0.7224671969739421,
+          "high": 0.9999999999999999
+        },
+        "falseOmissionIds": [],
+        "missIds": [],
+        "problems": {
+          "partial_sentence": 2,
+          "leading_reference": 4,
+          "pronoun": 1,
+          "demonstrative": 5,
+          "relative_time": 1,
+          "relative_sequence": 1,
+          "comparison": 1
+        }
+      },
+      "16d-dev": {
+        "items": 4,
+        "standalone": 0,
+        "needsContext": 4,
+        "falseOmissions": {
+          "k": 0,
+          "n": 0,
+          "rate": null,
+          "low": null,
+          "high": null
+        },
+        "catches": {
+          "k": 4,
+          "n": 4,
+          "rate": 1,
+          "low": 0.5101091596030786,
+          "high": 0.9999999999999999
+        },
+        "falseOmissionIds": [],
+        "missIds": [],
+        "problems": {
+          "leading_reference": 3,
+          "demonstrative": 3,
+          "relative_sequence": 1
+        }
+      }
+    }
+  }
+}
