@@ -20,7 +20,7 @@ export function testConfig(): AppConfig {
 /**
  * Credentials of the local `test` environment (database aviation_test, indices
  * aviation-test-*), written by `pnpm services:setup`. Nonempty process values win,
- * so the suite can run against another server (scripts/test-pg16.ts).
+ * so the suite can run against another server.
  */
 const TEST_VARS = [
   'TEST_DATABASE_URL',

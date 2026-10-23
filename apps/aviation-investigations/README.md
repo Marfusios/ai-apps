@@ -75,19 +75,23 @@ Deployments use shared PostgreSQL, Elasticsearch and Langfuse (see
 [Deployment with Docker Compose](#deployment-with-docker-compose)). For
 contributors without them and for the offline integration tests,
 `compose.local-services.yaml` (Compose project `ai-aviation-local`) runs pinned
-PostgreSQL 17.6 and Elasticsearch 9.5.5 (single node, security on, 2 GB heap, ML
-disabled). Both bind to loopback only, for development; HTTP TLS is disabled for
-this local profile. Ports come from `POSTGRES_PORT` (default 55432) and
-`ELASTICSEARCH_PORT` (default 59200). Earlier checkouts ran them as project
+PostgreSQL 16.2 (the shared server's version, so the integration tests run on the
+version the deployments use) and Elasticsearch 9.5.5 (single node, security on,
+2 GB heap, ML disabled). Both bind to loopback only, for development; HTTP TLS is
+disabled for this local profile. Ports come from `POSTGRES_PORT` (default 55432)
+and `ELASTICSEARCH_PORT` (default 59200). Earlier checkouts ran them as project
 `ai-aviation`: stop it once with `docker compose -p ai-aviation down` before
-`pnpm services:up` (the [runbook](docs/RUNBOOK.md#local-services-mode) has details).
+`pnpm services:up`. Earlier checkouts also ran PostgreSQL 17.6, and a data
+directory cannot be reused across major versions: run `pnpm services:down` and
+remove the old volume once with `docker volume rm ai-aviation-local_postgres-data`
+(the [runbook](docs/RUNBOOK.md#local-services-mode) has details for both).
 
 ```sh
 pnpm services:up      # generate bootstrap passwords, start services, wait until healthy
 pnpm services:setup   # roles, databases aviation_dev and aviation_test, scoped API keys
 pnpm db:migrate       # aviation_dev (the integration tests migrate aviation_test)
 pnpm test:integration
-pnpm test:pg16        # migrations and integration tests on PostgreSQL 16.2
+pnpm test:pg16        # the same suite after checking the server is PostgreSQL 16
 pnpm services:down    # stop; data volumes are kept
 ```
 
@@ -110,9 +114,15 @@ Each database and its schema `public` belong to a memberless owner role
 (`aviation_dev_owner`, `aviation_test_owner`); the group roles hold the grants and
 `aviation_migrator` owns the schema objects. Default privileges give both runtime
 roles SELECT on future tables and migrations grant DML explicitly. Each login can
-connect only to its own database and cannot grant itself access to another. `pnpm test:pg16` provisions the `test`
-environment on a throwaway PostgreSQL 16.2 container (the shared server's version)
-and runs the migrations and the integration suite against it.
+connect only to its own database and cannot grant itself access to another.
+
+`pnpm test:pg16` runs the integration suite on PostgreSQL 16, the shared server's
+major version. The local PostgreSQL is 16.2, so it is the same run as
+`pnpm test:integration` (which migrates `aviation_test` through every migration),
+preceded by a check that the test database's server is PostgreSQL 16; it refuses
+to run on another major version. The command keeps its name from the time it
+started a throwaway 16.2 container (profile `pg16`, `POSTGRES16_PORT`), which no
+longer exists, so that existing instructions keep working.
 
 ### NTSB fixtures and normalization
 

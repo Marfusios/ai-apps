@@ -1,7 +1,10 @@
 # Optional stand-alone PostgreSQL and Elasticsearch (Compose project
 # ai-aviation-local). Only for contributors without the shared services and for
 # the offline integration tests; deployments use the shared services instead
-# (compose.yaml, docs/RUNBOOK.md).
+# (compose.yaml, docs/RUNBOOK.md). PostgreSQL is pinned to 16.2, the shared
+# server's version, so the tests run on the version the deployments use. A data
+# directory cannot be reused across major versions: a volume made by another
+# major version must be removed once (docs/RUNBOOK.md#local-services-mode).
 #
 # Start with `pnpm services:up`, which generates ELASTIC_PASSWORD and
 # POSTGRES_PASSWORD in the ignored .env.local and passes it to Compose with
@@ -24,7 +27,7 @@ x-service: &service
 services:
   postgres:
     <<: *service
-    image: postgres:17.6
+    image: postgres:16.2
     labels:
       ai-apps.app: aviation-investigations
       ai-apps.component: db
@@ -71,30 +74,6 @@ services:
       timeout: 5s
       retries: 40
       start_period: 20s
-
-  # PostgreSQL 16.2, the shared server's version, for compatibility runs only
-  # (`pnpm test:pg16`). Profile pg16; data lives in a tmpfs and is discarded.
-  postgres16:
-    <<: *service
-    profiles: [pg16]
-    restart: "no"
-    image: postgres:16.2
-    labels:
-      ai-apps.app: aviation-investigations
-      ai-apps.component: db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run pnpm services:up}
-      POSTGRES_DB: postgres
-    ports:
-      - "127.0.0.1:${POSTGRES16_PORT:-55416}:5432"
-    tmpfs:
-      - /var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
 
 volumes:
   postgres-data:

@@ -24,7 +24,7 @@
 | --- | --- |
 | Runtime and tooling | Node 24 (v24.21.0), pnpm 12 (via corepack), TypeScript strict |
 | Server | Fastify 5, Zod |
-| Database | Drizzle ORM + `pg` on PostgreSQL 17 |
+| Database | Drizzle ORM + `pg` on PostgreSQL 16 (16.2, the shared server's version) |
 | Search | `@elastic/elasticsearch` 9 on Elasticsearch 9.5.5 |
 | Language models | `@anthropic-ai/sdk` |
 | Embeddings | `openai` |
@@ -195,7 +195,7 @@ Scripts:
 
 **Interfaces:**
 - Produces:
-  - Compose services `postgres` (`postgres:17.6`) and `elasticsearch` (`docker.elastic.co/elasticsearch/elasticsearch:9.5.5`, single node, security on, 2 GB heap). Both publish on `127.0.0.1` with ports from `POSTGRES_PORT` (default 55432) and `ELASTICSEARCH_PORT` (default 59200).
+  - Compose services `postgres` (`postgres:16.2`) and `elasticsearch` (`docker.elastic.co/elasticsearch/elasticsearch:9.5.5`, single node, security on, 2 GB heap). Both publish on `127.0.0.1` with ports from `POSTGRES_PORT` (default 55432) and `ELASTICSEARCH_PORT` (default 59200).
   - `pnpm services:up|down|setup`.
   - `scripts/es-setup.ts`:
     - Reads the bootstrap `ELASTIC_PASSWORD` from the ignored `.env.local`, generating it on first run.

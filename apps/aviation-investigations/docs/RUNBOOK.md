@@ -735,10 +735,10 @@ containers by Compose project. Nothing here uses `container_name`.
 For contributors without the shared stack and for `pnpm test:integration`:
 
 ```sh
-pnpm services:up      # project ai-aviation-local: PostgreSQL 17.6 and Elasticsearch 9.5.5
+pnpm services:up      # project ai-aviation-local: PostgreSQL 16.2 and Elasticsearch 9.5.5
 pnpm services:setup   # environments dev and test with the role model above, into .env.local
 pnpm db:migrate       # aviation_dev; the integration tests migrate aviation_test
-pnpm test:pg16        # migrations and integration suite on PostgreSQL 16.2
+pnpm test:pg16        # the same suite after checking the server is PostgreSQL 16
 pnpm services:down    # volumes are kept
 ```
 
@@ -768,20 +768,42 @@ with `docker compose -p ai-aviation down` (its volumes are kept) before
 `services:setup` against an old server instead converts its group roles to
 `NOLOGIN`, which locks out checkouts still using the old URLs.
 
+The local PostgreSQL ran 17.6 before it was pinned to 16.2, the shared server's
+version. A data directory cannot be reused across major versions, and the 16.2
+image refuses to start on one made by 17. A checkout whose `ai-aviation-local`
+PostgreSQL volume was made by 17.6 removes that volume once and provisions again
+(this deletes the local `aviation_dev` and `aviation_test` databases, which hold
+only disposable data; the Elasticsearch volume is not touched):
+
+```sh
+pnpm services:down
+docker volume rm ai-aviation-local_postgres-data
+pnpm services:up
+pnpm services:setup   # keeps the passwords and keys that .env.local still holds
+pnpm db:migrate
+```
+
 ## PostgreSQL 16 compatibility
 
-The shared server runs PostgreSQL 16.2; the local services run 17.6. The
-`MAINTAIN` privilege exists only from 17, so every `MAINTAIN` grant or revoke in
-the migrations runs inside a `DO` block guarded by `server_version_num >= 170000`.
+The shared server and the local services both run PostgreSQL 16.2 (the local
+services ran 17.6 until they were pinned to the shared server's version, so that
+the integration tests exercise the version the deployments use). The `MAINTAIN`
+privilege exists only from 17, so every `MAINTAIN` grant or revoke in the
+migrations runs inside a `DO` block guarded by `server_version_num >= 170000`; the
+guards keep the migrations valid on a later server.
 The loader refreshes statistics through `analyze_corpus()`, a `SECURITY DEFINER`
 function owned by `aviation_migrator` with a fixed `search_path` (migration 0003),
 so it needs no `MAINTAIN`. Already-migrated databases are unaffected by the
 guards; no new migration was needed. Later migrations follow the same pattern
 (0010, the index build and alias switch tables, revokes `MAINTAIN` only on 17+;
 0012, `passages` and `embedding_cache`, uses `REVOKE ALL`, which covers `MAINTAIN`
-on 17 and is valid on 16; 0011 changes no privileges). `pnpm test:pg16` checks
-every migration and the integration suite on 16.2 (a throwaway `postgres16` service of
-`ai-aviation-local`, profile `pg16`, data in tmpfs).
+on 17 and is valid on 16; 0011 changes no privileges). The integration suite
+migrates `aviation_test` through every migration, so `pnpm test:integration` checks
+them and the suite on 16.2. `pnpm test:pg16` keeps its name from the time a
+throwaway `postgres16` service (profile `pg16`, data in tmpfs) provided 16.2 next to
+a 17.6 stack; that service no longer exists. The command checks that the test
+database's server is PostgreSQL 16 and then runs the same integration suite, so
+existing instructions keep working.
 
 ## Application image
 

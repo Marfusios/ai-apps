@@ -1,38 +1,52 @@
 /**
- * Run the migrations and the integration suite against PostgreSQL 16.2, the shared
- * server's version (local services carry 17). Starts the throwaway `postgres16`
- * service (profile pg16) of the ai-aviation-local project, provisions the `test`
- * environment on it with the same role model, runs `vitest --project integration`
- * with TEST_DATABASE_* pointing at it (Elasticsearch stays on the local services),
- * then removes the container.
+ * Run the integration suite on PostgreSQL 16, the shared server's major version.
+ * The local services run PostgreSQL 16.2 (compose.local-services.yaml), so this is the
+ * same run as `pnpm test:integration`, preceded by a check that the server behind the
+ * test environment really is PostgreSQL 16: it refuses to run on another major
+ * version. The command and its name stay from the time it started a throwaway 16.2
+ * container, so that existing instructions keep working.
  *
  *   pnpm services:up && pnpm services:setup && pnpm test:pg16
  */
 import { spawnSync } from 'node:child_process';
-import { APP_DIR, ENV_LOCAL, ensureSecrets } from './local-env.js';
-import { ROLE_KINDS, provisionPostgres, roleUrl } from './provision.js';
+import pg from 'pg';
+import { DB_CONNECT_TIMEOUT_MS } from '../server/db/client.js';
+import { APP_DIR, readLocal } from './local-env.js';
 
-const port = Number(process.env.POSTGRES16_PORT || 55416);
-const compose = ['compose', '-f', 'compose.local-services.yaml', '--env-file', ENV_LOCAL, '--profile', 'pg16'];
-const docker = (args: string[]) => spawnSync('docker', [...compose, ...args], { cwd: APP_DIR, stdio: 'inherit' }).status;
+const REQUIRED_MAJOR = 16;
+const URL_VAR = 'TEST_DATABASE_MIGRATOR_URL';
 
-const { POSTGRES_PASSWORD } = ensureSecrets(['POSTGRES_PASSWORD']);
+/** The version of the server the test environment points at (any login may ask). */
+async function serverVersion(): Promise<{ major: number; text: string }> {
+  // Nonempty process values win over .env.local, as in tests/integration/helpers.ts.
+  const url = process.env[URL_VAR] || readLocal([URL_VAR])[URL_VAR];
+  if (!url) throw new Error(`${URL_VAR} missing; run pnpm services:up && pnpm services:setup`);
+  const client = new pg.Client({ connectionString: url, application_name: 'aviation-test-pg16', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ num: number; text: string }>(
+      "SELECT current_setting('server_version_num')::int AS num, current_setting('server_version') AS text",
+    );
+    return { major: Math.floor(rows[0]!.num / 10_000), text: rows[0]!.text };
+  } finally {
+    await client.end();
+  }
+}
+
 let code = 1;
 try {
-  if (docker(['up', '-d', '--wait', '--wait-timeout', '120', 'postgres16']) !== 0) throw new Error('postgres16 did not start');
-  const adminUrl = `postgres://postgres:${encodeURIComponent(POSTGRES_PASSWORD!)}@127.0.0.1:${port}/postgres`;
-  const passwords = await provisionPostgres({ env: 'test', adminUrl, log: (m) => console.log(`pg16: ${m}`) });
-  const base = `postgres://127.0.0.1:${port}`;
-  const env = { ...process.env };
-  const vars = { migrator: 'TEST_DATABASE_MIGRATOR_URL', ingest: 'TEST_DATABASE_INGEST_URL', app: 'TEST_DATABASE_URL' } as const;
-  for (const k of ROLE_KINDS) env[vars[k]] = roleUrl(base, 'test', k, passwords[k]);
-  // The provisioning test then creates its throwaway environment on this server too.
-  env.TEST_PG_ADMIN_URL = adminUrl;
-  const r = spawnSync('pnpm', ['exec', 'vitest', 'run', '--project', 'integration'], { cwd: APP_DIR, stdio: 'inherit', env });
+  const { major, text } = await serverVersion();
+  console.log(`pg16: test database server is PostgreSQL ${text}`);
+  if (major !== REQUIRED_MAJOR) {
+    throw new Error(
+      `pg16: expected PostgreSQL ${REQUIRED_MAJOR}. The local services pin 16.2; a data volume made by another major version ` +
+        'must be removed once: pnpm services:down && docker volume rm ai-aviation-local_postgres-data && ' +
+        'pnpm services:up && pnpm services:setup',
+    );
+  }
+  const r = spawnSync('pnpm', ['exec', 'vitest', 'run', '--project', 'integration'], { cwd: APP_DIR, stdio: 'inherit' });
   code = r.status ?? 1;
 } catch (e) {
   console.error(e instanceof Error ? e.message : String(e));
-} finally {
-  docker(['rm', '--stop', '--force', 'postgres16']);
 }
 process.exit(code);

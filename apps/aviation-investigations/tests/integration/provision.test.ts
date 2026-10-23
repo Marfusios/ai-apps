@@ -11,7 +11,7 @@ import { ROLE_KINDS, loginRole, ownerRole, provisionPostgres } from '../../scrip
 import { testDbUrl } from './helpers.js';
 
 // Provisions a throwaway environment `ci` on the local services (or on the server in
-// TEST_PG_ADMIN_URL, as `pnpm test:pg16` sets), checks its isolation, removes it.
+// TEST_PG_ADMIN_URL), checks its isolation, removes it.
 const APP_DIR = resolve(import.meta.dirname, '../..');
 const local = readDotenvAllowlisted(resolve(APP_DIR, '.env.local'), [
   'POSTGRES_PASSWORD',
