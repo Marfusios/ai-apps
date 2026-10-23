@@ -27,7 +27,11 @@
  *   on the channel's message, or on the storage event the record raises (browsers without
  *   the channel); when it starts listening, if a change came after its page loaded; and
  *   when the page comes back from the back/forward cache, where it heard nothing (without
- *   local storage it cannot tell, so it reads its private queries again).
+ *   local storage it cannot tell, so it forgets as if the visitor had changed). Such a tab
+ *   then reads the account again: the change was made elsewhere, and the server says who
+ *   is signed in now. It remembers the names it has seen, and once it has forgotten for
+ *   the latest recorded change, an earlier one arriving late (a message queued while its
+ *   page was away) changes nothing.
  *
  * Public namespaces (`PUBLIC_QUERY_ROOTS`) are the same for everyone and stay. A test keeps
  * every query key of the app in one of the two lists.
@@ -60,8 +64,19 @@ function recordedChange(): string | null | undefined {
   }
 }
 
-/** The latest change this tab knows of: the record when its page loaded, then each change it makes or hears. */
-let knownChange: string | null | undefined = recordedChange();
+/** The change names this tab has seen (made, heard or found recorded), the latest `SEEN_NAMES`. */
+const seenChanges = new Set<string>();
+const SEEN_NAMES = 64;
+
+function see(change: string): void {
+  seenChanges.delete(change);
+  seenChanges.add(change);
+  if (seenChanges.size > SEEN_NAMES) seenChanges.delete(seenChanges.values().next().value as string);
+}
+
+// The change recorded when this page loaded came before anything it holds.
+const recordedAtLoad = recordedChange();
+if (typeof recordedAtLoad === 'string') see(recordedAtLoad);
 
 function newChangeName(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -104,12 +119,22 @@ export async function privateRead<T>(read: () => Promise<T>): Promise<T> {
   return value;
 }
 
+export interface ForgetOptions {
+  /** Tell the other tabs (the default): not when the change came from one of them, or is only possible. */
+  announce?: boolean;
+  /**
+   * Read the account again once it is forgotten: when the change was not made here, this
+   * tab does not know who is signed in now (another tab may have signed in again).
+   */
+  reread?: boolean;
+}
+
 /**
  * The visitor changed (signed out, or the account deleted): drop everything private the
  * page holds, show the account signed out at once, and tell the other tabs (unless the
  * change came from one of them).
  */
-export async function forgetVisitor(queryClient: QueryClient, opts: { announce?: boolean } = {}): Promise<void> {
+export async function forgetVisitor(queryClient: QueryClient, opts: ForgetOptions = {}): Promise<void> {
   generation += 1;
   forgetQuestions();
   forgetAllUnsettled();
@@ -122,42 +147,55 @@ export async function forgetVisitor(queryClient: QueryClient, opts: { announce?:
   }
   if (opts.announce !== false) {
     const change = newChangeName();
-    knownChange = change;
+    see(change);
+    let recorded = false;
     try {
       // Other tabs get a storage event; a tab that listens late, or comes back from the cache, reads it.
       window.localStorage.setItem(VISITOR_STORAGE_KEY, change);
+      recorded = true;
     } catch {
       // No local storage: the channel still carries the change.
     }
-    channel?.postMessage({ type: CHANGED, change });
+    channel?.postMessage({ type: CHANGED, change, recorded });
   }
   await Promise.all(PRIVATE_QUERY_ROOTS.map((root) => queryClient.cancelQueries({ queryKey: [root] })));
   queryClient.setQueryData<AccountResponse>(['account'], { signedIn: false });
   // Reset (not remove): screens keep their queries and read them again as the new visitor.
   for (const root of PRIVATE_QUERY_ROOTS) if (root !== 'account') void queryClient.resetQueries({ queryKey: [root] });
+  if (opts.reread) void queryClient.invalidateQueries({ queryKey: ['account'] });
 }
+
+/** A change made elsewhere, or only possible: forget, without telling the other tabs, and read the account again. */
+const forgetFromElsewhere = (queryClient: QueryClient): Promise<void> => forgetVisitor(queryClient, { announce: false, reread: true });
 
 /**
  * Another tab changed the visitor: forget here, once per change (`change` names it; a
- * message without a name, from a page of an earlier version, always counts).
+ * message without a name, from a page of an earlier version, always counts). `recorded`:
+ * the change was written to the record when it was made, so the record now holds it or a
+ * later change; if this tab has already forgotten for that one, this change is covered (a
+ * message queued while the page was away, delivered after it caught up).
  */
-function heard(queryClient: QueryClient, change: string | undefined): void {
+function heard(queryClient: QueryClient, change: string | undefined, recorded: boolean): void {
+  const latest = recordedChange();
   if (change !== undefined) {
-    if (change === knownChange) return;
-    knownChange = change;
+    if (seenChanges.has(change)) return;
+    see(change);
+    if (recorded && typeof latest === 'string' && latest !== change && seenChanges.has(latest)) return;
   }
-  void forgetVisitor(queryClient, { announce: false });
+  if (typeof latest === 'string') see(latest);
+  void forgetFromElsewhere(queryClient);
 }
 
 /** A change recorded since this tab last looked (`restored`: back from the back/forward cache)? */
 function recheck(queryClient: QueryClient, restored: boolean): void {
   const recorded = recordedChange();
   if (recorded === undefined) {
-    // Without local storage a restored page cannot tell: what it holds privately is read again.
-    if (restored) for (const root of PRIVATE_QUERY_ROOTS) void queryClient.resetQueries({ queryKey: [root] });
+    // Without local storage a restored page cannot tell whether the visitor changed while it
+    // was away: it forgets as if it had, and reads the account again.
+    if (restored) void forgetFromElsewhere(queryClient);
     return;
   }
-  if (recorded !== null && recorded !== knownChange) heard(queryClient, recorded);
+  if (recorded !== null && !seenChanges.has(recorded)) heard(queryClient, recorded, true);
   else if (restored) void queryClient.invalidateQueries({ queryKey: ['account'] });
 }
 
@@ -169,11 +207,11 @@ function recheck(queryClient: QueryClient, restored: boolean): void {
 export function listenForVisitorChanges(queryClient: QueryClient): () => void {
   if (typeof window === 'undefined') return () => {};
   const onMessage = (event: MessageEvent): void => {
-    const data = event.data as { type?: unknown; change?: unknown } | null;
-    if (data?.type === CHANGED) heard(queryClient, typeof data.change === 'string' ? data.change : undefined);
+    const data = event.data as { type?: unknown; change?: unknown; recorded?: unknown } | null;
+    if (data?.type === CHANGED) heard(queryClient, typeof data.change === 'string' ? data.change : undefined, data.recorded === true);
   };
   const onStorage = (event: StorageEvent): void => {
-    if (event.key === VISITOR_STORAGE_KEY && event.newValue !== null) heard(queryClient, event.newValue);
+    if (event.key === VISITOR_STORAGE_KEY && event.newValue !== null) heard(queryClient, event.newValue, true);
   };
   const onPageShow = (event: PageTransitionEvent): void => {
     if (event.persisted) recheck(queryClient, true);

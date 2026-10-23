@@ -1885,6 +1885,46 @@ describe('lock order: account deletion against the maintenance pass (Task 20 rev
   });
 });
 
+describe('a sign-in completing while its account is deleted (Task 20 check, round 5)', () => {
+  it('lands on the sign-in error page, not a bare 500', async () => {
+    const h = harness();
+    const user = newUser();
+    const browser = new CookieJar();
+    await signIn(h, browser, user);
+    expect((await send(h, 'POST', '/api/account/delete/start', { jar: browser, body: {} })).json).toMatchObject({ next: 'confirm' });
+    // Another browser signs in to the same account; Google sends it back while the deletion runs.
+    const laptop = new CookieJar();
+    const back = google.authorize(await startSignIn(h, laptop, '/explore'), user);
+    // The deletion pauses in its last statement, the user row already deleted: it waits for the Google link.
+    const userId = (await rows<{ id: string }>(sql`SELECT id::text AS id FROM auth_users`))[0]!.id;
+    const locker = await holdLocks(`SELECT 1 FROM auth_accounts WHERE user_id = '${userId}'::uuid FOR KEY SHARE`);
+    let deletion: Promise<Sent> | null = null;
+    let returned: Promise<Sent> | null = null;
+    const printed = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      deletion = send(h, 'POST', '/api/account/delete', { jar: browser, body: { confirm: true } });
+      await untilBlocked(1);
+      // The callback finds the account and its user, and its new session waits for the deleted user row.
+      returned = callback(h, laptop, back);
+      await untilBlocked(2);
+      await locker.commit();
+      expect([(await deletion).status, (await deletion).json]).toMatchObject([200, { deleted: true }]);
+      const r = await returned;
+      expect([r.status, r.headers.location]).toEqual([302, '/account?signin=failed&error=internal_server_error']);
+      // Nothing is printed around the server's own log (a failed query's values included).
+      expect(printed).not.toHaveBeenCalled();
+    } finally {
+      printed.mockRestore();
+      await locker.rollback();
+    }
+    expect(await count('auth_users')).toBe(0);
+    expect(await count('auth_sessions')).toBe(0);
+    // The server's log has the failure, without the query's values.
+    expect(h.logs.some((l) => l.includes('sign-in callback failed'))).toBe(true);
+    expect(h.logs.join('\n')).not.toMatch(/params|Key \(user_id\)/);
+  });
+});
+
 describe('storage', () => {
   it('aviation_ingest sees nothing; aviation_app updates nothing and cannot keep tokens, pictures or addresses', async () => {
     const h = harness();

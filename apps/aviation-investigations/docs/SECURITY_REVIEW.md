@@ -214,7 +214,8 @@ re-reviewed. The implementation review must cover in particular:
   retry check spends nothing;
 - the page forgetting the previous visitor on sign-out and deletion, in every open tab
   (a `BroadcastChannel` and a random marker in local storage, also checked when a tab
-  starts listening and when a page returns from the back/forward cache; every private
+  starts listening and when a page returns from the back/forward cache, which forgets
+  anyway when it cannot read local storage; every private
   query, late answers dropped, the questions and retry keys; an AI request
   under way is discarded, its open Turnstile check cancelled, and it never restores a
   question, a retry key or a navigation);

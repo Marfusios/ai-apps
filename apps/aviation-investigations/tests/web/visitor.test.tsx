@@ -11,7 +11,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { http, HttpResponse } from 'msw';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { askAvailability } from '../../web/src/features/ai/status';
@@ -45,9 +45,9 @@ function signedInApi(options: HandlerOptions = {}): void {
 
 /**
  * A Turnstile stand-in: every widget answers with the test token (after `release()` when
- * held), unless it was removed first; records how it was shown.
+ * held), unless it was removed first; records how it was shown and how many are open.
  */
-function installTurnstile({ hold = false }: { hold?: boolean } = {}): { appearances: string[]; release: () => void } {
+function installTurnstile({ hold = false }: { hold?: boolean } = {}): { appearances: string[]; release: () => void; open: () => number } {
   const appearances: string[] = [];
   const live = new Set<string>();
   const waiting: (() => void)[] = [];
@@ -71,7 +71,7 @@ function installTurnstile({ hold = false }: { hold?: boolean } = {}): { appearan
     },
   };
   window.turnstile = api;
-  return { appearances, release: () => waiting.splice(0).forEach((answer) => answer()) };
+  return { appearances, release: () => waiting.splice(0).forEach((answer) => answer()), open: () => live.size };
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -91,12 +91,18 @@ function holdPost(pattern: string, answer: () => Response) {
   return { release, calls: () => calls };
 }
 
-/** Another tab of the site announces a visitor change (`change` names it, as the tab's own record does). */
-async function otherTabChangesVisitor(change: string = crypto.randomUUID()): Promise<void> {
+/** Another tab's message on the channel: the change and whether that tab recorded it in local storage. */
+async function messageFromOtherTab(change: string, { recorded }: { recorded: boolean }): Promise<void> {
   const other = new BroadcastChannel(VISITOR_CHANNEL);
-  other.postMessage({ type: 'visitor-changed', change });
+  other.postMessage({ type: 'visitor-changed', change, recorded });
   other.close();
   await act(() => sleep(50));
+}
+
+/** Another tab of the site changes the visitor: it records the change, then announces it. */
+async function otherTabChangesVisitor(change: string = crypto.randomUUID()): Promise<void> {
+  window.localStorage.setItem(VISITOR_STORAGE_KEY, change);
+  await messageFromOtherTab(change, { recorded: true });
 }
 
 /** Another tab records a visitor change in local storage; `event`: the browser tells this tab (it does not while a page is away). */
@@ -472,6 +478,76 @@ describe('every open tab forgets the previous visitor (Task 20 review N4)', () =
     renderApp('/');
     await waitFor(() => expect(visitorGeneration()).toBe(before + 1));
     expect(rememberedQuestion('00000000-0000-4000-8000-0000000000aa')).toBeNull();
+  });
+
+  it('changes missed while the page was away are forgotten once, even when their queued messages arrive afterwards (round 5)', async () => {
+    signedInApi();
+    renderApp('/');
+    await act(() => sleep(50));
+    const before = visitorGeneration();
+    // Away in the cache while another tab made three changes: each recorded, its message queued.
+    const changes = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    for (const change of changes) await otherTabRecordsChange({ event: false }, change);
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    await act(() => sleep(50));
+    expect(visitorGeneration()).toBe(before + 1);
+    for (const change of changes) await messageFromOtherTab(change, { recorded: true });
+    expect(visitorGeneration()).toBe(before + 1);
+    // A later change still counts, also one its tab could not record.
+    await messageFromOtherTab(crypto.randomUUID(), { recorded: false });
+    expect(visitorGeneration()).toBe(before + 2);
+  });
+
+  it('after another tab’s change the page reads the account again: it shows who the server says is signed in (round 5)', async () => {
+    signedInApi();
+    renderApp('/');
+    const banner = await screen.findByRole('banner');
+    await within(banner).findByRole('link', { name: 'Account' });
+    // The other tab signed out and in again: this browser still has a session on the server.
+    await otherTabChangesVisitor();
+    await within(banner).findByRole('link', { name: 'Account' });
+  });
+
+  it('a page restored without readable local storage forgets as if the visitor changed: memory, checks, waiting requests (Task 20 gate, round 5)', async () => {
+    signedInApi({ accountCheck: true });
+    const turnstile = installTurnstile({ hold: true });
+    let posts = 0;
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+    });
+    // What the page holds for this visitor: a question for "Ask again" and a retry key.
+    const heldId = '00000000-0000-4000-8000-0000000000bb';
+    rememberQuestion(heldId, 'an earlier question');
+    const retryId = await unsettledId({ kind: 'create', question: 'an earlier question' });
+    rememberUnsettled(retryId, 'an-earlier-retry-key');
+    const app = renderApp('/');
+    // An AI request waits for its check.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+    await waitFor(() => expect(turnstile.open()).toBe(1));
+    const before = visitorGeneration();
+    // Back from the back/forward cache, where local storage cannot be read.
+    const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    try {
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+      await act(() => sleep(50));
+    } finally {
+      blocked.mockRestore();
+    }
+    expect(visitorGeneration()).toBe(before + 1);
+    expect(rememberedQuestion(heldId)).toBeNull();
+    expect(unsettledKey(retryId)).toBeNull();
+    // The check was cancelled: a token arriving now sends nothing, and the page stays where it is.
+    expect(turnstile.open()).toBe(0);
+    turnstile.release();
+    await act(() => sleep(150));
+    expect(posts).toBe(0);
+    expect(currentUrl(app.router)).toBe('/');
+    // Who is signed in is read again (the server still has this browser's session).
+    await within(await screen.findByRole('banner')).findByRole('link', { name: 'Account' });
+    server.events.removeAllListeners();
   });
 
   it('one change heard twice, on the channel and through local storage, is forgotten once (N9)', async () => {

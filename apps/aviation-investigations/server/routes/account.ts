@@ -12,12 +12,13 @@
  *   re-authenticates a deletion (`DELETE_REAUTH_PATH`, from a signed-in browser) is counted
  *   per account here (at most 5 an hour, 429 past that) and marked for Better Auth
  *   (`AUTH_REAUTH_HEADER`), whose per-network limit then skips it;
- * - `GET /api/auth/callback/google`: Google's redirect back. A callback to a browser
- *   signed in to an account (a deletion's re-authentication returning; the page offers no
- *   other sign-in while signed in) is counted per account as well, 5 an hour, and marked
- *   the same way; past that account's limit the network's limit applies to it. Sign-in
- *   traffic from others on the same network therefore never holds up a re-authentication,
- *   neither its start nor its return.
+ * - `GET /api/auth/callback/google`: Google's redirect back; one that fails unexpectedly
+ *   (Better Auth's 500) is sent to the sign-in error page (`AUTH_ERROR_PATH`). A callback
+ *   to a browser signed in to an account (a deletion's re-authentication returning; the
+ *   page offers no other sign-in while signed in) is counted per account as well, 5 an
+ *   hour, and marked the same way; past that account's limit the network's limit applies
+ *   to it. Sign-in traffic from others on the same network therefore never holds up a
+ *   re-authentication, neither its start nor its return.
  *
  * Better Auth gets a request rebuilt from an allowlist: the APP_URL origin with the
  * matched path and the raw query, the headers it needs (cookies, origin and fetch
@@ -44,7 +45,7 @@ import {
   DeleteStartResponseSchema,
   SignInRequestSchema,
 } from '../../shared/contracts/account.js';
-import { AUTH_IP_HEADER, AUTH_REAUTH_HEADER, authClientIp } from '../auth/better-auth.js';
+import { AUTH_ERROR_PATH, AUTH_IP_HEADER, AUTH_REAUTH_HEADER, authClientIp } from '../auth/better-auth.js';
 import { deleteAccount, deletionConfirmedUntil, issueDeletionConfirmation, reauthCallbackAllowed, reauthStartAllowed } from '../auth/deletion.js';
 import { retryAfterSeconds } from '../identity/gate.js';
 import { crossSite, isJsonRequest } from '../http/origin.js';
@@ -127,6 +128,15 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
         ...(request.method === 'POST' ? { body: JSON.stringify(request.body ?? {}) } : {}),
       }),
     );
+    // The browser is back from Google: an unexpected failure (such as its account being deleted
+    // while this sign-in completes) lands on the sign-in error page, as Better Auth's own
+    // failures do, not on a bare 500.
+    if (path === '/api/auth/callback/google' && response.status >= 500) {
+      request.log.warn({ authCallback: response.status }, 'sign-in callback failed');
+      const cookies = response.headers.getSetCookie();
+      if (cookies.length > 0) reply.header('set-cookie', cookies);
+      return reply.redirect(`${AUTH_ERROR_PATH}&error=internal_server_error`, 302);
+    }
     reply.code(response.status);
     response.headers.forEach((value, name) => {
       if (!FRAMING_HEADERS.has(name)) reply.header(name, value);

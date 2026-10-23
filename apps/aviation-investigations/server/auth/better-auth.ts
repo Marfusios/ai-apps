@@ -83,13 +83,15 @@
  * which only the route can set, and Better Auth's per-network limit skips them.
  *
  * **Logging.** Better Auth's log lines go to the server log as their message only, with
- * any email address replaced; never the values it attaches (errors may quote a row).
- * Telemetry is off.
+ * any email address replaced; never the values it attaches (errors may quote a row). An
+ * unexpected error is answered as a plain 500, so Better Auth's router never prints it to
+ * the console; at Google's callback the route sends the browser to the sign-in error page
+ * instead (`AUTH_ERROR_PATH`). Telemetry is off.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { APIError, addOAuthServerContext, createAuthMiddleware, getOAuthState } from 'better-auth/api';
+import { APIError, addOAuthServerContext, createAuthMiddleware, getOAuthState, isAPIError } from 'better-auth/api';
 import { sql } from 'drizzle-orm';
 import type { AppConfig } from '../../shared/config.js';
 import { DELETE_REAUTH_PATH, SignInRequestSchema } from '../../shared/contracts/account.js';
@@ -111,6 +113,8 @@ export const GOOGLE_ISSUER = 'https://accounts.google.com';
 export const GOOGLE_ISSUERS: readonly string[] = ['https://accounts.google.com', 'accounts.google.com'];
 /** Where Better Auth is served. */
 export const AUTH_BASE_PATH = '/api/auth';
+/** Where a sign-in that failed without a page to return to lands (Better Auth adds `error=<code>`). */
+export const AUTH_ERROR_PATH = '/account?signin=failed';
 /** Request header carrying the validated network identity to Better Auth's limiter (set by the route only). */
 export const AUTH_IP_HEADER = 'x-aviation-client-ip';
 /** Sessions last this long and are never extended. */
@@ -504,12 +508,16 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
       }),
     },
     onAPIError: {
-      errorURL: '/account?signin=failed',
+      errorURL: AUTH_ERROR_PATH,
       // Instead of Better Auth's console output: the status and the message only.
       onError(error) {
         const e = error as { status?: unknown; message?: unknown; name?: unknown };
         const status = typeof e?.status === 'string' ? e.status : typeof e?.name === 'string' ? e.name : 'error';
         log.warn({ auth: 'better-auth', status }, sanitizeAuthLogMessage(e?.message));
+        // An unexpected failure (a database error, say) becomes a plain 500 here: Better Auth's
+        // router would otherwise print the whole error, with a failed query's values, to the
+        // console. The route turns a callback's 500 into the sign-in error page.
+        if (!isAPIError(error)) throw new APIError('INTERNAL_SERVER_ERROR', { message: 'Sign-in could not complete. Try again.' });
       },
     },
     telemetry: { enabled: false },

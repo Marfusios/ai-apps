@@ -1435,7 +1435,9 @@ lock order in migration 0019.
   as its rate limiter's address (10 sign-ins and 10 callbacks per minute per identity,
   besides the API's own limit). Cross-site and non-JSON posts are refused before Better
   Auth, which checks the `Origin` itself when cookies are sent. Its log lines go to the
-  server log as their message only, email addresses replaced; telemetry is off.
+  server log as their message only, email addresses replaced, and nothing of Better
+  Auth's goes to the console; telemetry is off. A callback that fails unexpectedly (its
+  account deleted while it completes, say) lands on the sign-in error page.
 - **Signed in, AI.** A signed-in visitor's AI requests are billed to the account: its
   quota key is HMAC(issuer, sub) (`abuse_records`, usage buckets), its daily allowance 5
   for the first 3 days (from the account's creation), then 20, and 150 a month.
@@ -1486,7 +1488,8 @@ lock order in migration 0019.
   (`web/src/features/auth/visitor.ts`), as it does on sign-out, in every open tab of the
   site (a `BroadcastChannel`, with a random marker in local storage for browsers without
   one, for a tab that starts listening late and for a page restored from the
-  back/forward cache); an AI request still under way is discarded without
+  back/forward cache, which forgets anyway when it cannot read local storage; such a tab
+  then reads the account again); an AI request still under way is discarded without
   restoring a question, a retry key or a navigation. A deletion's re-authentication is
   counted per account (5 starts and 5 callbacks an hour), not per network.
 - **Backups** never hold the rows of the sign-in tables, the briefs or the idempotency
