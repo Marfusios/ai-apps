@@ -10,6 +10,7 @@ import {
   type RefinementChange,
 } from '../../../shared/contracts/briefs';
 import { ApiError, ReadTimeoutError, configQuery, isNotFound } from '../api';
+import { documentTitle } from '../brand';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { SearchBox } from '../components/SearchBox';
@@ -63,7 +64,7 @@ function Expired({ id }: { id: string }) {
   const input = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
   return (
     <div className="mx-auto w-full max-w-reading px-4 pt-8 pb-12 sm:pt-12">
-      <title>AI search expired · Aviation Casebook</title>
+      <title>{documentTitle('AI search expired')}</title>
       <div className="card px-5 py-4">
         <h1 className="font-serif text-[19px] leading-snug font-semibold">{EXPIRED_TITLE}</h1>
         <p className="mt-1 text-ui text-muted">{EXPIRED_TEXT}</p>
@@ -340,7 +341,7 @@ export function Brief() {
       <>
         {live}
         <div className="mx-auto w-full max-w-reading px-4 pt-6 pb-12">
-          <title>AI brief · Aviation Casebook</title>
+          <title>{documentTitle('AI brief')}</title>
           {loadError ? (
             <div className="card px-5 py-4">
               <p className="font-serif text-[19px] font-semibold">{LOAD_FAILED}</p>
@@ -436,7 +437,7 @@ export function Brief() {
     <>
       {live}
       <div className={cx('mx-auto w-full max-w-reading px-4 pt-6 pb-12 sm:pt-[26px]', compare.selected.length > 0 && 'pb-24')}>
-        <title>AI brief · Aviation Casebook</title>
+        <title>{documentTitle('AI brief')}</title>
         <Placard as="p">Your question</Placard>
         <h1 className="mt-1 font-serif text-[17px] leading-[1.3] sm:text-[19px]">{step.question}</h1>
         <StepSwitcher briefId={id} step={step.step} steps={step.steps} origin={step.origin} />

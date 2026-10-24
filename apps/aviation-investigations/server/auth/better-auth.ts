@@ -465,7 +465,7 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
   const { log } = deps;
 
   const auth = betterAuth({
-    appName: 'Aviation Casebook',
+    appName: 'AirCase',
     baseURL: appOrigin,
     basePath: AUTH_BASE_PATH,
     secret: config.auth.secret!,

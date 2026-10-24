@@ -1,10 +1,11 @@
 import { Link } from 'react-router';
+import { documentTitle } from '../brand';
 import { Placard } from '../components/Placard';
 
 export function NotFound() {
   return (
     <section className="mx-auto w-full max-w-reading px-4 py-14 sm:py-20">
-      <title>Page not found · Aviation Casebook</title>
+      <title>{documentTitle('Page not found')}</title>
       <div className="card px-6 py-6 sm:px-8 sm:py-7">
         <Placard as="p">Not found</Placard>
         <h1 className="mt-2 font-serif text-headline font-semibold tracking-headline">There is no page here.</h1>

@@ -234,7 +234,7 @@ test('trial used up: the button and counter change, and a click explains', async
     await page.getByRole('button', { name: `Ask AI · ${left} free` }).click();
     await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
     // Back home inside the app: the mock keeps the trial in this page's memory.
-    await page.getByRole('link', { name: 'Aviation Casebook' }).click();
+    await page.getByRole('link', { name: 'AirCase' }).click();
     await expect(page).toHaveURL(/\/$/);
   }
   await expect(page.getByRole('banner').getByRole('button', { name: 'Sign in to keep asking' })).toBeVisible();

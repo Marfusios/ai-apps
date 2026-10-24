@@ -28,6 +28,9 @@ test('search from Home shows highlighted rows from the index, under the CSP', as
   expect(response?.headers()['content-security-policy']).toContain("script-src 'self' 'sha256-");
   // The inline theme script ran (its hash is allowed).
   await expect(page.locator('html')).toHaveAttribute('data-theme', /^(day|night)$/);
+  // The page is AirCase, and the app has started: its header is on screen.
+  await expect(page).toHaveTitle('AirCase · aviation casebook');
+  await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase' })).toBeVisible();
   const box = page.getByRole('textbox', { name: 'Search NTSB investigations' });
   await box.fill('carburetor icing');
   await box.press('Enter');
@@ -36,6 +39,24 @@ test('search from Home shows highlighted rows from the index, under the CSP', as
   const rows = page.getByRole('list', { name: 'Results' }).getByRole('listitem');
   await expect(rows).toHaveCount(7);
   await expect(rows.first().locator('mark.hit').first()).toContainText(/carburetor/i);
+  expect(problems).toEqual([]);
+});
+
+test('the pages without data load under the CSP: AirCase in the title, the credit in the footer, no violation', async ({ page }) => {
+  const problems = await watchPage(page);
+  for (const [path, title] of [
+    ['/about', 'About · AirCase'],
+    ['/privacy', 'Privacy · AirCase'],
+    ['/dashboard', 'The record, in questions · AirCase'],
+    ['/no-such-page', 'Page not found · AirCase'],
+  ] as const) {
+    await page.goto(path);
+    await expect(page, path).toHaveTitle(title);
+    await expect(page.getByRole('contentinfo').getByRole('link', { name: 'm@mkotas.cz' }), path).toHaveAttribute('href', 'mailto:m@mkotas.cz');
+  }
+  // The About page says who built it, with the same address.
+  await page.goto('/about');
+  await expect(page.getByRole('main').getByText('AirCase is built by Mariusz Kotas')).toBeVisible();
   expect(problems).toEqual([]);
 });
 

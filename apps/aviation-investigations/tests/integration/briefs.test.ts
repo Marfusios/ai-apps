@@ -3420,7 +3420,7 @@ describe('content security policy with anonymous AI', () => {
   it('allows Cloudflare Turnstile’s script and frame, and nothing broader, on API responses and pages', async () => {
     const root = mkdtempSync(join(tmpdir(), 'aviation-briefs-web-'));
     try {
-      writeFileSync(join(root, 'index.html'), '<!doctype html><html><head><title>Aviation Casebook</title></head><body><div id="root"></div></body></html>');
+      writeFileSync(join(root, 'index.html'), '<!doctype html><html><head><title>AirCase · aviation casebook</title></head><body><div id="root"></div></body></html>');
       const h = harness(answering(), { webRoot: root });
       for (const url of ['/api/config', '/api/ai/status', '/']) {
         const r = await h.app.inject({ method: 'GET', url, remoteAddress: VISITOR, headers: { accept: 'text/html' } });

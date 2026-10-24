@@ -32,7 +32,7 @@ async function useUpTrial(page: Page): Promise<void> {
     await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
     await page.getByRole('button', { name: `Ask AI · ${left} free` }).click();
     await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
-    await page.getByRole('link', { name: 'Aviation Casebook' }).click();
+    await page.getByRole('link', { name: 'AirCase' }).click();
     await expect(page).toHaveURL(/\/$/);
   }
 }
@@ -44,7 +44,7 @@ test('trial used up: Continue with Google opens the sign-in dialog; a first sign
   await expect(page.getByText('That was your third free AI search.')).toBeVisible();
   await page.getByRole('button', { name: 'Continue with Google' }).click();
 
-  const dialog = page.getByRole('dialog', { name: 'Sign in to Aviation Casebook' });
+  const dialog = page.getByRole('dialog', { name: 'Sign in to AirCase' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("We keep your Google account ID, email and name, and how many AI searches you've used.");
   await expect(dialog).toContainText('Questions and answers are held for up to 24 hours to deliver them, then deleted.');
@@ -69,7 +69,7 @@ test('trial used up: Continue with Google opens the sign-in dialog; a first sign
 test('account page: name, email and searches left; sign out; delete asks once more', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('banner').getByRole('button', { name: 'Sign in' }).click();
-  await page.getByRole('dialog', { name: 'Sign in to Aviation Casebook' }).getByRole('button', { name: 'Continue with Google' }).click();
+  await page.getByRole('dialog', { name: 'Sign in to AirCase' }).getByRole('button', { name: 'Continue with Google' }).click();
   await page.getByRole('dialog', { name: 'Welcome aboard.' }).getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('banner').getByRole('link', { name: 'Account' }).click();
   await expect(page).toHaveURL(/\/account$/);
@@ -90,7 +90,7 @@ test('account page: name, email and searches left; sign out; delete asks once mo
 
   // Signing in again (not a first sign-in: no welcome), then deleting the account.
   await page.getByRole('main').getByRole('button', { name: 'Continue with Google' }).click();
-  await page.getByRole('dialog', { name: 'Sign in to Aviation Casebook' }).getByRole('button', { name: 'Continue with Google' }).click();
+  await page.getByRole('dialog', { name: 'Sign in to AirCase' }).getByRole('button', { name: 'Continue with Google' }).click();
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.getByRole('dialog', { name: 'Welcome aboard.' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Delete account' }).click();
@@ -103,7 +103,7 @@ test('deleting after an older sign-in confirms with Google first, then asks once
   await page.addInitScript(`window.sessionStorage.setItem('casebook-mock-deletion-reauth', '1');`);
   await page.goto('/');
   await page.getByRole('banner').getByRole('button', { name: 'Sign in' }).click();
-  await page.getByRole('dialog', { name: 'Sign in to Aviation Casebook' }).getByRole('button', { name: 'Continue with Google' }).click();
+  await page.getByRole('dialog', { name: 'Sign in to AirCase' }).getByRole('button', { name: 'Continue with Google' }).click();
   await page.getByRole('dialog', { name: 'Welcome aboard.' }).getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('banner').getByRole('link', { name: 'Account' }).click();
 
@@ -120,7 +120,7 @@ test('deleting after an older sign-in confirms with Google first, then asks once
 test('signing out forgets the brief and its AI context: going back shows nothing of it', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('banner').getByRole('button', { name: 'Sign in' }).click();
-  await page.getByRole('dialog', { name: 'Sign in to Aviation Casebook' }).getByRole('button', { name: 'Continue with Google' }).click();
+  await page.getByRole('dialog', { name: 'Sign in to AirCase' }).getByRole('button', { name: 'Continue with Google' }).click();
   await page.getByRole('dialog', { name: 'Welcome aboard.' }).getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
   await page.getByRole('button', { name: 'Ask AI · 5 left today' }).click();

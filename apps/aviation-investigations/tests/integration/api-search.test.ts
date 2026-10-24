@@ -120,7 +120,7 @@ beforeAll(async () => {
   dataset = await publishFixtureDataset(ingest, es, PREFIX);
   webRoot = mkdtempSync(join(tmpdir(), 'aviation-api-web-'));
   mkdirSync(join(webRoot, 'assets'));
-  writeFileSync(join(webRoot, 'index.html'), '<!doctype html><html><head><title>Aviation Casebook</title></head><body><div id="root"></div></body></html>');
+  writeFileSync(join(webRoot, 'index.html'), '<!doctype html><html><head><title>AirCase · aviation casebook</title></head><body><div id="root"></div></body></html>');
   writeFileSync(join(webRoot, 'assets', 'app-0123abcd.js'), 'console.log(1);\n');
   app = makeApp();
 }, 180_000);

@@ -1,13 +1,19 @@
-# Aviation Casebook
+# AirCase
 
-Find and compare NTSB aviation investigations using their evidence, findings, and
-probable causes. For flight instructors preparing case-based lessons and safety
-analysts exploring similar events.
+AirCase, an aviation casebook, finds and compares NTSB aviation investigations using
+their evidence, findings, and probable causes. For flight instructors preparing
+case-based lessons and safety analysts exploring similar events.
+
+The product was named Aviation Casebook until 2026-10-24 (UI_DESIGN §10). Only the name
+users see was changed: the directory `apps/aviation-investigations`, the package name
+`aviation-casebook`, database and index names, Compose projects, environment variables
+and the `casebook-*` keys in browser storage keep their names.
 
 **Status: Experimental.** Keyword search, case pages and the dashboard are live on the
 dev environment (API server, web client, container deployment, trial identity and AI
-status); AI briefs and Google sign-in are in progress (sign-in waits for an OAuth client)
-and there is no public deployment.
+status); AI briefs and Google sign-in are in progress (sign-in waits for an OAuth client).
+The live deployment is at `https://aircase.app` (public; AI features and Google sign-in are
+not enabled yet).
 
 - [Implementation design](docs/DESIGN.md): TypeScript stack, retrieval, UI,
   authentication, cost controls, deployment, and delivery milestones.
@@ -1094,7 +1100,11 @@ keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearT
 briefs, the step (`step`) and the brief a case or compare page was opened from
 (`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
 compare bar. The footer gives the snapshot's real age once it is more than 45 days old
-(DESIGN §4: monthly full snapshots). A page that fails unexpectedly (a render error, or
+(DESIGN §4: monthly full snapshots), and carries the owner's credit under it, "Built by
+Mariusz Kotas · m@mkotas.cz" with the address as a `mailto:` link, on every page and in
+print, the plain fallback page of a failed frame included (`CreditLine`; the name, address
+and product name are in `web/src/brand.ts`; the About page has a "Built by" section with
+the same credit). A page that fails unexpectedly (a render error, or
 code that could not load) shows "Something went wrong." with Try again (a reload) and
 Home inside the header and footer, never the router's developer page; if the frame
 itself fails, a plain frame with the wordmark does the same (`web/src/pages/ErrorPage.tsx`).
@@ -1391,8 +1401,15 @@ stalled connections are checked every 5 s.
   anonymous AI is configured (the page gets a Turnstile site key), `script-src` and a
   `frame-src` directive allow `https://challenges.cloudflare.com`, exactly what
   Cloudflare's Turnstile CSP reference lists for policies without script nonces;
-  otherwise neither appears. Zod runs without compiled parsers
-  (`web/src/zod-config.ts`), which would otherwise probe `new Function`. Also
+  otherwise neither appears. Zod runs without compiled parsers: Zod probes `new Function`
+  when it builds an object schema, and a browser reports that blocked probe as a CSP
+  violation even though Zod catches the error. The production build puts Zod and the
+  shared contracts in a chunk that the entry imports, and that chunk runs before the
+  entry's own code, so the client's `zod` imports are mapped (vite.config.ts) to
+  `web/src/zod-jitless.ts`, which sets `jitless` between Zod and every schema.
+  `tests/unit/web-bundle-eval.test.ts` builds the client and starts it in jsdom with
+  `Function` recording its callers, and the real-server end-to-end tests fail on any
+  CSP violation. Also
   `X-Content-Type-Options`, `Referrer-Policy: same-origin`, `Permissions-Policy`,
   `X-Frame-Options`, and HSTS when `APP_URL` is HTTPS.
 

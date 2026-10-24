@@ -4,6 +4,7 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { BriefIdSchema, MAX_BRIEF_STEPS } from '../../../shared/contracts/briefs';
 import { NtsbNoSchema } from '../../../shared/contracts/common';
 import { caseQuery, isNotFound } from '../api';
+import { PRODUCT_NAME, documentTitle } from '../brand';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { cx } from '../lib/cx';
@@ -19,7 +20,9 @@ import { useCompareSelection } from '../features/explore/url-state';
 export function PrintHeader({ title, cases, snapshotDate }: { title: string; cases: readonly string[]; snapshotDate: string | null }) {
   return (
     <div data-print="only" className="mb-4 border-b border-ink pb-2 text-meta">
-      <p className="font-bold tracking-caps uppercase">Aviation Casebook · {title}</p>
+      <p className="font-bold tracking-caps uppercase">
+        {PRODUCT_NAME} · {title}
+      </p>
       <p>
         {cases.join(' · ')}
         {snapshotDate && ` · NTSB data snapshot ${formatChartDate(snapshotDate)}`}
@@ -100,7 +103,7 @@ export function CasePage() {
   const notFound = !valid || isNotFound(query.error);
   return (
     <div className={cx('mx-auto w-full max-w-case px-4 pt-5 pb-12 sm:pt-7', compare.selected.length > 0 && 'pb-24')}>
-      <title>{query.data ? `${query.data.ntsbNo}: ${query.data.headline} · Aviation Casebook` : `${ntsbNo} · Aviation Casebook`}</title>
+      <title>{documentTitle(query.data ? `${query.data.ntsbNo}: ${query.data.headline}` : ntsbNo)}</title>
       <nav data-print="hide" className="mb-3 text-ui">
         {from ? (
           <Link to={from} className="text-blue hover:underline">

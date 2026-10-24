@@ -6,6 +6,19 @@ async function countLine(page: Page) {
   return page.locator('p[aria-live="polite"]').filter({ hasText: /investigations?$/ });
 }
 
+test('the home page is AirCase: its tab title, the wordmark, and the credit in the footer', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveTitle('AirCase · aviation casebook');
+  await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase' })).toHaveAttribute('href', '/');
+  const footer = page.getByRole('contentinfo');
+  await expect(footer).toContainText('Built by Mariusz Kotas');
+  // The address is a mailto link and, like the footer's other links, reachable with the keyboard.
+  const credit = footer.getByRole('link', { name: 'm@mkotas.cz' });
+  await expect(credit).toHaveAttribute('href', 'mailto:m@mkotas.cz');
+  await credit.focus();
+  await expect(credit).toBeFocused();
+});
+
 test('search carburetor icing shows count line and rows', async ({ page }) => {
   await page.goto('/');
   const box = page.getByRole('textbox', { name: 'Search NTSB investigations' });

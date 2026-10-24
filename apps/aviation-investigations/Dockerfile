@@ -1,4 +1,4 @@
-# Aviation Casebook application image. One image serves the `app` (Fastify API
+# AirCase application image. One image serves the `app` (Fastify API
 # plus the built web client) and the worker CLI (`ingest`, `migrate`); see
 # compose.yaml and docs/RUNBOOK.md. Build it with `pnpm app:up` or
 # `docker compose build app`.

@@ -1,10 +1,11 @@
-# Aviation Casebook: interface design
+# AirCase: interface design
 
 **Design, agreed 2026-10-21.** The owner chose a direction for each screen from
-side-by-side mockups. This document replaces the visual direction in
-[DESIGN.md §10](DESIGN.md#10-interface-and-dashboard-direction). Everything else
-in DESIGN.md stays authoritative, including scope, the AI pipeline, limits,
-privacy, and security. Where this document quotes a limit or rule, DESIGN.md wins
+side-by-side mockups. On 2026-10-24 the owner renamed the product AirCase and
+asked for a credit line in the footer (§10). This document replaces the visual
+direction in [DESIGN.md §10](DESIGN.md#10-interface-and-dashboard-direction).
+Everything else in DESIGN.md stays authoritative, including scope, the AI
+pipeline, limits, privacy, and security. Where this document quotes a limit or rule, DESIGN.md wins
 if the two ever disagree.
 
 Decisions are marked:
@@ -217,8 +218,12 @@ AI CLASSIFIED".
   `5.1 FH`, `1ST FLIGHT` and `≤ 17 DAYS`. They are AI-extracted, so they are
   always magenta.
 - **Status badge:** `COMPLETED` in small bold caps with a 1px ink outline.
-- **Wordmark:** "AVIATION CASEBOOK" in B612 bold, letter-spacing 0.14em, chart
-  blue. There is no logo glyph in the header.
+- **Wordmark:** "AIRCASE" (the text is "AirCase"; CSS sets the capitals) in B612
+  bold, 13px, letter-spacing 0.2em, chart blue. One short word, so it is the same
+  at every width, and it is wider-spaced and a little larger than the two-word
+  mark it replaced (owner decision of 2026-10-24, §10). At night, where it is an
+  engraved placard, the first letter gets the same space as the tracking after the
+  last, so the text sits centred in the box. There is no logo glyph in the header.
 
 ### 2.6 Components and controls
 
@@ -306,11 +311,17 @@ Switching themes (Proposed):
 - Sign in, or an account menu when signed in
 
 **Footer** (all pages): "Not an NTSB service · Data: NTSB, snapshot {date} ·
-Privacy · About". The snapshot date comes from the ingestion run. If the snapshot
-is older than expected, the footer shows its real age (DESIGN §4). As built (Task
-22, Proposed): more than 45 days after a snapshot, against DESIGN §4's monthly full
-snapshots, the date is followed by "(46 days old)", and from two whole months by
-"(2 months old)".
+Privacy · About", and under it a quieter line, "Built by Mariusz Kotas ·
+m@mkotas.cz", in the same style, with the address as a `mailto:` link (Owner,
+2026-10-24; it is public on purpose, not personal data to remove). It shows on
+every page, on a phone, at night and in print (the plain fallback page of a
+failed app frame has the line too), and uses the footer's own tokens (muted
+text, the blue link), so contrast is that of those pairs (§2.2). The link is
+reachable by keyboard like Privacy and About. The snapshot date comes from the
+ingestion run. If the snapshot is older than expected, the footer shows its real
+age (DESIGN §4). As built (Task 22, Proposed): more than 45 days after a
+snapshot, against DESIGN §4's monthly full snapshots, the date is followed by
+"(46 days old)", and from two whole months by "(2 months old)".
 
 **Routes and URL state** (Proposed). Every view a user might share or refresh
 lives in the URL:
@@ -825,7 +836,7 @@ then state the processed cohort (DESIGN §5).
 
 ### 4.8 Sign-in, account and privacy (Proposed)
 
-- **Sign-in dialog:** the title "Sign in to Aviation Casebook", a "Continue with
+- **Sign-in dialog:** the title "Sign in to AirCase", a "Continue with
   Google" button, and then what is kept:
   - "We keep your Google account ID, email and name, and how many AI searches
     you've used."
@@ -859,6 +870,14 @@ then state the processed cohort (DESIGN §5).
   the AI loads Cloudflare's script and frame from challenges.cloudflare.com, only
   when an AI request needs a check, and Cloudflare may set its own cookies for it.
   The draft says so.
+- **About page** (`/about`, a reading column like Privacy): "About AirCase" says
+  what AirCase is (an aviation casebook for flight instructors and safety
+  analysts), what it does today (keyword search with filters, a page for each case,
+  Compare for up to four cases, the dashboard; AI features are not available yet),
+  where the data comes from (the NTSB database, with the snapshot and coverage), what
+  it is not (not an NTSB service, no operational advice), and, under "Built by", that
+  it is built by Mariusz Kotas with the contact address m@mkotas.cz as a `mailto:`
+  link (Owner, 2026-10-24). The browser tab reads "About · AirCase".
 
 ## 5. States and copy (Owner-approved)
 
@@ -980,8 +999,8 @@ Breakpoints:
 
 On a phone:
 
-- **Header:** a short wordmark "CASEBOOK", the AI counter ("AI left 2 of 3"),
-  and a ☰ menu holding the nav, Day/Night switch and Sign in.
+- **Header:** the wordmark "AIRCASE" (the same as on desktop), the AI counter
+  ("AI left 2 of 3"), and a ☰ menu holding the nav, Day/Night switch and Sign in.
 - **Filters:** a blue filled "Filters (n)" chip at the start of the chip row
   opens a bottom sheet. The sheet has a grab handle, "Filters · Clear all", the
   same facet bars, and a sticky "Show 58 investigations" button.
@@ -1006,7 +1025,8 @@ browser with the same stylesheet. Print uses:
   glyph, so AI content stays identifiable in grey or black
 - hatching kept for cautions
 - a header with the page title, case numbers, snapshot date and the page URL
-- the footer "Not an NTSB service · Source: NTSB · printed {date}"
+- the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
+  line "Built by Mariusz Kotas · m@mkotas.cz" (the address prints as text)
 - strips that never split across pages
 
 ## 8. Accessibility (Proposed)
@@ -1135,3 +1155,25 @@ counting rules.
   With the default Opus answer model, anonymous visitors share about 7 AI
   searches a day, so the "free searches paused" state will still be common.
   The owner picks the production answer model from the evaluation results.
+
+**Owner decisions** (2026-10-24):
+
+- The product is renamed **AirCase**, with the tagline **"aviation casebook"**; its
+  live domain is `https://aircase.app`. The user-visible name is AirCase everywhere:
+  the header wordmark, every page title ("{page} · AirCase"), the sign-in dialog
+  ("Sign in to AirCase"), the error and not-found pages, the print header and the
+  case page's provenance line. Where the long form helps it reads "AirCase · aviation casebook":
+  the home page's title and the page before the script runs. The wordmark keeps the
+  Sectional typography (§2.5) with letter-spacing adjusted for the shorter word.
+  Code identifiers, package names, the `apps/aviation-investigations` directory,
+  database and index names, Compose projects, environment variables and the stored
+  `casebook-*` browser keys are not renamed. The working mockups in `docs/mockups/`
+  carry the new name too; where they differ from this document, this document wins.
+- The footer says the app was built by **Mariusz Kotas**, with the contact e-mail
+  **m@mkotas.cz** as a `mailto:` link (§3), and the About page has a short "Built
+  by" section with the same name and address. This is intentional public
+  information requested by the owner, not personal data to scrub.
+- The About page describes AirCase as it is: keyword search with filters, a page
+  for each case, Compare (up to four cases) and the dashboard, with the NTSB data
+  source and attribution; it says the AI features are not available yet, and
+  promises none.

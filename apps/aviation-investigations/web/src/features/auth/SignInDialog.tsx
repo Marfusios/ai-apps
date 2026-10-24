@@ -5,11 +5,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Link, useLocation, useNavigate } from 'react-router';
 import { SIGN_IN_ERROR_PARAM } from '../../../../shared/contracts/account';
 import { configQuery } from '../../api';
+import { PRODUCT_NAME } from '../../brand';
 import { cx } from '../../lib/cx';
 import { returnPath, startGoogleSignIn } from './api';
 
 /** UI_DESIGN §4.8 copy (the sign-in dialog). */
-export const SIGN_IN_TITLE = 'Sign in to Aviation Casebook';
+export const SIGN_IN_TITLE = `Sign in to ${PRODUCT_NAME}`;
 export const CONTINUE_WITH_GOOGLE = 'Continue with Google';
 export const KEPT = [
   "We keep your Google account ID, email and name, and how many AI searches you've used.",
@@ -99,7 +100,7 @@ export interface SignInDialogProps {
 }
 
 /**
- * "Sign in to Aviation Casebook" (UI_DESIGN §4.8): Continue with Google, then what is
+ * "Sign in to AirCase" (UI_DESIGN §4.8): Continue with Google, then what is
  * kept, and the privacy notice. A modal dialog: focus moves to the title, Esc closes and
  * focus returns to the control that opened it.
  */

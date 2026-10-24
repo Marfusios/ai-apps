@@ -1,4 +1,4 @@
-# Aviation Casebook: implementation design
+# AirCase: implementation design
 
 **Draft, updated 2026-10-21.** Initial data research: 2026-10-16. Design only;
 the application is not built. Tracing/evaluation decision: self-hosted Langfuse.

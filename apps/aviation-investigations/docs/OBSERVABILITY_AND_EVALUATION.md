@@ -1,4 +1,4 @@
-# Aviation Casebook: tracing and evaluation
+# AirCase: tracing and evaluation
 
 **Decision, 2026-10-21.** Use self-hosted **Langfuse** for the developer dashboard,
 tracing, scores, datasets, and experiments. Implement aviation-specific evaluators
