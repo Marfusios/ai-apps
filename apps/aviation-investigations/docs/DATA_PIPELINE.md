@@ -226,7 +226,10 @@ exception is a guarded deletion: `prune_generation` removes a whole generation.
   `seal_generation` runs inside the load transaction. `record_verification`,
   `publish_manifest` and `prune_generation` take one shared advisory lock, which
   verification also holds. `pin_generation` and `unpin_generation` take the same lock
-  but only protect a generation from pruning; they never change its status.
+  but only protect a generation from pruning; they never change its status. The
+  connection that holds the lock for verification, publication and pruning bounds each
+  statement, the wait for the lock included, at 10 minutes, so a stalled statement
+  fails instead of blocking the others until someone interrupts it.
 - A sealed generation is `loaded`, and verification makes it `verified` or `failed`.
   Only a `verified` generation can be published. A `failed` one must pass
   verification first; there is no direct `failed → published` transition.
@@ -263,7 +266,8 @@ run it after publishing a new generation. It:
   retired ones;
 - delete never-published generations that have failed, at once;
 - delete other never-published generations 24 hours (the default grace) after their
-  seal or latest verification;
+  seal, latest verification or latest index build whose index still exists, so a
+  generation whose (paid) indices await publication stays;
 - never delete loading, active or pinned generations, or a generation that an AI
   brief created in the last 24 hours cites (its later steps read that generation's
   manifest and cases; `generations_cited_by_live_briefs()`, migration 0021). Such a

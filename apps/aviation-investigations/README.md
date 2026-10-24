@@ -245,8 +245,9 @@ Request-path reads keep their own, shorter bound (the cases index lookup: 2 s).
 - **Retention.** `pruneGenerations` keeps the last two published generations by
   publication time (the active one first) and deletes other published or retired
   ones. Never-published generations are deleted when `failed`, or when they were
-  sealed or last verified more than 24 hours ago (configurable), so a load that
-  committed late or a generation awaiting its indices stays. `loading`, active and
+  sealed, last verified and last indexed (an index build whose index still exists)
+  more than 24 hours ago (configurable), so a load that committed late or a
+  generation awaiting its indices or their publication stays. `loading`, active and
   pinned generations are never deleted, nor generations that an unexpired AI brief
   cites (`generations_cited_by_live_briefs()`, migration 0021: a brief's later steps
   read its generation for up to 24 hours). `pinGeneration`/`unpinGeneration` write

@@ -54,23 +54,42 @@ async function call(db: DbOrTx | NodePgDatabase<Schema>, query: SQL): Promise<Re
 }
 
 /**
+ * Bound on every statement of the lifecycle connection, the wait for the lock included.
+ * Verifying generation 1 takes about 7 s; a statement that stalls must not hold the lock,
+ * and with it every publication, pruning and pin, until an operator interrupts it.
+ */
+export const LIFECYCLE_STATEMENT_TIMEOUT_MS = 10 * 60_000;
+
+/**
  * Run `fn` on one dedicated connection that holds the lifecycle advisory lock for its
  * whole duration (session level, so a transaction started inside `fn` takes its
- * snapshot only after the lock is held).
+ * snapshot only after the lock is held). Every statement on it is bounded by
+ * `statementTimeoutMs` (default `LIFECYCLE_STATEMENT_TIMEOUT_MS`); the connection goes
+ * back to the pool without the bound, or is discarded (which also releases the lock) if
+ * unlocking or resetting fails.
  */
 export async function withLifecycleLock<T>(
   db: Db,
   fn: (q: NodePgDatabase<Schema>, client: import('pg').PoolClient) => Promise<T>,
+  opts: { statementTimeoutMs?: number } = {},
 ): Promise<T> {
+  const timeoutMs = opts.statementTimeoutMs ?? LIFECYCLE_STATEMENT_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error('statementTimeoutMs must be a positive integer');
   const client = await db.$client.connect();
   let locked = false;
+  let broken: Error | undefined;
+  const discard = (e: unknown): void => {
+    broken = e instanceof Error ? e : new Error(String(e));
+  };
   try {
+    await client.query(`SET statement_timeout = ${timeoutMs}`);
     await client.query('SELECT pg_advisory_lock($1)', [LIFECYCLE_LOCK_KEY]);
     locked = true;
     return await fn(drizzle({ client, schema }), client);
   } finally {
-    if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]).catch(() => undefined);
-    client.release();
+    if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]).catch(discard);
+    if (!broken) await client.query('RESET statement_timeout').catch(discard);
+    client.release(broken);
   }
 }
 
@@ -187,8 +206,9 @@ export interface PruneReport {
  * `published_at` (the active one first) and delete every other published or retired
  * generation. Never-published generations are deleted when `failed`, or when sealed
  * and unverified/verified for longer than the grace period (counted from the seal,
- * i.e. the load's commit, or the latest verification), so a slow load committing
- * late or a generation awaiting its indices is kept. `loading`, active and pinned
+ * i.e. the load's commit, the latest verification or the latest index build whose index
+ * still exists), so a slow load committing late or a generation awaiting publication
+ * of its (possibly paid) indices is kept. `loading`, active and pinned
  * generations are never deleted, and neither is a generation an unexpired AI brief cites
  * (`generations_cited_by_live_briefs()`, migration 0021; amendment A6): briefs are made
  * only on the active generation, which publication changes only under the lifecycle
@@ -207,7 +227,9 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
             exists (select 1 from generation_pins p where p.generation_id = g.id
               and (p.pinned_until is null or p.pinned_until > now())) as pinned,
             g.id in (select b from generations_cited_by_live_briefs() as b) as cited,
-            greatest(g.sealed_at, g.verified_at) < now() - make_interval(secs => ${graceHours * 3600}) as past_grace
+            greatest(g.sealed_at, g.verified_at,
+              (select max(b.created_at) from index_builds b where b.generation_id = g.id and b.deleted_at is null))
+              < now() - make_interval(secs => ${graceHours * 3600}) as past_grace
           from dataset_generations g left join dataset_manifests m on m.generation_id = g.id
           order by m.active desc nulls last, m.published_at desc nulls last, g.id`,
     );
