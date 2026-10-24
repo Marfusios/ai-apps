@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { BriefIdSchema, MAX_BRIEF_STEPS } from '../../../shared/contracts/briefs';
 import { NtsbNoSchema } from '../../../shared/contracts/common';
+import { pageTitle } from '../../../shared/page-titles';
 import { caseQuery, isNotFound } from '../api';
-import { PRODUCT_NAME, documentTitle } from '../brand';
+import { PRODUCT_NAME } from '../brand';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { cx } from '../lib/cx';
@@ -103,7 +104,7 @@ export function CasePage() {
   const notFound = !valid || isNotFound(query.error);
   return (
     <div className={cx('mx-auto w-full max-w-case px-4 pt-5 pb-12 sm:pt-7', compare.selected.length > 0 && 'pb-24')}>
-      <title>{documentTitle(query.data ? `${query.data.ntsbNo}: ${query.data.headline}` : ntsbNo)}</title>
+      <title>{pageTitle({ kind: 'case', ntsbNo: query.data?.ntsbNo ?? ntsbNo, detail: query.data ?? null })}</title>
       <nav data-print="hide" className="mb-3 text-ui">
         {from ? (
           <Link to={from} className="text-blue hover:underline">

@@ -14,8 +14,8 @@ import {
   type SearchRequest,
   type SearchResponse,
 } from '../../../shared/contracts/search';
+import { pageTitle } from '../../../shared/page-titles';
 import { searchQuery } from '../api';
-import { documentTitle } from '../brand';
 import { Chip } from '../components/Chip';
 import { SearchBox } from '../components/SearchBox';
 import { cx } from '../lib/cx';
@@ -324,7 +324,7 @@ export function Explore() {
 
   return (
     <div className={cx('mx-auto w-full max-w-page px-4 pt-4 pb-10 sm:px-[26px] sm:pt-[22px]', compare.selected.length > 0 && 'pb-24')}>
-      <title>{q ? documentTitle(`“${q}”`, 'Explore') : documentTitle('Explore')}</title>
+      <title>{pageTitle({ kind: 'explore', q })}</title>
       <h1 className="sr-only">Explore NTSB investigations</h1>
       <div className="lg:grid lg:grid-cols-[236px_minmax(0,1fr)] lg:gap-7">
         <aside aria-label="Filters" className="hidden lg:block">

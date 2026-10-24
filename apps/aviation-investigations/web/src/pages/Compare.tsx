@@ -4,8 +4,8 @@ import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
 import type { CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
 import type { CaseDetail } from '../../../shared/contracts/cases';
+import { compareHeading, pageTitle } from '../../../shared/page-titles';
 import { caseQuery, configQuery, isNotFound } from '../api';
-import { documentTitle } from '../brand';
 import { Button } from '../components/Button';
 import { DataCaution } from '../components/DataCaution';
 import { EVIDENCE_WORDS, GlyphMark } from '../components/EvidenceGlyph';
@@ -388,12 +388,12 @@ export function Compare() {
   }
   const loaded = strips.map((s) => s.query.data).filter((d): d is CaseDetail => d !== undefined);
   const same = loaded.length === list.length ? sameInAll(loaded) : [];
-  const title = `Comparing ${list.length} ${list.length === 1 ? 'case' : 'cases'}`;
+  const title = compareHeading(list.length);
   const back = from ?? `/explore${list.length ? `?${CASES_PARAM}=${list.join(',')}` : ''}`;
 
   return (
     <div className="mx-auto w-full max-w-page px-4 pt-5 pb-12 sm:px-[26px] sm:pt-[22px]">
-      <title>{documentTitle(title)}</title>
+      <title>{pageTitle({ kind: 'compare', count: list.length })}</title>
       <PrintHeader title={title} cases={list} snapshotDate={config.data?.snapshotDate ?? null} />
       <nav data-print="hide" className="text-ui">
         <Link to={back} className="text-blue hover:underline">

@@ -1,16 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
+import { pageTitle } from '../../../shared/page-titles';
 import { configQuery } from '../api';
-import { CREDIT_EMAIL, CREDIT_EMAIL_HREF, CREDIT_NAME, CREDIT_SITE, CREDIT_SITE_HREF, PRODUCT_NAME, documentTitle } from '../brand';
+import { CREDIT_EMAIL, CREDIT_EMAIL_HREF, CREDIT_NAME, CREDIT_SITE, CREDIT_SITE_HREF, PRODUCT_NAME } from '../brand';
 import { Placard } from '../components/Placard';
 import { formatChartDate, formatCount } from '../lib/format';
 
-/** `tabTitle` is the browser tab's page name when it differs from the heading ("About" for "About AirCase"). */
-export function TextPage({ eyebrow, title, tabTitle = title, children }: { eyebrow: string; title: string; tabTitle?: string; children: ReactNode }) {
+/** `tabTitle` is the browser tab's whole title, the route's shared one (shared/page-titles.ts). */
+export function TextPage({ eyebrow, title, tabTitle, children }: { eyebrow: string; title: string; tabTitle: string; children: ReactNode }) {
   return (
     <section className="mx-auto w-full max-w-reading px-4 py-10 sm:py-14">
-      <title>{documentTitle(tabTitle)}</title>
+      <title>{tabTitle}</title>
       <div className="card px-6 py-6 sm:px-8 sm:py-7">
         <Placard as="p">{eyebrow}</Placard>
         <h1 className="mt-2 font-serif text-headline font-semibold tracking-headline">{title}</h1>
@@ -34,7 +35,7 @@ export function About() {
   const config = useQuery(configQuery());
   const coverage = config.data?.coverage;
   return (
-    <TextPage eyebrow="About" title={`About ${PRODUCT_NAME}`} tabTitle="About">
+    <TextPage eyebrow="About" title={`About ${PRODUCT_NAME}`} tabTitle={pageTitle({ kind: 'about' })}>
       <p>
         {PRODUCT_NAME} is an aviation casebook. It helps flight instructors and safety analysts find and compare NTSB
         aviation investigations by what investigators established: the probable cause, the findings and the facts

@@ -1,3 +1,4 @@
+import { pageTitle } from '../../../shared/page-titles';
 import { PRIVACY_NOTICE } from '../../../shared/privacy';
 import { TextPage } from './About';
 
@@ -11,7 +12,7 @@ import { TextPage } from './About';
  */
 export function Privacy() {
   return (
-    <TextPage eyebrow="Privacy" title="Privacy">
+    <TextPage eyebrow="Privacy" title="Privacy" tabTitle={pageTitle({ kind: 'privacy' })}>
       <p>
         Searching, reading cases, comparing and the dashboard need no account. The site sets no tracking or advertising
         cookies.

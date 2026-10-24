@@ -9,6 +9,7 @@ import {
   type BriefStepResponse,
   type RefinementChange,
 } from '../../../shared/contracts/briefs';
+import { pageTitle } from '../../../shared/page-titles';
 import { ApiError, ReadTimeoutError, configQuery, isNotFound } from '../api';
 import { documentTitle } from '../brand';
 import { Button } from '../components/Button';
@@ -341,7 +342,7 @@ export function Brief() {
       <>
         {live}
         <div className="mx-auto w-full max-w-reading px-4 pt-6 pb-12">
-          <title>{documentTitle('AI brief')}</title>
+          <title>{pageTitle({ kind: 'brief' })}</title>
           {loadError ? (
             <div className="card px-5 py-4">
               <p className="font-serif text-[19px] font-semibold">{LOAD_FAILED}</p>
@@ -437,7 +438,7 @@ export function Brief() {
     <>
       {live}
       <div className={cx('mx-auto w-full max-w-reading px-4 pt-6 pb-12 sm:pt-[26px]', compare.selected.length > 0 && 'pb-24')}>
-        <title>{documentTitle('AI brief')}</title>
+        <title>{pageTitle({ kind: 'brief' })}</title>
         <Placard as="p">Your question</Placard>
         <h1 className="mt-1 font-serif text-[17px] leading-[1.3] sm:text-[19px]">{step.question}</h1>
         <StepSwitcher briefId={id} step={step.step} steps={step.steps} origin={step.origin} />
