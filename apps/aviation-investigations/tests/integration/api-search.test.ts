@@ -506,7 +506,7 @@ describe('http', () => {
   });
 
   it('61st request in a minute is 429 with retryAfter', async () => {
-    const limited = makeApp({ rateLimit: { limit: 60, windowMs: 60_000 } });
+    const limited = makeApp({ rateLimit: { limit: 60, windowMs: 60_000 }, now: () => 0 });
     for (let i = 0; i < 60; i++) expect((await get('/api/config', { app: limited })).status).toBe(200);
     const r = await get('/api/config', { app: limited });
     expect(r.status).toBe(429);
@@ -671,8 +671,9 @@ describe('request targets the router decodes', () => {
     return { status: Number(statusLine.split(' ')[1]), headers: parsed, body, json };
   }
 
+  // A burst test must freeze time: real searches can take long enough to refill a token.
   it('/%61pi/search shares /api/search’s rate limit: the 61st request in the window is 429', async () => {
-    const limited = makeApp({ rateLimit: { limit: 60, windowMs: 60_000 } });
+    const limited = makeApp({ rateLimit: { limit: 60, windowMs: 60_000 }, now: () => 0 });
     for (let i = 0; i < 60; i++) {
       const url = i % 2 === 0 ? '/api/search?q=carb' : '/%61pi/search?q=carb';
       expect((await get(url, { app: limited })).status, `${i} ${url}`).toBe(200);
