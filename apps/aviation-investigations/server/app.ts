@@ -64,6 +64,7 @@ import { isNoStoreRoute, PRIVATE_NO_STORE } from './http/cache-headers.js';
 import { makeClientErrorHandler } from './http/client-error.js';
 import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
+import { routerPath } from './http/request-target.js';
 import { isHttpsUrl, securityHeaders } from './http/security-headers.js';
 import { SearchIncompleteError, SearchTimedOutError } from './search/timeout.js';
 import { accountRoutes } from './routes/account.js';
@@ -172,21 +173,10 @@ function accessOf(route: string | undefined, method = 'GET'): Access {
 }
 
 /**
- * The path the router sees: the request target without an absolute-form scheme and
- * authority or the query, percent-decoded (left as is when malformed). Used only to
- * choose a JSON or a page 404; access control uses the matched route.
+ * An API path, as the router sees it (`routerPath`, server/http/request-target.ts). Used to
+ * choose a JSON or a page 404 and which responses are API responses; access control uses the
+ * matched route.
  */
-export function routerPath(target: string): string {
-  let path = target.replace(/^https?:\/\/[^/?#]*/i, '');
-  path = path.split(/[?#]/, 1)[0] ?? '';
-  if (!path.startsWith('/')) path = `/${path}`;
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return path;
-  }
-}
-
 const isApiPath = (path: string): boolean => path === '/api' || path.startsWith('/api/');
 
 /**

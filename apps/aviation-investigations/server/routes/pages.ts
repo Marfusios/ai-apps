@@ -25,8 +25,10 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { DatasetUnavailableError } from '../dataset.js';
 import { sendError } from '../http/reply.js';
+import { routerPath, targetQuery } from '../http/request-target.js';
 import { contentSecurityPolicy } from '../http/security-headers.js';
-import { pageHead, pagePolicy, renderPage, splitTemplate, type PageRoute } from '../seo/head.js';
+import { pageHead, pagePolicy, type PageRoute } from '../seo/head.js';
+import { renderPage, splitTemplate } from '../seo/page-template.js';
 import { robotsTxt } from '../seo/robots.js';
 import { SitemapStore, readSitemapCases, sitemapFile, type Sitemaps } from '../seo/sitemaps.js';
 import { findCase } from './cases.js';
@@ -66,20 +68,13 @@ export function acceptsPage(accept: string | undefined): boolean {
   return types.includes('text/html') || types.includes('*/*');
 }
 
-/** The request target's path, as sent: without an absolute-form scheme and authority, the query or a fragment. */
-function pathOf(target: string): string {
-  return target.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '').split(/[?#]/, 1)[0] ?? '';
-}
-
+/** A request target whose path (as the router sees it, server/http/request-target.ts) ends in a slash. */
 const hasTrailingSlash = (target: string): boolean => {
-  const path = pathOf(target);
+  const path = routerPath(target);
   return path.length > 1 && path.endsWith('/');
 };
 
-function queryOf(target: string): URLSearchParams {
-  const at = target.indexOf('?');
-  return new URLSearchParams(at < 0 ? '' : (target.slice(at + 1).split('#', 1)[0] ?? ''));
-}
+const queryOf = (target: string): URLSearchParams => new URLSearchParams(targetQuery(target));
 
 /** The pages whose head needs no database read, by route pattern. */
 const STATIC_PAGES: ReadonlyArray<readonly [string, (request: FastifyRequest) => PageRoute]> = [
