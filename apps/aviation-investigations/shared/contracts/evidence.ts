@@ -128,7 +128,7 @@ export const EvidenceExcerptSchema = z
     paragraph: SpanSchema,
     seed: SpanSchema,
     /** The paragraph's text: exactly the section text in `paragraph`. */
-    text: z.string().min(1).max(20_000),
+    text: z.string().min(1).max(200_000),
     /** Offsets into `text`, sorted and non-overlapping. */
     highlights: z.array(EvidenceHighlightSchema).max(200),
   })
@@ -153,7 +153,7 @@ export const ProbableCauseVariantSchema = z.strictObject({
   scope: z.enum(['event', 'aircraft']),
   aircraftKey: z.number().int().nonnegative().nullable(),
   revision: Sha256Schema,
-  text: z.string().min(1).max(20_000),
+  text: z.string().min(1).max(200_000),
 });
 export type ProbableCauseVariant = z.infer<typeof ProbableCauseVariantSchema>;
 

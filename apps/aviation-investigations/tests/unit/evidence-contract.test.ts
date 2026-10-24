@@ -75,6 +75,11 @@ describe('evidence.v1 contract', () => {
     expect(CreateEvidenceRequestSchema.safeParse({ ...edited, question: 'x' }).success).toBe(false);
   });
 
+  it('keeps a long whole paragraph rather than cropping it for a card', () => {
+    const text = 'NTSB text. '.repeat(3000);
+    expect(EvidenceExcerptSchema.safeParse({ ...excerpt, paragraph: { start: 0, end: text.length }, seed: { start: 0, end: 100 }, text, highlights: [] }).success).toBe(true);
+  });
+
   it('labels every unchecked kind, and the notice names timing, causes and absences', () => {
     for (const kind of UNCHECKED_KINDS) expect(UNCHECKED_LABEL[kind]).toMatch(/\S/);
     expect(EVIDENCE_NOTICE).toMatch(/timing/);
