@@ -81,6 +81,17 @@ const short = (commit: string | null): string | null => (commit ? commit.slice(0
  * commit. A missing image is never built from another commit (a rollback to a removed
  * image would otherwise start the current code under the old name).
  */
+/**
+ * Whether the checkout of `dir` differs from its HEAD within `dir`, the image's build context:
+ * changed, staged or untracked files that git does not ignore. An untracked source file would
+ * enter an image recorded as the tagged commit (re-check N9). Unknown (not a checkout, git
+ * failing) counts as dirty.
+ */
+export function checkoutDirty(dir: string): boolean {
+  const r = spawnSync('git', ['-C', dir, 'status', '--porcelain', '--untracked-files=all', '--', '.'], { encoding: 'utf8' });
+  return r.status !== 0 || r.stdout.trim() !== '';
+}
+
 export function liveImagePlan(tag: string, rebuild: boolean, f: LiveImageFacts): 'use' | 'build' {
   if (!f.tagCommit) {
     throw new UsageError(`live needs its release tagged in git: git tag ${tag} <commit> (docs/RUNBOOK.md, "Deploying an environment")`);
@@ -319,7 +330,7 @@ function main(): number {
       image: inspected.status === 0 ? { revision: /^[0-9a-f]{40}$/.test(revision) ? revision : null } : null,
       tagCommit: git('rev-parse', '-q', '--verify', `refs/tags/${appVersion}^{commit}`),
       head,
-      dirty: (git('status', '--porcelain', '--untracked-files=no') ?? 'unknown') !== '',
+      dirty: checkoutDirty(APP_DIR),
     };
   }
   const plan = planCompose(command, args, processEnv, fileEnvs, live);

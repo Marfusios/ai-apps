@@ -406,8 +406,10 @@ without `TRUSTED_PROXY_CIDRS`.
 `ai-aviation/app:dev` from the checkout every time (seconds when nothing changed), so the
 migrations, the worker and the server always come from the same code. On `live` every
 release tag (`APP_VERSION`) is also a git tag, on the release's commit. Its image is built
-once, by the first command that needs it, and only from a clean checkout of that commit;
-it records the commit (label `org.opencontainers.image.revision`), and later commands
+once, by the first command that needs it, and only from a clean checkout of that commit (no
+changed, staged or untracked file under the app directory that git does not ignore: an
+untracked file would enter the image too); it records the commit (label
+`org.opencontainers.image.revision`), and later commands
 start it as built, even after the checkout moved on. The wrappers refuse a live tag
 without a git tag, an image that records another commit than its tag, and a missing image
 unless the checkout is exactly the tagged commit: a rollback never builds the current

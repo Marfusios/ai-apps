@@ -1,7 +1,12 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   checkDatabaseUrl,
   checkEdgeSubnet,
+  checkoutDirty,
   liveImagePlan,
   planCompose,
   versionAtLeast,
@@ -268,5 +273,40 @@ describe('helpers', () => {
     expect(versionAtLeast('1.29.2')).toBe(false);
     expect(versionAtLeast('3.0.0-rc1')).toBe(true);
     expect(versionAtLeast('')).toBe(false);
+  });
+});
+
+describe('a live build only from a clean checkout (re-check N9)', () => {
+  it('counts changed, staged and untracked files under the app directory, not ignored ones', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aviation-checkout-'));
+    try {
+      const git = (...a: string[]) => {
+        const r = spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+        if (r.status !== 0) throw new Error(r.stderr);
+      };
+      const app = join(repo, 'apps', 'app');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, 'index.ts'), 'export {};\n');
+      writeFileSync(join(app, '.gitignore'), 'data/\n');
+      git('init', '-q');
+      git('add', '.');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'init');
+      expect(checkoutDirty(app)).toBe(false);
+      // Ignored output and files outside the app directory do not enter its build.
+      mkdirSync(join(app, 'data'));
+      writeFileSync(join(app, 'data', 'cache.json'), '{}');
+      writeFileSync(join(repo, 'notes.txt'), 'elsewhere');
+      expect(checkoutDirty(app)).toBe(false);
+      // An untracked source file would enter the image built as the tagged commit.
+      writeFileSync(join(app, 'extra.ts'), 'export const x = 1;\n');
+      expect(checkoutDirty(app)).toBe(true);
+      rmSync(join(app, 'extra.ts'));
+      writeFileSync(join(app, 'index.ts'), 'export const changed = true;\n');
+      expect(checkoutDirty(app)).toBe(true);
+      // Not a checkout at all: unknown counts as dirty.
+      expect(checkoutDirty(join(tmpdir(), 'no-such-aviation-checkout'))).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
