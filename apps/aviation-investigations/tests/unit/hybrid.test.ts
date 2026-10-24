@@ -400,6 +400,32 @@ describe('one filter for every retrieval request', () => {
   });
 });
 
+describe('retrieval.v1 fails fast (task 22 S-M10)', () => {
+  it('a channel that fails cancels the other channel’s request instead of leaving it to its timeout', async () => {
+    const base = fakeEs([], [], []);
+    let vectorSignal: AbortSignal | undefined;
+    const es = {
+      indices: (base.es as unknown as { indices: unknown }).indices,
+      search: async (body: estypes.SearchRequest, options: { signal?: AbortSignal } = {}) => {
+        if (body.knn) {
+          vectorSignal = options.signal;
+          return new Promise((_, reject) => options.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true }));
+        }
+        throw new Error('SENTINEL keyword search failed');
+      },
+    } as unknown as Client;
+    const dataset = { generationId: 7, passagesIndex: `${INDEX}-v2-fail-fast` };
+    const caller = new AbortController();
+    const err = await retrieveCandidates(es, createFakeEmbedder(DIMS), { dataset, text: 'x', contracts: CONTRACTS, signal: caller.signal, params: { timeoutMs: 5_000 } }).catch(
+      (e: unknown) => e,
+    );
+    // The genuine failure is what the caller gets; the vector request was cancelled, the caller's signal was not.
+    expect(err).toMatchObject({ message: 'SENTINEL keyword search failed' });
+    expect(vectorSignal?.aborted).toBe(true);
+    expect(caller.signal.aborted).toBe(false);
+  });
+});
+
 describe('refusals', () => {
   it('refuses without a published passages index and sends nothing', async () => {
     const f = fakeEs([], [], []);

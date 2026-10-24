@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SearchRequestSchema } from '../../shared/contracts/search.js';
 import { contentSecurityPolicy, securityHeaders } from '../../server/http/security-headers.js';
-import { FRAGMENT_SIZE, SECTION_EDGE, buildSearchBody, parseQuery, sectionEdges, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
+import { FRAGMENT_SIZE, MARK_END, MARK_START, SECTION_EDGE, buildSearchBody, parseQuery, sectionEdges, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
 import { SEARCH_TIMEOUT, SearchIncompleteError, SearchTimedOutError, assertComplete } from '../../server/search/timeout.js';
 import { isUnavailable } from '../../server/app.js';
 import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
@@ -111,8 +111,20 @@ describe('query text', () => {
 });
 
 describe('snippets from highlights', () => {
-  const S = '\uE000';
-  const E = '\uE001';
+  const S = MARK_START;
+  const E = MARK_END;
+
+  it('reads its markers right even when the text holds private-use characters of its own (task 22 S-M10)', () => {
+    // The markers are sequences no source text holds; a lone U+E000 or U+E001 in a section is just text.
+    expect(MARK_START.length).toBeGreaterThan(1);
+    expect(MARK_END.length).toBeGreaterThan(1);
+    const text = 'Sensor \uE000A\uE001 read low, then the engine quit.';
+    const marked = text.replace('engine', `${S}engine${E}`);
+    expect(unmark(marked)).toEqual({ text, spans: [{ start: text.indexOf('engine'), end: text.indexOf('engine') + 6 }] });
+    const snippet = snippetFromHighlights({ factual: [marked] });
+    expect(snippet?.text).toBe(text);
+    expect(snippet?.highlights.map((h) => snippet.text.slice(h.start, h.end))).toEqual(['engine']);
+  });
 
   it('turns markers into offsets', () => {
     expect(unmark(`a ${S}carb${E} b`)).toEqual({ text: 'a carb b', spans: [{ start: 2, end: 6 }] });

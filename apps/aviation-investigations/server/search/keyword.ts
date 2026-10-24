@@ -44,9 +44,13 @@ export const TEXT_FIELDS = [...SECTION_FIELDS, 'findings_text'] as const;
 /** At most this many quoted phrases become phrase clauses; the rest are plain words. */
 const MAX_PHRASES = 8;
 
-/** Highlight markers: private-use characters that never occur in NTSB text. */
-const MARK_START = '\uE000';
-const MARK_END = '\uE001';
+/**
+ * The highlighter's tags: sequences of private-use characters no NTSB text holds (a lone
+ * U+E000 or U+E001 in a section is read as text, task 22 S-M10). Turned into offsets
+ * (`unmark`); never sent to a client.
+ */
+export const MARK_START = '\uE000\uE002\uE000';
+export const MARK_END = '\uE001\uE002\uE001';
 
 /**
  * Analysis and factual sections can be tens of kilobytes: Elasticsearch returns one
@@ -91,21 +95,25 @@ export function textQuery(q: string, fields: readonly string[]): Query | null {
   return must.length === 1 ? (must[0] as Query) : { bool: { must } };
 }
 
-/** Text with the highlight markers removed, and the marked spans in it. */
+/** Text with the highlight markers removed, and the marked spans in it (UTF-16 offsets). */
 export function unmark(marked: string): { text: string; spans: Span[] } | null {
   let text = '';
   const spans: Span[] = [];
   let open = -1;
-  for (const ch of marked) {
-    if (ch === MARK_START) {
+  let i = 0;
+  while (i < marked.length) {
+    if (marked.startsWith(MARK_START, i)) {
       if (open !== -1) return null;
       open = text.length;
-    } else if (ch === MARK_END) {
+      i += MARK_START.length;
+    } else if (marked.startsWith(MARK_END, i)) {
       if (open === -1) return null;
       if (text.length > open) spans.push({ start: open, end: text.length });
       open = -1;
+      i += MARK_END.length;
     } else {
-      text += ch;
+      text += marked[i];
+      i += 1;
     }
   }
   return open === -1 ? { text, spans } : null;
