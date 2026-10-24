@@ -386,7 +386,7 @@ copy of source evidence or the store for users/quotas.
 ### Evidence-view MVP (`evidence.v1`)
 
 This is the initial AI product; the composed-answer pipeline below is disabled.
-`POST /api/evidence` calls `scope.e1` then one embedding, or skips scope for an edit of
+`POST /api/evidence` calls `scope.e2` then one embedding, or skips scope for an edit of
 an owned search. Scope returns supported `BriefFilters`, editable terms and several
 allowlisted unchecked categories with exact quotes from the question. It never
 applies a default timing/causation interpretation. The fixed notice about unchecked
@@ -395,27 +395,36 @@ statistics and comparison intents use static server replies, not model prose.
 
 The three-channel `retrieval.v2` ranking stays unchanged (200/channel, exact case RRF,
 deterministic lexical cutoffs; kNN remains approximate). Delivery is separately versioned:
-100 candidates, ten/page, mapping over those first 100 with the same query vector. A
+100 candidates, ten/page, mapping over those first 100 with the same query vector
+and at most eight concurrent Elasticsearch requests. All three channels use the
+original question, with interpreted filters; model terms only initialize edits and
+drive highlights/relevance counts. An edit uses user terms for all three channels. A
 search stores its ranking and projection, generation, both concrete indices and seeds.
 A new edited search uses the current publication. An existing search's free pages never
 change or call a provider. Prune/cleanup preserve its references until the 24-hour expiry.
 
-Canonical rows provide the facts and every probable-cause variant. `paragraphs.v1`
-expands retrieval seeds to whole blank-line-delimited paragraphs (UTF-16 offsets,
-canonical LF text) and deduplicates them, up to three previews per case. It does not
-crop paragraphs. The private `/api/evidence/:id/cases/:ntsbNo` endpoint provides full
+Canonical rows provide the facts and every probable-cause variant. `paragraphs.v2`
+expands retrieval seeds using the chunker's shared `ntsb-paragraphs.v1` rule:
+single-newline paragraphs, hard-wrap joins and headings attached to the next paragraph
+(UTF-16 offsets, canonical LF text) and deduplicates them, up to three previews per
+case. It does not crop paragraphs. The private `/api/evidence/:id/cases/:ntsbNo` endpoint provides full
 sections at that generation with canonical revision IDs. Multi-aircraft sections stay
 event-scoped; every aircraft must meet the active aircraft filter conjunction. Literal
 and declared-synonym highlights are deterministic; relevance facts are coded-filter
 checks, counts in displayed excerpts and channel enums. No summary, classification,
 chronology assertion or model-written gap note exists in this result contract.
 
+The canonical page is `/ai/:id`, private/no-store and noindex/nofollow. Page reads
+select only ten cases; context membership is checked inside SQL. Each stored search
+is bounded at 8 MiB UTF-8 JSON; exceeding it fails without truncation or quota charge.
 Search ownership and content are read together. Handover changes read ownership once,
 never billing or expiry. Edited requests recheck and lock their source under the same
 account lifecycle protocol. Deletion removes searches and replay references; backups
 omit them. Provider calls settle with result storage in one transaction. Static replies
 and failures return quota units but retain real spend. Crash recovery closes abandoned
-searches and returns their units while charging the reservation conservatively.
+searches and returns their units while charging the reservation conservatively. A
+client disconnect leaves admitted work running and replayable; shutdown, deletion
+and the 30-second server deadline can stop it.
 
 Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
 context-loss counterexamples through the actual UI, including required context on the
@@ -877,8 +886,11 @@ no fallback to another model or generated summary. A scope output that hits its 
 fails closed and returns its search unit while keeping the provider charge.
 
 Startup validates the evidence reservation while `AI_BRIEFS_ENABLED` is false. The
-free `ai-preflight` counts the actual `scope.e1` prompt/schema, maximal questions,
-cache prefix and a multi-reading output. Its measured input cap stays enforced at
+free `ai-preflight` counts the actual `scope.e2` prompt/schema, maximal questions,
+cache prefix and output at its schema bounds. The flat scope.e2 schema currently
+allows output exceeding the 600-token cap; preflight reports OVER, and public launch
+requires a measured, reviewed schema/cap decision. No cap or reservation is raised
+automatically. Re-enabling briefs would inherit the shared daily evidence allowances. Its measured input cap stays enforced at
 runtime. No provider calls are made by the offline test suite. Frozen scope-quality
 and fresh provider preflight gates remain necessary before enabling public traffic.
 The generated-summary prices below describe the disabled experimental path.
