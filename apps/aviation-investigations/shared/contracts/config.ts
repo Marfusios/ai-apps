@@ -22,6 +22,11 @@ export const ConfigResponseSchema = z.strictObject({
   /** Cloudflare Turnstile site key; null when AI requests are not offered. */
   turnstileSiteKey: z.string().max(200).nullable(),
   googleEnabled: z.boolean(),
+  /** Evidence search allowances; amounts are private. Optional for older clients/fixtures. */
+  aiLimits: z.strictObject({ anonymousDaily: z.number().int().nonnegative(), accountDaily: z.number().int().nonnegative(),
+    newAccountDaily: z.number().int().nonnegative(), newAccountDays: z.number().int().nonnegative(),
+    accountMonthly: z.number().int().nonnegative(), reset: z.literal('00:00 UTC'), pageSize: z.literal(10), candidateCeiling: z.literal(100),
+    briefsEnabled: z.boolean() }).optional(),
   /** Date of the NTSB snapshot the active dataset was loaded from. */
   snapshotDate: IsoDateSchema,
   datasetRevision: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/),

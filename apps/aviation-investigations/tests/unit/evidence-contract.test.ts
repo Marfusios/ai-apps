@@ -38,8 +38,8 @@ const page = {
   interpretation: { filters: { phase: ['approach'] }, terms: 'carburetor icing', unchecked: [] },
   edited: false,
   generation: 'g1',
-  createdAt: '2026-10-24T22:00:00',
-  expiresAt: '2026-10-25T22:00:00',
+  createdAt: '2026-10-24T22:00:00.000Z',
+  expiresAt: '2026-10-25T22:00:00.000Z',
   total: 0,
   page: 1,
   pages: 0,
@@ -51,6 +51,10 @@ describe('evidence.v1 contract', () => {
     expect(EvidencePageSchema.safeParse(page).success).toBe(true);
     const fixed = { ...excerpt, paragraph: { start: 120, end: 120 + excerpt.text.length } };
     expect(EvidenceExcerptSchema.safeParse(fixed).success).toBe(true);
+  });
+
+  it('requires unambiguous UTC instants for search creation and expiry', () => {
+    expect(EvidencePageSchema.safeParse({ ...page, expiresAt: '2026-10-25T22:00:00' }).success).toBe(false);
   });
 
   it('refuses an excerpt whose text is not the whole paragraph span, or whose highlights overlap', () => {

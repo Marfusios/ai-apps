@@ -21,7 +21,7 @@
 import { z } from 'zod';
 import { BRIEF_FILTER_FACETS, BriefFiltersSchema, IdempotencyKeySchema, QuestionSchema, ScopeReplySchema, TurnstileTokenSchema } from './briefs.js';
 import { ReportLinkSchema } from './cases.js';
-import { IsoDateTimeSchema, Sha256Schema } from './common.js';
+import { Sha256Schema } from './common.js';
 import { CaseRowSchema, SectionKindSchema, SpanSchema } from './search.js';
 
 export const EVIDENCE_CONTRACT_VERSION = 'evidence.v1';
@@ -200,8 +200,8 @@ export const EvidencePageSchema = z.strictObject({
   edited: z.boolean(),
   /** The dataset generation the ranking is pinned to. */
   generation: z.string().min(1).max(80),
-  createdAt: IsoDateTimeSchema,
-  expiresAt: IsoDateTimeSchema,
+  createdAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
   /** Cases ranked for this search (0 when nothing matched). */
   total: z.number().int().min(0).max(EVIDENCE_CANDIDATE_CEILING),
   page: z.number().int().min(1),
