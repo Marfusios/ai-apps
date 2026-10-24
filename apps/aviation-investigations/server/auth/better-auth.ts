@@ -190,8 +190,14 @@ export function authCookieNames(secure: boolean) {
   } as const;
 }
 
-/** Why Google sign-in is off (setting names only), or null when it can run. */
-export function authConfigProblem(config: Pick<AppConfig, 'appEnv' | 'appUrl' | 'auth'>): string | null {
+/**
+ * Why Google sign-in is off (setting names only), or null when it can run. `notice` is the
+ * published privacy notice's state; tests pass a draft to check that live keeps sign-in off.
+ */
+export function authConfigProblem(
+  config: Pick<AppConfig, 'appEnv' | 'appUrl' | 'auth'>,
+  notice: { readonly final: boolean } = PRIVACY_NOTICE,
+): string | null {
   const { googleClientId, googleClientSecret, secret, identityHmacSecret } = config.auth;
   if (!googleClientId || !googleClientSecret) return 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set: Google sign-in is off';
   if (!secret || secret.length < MIN_SECRET_LENGTH) return `BETTER_AUTH_SECRET must be set (at least ${MIN_SECRET_LENGTH} characters) for Google sign-in`;
@@ -200,7 +206,7 @@ export function authConfigProblem(config: Pick<AppConfig, 'appEnv' | 'appUrl' | 
   }
   if (config.appEnv === 'live' && !isHttpsUrl(config.appUrl)) return 'APP_ENV=live requires an https APP_URL for Google sign-in';
   // DESIGN §7: publish the privacy notice before collecting real users (RUNBOOK, "Google sign-in").
-  if (config.appEnv === 'live' && !PRIVACY_NOTICE.final) return 'APP_ENV=live keeps Google sign-in off until the final privacy notice is published (shared/privacy.ts)';
+  if (config.appEnv === 'live' && !notice.final) return 'APP_ENV=live keeps Google sign-in off until the final privacy notice is published (shared/privacy.ts)';
   return null;
 }
 

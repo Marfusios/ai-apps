@@ -166,10 +166,15 @@ describe('configuration', () => {
     expect(authConfigProblem(base({}, { appEnv: 'dev', appUrl: 'http://localhost:3000' }))).toBeNull();
   });
 
-  it('live keeps Google sign-in off while the privacy notice is a draft (DESIGN §7)', () => {
-    expect(PRIVACY_NOTICE.final).toBe(false);
-    expect(authConfigProblem(base({}, { appEnv: 'live' }))).toMatch(/final privacy notice/);
-    expect(authConfigProblem(base({}, { appEnv: 'dev' }))).toBeNull();
+  it('the final privacy notice is published, so live may turn Google sign-in on (owner approval, 2026-10-24)', () => {
+    expect(PRIVACY_NOTICE.final).toBe(true);
+    expect(authConfigProblem(base({}, { appEnv: 'live' }))).toBeNull();
+  });
+
+  it('a draft privacy notice keeps live Google sign-in off, and only live (DESIGN §7)', () => {
+    const draft = { final: false } as const;
+    expect(authConfigProblem(base({}, { appEnv: 'live' }), draft)).toMatch(/final privacy notice/);
+    expect(authConfigProblem(base({}, { appEnv: 'dev' }), draft)).toBeNull();
   });
 
   it('problems name settings, never values', () => {

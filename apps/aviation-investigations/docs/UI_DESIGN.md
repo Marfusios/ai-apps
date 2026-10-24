@@ -873,11 +873,14 @@ then state the processed cohort (DESIGN §5).
     asks once more. Coming back without a confirmation says nothing was
     deleted.
 - **Privacy page:** plain-language processing notice, linked from the footer
-  and the sign-in dialog. The content follows DESIGN §7. The owner provides
-  the final text. It must name Cloudflare Turnstile (Task 22 review W-14): asking
-  the AI loads Cloudflare's script and frame from challenges.cloudflare.com, only
-  when an AI request needs a check, and Cloudflare may set its own cookies for it.
-  The draft says so.
+  and the sign-in dialog. The owner approved the final text on 24 October 2026
+  (Owner); it was checked statement by statement against the code and is the
+  authority on what the site keeps (who is responsible, the site's four cookies,
+  what the server, accounts and AI searches keep, the processors, retention,
+  legal bases and rights). It names Cloudflare Turnstile (Task 22 review W-14):
+  asking the AI loads Cloudflare's script and frame from challenges.cloudflare.com,
+  only when an AI request needs a check, and Cloudflare may set its own cookies for it.
+  Any change to what the site keeps changes this text and its date in the same commit.
 - **About page** (`/about`, a reading column like Privacy): "About AirCase" says
   what AirCase is (an aviation casebook for flight instructors and safety
   analysts), what it does today (keyword search with filters, a page for each case,

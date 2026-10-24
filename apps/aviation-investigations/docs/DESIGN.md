@@ -670,6 +670,11 @@ that address requires reconfirmation. Unsubscribe must work without login using
 an opaque token. After deletion, retain only the minimal documented suppression
 record needed to avoid further mail, not an active marketing profile.
 
+The published privacy notice (web/src/pages/Privacy.tsx, approved 24 October 2026) records
+what the deployment actually keeps and is authoritative where it differs from this
+proposal: there is no separate security log (request logs hold no address, search text or
+identity and rotate by size), and backups are daily and kept 14 days on the host.
+
 Proposed retention: trial identities 30 days; pseudonymous security logs 7 days;
 content-free request records 30 days; quota buckets through their calendar window
 plus 7 days; content-free cost ledger 90 days for reconciliation; backup expiry
