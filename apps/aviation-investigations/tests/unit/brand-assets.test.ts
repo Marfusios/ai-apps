@@ -7,7 +7,17 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { encodeIco, pngSize } from '../../scripts/brand-assets/ico.js';
-import { BRAND_ICONS, faviconSvg, manifestJson, readBrandColours } from '../../scripts/brand-assets/sources.js';
+import {
+  BRAND_ICONS,
+  DIGEST_FILE,
+  assetSource,
+  brandAssets,
+  faviconSvg,
+  manifestJson,
+  readBrandColours,
+  sha256,
+  type AssetDigest,
+} from '../../scripts/brand-assets/sources.js';
 import { SHARE_IMAGE, SITE_DESCRIPTION } from '../../shared/brand.js';
 import { APP_DIR } from '../support/extract-dir.js';
 
@@ -51,8 +61,33 @@ describe('the committed brand assets (rebuild with pnpm brand:build)', () => {
   const file = (name: string): string => join(APP_DIR, 'web/public', name);
   const colours = readBrandColours(APP_DIR);
 
-  it('take the mark and paper colours from the day tokens', () => {
-    expect(colours).toEqual({ tile: '#1F519A', glyph: '#F3EEE1', paper: '#F3EEE1' });
+  it('take their colours from the day tokens, the share card included', () => {
+    expect(colours).toEqual({
+      tile: '#1F519A',
+      glyph: '#F3EEE1',
+      paper: '#F3EEE1',
+      ink: '#1E2A36',
+      blue: '#1F519A',
+      muted: '#58616B',
+      magenta: '#A0166C',
+    });
+    const card = brandAssets(APP_DIR).find((asset) => asset.file === 'social/card.png');
+    if (card?.kind !== 'card') throw new Error('no share card');
+    // Its paper, ink, blue, muted and magenta are the tokens', and its graticule is the blue at 7.5 %.
+    for (const colour of ['#F3EEE1', '#1E2A36', '#1F519A', '#58616B', '#A0166C', 'rgba(31, 81, 154, 0.075)']) expect(card.html).toContain(colour);
+  });
+
+  it('were built from the current sources and are as pnpm brand:build wrote them (its digest)', () => {
+    const recorded = (JSON.parse(readFileSync(join(APP_DIR, DIGEST_FILE), 'utf8')) as { files: Record<string, AssetDigest> }).files;
+    const assets = brandAssets(APP_DIR);
+    expect(Object.keys(recorded).sort()).toEqual(assets.map((asset) => asset.file).sort());
+    for (const asset of assets) {
+      expect(sha256(assetSource(asset)), `${asset.file}: its sources changed; run pnpm brand:build`).toBe(recorded[asset.file]?.source);
+      expect(sha256(readFileSync(file(asset.file))), `${asset.file}: changed since pnpm brand:build wrote it`).toBe(recorded[asset.file]?.output);
+    }
+    // A change to a token the share card uses changes its source, and so fails the check above.
+    const otherBlue = brandAssets(APP_DIR, { ...colours, blue: '#000000' }).find((asset) => asset.file === 'social/card.png');
+    expect(otherBlue && sha256(assetSource(otherBlue))).not.toBe(recorded['social/card.png']?.source);
   });
 
   it('favicon.svg is the small mark in its day colours', () => {

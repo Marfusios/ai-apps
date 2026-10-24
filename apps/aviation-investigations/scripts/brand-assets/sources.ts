@@ -1,25 +1,33 @@
 /**
  * What the brand assets in web/public are built from (scripts/build-brand-assets.ts): the mark
- * (shared/brand-mark.ts), the day values of its colour tokens and of the paper
- * (web/src/styles/tokens.css), and the words in shared/brand.ts. Pure apart from reading those
- * files, so tests/unit/brand-assets.test.ts can hold the committed files to them.
+ * (shared/brand-mark.ts), the day values of the colour tokens (web/src/styles/tokens.css), the
+ * words in shared/brand.ts, the share card's template and the app's fonts. Pure apart from
+ * reading those files, so tests/unit/brand-assets.test.ts can hold the committed files to them:
+ * each asset's source and bytes are recorded in `DIGEST_FILE` when it is built.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { PRODUCT_DESCRIPTOR, PRODUCT_NAME, SHARE_CARD_TEXT, SITE_DESCRIPTION } from '../../shared/brand.js';
+import { PRODUCT_DESCRIPTOR, PRODUCT_NAME, SHARE_CARD_TEXT, SHARE_IMAGE, SITE_DESCRIPTION } from '../../shared/brand.js';
 import { MARK_FOLDER_BOX, markSvg, markVariant } from '../../shared/brand-mark.js';
 
+/** The day values of the tokens the assets use. */
 export interface BrandColours {
   /** The folder (`--mark-tile`). */
   tile: string;
   /** The aircraft (`--mark-glyph`). */
   glyph: string;
-  /** The page (`--paper`): full-bleed icon backgrounds and the manifest's colours. */
+  /** The page (`--paper`): full-bleed icon backgrounds, the manifest's colours, the share card. */
   paper: string;
+  /** `--ink`, `--blue`, `--muted` and `--magenta`: the share card. */
+  ink: string;
+  blue: string;
+  muted: string;
+  magenta: string;
 }
 
-/** The day values of `--mark-tile`, `--mark-glyph` and `--paper` in web/src/styles/tokens.css. */
+/** The day values of the colour tokens the assets use, from web/src/styles/tokens.css. */
 export function readBrandColours(appDir: string): BrandColours {
   const css = readFileSync(join(appDir, 'web/src/styles/tokens.css'), 'utf8');
   const start = css.indexOf('[data-theme="day"] {');
@@ -30,7 +38,15 @@ export function readBrandColours(appDir: string): BrandColours {
     if (!value) throw new Error(`tokens.css has no day colour for --${name}`);
     return value;
   };
-  return { tile: token('mark-tile'), glyph: token('mark-glyph'), paper: token('paper') };
+  return {
+    tile: token('mark-tile'),
+    glyph: token('mark-glyph'),
+    paper: token('paper'),
+    ink: token('ink'),
+    blue: token('blue'),
+    muted: token('muted'),
+    magenta: token('magenta'),
+  };
 }
 
 /** The tab icon: the mark at its small optical size, transparent around the folder. */
@@ -128,6 +144,12 @@ const CARD_FONTS = {
 const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 
+/** `#RRGGBB` at `alpha`, as `rgba(…)`. */
+function withAlpha(hex: string, alpha: number): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 /** The card template with every slot filled: a whole page, ready to render at 1200×630. */
 export function cardHtml(appDir: string, colours: BrandColours): string {
   const require = createRequire(join(appDir, 'package.json'));
@@ -136,6 +158,13 @@ export function cardHtml(appDir: string, colours: BrandColours): string {
   );
   const slots: Readonly<Record<string, string>> = {
     ...fonts,
+    paper: colours.paper,
+    ink: colours.ink,
+    blue: colours.blue,
+    muted: colours.muted,
+    magenta: colours.magenta,
+    // The card's graticule: the day grid's blue, a little stronger than the page's.
+    grid: withAlpha(colours.blue, 0.075),
     mark: markSvg({ variant: markVariant(CARD_MARK_SIZE), tile: colours.tile, glyph: colours.glyph, size: CARD_MARK_SIZE }),
     name: escapeHtml(PRODUCT_NAME),
     headline: escapeHtml(PRODUCT_DESCRIPTOR),
@@ -149,4 +178,64 @@ export function cardHtml(appDir: string, colours: BrandColours): string {
     if (value === undefined) throw new Error(`${CARD_TEMPLATE} has an unknown slot {{${slot}}}`);
     return value;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Every asset, and the digest of what each was built from
+
+export type BrandAsset =
+  /** Written as it is. */
+  | { file: string; kind: 'text'; text: string }
+  /** An SVG drawn into a PNG `size` px square. */
+  | { file: string; kind: 'png'; size: number; svg: string }
+  /** SVGs drawn into PNGs and stored in one ICO. */
+  | { file: string; kind: 'ico'; images: readonly { size: number; svg: string }[] }
+  /** A page whose `#card` element is drawn into a PNG at the share image's size. */
+  | { file: string; kind: 'card'; html: string };
+
+/** Every brand asset in web/public, with what it is drawn from. */
+export function brandAssets(appDir: string, colours: BrandColours = readBrandColours(appDir)): BrandAsset[] {
+  return [
+    { file: 'favicon.svg', kind: 'text', text: faviconSvg(colours) },
+    {
+      file: 'favicon.ico',
+      kind: 'ico',
+      images: FAVICON_ICO_SIZES.map((size) => ({ size, svg: markSvg({ variant: markVariant(size), tile: colours.tile, glyph: colours.glyph, size }) })),
+    },
+    ...BRAND_ICONS.map((icon): BrandAsset => ({ file: icon.file, kind: 'png', size: icon.size, svg: iconSvg(icon, colours) })),
+    { file: SHARE_IMAGE.path.slice(1), kind: 'card', html: cardHtml(appDir, colours) },
+    { file: 'manifest.webmanifest', kind: 'text', text: manifestJson(colours) },
+  ];
+}
+
+/** What an asset is built from, as one text (sizes included): the digest records its hash. */
+export function assetSource(asset: BrandAsset): string {
+  switch (asset.kind) {
+    case 'text':
+      return asset.text;
+    case 'png':
+      return `${asset.size}px\n${asset.svg}`;
+    case 'ico':
+      return asset.images.map((image) => `${image.size}px\n${image.svg}`).join('\n');
+    case 'card':
+      return `${SHARE_IMAGE.width}×${SHARE_IMAGE.height}px\n${asset.html}`;
+  }
+}
+
+export function sha256(data: string | Uint8Array): string {
+  return createHash('sha256').update(data).digest('hex');
+}
+
+/** Written by `pnpm brand:build` next to its template; not served. */
+export const DIGEST_FILE = 'scripts/brand-assets/digest.json';
+
+/** The SHA-256 of what an asset was built from, and of the file the build wrote. */
+export interface AssetDigest {
+  source: string;
+  output: string;
+}
+
+export function digestJson(files: Readonly<Record<string, AssetDigest>>): string {
+  const note = 'Written by pnpm brand:build: the SHA-256 of what each file in web/public was built from, and of the file. tests/unit/brand-assets.test.ts compares them.';
+  return `${JSON.stringify({ note, files }, null, 2)}\n`;
 }

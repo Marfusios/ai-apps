@@ -245,7 +245,8 @@ AI CLASSIFIED".
   investigations since 2008: what happened, the probable cause and what
   investigators found.", the flight profile with its magenta event ring, and at
   the foot "aircase.app" and "Independent project, not an NTSB service". It is
-  rendered from a template with the app's own fonts (README, "Brand assets").
+  rendered from a template in the day tokens' colours and the app's own fonts
+  (README, "Brand assets").
 
 ### 2.6 Components and controls
 

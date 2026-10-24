@@ -1273,20 +1273,24 @@ development script, and the results are committed; the production build only cop
 
 `web/index.html` links the icons and the manifest and sets the browser bar's colour
 (`theme-color`: the paper by day, the header's charcoal by night). They are built from the
-mark (`shared/brand-mark.ts`), the day values of the `mark-tile`, `mark-glyph` and `paper`
-tokens (`web/src/styles/tokens.css`), the words in `shared/brand.ts` and the share card's
-template (`scripts/brand-assets/card.html`, set in the app's own fonts from the `@fontsource`
-packages). After changing any of them, rebuild and commit the files:
+mark (`shared/brand-mark.ts`), the day values of the colour tokens (`web/src/styles/tokens.css`:
+`mark-tile`, `mark-glyph` and `paper` for the icons, and `ink`, `blue`, `muted` and `magenta` too
+for the share card), the words in `shared/brand.ts` and the share card's template
+(`scripts/brand-assets/card.html`, set in the app's own fonts from the `@fontsource` packages).
+After changing any of them, rebuild and commit the files:
 
 ```sh
 pnpm brand:build   # scripts/build-brand-assets.ts; renders offline with Playwright's Chromium
 ```
 
-With the same sources and the same Chromium it writes the same bytes again. `tests/unit/brand-assets.test.ts`
-fails when the committed `favicon.svg` or manifest no longer matches its sources, and checks
-the sizes of the PNG images; a change to the mark or to the card's words needs the script run
-again. The server serves the manifest as `application/manifest+json`, and revalidates these
-files hourly like every file without a content hash.
+With the same sources and the same Chromium it writes the same bytes again. It also writes
+`scripts/brand-assets/digest.json`: the SHA-256 of what each file was built from (its SVG, the
+filled card page with its fonts, the manifest's text) and of the file itself.
+`tests/unit/brand-assets.test.ts` recomputes the first and hashes the committed files, so a
+change to any source without a rebuild, or an edit to a file after it, fails the unit tests; it
+also checks the image sizes and the manifest's fields. The server serves the manifest as
+`application/manifest+json`, and revalidates these files hourly like every file without a
+content hash.
 
 ### API server
 
