@@ -199,6 +199,7 @@ export function buildSearchBody(index: string, request: SearchRequest): SearchBo
     from: (request.page - 1) * request.pageSize,
     size: request.pageSize,
     timeout: SEARCH_TIMEOUT,
+    allow_partial_search_results: false,
     track_total_hits: true,
     query,
     post_filter: bool(f.filters()),

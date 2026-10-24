@@ -62,7 +62,7 @@ import { makeClientErrorHandler } from './http/client-error.js';
 import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
 import { contentSecurityPolicy, isHttpsUrl, securityHeaders } from './http/security-headers.js';
-import { SearchTimedOutError } from './search/timeout.js';
+import { SearchIncompleteError, SearchTimedOutError } from './search/timeout.js';
 import { accountRoutes } from './routes/account.js';
 import { aiStatusRoutes } from './routes/ai-status.js';
 import { briefRoutes } from './routes/briefs.js';
@@ -186,7 +186,7 @@ const isApiPath = (path: string): boolean => path === '/api' || path.startsWith(
  * timed out or a deadlock (fail closed), or no servable dataset.
  */
 export function isUnavailable(err: unknown): boolean {
-  if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError || err instanceof AuthUnavailableError) return true;
+  if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError || err instanceof SearchIncompleteError || err instanceof AuthUnavailableError) return true;
   if (isDatabaseUnavailable(err)) return true;
   const e = err as { name?: string; code?: string; meta?: { statusCode?: number } };
   if (['ConnectionError', 'TimeoutError', 'NoLivingConnectionsError'].includes(e.name ?? '')) return true;

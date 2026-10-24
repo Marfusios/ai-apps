@@ -44,6 +44,7 @@ import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from '../worker/index/c
 import type { Db } from './db/client.js';
 import { getActiveManifest, type ActiveManifest } from './db/generations.js';
 import { IndexMetaError, readIndexMeta } from './search/index-meta.js';
+import { assertComplete } from './search/timeout.js';
 import {
   PassagesCheckTimeoutError,
   checkPassagesIndex,
@@ -253,6 +254,7 @@ export class DatasetResolver {
     const stats = await this.es.search({
       index: manifest.casesIndex,
       size: 0,
+      allow_partial_search_results: false,
       track_total_hits: true,
       query: { term: { country: 'USA' } },
       aggs: {
@@ -261,6 +263,7 @@ export class DatasetResolver {
         last: { max: { field: 'ev_year' } },
       },
     });
+    assertComplete(stats, 'dataset statistics');
     const total = typeof stats.hits.total === 'number' ? stats.hits.total : (stats.hits.total?.value ?? 0);
     const aggs = stats.aggregations as
       | { cohort: { doc_count: number }; first: { value: number | null }; last: { value: number | null } }

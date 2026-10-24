@@ -601,7 +601,8 @@ index, is the rollback. **The `dev` manifest for generation 1 serves `cases-v3` 
   facts, and answers 503 rather than serve a mismatch;
 - uses a dataset revision such as `g1-cases-v3-b65442be` in ETags;
 - runs search, facets and the dashboard on the cases index, with a 5 s timeout and
-  no partial results;
+  no partial results (each request sets `allow_partial_search_results: false`, and a
+  response that timed out or whose shards did not all succeed is a 503);
 - reads result rows and case pages from PostgreSQL for the same generation;
 - reads report links, which belong to no generation, from `report_links`;
 - checks the passages index against the same contract, bounded to 2 s, once per

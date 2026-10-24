@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { SearchRequestSchema } from '../../shared/contracts/search.js';
 import { contentSecurityPolicy, securityHeaders } from '../../server/http/security-headers.js';
 import { FRAGMENT_SIZE, buildSearchBody, parseQuery, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
-import { SEARCH_TIMEOUT, SearchTimedOutError, assertComplete } from '../../server/search/timeout.js';
+import { SEARCH_TIMEOUT, SearchIncompleteError, SearchTimedOutError, assertComplete } from '../../server/search/timeout.js';
+import { isUnavailable } from '../../server/app.js';
 import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
 
 const request = (q: Record<string, string>) => SearchRequestSchema.parse(q);
@@ -82,6 +83,23 @@ describe('query text', () => {
     expect(body.timeout).toBe(SEARCH_TIMEOUT);
     expect(() => assertComplete({ timed_out: true })).toThrow(SearchTimedOutError);
     expect(() => assertComplete({ timed_out: false })).not.toThrow();
+  });
+
+  it('refuses partial results by construction: in the request, and a shard report that is not whole (task 22 S-M1)', () => {
+    expect(buildSearchBody('ix', request({ q: 'icing' })).body.allow_partial_search_results).toBe(false);
+    expect(buildSearchBody('ix', request({})).body.allow_partial_search_results).toBe(false);
+    const whole = { total: 1, successful: 1, skipped: 0, failed: 0 };
+    expect(() => assertComplete({ timed_out: false, _shards: whole })).not.toThrow();
+    // A failed or missing shard: incomplete counts, never served (503 like a timeout).
+    for (const shards of [
+      { ...whole, failed: 1, successful: 0 },
+      { total: 2, successful: 1, skipped: 0, failed: 0 },
+      { ...whole, failures: [{ shard: 0 }] },
+      { total: 3, successful: 1, skipped: 2, failed: 0 },
+    ]) {
+      expect(() => assertComplete({ timed_out: false, _shards: shards }), JSON.stringify(shards)).toThrow(SearchIncompleteError);
+      expect(isUnavailable(new SearchIncompleteError('keyword', 'x')), JSON.stringify(shards)).toBe(true);
+    }
   });
 
   it('asks for probable-cause previews and no highlights without a query', () => {
