@@ -142,7 +142,11 @@ Code: `worker/ingest/normalize.ts`, `worker/ingest/scalars.ts`,
 
 Value problems go to a quarantine list with an action (row excluded, value nulled or
 value kept) and are never coerced. Generation 1 has 25 entries, all coordinates of
-non-US events. 75 US events have no coordinates, so their location is null.
+non-US events. 75 US events have no coordinates, so their location is null. An event
+year outside 1900–2100 (`year_out_of_range`) or one its event date contradicts
+(`year_mismatch`) is nulled with a note: the API's year axis carries only 1900–2100, so
+one such year would otherwise make every search fail once published (the server also
+refuses a cases index whose years fall outside it, as unavailable).
 
 **Scalars and codes.** A blank field becomes `null` before any numeric conversion.
 Flags are decoded from their real vocabularies (`defining_ev` `0`/`1`, `cm_inpc`

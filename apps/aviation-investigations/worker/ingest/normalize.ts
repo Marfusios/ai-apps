@@ -282,7 +282,11 @@ export type QuarantineReason =
   | 'coordinate_incomplete'
   | 'unknown_flag'
   | 'conflicting_defining_events'
-  | 'tag_like_text_after_html';
+  | 'tag_like_text_after_html'
+  /** `ev_year` outside 1900–2100, the API's year axis (task 22 S-I1). */
+  | 'year_out_of_range'
+  /** `ev_year` that the event date (`ev_date`) contradicts. */
+  | 'year_mismatch';
 
 export interface QuarantineRow {
   table: TableName;
@@ -554,6 +558,26 @@ class FieldReader {
     return null;
   }
 
+  /**
+   * An event year the API can serve: within 1900–2100 (the year axis of every search and
+   * dashboard response) and, when the event has a date, its year. Anything else is nulled
+   * with a note: one bad year would otherwise make every search fail its contract once the
+   * generation is published (task 22 search review S-I1).
+   */
+  year(column: string, date: string | null): number | null {
+    const value = this.integer(column);
+    if (value === null) return null;
+    if (value < 1900 || value > 2100) {
+      this.notes.add(this.table, this.key, column, 'year_out_of_range', 'value_nulled', String(value), 'outside 1900-2100');
+      return null;
+    }
+    if (date !== null && Number(date.slice(0, 4)) !== value) {
+      this.notes.add(this.table, this.key, column, 'year_mismatch', 'value_nulled', String(value), 'differs from the year of ev_date');
+      return null;
+    }
+    return value;
+  }
+
   flag(column: FlagColumn): boolean | null {
     const d = decodeFlag(column, this.raw(column));
     if (d.ok) return d.value;
@@ -690,15 +714,16 @@ function indexCorpus(tables: Readonly<Partial<Record<TableName, readonly AnyRow[
 }
 
 function eventFields(r: FieldReader): CanonicalEventFields {
+  const evDate = r.date('ev_date');
   return {
     evType: code(r.raw('ev_type')),
-    evDate: r.date('ev_date'),
+    evDate,
     evDow: blankToNull(r.raw('ev_dow')),
     evTime: r.integer('ev_time'),
     evTmzn: blankToNull(r.raw('ev_tmzn')),
     city: blankToNull(r.raw('ev_city')),
     state: blankToNull(r.raw('ev_state')),
-    evYear: r.integer('ev_year'),
+    evYear: r.year('ev_year', evDate),
     evMonth: r.integer('ev_month'),
     lightCond: code(r.raw('light_cond')),
     skyCondNonceil: code(r.raw('sky_cond_nonceil')),
