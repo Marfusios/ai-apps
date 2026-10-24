@@ -85,6 +85,25 @@ describe('Explore', () => {
     expect(within(facets).getByRole('button', { name: /More filters|Fewer filters/ })).toBeTruthy();
   });
 
+  it('states the multi-aircraft overlap for every aircraft facet: under Phase, and once above the aircraft ones in More filters (G0 #14, review W-7)', async () => {
+    renderApp('/explore');
+    await countLine();
+    const facets = screen.getByRole('complementary', { name: 'Filters' });
+    const phase = within(facets).getByRole('region', { name: 'Phase' });
+    expect(within(phase).getByText(/^\d+ investigations? here involved more than one aircraft, so phase counts can add up to more than \d[\d,]*\.$/)).toBeTruthy();
+    fireEvent.click(within(facets).getByRole('button', { name: /^More filters/ }));
+    const notes = within(facets).getAllByText(/involved more than one aircraft/);
+    expect(notes).toHaveLength(2);
+    const more = notes[1] as HTMLElement;
+    expect(more.textContent).toMatch(/so aircraft, engine, operation and purpose counts can add up to more than \d[\d,]*\.$/);
+    // Once, above the aircraft facets: Aircraft, Engine, Operation and Purpose follow it.
+    const aircraft = within(facets).getByRole('region', { name: 'Aircraft' });
+    expect(more.compareDocumentPosition(aircraft) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const name of ['Aircraft', 'Engine', 'Operation', 'Purpose']) {
+      expect(within(within(facets).getByRole('region', { name })).queryByText(/involved more than one aircraft/)).toBeNull();
+    }
+  });
+
   it(`a fifth compare tick shows "${COMPARE_FULL_MESSAGE}"`, async () => {
     const { router } = renderApp('/explore?q=carburetor+icing');
     await countLine();

@@ -85,8 +85,13 @@ export function mapSentence(map: DashboardResponse['map'], total: number): strin
   return `Lower 48 shown: ${formatCount(drawn)} of ${formatCount(total)} cases.${outside} ${lacking}`;
 }
 
-/** The multi-aircraft overlap statement (A14) under the aircraft charts. */
-export function overlapSentence(multiAircraft: number, total: number): string | null {
+/**
+ * The multi-aircraft overlap statement (A14) under each chart of an aircraft facet: the
+ * aircraft category ("aircraft counts") and the phase, which is each aircraft's
+ * defining-event phase ("phase counts"). Both count an event once per value any of its
+ * aircraft has, so they can add up to more than the total.
+ */
+export function overlapSentence(multiAircraft: number, total: number, counts: 'aircraft' | 'phase' = 'aircraft'): string | null {
   if (multiAircraft === 0) return null;
-  return `${multiAircraft === 1 ? '1 investigation' : `${formatCount(multiAircraft)} investigations`} involved more than one aircraft, so aircraft counts can add up to more than ${formatCount(total)}.`;
+  return `${multiAircraft === 1 ? '1 investigation' : `${formatCount(multiAircraft)} investigations`} involved more than one aircraft, so ${counts} counts can add up to more than ${formatCount(total)}.`;
 }

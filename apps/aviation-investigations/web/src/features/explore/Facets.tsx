@@ -145,12 +145,17 @@ function FacetList({
   );
 }
 
-function OverlapNote({ count, total }: { count: number; total: number }) {
+/**
+ * The multi-aircraft overlap statement (A14): the aircraft facets (`AIRCRAFT_FACETS`: phase,
+ * aircraft, engine, operation, purpose) count an event once per value any of its aircraft
+ * has, so their counts can add up to more than the total. Said under Phase, and once above
+ * the aircraft facets in More filters (G0 #14).
+ */
+function OverlapNote({ count, total, counts, className }: { count: number; total: number; counts: string; className?: string }) {
   if (count === 0) return null;
   return (
-    <p className="mt-1.5 text-label text-muted">
-      {count === 1 ? '1 investigation' : `${formatCount(count)} investigations`} here involved more than one aircraft, so
-      aircraft counts can add up to more than {formatCount(total)}.
+    <p className={cx('text-label text-muted', className)}>
+      {`${count === 1 ? '1 investigation' : `${formatCount(count)} investigations`} here involved more than one aircraft, so ${counts} counts can add up to more than ${formatCount(total)}.`}
     </p>
   );
 }
@@ -292,7 +297,9 @@ export function Facets({ response, request, onChange, expanded = false }: Facets
       {...extra}
     />
   );
-  const overlap = <OverlapNote count={response.multiAircraft} total={response.total} />;
+  const overlap = (counts: string, className: string) => (
+    <OverlapNote count={response.multiAircraft} total={response.total} counts={counts} className={className} />
+  );
   const completionDefault =
     request.completion.length === DEFAULT_COMPLETION.length && request.completion.every((v) => DEFAULT_COMPLETION.includes(v));
   const showMore = expanded || moreOpen || anyMore;
@@ -343,7 +350,7 @@ export function Facets({ response, request, onChange, expanded = false }: Facets
           </ul>
         </section>
       )}
-      {list('phase', { note: overlap })}
+      {list('phase', { note: overlap('phase', 'mt-1.5') })}
       {list('injury')}
       {list('conditions')}
       <Years response={response} request={request} onChange={onChange} />
@@ -360,7 +367,8 @@ export function Facets({ response, request, onChange, expanded = false }: Facets
         </button>
       )}
       <div id={moreId} hidden={!showMore}>
-        {list('category', { note: overlap })}
+        {overlap('aircraft, engine, operation and purpose', 'mt-4')}
+        {list('category')}
         {list('engine')}
         {list('far_part')}
         {list('purpose')}
