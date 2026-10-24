@@ -8,10 +8,10 @@ import { DataCaution } from '../../web/src/components/DataCaution';
 import { EVIDENCE_KINDS, EVIDENCE_WORDS, EvidenceGlyph } from '../../web/src/components/EvidenceGlyph';
 import { Footer } from '../../web/src/components/Footer';
 import { Header } from '../../web/src/components/Header';
-import { StatusBadge } from '../../web/src/components/StatusBadge';
+import { STATUS_BADGE, StatusBadge } from '../../web/src/components/StatusBadge';
 import { ThemeSwitch } from '../../web/src/components/ThemeSwitch';
 import { TimingChip } from '../../web/src/components/TimingChip';
-import { localIsoDate } from '../../web/src/lib/format';
+import { localIsoDate, snapshotAge } from '../../web/src/lib/format';
 import printCss from '../../web/src/styles/print.css?raw';
 import tokensCss from '../../web/src/styles/tokens.css?raw';
 import { cssBlock, cssVar } from './helpers';
@@ -178,12 +178,13 @@ describe('print', () => {
 
 describe('StatusBadge', () => {
   it('uses the UI_DESIGN §4.2 badge text and shows raw codes for other statuses', () => {
+    // Exactly the four completion classes: nothing else, such as an unused "NOT COMPLETED" (review W-15).
+    expect(STATUS_BADGE).toEqual({ completed: 'COMPLETED', in_progress: 'IN PROGRESS', status_unknown: 'STATUS UNKNOWN', other_status: 'OTHER STATUS' });
     const cases = [
       ['completed', 'COMPLETED'],
       ['in_progress', 'IN PROGRESS'],
       ['status_unknown', 'STATUS UNKNOWN'],
       ['other_status', 'OTHER STATUS'],
-      ['not_completed', 'NOT COMPLETED'],
     ] as const;
     for (const [kind, text] of cases) {
       const { unmount, container } = render(<StatusBadge kind={kind} rawStatus="P" />);
@@ -193,6 +194,22 @@ describe('StatusBadge', () => {
     }
     render(<StatusBadge kind="status_unknown" rawStatus="  " />);
     expect(screen.getByText(/NTSB status: blank/)).toBeTruthy();
+  });
+});
+
+describe('Type scale (UI_DESIGN §2.3)', () => {
+  // Every component and page's source, as text.
+  const sources = import.meta.glob(['../../web/src/**/*.tsx', '../../web/src/**/*.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+
+  it('no text is set below the 9.5 px floor of small labels (review W-15)', () => {
+    expect(Object.keys(sources).length).toBeGreaterThan(50);
+    const below: string[] = [];
+    for (const [file, text] of Object.entries(sources)) {
+      for (const m of text.matchAll(/text-\[(\d+(?:\.\d+)?)px\]/g)) {
+        if (Number(m[1]) < 9.5) below.push(`${file}: ${m[0]}`);
+      }
+    }
+    expect(below).toEqual([]);
   });
 });
 
@@ -260,6 +277,27 @@ describe('frame', () => {
     expect(printLine?.textContent).toBe('Not an NTSB service · Source: NTSB · printed 22 OCT 2026');
     expect(screen.getByRole('link', { name: 'Privacy' }).getAttribute('href')).toBe('/privacy');
     expect(screen.getByRole('link', { name: 'About' }).getAttribute('href')).toBe('/about');
+  });
+
+  it('the snapshot\'s real age shows once it is older than the monthly refresh (UI_DESIGN §3, DESIGN §4; review W-8)', () => {
+    const at = (iso: string) => new Date(`${iso}T12:00:00Z`);
+    expect(snapshotAge('2026-10-16', at('2026-10-23'))).toBeNull();
+    expect(snapshotAge('2026-10-16', at('2026-11-30'))).toBeNull();
+    expect(snapshotAge('2026-10-16', at('2026-12-01'))).toBe('46 days old');
+    expect(snapshotAge('2026-10-16', at('2026-12-14'))).toBe('59 days old');
+    expect(snapshotAge('2026-10-16', at('2026-12-16'))).toBe('2 months old');
+    expect(snapshotAge('2026-10-16', at('2027-12-20'))).toBe('14 months old');
+    // A date the client cannot read, or one in the future, says nothing.
+    expect(snapshotAge('not a date', at('2027-12-20'))).toBeNull();
+    expect(snapshotAge('2027-01-01', at('2026-10-23'))).toBeNull();
+    const { container } = render(
+      <MemoryRouter>
+        <Footer snapshotDate="2026-10-16" snapshotAge="14 months old" printedDate="2027-12-20" />
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('footer p')?.textContent).toBe(
+      'Not an NTSB service · Data: NTSB, snapshot 16 OCT 2026 (14 months old) · Privacy · About',
+    );
   });
 
   it('header marks the active section and fills the AI counter and auth slots', () => {

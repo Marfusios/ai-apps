@@ -98,7 +98,7 @@ export function ResultRow({ row, caseTo, inCompare, onToggleCompare }: ResultRow
       {!row.completion.hasProbableCause && <p className="text-meta text-muted">No probable cause on record</p>}
       {snippet && (
         <p className="font-serif text-body leading-[1.45] text-ink">
-          <span className="mr-1.5 font-sans text-[9px] tracking-caps text-muted uppercase">{snippet.label}</span>
+          <span className="mr-1.5 font-sans text-micro tracking-caps text-muted uppercase">{snippet.label}</span>
           {snippet.truncatedStart && '…'}
           <Highlighted text={snippet.text} highlights={snippet.highlights} />
           {snippet.truncatedEnd && '…'}

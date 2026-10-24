@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { SearchRequestSchema } from '../../shared/contracts/search.js';
 import { contentSecurityPolicy, securityHeaders } from '../../server/http/security-headers.js';
-import { FRAGMENT_SIZE, buildSearchBody, parseQuery, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
-import { SEARCH_TIMEOUT, SearchTimedOutError, assertComplete } from '../../server/search/timeout.js';
+import { FRAGMENT_SIZE, MARK_END, MARK_START, SECTION_EDGE, buildSearchBody, parseQuery, sectionEdges, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
+import { SEARCH_TIMEOUT, SearchIncompleteError, SearchTimedOutError, assertComplete } from '../../server/search/timeout.js';
+import { isUnavailable } from '../../server/app.js';
 import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
 
 const request = (q: Record<string, string>) => SearchRequestSchema.parse(q);
@@ -84,6 +85,23 @@ describe('query text', () => {
     expect(() => assertComplete({ timed_out: false })).not.toThrow();
   });
 
+  it('refuses partial results by construction: in the request, and a shard report that is not whole (task 22 S-M1)', () => {
+    expect(buildSearchBody('ix', request({ q: 'icing' })).body.allow_partial_search_results).toBe(false);
+    expect(buildSearchBody('ix', request({})).body.allow_partial_search_results).toBe(false);
+    const whole = { total: 1, successful: 1, skipped: 0, failed: 0 };
+    expect(() => assertComplete({ timed_out: false, _shards: whole })).not.toThrow();
+    // A failed or missing shard: incomplete counts, never served (503 like a timeout).
+    for (const shards of [
+      { ...whole, failed: 1, successful: 0 },
+      { total: 2, successful: 1, skipped: 0, failed: 0 },
+      { ...whole, failures: [{ shard: 0 }] },
+      { total: 3, successful: 1, skipped: 2, failed: 0 },
+    ]) {
+      expect(() => assertComplete({ timed_out: false, _shards: shards }), JSON.stringify(shards)).toThrow(SearchIncompleteError);
+      expect(isUnavailable(new SearchIncompleteError('keyword', 'x')), JSON.stringify(shards)).toBe(true);
+    }
+  });
+
   it('asks for probable-cause previews and no highlights without a query', () => {
     const { body } = buildSearchBody('ix', request({}));
     expect(body.highlight).toBeUndefined();
@@ -93,8 +111,20 @@ describe('query text', () => {
 });
 
 describe('snippets from highlights', () => {
-  const S = '\uE000';
-  const E = '\uE001';
+  const S = MARK_START;
+  const E = MARK_END;
+
+  it('reads its markers right even when the text holds private-use characters of its own (task 22 S-M10)', () => {
+    // The markers are sequences no source text holds; a lone U+E000 or U+E001 in a section is just text.
+    expect(MARK_START.length).toBeGreaterThan(1);
+    expect(MARK_END.length).toBeGreaterThan(1);
+    const text = 'Sensor \uE000A\uE001 read low, then the engine quit.';
+    const marked = text.replace('engine', `${S}engine${E}`);
+    expect(unmark(marked)).toEqual({ text, spans: [{ start: text.indexOf('engine'), end: text.indexOf('engine') + 6 }] });
+    const snippet = snippetFromHighlights({ factual: [marked] });
+    expect(snippet?.text).toBe(text);
+    expect(snippet?.highlights.map((h) => snippet.text.slice(h.start, h.end))).toEqual(['engine']);
+  });
 
   it('turns markers into offsets', () => {
     expect(unmark(`a ${S}carb${E} b`)).toEqual({ text: 'a carb b', spans: [{ start: 2, end: 6 }] });
@@ -130,6 +160,39 @@ describe('snippets from highlights', () => {
     const long = snippetFromHighlights({ factual: [`${'word '.repeat(300)}${S}carb${E}${' tail'.repeat(300)}`] });
     expect(long?.text.length).toBeLessThanOrEqual(1200);
     expect(long?.highlights).toHaveLength(1);
+  });
+
+  it('marks a passage truncated only on a side where its section goes on (task 22 S-M7)', () => {
+    const section = 'The pilot applied carb heat. The engine recovered. Then it quit again over the lake.';
+    const edges = (...sections: string[]) => sectionEdges(sections);
+    // The section's first sentences: nothing before them, more after.
+    const first = snippetFromHighlights({ analysis: [`The pilot applied ${S}carb${E} heat. The engine recovered.`] }, { analysis: edges(section) });
+    expect(first).toMatchObject({ section: 'analysis', truncatedStart: false, truncatedEnd: true });
+    // Its last sentence: more before, nothing after.
+    const last = snippetFromHighlights({ analysis: [`Then it quit again over the ${S}lake${E}.`] }, { analysis: edges(section) });
+    expect(last).toMatchObject({ truncatedStart: true, truncatedEnd: false });
+    // The whole section, in one of several (an event's per-aircraft variants).
+    const whole = snippetFromHighlights({ factual: [section.replace('carb', `${S}carb${E}`)] }, { factual: edges('Another aircraft.', section) });
+    expect(whole).toMatchObject({ section: 'factual', truncatedStart: false, truncatedEnd: false });
+    // The middle, or no edges reported: truncated on both sides, as before.
+    expect(snippetFromHighlights({ analysis: [`The engine ${S}recovered${E}.`] }, { analysis: edges(section) })).toMatchObject({ truncatedStart: true, truncatedEnd: true });
+    expect(snippetFromHighlights({ analysis: [`The pilot applied ${S}carb${E} heat.`] })).toMatchObject({ truncatedStart: true, truncatedEnd: true });
+    // A long section: only its edges are known, and a passage that begins it is still found.
+    const long = `Long opening sentence about the ${'approach '.repeat(40)}path. ${'More text. '.repeat(60)}End.`;
+    const head = long.slice(0, long.indexOf('. ') + 1);
+    expect(snippetFromHighlights({ analysis: [head.replace('opening', `${S}opening${E}`)] }, { analysis: edges(long) })).toMatchObject({
+      truncatedStart: false,
+      truncatedEnd: true,
+    });
+  });
+
+  it('asks Elasticsearch for each long section’s edges only, never its text', () => {
+    const { body } = buildSearchBody('ix', request({ q: 'icing' }));
+    expect(body._source).toBe(false);
+    expect(Object.keys(body.script_fields ?? {}).sort()).toEqual(['analysis_edges', 'factual_edges']);
+    expect(JSON.stringify(body.script_fields)).toContain(`"edge":${SECTION_EDGE}`);
+    expect(buildSearchBody('ix', request({ q: 'icing', mentionedIn: 'probable_cause' })).body.script_fields).toBeUndefined();
+    expect(buildSearchBody('ix', request({})).body.script_fields).toBeUndefined();
   });
 
   it('is null when no narrative section matched', () => {

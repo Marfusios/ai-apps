@@ -120,7 +120,7 @@ import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { retryAfterSeconds, sendGateRefusal } from '../identity/gate.js';
 import { accountCheckSignals } from '../identity/step-up.js';
 import type { TrialPrincipal } from '../identity/trial.js';
-import { admitPaidRequest, releaseQuota, setResultRef, type Admission, type Rejection } from '../quota/admit.js';
+import { admitPaidRequest, forgetIdempotency, releaseQuota, setResultRef, type Admission, type Rejection } from '../quota/admit.js';
 import { setLockTimeout } from '../quota/locks.js';
 import { principalHash, UnknownPrincipalError, type Principal, type QuotaPolicy } from '../quota/policy.js';
 import { settle } from '../quota/settle.js';
@@ -202,6 +202,7 @@ function sendRejection(reply: FastifyReply, r: Rejection, now: Date): FastifyRep
       return sendError(reply, 429, 'trial_used');
     case 'daily_cap':
     case 'monthly_cap':
+    case 'uncertain_limit':
       return retry(429, 'quota_exhausted');
     case 'anonymous_share_exhausted':
       return retry(429, 'free_searches_paused');
@@ -324,10 +325,14 @@ async function sendReplay(ctx: ApiContext, reply: FastifyReply, stepId: string |
   return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
 }
 
-/** Give back an admission that made no step (nothing was spent). */
+/**
+ * Give back an admission that made no step (nothing was spent), and forget its idempotency
+ * record so the same request can be sent again.
+ */
 async function abandon(ctx: ApiContext, r: Ready, admission: Admission): Promise<void> {
   await releaseQuota(ctx.db, admission, admission.fencingToken, { policy: r.ai.policy, now: r.ai.now() }).catch(() => undefined);
   await settle(ctx.db, admission, 0, admission.fencingToken, r.ai.now()).catch(() => undefined);
+  await forgetIdempotency(ctx.db, admission, r.ai.now()).catch(() => undefined);
 }
 
 /**

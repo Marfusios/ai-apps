@@ -42,7 +42,7 @@ export interface ReserveSpendInput {
   request: SpendRequest;
   budgets: QuotaBudgets;
   now?: Date;
-  /** Lease TTL (default 90 s, at most 15 minutes). */
+  /** Lease TTL (default `LEASE_TTL_MS`, 120 s; at most 15 minutes). */
   ttlMs?: number;
 }
 

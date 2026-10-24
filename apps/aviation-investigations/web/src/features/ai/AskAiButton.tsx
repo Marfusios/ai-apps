@@ -3,7 +3,8 @@ import { useId } from 'react';
 import { aiStatusQuery } from '../../api';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
-import { askAvailability, askCounter } from './status';
+import { useSignIn } from '../auth/SignInDialog';
+import { askAvailability, askCounter, signedInOnlyNote, type AskAvailability } from './status';
 import type { AiPhase } from './useAiRequest';
 
 export interface AskAiButtonProps {
@@ -21,16 +22,36 @@ export interface AskAiButtonProps {
 }
 
 /**
+ * What an AI control says while its request runs: "Checking…" during the Turnstile check,
+ * "Starting…" while the request is on its way (the server answers once the scope stage is
+ * done, a few seconds); null when idle.
+ */
+export function busyLabel(phase: AiPhase): string | null {
+  return phase === 'checking' ? 'Checking…' : phase === 'sending' ? 'Starting…' : null;
+}
+
+/**
  * The magenta Ask AI button with its live availability (UI_DESIGN §2.6, §5):
- * "Ask AI · 3 free", "Ask AI · 18 left today", "Ask AI · sign in", or disabled with
+ * "Ask AI · 3 free", "Ask AI · 18 left today", "Ask AI · sign in" (only while sign-in is
+ * offered: otherwise disabled with the counter's words), or disabled with
  * "AI back tomorrow" / "AI back on {date}" / "AI temporarily unavailable". It shows
- * "Checking…" while the Turnstile check runs. A disabled button stays focusable
- * (aria-disabled) so its note is read; a click then explains instead of asking.
+ * "Checking…" while the Turnstile check runs and "Starting…" while the request is on its
+ * way. A disabled button stays focusable (aria-disabled) so its note is read; a click then
+ * explains instead of asking.
  */
 export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, size = 'md', look = 'pill', className }: AskAiButtonProps) {
   const status = useQuery(aiStatusQuery());
+  const signIn = useSignIn();
   const noteId = useId();
-  const availability = askAvailability(status.data, status.isError);
+  const read = askAvailability(status.data, status.isError);
+  // Only signed-in AI is open and nobody can sign in here: off, with the counter's words (review
+  // W-10); while the first configuration read is on its way, the button waits.
+  const availability: AskAvailability =
+    read.kind !== 'sign_in' || signIn.enabled
+      ? read
+      : signIn.pending
+        ? { kind: 'loading' }
+        : { kind: 'paused', note: signedInOnlyNote(read.reason), status: null };
   const describedBy = availability.kind === 'paused' ? noteId : undefined;
   const busy = phase !== 'idle';
   const disabled = availability.kind === 'loading' || availability.kind === 'paused' || busy;
@@ -55,7 +76,7 @@ export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne =
           onClick={click}
           className="inline-flex cursor-pointer items-center rounded-chip border border-magenta bg-raised px-2 py-0.5 text-left text-meta text-magenta hover:bg-magenta-wash aria-disabled:cursor-not-allowed aria-disabled:border-hairline aria-disabled:text-muted pointer-coarse:min-h-11"
         >
-          {phase === 'checking' ? 'Checking…' : label}
+          {busyLabel(phase) ?? label}
           {counter && <span className="ml-1 whitespace-nowrap">· {counter}</span>}
         </button>
       ) : (
@@ -69,7 +90,7 @@ export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne =
           onClick={click}
           className="aria-disabled:cursor-not-allowed aria-disabled:border-tint aria-disabled:bg-tint aria-disabled:text-muted aria-disabled:shadow-none"
         >
-          {phase === 'checking' ? 'Checking…' : label}
+          {busyLabel(phase) ?? label}
         </Button>
       )}
     </span>

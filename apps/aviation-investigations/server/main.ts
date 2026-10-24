@@ -8,7 +8,8 @@
  * and serves the built web client from `dist/web` when it exists.
  *
  * A live deployment must run in tunnel mode: with APP_ENV=live the server refuses to
- * start unless TRUSTED_PROXY_CIDRS is set.
+ * start unless TRUSTED_PROXY_CIDRS is set, and set to private, narrow networks only (the
+ * tunnel's edge network: RFC 1918 at /16 or narrower, unique-local IPv6 at /64 or narrower).
  *
  * AI briefs read their evidence through hybrid retrieval (server/briefs/retriever.ts)
  * with the OpenAI query embedder (OPENAI_API_KEY, OPENAI_EMBEDDING_MODEL and
@@ -32,11 +33,12 @@ import { createAuthService, type AuthLog } from './auth/better-auth.js';
 import { buildApp } from './app.js';
 import { createHybridRetriever } from './briefs/retriever.js';
 import { createBriefServices, type BriefServices } from './briefs/services.js';
-import { DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from './db/client.js';
+import { API_DB_EXECUTION, DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from './db/client.js';
 import { manifestCasesIndex } from './db/generations.js';
 import { startControlMaintenance } from './quota/maintenance.js';
 import { startTracing } from './observability/tracing.js';
 import { createEsClient } from './search/es.js';
+import { trustedProxyProblem } from './http/network-identity.js';
 import { retrievalConfig } from './search/retrieval-config.js';
 
 const APP_DIR = resolve(fileURLToPath(import.meta.url), '../..');
@@ -82,10 +84,26 @@ async function main(): Promise<void> {
   if (config.appEnv === 'live' && config.trustedProxyCidrs.length === 0) {
     fail('APP_ENV=live requires tunnel mode: set TRUSTED_PROXY_CIDRS (compose.tunnel.yaml sets it from EDGE_SUBNET)');
   }
+  // Only the tunnel's own private, narrow edge network may be trusted (platform review P4).
+  const proxyProblem = config.appEnv === 'live' ? trustedProxyProblem(config.trustedProxyCidrs) : null;
+  if (proxyProblem) fail(proxyProblem);
 
   const tracing = startTracing(config);
-  // Opening a connection or waiting for one ends after 5 s (server/db/client.ts).
-  const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api', connectTimeoutMs: DB_CONNECT_TIMEOUT_MS });
+  // The server's logger exists once the app does; until then failed connections go to stderr.
+  let dbLog: { warn(obj: object, msg: string): void } | null = null;
+  // Opening a connection or waiting for one ends after 5 s; statements are bounded on the
+  // server and on the connection (API_DB_EXECUTION), and a failed connection is logged, never
+  // fatal (server/db/client.ts).
+  const db = createDb(config.databaseUrl, {
+    max: 8,
+    applicationName: 'aviation-api',
+    connectTimeoutMs: DB_CONNECT_TIMEOUT_MS,
+    execution: API_DB_EXECUTION,
+    onConnectionError: (problem) => {
+      if (dbLog) dbLog.warn({ err: problem }, 'database connection failed');
+      else process.stderr.write(`${JSON.stringify({ level: 40, msg: 'database connection failed', err: problem })}\n`);
+    },
+  });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 10_000, maxRetries: 1 });
   const evidence = briefServices(config, db, es);
   const ai = createAiRuntime(config, { db });
@@ -114,6 +132,10 @@ async function main(): Promise<void> {
   });
 
   authLog = app.log;
+  dbLog = app.log;
+  // Tracing that was asked for and is off says why (setting names only).
+  if (tracing.enabled) app.log.info({}, 'tracing on');
+  else if (config.tracing.enabled) app.log.warn({ problem: tracing.reason }, 'tracing off');
   if (signIn.problem) app.log.warn({ problem: signIn.problem }, 'Google sign-in off');
   if (evidence.problem) app.log.warn({ problem: evidence.problem }, 'AI feature off');
   else app.log.info({ retrievalVersion: config.retrieval.version }, 'AI retrieval configuration');

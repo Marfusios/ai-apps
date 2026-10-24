@@ -681,21 +681,43 @@ export interface PassagesIndexReport {
   durationMs: number;
 }
 
+/** The passages lock's session ended during the build, and the server released the lock with it. */
+export class PassagesLockLostError extends Error {
+  constructor(generationId: number) {
+    super(`the passages-build lock of generation ${generationId} was lost (its database session ended); the build stopped, run it again`);
+    this.name = 'PassagesLockLostError';
+  }
+}
+
 /**
  * Hold the per-generation passages lock: a second build of the same generation fails
  * fast instead of paying for the same embeddings. It lives on its own session, outside
- * the pool the build needs.
+ * the pool the build needs. A session that drops (task 22 re-review N4) must not end the
+ * worker on an unhandled `error`, and it takes the lock with it: `fn` gets
+ * `assertLocked`, which throws `PassagesLockLostError` from then on, and calls it before
+ * every paid embedding request and before the alias switch.
  */
-async function withGenerationLock<T>(db: Db, generationId: number, fn: () => Promise<T>): Promise<T> {
+export async function withGenerationLock<T>(db: Db, generationId: number, fn: (assertLocked: () => void) => Promise<T>): Promise<T> {
   // The pool's options, its connect timeout included (server/db/client.ts).
   const client = new pg.Client({ ...db.$client.options, application_name: 'aviation-passages-generation-lock' });
+  let lost = false;
+  let ending = false;
+  client.on('error', () => {
+    lost = true;
+  });
+  client.on('end', () => {
+    if (!ending) lost = true;
+  });
   await client.connect();
   try {
     const r = await client.query<{ ok: boolean }>('select pg_try_advisory_lock($1, $2) as ok', [PASSAGES_BUILD_LOCK_NAMESPACE, generationId]);
     if (r.rows[0]?.ok !== true) throw new Error(`another passages build of generation ${generationId} is running`);
-    return await fn();
+    return await fn(() => {
+      if (lost) throw new PassagesLockLostError(generationId);
+    });
   } finally {
     // Closing the session releases the lock.
+    ending = true;
     await client.end().catch(() => undefined);
   }
 }
@@ -893,7 +915,7 @@ export async function rebuildPassagesIndex(
   const pinReason = buildPinReason(buildId);
   const spec: EmbeddingSpec = { model: embedder.model, dims: embedder.dims, usdPerMillionTokens: embedder.usdPerMillionTokens };
 
-  return withGenerationLock(db, generationId, () =>
+  return withGenerationLock(db, generationId, (assertLocked) =>
     withBuildLock(db, buildId, async () => {
       const blocking = await blockingAttempts(db.$client, alias);
       if (blocking.length > 0) throw new UnresolvedAliasError(blockedMessage(alias, blocking));
@@ -987,6 +1009,8 @@ export async function rebuildPassagesIndex(
           for (const [i, batch] of batches.entries()) {
             if (!all && i === batches.length - 1 && batch.length < EMBEDDING_LIMITS.maxInputs) break;
             const inputs = batch.map((k) => (pending.get(k) as { input: string }).input);
+            // Never pay for a request without the lock (another build may be running now).
+            assertLocked();
             const res = await embedder.embed(inputs);
             embedded.inputs += batch.length;
             embedded.tokens += res.tokens;
@@ -1074,6 +1098,7 @@ export async function rebuildPassagesIndex(
         await verifyIndex(es, index, want);
 
         let switched;
+        assertLocked();
         try {
           switched = await switchAlias(es, db, alias, index, {
             ...opts.alias,

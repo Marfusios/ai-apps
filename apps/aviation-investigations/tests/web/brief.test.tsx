@@ -5,12 +5,14 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiStatusResponse } from '../../shared/contracts/ai';
-import { BRIEF_FILTER_FACETS, BriefStepResponseSchema, CRITERIA, type CaseReading, type SummarySegment } from '../../shared/contracts/briefs';
+import { BRIEF_FILTER_FACETS, BriefStepResponseSchema, CRITERIA, type BriefStepResponse, type CaseReading, type SummarySegment } from '../../shared/contracts/briefs';
 import { CRITERION_LINE } from '../../server/briefs/context';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_MIDAIR_QUESTION, MOCK_SEED_QUESTION, RESULT_SAMPLES } from '../../web/mock/briefs';
+import mockConfig from '../../web/mock/config.json';
 import { AiCounter } from '../../web/src/features/ai/AiCounter';
+import { SignInProvider } from '../../web/src/features/auth/SignInDialog';
 import { AiNoticeBox } from '../../web/src/features/ai/AiNoticeBox';
 import { AskAiButton } from '../../web/src/features/ai/AskAiButton';
 import {
@@ -22,8 +24,8 @@ import {
   type AiCheck,
   type TurnstileApi,
 } from '../../web/src/features/ai/TurnstileGate';
-import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, type PollState } from '../../web/src/features/brief/api';
-import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
+import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, briefStepQuery, type PollState } from '../../web/src/features/brief/api';
+import { BriefingSheet, citationJoiner, sheetOrder } from '../../web/src/features/brief/BriefingSheet';
 import { attributionAmbiguous, evidenceAttribution, quoteAttribution, unconfirmedLines } from '../../web/src/features/brief/display';
 import { exploreHref } from '../../web/src/features/brief/filters';
 import {
@@ -31,20 +33,23 @@ import {
   UNSETTLED_TTL_MS,
   canonicalFilters,
   forgetUnsettled,
+  forgetUnsettledMemoryForTests,
   rememberUnsettled,
   resetUnsettledForTests,
   unsettledId,
   unsettledKey,
 } from '../../web/src/features/ai/unsettled';
 import { canonicalFilters as serverCanonicalFilters } from '../../server/briefs/intent';
-import { IDEMPOTENCY_TTL_MS } from '../../server/quota/policy';
-import { ApiError } from '../../web/src/api';
-import { chipsContext } from '../../web/src/pages/Brief';
-import { Checklist, CHECKLIST_NOTE } from '../../web/src/features/brief/Checklist';
+import { IDEMPOTENCY_TTL_MS, PIPELINE_DEADLINE_MS } from '../../server/quota/policy';
+import { AI_STATUS_RETRY_MS, ApiError, CONFIG_RETRY_MAX_MS, CONFIG_RETRY_MS, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery, configQuery } from '../../web/src/api';
+import { CHANGE_NOT_KEPT, RETRY_FAILED, chipsContext } from '../../web/src/pages/Brief';
+import { REFINEMENTS_USED } from '../../web/src/features/brief/RefineBox';
+import { Checklist, CHECKLIST_NOTE, POLL_TROUBLE } from '../../web/src/features/brief/Checklist';
 import { WithheldNotice, withheldText } from '../../web/src/features/brief/WithheldNotice';
 import { PassageText, cleanSpans, paragraphRanges } from '../../web/src/features/case/BriefContext';
 import { TURNSTILE_TEST_SITE_KEY, createHandlers } from '../../web/src/mocks/handlers';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
+import { routes } from '../../web/src/routes';
 import printCss from '../../web/src/styles/print.css?raw';
 
 const server = setupMockApi({ briefPolls: 1 });
@@ -105,6 +110,7 @@ function installTurnstile(delay = 20, { hold = false }: { hold?: boolean } = {})
 afterEach(() => {
   delete window.turnstile;
   resetUnsettledForTests();
+  vi.useRealTimers();
 });
 
 /** A fresh mock API (trial, briefs) for one test. */
@@ -122,12 +128,14 @@ async function askFromHome(question: string) {
 
 const SLOW = { timeout: 5000 };
 
-function withStatus(status: AiStatusResponse, ui: ReactNode) {
+/** `ui` with this AI status; `signIn`: Google sign-in is offered (the sign-in dialog's provider around it). */
+function withStatus(status: AiStatusResponse, ui: ReactNode, { signIn = false }: { signIn?: boolean } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(['ai-status'], status);
+  client.setQueryData(['config'], { ...mockConfig, googleEnabled: signIn });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter>{signIn ? <SignInProvider>{ui}</SignInProvider> : ui}</MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -136,15 +144,129 @@ describe('AI availability labels (UI_DESIGN §5)', () => {
   it.each([
     ['fresh', /^Ask AI\s*·\s*3 free$/, null],
     ['signedIn', /^Ask AI\s*·\s*18 left today$/, null],
-    ['trialUsed', /^Ask AI\s*·\s*sign in$/, null],
     ['pausedDaily', /^Ask AI$/, 'AI back tomorrow'],
     ['pausedMonthly', /^Ask AI$/, 'AI back on 1 Nov'],
     ['unavailable', /^Ask AI$/, 'AI temporarily unavailable'],
+    // Signed-in AI only, and sign-in is not offered: nothing says "sign in" (review W-10).
+    ['trialUsed', /^Ask AI$/, 'Free AI searches used'],
+    ['anonymousShare', /^Ask AI$/, 'Free AI searches paused for today'],
+    ['loginRequired', /^Ask AI$/, 'AI temporarily unavailable'],
   ] as const)('%s', (sample, name, note) => {
-    withStatus(AI_STATUS_SAMPLES[sample], <AskAiButton onAsk={() => {}} />);
+    const { container } = withStatus(AI_STATUS_SAMPLES[sample], <AskAiButton onAsk={() => {}} />);
     const button = screen.getByRole('button', { name });
     expect(button.getAttribute('aria-disabled')).toBe(note ? 'true' : 'false');
-    if (note) expect(screen.getByText(note)).toBeTruthy();
+    if (note) expect(document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent).toBe(note);
+    expect(container.textContent).not.toMatch(/sign in/i);
+  });
+
+  it('until it is known whether sign-in is offered, a signed-in-only state says neither "sign in" nor the words for no sign-in', async () => {
+    let answer: (() => void) | null = null;
+    server.use(
+      http.get('*/api/config', async () => {
+        await new Promise<void>((resolve) => (answer = resolve));
+        return HttpResponse.json({ ...mockConfig, googleEnabled: true });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.trialUsed);
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SignInProvider>
+            <AiCounter />
+            <AskAiButton onAsk={() => {}} />
+          </SignInProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(answer).not.toBeNull());
+    expect(container.textContent).not.toMatch(/sign in|Free AI searches/i);
+    expect(screen.getByRole('button', { name: /^Ask AI$/ }).getAttribute('aria-disabled')).toBe('true');
+    act(() => answer?.());
+    expect(await screen.findByRole('button', { name: 'Sign in to keep asking' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');
+  });
+
+  it('a failed configuration read leaves no silent state: a neutral note, and the configuration is read again until it answers (re-review N-3)', { timeout: 15_000 }, async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let failing = true;
+    let reads = 0;
+    server.use(
+      http.get('*/api/config', () => {
+        reads += 1;
+        return failing ? HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 }) : HttpResponse.json({ ...mockConfig, googleEnabled: true });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.trialUsed);
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SignInProvider>
+            <header>
+              <AiCounter />
+            </header>
+            <AskAiButton onAsk={() => {}} />
+          </SignInProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    // The read and its one retry fail: the controls say what is true either way, never "sign in".
+    const header = screen.getByRole('banner');
+    await waitFor(() => expect(header.textContent).toBe('Free AI searches used'), SLOW);
+    const ask = screen.getByRole('button', { name: /^Ask AI$/ });
+    expect(ask.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(ask.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Free AI searches used');
+    // It is read again (with a growing pause), and once it answers the controls follow it.
+    const before = reads;
+    failing = false;
+    await act(() => vi.advanceTimersByTimeAsync(CONFIG_RETRY_MS));
+    await waitFor(() => expect(reads).toBeGreaterThan(before), SLOW);
+    expect(await screen.findByRole('button', { name: 'Sign in to keep asking' }, SLOW)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');
+  });
+
+  it('the configuration is read again with a growing pause while it fails, and not at all once read (re-review N-3)', () => {
+    const interval = configQuery().refetchInterval as (q: never) => number | false;
+    const at = (state: { status: 'error' | 'success' | 'pending'; data?: unknown; errorUpdateCount: number }) => ({ state }) as never;
+    expect(interval(at({ status: 'error', errorUpdateCount: 1 }))).toBe(CONFIG_RETRY_MS);
+    expect(interval(at({ status: 'error', errorUpdateCount: 2 }))).toBe(2 * CONFIG_RETRY_MS);
+    expect(interval(at({ status: 'error', errorUpdateCount: 20 }))).toBe(CONFIG_RETRY_MAX_MS);
+    expect(interval(at({ status: 'success', data: mockConfig, errorUpdateCount: 3 }))).toBe(false);
+    // Read once: a later failed refresh keeps what was read, and nothing changes for the controls.
+    expect(interval(at({ status: 'error', data: mockConfig, errorUpdateCount: 4 }))).toBe(false);
+  });
+
+  it('a notice raised before the configuration arrives says only what is true either way, then adds the right lines (re-review N-4)', async () => {
+    let answer: (() => void) | null = null;
+    server.use(
+      http.get('*/api/config', async () => {
+        await new Promise<void>((resolve) => (answer = resolve));
+        return HttpResponse.json({ ...mockConfig, googleEnabled: true });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.trialUsed);
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SignInProvider>
+            <AiNoticeBox notice={{ kind: 'trial_used' }} keywordHref="/explore?q=x" />
+          </SignInProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(answer).not.toBeNull());
+    // While it is unknown whether sign-in is offered: only the title, which both versions share.
+    expect(container.textContent).toBe('That was your third free AI search.');
+    act(() => answer?.());
+    await waitFor(() => expect(container.textContent).toContain('Sign in with Google to keep asking.'), SLOW);
+    expect(container.textContent).not.toContain('Everything else works');
+  });
+
+  it.each(['trialUsed', 'anonymousShare', 'loginRequired'] as const)('%s, with sign-in offered: "Ask AI · sign in"', (sample) => {
+    withStatus(AI_STATUS_SAMPLES[sample], <AskAiButton onAsk={() => {}} />, { signIn: true });
+    expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');
   });
 
   it('brief controls say "· uses 1" before the click, and "Checking…" during the check', () => {
@@ -163,15 +285,57 @@ describe('AI availability labels (UI_DESIGN §5)', () => {
   it.each([
     ['fresh', 'AI searches left: 3 of 3'],
     ['oneLeft', 'AI searches left: 1 of 3'],
-    ['trialUsed', 'Sign in to keep asking'],
-    ['anonymousShare', 'Sign in to ask the AI'],
     ['signedIn', 'AI left today: 18 of 20'],
     ['pausedDaily', 'AI back tomorrow'],
     ['pausedMonthly', 'AI back on 1 Nov'],
     ['unavailable', 'AI temporarily unavailable'],
+    // Sign-in is not offered: the counter never tells the visitor to sign in (review W-10).
+    ['trialUsed', 'Free AI searches used'],
+    ['anonymousShare', 'Free AI searches paused for today'],
+    ['loginRequired', 'AI temporarily unavailable'],
   ] as const)('header counter: %s reads "%s"', (sample, text) => {
     const { container } = withStatus(AI_STATUS_SAMPLES[sample], <AiCounter />);
     expect(container.textContent).toContain(text);
+    expect(container.textContent).not.toMatch(/sign in/i);
+  });
+
+  it.each([
+    ['trialUsed', 'Sign in to keep asking'],
+    ['anonymousShare', 'Sign in to ask the AI'],
+    ['loginRequired', 'Sign in to ask the AI'],
+  ] as const)('header counter with sign-in offered: %s is the pill "%s"', (sample, text) => {
+    withStatus(AI_STATUS_SAMPLES[sample], <AiCounter />, { signIn: true });
+    expect(screen.getByRole('button', { name: text })).toBeTruthy();
+  });
+});
+
+describe('A failed AI status read is read again (review W-9)', { timeout: 20_000 }, () => {
+  it('the status query re-reads on a timer while it is in error, and when the tab gets focus', () => {
+    const options = aiStatusQuery();
+    const at = (status: 'error' | 'success') => ({ state: { status } }) as never;
+    const interval = options.refetchInterval as (q: never) => number | false;
+    const onFocus = options.refetchOnWindowFocus as (q: never) => boolean;
+    expect(interval(at('error'))).toBe(AI_STATUS_RETRY_MS);
+    expect(interval(at('success'))).toBe(false);
+    expect(onFocus(at('error'))).toBe(true);
+    expect(onFocus(at('success'))).toBe(false);
+  });
+
+  it('after a failed read, the Ask AI button comes back by itself once the status can be read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let failures = 2;
+    server.use(
+      http.get('*/api/ai/status', () => (failures-- > 0 ? HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 }) : undefined)),
+    );
+    renderApp('/');
+    // The first read and its one retry fail: nothing is promised and nothing runs ...
+    expect(await screen.findByText('AI temporarily unavailable', {}, SLOW)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Ask AI$/ }).getAttribute('aria-disabled')).toBe('true');
+    // ... until the status is read again, without a reload.
+    await act(() => vi.advanceTimersByTimeAsync(AI_STATUS_RETRY_MS));
+    const ask = await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }, SLOW);
+    expect(ask.getAttribute('aria-disabled')).toBe('false');
+    expect(screen.queryByText('AI temporarily unavailable')).toBeNull();
   });
 });
 
@@ -188,14 +352,27 @@ describe('AI notices (UI_DESIGN §5 copy)', () => {
   });
 
   it('trial used, free searches paused (and the login-required variant), rate limit and failure', () => {
+    const offered = (n: Parameters<typeof AiNoticeBox>[0]['notice']) =>
+      withStatus(AI_STATUS_SAMPLES.trialUsed, <AiNoticeBox notice={n} keywordHref="/explore?q=x" onRetry={() => {}} />, { signIn: true }).container
+        .textContent;
+    expect(offered({ kind: 'trial_used' })).toBe(
+      'That was your third free AI search.Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.Continue with GoogleSearch, case pages, compare and the dashboard stay open without an account.',
+    );
+    expect(offered({ kind: 'free_paused', loginRequired: false })).toBe(
+      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.Continue with GoogleFree searches return tomorrow; keyword search and every case work now.',
+    );
+    expect(offered({ kind: 'free_paused', loginRequired: true })).toBe(
+      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.Continue with Google',
+    );
+    // Sign-in is not offered: the same moments, without telling the visitor to sign in (review W-10).
     expect(notice({ kind: 'trial_used' })).toBe(
-      'That was your third free AI search.Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.Search, case pages, compare and the dashboard stay open without an account.',
+      'That was your third free AI search.Everything else works: keyword search, every case, comparisons and printing.Search by keyword instead',
     );
     expect(notice({ kind: 'free_paused', loginRequired: false })).toBe(
-      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.Free searches return tomorrow; keyword search and every case work now.',
+      'Free AI searches are used up for today.Free searches return tomorrow; keyword search and every case work now.',
     );
     expect(notice({ kind: 'free_paused', loginRequired: true })).toBe(
-      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.',
+      'AI search is temporarily unavailable.Everything else works: keyword search, every case, comparisons and printing.Search by keyword instead',
     );
     expect(notice({ kind: 'rate', seconds: 12 })).toBe('Slow down a moment. Try again in 12 seconds.');
     expect(notice({ kind: 'failure', spent: 'no' })).toBe(
@@ -205,6 +382,31 @@ describe('AI notices (UI_DESIGN §5 copy)', () => {
     const unknown = notice({ kind: 'failure', spent: 'unknown' });
     expect(unknown).not.toContain("This didn't use one of your searches.");
     expect(unknown).toContain('If it went through, Try again opens it without using another search.');
+  });
+
+  it('a long rate-limit wait (a per-network limit) reads in minutes or as a UTC time, never thousands of seconds (review W-4)', () => {
+    // Per-minute limits: the approved copy, in seconds.
+    expect(notice({ kind: 'rate', seconds: 119 })).toBe('Slow down a moment. Try again in 119 seconds.');
+    // Hourly and daily limits are per network (the trial-creation cap is one): minutes, then the time.
+    const tail = 'Everything else works: keyword search, every case, comparisons and printing.Search by keyword instead';
+    expect(notice({ kind: 'rate', seconds: 120 })).toBe(`AI searches from this network are limited for now.Try again in 2 minutes.${tail}`);
+    expect(notice({ kind: 'rate', seconds: 3480 })).toBe(`AI searches from this network are limited for now.Try again in 58 minutes.${tail}`);
+    const at = Date.UTC(2026, 9, 23, 13, 0, 30);
+    expect(notice({ kind: 'rate', seconds: 7200, at })).toBe(`AI searches from this network are limited for now.Try again after 15:01 UTC.${tail}`);
+    expect(notice({ kind: 'rate', seconds: 39_570, at })).toBe(`AI searches from this network are limited for now.Try again after 00:00 UTC.${tail}`);
+    expect(notice({ kind: 'rate', seconds: 3480 })).not.toMatch(/\d{3,} seconds/);
+  });
+
+  it('a 429 with a long Retry-After from the server reads as minutes (review W-4)', { timeout: 15_000 }, async () => {
+    freshApi();
+    installTurnstile();
+    server.use(http.post('*/api/briefs', () => HttpResponse.json({ error: 'rate_limited', message: 'Too many requests.', retryAfter: 3480 }, { status: 429 })));
+    renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText('AI searches from this network are limited for now.', {}, SLOW)).toBeTruthy();
+    expect(screen.getByText('Try again in 58 minutes.')).toBeTruthy();
+    expect(screen.queryByText(/3480/)).toBeNull();
   });
 
   it('a notice appears inside a live region that was there before it', () => {
@@ -250,6 +452,14 @@ describe('Checklist (UI_DESIGN §4.4)', () => {
     expect(screen.getByText(/0:0\d/).getAttribute('aria-hidden')).toBe('true');
     expect(screen.getByText(new RegExp(CHECKLIST_NOTE.replace('.', '\\.')))).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+  });
+
+  it('the note says how long it usually takes, as measured, and its bound (review W-13)', () => {
+    // Measured: scope 2–4 s, retrieve 1–2 s, compose 19–23 s, check 20–38 s (p50–p95); deadline 100 s.
+    expect(CHECKLIST_NOTE).toBe('Nothing is shown until each quote matches the report text word for word. Usually about a minute; up to two.');
+    expect(PIPELINE_DEADLINE_MS).toBeLessThanOrEqual(2 * 60_000);
+    render(<Checklist {...props} stage="scope" checklist={{}} />);
+    expect(screen.getByText(/Usually about a minute; up to two\./)).toBeTruthy();
   });
 
   it('says what the evidence check did, from the actual count; never a blanket status (Task 16e)', () => {
@@ -580,6 +790,172 @@ describe('Brief outcomes read from the server', { timeout: 15_000 }, () => {
   });
 });
 
+describe('Try again after a failed step (review W-5, W-12)', { timeout: 20_000 }, () => {
+  const ID = '00000000-0000-4000-8000-00000000f001';
+  /** Step `n` of `steps`, failed before anything was spent, started by `origin`. */
+  const failed = (n: number, steps: number, origin: BriefStepResponse['origin'], refinementsLeft: number) =>
+    BriefStepResponseSchema.parse({
+      briefId: ID,
+      step: n,
+      steps,
+      refinementsLeft,
+      question: MOCK_SEED_QUESTION,
+      origin,
+      stage: 'failed',
+      checklist: {},
+      startedAt: '2026-10-22T10:00:00.000Z',
+      finishedAt: '2026-10-22T10:00:30.000Z',
+      expiresAt: '2026-10-23T10:00:00.000Z',
+      result: { kind: 'failed', countedAsSearch: false },
+    });
+
+  /** Records every brief POST (`create` or `refine`) with its body, then lets the mock answer. */
+  function recordBriefPosts(): { path: 'create' | 'refine'; body: Record<string, unknown> }[] {
+    const posts: { path: 'create' | 'refine'; body: Record<string, unknown> }[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        posts.push({ path: 'create', body: (await request.clone().json()) as Record<string, unknown> });
+        return undefined;
+      }),
+      http.post('*/api/briefs/:id/refine', async ({ request }) => {
+        posts.push({ path: 'refine', body: (await request.clone().json()) as Record<string, unknown> });
+        return undefined;
+      }),
+    );
+    return posts;
+  }
+
+  it('a failed edited reading is tried again as that reading, never as a new search with the question (W-5)', async () => {
+    freshApi();
+    installTurnstile();
+    const { router } = await askFromHome(MOCK_SEED_QUESTION);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const id = currentUrl(router).split('/')[2] as string;
+    let failNext = false;
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) =>
+        failNext && new URL(request.url).searchParams.get('step') !== '1'
+          ? HttpResponse.json({ ...failed(2, 2, { kind: 'interpretation', label: 'Within 14 days or 5 flight hours' }, 2), briefId: id })
+          : undefined,
+      ),
+    );
+    const posts = recordBriefPosts();
+    fireEvent.click(screen.getByRole('button', { name: /Within 30 days or 10 flight hours.*edit/ }));
+    const editor = screen.getByRole('group', { name: "Change the AI's reading" });
+    fireEvent.change(within(editor).getByLabelText('Calendar days'), { target: { value: '14' } });
+    fireEvent.change(within(editor).getByLabelText('Flight hours'), { target: { value: '5' } });
+    failNext = true;
+    fireEvent.click(within(editor).getByRole('button', { name: /^Re-run AI\s*·\s*uses 1$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    await waitFor(() => expect(posts).toHaveLength(2), SLOW);
+    expect(posts.map((p) => p.path)).toEqual(['refine', 'refine']);
+    expect(posts[1]?.body).toMatchObject({ kind: 'interpretation', field: 'timing_window', value: { days: 14, flightHours: 5 } });
+  });
+
+  it('after a reload, a failed edited reading offers no Try again that would drop it (W-5)', async () => {
+    const posts = recordBriefPosts();
+    server.use(http.get('*/api/briefs/:id', () => HttpResponse.json(failed(2, 2, { kind: 'interpretation', label: 'Within 14 days or 5 flight hours' }, 2))));
+    renderApp(`/briefs/${ID}`);
+    const title = await screen.findByText("The AI search didn't finish.", {}, SLOW);
+    const card = title.parentElement as HTMLElement;
+    expect(within(card).queryByRole('button', { name: /Try again/ })).toBeNull();
+    expect(card.textContent).toContain(CHANGE_NOT_KEPT);
+    expect(within(card).getByRole('link', { name: 'New search' }).getAttribute('href')).toBe('/');
+    expect(posts).toHaveLength(0);
+  });
+
+  it('with no refinements left, a failed refinement offers no Try again that would start over with the question (W-5)', async () => {
+    server.use(http.get('*/api/briefs/:id', () => HttpResponse.json(failed(4, 4, { kind: 'text', text: 'only helicopters' }, 0))));
+    renderApp(`/briefs/${ID}`);
+    const title = await screen.findByText("The AI search didn't finish.", {}, SLOW);
+    const card = title.parentElement as HTMLElement;
+    expect(within(card).queryByRole('button', { name: /Try again/ })).toBeNull();
+    expect(card.textContent).toContain(REFINEMENTS_USED);
+    expect(within(card).getByRole('link', { name: 'New search' }).getAttribute('href')).toBe('/');
+  });
+
+  it('an earlier failed answer, with later ones in the brief, is not tried again from there (W-5)', async () => {
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) =>
+        new URL(request.url).searchParams.get('step') === '2' ? HttpResponse.json(failed(2, 3, { kind: 'text', text: 'only helicopters' }, 1)) : undefined,
+      ),
+    );
+    renderApp(`/briefs/${ID}?step=2`);
+    const title = await screen.findByText("The AI search didn't finish.", {}, SLOW);
+    expect(within(title.parentElement as HTMLElement).queryByRole('button', { name: /Try again/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Go to the latest answer' }).getAttribute('href')).toBe(`/briefs/${ID}`);
+  });
+
+  it('a Try again that fails too is said in the same card: one failure box, one Try again (W-12)', async () => {
+    freshApi();
+    installTurnstile();
+    server.use(
+      http.get('*/api/briefs/:id', () => HttpResponse.json(failed(2, 2, { kind: 'text', text: 'only helicopters' }, 2))),
+      // No answer comes back: whether it counted is unknown.
+      http.post('*/api/briefs/:id/refine', () => HttpResponse.error()),
+    );
+    renderApp(`/briefs/${ID}`);
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    expect(await screen.findByText(new RegExp(`^${RETRY_FAILED}`), {}, SLOW)).toBeTruthy();
+    expect(screen.getAllByText("The AI search didn't finish.")).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /Try again/ })).toHaveLength(1);
+    const line = screen.getByText(new RegExp(`^${RETRY_FAILED}`));
+    expect(line.textContent).toBe(`${RETRY_FAILED} If it went through, Try again opens it without using another search.`);
+    // Said politely, from a region that was there before it.
+    expect(line.getAttribute('aria-live')).toBe('polite');
+  });
+});
+
+describe('The drawer steps through the cards in the order they are shown (review W-11)', { timeout: 20_000 }, () => {
+  const ID = '00000000-0000-4000-8000-00000000d011';
+  // Grouped: DEN08LA103 (causal), then DFW08TA066 (defect); MIA08LA156 in no group, so it is
+  // shown last. The result lists them DFW, MIA, DEN.
+  const answer = {
+    ...RESULT_SAMPLES.answer,
+    groups: [
+      { kind: 'causal', caseNumbers: ['DEN08LA103'] },
+      { kind: 'defect_not_causal', caseNumbers: ['DFW08TA066'] },
+      { kind: 'no_fault', caseNumbers: [] },
+      { kind: 'insufficient', caseNumbers: [] },
+    ],
+  };
+  const step = BriefStepResponseSchema.parse({
+    briefId: ID,
+    step: 1,
+    steps: 1,
+    refinementsLeft: 3,
+    question: MOCK_SEED_QUESTION,
+    origin: { kind: 'question' },
+    stage: 'done',
+    checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 }, written: true, verified: 'partially_checked', removedStatements: 0 },
+    startedAt: '2026-10-22T10:00:00.000Z',
+    finishedAt: '2026-10-22T10:00:40.000Z',
+    expiresAt: '2026-10-23T10:00:00.000Z',
+    result: answer,
+  });
+
+  it('‹ n of N › and the steps follow the sheet, groups first, then the cases in no group', async () => {
+    expect(sheetOrder(step.result as Parameters<typeof sheetOrder>[0])).toEqual(['DEN08LA103', 'DFW08TA066', 'MIA08LA156']);
+    server.use(
+      http.get('*/api/briefs/:id', () => HttpResponse.json(step)),
+      http.get('*/api/briefs/:id/steps/:n/cases/:ntsbNo', () => HttpResponse.json({ error: 'not_found', message: 'Gone.' }, { status: 404 })),
+    );
+    const { router } = renderApp(`/briefs/${ID}?case=DFW08TA066`);
+    // The open drawer hides the sheet from the accessibility tree; its cards are still there.
+    const dialog = await screen.findByRole('dialog', {}, SLOW);
+    const shown = [...document.querySelectorAll('article[data-card]')].map((a) => a.getAttribute('data-card'));
+    expect(shown).toEqual(['DEN08LA103', 'DFW08TA066', 'MIA08LA156']);
+    expect(await within(dialog).findByText('2 of 3')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Previous case' }));
+    await waitFor(() => expect(currentUrl(router)).toContain('case=DEN08LA103'));
+    expect(await within(dialog).findByText('1 of 3')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Next case' }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Next case' }));
+    await waitFor(() => expect(currentUrl(router)).toContain('case=MIA08LA156'));
+    expect(await within(dialog).findByText('3 of 3')).toBeTruthy();
+  });
+});
+
 describe('Polling (stops, honours Retry-After, backs off)', () => {
   const running = BriefStepResponseSchema.parse({
     briefId: '00000000-0000-4000-8000-000000000001',
@@ -624,6 +1000,113 @@ describe('Polling (stops, honours Retry-After, backs off)', () => {
     expect(briefPollDelay(q)).toBe(BRIEF_POLL_MS);
     q.state = { ...q.state, status: 'error', error: new TypeError('network'), errorUpdateCount: 8 };
     expect(briefPollDelay(q)).toBe(2_000);
+  });
+
+  it('a read that gets no answer gives up after READ_TIMEOUT_MS and counts as a failed read (review W-3)', async () => {
+    // Stalled, not failed: the connection stays open and nothing comes back.
+    server.use(
+      http.get('*/api/briefs/:id', () => new Promise<Response>(() => {})),
+      http.get('*/api/ai/status', () => new Promise<Response>(() => {})),
+      http.get('*/api/config', () => new Promise<Response>(() => {})),
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const context = { signal: new AbortController().signal } as Parameters<NonNullable<ReturnType<typeof briefStepQuery>['queryFn']>>[0];
+      const poll = (briefStepQuery(running.briefId, null).queryFn as (c: typeof context) => Promise<unknown>)(context).then(
+        () => 'answered',
+        (err: unknown) => err,
+      );
+      const status = (aiStatusQuery().queryFn as (c: typeof context) => Promise<unknown>)(context).then(
+        () => 'answered',
+        (err: unknown) => err,
+      );
+      // The configuration too (re-review F-3): a hung read ends, and its re-read and neutral note take over.
+      const config = (configQuery().queryFn as (c: typeof context) => Promise<unknown>)(context).then(
+        () => 'answered',
+        (err: unknown) => err,
+      );
+      await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 100);
+      let settled = false;
+      void poll.then(() => (settled = true));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      const [pollErr, statusErr, configErr] = await Promise.all([poll, status, config]);
+      expect(pollErr).toBeInstanceOf(ReadTimeoutError);
+      expect(statusErr).toBeInstanceOf(ReadTimeoutError);
+      expect(configErr).toBeInstanceOf(ReadTimeoutError);
+      // Not an ApiError: polling backs off and tries again, as after any failed read.
+      expect(briefPollDelay(query({ data: running, dataUpdatedAt: 1, status: 'error', error: pollErr, errorUpdateCount: 1 }))).toBe(2_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('while polls of a running step fail, a muted line says so; the next good read clears it (review W-3)', { timeout: 20_000 }, async () => {
+    let fail = false;
+    server.use(
+      http.get('*/api/briefs/:id', () =>
+        fail ? HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 }) : HttpResponse.json({ ...running, startedAt: new Date().toISOString() }),
+      ),
+    );
+    renderApp(`/briefs/${running.briefId}`);
+    const checklist = await screen.findByRole('region', { name: /answer checklist/i });
+    const line = within(checklist).getByText((_, el) => el?.getAttribute('data-poll-trouble') !== null && el?.tagName === 'P');
+    expect(line.textContent).toBe('');
+    expect(line.getAttribute('aria-live')).toBe('polite');
+    fail = true;
+    await waitFor(() => expect(line.textContent).toBe(POLL_TROUBLE), { timeout: 8_000 });
+    // The checklist stays as it was: nothing else changes while the page keeps trying.
+    expect(within(checklist).getAllByRole('listitem')).toHaveLength(4);
+    fail = false;
+    await waitFor(() => expect(line.textContent).toBe(''), { timeout: 10_000 });
+  });
+
+  it('a stalled poll is said as soon as the read gives up after READ_TIMEOUT_MS, not after its retry gives up too (re-review N-5)', { timeout: 20_000 }, async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let stall = false;
+    server.use(
+      http.get('*/api/briefs/:id', () =>
+        stall ? new Promise<Response>(() => {}) : HttpResponse.json({ ...running, startedAt: new Date().toISOString() }),
+      ),
+    );
+    renderApp(`/briefs/${running.briefId}`);
+    const checklist = await screen.findByRole('region', { name: /answer checklist/i }, SLOW);
+    const line = checklist.querySelector('[data-poll-trouble]') as HTMLElement;
+    stall = true;
+    // The next poll (within a second) gets no answer: nothing is said before it gives up ...
+    await act(() => vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1_000));
+    expect(line.textContent).toBe('');
+    // ... and the line appears once it has, while its one retry is still waiting.
+    await act(() => vi.advanceTimersByTimeAsync(2_500));
+    await waitFor(() => expect(line.textContent).toBe(POLL_TROUBLE), SLOW);
+  });
+
+  it('one failed poll that its automatic retry repairs says nothing; a failed retry does (re-review F-2)', { timeout: 20_000 }, async () => {
+    let failures = 0;
+    server.use(
+      http.get('*/api/briefs/:id', () => {
+        if (failures > 0) {
+          failures -= 1;
+          return HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 });
+        }
+        return HttpResponse.json({ ...running, startedAt: new Date().toISOString() });
+      }),
+    );
+    renderApp(`/briefs/${running.briefId}`);
+    const checklist = await screen.findByRole('region', { name: /answer checklist/i }, SLOW);
+    const line = checklist.querySelector('[data-poll-trouble]') as HTMLElement;
+    const seen: string[] = [];
+    const watch = new MutationObserver(() => seen.push(line.textContent ?? ''));
+    watch.observe(line, { childList: true, characterData: true, subtree: true });
+    // One 5xx: the retry a second later gets through, and the line never shows.
+    failures = 1;
+    await new Promise((resolve) => setTimeout(resolve, 3_500));
+    expect(seen.filter((t) => t !== '')).toEqual([]);
+    // Two in a row (the poll and its retry): now it is said.
+    failures = 2;
+    await waitFor(() => expect(line.textContent).toBe(POLL_TROUBLE), { timeout: 8_000 });
+    watch.disconnect();
   });
 
   it('an expired brief is read once, then left alone', { timeout: 10_000 }, async () => {
@@ -1055,7 +1538,7 @@ describe('Unknown outcomes stay unknown until a 2xx or a 409 settles them', { ti
     if (changed) {
       await act(() => client.invalidateQueries({ queryKey: ['ai-status'] }));
       // The header shows the new status before the retry, so the retry reads it too.
-      const counter = changed === paused ? 'AI back tomorrow' : 'Sign in to keep asking';
+      const counter = changed === paused ? 'AI back tomorrow' : 'Free AI searches used';
       await waitFor(() => expect(screen.getByRole('banner').textContent).toContain(counter), SLOW);
     }
     fireEvent.click(screen.getByRole('button', { name: /^Try again/ }));
@@ -1106,6 +1589,45 @@ describe('Unknown outcomes stay unknown until a 2xx or a 409 settles them', { ti
 });
 
 describe('Round-2 minors', { timeout: 20_000 }, () => {
+  it('?step past the last answer still announces the latest step finishing, after the note (Task 17 parked item)', async () => {
+    const id = '00000000-0000-4000-8000-0000000000ce';
+    const base = {
+      briefId: id,
+      step: 1,
+      steps: 1,
+      refinementsLeft: 3,
+      question: 'Q',
+      origin: { kind: 'question' },
+      startedAt: new Date().toISOString(),
+      expiresAt: '2099-10-23T10:00:00.000Z',
+    };
+    let reads = 0;
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) => {
+        if (new URL(request.url).searchParams.get('step') === '3') return HttpResponse.json({ error: 'not_found', message: 'x' }, { status: 404 });
+        reads += 1;
+        return HttpResponse.json(
+          reads === 1
+            ? { ...base, stage: 'compose', checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 } }, finishedAt: null }
+            : {
+                ...base,
+                stage: 'done',
+                checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 }, written: true, verified: 'partially_checked', removedStatements: 0 },
+                finishedAt: new Date().toISOString(),
+                result: RESULT_SAMPLES.answer,
+              },
+        );
+      }),
+    );
+    const page = renderApp(`/briefs/${id}?step=3`);
+    await screen.findByRole('region', { name: /answer checklist/i }, SLOW);
+    const region = page.container.querySelector('p[aria-live="polite"]') as HTMLElement;
+    expect(region.textContent).toBe('There is no answer 3 in this brief; this is the latest.');
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    expect(page.container.querySelector('p[aria-live="polite"]')).toBe(region);
+    expect(region.textContent).toBe('There is no answer 3 in this brief; this is the latest. The answer is ready.');
+  });
+
   it('?step past the last answer shows no load error while the latest step is read', async () => {
     const id = '00000000-0000-4000-8000-0000000000cc';
     const latest = {
@@ -1233,8 +1755,9 @@ describe('Unknown-outcome keys for the tab (web/src/features/ai/unsettled.ts)', 
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
     await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
-    // Settled by the 2xx: nothing is left for the tab.
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: LOST, filters: {} }))).toBeNull();
+    // Settled once the brief page shows the step the replay returned: nothing is left for the tab.
+    const id = await unsettledId({ kind: 'create', question: LOST, filters: {} });
+    await waitFor(() => expect(unsettledKey(id)).toBeNull(), SLOW);
   });
 
   it('a different question gets a new key', async () => {
@@ -1319,6 +1842,246 @@ describe('Unknown-outcome keys for the tab (web/src/features/ai/unsettled.ts)', 
     rememberUnsettled(id, 'key-00000005');
     expect(unsettledKey(id)).toBe('key-00000005');
     setItem.mockRestore();
+  });
+});
+
+describe('Write-ahead keys: a reload while the request is in flight pays once (review W-2)', { timeout: 20_000 }, () => {
+  const ENTRY = 'casebook-ai-unsettled:';
+  const stored = (): Record<string, { key: string; at: number }> =>
+    Object.fromEntries(
+      Object.keys(window.sessionStorage)
+        .filter((name) => name.startsWith(ENTRY))
+        .map((name) => [name.slice(ENTRY.length), JSON.parse(window.sessionStorage.getItem(name) ?? 'null') as { key: string; at: number }]),
+    );
+
+  /** Holds every POST to `path` (recording its key) until `release`, then lets the mock answer it. */
+  function holdPosts(path: string): { keys: string[]; release(): void } {
+    const keys: string[] = [];
+    const held: (() => void)[] = [];
+    server.use(
+      http.post(path, async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        await new Promise<void>((resolve) => held.push(resolve));
+        return undefined;
+      }),
+    );
+    return { keys, release: () => held.splice(0).forEach((go) => go()) };
+  }
+
+  it('Ask AI keeps its key for the tab before the request leaves; the same question after a reload replays it', async () => {
+    freshApi();
+    installTurnstile();
+    const posts = holdPosts('*/api/briefs');
+    const first = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(1), SLOW);
+    // In flight (the server waits for its scope stage): the button says so ...
+    expect(screen.getByRole('button', { name: 'Starting…' }).getAttribute('aria-busy')).toBe('true');
+    // ... and the key is already kept for this tab, under the request's hash.
+    const id = await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION });
+    expect(stored()).toEqual({ [id]: { key: posts.keys[0], at: expect.any(Number) } });
+
+    // The reader reloads: the page and its memory go, this tab's session storage stays.
+    first.unmount();
+    forgetUnsettledMemoryForTests();
+    const second = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(2), SLOW);
+    // The same question goes out under the same key: the server replays the request it admitted.
+    expect(posts.keys[1]).toBe(posts.keys[0]);
+    posts.release();
+    await waitFor(() => expect(currentUrl(second.router)).toMatch(/^\/briefs\//), SLOW);
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
+    // Settled once the brief page shows the step the 2xx started: nothing is left for the tab.
+    await waitFor(() => expect(stored()).toEqual({}), SLOW);
+  });
+
+  it('Refine keeps its key for the tab before the request leaves; the same change after a reload replays it', async () => {
+    freshApi();
+    installTurnstile();
+    const { router, unmount } = await askFromHome(MOCK_SEED_QUESTION);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const briefPath = currentUrl(router);
+    const briefId = briefPath.split('/')[2] as string;
+    const posts = holdPosts('*/api/briefs/:id/refine');
+    fireEvent.change(screen.getByRole('textbox', { name: /^refine$/i }), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(1), SLOW);
+    expect(screen.getByRole('button', { name: 'Starting…' }).getAttribute('aria-busy')).toBe('true');
+    const id = await unsettledId({ kind: 'refine', briefId, change: { kind: 'text', text: 'only helicopters' } });
+    expect(stored()).toEqual({ [id]: { key: posts.keys[0], at: expect.any(Number) } });
+
+    unmount();
+    forgetUnsettledMemoryForTests();
+    const again = renderApp(briefPath);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    fireEvent.change(screen.getByRole('textbox', { name: /^refine$/i }), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(posts.keys).toHaveLength(2), SLOW);
+    expect(posts.keys[1]).toBe(posts.keys[0]);
+    posts.release();
+    const switcher = await screen.findByRole('navigation', { name: 'Answers in this brief' }, SLOW);
+    expect(within(switcher).getAllByRole('link')).toHaveLength(2);
+    expect(currentUrl(again.router)).toBe(briefPath);
+    await waitFor(() => expect(stored()).toEqual({}), SLOW);
+  });
+
+  it('a known refusal of a first send (nothing admitted) takes its key back: the next ask uses a new one', async () => {
+    freshApi();
+    installTurnstile();
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return keys.length === 1 ? HttpResponse.json({ error: 'rate_limited', message: 'Slow down.', retryAfter: 2 }, { status: 429 }) : undefined;
+      }),
+    );
+    const { router } = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText('Slow down a moment. Try again in 2 seconds.', {}, SLOW)).toBeTruthy();
+    expect(stored()).toEqual({});
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }, SLOW));
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('a 2xx settles the key only once the brief page has taken over: a second ask while that page loads replays it (re-review N-2)', async () => {
+    freshApi();
+    installTurnstile();
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return undefined;
+      }),
+    );
+    // The brief page is a lazy route: hold its code back, as a slow network would.
+    type Route = { path?: string; lazy?: () => Promise<unknown>; children?: Route[] };
+    let open = (): void => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const undo: (() => void)[] = [];
+    const hold = (list: Route[]): void => {
+      for (const route of list) {
+        if (route.path === 'briefs/:id' && route.lazy) {
+          const lazy = route.lazy;
+          route.lazy = async () => {
+            await gate;
+            return lazy();
+          };
+          undo.push(() => (route.lazy = lazy));
+        }
+        if (route.children) hold(route.children);
+      }
+    };
+    hold(routes as unknown as Route[]);
+    try {
+      const { router } = renderApp('/');
+      fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+      fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+      await waitFor(() => expect(keys).toHaveLength(1), SLOW);
+      // Answered 2xx; the brief page is still loading, so the key is still kept ...
+      await waitFor(() => expect(router.state.navigation.state).toBe('loading'), SLOW);
+      const id = await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION });
+      expect(stored()).toEqual({ [id]: { key: keys[0], at: expect.any(Number) } });
+      // ... and a second ask in that gap replays it rather than starting (and paying for) another.
+      fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*2 free$/ }, SLOW));
+      await waitFor(() => expect(keys).toHaveLength(2), SLOW);
+      expect(keys[1]).toBe(keys[0]);
+      open();
+      // The brief page is on screen for it: now it is settled.
+      await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
+      await waitFor(() => expect(stored()).toEqual({}), SLOW);
+      await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+      await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
+    } finally {
+      undo.forEach((u) => u());
+    }
+  });
+
+  it('a lost refinement replayed for the step the page already shows is settled at once: the next same change starts a new step (re-review F-1)', { timeout: 20_000 }, async () => {
+    freshApi();
+    installTurnstile();
+    const ID = '00000000-0000-4000-8000-00000000f011';
+    const at = '2026-10-22T10:00:00.000Z';
+    const common = { briefId: ID, question: MOCK_SEED_QUESTION, startedAt: at, expiresAt: '2099-10-23T10:00:00.000Z' };
+    const answer = { ...common, step: 1, origin: { kind: 'question' }, stage: 'done', finishedAt: at, result: RESULT_SAMPLES.answer, checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 }, written: true, verified: 'partially_checked', removedStatements: 0 } };
+    const failedStep = (n: number) => ({ ...common, step: n, origin: { kind: 'text', text: 'only helicopters' }, stage: 'failed', finishedAt: at, result: { kind: 'failed', countedAsSearch: false }, checklist: {} });
+    // A small brief server: step 1 answered; each refinement adds a failed step; a key it has seen replays its step.
+    const steps: Record<string, unknown>[] = [answer];
+    const byKey = new Map<string, number>();
+    const keys: string[] = [];
+    let loseNext = true;
+    const view = (n: number) => BriefStepResponseSchema.parse({ ...steps[n - 1], steps: steps.length, refinementsLeft: 4 - steps.length });
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) => {
+        const n = Number(new URL(request.url).searchParams.get('step') ?? steps.length);
+        return HttpResponse.json(view(n));
+      }),
+      http.post('*/api/briefs/:id/refine', async ({ request }) => {
+        const key = ((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey;
+        keys.push(key);
+        let n = byKey.get(key);
+        if (n === undefined) {
+          steps.push(failedStep(steps.length + 1));
+          n = steps.length;
+          byKey.set(key, n);
+        }
+        if (loseNext) {
+          // Admitted and started, but the answer never arrives.
+          loseNext = false;
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({ kind: 'started', briefId: ID, step: n, stage: 'failed' }, { status: 202 });
+      }),
+    );
+    const first = renderApp(`/briefs/${ID}`);
+    fireEvent.change(await screen.findByRole('textbox', { name: /^refine$/i }, SLOW), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    expect(await screen.findByText('If it went through, Try again opens it without using another search.', {}, SLOW)).toBeTruthy();
+    // A reload: the page now shows the step the lost request started (it failed).
+    first.unmount();
+    forgetUnsettledMemoryForTests();
+    renderApp(`/briefs/${ID}`);
+    const switcher = await screen.findByRole('navigation', { name: 'Answers in this brief' }, SLOW);
+    expect(within(switcher).getByRole('link', { name: 'Answer 2, latest' })).toBeTruthy();
+    // Try again sends the same change: a replay of the lost request's key, answered with the step on screen ...
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    await waitFor(() => expect(keys).toHaveLength(2), SLOW);
+    expect(keys[1]).toBe(keys[0]);
+    // ... which settles it at once: Try again again starts a new step under a new key.
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    await waitFor(() => expect(keys).toHaveLength(3), SLOW);
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(await screen.findByRole('link', { name: 'Answer 3, latest' }, SLOW)).toBeTruthy();
+    expect(stored()).toEqual({});
+  });
+
+  it('a check refused before anything is sent writes nothing for the tab', async () => {
+    freshApi();
+    window.turnstile = {
+      render(_host, params) {
+        setTimeout(() => params['error-callback'](), 10);
+        return 'w1';
+      },
+      remove() {},
+    };
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return undefined;
+      }),
+    );
+    renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+    expect(await screen.findByText("The quick check didn't finish.", {}, SLOW)).toBeTruthy();
+    expect(keys).toHaveLength(0);
+    expect(stored()).toEqual({});
   });
 });
 

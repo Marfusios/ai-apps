@@ -13,7 +13,8 @@
  *   found), and nothing cached is shown on the way back to it.
  * - **Late answers.** Every private read runs through `privateRead`, which drops an answer
  *   that arrives after the visitor changed: a poll or a context read sent before the
- *   change cannot fill the cache again. AI requests (web/src/features/ai/useAiRequest.ts)
+ *   change cannot fill the cache again. Signing out moves the generation on as soon as it
+ *   starts (`visitorLeaving`), before the server has answered, and forgets once it has. AI requests (web/src/features/ai/useAiRequest.ts)
  *   carry the generation they started under: after a change they send nothing more (their
  *   POST checks it right before the network call, after every wait), and their answer,
  *   success or failure, is discarded without restoring a question, a retry key or a
@@ -104,6 +105,16 @@ export function visitorGeneration(): number {
 export function onVisitorChange(listener: () => void): () => void {
   listeners.add(listener);
   return () => void listeners.delete(listener);
+}
+
+/**
+ * The visitor is leaving (a sign-out has started): from now on nothing started for them is
+ * kept or sent. A private answer still on its way is dropped, and an AI request sends
+ * nothing more, while the server works on the sign-out; `forgetVisitor` follows once it has
+ * answered, so that what is read again is read as whoever the server then says is signed in.
+ */
+export function visitorLeaving(): void {
+  generation += 1;
 }
 
 /** The visitor changed: a private read's late answer is dropped, and a send for the previous visitor is not made. */

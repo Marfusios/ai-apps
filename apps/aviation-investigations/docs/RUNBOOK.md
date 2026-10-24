@@ -1031,7 +1031,12 @@ container on the host before launch (DESIGN §11).
 Tracing is off unless `AVIATION_TRACING_ENABLED=true`. Then the wrappers add
 `compose.tracing.yaml`, which joins `aviation-app` and `aviation-ingest` to the external network
 `SHARED_OBSERVABILITY_NETWORK` and passes the Langfuse variables (all required).
-`LANGFUSE_BASE_URL` is the Langfuse web service's address on that network. Use the
+`LANGFUSE_BASE_URL` is the Langfuse web service's address on that network. The server
+accepts https, or plain http only to a host listed in `AVIATION_TRACING_HTTP_HOSTS`: a
+Langfuse reached over plain http by its service name on that network needs that name
+there (for example `AVIATION_TRACING_HTTP_HOSTS=langfuse-web` for
+`http://langfuse-web:3000`). Otherwise the server logs `tracing off` with the reason at
+startup and exports nothing; `tracing on` confirms export. Use the
 `aviation-dev` project's keys for `dev` and `aviation-live`'s for `live`. The
 network may not exist on other machines, which is why it is an override.
 

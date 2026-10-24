@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertReservationCovers,
   CACHED_PREFIX_MAX,
+  embeddingWorstCaseUsd,
   PRICE_TABLE,
   PricingError,
   RESERVATIONS,
@@ -49,6 +50,28 @@ describe('PRICE_TABLE and caps', () => {
   it('keeps every stage below the Haiku long-context threshold', () => {
     const threshold = (PRICE_TABLE[HAIKU] as { longContext: { thresholdTokens: number } }).longContext.thresholdTokens;
     for (const caps of Object.values(STAGE_CAPS)) expect(caps.input).toBeLessThanOrEqual(threshold);
+  });
+});
+
+describe('uncertain calls are charged at their own stage’s worst case (DESIGN §9, gate 22 AI I1)', () => {
+  it('each stage’s worst case at its caps, below the reservation, and the request’s sum of them', () => {
+    const compose = stageWorstCaseUsd(OPUS, STAGE_CAPS.answer);
+    const check = stageWorstCaseUsd(HAIKU, STAGE_CAPS.check);
+    const scope = stageWorstCaseUsd(HAIKU, STAGE_CAPS.scope);
+    // The figures DESIGN §9 states.
+    expect(compose).toBeCloseTo(0.3385, 9);
+    expect(check).toBeCloseTo(0.0164125, 9);
+    expect(scope).toBeCloseTo(0.0011125, 9);
+    expect(embeddingWorstCaseUsd('text-embedding-3-small')).toBeCloseTo(0.00002, 12);
+    // A model nobody named: the highest embedding price in the table (here the only one).
+    expect(embeddingWorstCaseUsd()).toBe(embeddingWorstCaseUsd('text-embedding-3-small'));
+    expect(() => embeddingWorstCaseUsd(HAIKU)).toThrow(PricingError);
+    expect(compose + check + scope + embeddingWorstCaseUsd()).toBeCloseTo(worstCaseRequestUsd(withAnswer(OPUS)), 12);
+    // A cancelled check costs about its own worst case, not the whole reservation.
+    expect(check).toBeLessThan(RESERVATIONS[OPUS]! / 20);
+    // Two compose calls of unknown usage reach one Opus reservation (the per-principal daily bound).
+    expect(compose).toBeLessThan(RESERVATIONS[OPUS]!);
+    expect(2 * compose).toBeGreaterThanOrEqual(RESERVATIONS[OPUS]!);
   });
 });
 

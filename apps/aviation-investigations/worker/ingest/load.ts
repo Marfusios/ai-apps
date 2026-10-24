@@ -480,9 +480,26 @@ function integerColumns(table: PgTable): Set<string> {
   return set;
 }
 
-/** Validate values PostgreSQL cannot store (NUL in text, integers outside int4) and return string size. */
+/**
+ * Event years the API serves: every search, dashboard and config response carries a year
+ * axis bounded to 1900–2100 (shared/contracts/search.ts, config.ts). One event outside it
+ * would pass normalization, verification, both builds and publish, then fail every such
+ * response (task 22 search review S-I1), so the load refuses it instead. (A refusal, not a
+ * change to normalized output: `FIELD_NORMALIZATION_VERSION` v1 is unchanged.)
+ */
+const FIRST_EVENT_YEAR = 1900;
+const LAST_EVENT_YEAR = 2100;
+
+/**
+ * Validate values PostgreSQL cannot store (NUL in text, integers outside int4), and event
+ * years the API could not serve, and return string size.
+ */
 function checkRow(table: PgTable, row: Record<string, unknown>): number {
   const ints = integerColumns(table);
+  const year = row.evYear;
+  if (getTableName(table) === 'cases' && typeof year === 'number' && (year < FIRST_EVENT_YEAR || year > LAST_EVENT_YEAR)) {
+    throw new LoadValueError('cases', rowKeyOf(row), 'evYear', `is outside ${FIRST_EVENT_YEAR}-${LAST_EVENT_YEAR}, the years the API serves (a dropped or extra digit?)`);
+  }
   let chars = 0;
   for (const [column, value] of Object.entries(row)) {
     if (typeof value === 'string') {

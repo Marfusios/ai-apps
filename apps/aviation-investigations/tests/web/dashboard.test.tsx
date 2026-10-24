@@ -69,13 +69,27 @@ describe('Dashboard', () => {
   it('states multi-aircraft overlap, missing coordinates and the hidden year table', async () => {
     renderApp('/dashboard');
     await screen.findByRole('region', { name: 'Where?' });
-    // The overlap note belongs to the aircraft category chart only; phase counts are events.
+    // Both aircraft charts can sum to more than the total (G0 #14, review W-7): phase is each
+    // aircraft's defining-event phase, as in Explore, so a two-aircraft event can count twice.
+    expect(data.phase.reduce((sum, b) => sum + b.count, 0)).toBeGreaterThan(data.total);
+    const multi = data.coverage.multiAircraft;
     const phase = screen.getByRole('region', { name: 'When in the flight did it happen?' });
-    expect(within(phase).queryByText(/involved more than one aircraft/)).toBeNull();
+    expect(within(phase).getByText(`${multi} investigations involved more than one aircraft, so phase counts can add up to more than ${data.total}.`)).toBeTruthy();
     const category = screen.getByRole('region', { name: 'What was flying?' });
-    expect(within(category).getByText(/involved more than one aircraft/)).toBeTruthy();
+    expect(within(category).getByText(`${multi} investigations involved more than one aircraft, so aircraft counts can add up to more than ${data.total}.`)).toBeTruthy();
+    // The event-level charts have none.
+    for (const name of ['How serious were the outcomes?', 'What was the weather?']) {
+      expect(within(screen.getByRole('region', { name })).queryByText(/involved more than one aircraft/)).toBeNull();
+    }
     expect(screen.getByText(/Lower 48 shown/).textContent).toMatch(/coordinates/);
     expect(screen.getByRole('table', { hidden: true })).toBeTruthy();
-    expect(screen.getByText('Other records (in progress or status unknown)')).toBeTruthy();
+  });
+
+  it('the year legend never interprets raw statuses while the mapping is unverified (G0 #5, review W-6)', async () => {
+    renderApp('/dashboard');
+    const years = await screen.findByRole('region', { name: 'How complete is the recent record?' });
+    const legend = within(years).getByRole('list', { name: 'Legend' });
+    expect(legend.textContent).toContain('Other records (not a verified completed status)');
+    expect(legend.textContent).not.toMatch(/in progress|status unknown/i);
   });
 });

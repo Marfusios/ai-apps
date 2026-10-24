@@ -19,6 +19,9 @@ export function isCidr(value: string): boolean {
   const bits = Number(m[2]);
   return (family === 4 && bits <= 32) || (family === 6 && bits <= 128);
 }
+/** A host name (labels of letters, digits and hyphens) or an IPv4 address: no scheme, port or wildcard. */
+const isHostName = (v: string): boolean =>
+  v.length <= 253 && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(v);
 /** An absolute http(s) URL. */
 const isHttpUrl = (v: string): boolean => {
   try {
@@ -79,6 +82,16 @@ const envSchema = z.object({
   LANGFUSE_BASE_URL: str(),
   LANGFUSE_PUBLIC_KEY: str(),
   LANGFUSE_SECRET_KEY: str(),
+  /**
+   * Hosts whose plain-http Langfuse address the operator trusts: a private container
+   * network such as the shared observability one (server/observability/tracing.ts).
+   * Otherwise LANGFUSE_BASE_URL must be https, or loopback.
+   */
+  AVIATION_TRACING_HTTP_HOSTS: z
+    .string()
+    .default('')
+    .refine((v) => listOf(v).every(isHostName), 'expected comma-separated host names (no scheme, port or wildcard)')
+    .transform((v) => listOf(v).map((h) => h.toLowerCase())),
   BETTER_AUTH_SECRET: str(),
   GOOGLE_CLIENT_ID: str(),
   GOOGLE_CLIENT_SECRET: str(),
@@ -176,7 +189,8 @@ export interface AppConfig {
     identityHmacSecret?: string;
   };
   turnstile: { secretKey?: string; siteKey?: string };
-  tracing: { enabled: boolean; baseUrl?: string; publicKey?: string; secretKey?: string };
+  /** `httpHosts`: hosts whose plain-http Langfuse address is trusted (`AVIATION_TRACING_HTTP_HOSTS`, lower case). */
+  tracing: { enabled: boolean; baseUrl?: string; publicKey?: string; secretKey?: string; httpHosts: string[] };
   ntsbApiKey?: string;
   /** Directory for verification reports; default `data/work` in the checkout. */
   verifyDir?: string;
@@ -313,6 +327,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
       baseUrl: e.LANGFUSE_BASE_URL,
       publicKey: e.LANGFUSE_PUBLIC_KEY,
       secretKey: e.LANGFUSE_SECRET_KEY,
+      httpHosts: e.AVIATION_TRACING_HTTP_HOSTS,
     },
     ntsbApiKey: e.NTSB_API_KEY,
     verifyDir: e.AVIATION_VERIFY_DIR,

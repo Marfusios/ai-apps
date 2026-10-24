@@ -55,14 +55,14 @@ import { AuthUnavailableError, type AuthService } from './auth/better-auth.js';
 import type { EvidenceDataset } from './briefs/evidence.js';
 import { servableEvidence, type BriefServices } from './briefs/services.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
-import type { Db } from './db/client.js';
+import { isDatabaseUnavailable, type Db } from './db/client.js';
 import { CLIENT_IP_HEADER, compileTrustedProxies, isLoopback, resolveNetworkIdentity } from './http/network-identity.js';
 import { isNoStoreRoute, PRIVATE_NO_STORE } from './http/cache-headers.js';
 import { makeClientErrorHandler } from './http/client-error.js';
 import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
 import { contentSecurityPolicy, isHttpsUrl, securityHeaders } from './http/security-headers.js';
-import { SearchTimedOutError } from './search/timeout.js';
+import { SearchIncompleteError, SearchTimedOutError } from './search/timeout.js';
 import { accountRoutes } from './routes/account.js';
 import { aiStatusRoutes } from './routes/ai-status.js';
 import { briefRoutes } from './routes/briefs.js';
@@ -113,6 +113,8 @@ export interface AppDeps {
   shutdownGraceMs?: number;
   /** How long a health probe result is shared (default `HEALTH_CACHE_MS`). */
   healthCacheMs?: number;
+  /** The whole-request bound (default `REQUEST_TIMEOUT_MS`; tests shorten it). */
+  requestTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -130,6 +132,17 @@ export const SHUTDOWN_GRACE_MS = 9_000;
  * their connection.
  */
 export const KEEP_ALIVE_TIMEOUT_MS = 95_000;
+/**
+ * The longest a client may take to send one whole request, headers and body (platform
+ * review P1). Fastify's default is none (0), and Node's own header timeout does not
+ * cover the body, so a client that sent headers and then stalled or trickled its body
+ * held a socket and a request for ever. Every legitimate body here is at most 16 KB.
+ * Node refuses a header timeout above the request timeout, so the header timeout is kept
+ * within it; stalled connections are checked every `CONNECTION_CHECK_MS` (Node's default
+ * is 30 s), so one is answered 408 (`clientErrorHandler`) and closed within about 65 s.
+ */
+export const REQUEST_TIMEOUT_MS = 60_000;
+export const CONNECTION_CHECK_MS = 5_000;
 
 /** Route patterns of the web client: the page and the static files (`@fastify/static`'s wildcard). */
 export const ASSET_ROUTES: ReadonlySet<string> = new Set(['/', '/index.html', '/*']);
@@ -168,16 +181,66 @@ const isApiPath = (path: string): boolean => path === '/api' || path.startsWith(
 /**
  * The service, not the request, is at fault: Elasticsearch transport failures, an
  * index that is missing or overloaded, a search that timed out, PostgreSQL connection
- * failures, a bounded lock wait that timed out or a deadlock (fail closed), or no
- * servable dataset.
+ * failures (no connection free in time, a connection that broke or stalled, a statement
+ * the server ended at its timeout: `isDatabaseUnavailable`), a bounded lock wait that
+ * timed out or a deadlock (fail closed), or no servable dataset.
  */
-function isUnavailable(err: unknown): boolean {
-  if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError || err instanceof AuthUnavailableError) return true;
+export function isUnavailable(err: unknown): boolean {
+  if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError || err instanceof SearchIncompleteError || err instanceof AuthUnavailableError) return true;
+  if (isDatabaseUnavailable(err)) return true;
   const e = err as { name?: string; code?: string; meta?: { statusCode?: number } };
   if (['ConnectionError', 'TimeoutError', 'NoLivingConnectionsError'].includes(e.name ?? '')) return true;
   if (e.name === 'ResponseError' && [404, 429, 502, 503, 504].includes(e.meta?.statusCode ?? 0)) return true;
   const code = e.code ?? (err as { cause?: { code?: string } }).cause?.code ?? '';
   return ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03', '53300', '55P03', '40P01'].includes(code) || code.startsWith('08');
+}
+
+const logToken = (v: unknown): v is string => typeof v === 'string' && v.length <= 80 && /^[A-Za-z0-9_.:-]+$/.test(v);
+
+/**
+ * How an `err` is logged: its name, code and (an Elasticsearch error's) type, never its
+ * message or stack (platform review P7). A message can hold the request URL with its
+ * search text (Fastify's own warning about a reply sent twice), a query or an address.
+ * The app's own log lines already pass only these fields.
+ */
+export function serializeLoggedError(e: unknown): Record<string, string> {
+  const x = (e ?? {}) as { name?: unknown; code?: unknown; type?: unknown };
+  return {
+    ...(logToken(x.name) ? { name: x.name } : {}),
+    ...(logToken(x.code) ? { code: x.code } : {}),
+    ...(logToken(x.type) ? { type: x.type } : {}),
+  };
+}
+
+/** A log message without the query string of any path in it (`/api/search?q=…` → `/api/search?…`). */
+export function withoutQueries(message: string): string {
+  return message.replace(/(\/[^\s"'?]*)\?[^\s"']*/g, '$1?…');
+}
+
+/**
+ * The logger options with `serializeLoggedError` in force, and no request target in a
+ * message: pino makes an error's message the line's message when a call gives none
+ * (`log.warn({ err })`, `log.error(err)`), so such a call gets a fixed one; and a message
+ * string loses the query string of any path in it (Fastify's warning about a handler that
+ * answered twice quotes the request URL; platform review P7).
+ */
+function withErrorSerializer(logger: AppDeps['logger']): FastifyServerOptions['logger'] {
+  if (logger === undefined || logger === false) return false;
+  const base = (logger === true ? {} : logger) as { serializers?: Record<string, unknown> };
+  return {
+    ...base,
+    serializers: { ...base.serializers, err: serializeLoggedError },
+    hooks: {
+      logMethod(this: unknown, args: unknown[], method: (...a: unknown[]) => void) {
+        const [first, second, ...rest] = args;
+        if (typeof first === 'string') return method.apply(this, [withoutQueries(first), ...args.slice(1)]);
+        const message = typeof second === 'string' ? withoutQueries(second) : 'error logged';
+        if (first instanceof Error) return method.apply(this, [{ err: first }, message, ...rest]);
+        if (typeof first === 'object' && first !== null && ('err' in first || typeof second === 'string')) return method.apply(this, [first, message, ...rest]);
+        return method.apply(this, args);
+      },
+    },
+  } as unknown as FastifyServerOptions['logger'];
 }
 
 /** Fastify's own request errors (body too large, unsupported media type, ...). */
@@ -207,13 +270,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   };
 
   const identityOf = (peer: string | undefined, clientIp: string | string[] | undefined) => resolveNetworkIdentity(peer, clientIp, trusted);
+  const requestTimeout = deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
 
   const app = Fastify({
-    logger: deps.logger ?? false,
+    logger: withErrorSerializer(deps.logger),
     trustProxy: false,
     // Request logs would hold client addresses and search text; responses are logged below without either.
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 16 * 1024,
+    // A request must arrive whole within this bound (REQUEST_TIMEOUT_MS); the header timeout
+    // stays within it (Node requires that), and stalled connections are checked often.
+    requestTimeout,
+    http: {
+      headersTimeout: Math.min(60_000, requestTimeout),
+      connectionsCheckingInterval: Math.min(CONNECTION_CHECK_MS, Math.max(100, Math.floor(requestTimeout / 2))),
+    },
     // While closing, `onRequest` refuses new requests itself (503 `unavailable`, with the
     // security headers), instead of Fastify's own bare 503.
     return503OnClosing: false,
@@ -410,6 +481,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       prefix: '/',
       wildcard: true,
       index: false,
+      // Never a dotfile or a dot directory (a stray `.env` or a build manifest): 404 (platform review P6).
+      dotfiles: 'ignore',
       cacheControl: false,
       etag: true,
       lastModified: true,

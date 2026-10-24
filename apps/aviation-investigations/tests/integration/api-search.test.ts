@@ -231,6 +231,33 @@ describe('search', () => {
     }
   });
 
+  it('marks an analysis or factual snippet truncated only on a side where its section goes on (task 22 S-M7)', async () => {
+    const seen = { start: 0, end: 0, inner: 0 };
+    for (const q of ['pilot', 'engine', 'airplane', 'landing', 'fuel', 'reported', 'the airplane']) {
+      const r = await search({ q, completion: 'any', mentionedIn: 'anywhere', pageSize: '50' });
+      for (const row of r.rows) {
+        const snip = row.snippet;
+        if (!snip || snip.section === 'probable_cause') continue;
+        const texts = (
+          await appDb.execute(sql`SELECT text FROM case_sections WHERE generation_id = ${dataset.generationId} AND ntsb_no = ${row.ntsbNo}
+            AND kind = ${snip.section}`)
+        ).rows.map((x) => (x as { text: string }).text.replace(/[\r\n\t]/g, ' ').trim());
+        // Not truncated at a side: some section of that kind begins (ends) with the snippet's text.
+        if (!snip.truncatedStart) {
+          seen.start += 1;
+          expect(texts.some((t) => t.startsWith(snip.text)), `${q} ${row.ntsbNo} start`).toBe(true);
+        }
+        if (!snip.truncatedEnd) {
+          seen.end += 1;
+          expect(texts.some((t) => t.endsWith(snip.text)), `${q} ${row.ntsbNo} end`).toBe(true);
+        }
+        if (snip.truncatedStart && snip.truncatedEnd) seen.inner += 1;
+      }
+    }
+    // The section edges came back from Elasticsearch: some snippets begin or end their section.
+    expect(seen.start + seen.end).toBeGreaterThan(0);
+  });
+
   it('home examples return results on the index', async () => {
     for (const example of HOME_EXAMPLES) {
       const r = await search({ q: example });

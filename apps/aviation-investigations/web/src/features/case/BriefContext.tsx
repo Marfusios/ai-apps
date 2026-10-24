@@ -278,7 +278,7 @@ export function BriefSections({ ai, ntsbNo, aircraft, mode }: BriefSectionsProps
                 className="scroll-mt-10 outline-none focus-visible:outline-2"
               >
                 {(!single || aircraft.length > 1) && (
-                  <p className="mb-1 text-[9px] tracking-[.12em] text-muted uppercase">
+                  <p className="mb-1 text-micro tracking-[.12em] text-muted uppercase">
                     {ntsbSectionTag(p.section)}
                     {aircraft.length > 1 && ` · ${quoteAttribution(ntsbNo, aircraft, p)}`}
                   </p>

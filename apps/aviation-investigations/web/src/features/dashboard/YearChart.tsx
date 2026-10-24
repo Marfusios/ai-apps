@@ -134,7 +134,8 @@ export function YearChart({ years, cohort }: { years: readonly YearBucket[]; coh
             aria-hidden="true"
             className="inline-block size-2.5 border-t border-blue bg-[repeating-linear-gradient(135deg,var(--blue)_0_1.5px,transparent_1.5px_4px)] opacity-75"
           />
-          Other records (in progress or status unknown)
+          {/* Never "in progress" or "status unknown" while the completion mapping is unverified (G0 #5, UI_DESIGN §4.7). */}
+          Other records (not a verified completed status)
         </li>
       </ul>
       <div className="sr-only">

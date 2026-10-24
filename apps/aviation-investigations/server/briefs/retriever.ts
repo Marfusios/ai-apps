@@ -186,16 +186,36 @@ function reasonOf(err: unknown): RetrievalFailureReason {
   return 'other';
 }
 
+const ABORT_NAMES = new Set(['AbortError', 'TimeoutError', 'RequestAbortedError', 'APIUserAbortError']);
+
 /**
- * The port's failure for an error of retrieval: `unavailable` when the dataset cannot
- * serve evidence, `timeout` when the stage's signal (cancel or deadline) aborted it,
- * `failed` otherwise. The message is fixed; `embedding` says how a failed embedding is
- * settled.
+ * Whether `err` is what the stage's abort produced (task 22 S-M9): the signal's own reason,
+ * an error named for an abort (the DOM's, the search client's, a provider SDK's), or an
+ * embedding request the caller aborted (`providerKind`), also under a wrapper (`cause`).
+ */
+function causedByAbort(err: unknown, signal: AbortSignal): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 4; depth++) {
+    if (e === signal.reason) return true;
+    const x = e as { name?: unknown; providerKind?: unknown; cause?: unknown };
+    if (typeof x.name === 'string' && ABORT_NAMES.has(x.name)) return true;
+    if (x.providerKind === 'aborted') return true;
+    e = x.cause;
+  }
+  return false;
+}
+
+/**
+ * The port's failure for an error of retrieval: `timeout` when the stage's signal (cancel
+ * or deadline) aborted it and the error is what that abort caused; otherwise
+ * `unavailable` when the dataset cannot serve evidence and `failed` for anything else,
+ * also when a genuine failure raced with the abort (it keeps its own reason). The message
+ * is fixed; `embedding` says how a failed embedding is settled.
  */
 export function retrievalFailureOf(err: unknown, signal: AbortSignal | undefined, embedding: 'none' | 'uncertain'): RetrievalFailure {
   if (err instanceof RetrievalFailure) return err;
-  const reason: RetrievalFailureReason = signal?.aborted ? 'aborted' : reasonOf(err);
-  const kind: RetrievalFailureKind = signal?.aborted ? 'timeout' : err instanceof RetrievalUnavailableError ? 'unavailable' : 'failed';
+  const aborted = signal?.aborted === true && causedByAbort(err, signal);
+  const reason: RetrievalFailureReason = aborted ? 'aborted' : reasonOf(err);
+  const kind: RetrievalFailureKind = aborted ? 'timeout' : err instanceof RetrievalUnavailableError ? 'unavailable' : 'failed';
   return new RetrievalFailure(kind, embedding, `retrieval failed: ${kind} (${reason})`, reason);
 }
 
@@ -283,7 +303,7 @@ export function createHybridRetriever(opts: HybridRetrieverOptions): EvidenceRet
             casesIndex = await lookup(casesIndexOf, query.dataset, signal, lookupTimeoutMs);
           } catch (err) {
             // A cancel or the stage deadline: `timeout` (`aborted`). Nothing was embedded.
-            if (signal.aborted) throw retrievalFailureOf(err, signal, 'none');
+            if (signal.aborted && causedByAbort(err, signal)) throw retrievalFailureOf(err, signal, 'none');
             const timedOut = err instanceof CasesIndexLookupTimeoutError || err instanceof BoundedReadTimeoutError;
             const kind = timedOut ? 'timeout' : 'failed';
             throw new RetrievalFailure(kind, 'none', `retrieval failed: ${kind} (cases_index_lookup)`, 'cases_index_lookup');

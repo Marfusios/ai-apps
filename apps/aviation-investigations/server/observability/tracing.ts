@@ -14,6 +14,10 @@ import { genAiAttributes, safeSpanName, sanitizeAttrs, tracingStats, type Allowe
 export type { AllowedAttrs } from './attributes.js';
 
 export interface TracingHandle {
+  /** Whether spans are exported. */
+  readonly enabled: boolean;
+  /** Why they are not: setting names only, never their values (logged at startup). */
+  readonly reason?: string;
   shutdown(): Promise<void>;
 }
 
@@ -28,19 +32,26 @@ export interface StartTracingOptions {
   shutdownTimeoutMillis?: number;
 }
 
-/** https is required except for loopback hosts and the test environment. */
-function transportAllowed(cfg: AppConfig, baseUrl: string): boolean {
+/**
+ * Why the Langfuse address is refused, or null (gate 22 finding 4). https always; plain
+ * http only to a loopback host, to a host the operator listed in AVIATION_TRACING_HTTP_HOSTS
+ * (a private container network such as the shared observability one, where Langfuse's web
+ * service is reached by its service name: configured, never guessed from the address), or
+ * under NODE_ENV=test. The reason names settings only.
+ */
+function transportProblem(cfg: AppConfig, baseUrl: string): string | null {
   let url: URL;
   try {
     url = new URL(baseUrl);
   } catch {
-    return false;
+    return 'LANGFUSE_BASE_URL is not a valid URL';
   }
-  if (url.protocol === 'https:') return true;
-  if (url.protocol !== 'http:') return false;
-  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (url.protocol === 'https:') return null;
+  if (url.protocol !== 'http:') return 'LANGFUSE_BASE_URL must be an https or http URL';
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   const loopback = host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
-  return loopback || cfg.nodeEnv === 'test';
+  if (loopback || cfg.nodeEnv === 'test' || cfg.tracing.httpHosts.includes(host)) return null;
+  return 'LANGFUSE_BASE_URL uses plain http to a host that is not loopback: use https, or list the host in AVIATION_TRACING_HTTP_HOSTS (a private network you trust)';
 }
 
 /** The traces' `service.name`. */
@@ -56,7 +67,7 @@ export function tracingResourceAttributes(cfg: Pick<AppConfig, 'appEnv'>): Recor
   return { 'service.name': SERVICE_NAME, 'deployment.environment': cfg.appEnv, 'deployment.environment.name': cfg.appEnv };
 }
 
-const NOOP: TracingHandle = { async shutdown() {} };
+const off = (reason: string): TracingHandle => ({ enabled: false, reason, async shutdown() {} });
 let tracer: Tracer | undefined;
 let active: TracingHandle | undefined;
 
@@ -111,12 +122,16 @@ function bounded(p: Promise<void>, ms: number): Promise<void> {
 
 /**
  * Starts OTLP export to the configured Langfuse project. A no-op unless tracing is
- * enabled and the base URL and both keys are set; there is no cloud fallback.
+ * enabled, the base URL and both keys are set and the address is allowed
+ * (`transportProblem`); there is no cloud fallback. The handle says whether it exports and,
+ * if not, why (server/main.ts logs it).
  */
 export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): TracingHandle {
   const { enabled, baseUrl, publicKey, secretKey } = cfg.tracing;
-  if (!enabled || !baseUrl || !publicKey || !secretKey) return NOOP;
-  if (!transportAllowed(cfg, baseUrl)) return NOOP;
+  if (!enabled) return off('AVIATION_TRACING_ENABLED is not true');
+  if (!baseUrl || !publicKey || !secretKey) return off('LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must all be set');
+  const problem = transportProblem(cfg, baseUrl);
+  if (problem) return off(problem);
 
   // Needed so nested spans find their parent; a no-op if a manager is already set.
   context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
@@ -147,6 +162,7 @@ export function startTracing(cfg: AppConfig, opts: StartTracingOptions = {}): Tr
   tracer = myTracer;
   const shutdownMs = opts.shutdownTimeoutMillis ?? 5000;
   const handle: TracingHandle = {
+    enabled: true,
     async shutdown() {
       if (tracer === myTracer) tracer = undefined;
       if (active === handle) active = undefined;

@@ -39,7 +39,7 @@ export function UnconfirmedTag({ className }: { className?: string }) {
   return (
     <span
       className={cx(
-        'inline-block rounded-badge border border-magenta-soft px-1 align-[1px] text-[9px] font-bold tracking-[.12em] whitespace-nowrap text-magenta uppercase',
+        'inline-block rounded-badge border border-magenta-soft px-1 align-[1px] text-micro font-bold tracking-[.12em] whitespace-nowrap text-magenta uppercase',
         className,
       )}
     >

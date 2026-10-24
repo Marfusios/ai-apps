@@ -236,7 +236,6 @@ export function ComponentGallery() {
           <StatusBadge kind="other_status" rawStatus="P" />
           <StatusBadge kind="in_progress" rawStatus="P" />
           <StatusBadge kind="status_unknown" rawStatus="" />
-          <StatusBadge kind="not_completed" rawStatus="F" />
         </div>
       </Section>
 

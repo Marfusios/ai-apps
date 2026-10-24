@@ -24,7 +24,7 @@ export function EvidenceGroup({ kind, count, children }: EvidenceGroupProps) {
         {kind !== 'examples' && <GlyphMark kind={kind} />}
         <span>{title}</span>
         <span className="font-normal whitespace-nowrap text-muted">{count === 0 ? 'none' : `${count} ${count === 1 ? 'case' : 'cases'}`}</span>
-        {kind !== 'examples' && <span className="text-[9px] font-normal tracking-[.12em] whitespace-nowrap text-magenta uppercase">AI classified</span>}
+        {kind !== 'examples' && <span className="text-micro font-normal tracking-[.12em] whitespace-nowrap text-magenta uppercase">AI classified</span>}
       </h3>
       {children}
     </section>

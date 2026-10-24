@@ -305,6 +305,18 @@ describe('insertBatched', () => {
     );
     await expect(insertBatched(tx, cases, [nul])).rejects.not.toThrow(/secret/);
   });
+
+  it('refuses an event year outside 1900–2100, the years the API serves (task 22 S-I1, a refusal, not a change to normalized output)', async () => {
+    const { tx, batches } = fakeTx();
+    for (const evYear of [208, 20226, 1899, 2101]) {
+      await expect(insertBatched(tx, cases, [{ ...caseRow(3), evYear }]), String(evYear)).rejects.toThrow(
+        'cases: evYear of ntsbNo=SYN3 is outside 1900-2100, the years the API serves (a dropped or extra digit?)',
+      );
+    }
+    expect(batches).toEqual([]);
+    // The bounds themselves, and a missing year, load.
+    expect(await insertBatched(tx, cases, [{ ...caseRow(4), evYear: 1900 }, { ...caseRow(5), evYear: 2100 }, { ...caseRow(6), evYear: null }])).toBe(3);
+  });
 });
 
 describe('describeLoadError', () => {

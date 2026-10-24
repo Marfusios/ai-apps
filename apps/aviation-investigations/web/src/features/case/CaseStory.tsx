@@ -138,7 +138,7 @@ function FindingRow({ finding }: { finding: Finding }) {
       <div className="min-w-0 flex-1">
         <p>
           {finding.inProbableCause === true && (
-            <span className="mr-2 inline-block rounded-badge border border-ink px-1 align-[1px] text-[9px] font-bold tracking-[.12em] text-ink uppercase">
+            <span className="mr-2 inline-block rounded-badge border border-ink px-1 align-[1px] text-micro font-bold tracking-[.12em] text-ink uppercase">
               In probable cause
             </span>
           )}
@@ -197,7 +197,7 @@ function ScopeNote({ detail, section, index, of }: { detail: CaseDetail; section
   const which = of > 1 ? `Text ${index + 1} of ${of}. ` : '';
   return (
     <p className="mb-1.5 text-meta text-muted">
-      <span className="mr-1.5 inline-block rounded-badge border border-rule px-1 text-[9px] font-bold tracking-[.12em] uppercase">
+      <span className="mr-1.5 inline-block rounded-badge border border-rule px-1 text-micro font-bold tracking-[.12em] uppercase">
         Event-wide
       </span>
       {which}Published for the event, not one aircraft; filed with aircraft {letters.join(' and ')}.

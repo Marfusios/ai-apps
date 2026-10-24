@@ -63,6 +63,7 @@ export const ERROR_MESSAGES = {
   moved: 'This AI search moved to the account that signed in. Sign in to view it.',
   signed_out: "You were signed out, so this AI search didn't start. Sign in to ask again.",
   reauth_required: "Confirm with Google that it's you, then delete your account.",
+  sign_out_pending: "You're signed out on this device, but the server hasn't confirmed the sign-out yet. Try again shortly.",
 } as const satisfies Record<ErrorResponse['error'], string>;
 
 export function sendError(

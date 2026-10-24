@@ -133,6 +133,8 @@ export class EmbeddingRequestError extends Error {
   readonly status: number | undefined;
   readonly code: string | undefined;
   readonly requestId: string | undefined;
+  /** What failed: the API, the connection, the caller's abort, or something else (`ProviderErrorInfo.kind`). */
+  readonly providerKind: ProviderErrorInfo['kind'];
   constructor(
     message: string,
     readonly attempts: number,
@@ -143,6 +145,7 @@ export class EmbeddingRequestError extends Error {
     this.status = info.status;
     this.code = info.code;
     this.requestId = info.requestId;
+    this.providerKind = info.kind;
   }
 }
 

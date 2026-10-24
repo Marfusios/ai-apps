@@ -3,6 +3,9 @@ import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
 import { homedir } from 'node:os';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   enumList,
   FAILURE_CATEGORIES,
@@ -270,6 +273,54 @@ describe('tracing attributes', () => {
     expect(await run('https://langfuse.example.com', prod.NODE_ENV)).toBe(1);
     expect(await run('http://localhost:3000', prod.NODE_ENV)).toBe(1);
     expect(await run('http://langfuse.example.com', 'test')).toBe(1);
+  });
+
+  it('the shared Langfuse on a container network: plain http only to a host the operator listed (gate 22 finding 4, platform P3)', async () => {
+    // What a backend container gets: Langfuse's web service on the observability network, over plain http.
+    const container = { ...ENV, NODE_ENV: 'production', APP_ENV: 'live', LANGFUSE_BASE_URL: 'http://langfuse-web:3000' };
+    const run = async (env: Record<string, string>) => {
+      const exporter = new InMemorySpanExporter();
+      const h = startTracing(loadConfig({ env, files: [] }), { exporter, scheduledDelayMillis: 10 });
+      await stageSpan('x', {}, () => 1);
+      await new Promise((r) => setTimeout(r, 50));
+      const spans = exporter.getFinishedSpans().length;
+      await h.shutdown();
+      return { enabled: h.enabled, reason: h.reason, spans };
+    };
+    // Not listed: nothing is exported, and the handle says why, naming settings only.
+    const refused = await run(container);
+    expect(refused).toMatchObject({ enabled: false, spans: 0 });
+    expect(refused.reason).toMatch(/AVIATION_TRACING_HTTP_HOSTS/);
+    expect(refused.reason).not.toContain('langfuse-web');
+    // Listed explicitly: exported.
+    expect(await run({ ...container, AVIATION_TRACING_HTTP_HOSTS: 'langfuse-web' })).toEqual({ enabled: true, reason: undefined, spans: 1 });
+    expect(await run({ ...container, AVIATION_TRACING_HTTP_HOSTS: 'other, LANGFUSE-WEB' })).toMatchObject({ enabled: true, spans: 1 });
+    // Another host, or https: the list trusts that one host's plain http only; https never needs it.
+    expect(await run({ ...container, AVIATION_TRACING_HTTP_HOSTS: 'langfuse' })).toMatchObject({ enabled: false, spans: 0 });
+    expect(await run({ ...container, LANGFUSE_BASE_URL: 'https://langfuse.example.com' })).toMatchObject({ enabled: true, spans: 1 });
+    // Host names only: not a URL, a wildcard or a port.
+    for (const bad of ['http://langfuse-web', '*.internal', 'langfuse-web:3000', 'a b']) {
+      expect(() => loadConfig({ env: { ...container, AVIATION_TRACING_HTTP_HOSTS: bad }, files: [] }), bad).toThrow(/AVIATION_TRACING_HTTP_HOSTS/);
+    }
+  });
+
+  it('says why it is off, without values: not enabled, incomplete, or a refused address', async () => {
+    const off = startTracing(cfg({ ...ENV, AVIATION_TRACING_ENABLED: 'false' }));
+    expect(off).toMatchObject({ enabled: false, reason: 'AVIATION_TRACING_ENABLED is not true' });
+    const env: Record<string, string> = { ...ENV };
+    delete env.LANGFUSE_SECRET_KEY;
+    expect(startTracing(cfg(env))).toMatchObject({ enabled: false, reason: expect.stringMatching(/LANGFUSE_SECRET_KEY/) });
+    const ftp = startTracing(loadConfig({ env: { ...ENV, NODE_ENV: 'production', LANGFUSE_BASE_URL: 'ftp://pk-test@langfuse.example.com' }, files: [] }));
+    expect(ftp).toMatchObject({ enabled: false });
+    expect(ftp.reason).not.toMatch(/pk-test|langfuse\.example/);
+  });
+
+  it('the Compose tracing overlay passes every tracing setting to the containers', () => {
+    const overlay = readFileSync(resolve(fileURLToPath(import.meta.url), '../../../compose.tracing.yaml'), 'utf8');
+    const block = overlay.split('x-tracing-env: &tracing-env')[1]!.split(/\n\S/)[0]!;
+    for (const name of ['AVIATION_TRACING_ENABLED', 'LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'AVIATION_TRACING_HTTP_HOSTS']) {
+      expect(block, name).toMatch(new RegExp(`\\n  ${name}: `));
+    }
   });
 
   it('is disabled when the config is incomplete', async () => {

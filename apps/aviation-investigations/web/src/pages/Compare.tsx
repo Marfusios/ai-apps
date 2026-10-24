@@ -247,7 +247,7 @@ function Strip({ detail, order, onRemove, ai }: { detail: CaseDetail; order: num
       </Cell>
       {ai && <AiCells ai={ai} detail={detail} />}
       <div className="flex flex-col gap-1 border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1] sm:flex-row sm:items-baseline sm:gap-2.5">
-        <span className="flex-none text-[9px] tracking-caps text-muted uppercase">Probable cause</span>
+        <span className="flex-none text-micro tracking-caps text-muted uppercase">Probable cause</span>
         <p className={cx('min-w-0 flex-1 font-serif text-[13px] leading-[1.45]', !cause && 'text-muted')}>
           {cause ? preview : 'No probable cause on record.'}
         </p>
