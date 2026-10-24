@@ -674,11 +674,53 @@ pnpm app:migrate
 #    made before these exclusions); only then empty them, which also checks again:
 pnpm worker restore-check
 #    pnpm worker restore-check --empty
-# 3. Only after it passed, open the service.
+# 3. Only after it passed, open the service. Paid operations stay held (next section).
 pnpm app:up
+# 4. Charge the spend the restored ledger lacks, which releases them.
+pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source of the figures>"
 ```
 
 Roles and grants are part of provisioning, not of the dump (`pnpm provision:shared`).
+
+### Paid operations after a restore
+
+A backup's ledger (`cost_ledger`, `reservations`) ends when the backup was taken. What was
+spent afterwards is missing from the restored database but still billed by the providers,
+so a service opened on it could spend the same daily and monthly allowance again. A
+restored database therefore holds every paid operation (`server/quota/hold.ts`, migration
+0020): AI answers are paused for maintenance (`GET /api/ai/status` says `paused`,
+`maintenance`) and indexing and evaluation spend is refused (`restore_hold`). Search, case
+pages and the dashboard work as usual.
+
+The hold starts by itself when a backup is restored into another database (the restored
+`paid_operations_hold` row names the database the backup was taken from; provisioning
+always creates a new one), and `pnpm worker restore-check` sets it in any case.
+`pnpm worker ai-switch --on` does not release it (`pnpm worker ai-switch` shows it). Only
+the reconciliation does. It runs as `aviation_migrator`, with the environment's host-side
+`DATABASE_MIGRATOR_URL` and the same budget settings as the app (its settings file in
+`AVIATION_ENV_FILES`):
+
+```sh
+# The spend since the backup (its file name carries the time) that the ledger lacks, from the
+# providers' usage pages for this environment's keys: Anthropic and OpenAI usage of AI
+# answers as --interactive-usd, embeddings for indexing and evaluation calls as
+# --ingestion-usd. Preview first; nothing changes.
+pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source>" --dry-run
+pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source>"
+# Without those figures: charge everything the budgets still allow this month. Paid
+# operations then stay at zero until the next UTC month.
+pnpm worker restore-reconcile --charge-remaining --note "<why>"
+```
+
+In one transaction under the spend lock it charges every reservation the backup left open
+at its full amount (the outcome of those requests is unknown), then the given amounts
+(interactive, and indexing and evaluation together, which share one allowance) to the
+current day, and releases the hold. It refuses, changing nothing, when nothing is held or
+while a reservation of the backup still has a running lease (it names the time to wait
+for). A provider's usage page counts every use of a key: when a key also serves something
+else, or a figure cannot be split between the two amounts, the larger figure is the safe
+one. After moving the database to another server by dump and restore, the ledger is
+complete: reconcile with `--interactive-usd 0 --ingestion-usd 0`.
 
 ## Retention and maintenance
 

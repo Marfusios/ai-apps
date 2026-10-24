@@ -6,6 +6,8 @@ import { WORKER_DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from '../ser
 import { BACKUP_EXCLUDED_DATA, emptyExcludedTables, restoreCheck } from '../server/db/backup.js';
 import { listGenerations, pruneGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
+import { holdPaidOperations, readPaidOperationsHold, reconcileRestore, ReconcileRefusedError } from '../server/quota/hold.js';
+import { QuotaInputError } from '../server/quota/policy.js';
 import { pruneControls } from '../server/quota/retention.js';
 import { expireLeases } from '../server/quota/settle.js';
 import { readAiSwitch, setAccountCheck, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
@@ -53,6 +55,7 @@ const USAGE = [
   '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]] [--account-check suspicious | always]',
   '  worker migrate',
   '  worker restore-check [--empty]',
+  '  worker restore-reconcile (--interactive-usd <n> --ingestion-usd <n> | --charge-remaining) --note <text> [--dry-run]',
   '  worker ai-preflight',
   '  worker brief-diagnose <brief-id> [--step <n>] [--include-expired]',
 ].join('\n');
@@ -603,6 +606,10 @@ async function main(argv: string[]): Promise<number> {
     console.log(
       `interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}; ${free}; ${checked}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`,
     );
+    const hold = await withDb((db) => readPaidOperationsHold(db));
+    if (hold.held) {
+      console.log(`paid operations HELD after a restore (${hold.reason}); the switch cannot release them: pnpm worker restore-reconcile`);
+    }
     return 0;
   }
   if (command === 'prune-generations') {
@@ -721,6 +728,10 @@ async function main(argv: string[]): Promise<number> {
     }
     const db = createDb(url, { max: 1, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {
+      // A restored ledger lacks the spend after its backup: hold every paid operation until
+      // `restore-reconcile` has charged it (server/quota/hold.ts), whatever the checks below say.
+      await holdPaidOperations(db, 'restore check: paid operations held until pnpm worker restore-reconcile');
+      console.log('paid operations held until pnpm worker restore-reconcile (RUNBOOK, "Backups")');
       if (values.empty) await emptyExcludedTables(db);
       const found = await restoreCheck(db);
       if (found.length === 0) {
@@ -730,6 +741,66 @@ async function main(argv: string[]): Promise<number> {
       for (const { table, rows } of found) console.error(`${table}: ${rows} rows (a backup must not hold them)`);
       console.error('restore check FAILED: empty them with pnpm worker restore-check --empty before starting the app');
       return 1;
+    } finally {
+      await closeDb(db);
+    }
+  }
+  if (command === 'restore-reconcile') {
+    // After a restore (RUNBOOK, "Backups"): charge what the restored ledger lacks (the backup's
+    // open reservations in full, and the spend since the backup as the providers report it, or
+    // all the budgets still allow this month) and release the hold, as aviation_migrator.
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        'interactive-usd': { type: 'string' },
+        'ingestion-usd': { type: 'string' },
+        'charge-remaining': { type: 'boolean' },
+        note: { type: 'string' },
+        'dry-run': { type: 'boolean' },
+      },
+      strict: true,
+    });
+    const amountArg = (v: string | undefined): number | undefined =>
+      v === undefined ? undefined : /^\d+(\.\d{1,6})?$/.test(v) ? Number(v) : Number.NaN;
+    const interactiveUsd = amountArg(values['interactive-usd']);
+    const ingestionUsd = amountArg(values['ingestion-usd']);
+    const chargeRemaining = values['charge-remaining'] === true;
+    const amounts = interactiveUsd !== undefined && ingestionUsd !== undefined;
+    if (
+      Number.isNaN(interactiveUsd) ||
+      Number.isNaN(ingestionUsd) ||
+      amounts === chargeRemaining ||
+      (!amounts && (interactiveUsd !== undefined || ingestionUsd !== undefined)) ||
+      !values.note?.trim()
+    ) {
+      console.error(USAGE);
+      return 2;
+    }
+    const config = workerConfig();
+    const url = config.databaseMigratorUrl;
+    if (!url) {
+      console.error('DATABASE_MIGRATOR_URL is not set');
+      return 2;
+    }
+    const db = createDb(url, { max: 1, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
+    try {
+      const r = await reconcileRestore(db, {
+        ...(amounts ? { interactiveUsd, ingestionUsd } : { chargeRemaining: true }),
+        note: values.note,
+        budgets: config.ai.budgets,
+        dryRun: values['dry-run'] === true,
+      });
+      const prefix = r.dryRun ? 'would charge (dry run, nothing changed)' : 'charged';
+      console.log(`${prefix}: ${r.openCharged.count} reservations the backup left open, ${r.openCharged.usd.toFixed(6)} USD in full`);
+      console.log(`${prefix}: interactive ${r.charged.interactive.toFixed(6)} USD, indexing and evaluation ${r.charged.indexing.toFixed(6)} USD`);
+      console.log(r.released ? 'paid operations released' : 'paid operations stay held');
+      return 0;
+    } catch (e) {
+      if (e instanceof ReconcileRefusedError || e instanceof QuotaInputError) {
+        console.error(`restore-reconcile refused: ${e.message}`);
+        return 1;
+      }
+      throw e;
     } finally {
       await closeDb(db);
     }

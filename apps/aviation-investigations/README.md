@@ -1467,6 +1467,10 @@ retention are in migrations 0008 and 0009.
 The kill switch pauses interactive AI only. Its second flag is the login-required
 emergency mode (DESIGN §7): anonymous trials are refused (admission `login_required`,
 403; status `signed_in_only` with reason `login_required`) and signed-in AI goes on.
+After a restore, a separate hold stops every paid operation, interactive and indexing or
+evaluation alike, until `pnpm worker restore-reconcile` has charged the spend the restored
+ledger lacks (`server/quota/hold.ts`; RUNBOOK, "Paid operations after a restore"); the
+switch cannot release it.
 
 ```sh
 pnpm worker ai-switch                                   # show both
@@ -1825,7 +1829,8 @@ lock order in migration 0019.
 - **Backups** never hold the rows of the sign-in tables, the briefs or the idempotency
   records (`server/db/backup.ts`; RUNBOOK, "Backups"), so a restore cannot bring back a
   deleted account, its content, a session or OAuth state; `pnpm worker restore-check`
-  checks a restored database before the service opens.
+  checks a restored database before the service opens, and paid operations stay held
+  until `pnpm worker restore-reconcile` has charged the spend since the backup.
 - **Retention.** The API's control maintenance also deletes expired sessions, OAuth
   state, used states and deletion confirmations (`pruneAuth`).
 

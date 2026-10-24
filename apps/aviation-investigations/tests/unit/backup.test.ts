@@ -46,4 +46,11 @@ describe('backups never hold accounts, sign-in state or content', () => {
     expect(backups).toContain('pnpm worker restore-check');
     expect(backups.indexOf('pnpm worker restore-check')).toBeLessThan(backups.indexOf('pnpm app:up'));
   });
+
+  it('after a restore the RUNBOOK keeps paid operations held until the reconciliation, which follows the check', () => {
+    const backups = section('Backups');
+    expect(backups).toContain('### Paid operations after a restore');
+    expect(backups.indexOf('pnpm worker restore-check')).toBeLessThan(backups.indexOf('pnpm worker restore-reconcile'));
+    for (const option of ['--interactive-usd', '--ingestion-usd', '--charge-remaining', '--dry-run']) expect(backups).toContain(option);
+  });
 });

@@ -14,6 +14,7 @@ import { accountDailyLimit, accountRequestBuckets, type PauseReason } from './ad
 import { nextMonthStart, nextUtcMidnight, readBuckets } from './buckets.js';
 import { checkInteractiveBudget, spendSnapshot, toMicros } from './pacing.js';
 import { principalHash, type Principal, type QuotaPolicy } from './policy.js';
+import { paidOperationsHeld } from './hold.js';
 import { readAiSwitch } from './switch.js';
 
 export type AiState = 'available' | 'signed_in_only' | 'paused';
@@ -103,7 +104,8 @@ export async function aiStatus(db: DbOrTx, principal: Principal | null, opts: Ai
   });
 
   const aiSwitch = await readAiSwitch(db);
-  if (!aiSwitch.enabled) return status('paused', 'maintenance');
+  // Paused by an operator, or held after a restore until the lost spend is charged (server/quota/hold.ts).
+  if (!aiSwitch.enabled || (await paidOperationsHeld(db))) return status('paused', 'maintenance');
   const budget = checkInteractiveBudget(
     await spendSnapshot(db, now),
     toMicros(opts.reservationUsd),

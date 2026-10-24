@@ -86,6 +86,38 @@ export const aiSwitch = pgTable(
   ],
 );
 
+/** Stage of the reservations and ledger lines that charge spend a restore lost (server/quota/hold.ts). */
+export const RESTORE_RECONCILE_STAGE = 'restore_reconcile';
+
+/**
+ * Paid operations held after a restore (RUNBOOK, "Backups"): exactly one row (id 1). A
+ * restored ledger lacks what was spent after the backup was taken, although the providers
+ * still bill it, so after a restore no paid call may start until an operator has charged
+ * that spend (`pnpm worker restore-reconcile`). Paid operations are held when `held_at` is
+ * set (`pnpm worker restore-check` sets it), when `database_oid` is not the current
+ * database's OID (a restore or copy into another database carries the old row), or when
+ * the row is missing. Admission, `GET /api/ai/status` and `reserveSpend` read it; only the
+ * schema owner (aviation_migrator) changes it (migration 0020).
+ */
+export const paidOperationsHold = pgTable(
+  'paid_operations_hold',
+  {
+    id: smallint('id').primaryKey(),
+    /** `pg_database.oid` of the database whose ledger is complete. */
+    databaseOid: bigint('database_oid', { mode: 'number' }).notNull(),
+    /** Set by the restore check; cleared by a reconciliation. */
+    heldAt: tsz('held_at'),
+    reconciledAt: tsz('reconciled_at'),
+    /** Operator note of the last hold or reconciliation; never shown to users. */
+    note: text('note'),
+    updatedAt: tsz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    check('paid_operations_hold_single_row_check', sql`${t.id} = 1`),
+    check('paid_operations_hold_note_check', sql`${t.note} is null or length(${t.note}) <= 200`),
+  ],
+);
+
 /**
  * Anonymous trial identities (DESIGN §7), created only after a successful Turnstile
  * challenge (server/identity/). The browser holds a signed cookie with a random value;
@@ -214,10 +246,13 @@ export const reservations = pgTable(
   (t) => [
     check('reservations_category_check', sql`${t.category} in (${inList(SPEND_CATEGORIES)})`),
     check('reservations_principal_kind_check', sql`${t.principalKind} in (${inList(PRINCIPAL_KINDS)})`),
+    // Interactive money belongs to a trial or an account, except the interactive spend a
+    // restore lost, which `pnpm worker restore-reconcile` charges as `system` (migration 0020).
     check(
       'reservations_principal_check',
       sql`(${t.principalKind} = 'system') = (${t.principalHash} is null)
-        and (${t.category} = 'interactive') = (${t.principalKind} <> 'system')
+        and ((${t.category} = 'interactive') = (${t.principalKind} <> 'system')
+          or (${t.category} = 'interactive' and ${t.principalKind} = 'system' and ${t.stage} = ${sql.raw(`'${RESTORE_RECONCILE_STAGE}'`)}))
         and (${t.principalHash} is null or ${t.principalHash} ~ ${sql.raw(HEX64)})`,
     ),
     check('reservations_usd_check', sql`${t.usd} > 0`),
