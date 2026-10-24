@@ -26,7 +26,7 @@
  *   limit; the largest dev case holds 63).
  * - **Fail fast.** All requests share one controller with the caller's signal: the first
  *   failed request aborts the others, in both waves, so a failing mapping leaves nothing
- *   running against Elasticsearch.
+ *   running against Elasticsearch. Both waves share a deadline and run at most eight requests at once.
  * - **Complete answers only**: `allow_partial_search_results: false` and the completeness
  *   check on every response (`IncompleteSearchError('mapping')`).
  */
@@ -37,6 +37,8 @@ import { HIT_FIELDS, IncompleteSearchError, assertCompleteResponse, toHit, trans
 
 /** Elasticsearch's limit on `num_candidates`: the most passages one exact search can consider. */
 export const MAX_EXACT_CANDIDATES = 10_000;
+/** Transport concurrency only: candidate/ranking/mapping semantics are unchanged. */
+export const MAPPING_CONCURRENCY = 8;
 
 export type UnmappedReason = 'no_passages' | 'too_many_passages';
 
@@ -143,7 +145,7 @@ export async function mapCasesToPassages(
   const started = Date.now();
   // One controller for every mapping request: the first failure aborts the others.
   const siblings = new AbortController();
-  const signal = opts.signal ? AbortSignal.any([opts.signal, siblings.signal]) : siblings.signal;
+  const signal = AbortSignal.any([siblings.signal, AbortSignal.timeout(params.timeoutMs), ...(opts.signal ? [opts.signal] : [])]);
   const t = transport(params, signal);
   const failFast = <T>(p: Promise<T>): Promise<T> =>
     p.catch((err: unknown) => {
@@ -152,46 +154,45 @@ export async function mapCasesToPassages(
     });
   const requests: estypes.SearchRequest[] = [];
 
-  const counts = await Promise.all(
-    cases.map((ntsbNo) =>
-      failFast(
-        (async () => {
-          const body = mappingCountBody(index, filter, ntsbNo);
-          requests.push(body);
-          const res = await es.search(body, t);
-          assertCompleteResponse(res, 'mapping');
-          return exactTotal(res);
-        })(),
-      ),
-    ),
-  );
+  const wave = async <T, R>(values: readonly T[], task: (value: T) => Promise<R>): Promise<R[]> => {
+    const answers: R[] = new Array(values.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(MAPPING_CONCURRENCY, values.length) }, async () => {
+      while (next < values.length) {
+        signal.throwIfAborted();
+        const index = next++;
+        answers[index] = await failFast(task(values[index]!));
+      }
+    }));
+    return answers;
+  };
+  const counts = await wave(cases, async (ntsbNo) => {
+    const body = mappingCountBody(index, filter, ntsbNo);
+    requests.push(body);
+    const res = await es.search(body, t);
+    assertCompleteResponse(res, 'mapping');
+    return exactTotal(res);
+  });
 
   const entries: CaseMappingEntry[] = cases.map((ntsbNo, i) => ({ ntsbNo, status: 'unmapped', reason: 'no_passages', passagesUnderFilter: counts[i] as number, returned: 0 }));
   const passages = new Map<string, PassageHit[]>();
-  await Promise.all(
-    entries.map((e) =>
-      failFast(
-        (async () => {
-          const n = e.passagesUnderFilter;
-          if (n === 0) return;
-          if (n > opts.maxMappablePassages) {
-            e.reason = 'too_many_passages';
-            return;
-          }
-          const body = mappingKnnBody(index, vector, filter, e.ntsbNo, n);
-          requests.push(body);
-          const res = await es.search<Record<string, unknown>>(body, t);
-          const hits = verifiedMappingHits(res, e.ntsbNo, n);
-          e.returned = hits.length;
-          const best = orderChannel(hits, (h) => h.hit.id, (h) => h.score)
-            .slice(0, opts.passagesPerCase)
-            .map((h) => h.hit);
-          passages.set(e.ntsbNo, best);
-          e.status = 'mapped';
-          e.reason = null;
-        })(),
-      ),
-    ),
-  );
+  await wave(entries, async (e) => {
+    const n = e.passagesUnderFilter;
+    if (n === 0) return;
+    if (n > opts.maxMappablePassages) {
+      e.reason = 'too_many_passages';
+      return;
+    }
+    const body = mappingKnnBody(index, vector, filter, e.ntsbNo, n);
+    requests.push(body);
+    const res = await es.search<Record<string, unknown>>(body, t);
+    const hits = verifiedMappingHits(res, e.ntsbNo, n);
+    e.returned = hits.length;
+    const best = orderChannel(hits, (h) => h.hit.id, (h) => h.score)
+      .slice(0, opts.passagesPerCase).map((h) => h.hit);
+    passages.set(e.ntsbNo, best);
+    e.status = 'mapped';
+    e.reason = null;
+  });
   return { passages, cases: entries, requests, ms: Date.now() - started };
 }

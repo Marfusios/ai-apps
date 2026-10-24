@@ -43,7 +43,7 @@ async function replay(ctx: ApiContext, request: FastifyRequest, reply: FastifyRe
     const account = who.account, trial = who.trial;
     await withLiveAccount(ctx.db, account, (tx) => takeOverSearch(tx, id, trial.hash, account.hash));
   }
-  const row = await readOwnedSearch(ctx.db, id, readersOf(await visitor(ctx, request)), ai.now());
+  const row = await readOwnedSearch(ctx.db, id, readersOf(await visitor(ctx, request)), ai.now(), false, { page: 1 });
   if (!row) {
     if (who.trial) {
       const moved = await ctx.db.select({ id: evidenceSearches.id }).from(evidenceSearches).where(and(eq(evidenceSearches.id, id),
@@ -108,14 +108,28 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     }
     const admission: Admission = admitted;
     const abandon = async () => {
-      await releaseQuota(ctx.db, admission, admission.fencingToken, { policy: ai.policy!, now: ai.now() });
-      await settle(ctx.db, admission, 0, admission.fencingToken, ai.now());
-      await forgetIdempotency(ctx.db, admission, ai.now());
+      // A busy refund must not be followed by zero settlement: that would strand the
+      // quota unit on a closed reservation. Retry only storage, never admission/providers.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await ctx.db.transaction(async (tx) => {
+            const released = await releaseQuota(tx, admission, admission.fencingToken, { policy: ai.policy!, now: ai.now() });
+            if (!released.released && released.reason === 'busy') throw new Error('evidence refund busy');
+            const settled = await settle(tx, admission, 0, admission.fencingToken, ai.now());
+            if (!settled.ok && settled.reason === 'busy') throw new Error('evidence settlement busy');
+            await forgetIdempotency(tx, admission, ai.now());
+          });
+          return;
+        } catch {
+          if (attempt === 1) throw new Error('evidence admission cleanup unavailable');
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
     };
     if (svc.shutdown.aborted) { await abandon(); return sendError(reply, 503, 'unavailable'); }
-    let row: EvidenceRow | null | typeof ACCOUNT_GONE;
+    let row: EvidenceRow | null | typeof ACCOUNT_GONE | 'source_gone';
     try {
-      const write = async (tx: Parameters<typeof lockLiveAccount>[0]): Promise<EvidenceRow | null> => {
+      const write = async (tx: Parameters<typeof lockLiveAccount>[0]): Promise<EvidenceRow | null | 'source_gone'> => {
         await setLockTimeout(tx);
         if ((await claimBriefEvidence(tx, { generationId: pinned.manifest.generationId, passagesIndex: pinned.manifest.passagesIndex! })) !== 'ok' ||
             (await deletedOrDeleting(tx, [pinned.manifest.casesIndex])).length > 0) return null;
@@ -124,7 +138,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
           // A concurrent deletion or handover cannot give a new search a stale private question.
           if (payer.account && who.trial) await takeOverSearch(tx, body.from, who.trial.hash, payer.account.hash);
           source = await readOwnedSearch(tx, body.from, readersOf(who), ai.now(), true);
-          if (!source?.data.interpretation) return null;
+          if (!source?.data.interpretation) return 'source_gone';
         }
         const inserted = await insertSearch(tx, {
           readOwner: principalHash(ai.policy!, payer.principal), readOwnerKind: payer.principal.kind,
@@ -140,26 +154,25 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
       };
       row = payer.account ? await withLiveAccount(ctx.db, payer.account, write) : await ctx.db.transaction(write);
     } catch { await abandon(); return sendError(reply, 503, 'unavailable'); }
+    if (row === 'source_gone') { await abandon(); return notFound(reply); }
     if (!row || row === ACCOUNT_GONE) { await abandon(); return sendError(reply, row === ACCOUNT_GONE ? 403 : 503, row === ACCOUNT_GONE ? 'signed_out' : 'unavailable'); }
     const controller = new AbortController();
-    const abort = () => controller.abort();
-    request.raw.once('aborted', abort);
-    const onClose = () => { if (!reply.raw.writableFinished) controller.abort(); };
-    reply.raw.once('close', onClose);
+    // The admitted operation survives a lost response. Its result remains replayable;
+    // only deletion, shutdown or the server deadline may stop paid work.
     svc.runs.set(row.id, { controller });
     try {
       await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(30_000)]), row.data.interpretation);
       const current = await visitor(ctx, request);
       // A newly issued trial cookie is on the response, not yet on this request.
       // Sessions are re-read; only the trial just proved/issued by billing can be carried forward.
-      const completed = await readOwnedSearch(ctx.db, row.id, readersOf({ ...current, trial: current.trial ?? who.trial }), ai.now());
+      const completed = await readOwnedSearch(ctx.db, row.id, readersOf({ ...current, trial: current.trial ?? who.trial }), ai.now(), false, { page: 1 });
       return completed ? send(reply, completed) : notFound(reply);
     } catch {
       // Only fixed categories leave this route, including storage failures containing private query values.
       request.log.warn({ outcome: 'failed' }, 'evidence request unavailable');
       return sendError(reply, 503, 'unavailable');
     } finally {
-      request.raw.off('aborted', abort); reply.raw.off('close', onClose); svc.runs.delete(row.id);
+      svc.runs.delete(row.id);
     }
   }
   app.post('/api/evidence', async (request, reply) => ctx.evidence ? ctx.evidence.track(() => create(request, reply)) : create(request, reply));
@@ -167,7 +180,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const id = EvidenceSearchIdSchema.safeParse(request.params.id), query = EvidencePageQuerySchema.safeParse(request.query ?? {});
     if (!id.success || !ctx.ai) return notFound(reply);
     if (!query.success) return sendError(reply, 400, 'bad_request');
-    const row = await readOwnedSearch(ctx.db, id.data, readersOf(await visitor(ctx, request)), ctx.ai.now());
+    const row = await readOwnedSearch(ctx.db, id.data, readersOf(await visitor(ctx, request)), ctx.ai.now(), false, { page: query.data.page });
     const page = row ? pageOf(row, query.data.page) : null;
     return page ? reply.type(JSON_TYPE).send(JSON.stringify(page)) : notFound(reply);
   });
@@ -175,8 +188,8 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
   app.get<{ Params: { id: string; ntsbNo: string } }>('/api/evidence/:id/cases/:ntsbNo', async (request, reply) => {
     const id = EvidenceSearchIdSchema.safeParse(request.params.id), n = NtsbNoSchema.safeParse(request.params.ntsbNo);
     if (!id.success || !n.success || !ctx.ai) return notFound(reply);
-    const row = await readOwnedSearch(ctx.db, id.data, readersOf(await visitor(ctx, request)), ctx.ai.now());
-    if (!row || row.status !== 'results' || !row.data.ranking?.some((c) => c.ntsbNo === n.data)) return notFound(reply);
+    const row = await readOwnedSearch(ctx.db, id.data, readersOf(await visitor(ctx, request)), ctx.ai.now(), false, { caseNo: n.data });
+    if (!row || row.status !== 'results') return notFound(reply);
     const detail = await readCaseDetail(ctx.db, row.generationId, n.data, row.data.context);
     if (!detail) return notFound(reply);
     // Public case pages use a text hash; evidence provenance names the canonical revision id.

@@ -695,7 +695,11 @@ async function main(argv: string[]): Promise<number> {
     const provider = createAnthropicProvider({ models, client: countOnly });
     const countText = async (model: string, text: string) =>
       (await client.messages.countTokens({ model, messages: [{ role: 'user', content: text }] })).input_tokens;
-    const rows = await runAiPreflight(provider, countText, models);
+    const { evidenceReservation } = await import('../server/evidence/pricing.js');
+    const embeddingModel = config.ai.openai.embeddingModel;
+    const rows = await runAiPreflight(provider, countText, models, {
+      embeddingModel, reservationUsd: evidenceReservation(models.scope, embeddingModel).reservationUsd,
+    });
     console.log(formatPreflight(rows));
     const over = rows.filter((r) => !r.ok);
     console.log(over.length === 0 ? 'ai-preflight: every request fits its cap' : `ai-preflight: FAILED, ${over.length} over the cap`);

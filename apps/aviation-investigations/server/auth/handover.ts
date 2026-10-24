@@ -37,8 +37,6 @@
  * same retry from the signed-in browser replays the brief for the account. An account
  * deleted meanwhile takes nothing over (`account_gone`): the brief stays the trial's.
  */
-import { evidenceSearches } from '../db/schema/evidence.js';
-import { eq } from 'drizzle-orm';
 import { readOwnedSearch, takeOverSearch } from '../evidence/store.js';
 import { sql } from 'drizzle-orm';
 import { BriefIdSchema } from '../../shared/contracts/briefs.js';
@@ -98,7 +96,7 @@ export function parseHandoverCandidate(value: unknown): HandoverCandidate | null
  * live brief that the trial proven by this browser's cookie reads. Otherwise null.
  */
 export async function handoverCandidate(deps: HandoverDeps, cookieHeader: string | null, returnPath: string): Promise<HandoverCandidate | null> {
-  const evidenceId = /^\/(?:ai|evidence)\/([0-9a-f-]{36})(?:\?[^#]*)?$/.exec(returnPath)?.[1];
+  const evidenceId = /^\/ai\/([0-9a-f-]{36})(?:\?[^#]*)?$/.exec(returnPath)?.[1];
   const kind = evidenceId && BriefIdSchema.safeParse(evidenceId).success ? 'evidence' as const : undefined;
   const briefId = kind ? evidenceId! : briefOfReturnPath(returnPath);
   if (!briefId) return null;

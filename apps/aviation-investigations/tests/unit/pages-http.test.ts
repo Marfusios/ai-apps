@@ -75,6 +75,7 @@ describe('page paths in the wrong letter case, and /index.html', () => {
     ['/Cases/DFW08TA066', '/cases/DFW08TA066'],
     ['/CASES/dfw08ta066?x=1', '/cases/dfw08ta066'],
     [`/BRIEFS/${BRIEF_ID}?step=2`, `/briefs/${BRIEF_ID}`],
+    [`/AI/${BRIEF_ID}?page=2`, `/ai/${BRIEF_ID}`],
     ['/index.html', '/'],
     ['/index.html?utm_source=x', '/'],
   ])('%s is 301 to %s, the query dropped', async (url, location) => {
@@ -194,4 +195,15 @@ describe('unmatchedPage reads a path in linear time (re-review of fix round 1)',
     expect(unmatchedPage('/About///')).toEqual({ redirect: '/about' });
     expect(unmatchedPage('///')).toBeNull();
   });
+});
+
+it('serves the canonical AI search page privately without a database read or private head text', async () => {
+  const app = makeApp();
+  const r = await page(app, `/ai/${BRIEF_ID}?question=SECRET&page=2`);
+  expect(r.statusCode).toBe(200);
+  expect(r.headers['cache-control']).toBe('private, no-store');
+  expect(headOf(r)).toMatchObject({ title: 'AI search · AirCase', robots: 'noindex, nofollow', canonical: `https://aircase.example/ai/${BRIEF_ID}`, jsonLd: 0 });
+  expect(r.body).not.toContain('SECRET');
+  expect((await page(app, `/ai/${BRIEF_ID}`, 'text/html', 'HEAD')).headers['cache-control']).toBe('private, no-store');
+  expect((await page(app, `/evidence/${BRIEF_ID}`)).statusCode).toBe(404);
 });

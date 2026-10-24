@@ -1,4 +1,5 @@
 /** Deterministic evidence.v1 projection. Source text is never rewritten, abbreviated or completed. */
+import { wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
 import { AVIATION_STOP_WORDS, AVIATION_SYNONYMS } from '../../shared/aviation-analysis.js';
 import { BRIEF_FILTER_FACETS, type BriefFilters } from '../../shared/contracts/briefs.js';
 import { EvidenceCaseSchema, MAX_EXCERPTS_PER_CASE, type EvidenceCase, type EvidenceExcerpt, type EvidenceRelevance } from '../../shared/contracts/evidence.js';
@@ -8,7 +9,7 @@ import type { CaseRecord, CaseRecordAircraft, CaseRecordSection } from '../db/qu
 import type { CaseRowBase } from '../db/queries/case-views.js';
 import type { PassageHit } from '../search/hybrid.js';
 
-export const EVIDENCE_PROJECTION_VERSION = 'paragraphs.v1';
+export const EVIDENCE_PROJECTION_VERSION = 'paragraphs.v2';
 export interface RankedEvidenceCase { ntsbNo: string; seeds: PassageHit[]; channels: EvidenceRelevance['channels'] }
 type Span = { start: number; end: number };
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -53,22 +54,10 @@ export function highlighted(text: string, plan: ReturnType<typeof termPlan>): { 
   return { terms, highlights: accepted.slice(0, 200).map(({ start, end, match }) => ({ start, end, match })) };
 }
 
-/** Blank-line paragraph boundaries in canonical LF text, with Unicode-safe UTF-16 offsets. */
+/** The chunker's single-line/hard-wrap rules, with headings kept with their paragraph. */
 export function paragraphSpans(text: string): Span[] {
   if (text.includes('\r')) throw new Error('noncanonical line ending');
-  const out: Span[] = [];
-  let start = 0;
-  const add = (end: number) => {
-    const raw = text.slice(start, end);
-    const trimmed = raw.trim();
-    if (trimmed) {
-      const offset = raw.length - raw.trimStart().length;
-      out.push({ start: start + offset, end: start + offset + trimmed.length });
-    }
-  };
-  for (const match of text.matchAll(/\n[\t ]*\n+/gu)) { add(match.index); start = match.index + match[0].length; }
-  add(text.length);
-  return out;
+  return wholeNarrativeParagraphs(text);
 }
 
 function verifySeed(seed: PassageHit, section: CaseRecordSection, c: CaseRecord): void {

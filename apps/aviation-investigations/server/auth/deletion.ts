@@ -86,7 +86,7 @@ export interface DeletionDeps {
   /** PostgreSQL as aviation_app. */
   db: Db;
   /** Steps running in this process (server/briefs/services.ts), to stop the account's. */
-  runs?: ReadonlyMap<string, { controller: AbortController }> | null;
+  runs?: Pick<ReadonlyMap<string, { controller: AbortController }>, 'get'> | null;
   now: () => Date;
 }
 

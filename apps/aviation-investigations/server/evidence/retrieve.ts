@@ -4,6 +4,7 @@ import type { Client } from '@elastic/elasticsearch';
 import type { EvidenceInterpretation, EvidenceCase } from '../../shared/contracts/evidence.js';
 import { EVIDENCE_CANDIDATE_CEILING } from '../../shared/contracts/evidence.js';
 import { stageSpan } from '../observability/tracing.js';
+import { fitQueryText } from '../briefs/retriever.js';
 import { embeddingCostUsd, embeddingWorstCaseUsd } from '../ai/pricing.js';
 import { QueryEmbeddingError, type QueryEmbedder, type Embedder } from '../ai/embeddings.js';
 import type { PinnedDataset } from '../dataset.js';
@@ -26,7 +27,7 @@ export interface EvidenceRetrievalResult { ranking: RankedEvidenceCase[]; cases:
 export interface EvidenceRetriever {
   available(pinned: PinnedDataset): Promise<boolean>;
   search(pinned: PinnedDataset, interpretation: EvidenceInterpretation, signal: AbortSignal,
-    onEmbedding: (usage: QueryEmbeddingUsage) => void): Promise<EvidenceRetrievalResult>;
+    onEmbedding: (usage: QueryEmbeddingUsage) => void, queryText: string): Promise<EvidenceRetrievalResult>;
 }
 
 export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbedder | Embedder): EvidenceRetriever {
@@ -43,7 +44,7 @@ export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbed
         return true;
       } catch { return false; }
     },
-    async search(pinned, interpretation, signal, onEmbedding) {
+    async search(pinned, interpretation, signal, onEmbedding, queryText) {
       const generation = pinned.manifest.generationId;
       // Unknown failures after dispatch cannot silently lose an embedding charge.
       const safeEmbedder: QueryEmbedder = { ...embedder,
@@ -65,7 +66,7 @@ export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbed
       };
       const result = await retrieveCaseCandidates(es, safeEmbedder, EVIDENCE_RETRIEVAL, {
         dataset: { generationId: generation, passagesIndex: pinned.manifest.passagesIndex }, casesIndex: pinned.manifest.casesIndex,
-        text: interpretation.terms, keywordText: interpretation.terms, filters: interpretation.filters, signal, onQueryEmbedding: onEmbedding,
+        text: fitQueryText(queryText), keywordText: queryText, filters: interpretation.filters, signal, onQueryEmbedding: onEmbedding,
       });
       signal.throwIfAborted();
       const ranking: RankedEvidenceCase[] = result.cases.slice(0, EVIDENCE_CANDIDATE_CEILING).map((c) => ({

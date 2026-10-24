@@ -779,12 +779,12 @@ describe('fake provider', () => {
 });
 
 
-describe('scope.e1 in the real adapter with offline transport', () => {
+describe('scope.e2 in the real adapter with offline transport', () => {
   const output = { intent: 'case_search', filters: { purpose: ['PERS'] }, terms: 'power loss maintenance', unchecked: [{ kind: 'timing', quote: 'shortly after maintenance' }] };
   it('uses the independent prompt/schema and same measured caps, with no history/defaults', async () => {
     const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson(JSON.stringify(output))));
     const result = await p.evidenceScope!(scopeInput, ctx('scope'));
-    expect(result.promptVersion).toBe('scope.e1');
+    expect(result.promptVersion).toBe('scope.e2');
     expect(result.output).toEqual(output);
     expect(bodies).toHaveLength(1); expect(countBodies).toHaveLength(1);
     expect(bodies[0]!.max_tokens).toBe(STAGE_CAPS.scope.output);

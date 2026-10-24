@@ -122,6 +122,17 @@ describe('runAiPreflight with a stub counter', () => {
   const countText = async (_model: string, text: string) => userTurns.get(text) ?? 10;
   const prefixRows = async () => (await runAiPreflight(provider, countText, models)).filter((row) => row.request.startsWith('cached prefix'));
 
+  it('validates the actual reservation and configured embedder before counting, and reports an oversized evidence output', async () => {
+    const evidenceProvider = { ...provider, countEvidenceScopeTokens: async () => 100 };
+    await expect(runAiPreflight(evidenceProvider, countText, models)).rejects.toThrow('configured embedding');
+    await expect(runAiPreflight(evidenceProvider, countText, models, { embeddingModel: 'text-embedding-3-small', reservationUsd: 0 })).rejects.toThrow('reservation too small');
+    // A configured model without an approved price row cannot silently use the small price.
+    await expect(runAiPreflight(evidenceProvider, countText, models, { embeddingModel: 'text-embedding-3-large', reservationUsd: 0.0012 })).rejects.toThrow('has no price row');
+    const rows = await runAiPreflight(evidenceProvider, async (_m, t) => text(t), models,
+      { embeddingModel: 'text-embedding-3-small', reservationUsd: 0.0012 });
+    expect(rows.find((r) => r.request === 'scope.e2: output at its schema bounds')).toMatchObject({ ok: false, limit: STAGE_CAPS.scope.output });
+  });
+
   it('reports each stage’s cached prefix as its fixed request less its user turn, against CACHED_PREFIX_MAX', async () => {
     const row = (stage: 'scope' | 'answer' | 'check', tokens: number) => ({
       stage,
@@ -150,7 +161,7 @@ describe('runAiPreflight with a stub counter', () => {
 
 
 describe('evidence scope preflight (offline)', () => {
-  it('sizes the actual prompt/schema, longest Latin question and multi-reading output', () => {
+  it('sizes the actual prompt/schema, longest Latin question and every output field at its schema bound', () => {
     const e = evidencePreflightRequests();
     const base = fixed(EVIDENCE_SCOPE_SYSTEM, EvidenceScopeOutputSchema);
     expect(base).toBeLessThanOrEqual(CACHED_PREFIX_MAX);
@@ -159,6 +170,10 @@ describe('evidence scope preflight (offline)', () => {
       if (w.latin) expect(base + text(renderEvidenceScopeUser(w.input))).toBeLessThanOrEqual(STAGE_CAPS.scope.input);
     }
     expect(EvidenceScopeOutputSchema.safeParse(JSON.parse(e.output)).success).toBe(true);
-    expect(text(e.output)).toBeLessThanOrEqual(STAGE_CAPS.scope.output);
+    const out = JSON.parse(e.output);
+    expect(out.terms).toHaveLength(300); expect(out.unchecked).toHaveLength(8);
+    expect(out.unchecked.every((r: { quote: string }) => r.quote.length === 300)).toBe(true);
+    // The existing 600-token cap does not cover every legal output. Preflight must say so.
+    expect(text(e.output)).toBeGreaterThan(STAGE_CAPS.scope.output);
   });
 });

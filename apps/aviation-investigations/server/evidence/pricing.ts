@@ -1,4 +1,4 @@
-/** Evidence uses only scope.e1 and one embedding. No generated-answer reservation. */
+/** Evidence uses only scope.e2 and one embedding. No generated-answer reservation. */
 import type { AppConfig } from '../../shared/config.js';
 import { embeddingWorstCaseUsd, stageWorstCaseUsd, STAGE_CAPS, startupAiCheck, type AiStartupCheck } from '../ai/pricing.js';
 
