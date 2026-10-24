@@ -173,6 +173,8 @@ export interface ExcerptProps {
   ntsbNo: string;
   aircraft: readonly Pick<AircraftBrief, 'aircraftKey' | 'aircraftNtsbNo' | 'make' | 'model'>[];
   excerpt: EvidenceExcerpt;
+  /** The case shows more than one section of this kind: say which ("TEXT 2"). */
+  numbered?: boolean;
 }
 
 /**
@@ -180,7 +182,7 @@ export interface ExcerptProps {
  * label and scope, with the search's matches marked; "Show the full section" opens the section
  * around it in place, and "Show the excerpt only" closes it again.
  */
-export function Excerpt({ searchId, ntsbNo, aircraft, excerpt }: ExcerptProps) {
+export function Excerpt({ searchId, ntsbNo, aircraft, excerpt, numbered = false }: ExcerptProps) {
   const [full, setFull] = useState(false);
   const regionId = useId();
   const toggle = useRef<HTMLButtonElement>(null);
@@ -193,7 +195,7 @@ export function Excerpt({ searchId, ntsbNo, aircraft, excerpt }: ExcerptProps) {
   }, [full]);
   return (
     <figure className="m-0" data-excerpt={excerpt.sectionKey}>
-      <figcaption className="mb-[3px] text-[10px] tracking-[.12em] text-muted">{excerptLabel(ntsbNo, aircraft, excerpt)}</figcaption>
+      <figcaption className="mb-[3px] text-[10px] tracking-[.12em] text-muted">{excerptLabel(ntsbNo, aircraft, excerpt, numbered)}</figcaption>
       {full ? (
         <FullSection searchId={searchId} ntsbNo={ntsbNo} excerpt={excerpt} id={regionId} />
       ) : (

@@ -3,7 +3,7 @@ import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import type { EvidenceCase } from '../../../../shared/contracts/evidence';
 import { cx } from '../../lib/cx';
 import { CaseFacts } from '../explore/CaseFacts';
-import { NO_EXCERPT, probableCauseLabel, relevanceParts } from './display';
+import { NO_EXCERPT, numberedKinds, probableCauseLabel, relevanceParts } from './display';
 import { Excerpt, LongText } from './Excerpt';
 
 /** The report link, or the labelled search fallback (DESIGN §4). */
@@ -96,6 +96,7 @@ export interface EvidenceCardProps {
  */
 export function EvidenceCard({ searchId, item, filters, caseTo, inCompare, onToggleCompare }: EvidenceCardProps) {
   const { case: row } = item;
+  const numbered = numberedKinds(item.excerpts);
   return (
     <article aria-labelledby={`evidence-case-${row.ntsbNo}`} className="card mb-2.5 px-3.5 pt-[11px] pb-2.5 sm:px-4" data-card={row.ntsbNo} data-rank={item.rank}>
       <div data-print="keep">
@@ -105,7 +106,7 @@ export function EvidenceCard({ searchId, item, filters, caseTo, inCompare, onTog
       {item.excerpts.length > 0 ? (
         <div className="mt-3.5 space-y-4">
           {item.excerpts.map((e) => (
-            <Excerpt key={`${e.sectionKey}:${e.paragraph.start}`} searchId={searchId} ntsbNo={row.ntsbNo} aircraft={row.aircraft} excerpt={e} />
+            <Excerpt key={`${e.sectionKey}:${e.paragraph.start}`} searchId={searchId} ntsbNo={row.ntsbNo} aircraft={row.aircraft} excerpt={e} numbered={numbered.has(e.section)} />
           ))}
         </div>
       ) : (

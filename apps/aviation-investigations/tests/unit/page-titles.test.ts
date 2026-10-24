@@ -23,6 +23,7 @@ describe('page titles (shared by the server and the client)', () => {
     [{ kind: 'about' }, 'About · AirCase'],
     [{ kind: 'privacy' }, 'Privacy · AirCase'],
     [{ kind: 'brief' }, 'AI brief · AirCase'],
+    [{ kind: 'evidence' }, 'AI search · AirCase'],
     [{ kind: 'not_found' }, 'Page not found · AirCase'],
   ])('%j → %s', (page, title) => {
     expect(pageTitle(page)).toBe(title);

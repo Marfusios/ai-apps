@@ -59,6 +59,8 @@ describe('statuses, robots and canonicals per route', () => {
     ['/compare', { kind: 'compare', query: new URLSearchParams('cases=DFW08TA066') }, 200, 'noindex, nofollow', '/compare'],
     ['/account', { kind: 'account' }, 200, 'noindex, nofollow', '/account'],
     ['/briefs/:id', { kind: 'brief', id: '0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f' }, 200, 'noindex, nofollow', '/briefs/0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f'],
+    // An AI evidence search (Task 23): private, never indexed, like a brief.
+    ['/ai/:id', { kind: 'evidence', id: '0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f' }, 200, 'noindex, nofollow', '/ai/0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f'],
     ['/cases/:ntsbNo served', { kind: 'case', detail: fixture('DFW08TA066') }, 200, 'index, follow', '/cases/DFW08TA066'],
     ['/cases/:ntsbNo not served', { kind: 'missing_case', requested: 'ZZZ99ZZ999' }, 404, 'noindex', null],
     ['anything else', { kind: 'not_found' }, 404, 'noindex', null],
@@ -73,8 +75,9 @@ describe('statuses, robots and canonicals per route', () => {
     expect(page.meta('property', 'og:url')).toBe(page.canonical);
   });
 
-  it('a brief id is put into its canonical URL encoded', () => {
+  it('a brief or search id is put into its canonical URL encoded', () => {
     expect(pagePolicy({ kind: 'brief', id: 'a b/c' }).canonicalPath).toBe('/briefs/a%20b%2Fc');
+    expect(pagePolicy({ kind: 'evidence', id: 'a b/c' }).canonicalPath).toBe('/ai/a%20b%2Fc');
   });
 });
 
@@ -91,6 +94,7 @@ describe('titles: the shared ones the client renders (title parity)', () => {
     [{ kind: 'compare', query: new URLSearchParams('cases=DFW08TA066,not-a-number,sea08la057') }, 'Comparing 2 cases · AirCase'],
     [{ kind: 'account' }, 'Account · AirCase'],
     [{ kind: 'brief', id: 'x' }, 'AI brief · AirCase'],
+    [{ kind: 'evidence', id: 'x' }, 'AI search · AirCase'],
     [{ kind: 'case', detail: fixture('DFW08TA066') }, `${VALENTINE} (2008) · NTSB DFW08TA066 · AirCase`],
     [{ kind: 'missing_case', requested: 'zzz99zzz999' }, 'NTSB ZZZ99ZZZ999 · AirCase'],
     [{ kind: 'not_found' }, 'Page not found · AirCase'],
@@ -137,6 +141,7 @@ describe('descriptions', () => {
       ],
       [{ kind: 'account' }, 'Your AirCase account. Search, case pages, compare and the dashboard stay open without an account.'],
       [{ kind: 'brief', id: 'x' }, 'A private brief. It opens only for the person who asked the question.'],
+      [{ kind: 'evidence', id: 'x' }, 'A private AI search. It opens only for the person who asked the question.'],
       [{ kind: 'missing_case', requested: 'ZZZ99ZZ999' }, 'No investigation has that number.'],
       [{ kind: 'not_found' }, 'There is no page here.'],
     ];

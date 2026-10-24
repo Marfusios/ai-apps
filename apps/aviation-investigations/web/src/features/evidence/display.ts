@@ -209,10 +209,27 @@ export function scopeWords(ntsbNo: string, aircraft: readonly AircraftRef[], tex
   return `Aircraft ${aircraftLetter(ntsbNo, a.aircraftNtsbNo, i)} · ${aircraftName(a)}`;
 }
 
-/** "NTSB · ANALYSIS", with the scope in a multi-aircraft event ("NTSB · ANALYSIS · EVENT, BOTH AIRCRAFT"). */
-export function excerptLabel(ntsbNo: string, aircraft: readonly AircraftRef[], excerpt: Pick<EvidenceExcerpt, 'label' | 'scope' | 'aircraftKey'>): string {
+/**
+ * "NTSB · ANALYSIS", with the scope in a multi-aircraft event ("NTSB · ANALYSIS · EVENT, BOTH
+ * AIRCRAFT"), and which text of its kind it is when a card shows more than one ("· TEXT 2": an
+ * event can carry two factual narratives, one per aircraft's record).
+ */
+export function excerptLabel(
+  ntsbNo: string,
+  aircraft: readonly AircraftRef[],
+  excerpt: Pick<EvidenceExcerpt, 'label' | 'scope' | 'aircraftKey' | 'sectionKey'>,
+  numbered = false,
+): string {
   const scope = scopeWords(ntsbNo, aircraft, excerpt);
-  return ['NTSB', excerpt.label, scope].filter((p): p is string => p !== null).join(' · ').toUpperCase();
+  const ordinal = numbered ? /-(\d+)$/.exec(excerpt.sectionKey)?.[1] : undefined;
+  return ['NTSB', excerpt.label, scope, ordinal ? `Text ${ordinal}` : null].filter((p): p is string => p !== null).join(' · ').toUpperCase();
+}
+
+/** The section kinds a card shows from more than one section: their excerpts carry "TEXT n". */
+export function numberedKinds(excerpts: readonly Pick<EvidenceExcerpt, 'section' | 'sectionKey'>[]): Set<string> {
+  const keys = new Map<string, Set<string>>();
+  for (const e of excerpts) keys.set(e.section, (keys.get(e.section) ?? new Set()).add(e.sectionKey));
+  return new Set([...keys].filter(([, k]) => k.size > 1).map(([kind]) => kind));
 }
 
 /** "NTSB · PROBABLE CAUSE", with its scope and "1 OF 2" when a case has several statements. */

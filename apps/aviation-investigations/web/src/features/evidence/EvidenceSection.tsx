@@ -1,7 +1,7 @@
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import type { EvidenceCase } from '../../../../shared/contracts/evidence';
 import { SectionHead } from '../../components/SectionHead';
-import { EVIDENCE_HEADING, NO_EXCERPT } from './display';
+import { EVIDENCE_HEADING, NO_EXCERPT, numberedKinds } from './display';
 import { RelevanceLine } from './EvidenceCard';
 import { Excerpt } from './Excerpt';
 import { MatchLegend } from './MatchedText';
@@ -22,6 +22,7 @@ export interface DrawerEvidence {
  * full section. It follows what investigators established, as the brief's sections do (§4.5).
  */
 export function EvidenceSection({ searchId, item, filters }: DrawerEvidence) {
+  const numbered = numberedKinds(item.excerpts);
   return (
     <section className="mt-6" aria-label={EVIDENCE_HEADING} data-evidence-section="">
       <SectionHead tag="NTSB text">{EVIDENCE_HEADING}</SectionHead>
@@ -31,7 +32,14 @@ export function EvidenceSection({ searchId, item, filters }: DrawerEvidence) {
       {item.excerpts.length > 0 ? (
         <div className="mt-3 space-y-4">
           {item.excerpts.map((e) => (
-            <Excerpt key={`${e.sectionKey}:${e.paragraph.start}`} searchId={searchId} ntsbNo={item.case.ntsbNo} aircraft={item.case.aircraft} excerpt={e} />
+            <Excerpt
+              key={`${e.sectionKey}:${e.paragraph.start}`}
+              searchId={searchId}
+              ntsbNo={item.case.ntsbNo}
+              aircraft={item.case.aircraft}
+              excerpt={e}
+              numbered={numbered.has(e.section)}
+            />
           ))}
         </div>
       ) : (
