@@ -10,7 +10,12 @@
 -- briefs expire. It returns generation ids only: aviation_ingest, which prunes, cannot read
 -- briefs. Migration 0004 expected the API role to pin generations for live briefs; it never
 -- does, and gets no EXECUTE on pin_generation.
-CREATE FUNCTION generations_cited_by_live_briefs() RETURNS SETOF bigint
+--
+-- This migration changed after the local test database had recorded its first version (no
+-- shared environment ever ran it). Its statements therefore converge: run again over a
+-- database that recorded an earlier version, they leave the schema this version creates, and
+-- the migrator does exactly that (server/db/migrate.ts, REAPPLIED_MIGRATIONS).
+CREATE OR REPLACE FUNCTION generations_cited_by_live_briefs() RETURNS SETOF bigint
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
   SELECT DISTINCT generation_id FROM briefs WHERE expires_at > now() ORDER BY 1
 $$;
@@ -27,7 +32,7 @@ GRANT EXECUTE ON FUNCTION generations_cited_by_live_briefs() TO aviation_ingest;
 -- index of that publication; a trigger on dataset_manifests writes it (publish_manifest runs
 -- as the owner) and removes a generation's pairs with its manifest row (prune_generation). No
 -- foreign key: test resets truncate the corpus tables without it.
-CREATE TABLE "manifest_pairings" (
+CREATE TABLE IF NOT EXISTS "manifest_pairings" (
 	"generation_id" bigint NOT NULL,
 	"passages_index" text NOT NULL,
 	"cases_index" text NOT NULL,
@@ -35,7 +40,7 @@ CREATE TABLE "manifest_pairings" (
 	CONSTRAINT "manifest_pairings_pk" PRIMARY KEY("generation_id","passages_index")
 );
 --> statement-breakpoint
-CREATE FUNCTION record_manifest_pairing() RETURNS trigger
+CREATE OR REPLACE FUNCTION record_manifest_pairing() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
@@ -51,12 +56,15 @@ BEGIN
   RETURN NEW;
 END $$;
 --> statement-breakpoint
+DROP TRIGGER IF EXISTS dataset_manifests_pairing ON dataset_manifests;
+--> statement-breakpoint
 CREATE TRIGGER dataset_manifests_pairing AFTER INSERT OR UPDATE OR DELETE ON dataset_manifests
   FOR EACH ROW EXECUTE FUNCTION record_manifest_pairing();
 --> statement-breakpoint
 INSERT INTO manifest_pairings (generation_id, passages_index, cases_index, published_at)
   SELECT generation_id, passages_index, cases_index, coalesce(published_at, created_at)
-  FROM dataset_manifests WHERE passages_index IS NOT NULL;
+  FROM dataset_manifests WHERE passages_index IS NOT NULL
+  ON CONFLICT (generation_id, passages_index) DO NOTHING;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION record_manifest_pairing() FROM PUBLIC;
 --> statement-breakpoint
@@ -74,7 +82,7 @@ END $$;
 --> statement-breakpoint
 -- The indices unexpired briefs use: their passages indices and the cases indices those pairs
 -- were published with. `index delete-unused` (aviation_ingest) refuses them; index names only.
-CREATE FUNCTION indices_cited_by_live_briefs() RETURNS SETOF text
+CREATE OR REPLACE FUNCTION indices_cited_by_live_briefs() RETURNS SETOF text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
   SELECT b.passages_index FROM briefs b WHERE b.expires_at > now()
   UNION

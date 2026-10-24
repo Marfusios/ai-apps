@@ -1048,6 +1048,20 @@ the `DATABASE_*` and `ELASTICSEARCH_*` variables) and `test` (database
 `aviation_test`, indices `aviation-test-*`, the `TEST_DATABASE_*` and
 `TEST_ELASTICSEARCH_*_API_KEY` variables of the integration tests).
 
+`pnpm db:migrate` and the integration tests refuse a database whose recorded migrations
+differ from the checkout's: one recorded with other content (edited after it was applied),
+or missing below a later one (another checkout migrated it). Over a database that recorded
+an earlier version of migration 0020 or 0021, which changed after the local test database
+had recorded them, the migrator runs the current version again instead (it converges). For
+any other difference, reset the local test database, which holds only disposable test data:
+
+```sh
+docker compose -f compose.local-services.yaml --env-file .env.local exec postgres \
+  psql -U postgres -c 'DROP DATABASE aviation_test WITH (FORCE)'
+pnpm services:setup        # provisions aviation_test again, keeping the passwords
+pnpm db:migrate --test     # or the next pnpm test:integration
+```
+
 Both services publish loopback-only ports (`POSTGRES_PORT`, default 55432, and
 `ELASTICSEARCH_PORT`, default 59200) for host-side tools: setup, migrations, the
 integration tests and `pnpm worker`. These ports are for development only.

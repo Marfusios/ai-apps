@@ -873,8 +873,9 @@ async function main(argv: string[]): Promise<number> {
       console.error('DATABASE_MIGRATOR_URL is not set');
       return 2;
     }
-    await runMigrations(url);
+    const r = await runMigrations(url);
     console.log(`migrations applied to ${new URL(url).pathname.slice(1)}`);
+    if (r.reapplied.length > 0) console.log(`run again over an earlier recorded version: ${r.reapplied.join(', ')}`);
     return 0;
   }
   console.error(USAGE);

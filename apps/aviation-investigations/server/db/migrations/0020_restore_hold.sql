@@ -17,7 +17,12 @@
 -- The reconciliation charges lost interactive spend as an interactive reservation of
 -- principal kind `system`, stage `restore_reconcile`: the money of no known visitor. The
 -- principal check allows exactly that combination besides the existing ones.
-CREATE TABLE "paid_operations_hold" (
+--
+-- This migration changed after the local test database had recorded its first version (no
+-- shared environment ever ran it). Its statements therefore converge: run again over a
+-- database that recorded an earlier version, they leave the schema this version creates, and
+-- the migrator does exactly that (server/db/migrate.ts, REAPPLIED_MIGRATIONS).
+CREATE TABLE IF NOT EXISTS "paid_operations_hold" (
 	"id" smallint PRIMARY KEY NOT NULL,
 	"database_oid" bigint NOT NULL,
 	"held_at" timestamp with time zone,
@@ -28,7 +33,7 @@ CREATE TABLE "paid_operations_hold" (
 	CONSTRAINT "paid_operations_hold_note_check" CHECK ("paid_operations_hold"."note" is null or length("paid_operations_hold"."note") <= 200)
 );
 --> statement-breakpoint
-ALTER TABLE "reservations" DROP CONSTRAINT "reservations_principal_check";--> statement-breakpoint
+ALTER TABLE "reservations" DROP CONSTRAINT IF EXISTS "reservations_principal_check";--> statement-breakpoint
 ALTER TABLE "reservations" ADD CONSTRAINT "reservations_principal_check" CHECK (("reservations"."principal_kind" = 'system') = ("reservations"."principal_hash" is null)
         and (("reservations"."category" = 'interactive') = ("reservations"."principal_kind" <> 'system')
           or ("reservations"."category" = 'interactive' and "reservations"."principal_kind" = 'system' and "reservations"."stage" = 'restore_reconcile'))
@@ -41,14 +46,16 @@ CREATE TABLE IF NOT EXISTS "drizzle"."restores" (
 );
 --> statement-breakpoint
 -- An existing environment keeps its paid operations; a database restored from a backup taken
--- before this migration starts held.
+-- before this migration starts held. A row already there (an earlier version of this
+-- migration wrote it) stays as it is.
 INSERT INTO "paid_operations_hold" ("id", "database_oid", "held_at", "note")
   SELECT 1, d.oid::bigint, r.held_at, r.note
   FROM pg_database d,
     LATERAL (SELECT CASE WHEN EXISTS (SELECT 1 FROM "drizzle"."restores") THEN now() END AS held_at,
       CASE WHEN EXISTS (SELECT 1 FROM "drizzle"."restores")
         THEN 'restored from a backup taken before migration 0020: run pnpm worker restore-reconcile' END AS note) r
-  WHERE d.datname = current_database();
+  WHERE d.datname = current_database()
+  ON CONFLICT ("id") DO NOTHING;
 --> statement-breakpoint
 GRANT SELECT ON TABLE "paid_operations_hold" TO aviation_app, aviation_ingest;
 --> statement-breakpoint

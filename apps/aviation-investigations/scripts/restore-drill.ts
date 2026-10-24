@@ -105,7 +105,11 @@ async function drill(file: string): Promise<number> {
       console.error('drill FAILED: the restore did not complete (nothing was restored)');
       return 1;
     }
-    await runMigrations(hostUrl);
+    const migrated = await runMigrations(hostUrl);
+    console.log(
+      `drill: migrated (${migrated.applied.join(', ') || 'nothing new'}` +
+        `${migrated.reapplied.length > 0 ? `; run again over an earlier recorded version: ${migrated.reapplied.join(', ')}` : ''})`,
+    );
     const db = createDb(hostUrl, { max: 1, applicationName: 'aviation-drill' });
     const app = createDb(roleUrl(adminUrl, ENV, 'app', passwords.app), { max: 1, applicationName: 'aviation-drill' });
     const ingest = createDb(roleUrl(adminUrl, ENV, 'ingest', passwords.ingest), { max: 1, applicationName: 'aviation-drill' });
