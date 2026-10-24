@@ -9,7 +9,7 @@ import {
   type BriefStepResponse,
   type RefinementChange,
 } from '../../../shared/contracts/briefs';
-import { ApiError, configQuery, isNotFound } from '../api';
+import { ApiError, ReadTimeoutError, configQuery, isNotFound } from '../api';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { SearchBox } from '../components/SearchBox';
@@ -291,12 +291,13 @@ export function Brief() {
     if (document.activeElement === document.body || document.activeElement === null) resultHeading.current?.focus({ preventScroll: true });
   }, [step, finished]);
 
-  // A read of the running step on screen failed (a network or server error, or no answer
-  // within READ_TIMEOUT_MS; not a refusal such as a 404 or a 429, which stop or wait): the
-  // page keeps trying, and the checklist says so from that first failed attempt (its one
-  // retry still to come, re-review N-5) until a read gets through.
+  // Reads of the running step on screen fail (a network or server error; not a refusal such
+  // as a 404 or a 429, which stop or wait): the page keeps trying, and the checklist says so
+  // until a read gets through. Said once a read and its automatic retry have failed, so one
+  // transient error the retry repairs says nothing (re-review F-2); a read that gets no
+  // answer within READ_TIMEOUT_MS is said at once (re-review N-5).
   const polling = stepMissing ? fallback : query;
-  const pollFailure = polling.error ?? polling.failureReason;
+  const pollFailure = polling.error ?? (polling.failureReason instanceof ReadTimeoutError ? polling.failureReason : null);
   const pollTrouble = step !== undefined && !finished && pollFailure !== null && !(pollFailure instanceof ApiError && pollFailure.status < 500);
 
   // A failed read that is not a 404. While `?step=n` past the last step falls back to the

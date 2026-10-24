@@ -1082,6 +1082,33 @@ describe('Polling (stops, honours Retry-After, backs off)', () => {
     await waitFor(() => expect(line.textContent).toBe(POLL_TROUBLE), SLOW);
   });
 
+  it('one failed poll that its automatic retry repairs says nothing; a failed retry does (re-review F-2)', { timeout: 20_000 }, async () => {
+    let failures = 0;
+    server.use(
+      http.get('*/api/briefs/:id', () => {
+        if (failures > 0) {
+          failures -= 1;
+          return HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 });
+        }
+        return HttpResponse.json({ ...running, startedAt: new Date().toISOString() });
+      }),
+    );
+    renderApp(`/briefs/${running.briefId}`);
+    const checklist = await screen.findByRole('region', { name: /answer checklist/i }, SLOW);
+    const line = checklist.querySelector('[data-poll-trouble]') as HTMLElement;
+    const seen: string[] = [];
+    const watch = new MutationObserver(() => seen.push(line.textContent ?? ''));
+    watch.observe(line, { childList: true, characterData: true, subtree: true });
+    // One 5xx: the retry a second later gets through, and the line never shows.
+    failures = 1;
+    await new Promise((resolve) => setTimeout(resolve, 3_500));
+    expect(seen.filter((t) => t !== '')).toEqual([]);
+    // Two in a row (the poll and its retry): now it is said.
+    failures = 2;
+    await waitFor(() => expect(line.textContent).toBe(POLL_TROUBLE), { timeout: 8_000 });
+    watch.disconnect();
+  });
+
   it('an expired brief is read once, then left alone', { timeout: 10_000 }, async () => {
     let reads = 0;
     server.use(
