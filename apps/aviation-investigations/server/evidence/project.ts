@@ -1,4 +1,4 @@
-/** Deterministic evidence.v1 projection. Source text is never rewritten, abbreviated or completed. */
+/** Deterministic evidence projection. Source text is never rewritten, abbreviated or completed. */
 import { wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
 import { AVIATION_STOP_WORDS, AVIATION_SYNONYMS } from '../../shared/aviation-analysis.js';
 import { BRIEF_FILTER_FACETS, type BriefFilters } from '../../shared/contracts/briefs.js';
@@ -128,4 +128,17 @@ export function projectCase(record: CaseRecord, row: CaseRowBase, report: Report
   if (probableCauses.length === 0) throw new Error('missing canonical cause');
   return EvidenceCaseSchema.parse({ rank, case: row, report, probableCauses, excerpts,
     relevance: { filters: satisfiedFilters(record, filters), terms: counts.filter((t) => t.literal + t.synonym > 0), channels: ranked.channels } });
+}
+
+/** Optional display annotations only; never changes ranks, source text, spans or selection. */
+export function suggestedHighlights(result: EvidenceCase, terms: string): EvidenceCase {
+  const plan = termPlan(terms);
+  const counts = plan.map(p => ({ term: p.term, literal: 0, synonym: 0 }));
+  const excerpts = result.excerpts.map(excerpt => {
+    const marks = highlighted(excerpt.text, plan);
+    marks.terms.forEach((t, i) => { counts[i]!.literal += t.literal; counts[i]!.synonym += t.synonym; });
+    return { ...excerpt, highlights: marks.highlights };
+  });
+  return EvidenceCaseSchema.parse({ ...result, excerpts, relevance: { ...result.relevance,
+    terms: counts.filter(t => t.literal + t.synonym > 0) } });
 }

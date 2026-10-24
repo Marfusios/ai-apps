@@ -1,18 +1,23 @@
 /** Ownership and content are read by one statement; publication never changes saved rankings. */
+import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { and, eq, getTableColumns, gt, or, sql } from 'drizzle-orm';
 import type { ScopeReply } from '../../shared/contracts/briefs.js';
-import { EVIDENCE_CONTRACT_VERSION, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceInterpretation, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
+import { EVIDENCE_CONTRACT_VERSION, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceQuery, type EvidenceSuggestion, type EvidenceHint, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
 import type { BriefReader } from '../briefs/store.js';
 import type { DbOrTx } from '../db/client.js';
 import { evidenceSearches } from '../db/schema/evidence.js';
 import type { ProjectionContext } from '../projection/cases.js';
-import type { RankedEvidenceCase } from './project.js';
+import { suggestedHighlights, type RankedEvidenceCase } from './project.js';
 
 export interface SearchData {
   question: string;
   edited: boolean;
   context: ProjectionContext;
-  interpretation?: EvidenceInterpretation;
+  version: typeof EVIDENCE_CONTRACT_VERSION;
+  query: EvidenceQuery;
+  appliedFilters: BriefFilters;
+  suggestion: EvidenceSuggestion | null;
+  hint: EvidenceHint | null;
   ranking?: RankedEvidenceCase[];
   cases?: EvidenceCase[];
   reply?: ScopeReply;
@@ -24,6 +29,19 @@ export function assertSearchDataBudget(data: SearchData): void {
   // Pretty-print overhead conservatively exceeds PostgreSQL jsonb's separator spaces.
   if (Buffer.byteLength(JSON.stringify(data, null, 1), 'utf8') > EVIDENCE_DATA_MAX_BYTES) throw new Error('evidence storage budget exceeded');
 }
+/** Validate the ordinary result first. Optional model metadata cannot make it unstoreable.
+ * If annotations exceed the byte budget, keep the original-query marks and no suggestion.
+ * Canonical paragraphs and cause variants are never truncated to make room for metadata. */
+export function withSuggestion(data: SearchData, suggestion: EvidenceSuggestion | null): SearchData {
+  assertSearchDataBudget(data);
+  if (!suggestion) return data;
+  try {
+    const decorated = { ...data, suggestion, cases: data.cases?.map(c => suggestedHighlights(c, suggestion.terms)) };
+    assertSearchDataBudget(decorated);
+    return decorated;
+  } catch { return data; }
+}
+
 export const readersWhere = (readers: readonly BriefReader[]) => or(...readers.map((p) => and(eq(evidenceSearches.readOwner, p.hash), eq(evidenceSearches.readOwnerKind, p.kind))));
 
 export async function readOwnedSearch(db: DbOrTx, id: string, readers: readonly BriefReader[], now: Date, lock = false,
@@ -33,13 +51,15 @@ export async function readOwnedSearch(db: DbOrTx, id: string, readers: readonly 
   if (page !== undefined && (!Number.isSafeInteger(page) || page < 1 || page > 10)) return null;
   const source = evidenceSearches.data;
   const header = sql`jsonb_build_object('question', ${source}->'question', 'edited', ${source}->'edited',
-    'context', ${source}->'context', 'interpretation', ${source}->'interpretation', 'reply', ${source}->'reply')`;
+    'context', ${source}->'context', 'version', ${source}->'version', 'query', ${source}->'query',
+    'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'reply', ${source}->'reply')`;
   const data = page === undefined ? sql<SearchData>`${header}` : sql<SearchData>`${header} || jsonb_build_object('cases',
     jsonb_path_query_array(${source}, ${`$.cases[${(page - 1) * EVIDENCE_PAGE_SIZE} to ${page * EVIDENCE_PAGE_SIZE - 1}]`}::jsonpath))`;
   // No query returns the ranking or all pages to Node. The DB checks case membership too.
   const query = db.select({ ...getTableColumns(evidenceSearches), data,
     resultTotal: sql<number>`coalesce(jsonb_array_length(${source}->'cases'), 0)`,
   }).from(evidenceSearches).where(and(eq(evidenceSearches.id, id), gt(evidenceSearches.expiresAt, now), readersWhere(readers),
+    sql`${source}->>'version' = ${EVIDENCE_CONTRACT_VERSION}`,
     ...(selection.caseNo ? [sql`${source}->'ranking' @> ${JSON.stringify([{ ntsbNo: selection.caseNo }])}::jsonb`] : [])));
   const [row] = await (lock ? query.for('no key update') : query);
   return row ? { ...row, ...(page === undefined ? {} : { resultPage: page }) } : null;
@@ -56,12 +76,12 @@ export async function finishSearch(db: DbOrTx, id: string, status: 'results' | '
   return rows.length === 1;
 }
 export function pageOf(row: EvidenceRow, page: number): EvidencePage | null {
-  if (row.status !== 'results' || !row.data.interpretation || !row.data.cases) return null;
+  if (row.status !== 'results' || row.data.version !== EVIDENCE_CONTRACT_VERSION || !row.data.query || !row.data.cases) return null;
   const total = row.resultTotal ?? row.data.cases.length, pages = Math.ceil(total / EVIDENCE_PAGE_SIZE);
   if (page < 1 || page > Math.max(1, pages)) return null;
   if (row.resultPage !== undefined && row.resultPage !== page) return null;
   return EvidencePageSchema.parse({ version: EVIDENCE_CONTRACT_VERSION, id: row.id, question: row.data.question,
-    interpretation: row.data.interpretation, edited: row.data.edited, generation: row.data.context.dataset.revision,
+    query: row.data.query, appliedFilters: row.data.appliedFilters, suggestion: row.data.suggestion, hint: row.data.hint, generation: row.data.context.dataset.revision,
     createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString(), total, page, pages,
     cases: row.resultPage === page ? row.data.cases : row.data.cases.slice((page - 1) * EVIDENCE_PAGE_SIZE, page * EVIDENCE_PAGE_SIZE) });
 }

@@ -1,8 +1,9 @@
 /** Private evidence search creation and free pagination. Matched routes enforce network limits. */
+import { evidenceJson } from '../evidence/routing.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gt, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { CreateEvidenceRequestSchema, CreateEvidenceResponseSchema, EvidencePageQuerySchema, EvidenceSearchIdSchema, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
+import { EVIDENCE_CONTRACT_VERSION, CreateEvidenceRequestSchema, CreateEvidenceResponseSchema, EvidencePageQuerySchema, EvidenceSearchIdSchema, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
 import { CaseDetailSchema } from '../../shared/contracts/cases.js';
 import { NtsbNoSchema } from '../../shared/contracts/common.js';
 import { ACCOUNT_GONE, lockLiveAccount, withLiveAccount } from '../auth/lifecycle.js';
@@ -27,7 +28,7 @@ const notFound = (reply: FastifyReply) => sendError(reply, 404, 'not_found', { m
 const send = (reply: FastifyReply, row: EvidenceRow): FastifyReply => {
   const response = row.status === 'scope_reply' ? { kind: 'scope_reply', reply: row.data.reply } : { kind: 'results', search: pageOf(row, 1) };
   const valid = CreateEvidenceResponseSchema.parse(response);
-  return reply.code(valid.kind === 'results' ? 201 : 200).type(JSON_TYPE).send(JSON.stringify(valid));
+  return reply.code(valid.kind === 'results' ? 201 : 200).type(JSON_TYPE).send(evidenceJson(valid));
 };
 
 /** A replay is read by the current owner, never by the original billing principal alone. */
@@ -68,7 +69,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     if (!ai?.startup.enabled || !ai.policy || !ai.trials || !ai.llm?.evidenceScope || !ai.startup.models || !svc || svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const runtime = { ai: { ...ai, policy: ai.policy, llm: ai.llm, trials: ai.trials } };
     const { turnstileToken: _token, idempotencyKey: _key, ...content } = body;
-    const requestHash = canonicalRequestHash({ version: 'evidence.v1', ...content });
+    const requestHash = canonicalRequestHash({ version: EVIDENCE_CONTRACT_VERSION, ...content });
     let who = await visitor(ctx, request);
     // Replay before availability/budget checks, with a fresh anonymous Turnstile token.
     for (const reader of readersOf(who)) {
@@ -138,14 +139,16 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
           // A concurrent deletion or handover cannot give a new search a stale private question.
           if (payer.account && who.trial) await takeOverSearch(tx, body.from, who.trial.hash, payer.account.hash);
           source = await readOwnedSearch(tx, body.from, readersOf(who), ai.now(), true);
-          if (!source?.data.interpretation) return 'source_gone';
+          if (!source?.data.query || source.status !== 'results') return 'source_gone';
         }
         const inserted = await insertSearch(tx, {
           readOwner: principalHash(ai.policy!, payer.principal), readOwnerKind: payer.principal.kind,
           billingPrincipal: admission.principalHash, billingKind: payer.principal.kind, reservationId: admission.reservationId,
           generationId: pinned.manifest.generationId, casesIndex: pinned.manifest.casesIndex, passagesIndex: pinned.manifest.passagesIndex!, now: ai.now(),
           data: { question: body.kind === 'question' ? body.question : source!.data.question, edited: body.kind === 'edited',
-            ...(body.kind === 'edited' ? { interpretation: { filters: body.filters, terms: body.terms, unchecked: source!.data.interpretation!.unchecked } } : {}),
+            version: EVIDENCE_CONTRACT_VERSION,
+            query: body.kind === 'question' ? { source: 'question' } : body.terms === undefined ? source!.data.query : { source: 'edited', terms: body.terms },
+            appliedFilters: body.kind === 'edited' ? body.filters : {}, suggestion: null, hint: null,
             context: { dataset: pinned.dataset, citationTextVersion: pinned.manifest.citationTextVersion,
               fieldNormalizationVersion: pinned.fieldNormalizationVersion, mappingVerified: pinned.manifest.mappingVerified } },
         });
@@ -161,7 +164,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     // only deletion, shutdown or the server deadline may stop paid work.
     svc.runs.set(row.id, { controller });
     try {
-      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(30_000)]), row.data.interpretation);
+      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(30_000)]));
       const current = await visitor(ctx, request);
       // A newly issued trial cookie is on the response, not yet on this request.
       // Sessions are re-read; only the trial just proved/issued by billing can be carried forward.
@@ -182,7 +185,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     if (!query.success) return sendError(reply, 400, 'bad_request');
     const row = await readOwnedSearch(ctx.db, id.data, readersOf(await visitor(ctx, request)), ctx.ai.now(), false, { page: query.data.page });
     const page = row ? pageOf(row, query.data.page) : null;
-    return page ? reply.type(JSON_TYPE).send(JSON.stringify(page)) : notFound(reply);
+    return page ? reply.type(JSON_TYPE).send(evidenceJson(page)) : notFound(reply);
   });
   /** Authoritative full sections at the search's generation (no current-manifest lookup). */
   app.get<{ Params: { id: string; ntsbNo: string } }>('/api/evidence/:id/cases/:ntsbNo', async (request, reply) => {
@@ -201,6 +204,6 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
       if (!revision) throw new Error('missing canonical context revision');
       return { ...s, revision };
     }) };
-    return reply.type(JSON_TYPE).send(JSON.stringify(CaseDetailSchema.parse(canonical)));
+    return reply.type(JSON_TYPE).send(evidenceJson(CaseDetailSchema.parse(canonical)));
   });
 }

@@ -112,6 +112,10 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  *   60-claim check) → 24,500. Task 16d calibrated the checker with exactly these caps
  *   (evals/checker/protocol.v2.ts).
  */
+/** Advisory scope has the full Explore vocabulary. Kept separate from gated summary caps.
+ * Includes the strict object envelope and maximum-length Unicode suggested terms. */
+export const EVIDENCE_SCOPE_CAPS = Object.freeze({ input: 10_000, output: 2_500 });
+
 export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; readonly output: number }>> = {
   scope: { input: 6_500, output: 600 },
   answer: { input: 28_000, output: 11_000 },
