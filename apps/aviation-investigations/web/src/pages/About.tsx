@@ -25,8 +25,9 @@ export function TextPage({ eyebrow, title, tabTitle = title, children }: { eyebr
 /**
  * About: what the casebook is and can do today (keyword search, case pages, Compare and the
  * dashboard; the AI features are not open yet, as the Privacy page also says), where its
- * data comes from, what it is not, and who built it (the owner's credit, 2026-10-24). When
- * the AI features open, this page says so with them.
+ * data comes from, what it is not, and who built it (the owner's credit, 2026-10-24). The line
+ * "AI features are not available yet." is static: it changes in the release that opens AI,
+ * with the Privacy text (RUNBOOK, "Google sign-in", step 0; tests/web/brand.test.tsx).
  */
 export function About() {
   const config = useQuery(configQuery());
@@ -41,7 +42,7 @@ export function About() {
       <h2>What you can do here</h2>
       <p>
         Search the record by keyword and narrow the results with filters. Open any investigation on its own page,
-        compare up to four of them side by side, and see how the whole record breaks down on the dashboard. AI features
+        compare up to four of them on one page, and see how the whole record breaks down on the dashboard. AI features
         are not available yet.
       </p>
       <h2>The data</h2>

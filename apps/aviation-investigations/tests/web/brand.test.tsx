@@ -149,7 +149,9 @@ describe('the About page (UI_DESIGN §4.8)', () => {
     const text = screen.getByRole('main').textContent ?? '';
     expect(text).toContain('AirCase is an aviation casebook.');
     expect(text).toContain('Search the record by keyword');
-    expect(text).toContain('compare up to four');
+    // Compare puts up to four cases on one page as stacked flight strips (UI_DESIGN §4.6), not in side-by-side columns.
+    expect(text).toContain('compare up to four of them on one page');
+    expect(text).not.toContain('side by side');
     expect(text).toContain('dashboard');
     expect(text).toContain('AI features are not available yet.');
     // The data source and its attribution stay.
