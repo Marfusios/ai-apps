@@ -1,4 +1,4 @@
-# Aviation Casebook deployment: one Compose project per environment
+# AirCase deployment: one Compose project per environment
 # (ai-aviation-dev, ai-aviation-live) that connects to the shared PostgreSQL,
 # Elasticsearch and, optionally, Langfuse. It runs no database or search engine
 # of its own (for those, see compose.local-services.yaml). Full guide:

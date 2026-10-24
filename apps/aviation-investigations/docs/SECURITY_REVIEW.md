@@ -1,4 +1,4 @@
-# Aviation Casebook: design security review
+# AirCase: design security review
 
 **Date:** 2026-10-16. **Reviewer:** Claude Opus, resolved model
 `claude-opus-5-5`, invoked through Claude Code with tools, external integrations,

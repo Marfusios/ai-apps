@@ -1,4 +1,4 @@
-# Aviation Casebook data pipeline (as built)
+# AirCase data pipeline (as built)
 
 How NTSB data becomes the PostgreSQL corpus and the two Elasticsearch indices, and
 why each step works the way it does. Written 2026-10-22 against implementation

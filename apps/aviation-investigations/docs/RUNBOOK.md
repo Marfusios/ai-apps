@@ -1,4 +1,4 @@
-# Aviation Casebook runbook: containers and deployment
+# AirCase runbook: containers and deployment
 
 How the application runs under Docker Compose, which container holds which
 credential, and the commands for each environment. Design background:
@@ -308,14 +308,14 @@ The generated files supply `APP_ENV`, the three `DATABASE_*` URLs,
 
 ```sh
 APP_VERSION=                     # image tag; live needs an explicit release tag (not dev)
-APP_URL=                         # public origin on live (https: Turnstile hostname, Secure trial cookie)
+APP_URL=                         # public origin on live: https://aircase.app (https: Turnstile hostname, Secure trial cookie)
 PORT=3000                        # dev only: loopback port of the app
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 BETTER_AUTH_SECRET=
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-TURNSTILE_SECRET_KEY=            # a widget for APP_URL's hostname; dev may use Cloudflare's test keys, live refuses them
+TURNSTILE_SECRET_KEY=            # a widget for APP_URL's hostname (aircase.app on live); dev may use Cloudflare's test keys, live refuses them
 TURNSTILE_SITE_KEY=
 IP_HMAC_SECRET=
 IDENTITY_HMAC_SECRET=            # rotating it ends every trial cookie
@@ -948,7 +948,7 @@ on for an environment:
    configured, and says so in the startup log ("Google sign-in off ... final privacy
    notice").
 1. In the Google Cloud console, configure the OAuth consent screen (External; the app
-   name, support email and the privacy notice URL `<APP_URL>/privacy`; scopes `openid`,
+   name AirCase, support email and the privacy notice URL `<APP_URL>/privacy`; scopes `openid`,
    `email` and `profile` only, which need no verification) and create an OAuth client of
    type *Web application*, one per environment, with the authorized redirect URI
    `<APP_URL>/api/auth/callback/google`. No JavaScript origin is needed: the browser
@@ -995,10 +995,10 @@ pnpm worker ai-switch --account-check suspicious
 `live` is reached only through a Cloudflare Tunnel; the app publishes no port.
 
 1. In Cloudflare Zero Trust, create a remotely managed tunnel and add a public
-   hostname whose service is `http://aviation-app:3000`.
+   hostname whose service is `http://aviation-app:3000`. Live's is `aircase.app`.
 2. Put its token in the live settings file as `TUNNEL_TOKEN`, the public origin in
-   `APP_URL`, a release tag in `APP_VERSION` and an unused private /28 in
-   `EDGE_SUBNET`.
+   `APP_URL` (`APP_URL=https://aircase.app` on live), a release tag in `APP_VERSION` and
+   an unused private /28 in `EDGE_SUBNET`.
 3. `pnpm app:up`. The wrapper adds `compose.tunnel.yaml`, which removes the app's
    port, requires the token, pins the edge subnet and sets `TRUSTED_PROXY_CIDRS`,
    and the `tunnel` profile:

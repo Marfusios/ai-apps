@@ -8,7 +8,7 @@ tests, and setup instructions. Shared code is introduced when multiple apps need
 the same functionality. The repository does not require a particular cloud account,
 private network, or shared development server.
 
-**Status:** the first app, [Aviation Casebook](apps/aviation-investigations/README.md),
+**Status:** the first app, [AirCase](apps/aviation-investigations/README.md),
 has a researched implementation design, including a
 [Langfuse tracing and evaluation plan](apps/aviation-investigations/docs/OBSERVABILITY_AND_EVALUATION.md).
 No application has been implemented yet.
