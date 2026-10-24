@@ -946,7 +946,10 @@ on for an environment:
    users): replace the text of `web/src/pages/Privacy.tsx` and set `final: true` in
    `shared/privacy.ts`, and deploy. Until then live keeps sign-in off whatever is
    configured, and says so in the startup log ("Google sign-in off ... final privacy
-   notice").
+   notice"). In the same release that opens AI searches, update the About page too:
+   `web/src/pages/About.tsx` says "AI features are not available yet." as fixed text,
+   not tied to the AI switch, so it goes stale the day AI opens (`tests/web/brand.test.tsx`
+   checks the line and needs the same change).
 1. In the Google Cloud console, configure the OAuth consent screen (External; the app
    name AirCase, support email and the privacy notice URL `<APP_URL>/privacy`; scopes `openid`,
    `email` and `profile` only, which need no verification) and create an OAuth client of

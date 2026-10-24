@@ -314,11 +314,12 @@ Switching themes (Proposed):
 Privacy · About", and under it a quieter line, "Built by Mariusz Kotas ·
 m@mkotas.cz", in the same style, with the address as a `mailto:` link (Owner,
 2026-10-24; it is public on purpose, not personal data to remove). It shows on
-every page, on a phone, at night and in print, and uses the footer's own tokens
-(muted text, the blue link), so contrast is that of those pairs (§2.2). The link
-is reachable by keyboard like Privacy and About. The snapshot date comes from
-the ingestion run. If the snapshot is older than expected, the footer shows its
-real age (DESIGN §4). As built (Task 22, Proposed): more than 45 days after a
+every page, on a phone, at night and in print (the plain fallback page of a
+failed app frame has the line too), and uses the footer's own tokens (muted
+text, the blue link), so contrast is that of those pairs (§2.2). The link is
+reachable by keyboard like Privacy and About. The snapshot date comes from the
+ingestion run. If the snapshot is older than expected, the footer shows its real
+age (DESIGN §4). As built (Task 22, Proposed): more than 45 days after a
 snapshot, against DESIGN §4's monthly full snapshots, the date is followed by
 "(46 days old)", and from two whole months by "(2 months old)".
 
