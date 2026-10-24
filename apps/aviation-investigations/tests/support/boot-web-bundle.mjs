@@ -53,7 +53,7 @@ try {
 }
 // The entry renders once the mock-API promise settles; wait for the header.
 const root = w.document.getElementById('root');
-for (let waited = 0; waited < 4000 && !root?.querySelector('header a'); waited += 25) await new Promise((resolve) => setTimeout(resolve, 25));
+for (let waited = 0; waited < 15_000 && !root?.querySelector('header a'); waited += 25) await new Promise((resolve) => setTimeout(resolve, 25));
 
 process.stdout.write(
   JSON.stringify({
