@@ -421,3 +421,23 @@ export async function countCaseRecords(
     eventsWithoutDefiningPhase: n('without_defining'),
   };
 }
+
+/** Canonical records for a bounded retrieval result, in one caller-owned snapshot. */
+export async function readCaseRecords(tx: DbOrTx, generationId: number, nos: string[]): Promise<CaseRecord[]> {
+  if (nos.length === 0) return [];
+  if (nos.length > 100) throw new Error('case record read exceeds evidence ceiling');
+  const caseRows = await tx.select(CASE_COLUMNS).from(cases)
+    .where(and(eq(cases.generationId, generationId), inArray(cases.ntsbNo, nos)));
+  // One connection runs one query at a time: read the child tables in turn.
+  const aircraft = await tx.select(AIRCRAFT_COLUMNS).from(caseAircraft)
+    .where(and(eq(caseAircraft.generationId, generationId), inArray(caseAircraft.ntsbNo, nos)));
+  const engines = await tx.select(ENGINE_COLUMNS).from(caseEngines)
+    .where(and(eq(caseEngines.generationId, generationId), inArray(caseEngines.ntsbNo, nos)));
+  const sections = await tx.select(SECTION_COLUMNS).from(caseSections)
+    .where(and(eq(caseSections.generationId, generationId), inArray(caseSections.ntsbNo, nos)));
+  const findings = await tx.select(FINDING_COLUMNS).from(caseFindings)
+    .where(and(eq(caseFindings.generationId, generationId), inArray(caseFindings.ntsbNo, nos)));
+  const sequence = await tx.select(SEQUENCE_COLUMNS).from(caseSequence)
+    .where(and(eq(caseSequence.generationId, generationId), inArray(caseSequence.ntsbNo, nos)));
+  return assembleCaseRecords(generationId, { cases: caseRows, aircraft, engines, sections, findings, sequence });
+}

@@ -3,6 +3,7 @@
  * It applies the same input bounds, context caps, pre-send token cap and output
  * schemas as the real adapter, so a pipeline test fails where production would.
  */
+import { EvidenceScopeInputSchema, EvidenceScopeOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser, type EvidenceScopeInput, type EvidenceScopeOutput } from './prompts/scope.e1.js';
 import type { z } from 'zod';
 import { CHECK_PROMPT_VERSION, CHECK_SYSTEM, renderCheckUser } from './prompts/check.v9.js';
 import { COMPOSE_PROMPT_VERSION, COMPOSE_SYSTEM, renderComposeUser } from './prompts/compose.v8.js';
@@ -77,6 +78,7 @@ export interface FakeScript {
   /** Token counts per stage; the default is ceil(characters / 4) of system prompt plus user turn. */
   counts?: FakeCounts;
   scope?: FakeSteps<ScopeInput, ScopeOutput>;
+  evidenceScope?: FakeSteps<EvidenceScopeInput, EvidenceScopeOutput>;
   compose?: FakeSteps<ComposeInput, ComposeOutput>;
   check?: FakeSteps<CheckInput, CheckOutput>;
 }
@@ -216,6 +218,11 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
     return { run, countInputTokens: async (rawInput: I, ctx: StageCtx) => prepare(rawInput, ctx).tokens };
   }
 
+  const evidenceScope = stage({
+    name: 'scope', promptVersion: EVIDENCE_SCOPE_VERSION, system: EVIDENCE_SCOPE_SYSTEM,
+    input: EvidenceScopeInputSchema, output: EvidenceScopeOutputSchema, render: renderEvidenceScopeUser,
+    steps: script.evidenceScope, count: undefined,
+  });
   const scope = stage({
     name: 'scope',
     promptVersion: SCOPE_PROMPT_VERSION,
@@ -259,6 +266,8 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
     countInputTokens<S extends LlmStage>(name: S, input: StageInputs[S], ctx: StageCtx): Promise<number> {
       return (counters[name] as (i: StageInputs[S], c: StageCtx) => Promise<number>)(input, ctx);
     },
+    evidenceScope: evidenceScope.run,
+    countEvidenceScopeTokens: evidenceScope.countInputTokens,
     scope: scope.run,
     compose: compose.run,
     check: check.run,

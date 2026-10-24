@@ -5,6 +5,7 @@
  * (`AI_LLM_PROVIDER`); there is no per-request routing or failover.
  */
 import { z } from 'zod';
+import type { EvidenceScopeInput, EvidenceScopeOutput } from './prompts/scope.e1.js';
 import { PHASE_GROUPS, type PhaseGroup } from '../../shared/codes.js';
 import {
   ComposeOutputSchema,
@@ -446,6 +447,9 @@ export interface LlmProvider {
    * rate-limited. Every stage call also counts first and refuses input above its cap.
    */
   countInputTokens<S extends LlmStage>(stage: S, input: StageInputs[S], ctx: StageCtx): Promise<number>;
+  /** Separate evidence contract; legacy scope.v2 is unchanged. */
+  evidenceScope?(input: EvidenceScopeInput, ctx: StageCtx): Promise<StageResult<EvidenceScopeOutput>>;
+  countEvidenceScopeTokens?(input: EvidenceScopeInput, ctx: StageCtx): Promise<number>;
   scope(input: ScopeInput, ctx: StageCtx): Promise<StageResult<ScopeOutput>>;
   compose(input: ComposeInput, ctx: StageCtx): Promise<StageResult<ComposeOutput>>;
   check(input: CheckInput, ctx: StageCtx): Promise<StageResult<CheckOutput>>;

@@ -24,6 +24,9 @@
  * `preflightRequests` is pure, so the offline unit test sizes the same requests with the
  * local tokenizer (tests/unit/ai-preflight.test.ts).
  */
+import { UNCHECKED_KINDS } from '../shared/contracts/evidence.js';
+import { EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from '../server/ai/prompts/scope.e1.js';
+import { evidenceReservation } from '../server/evidence/pricing.js';
 import { createHash } from 'node:crypto';
 import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOutput } from '../shared/contracts/briefs.js';
 import { PHASE_GROUPS } from '../shared/codes.js';
@@ -394,6 +397,24 @@ export function preflightRequests(): PreflightRequests {
   };
 }
 
+/** Evidence has no refinement history or case text in scope; extrema are questions only.
+ * A broad multi-reading example exercises the output allowance. Legal outputs can be
+ * longer: the adapter refuses max_tokens (never crops) and the request refunds its quota.
+ * Provider measurement and fresh scope-quality evaluation remain deployment gates.
+ */
+export function evidencePreflightRequests() {
+  const quote = 'loss of engine power shortly after maintenance';
+  return {
+    fixed: { question: 'Find engine power loss investigations.' },
+    worst: [
+      { label: 'maximum Latin question', latin: true, input: { question: exactly(QUESTION_MAX_CHARS) } },
+      { label: 'maximum dense question', latin: false, input: { question: denseUpTo(QUESTION_MAX_CHARS, QUESTION_MAX_CHARS) } },
+    ],
+    output: JSON.stringify({ intent: 'case_search', filters: { phase: ['takeoff', 'approach'], category: ['AIR'], far_part: ['091'], purpose: ['PERS'], state: ['CA', 'TX'], yearFrom: 2010, yearTo: 2026 },
+      terms: quote, unchecked: UNCHECKED_KINDS.map((kind) => ({ kind, quote })) }),
+  };
+}
+
 /** The provider's token counter for a plain user message (an output counted as text). */
 export type TextCounter = (model: string, text: string) => Promise<number>;
 
@@ -418,6 +439,19 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
   // The cached prefix: the fixed request less its (minimal) user turn counted on its own.
   const prefix = async (model: string, fixed: number, userTurn: string) => fixed - (await countText(model, userTurn));
 
+  // The separate evidence scope has the same capped price, no compose/check reachability.
+  if (provider.countEvidenceScopeTokens) {
+    const e = evidencePreflightRequests();
+    const tokens = await provider.countEvidenceScopeTokens(e.fixed, ctx('scope'));
+    add('scope', `${EVIDENCE_SCOPE_VERSION}: fixed prompt + schema`, tokens, STAGE_CAPS.scope.input);
+    add('scope', `${EVIDENCE_SCOPE_VERSION}: cached prefix`, Math.max(0, tokens - await countText(models.scope, renderEvidenceScopeUser(e.fixed))), CACHED_PREFIX_MAX);
+    for (const w of e.worst) {
+      add('scope', `${EVIDENCE_SCOPE_VERSION}: ${w.label}`, await provider.countEvidenceScopeTokens(w.input, ctx('scope')), STAGE_CAPS.scope.input);
+    }
+    add('scope', `${EVIDENCE_SCOPE_VERSION}: multi-reading output`, await output(models.scope, e.output), STAGE_CAPS.scope.output);
+    const cost = evidenceReservation(models.scope, 'text-embedding-3-small');
+    if (cost.reservationUsd < cost.worstCaseUsd) throw new Error('evidence reservation too small');
+  }
   const scopeFixed = await provider.countInputTokens('scope', r.fixed.scope, ctx('scope'));
   add('scope', 'fixed (system prompt + schema)', scopeFixed, STAGE_CAPS.scope.input);
   add('scope', 'cached prefix (system prompt + schema)', await prefix(models.scope, scopeFixed, renderScopeUser(r.fixed.scope)), CACHED_PREFIX_MAX);

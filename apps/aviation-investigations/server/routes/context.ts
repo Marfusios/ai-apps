@@ -2,6 +2,7 @@
 import type { Client } from '@elastic/elasticsearch';
 import type { FastifyBaseLogger } from 'fastify';
 import type { FacetKey } from '../../shared/contracts/search.js';
+import type { EvidenceServices } from '../evidence/retrieve.js';
 import type { AiRuntime } from '../ai/runtime.js';
 import type { AuthService } from '../auth/better-auth.js';
 import type { BriefServices } from '../briefs/services.js';
@@ -20,6 +21,8 @@ export interface ApiContext {
   auth: AuthService | null;
   /** Evidence retrieval and the brief runs; null without a query embedder: AI briefs are off. */
   briefs: BriefServices | null;
+  evidence?: EvidenceServices | null;
+  briefsEnabled?: boolean;
   /**
    * The passages index AI evidence would come from right now (the active manifest's,
    * when the dataset reports it servable and the retriever accepts it), or null: AI is

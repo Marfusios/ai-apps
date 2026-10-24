@@ -22,6 +22,7 @@
  * GOOGLE_CLIENT_SECRET, BETTER_AUTH_SECRET and the identity HMAC key are set; otherwise
  * it is off (`googleEnabled: false`) and the log says which setting is missing.
  */
+import { createEvidenceRetriever, createEvidenceServices } from './evidence/retrieve.js';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -126,6 +127,9 @@ async function main(): Promise<void> {
     ai,
     auth: signIn.service,
     briefs: evidence.services,
+    evidence: config.ai.openai.apiKey ? createEvidenceServices(createEvidenceRetriever(db, es, createOpenAIQueryEmbedder({
+      apiKey: config.ai.openai.apiKey, model: config.ai.openai.embeddingModel, dims: config.ai.openai.embeddingDimensions,
+    }))) : null,
     embedding: { model: config.ai.openai.embeddingModel, dims: config.ai.openai.embeddingDimensions },
     webRoot: resolve(APP_DIR, 'dist/web'),
     logger: { level: config.nodeEnv === 'production' ? 'info' : 'debug' },

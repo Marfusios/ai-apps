@@ -274,6 +274,7 @@ async function trialQuota(
   policy: QuotaPolicy,
   principal: Extract<Principal, { kind: 'trial' }>,
   now: Date,
+  usedToday = 0,
 ): Promise<Rejection | null> {
   const res = await tx.execute(
     sql`SELECT requests_used, (extract(epoch FROM expires_at) * 1000)::bigint AS expires_ms FROM trial_identities
@@ -283,7 +284,8 @@ async function trialQuota(
   if (!row || Number(row.expires_ms) <= now.getTime()) {
     throw new UnknownPrincipalError('The trial identity does not exist or has expired');
   }
-  return row.requests_used >= policy.limits.trialRequests ? { ok: false, reason: 'trial_exhausted' } : null;
+  const used = policy.trialDaily ? usedToday : row.requests_used;
+  return used >= policy.limits.trialRequests ? { ok: false, reason: 'trial_exhausted', ...(policy.trialDaily ? { retryAt: nextUtcMidnight(now) } : {}) } : null;
 }
 
 function accountQuota(
@@ -340,7 +342,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
   const anonymous = isAnonymous(principal);
   const reservation = toMicros(a.reservationUsd);
   const attempts = attemptBuckets(policy, principal, pHash, a.networkId, now);
-  const account = principal.kind === 'account' ? accountRequestBuckets(pHash, now) : null;
+  const account = principal.kind === 'account' || policy.trialDaily ? accountRequestBuckets(pHash, now) : null;
   const global = globalRequestBuckets(now);
   const requestBuckets = [...(account ? [account.day, account.month] : []), ...global];
 
@@ -389,7 +391,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
 
       const quota =
         principal.kind === 'trial'
-          ? await trialQuota(tx, policy, principal, now)
+          ? await trialQuota(tx, policy, principal, now, account ? countsOf(counts, account.day).requests : 0)
           : accountQuota(policy, principal, counts, account!, now);
       if (quota) return quota;
       if ((await uncertainChargedMicros(tx, pHash, utcDay(now))) >= reservation * UNCERTAIN_DAILY_RESERVATIONS) {
@@ -432,7 +434,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
       if (principal.kind === 'trial') {
         const used = await tx.execute(sql`
           UPDATE trial_identities SET requests_used = requests_used + 1
-          WHERE id = ${principal.id}::uuid AND requests_used < ${l.trialRequests}`);
+          WHERE id = ${principal.id}::uuid AND (${policy.trialDaily === true} OR requests_used < ${l.trialRequests})`);
         if (used.rowCount !== 1) throw new Error('trial identity changed during admission');
       } else {
         await tx.execute(sql`
@@ -519,7 +521,7 @@ export type ReleaseResult =
  * summaries keep their unit.
  */
 export async function releaseQuota(
-  db: Db,
+  db: DbOrTx,
   admission: Admission,
   fencingToken: string,
   opts: { policy: QuotaPolicy; now?: Date },
@@ -527,14 +529,14 @@ export async function releaseQuota(
   const now = opts.now ?? new Date();
   const pHash = principalHash(opts.policy, admission.principal);
   try {
-    return await releaseInTransaction(db, admission, fencingToken, pHash, now);
+    return await releaseInTransaction(db, admission, fencingToken, pHash, now, opts.policy.trialDaily === true);
   } catch (err) {
     if (isLockTimeout(err)) return { released: false, reason: 'busy' };
     throw err;
   }
 }
 
-function releaseInTransaction(db: Db, admission: Admission, fencingToken: string, pHash: string, now: Date): Promise<ReleaseResult> {
+function releaseInTransaction(db: DbOrTx, admission: Admission, fencingToken: string, pHash: string, now: Date, trialDaily: boolean): Promise<ReleaseResult> {
   return db.transaction(async (tx): Promise<ReleaseResult> => {
     // Lock waits are bounded like the rest of the gate's (2 s; DESIGN §8).
     await setLockTimeout(tx);
@@ -571,7 +573,7 @@ function releaseInTransaction(db: Db, admission: Admission, fencingToken: string
     // then the buckets in key order, then the trial row. Admission also takes buckets
     // before the trial row, so the two cannot wait on each other in a cycle.
     const at = new Date(Number(row.created_ms));
-    const principalBuckets = admission.principal.kind === 'account' ? Object.values(accountRequestBuckets(pHash, at)) : [];
+    const principalBuckets = admission.principal.kind === 'account' || trialDaily ? Object.values(accountRequestBuckets(pHash, at)) : [];
     const buckets = [...principalBuckets, ...globalRequestBuckets(at)];
     await lockBuckets(tx, buckets);
     if (admission.principal.kind === 'trial') {

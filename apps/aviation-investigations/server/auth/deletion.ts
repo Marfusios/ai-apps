@@ -49,7 +49,7 @@
  */
 import { sql } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../db/client.js';
-import type { RunningStep } from '../briefs/services.js';
+
 import { accountRequestBuckets } from '../quota/admit.js';
 import { addToBuckets, bucketRef, countsOf, lockBuckets } from '../quota/buckets.js';
 import { isLockTimeout, setLockTimeout } from '../quota/locks.js';
@@ -86,7 +86,7 @@ export interface DeletionDeps {
   /** PostgreSQL as aviation_app. */
   db: Db;
   /** Steps running in this process (server/briefs/services.ts), to stop the account's. */
-  runs?: Map<string, RunningStep> | null;
+  runs?: ReadonlyMap<string, { controller: AbortController }> | null;
   now: () => Date;
 }
 

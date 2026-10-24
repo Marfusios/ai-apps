@@ -190,7 +190,7 @@ function queryTooLong(req: StepRequest): boolean {
   }
 }
 
-function sendRejection(reply: FastifyReply, r: Rejection, now: Date): FastifyReply {
+export function sendRejection(reply: FastifyReply, r: Rejection, now: Date): FastifyReply {
   const retry = (status: number, code: Parameters<typeof sendError>[2]) => {
     if (!r.retryAt) return sendError(reply, status, code);
     const seconds = retryAfterSeconds(r.retryAt, now);
@@ -199,7 +199,7 @@ function sendRejection(reply: FastifyReply, r: Rejection, now: Date): FastifyRep
   };
   switch (r.reason) {
     case 'trial_exhausted':
-      return sendError(reply, 429, 'trial_used');
+      return retry(429, 'trial_used');
     case 'daily_cap':
     case 'monthly_cap':
     case 'uncertain_limit':
@@ -265,7 +265,7 @@ interface Visitor {
 
 const NOBODY: Visitor = { account: null, trial: null };
 
-async function visitor(ctx: ApiContext, request: FastifyRequest, now?: Date): Promise<Visitor> {
+export async function visitor(ctx: ApiContext, request: FastifyRequest, now?: Date): Promise<Visitor> {
   const ai = ctx.ai;
   if (!ai?.policy || !ai.trials) return NOBODY;
   const signedIn = ctx.auth ? await ctx.auth.signedIn(request.headers.cookie) : null;
@@ -277,7 +277,7 @@ async function visitor(ctx: ApiContext, request: FastifyRequest, now?: Date): Pr
 }
 
 /** The identities a visitor reads briefs with: the account first, then the trial. */
-function readersOf(who: Visitor): BriefReader[] {
+export function readersOf(who: Visitor): BriefReader[] {
   return [
     ...(who.account ? [{ hash: who.account.hash, kind: 'account' as const }] : []),
     ...(who.trial ? [{ hash: who.trial.hash, kind: 'trial' as const }] : []),
@@ -417,7 +417,7 @@ type Billing = { ok: true; payer: Payer; who: Visitor } | { ok: false; reply: Fa
  * anonymous gate passes (it may create the trial and set its cookie). `who` gains a trial
  * the gate created.
  */
-async function billing(ctx: ApiContext, r: Ready, request: FastifyRequest, reply: FastifyReply, who: Visitor, token: unknown): Promise<Billing> {
+export async function billing(ctx: ApiContext, r: Pick<Runtime, 'ai'>, request: FastifyRequest, reply: FastifyReply, who: Visitor, token: unknown): Promise<Billing> {
   const gate = r.ai.gate;
   if (who.account) {
     const networkId = request.networkIdentity;
@@ -444,7 +444,7 @@ async function billing(ctx: ApiContext, r: Ready, request: FastifyRequest, reply
  * (UI_DESIGN §5), but not the gate's availability checks: it replays and spends nothing.
  * The refusal already sent, or null when the check passes.
  */
-async function checkAnonymousRetry(r: Runtime, request: FastifyRequest, reply: FastifyReply, token: unknown): Promise<FastifyReply | null> {
+export async function checkAnonymousRetry(r: Pick<Runtime, 'ai'>, request: FastifyRequest, reply: FastifyReply, token: unknown): Promise<FastifyReply | null> {
   const gate = r.ai.gate;
   if (!gate) return sendError(reply, 503, 'unavailable');
   const refused = await gate.challenge(request, reply, token);
@@ -535,12 +535,13 @@ function stepResponse(briefId: string, step: StepRow, steps: number, expiresAt: 
 
 const StepQuerySchema = z.strictObject({ step: z.coerce.number().pipe(StepNumberSchema).optional() });
 
-export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUrl: string }): void {
+export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUrl: string; enabled?: boolean }): void {
   const appOrigin = new URL(opts.appUrl).origin;
 
   /** `POST /api/briefs` (tracked work: see the module comment). */
   async function createBrief(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
     if (crossSite(request, appOrigin)) return sendError(reply, 403, 'forbidden');
+    if (!opts.enabled) return sendError(reply, 404, 'not_found');
     const parsed = CreateBriefRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(parsed.error.issues) });
     const body = parsed.data;
@@ -627,6 +628,7 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
   /** `POST /api/briefs/:id/refine` (tracked work: see the module comment). */
   async function refineBrief(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): Promise<FastifyReply> {
     if (crossSite(request, appOrigin)) return sendError(reply, 403, 'forbidden');
+    if (!opts.enabled) return sendError(reply, 404, 'not_found');
     const id = BriefIdSchema.safeParse(request.params.id);
     if (!id.success) return sendError(reply, 404, 'not_found', { message: NOT_FOUND });
     const parsed = RefinementRequestSchema.safeParse(request.body);

@@ -218,7 +218,7 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
     if (!parsed.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(parsed.error.issues) });
     const signedIn = await auth.signedIn(request.headers.cookie);
     if (!signedIn) return sendError(reply, 403, 'sign_in_required', { message: 'Sign in to delete your account.' });
-    const report = await deleteAccount({ db: ctx.db, runs: ctx.briefs?.runs ?? null, now }, signedIn);
+    const report = await deleteAccount({ db: ctx.db, runs: new Map([...(ctx.briefs?.runs ?? []), ...(ctx.evidence?.runs ?? [])]), now }, signedIn);
     if (report === 'not_confirmed') return sendError(reply, 403, 'reauth_required');
     if (report === 'signed_out') return sendError(reply, 403, 'sign_in_required', { message: 'Sign in to delete your account.' });
     // Counts only: nothing that identifies the person.

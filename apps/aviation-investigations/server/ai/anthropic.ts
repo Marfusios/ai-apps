@@ -5,6 +5,7 @@
  * it (adaptive for the check), a cached frozen system prompt, no retries, prefill, sampling
  * parameters, server tools or refusal fallbacks.
  */
+import { EvidenceScopeInputSchema, EvidenceScopeOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser, type EvidenceScopeInput, type EvidenceScopeOutput } from './prompts/scope.e1.js';
 import Anthropic, {
   APIConnectionError,
   APIConnectionTimeoutError,
@@ -405,6 +406,10 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     return { run, countInputTokens: async (rawInput: I, ctx: StageCtx) => count(prepare(rawInput, ctx)) };
   }
 
+  const evidenceScope = stage({
+    stage: 'scope', promptVersion: EVIDENCE_SCOPE_VERSION, system: EVIDENCE_SCOPE_SYSTEM,
+    input: EvidenceScopeInputSchema, output: EvidenceScopeOutputSchema, render: renderEvidenceScopeUser,
+  });
   const scope = stage({
     stage: 'scope',
     promptVersion: SCOPE_PROMPT_VERSION,
@@ -441,6 +446,8 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     countInputTokens<S extends LlmStage>(name: S, input: StageInputs[S], ctx: StageCtx): Promise<number> {
       return (counters[name] as (i: StageInputs[S], c: StageCtx) => Promise<number>)(input, ctx);
     },
+    evidenceScope: evidenceScope.run,
+    countEvidenceScopeTokens: evidenceScope.countInputTokens,
     scope: scope.run,
     compose: compose.run,
     check: check.run,

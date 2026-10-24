@@ -107,7 +107,7 @@ afterAll(async () => {
 type ConfigOver = { google?: boolean; appUrl?: string; authSecret?: string };
 
 function config(over: ConfigOver = {}): AppConfig {
-  const base = loadConfig({ env: {}, files: [] });
+  const base = loadConfig({ env: { AI_ANONYMOUS_TRIAL_REQUESTS: '3', AI_USER_DAILY_REQUESTS: '20', AI_USER_MONTHLY_REQUESTS: '150', AI_NEW_ACCOUNT_DAILY_REQUESTS: '5', AI_BRIEFS_ENABLED: 'true' }, files: [] });
   const google = over.google ?? true;
   return {
     ...base,
@@ -162,7 +162,7 @@ function harness(script: FakeScript = {}, opts: HarnessOptions = {}): Harness {
   const svc = createBriefServices(appDb, { retriever: new FakeRetriever(appDb, { cases: [], served: opts.served ?? (async () => ({ chunkerVersion: 'none' })) }) });
   const logs: string[] = [];
   const app = buildApp({
-    config: { appUrl: cfg.appUrl, trustedProxyCidrs: [] },
+    config: { appUrl: cfg.appUrl, trustedProxyCidrs: [], ai: cfg.ai },
     db: appDb,
     es,
     ai,

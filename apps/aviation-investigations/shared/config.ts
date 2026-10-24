@@ -75,6 +75,7 @@ const envSchema = z.object({
    * Claim-level display of AI briefs (Task 16d, server/briefs/display.ts): off until gate G6
    * clears it. Off, a brief's summary is shown only when the check confirmed every claim.
    */
+  AI_BRIEFS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   AI_PARTIAL_DISPLAY: z
     .enum(['true', 'false', '1', '0'])
     .default('false')
@@ -103,12 +104,12 @@ const envSchema = z.object({
   AI_INTERACTIVE_MONTHLY_BUDGET_USD: num(80),
   AI_INTERACTIVE_DAILY_BUDGET_USD: num(3),
   AI_INGESTION_MONTHLY_BUDGET_USD: num(20),
-  AI_ANONYMOUS_TRIAL_REQUESTS: int(3),
+  AI_ANONYMOUS_TRIAL_REQUESTS: int(10),
   AI_ANONYMOUS_BUDGET_SHARE: z.coerce.number().min(0).max(1).default(0.25),
-  AI_NEW_ACCOUNT_DAILY_REQUESTS: int(5),
+  AI_NEW_ACCOUNT_DAILY_REQUESTS: int(20),
   AI_NEW_ACCOUNT_DAYS: int(3),
-  AI_USER_DAILY_REQUESTS: int(20),
-  AI_USER_MONTHLY_REQUESTS: int(150),
+  AI_USER_DAILY_REQUESTS: int(50),
+  AI_USER_MONTHLY_REQUESTS: int(600),
   AI_GLOBAL_CONCURRENCY: int(2),
   NTSB_API_KEY: str(),
   AVIATION_VERIFY_DIR: str(),
@@ -150,6 +151,7 @@ export interface AppConfig {
     llmProvider: Env['AI_LLM_PROVIDER'];
     /** Show the statements the evidence check confirmed and remove the rest (`AI_PARTIAL_DISPLAY`; off until gate G6). */
     partialDisplay: boolean;
+    briefsEnabled: boolean;
     anthropic: { apiKey?: string; scopeModel: string; answerModel: string; checkModel: string };
     openai: {
       apiKey?: string;
@@ -283,6 +285,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
     ai: {
       llmProvider: e.AI_LLM_PROVIDER,
       partialDisplay: e.AI_PARTIAL_DISPLAY,
+      briefsEnabled: e.AI_BRIEFS_ENABLED,
       anthropic: {
         apiKey: e.ANTHROPIC_API_KEY,
         scopeModel: e.ANTHROPIC_SCOPE_MODEL,

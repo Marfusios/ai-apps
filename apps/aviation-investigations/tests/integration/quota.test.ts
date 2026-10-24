@@ -36,9 +36,11 @@ import { sqlState } from './corpus-helpers.js';
 import { resetControls, testDb, testDbUrl, testPool } from './helpers.js';
 
 const POLICY = quotaPolicy({
-  ai: loadConfig({ env: {}, files: [] }).ai,
+  ai: loadConfig({ env: { AI_ANONYMOUS_TRIAL_REQUESTS: '3', AI_USER_DAILY_REQUESTS: '20', AI_USER_MONTHLY_REQUESTS: '150', AI_NEW_ACCOUNT_DAILY_REQUESTS: '5', AI_BRIEFS_ENABLED: 'true' }, files: [] }).ai,
   auth: { identityHmacSecret: 'test-identity-hmac-secret-0123456789', ipHmacSecret: 'test-network-hmac-secret-0123456789' },
 });
+// Keep the legacy quota regression policy explicit; evidence.test covers the new daily defaults.
+POLICY.trialDaily = false;
 const BUDGETS = POLICY.budgets;
 const RESERVATION = 0.14;
 /** A fresh 30-day month: the paced allowance is 80 / 30 = $2.666666. */
@@ -1127,6 +1129,7 @@ describe('roles and guards', () => {
       reservations: 1,
       briefs: 0,
       briefSteps: 0,
+      evidenceSearches: 0,
     });
     const left = await migrator.execute(sql`SELECT id::int AS id FROM reservations`);
     expect(left.rows).toEqual([{ id: current.reservationId }]);

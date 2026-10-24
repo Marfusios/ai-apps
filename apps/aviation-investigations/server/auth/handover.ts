@@ -37,6 +37,9 @@
  * same retry from the signed-in browser replays the brief for the account. An account
  * deleted meanwhile takes nothing over (`account_gone`): the brief stays the trial's.
  */
+import { evidenceSearches } from '../db/schema/evidence.js';
+import { eq } from 'drizzle-orm';
+import { readOwnedSearch, takeOverSearch } from '../evidence/store.js';
 import { sql } from 'drizzle-orm';
 import { BriefIdSchema } from '../../shared/contracts/briefs.js';
 import { lockBrief, moveBriefReadOwner, readBrief } from '../briefs/store.js';
@@ -58,6 +61,7 @@ export interface HandoverDeps {
 
 /** A brief a sign-in may take over: its id and the HMAC of the trial that owns it. */
 export interface HandoverCandidate {
+  kind?: 'evidence';
   briefId: string;
   from: string;
 }
@@ -82,10 +86,11 @@ export function briefOfReturnPath(path: string): string | null {
 /** A candidate read back from the OAuth state, or null when it is not one. */
 export function parseHandoverCandidate(value: unknown): HandoverCandidate | null {
   if (typeof value !== 'object' || value === null) return null;
-  const { briefId, from } = value as Record<string, unknown>;
+  const { briefId, from, kind } = value as Record<string, unknown>;
+  if (kind !== undefined && kind !== 'evidence') return null;
   if (typeof briefId !== 'string' || !BriefIdSchema.safeParse(briefId).success) return null;
   if (typeof from !== 'string' || !HEX64.test(from)) return null;
-  return { briefId, from };
+  return { briefId, from, ...(kind === 'evidence' ? { kind } : {}) };
 }
 
 /**
@@ -93,15 +98,19 @@ export function parseHandoverCandidate(value: unknown): HandoverCandidate | null
  * live brief that the trial proven by this browser's cookie reads. Otherwise null.
  */
 export async function handoverCandidate(deps: HandoverDeps, cookieHeader: string | null, returnPath: string): Promise<HandoverCandidate | null> {
-  const briefId = briefOfReturnPath(returnPath);
+  const evidenceId = /^\/(?:ai|evidence)\/([0-9a-f-]{36})(?:\?[^#]*)?$/.exec(returnPath)?.[1];
+  const kind = evidenceId && BriefIdSchema.safeParse(evidenceId).success ? 'evidence' as const : undefined;
+  const briefId = kind ? evidenceId! : briefOfReturnPath(returnPath);
   if (!briefId) return null;
   const now = deps.now();
   const trial = await deps.trials.fromCookieHeader(cookieHeader, now);
   if (!trial) return null;
   const from = principalHash(deps.policy, trial);
-  const brief = await readBrief(deps.db, briefId, now);
-  if (!brief || brief.readOwner !== from || brief.readOwnerKind !== 'trial') return null;
-  return { briefId, from };
+  const brief = kind
+    ? await readOwnedSearch(deps.db, briefId, [{ kind: 'trial', hash: from }], now)
+    : await readBrief(deps.db, briefId, now);
+  if (!brief || brief.expiresAt <= now || brief.readOwner !== from || brief.readOwnerKind !== 'trial') return null;
+  return { briefId, from, ...(kind ? { kind } : {}) };
 }
 
 /**
@@ -119,7 +128,10 @@ export async function completeHandover(
   const trial = await deps.trials.fromCookieHeader(cookieHeader, now);
   if (!trial || principalHash(deps.policy, trial) !== candidate.from) return 'trial_changed';
   const outcome = await withLiveAccount(deps.db, account, async (tx): Promise<HandoverOutcome> => {
-    const took = await takeOver(tx, candidate.briefId, candidate.from, account.hash, now);
+    const took = candidate.kind === 'evidence'
+      ? (await takeOverSearch(tx, candidate.briefId, candidate.from, account.hash)) ? 'moved' :
+        (await readOwnedSearch(tx, candidate.briefId, [{ kind: 'account', hash: account.hash }], now)) !== null ? 'already' : 'no'
+      : await takeOver(tx, candidate.briefId, candidate.from, account.hash, now);
     if (took === 'moved') return 'moved';
     return took === 'already' ? 'already_moved' : 'not_moved';
   });

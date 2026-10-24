@@ -777,3 +777,23 @@ describe('fake provider', () => {
     expect(fake.calls).toHaveLength(0);
   });
 });
+
+
+describe('scope.e1 in the real adapter with offline transport', () => {
+  const output = { intent: 'case_search', filters: { purpose: ['PERS'] }, terms: 'power loss maintenance', unchecked: [{ kind: 'timing', quote: 'shortly after maintenance' }] };
+  it('uses the independent prompt/schema and same measured caps, with no history/defaults', async () => {
+    const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson(JSON.stringify(output))));
+    const result = await p.evidenceScope!(scopeInput, ctx('scope'));
+    expect(result.promptVersion).toBe('scope.e1');
+    expect(result.output).toEqual(output);
+    expect(bodies).toHaveLength(1); expect(countBodies).toHaveLength(1);
+    expect(bodies[0]!.max_tokens).toBe(STAGE_CAPS.scope.output);
+    expect(JSON.stringify(bodies[0]!.system)).toContain('Never default');
+    expect(JSON.stringify(bodies[0]!.output_config)).not.toContain('needs_clarification');
+  });
+  it('does not generate when evidence token counting exceeds the cap', async () => {
+    const { p, bodies } = provider(jsonResponse(200, messageJson(JSON.stringify(output))), DEFAULT_MODELS, STAGE_CAPS.scope.input + 1);
+    const e = await stageError(p.evidenceScope!(scopeInput, ctx('scope')));
+    expect(e.billing.kind).toBe('none'); expect(bodies).toHaveLength(0);
+  });
+});

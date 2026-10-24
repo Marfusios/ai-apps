@@ -47,6 +47,8 @@
  *
  * Fastify runs with `trustProxy: false`; `request.ip` is never used.
  */
+import type { EvidenceServices } from './evidence/retrieve.js';
+import { evidenceRoutes } from './routes/evidence.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
@@ -88,7 +90,7 @@ declare module 'fastify' {
 
 export interface AppDeps {
   /** `appEnv` (default `dev`): only `live` lets search engines index the site. */
-  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'> & Partial<Pick<AppConfig, 'appEnv'>>;
+  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'> & Partial<Pick<AppConfig, 'appEnv' | 'ai'>>;
   /** The configured embedding model and dimensions: a published passages index must match them. */
   embedding?: { model: string; dims: number };
   /** PostgreSQL as `aviation_app`. */
@@ -101,6 +103,7 @@ export interface AppDeps {
   auth?: AuthService | null;
   /** Evidence retrieval for AI briefs (`createBriefServices`, server/briefs/services.ts); absent: AI briefs are unavailable. */
   briefs?: BriefServices | null;
+  evidence?: EvidenceServices | null;
   /**
    * Test seam: which evidence index AI would use. Default: the active manifest's passages
    * index when the dataset resolver reports it servable and the briefs' retriever accepts
@@ -336,7 +339,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     ai: deps.ai ?? null,
     auth: deps.auth ?? null,
     briefs,
-    aiEvidence: deps.aiEvidence ?? (() => servableEvidence(briefs, () => datasets.current())),
+    evidence: deps.evidence ?? null,
+    briefsEnabled: deps.config.ai?.briefsEnabled ?? false,
+    aiEvidence: deps.aiEvidence ?? (async () => {
+      if (deps.evidence) {
+        const pinned = await datasets.current();
+        return await deps.evidence.retriever.available(pinned) && pinned.manifest.passagesIndex
+          ? { generationId: pinned.manifest.generationId, passagesIndex: pinned.manifest.passagesIndex } : null;
+      }
+      return servableEvidence(briefs, () => datasets.current());
+    }),
     onUnknownFacetValue: (facet: FacetKey, value: string) =>
       app.log.warn({ facet, value: value.slice(0, 16) }, 'facet value outside the vocabulary left out of the buckets'),
   };
@@ -355,11 +367,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     closing = true;
     const deadline = performance.now() + (deps.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
     const left = () => Math.max(0, deadline - performance.now());
-    if (briefs) {
-      briefs.beginShutdown();
+    if (briefs || deps.evidence) {
+      briefs?.beginShutdown();
+      deps.evidence?.beginShutdown();
       let timer: NodeJS.Timeout | undefined;
       await Promise.race([
-        briefs.settled(),
+        Promise.all([briefs?.settled(), deps.evidence?.settled()]),
         new Promise<void>((resolve) => {
           timer = setTimeout(resolve, left());
         }),
@@ -455,7 +468,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   caseRoutes(app, ctx);
   dashboardRoutes(app, ctx);
   aiStatusRoutes(app, ctx);
-  briefRoutes(app, ctx, { appUrl: deps.config.appUrl });
+  briefRoutes(app, ctx, { appUrl: deps.config.appUrl, enabled: deps.config.ai?.briefsEnabled ?? false });
+  evidenceRoutes(app, ctx, deps.config.appUrl);
   accountRoutes(app, ctx, { appUrl: deps.config.appUrl });
   for (const problem of deps.ai?.problems ?? ['AI is not configured']) app.log.warn({ problem }, 'AI feature off');
   if (deps.ai?.gate?.testKeys) app.log.warn('Turnstile test keys in use: every challenge passes (development only)');

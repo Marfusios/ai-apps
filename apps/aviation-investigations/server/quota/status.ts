@@ -63,11 +63,15 @@ async function remainingFor(
   if (principal === null || principal.kind === 'trial') {
     let used = 0;
     if (principal !== null) {
-      principalHash(policy, principal); // throws on a malformed trial id
+      const hash = principalHash(policy, principal); // throws on a malformed trial id
       const res = await db.execute(
         sql`SELECT requests_used FROM trial_identities WHERE id = ${principal.id}::uuid AND expires_at > ${now}`,
       );
       used = (res.rows[0] as { requests_used: number } | undefined)?.requests_used ?? 0;
+      if (policy.trialDaily) {
+        const day = accountRequestBuckets(hash, now).day;
+        used = (await readBuckets(db, [day])).get(day.key)?.requests ?? 0;
+      }
     }
     return {
       remaining: { kind: 'trial', left: Math.max(0, l.trialRequests - used), limit: l.trialRequests },
@@ -124,7 +128,7 @@ export async function aiStatus(db: DbOrTx, principal: Principal | null, opts: Ai
     if (remaining.leftToday === 0) return status('paused', 'daily_cap', dailyRetryAt);
     return status('available');
   }
-  if (remaining.left === 0) return status('signed_in_only', 'trial_used');
+  if (remaining.left === 0) return status('signed_in_only', 'trial_used', opts.policy.trialDaily ? nextUtcMidnight(now) : undefined);
   if (!budget.anonymousOk) return status('signed_in_only', 'anonymous_share', nextUtcMidnight(now));
   return status('available');
 }
