@@ -15,7 +15,8 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     COREPACK_HOME=/opt/corepack
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# pnpm comes from corepack at the version pinned in package.json (packageManager).
+# pnpm comes from corepack at the version and sha512 pinned in package.json
+# (packageManager); corepack refuses a download with another hash.
 RUN corepack enable pnpm && pnpm --version
 
 FROM base AS deps

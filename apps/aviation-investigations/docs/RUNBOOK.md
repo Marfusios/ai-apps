@@ -204,7 +204,8 @@ With tracing on (see [Tracing](#tracing)), `aviation-app` and `aviation-ingest` 
 - No Docker socket, no home-directory mounts. The only host paths mounted are
   the app's `data/` directory (ingest) and the Elasticsearch CA file.
 - Logs use the `json-file` driver, 10 MB × 3 files per container. Long-running
-  services restart `unless-stopped`; one-shot tools never restart.
+  services restart `unless-stopped`; one-shot tools never restart. `aviation-app` gets
+  15 s to stop (`stop_grace_period`), more than its own 10 s forced exit.
 - Images built here use `pull_policy: never`: `ai-aviation/*` names are never
   fetched from a registry.
 
@@ -605,7 +606,11 @@ Enabling it on an environment requires, in this order:
    checklist count, the drawer's READING and QUOTES lines, Compare's markers); an older
    client would drop or mislabel them.
 4. **The setting** in the environment's settings file, then a restart of the app
-   container; `AI_PARTIAL_DISPLAY` is read at start.
+   container; `AI_PARTIAL_DISPLAY` is read at start. Until gate G6 clears it, compose.yaml
+   does not pass `AI_PARTIAL_DISPLAY` to `aviation-app`, so a Compose deployment stays in
+   `whole` mode whatever the settings file says (a unit test keeps it that way): the commit
+   that records the clearance adds `AI_PARTIAL_DISPLAY: ${AI_PARTIAL_DISPLAY:-}` to the
+   service's `environment` and updates that test.
 5. **A smoke check**: one brief on the environment, then `pnpm worker brief-diagnose
    <brief-id>` shows `display.mode: claims`, and the page shows "Evidence check completed ·
    N statements removed".

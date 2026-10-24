@@ -139,6 +139,9 @@ services:
     networks: [edge, postgres, elasticsearch]
     mem_limit: 1g
     cpus: 1
+    # Longer than the server's own shutdown (9 s grace, forced exit at 10 s; server/main.ts):
+    # Docker's default 10 s SIGKILL would race the step settlements of the last second.
+    stop_grace_period: 15s
     healthcheck:
       test:
         - CMD
