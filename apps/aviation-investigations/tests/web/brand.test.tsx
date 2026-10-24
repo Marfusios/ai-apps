@@ -324,7 +324,6 @@ describe('the header lockup: the mark, the wordmark and what AirCase shows (owne
 });
 
 describe('the app frame names AirCase', () => {
-
   it('the sign-in dialog is "Sign in to AirCase"', () => {
     render(
       <QueryClientProvider client={new QueryClient()}>

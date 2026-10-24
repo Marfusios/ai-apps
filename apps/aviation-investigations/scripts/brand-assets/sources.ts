@@ -75,7 +75,10 @@ function frameAroundFolder(side: number): [number, number, number, number] {
  * maskable icon keeps that within 39 % of its width, just inside the safe zone, a circle whose
  * radius is 40 % of the width.
  */
-const FOLDER_REACH = Math.hypot(MARK_FOLDER_BOX.width / 2 - MARK_FOLDER_BOX.cornerRadius, MARK_FOLDER_BOX.height / 2 - MARK_FOLDER_BOX.cornerRadius) + MARK_FOLDER_BOX.cornerRadius;
+const FOLDER_REACH = (() => {
+  const { width, height, cornerRadius } = MARK_FOLDER_BOX;
+  return Math.hypot(width / 2 - cornerRadius, height / 2 - cornerRadius) + cornerRadius;
+})();
 const FRAMES = {
   touch: frameAroundFolder(MARK_FOLDER_BOX.width / 0.8),
   maskable: frameAroundFolder(FOLDER_REACH / 0.39),
