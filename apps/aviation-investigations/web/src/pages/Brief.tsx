@@ -297,13 +297,14 @@ export function Brief() {
       ? query.error
       : null;
   // One polite live region for the whole page, rendered first in every state, so whatever
-  // appears later (expiry, a load failure, the fallback note, a finished step) is announced.
+  // appears later (expiry, a load failure, the fallback note, a finished step) is announced;
+  // the fallback note keeps the latest step's own finish after it.
   const liveText = gone
     ? EXPIRED_TITLE
     : !step && loadError
       ? LOAD_FAILED
       : stepMissing && step
-        ? `There is no answer ${stepParam} in this brief; this is the latest.`
+        ? `There is no answer ${stepParam} in this brief; this is the latest.${announcement ? ` ${announcement}` : ''}`
         : announcement;
   const live = (
     <p aria-live="polite" className="sr-only">

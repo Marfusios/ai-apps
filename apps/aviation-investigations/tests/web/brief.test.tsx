@@ -1429,6 +1429,45 @@ describe('Unknown outcomes stay unknown until a 2xx or a 409 settles them', { ti
 });
 
 describe('Round-2 minors', { timeout: 20_000 }, () => {
+  it('?step past the last answer still announces the latest step finishing, after the note (Task 17 parked item)', async () => {
+    const id = '00000000-0000-4000-8000-0000000000ce';
+    const base = {
+      briefId: id,
+      step: 1,
+      steps: 1,
+      refinementsLeft: 3,
+      question: 'Q',
+      origin: { kind: 'question' },
+      startedAt: new Date().toISOString(),
+      expiresAt: '2099-10-23T10:00:00.000Z',
+    };
+    let reads = 0;
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) => {
+        if (new URL(request.url).searchParams.get('step') === '3') return HttpResponse.json({ error: 'not_found', message: 'x' }, { status: 404 });
+        reads += 1;
+        return HttpResponse.json(
+          reads === 1
+            ? { ...base, stage: 'compose', checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 } }, finishedAt: null }
+            : {
+                ...base,
+                stage: 'done',
+                checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 }, written: true, verified: 'partially_checked', removedStatements: 0 },
+                finishedAt: new Date().toISOString(),
+                result: RESULT_SAMPLES.answer,
+              },
+        );
+      }),
+    );
+    const page = renderApp(`/briefs/${id}?step=3`);
+    await screen.findByRole('region', { name: /answer checklist/i }, SLOW);
+    const region = page.container.querySelector('p[aria-live="polite"]') as HTMLElement;
+    expect(region.textContent).toBe('There is no answer 3 in this brief; this is the latest.');
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    expect(page.container.querySelector('p[aria-live="polite"]')).toBe(region);
+    expect(region.textContent).toBe('There is no answer 3 in this brief; this is the latest. The answer is ready.');
+  });
+
   it('?step past the last answer shows no load error while the latest step is read', async () => {
     const id = '00000000-0000-4000-8000-0000000000cc';
     const latest = {
