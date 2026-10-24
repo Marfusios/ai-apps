@@ -8,7 +8,7 @@ async function countLine(page: Page) {
 
 test('the home page is AirCase: its tab title, the wordmark, and the credit in the footer', async ({ page }) => {
   await page.goto('/');
-  await expect(page).toHaveTitle('AirCase · aviation casebook');
+  await expect(page).toHaveTitle('AirCase · Plane crash & accident investigations');
   await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase' })).toHaveAttribute('href', '/');
   const footer = page.getByRole('contentinfo');
   await expect(footer).toContainText('Built by Mariusz Kotas');

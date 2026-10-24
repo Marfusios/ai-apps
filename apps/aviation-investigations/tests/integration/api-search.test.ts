@@ -1013,7 +1013,7 @@ describe('pages for search engines and link previews', () => {
 
   it('statuses, robots and canonicals of the other pages', async () => {
     const table: ReadonlyArray<readonly [string, number, string, string | null, string]> = [
-      ['/', 200, 'index, follow', '/', 'AirCase · aviation casebook'],
+      ['/', 200, 'index, follow', '/', 'AirCase · Plane crash & accident investigations'],
       ['/explore', 200, 'index, follow', '/explore', 'Explore · AirCase'],
       ['/explore?q=carburetor+icing', 200, 'noindex, follow', '/explore', '“carburetor icing” · Explore · AirCase'],
       ['/dashboard?cohort=all', 200, 'index, follow', '/dashboard', 'The record, in questions · AirCase'],

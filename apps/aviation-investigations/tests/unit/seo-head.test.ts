@@ -91,7 +91,7 @@ describe('statuses, robots and canonicals per route', () => {
 
 describe('titles: the shared ones the client renders (title parity)', () => {
   const table: ReadonlyArray<readonly [PageRoute, string]> = [
-    [{ kind: 'home' }, 'AirCase · aviation casebook'],
+    [{ kind: 'home' }, 'AirCase · Plane crash & accident investigations'],
     [{ kind: 'explore', query: new URLSearchParams() }, 'Explore · AirCase'],
     [{ kind: 'explore', query: new URLSearchParams('q=carburetor+icing&case=DFW08TA066') }, '“carburetor icing” · Explore · AirCase'],
     // Read leniently, as the client does: a bad facet value is dropped, the query kept.
@@ -125,7 +125,7 @@ describe('titles: the shared ones the client renders (title parity)', () => {
 describe('descriptions', () => {
   it('static pages have their fixed descriptions, at most 160 characters', () => {
     const table: ReadonlyArray<readonly [PageRoute, string]> = [
-      [{ kind: 'home' }, 'Find and compare NTSB aviation investigations by their evidence, findings and probable causes.'],
+      [{ kind: 'home' }, 'Search NTSB investigations of US plane crashes and aviation accidents since 2008: what happened, the probable cause and what investigators found.'],
       [
         { kind: 'explore', query: new URLSearchParams('q=icing') },
         'Search NTSB aviation investigations by keyword, with filters for phase of flight, injury, weather, aircraft, operation, location and year.',
@@ -287,16 +287,16 @@ describe('Open Graph and Twitter', () => {
       image: `${ORIGIN}/social/card.png`,
       width: '1200',
       height: '630',
-      alt: 'AirCase: NTSB aviation accident investigations',
+      alt: 'AirCase: Plane crash & accident investigations',
       card: 'summary_large_image',
       twitterTitle: share,
       twitterImage: `${ORIGIN}/social/card.png`,
-      twitterAlt: 'AirCase: NTSB aviation accident investigations',
+      twitterAlt: 'AirCase: Plane crash & accident investigations',
     });
   });
 
   it('the home page keeps its long name; other pages drop " · AirCase"', () => {
-    expect(parsed({ kind: 'home' }).meta('property', 'og:title')).toBe('AirCase · aviation casebook');
+    expect(parsed({ kind: 'home' }).meta('property', 'og:title')).toBe('AirCase · Plane crash & accident investigations');
     expect(parsed({ kind: 'explore', query: new URLSearchParams('q=icing') }).meta('property', 'og:title')).toBe('“icing” · Explore');
     expect(parsed({ kind: 'not_found' }).meta('name', 'twitter:title')).toBe('Page not found');
   });
@@ -381,7 +381,9 @@ describe('the page template', () => {
     const page = parsed({ kind: 'about' });
     expect(page.titles).toBe(1);
     expect(page.descriptions).toBe(1);
-    expect(page.html).not.toContain('<title>AirCase · aviation casebook</title>');
+    const templateTitle = /<title>[^<]*<\/title>/.exec(SOURCE_TEMPLATE)?.[0];
+    expect(templateTitle).toBeDefined();
+    expect(page.html).not.toContain(templateTitle);
     const theme = /<script>\(function\(\)\{[\s\S]*?<\/script>/.exec(SOURCE_TEMPLATE)?.[0];
     expect(theme).toBeDefined();
     expect(page.html).toContain(theme);

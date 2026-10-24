@@ -6,14 +6,21 @@
  * casebook". The footer says it was built by Mariusz Kotas and links his website; the About
  * page gives his name, the website and his e-mail address as a `mailto:` link. Both are public
  * on purpose: the owner asked for them. The website opens in a new tab, like the app's links to
- * NTSB reports. The wordmark is set in capitals by CSS; the text is "AirCase". `web/index.html`
- * repeats the long form and the site description for the moment before the script runs
- * (tests/web/brand.test.tsx keeps them equal); the server replaces both with each page's own.
+ * NTSB reports. The wordmark is set in capitals by CSS; the text is "AirCase". The header says in
+ * plain words what the site shows (`PRODUCT_DESCRIPTOR`), and so do the home page's title and
+ * the share card. `web/index.html` repeats the home page's title and the site description for
+ * the moment before the script runs (tests/web/brand.test.tsx keeps them equal); the server
+ * replaces both with each page's own.
  */
 export const PRODUCT_NAME = 'AirCase';
+/** What AirCase is, in the About page's words and the home page's JSON-LD (`alternateName`). */
 export const PRODUCT_TAGLINE = 'aviation casebook';
-/** "AirCase · aviation casebook": where the long form helps, as the home page's title. */
-export const PRODUCT_LONG_NAME = `${PRODUCT_NAME} · ${PRODUCT_TAGLINE}`;
+/** What the site shows, for a stranger: the header's line beside or under the wordmark. */
+export const PRODUCT_DESCRIPTOR = 'Plane crash & accident investigations';
+/** "AirCase · Plane crash & accident investigations": the home page's title. */
+export const PRODUCT_LONG_NAME = `${PRODUCT_NAME} · ${PRODUCT_DESCRIPTOR}`;
+/** The live domain, as the share card prints it. */
+export const PRODUCT_DOMAIN = 'aircase.app';
 
 export const CREDIT_NAME = 'Mariusz Kotas';
 export const CREDIT_SITE = 'mkotas.cz';
@@ -30,15 +37,33 @@ export function documentTitle(...parts: string[]): string {
 // Search engines and link previews (README, "Search engines and link previews"). Plain,
 // factual text: what each page shows today, no promises and nothing written by AI.
 
-/** The home page's description, and `web/index.html`'s until the server replaces it. */
-export const SITE_DESCRIPTION = 'Find and compare NTSB aviation investigations by their evidence, findings and probable causes.';
+/**
+ * The home page's description, `web/index.html`'s until the server replaces it, and the web app
+ * manifest's (web/public/manifest.webmanifest).
+ */
+export const SITE_DESCRIPTION =
+  'Search NTSB investigations of US plane crashes and aviation accidents since 2008: what happened, the probable cause and what investigators found.';
 
-/** The share image of every page (Open Graph and Twitter cards), served from `web/public`. */
+/**
+ * The share image of every page (Open Graph and Twitter cards), served from `web/public`. Its
+ * text: the mark and the wordmark, the descriptor as the headline, `SHARE_CARD_TEXT` under it.
+ */
 export const SHARE_IMAGE = {
   path: '/social/card.png',
   width: 1200,
   height: 630,
-  alt: 'AirCase: NTSB aviation accident investigations',
+  alt: `${PRODUCT_NAME}: ${PRODUCT_DESCRIPTOR}`,
+} as const;
+
+/**
+ * The share card's words besides the wordmark and the headline (the descriptor), rendered into
+ * `web/public/social/card.png` by `pnpm brand:build` (scripts/build-brand-assets.ts): run it
+ * again after changing any of them.
+ */
+export const SHARE_CARD_TEXT = {
+  subline: 'NTSB investigations since 2008: what happened, the probable cause and what investigators found.',
+  site: PRODUCT_DOMAIN,
+  disclaimer: 'Independent project, not an NTSB service',
 } as const;
 
 /**

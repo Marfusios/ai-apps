@@ -181,7 +181,8 @@ describe('page titles name AirCase, never the old name (owner decision 2026-10-2
   // Each route's title, and the input the server titles the same route with (shared/page-titles.ts,
   // server/seo/head.ts): the tab shows one title before and after the script runs.
   const titles: ReadonlyArray<readonly [string, string, TitledPage]> = [
-    ['/', 'AirCase · aviation casebook', { kind: 'home' }],
+    // The home page names what AirCase shows (owner decision of 2026-10-24, UI_DESIGN §10).
+    ['/', 'AirCase · Plane crash & accident investigations', { kind: 'home' }],
     ['/explore', 'Explore · AirCase', { kind: 'explore', q: '' }],
     ['/explore?q=carburetor+icing', '“carburetor icing” · Explore · AirCase', { kind: 'explore', q: 'carburetor icing' }],
     ['/dashboard', 'The record, in questions · AirCase', { kind: 'dashboard' }],
@@ -228,12 +229,21 @@ describe('page titles name AirCase, never the old name (owner decision 2026-10-2
   });
 });
 
+/** Text as HTML gives it: the character references index.html uses decoded. */
+function htmlText(raw: string | undefined): string | undefined {
+  return raw?.replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[e] ?? '');
+}
+
 describe('the page before the script runs (web/index.html)', () => {
-  it('has the long form as its title and names AirCase for visitors without JavaScript', () => {
-    expect(/<title>([^<]*)<\/title>/.exec(indexHtml)?.[1]).toBe('AirCase · aviation casebook');
+  it("has the home page's title and the site description, and names AirCase for visitors without JavaScript", () => {
+    const title = htmlText(/<title>([^<]*)<\/title>/.exec(indexHtml)?.[1]);
+    expect(title).toBe('AirCase · Plane crash & accident investigations');
+    expect(title).toBe(pageTitle({ kind: 'home' }));
     // The site description, until the server replaces it with the page's own (shared/brand.ts).
-    const description = /<meta name="description" content="([^"]*)"/.exec(indexHtml)?.[1];
-    expect(description).toBe('Find and compare NTSB aviation investigations by their evidence, findings and probable causes.');
+    const description = htmlText(/<meta name="description" content="([^"]*)"/.exec(indexHtml)?.[1]);
+    expect(description).toBe(
+      'Search NTSB investigations of US plane crashes and aviation accidents since 2008: what happened, the probable cause and what investigators found.',
+    );
     expect(description).toBe(SITE_DESCRIPTION);
     expect(/<noscript>([^<]*)<\/noscript>/.exec(indexHtml)?.[1]).toBe('AirCase needs JavaScript to search and display investigations.');
   });

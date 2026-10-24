@@ -38,7 +38,7 @@ test('search from Home shows highlighted rows from the index, under the CSP', as
   // The inline theme script ran (its hash is allowed).
   await expect(page.locator('html')).toHaveAttribute('data-theme', /^(day|night)$/);
   // The page is AirCase, and the app has started: its header is on screen.
-  await expect(page).toHaveTitle('AirCase · aviation casebook');
+  await expect(page).toHaveTitle('AirCase · Plane crash & accident investigations');
   await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase' })).toBeVisible();
   const box = page.getByRole('textbox', { name: 'Search NTSB investigations' });
   await box.fill('carburetor icing');
