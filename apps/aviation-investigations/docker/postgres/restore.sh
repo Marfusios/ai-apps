@@ -8,8 +8,10 @@
 # - Every object is created by aviation_migrator and so owned by it, as the migrations expect;
 #   the dump's grants are applied as they were. The migrator's default privileges (provisioning
 #   lets the runtime roles read every table the migrator creates) are cleared first, because
-#   pg_dump's grants never revoke them: auth tables and abuse records would otherwise become
-#   readable by aviation_ingest. The dump restores the default privileges at its end.
+#   pg_dump's grants never revoke them. Both roles would otherwise read tables they must not:
+#   aviation_ingest the sign-in, brief, idempotency, quota, lease, trial, Turnstile and abuse
+#   tables; aviation_app all of `cases` (the internal event ids too), embedding_cache,
+#   quarantine and ingestion_runs. The dump restores the default privileges at its end.
 # - One transaction: COMMIT is sent only after pg_restore has produced the whole dump, and the
 #   first error stops psql, so a failed restore leaves the database as it was. Skipped: the
 #   schema `drizzle`, which provisioning created (its journal table is restored), and the

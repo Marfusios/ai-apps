@@ -814,9 +814,11 @@ Why it is done this way (docker/postgres/restore.sh):
   `prune_controls()` and `publish_manifest()` run as a superuser.
 - **Provisioning's default privileges are suspended during the restore.** They let the
   runtime roles read every table the migrator creates, and `pg_dump`'s grants never revoke
-  them: restored with them in force, the sign-in tables and abuse records become readable
-  by `aviation_ingest`. The restore clears them in its transaction; the dump puts them back
-  at its end.
+  them. Restored with them in force, both runtime roles read tables they must not:
+  `aviation_ingest` the 14 sign-in, brief, idempotency, quota, lease, trial, Turnstile and
+  abuse tables, `aviation_app` all of `cases` (the internal event ids too),
+  `embedding_cache`, `quarantine` and `ingestion_runs`. The restore clears them in its
+  transaction; the dump puts them back at its end. `restore-check` names any such grant.
 - **One transaction.** `COMMIT` is sent only after `pg_restore` produced the whole dump, so
   a truncated or corrupt file restores nothing. The schema `drizzle` (provisioning created
   it) and the grants on schema `public` (provisioning sets them) are skipped.

@@ -51,8 +51,9 @@ describe('restore check', () => {
         await admin.query('ALTER TABLE public.cases OWNER TO CURRENT_USER');
         await admin.query('ALTER TABLE public.idempotency OWNER TO CURRENT_USER');
         await admin.query('ALTER FUNCTION public.prune_controls() OWNER TO CURRENT_USER');
-        // What restoring as the migrator under provisioning's default privileges leaves:
+        // What restoring as the migrator under provisioning's default privileges leaves, for both runtime roles:
         await admin.query('GRANT SELECT ON TABLE public.auth_users TO aviation_ingest');
+        await admin.query('GRANT SELECT ON TABLE public.quarantine TO aviation_app');
         // A grant the dump lost, and one PUBLIC must never have.
         await admin.query('REVOKE EXECUTE ON FUNCTION public.publish_manifest(bigint, text, text, text) FROM aviation_ingest');
         await admin.query('GRANT EXECUTE ON FUNCTION public.spend_totals(date) TO PUBLIC');
@@ -66,10 +67,11 @@ describe('restore check', () => {
         expect(unexpectedLine(r, 'table public.cases |')).toContain(`owner=${adminRole}`);
         expect(unexpectedLine(r, 'function public.prune_controls() |')).toContain(`owner=${adminRole} | security definer`);
         expect(unexpectedLine(r, 'table public.auth_users |')).toContain('aviation_ingest:SELECT');
+        expect(unexpectedLine(r, 'table public.quarantine |')).toContain('aviation_app:SELECT');
         expect(unexpectedLine(r, 'function public.publish_manifest(')).not.toContain('aviation_ingest:EXECUTE');
         expect(unexpectedLine(r, 'function public.spend_totals(')).toContain('PUBLIC:EXECUTE');
-        expect(r.privileges.unexpected).toHaveLength(6);
-        expect(r.privileges.missing).toHaveLength(6);
+        expect(r.privileges.unexpected).toHaveLength(7);
+        expect(r.privileges.missing).toHaveLength(7);
         expect(r.privileges.missing.every((l) => EXPECTED_PRIVILEGES.includes(l))).toBe(true);
       } finally {
         await closeDb(db);
