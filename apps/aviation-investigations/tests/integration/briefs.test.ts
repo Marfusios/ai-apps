@@ -66,7 +66,7 @@ import { SPAN_ATTR_KEYS } from '../../server/observability/attributes.js';
 import { diagnoseBrief } from '../../worker/brief-diagnose.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { manifestCasesIndex, publishManifest } from '../../server/db/generations.js';
-import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
+import { admitPaidRequest, canonicalRequestHash, expireLeases, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
 import { SPEND_LOCK_KEY } from '../../server/quota/policy.js';
 import { assertServablePassagesIndex } from '../../server/search/hybrid.js';
 import { FIXTURE_EMBEDDING, deleteIndices, fixtureEmbedder, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
@@ -1698,6 +1698,23 @@ describe('cancel and expiry', () => {
     } finally {
       await tracing.shutdown();
     }
+  });
+
+  it('a step whose settlement finds its lease already swept records what the sweep charged (task 22 AI M8)', async () => {
+    const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 20_000 } });
+    const started = await ask(h, 'Engine power loss shortly after maintenance');
+    const cookie = cookieOf(started.setCookie);
+    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
+    // The maintenance pass sweeps the lease first (as if the step had outlived it): charged in full.
+    expect(await expireLeases(appDb, new Date(clock.getTime() + 10 * MIN))).toMatchObject({ expired: 1 });
+    expect((await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie })).status).toBe(204);
+    await h.svc.settled();
+    const [res] = await reservations();
+    expect(res).toMatchObject({ status: 'expired_charged', uncertain: true });
+    const row = await stepRow(started.json.briefId);
+    // The step's own record says what the ledger holds, and that the sweep came first.
+    expect(row.cost_usd).toBe(res!.charged);
+    expect(row.meta).toMatchObject({ settlement: { status: 'not_open' } });
   });
 
   it('a cancel during the check is not a failure either', async () => {

@@ -1048,7 +1048,9 @@ class Run {
         break;
       }
       if (s && !s.ok && s.reason !== 'busy') {
-        if (s.reason === 'lease_expired') chargedUsd = s.chargedUsd ?? null;
+        // Charged without this settlement (lease expiry, now or by the sweep earlier): the step
+        // records what the ledger holds (task 22 AI M8).
+        if (s.reason === 'lease_expired' || s.reason === 'not_open') chargedUsd = s.chargedUsd ?? null;
         this.meta.settlement = { status: s.reason };
         break;
       }

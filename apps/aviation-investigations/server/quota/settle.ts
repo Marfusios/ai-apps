@@ -58,7 +58,10 @@ export type SettleResult =
       ok: false;
       reason: SettleRefusal;
       status: ReservationStatus;
-      /** For `lease_expired`: the full reservation, charged now. */
+      /**
+       * For `lease_expired`: the full reservation, charged now. For `not_open`: what the
+       * reservation was charged when it closed (by an earlier settlement or the lease sweep).
+       */
       chargedUsd?: number;
     }
   /**
@@ -86,6 +89,8 @@ interface ReservationRow {
   model: string | null;
   stage: string | null;
   request_id: string | null;
+  /** µ$ charged once closed; null while open. */
+  charged_micros: string | null;
 }
 
 interface LedgerLine {
@@ -184,7 +189,7 @@ async function lockReservation(tx: DbOrTx, id: number): Promise<ReservationRow> 
     SELECT id, category, principal_kind, principal_hash, (usd * 1000000)::bigint AS usd_micros, status,
       fencing_token::text AS fencing_token, (extract(epoch FROM lease_expires_at) * 1000)::bigint AS lease_expires_ms,
       accounting_day::text AS accounting_day,
-      provider, model, stage, request_id
+      provider, model, stage, request_id, (charged_usd * 1000000)::bigint AS charged_micros
     FROM reservations WHERE id = ${id} FOR UPDATE`);
   const row = res.rows[0] as ReservationRow | undefined;
   if (!row) throw new QuotaInputError(`Unknown reservation ${id}`);
@@ -241,7 +246,14 @@ export async function settleReservation(
       await setLockTimeout(tx);
       const row = await lockReservation(tx, reservationId);
       if (row.fencing_token !== fencingToken) return { ok: false, reason: 'stale_token', status: row.status };
-      if (row.status !== 'open') return { ok: false, reason: 'not_open', status: row.status };
+      if (row.status !== 'open') {
+        return {
+          ok: false,
+          reason: 'not_open',
+          status: row.status,
+          ...(row.charged_micros !== null ? { chargedUsd: microsToUsd(Number(row.charged_micros)) } : {}),
+        };
+      }
       if (now.getTime() >= Number(row.lease_expires_ms)) {
         const full = Number(row.usd_micros);
         const charged = await close(

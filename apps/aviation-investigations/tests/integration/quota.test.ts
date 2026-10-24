@@ -438,6 +438,8 @@ describe('settlement', () => {
       ok: false,
       reason: 'not_open',
       status: 'expired_charged',
+      // What it was charged, so the caller's own record can say so (task 22 AI M8).
+      chargedUsd: RESERVATION,
     });
     expect(await ledger(b.reservationId)).toEqual([{ stage: 'lease_expired', usd: '0.140000', uncertain: true }]);
 
@@ -608,6 +610,7 @@ describe('settlement', () => {
       ok: false,
       reason: 'not_open',
       status: 'settled',
+      chargedUsd: 0.05,
     });
     expect(await ledger(a.reservationId)).toEqual([{ stage: 'request', usd: '0.050000', uncertain: false }]);
   });
