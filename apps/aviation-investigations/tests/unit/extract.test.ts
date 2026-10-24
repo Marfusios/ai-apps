@@ -16,6 +16,7 @@ import { Writable } from 'node:stream';
 import yazl from 'yazl';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  cleanupExtraction,
   extractArchive,
   removeAllContainers,
   runContainer,
@@ -149,7 +150,7 @@ describe('runContainer lifecycle', () => {
     expect(createLine()).toMatch(/^create --name ai-aviation-dev-extract-[0-9a-f]{12} /);
     expect(createLine()).toContain(labels('dev'));
     expect(createLine()).toContain(
-      '--network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 --memory 1g --cpus 2 --pids-limit 64',
+      '--network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64',
     );
     rmSync(log, { force: true });
     setExtractEnvironment('live');
@@ -329,6 +330,27 @@ describe('extractArchive ownership', () => {
       extractArchive({ archive: z.path, sha256: '0'.repeat(64), out: join(parent, 'run') }),
     ).rejects.toThrow(/sha256/);
     expect(readdirSync(parent)).toEqual(['neighbour.txt']);
+  });
+
+  it('an interruption after the publishing rename keeps the finished extraction (data review D-M1)', () => {
+    // A signal handled after the rename completed but before the run recorded it as published.
+    const dest = join(dir, 'published');
+    mkdirSync(dest);
+    writeFileSync(join(dest, 'events.csv'), 'rows');
+    writeFileSync(join(dest, 'manifest.json'), '{}');
+    const staging = `${dest}.staging-0123456789ab`;
+    cleanupExtraction({ dest, staging }, { stagingCreated: true, published: false });
+    expect(readdirSync(dest).sort()).toEqual(['events.csv', 'manifest.json']);
+    expect(existsSync(staging)).toBe(false);
+    // Before the rename the destination is only the empty reservation: removed with the staging directory.
+    const reserved = join(dir, 'reserved');
+    mkdirSync(reserved);
+    const work = `${reserved}.staging-0123456789ab`;
+    mkdirSync(work);
+    writeFileSync(join(work, 'manifest.json'), '{}');
+    cleanupExtraction({ dest: reserved, staging: work }, { stagingCreated: true, published: false });
+    expect(existsSync(reserved)).toBe(false);
+    expect(existsSync(work)).toBe(false);
   });
 
   it('a failed run leaves neither destination nor staging directory', async () => {

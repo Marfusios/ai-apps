@@ -24,7 +24,10 @@ if (!url) {
 }
 const database = new URL(url).pathname.slice(1);
 runMigrations(url).then(
-  () => console.log(`migrations applied to ${database}`),
+  (r) => {
+    console.log(`migrations applied to ${database}`);
+    if (r.reapplied.length > 0) console.log(`run again over an earlier recorded version: ${r.reapplied.join(', ')}`);
+  },
   (err: unknown) => {
     console.error(`migration failed on ${database}: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

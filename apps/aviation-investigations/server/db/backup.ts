@@ -21,9 +21,17 @@
  * allowance) because the account rows are new. `restoreCheck` lists any of these tables
  * that are not empty (a dump made without the exclusions); `pnpm worker restore-check
  * --empty` empties them before the restored service opens.
+ *
+ * `restoreCheck` also compares every owner and grant with a freshly migrated database
+ * (`EXPECTED_PRIVILEGES`, server/db/privileges.ts): a restore that left tables or SECURITY
+ * DEFINER functions owned by the restoring administrator, or a grant the migrations never
+ * made (for example the SELECT that provisioning's default privileges give the runtime roles
+ * on tables the migrator creates, which a dump's own grants never revoke), fails it.
  */
 import { sql } from 'drizzle-orm';
 import type { DbOrTx } from './client.js';
+import { EXPECTED_PRIVILEGES } from './privileges-expected.js';
+import { comparePrivileges, privilegeSnapshot, type PrivilegeDiff } from './privileges.js';
 import { AUTH_TABLES } from './schema/auth.js';
 
 /** Tables whose rows a backup never holds (their definitions it does). */
@@ -34,15 +42,41 @@ export function pgDumpExclusions(): string[] {
   return BACKUP_EXCLUDED_DATA.map((table) => `--exclude-table-data=${table}`);
 }
 
-/** The excluded tables that hold rows (each with its count): none after a restore of a proper backup. */
-export async function restoreCheck(db: DbOrTx): Promise<{ table: string; rows: number }[]> {
-  const found: { table: string; rows: number }[] = [];
+export interface RestoreCheckReport {
+  ok: boolean;
+  /** Excluded tables that hold rows, each with its count: none after a restore of a proper backup. */
+  rows: { table: string; rows: number }[];
+  /** Excluded tables aviation_migrator cannot read: another role owns them. */
+  unreadable: string[];
+  /** Owners and grants that differ from a freshly migrated database. */
+  privileges: PrivilegeDiff;
+}
+
+/**
+ * Check a restored database before the service opens, as aviation_migrator (which owns, and
+ * so reads, every table). The owners and grants come from the catalog, which any role reads,
+ * so a database with the wrong owners is still described rather than failing on the first
+ * table the migrator cannot read. Statements run one by one, outside a transaction.
+ */
+export async function restoreCheck(db: DbOrTx, expected: readonly string[] = EXPECTED_PRIVILEGES): Promise<RestoreCheckReport> {
+  const privileges = comparePrivileges(await privilegeSnapshot(db), expected);
+  const rows: { table: string; rows: number }[] = [];
+  const unreadable: string[] = [];
   for (const table of BACKUP_EXCLUDED_DATA) {
-    const res = await db.execute(sql.raw(`SELECT count(*)::int AS n FROM "${table}"`));
-    const rows = (res.rows[0] as { n: number } | undefined)?.n ?? 0;
-    if (rows > 0) found.push({ table, rows });
+    let n: number;
+    try {
+      const res = await db.execute(sql.raw(`SELECT count(*)::int AS n FROM "${table}"`));
+      n = (res.rows[0] as { n: number } | undefined)?.n ?? 0;
+    } catch (err) {
+      const code = ((err as { cause?: { code?: string } }).cause ?? (err as { code?: string })).code;
+      if (code !== '42501') throw err;
+      unreadable.push(table);
+      continue;
+    }
+    if (n > 0) rows.push({ table, rows: n });
   }
-  return found;
+  const ok = rows.length === 0 && unreadable.length === 0 && privileges.missing.length === 0 && privileges.unexpected.length === 0;
+  return { ok, rows, unreadable, privileges };
 }
 
 /** Empty the excluded tables (as the schema owner; TRUNCATE skips the brief guards): a restore made from a dump that held them. */

@@ -22,6 +22,76 @@ import {
 export const LIFECYCLE_LOCK_KEY = 7_311_905_022;
 
 /**
+ * Advisory lock between creating a brief and deleting what briefs cite (Task 22 fix round 2,
+ * gate finding 4). A brief is inserted holding it shared (`claimBriefEvidence`), so briefs
+ * are created concurrently. Pruning and index cleanup hold it exclusively, in one
+ * transaction per generation or index, from their last check of what unexpired briefs use
+ * until the deletion is committed (or recorded). A brief therefore either commits first and
+ * is seen by that check, or claims afterwards and finds what the deletion removed.
+ */
+export const BRIEF_REFERENCES_LOCK_KEY = 7_311_905_025;
+
+export interface BriefEvidence {
+  generationId: number;
+  passagesIndex: string;
+}
+
+/**
+ * `ok`: the brief may be inserted. `gone`: its generation was pruned, or the deletion of its
+ * passages index or of the cases index of its pair was requested or done. `busy`: a pruning
+ * or cleanup step held the lock longer than the claim waits. Only `ok` lets the caller create
+ * the brief.
+ */
+export type BriefClaim = 'ok' | 'gone' | 'busy';
+
+/**
+ * In the transaction that inserts a brief, before the insert: take the brief-references lock
+ * shared (it lasts until the transaction ends) and confirm the evidence still exists. The
+ * evidence was resolved before admission, and a request can pause across publications and
+ * pruning. The lock is tried for up to `waitMs` (default 2 s, the transaction's lock bound),
+ * so a long deletion makes the request `busy` rather than failing its transaction. An index is
+ * gone from the moment `index_builds` records its deletion as requested, which cleanup commits
+ * before it asks Elasticsearch (migration 0021), whatever became of the request.
+ */
+export async function claimBriefEvidence(
+  tx: DbOrTx | NodePgDatabase<Schema>,
+  evidence: BriefEvidence,
+  opts: { waitMs?: number } = {},
+): Promise<BriefClaim> {
+  const deadline = Date.now() + (opts.waitMs ?? 2_000);
+  for (;;) {
+    const locked = await tx.execute(sql`SELECT pg_try_advisory_xact_lock_shared(${BRIEF_REFERENCES_LOCK_KEY}) AS ok`);
+    if ((locked.rows[0] as { ok?: boolean } | undefined)?.ok === true) break;
+    if (Date.now() >= deadline) return 'busy';
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const res = await tx.execute(sql`
+    SELECT EXISTS (SELECT 1 FROM dataset_manifests WHERE generation_id = ${evidence.generationId})
+      AND NOT EXISTS (
+        SELECT 1 FROM index_builds
+        WHERE index_name = ${evidence.passagesIndex} AND (deletion_requested_at IS NOT NULL OR deleted_at IS NOT NULL))
+      AND NOT EXISTS (
+        SELECT 1 FROM manifest_pairings p
+          JOIN index_builds b ON b.index_name = p.cases_index AND (b.deletion_requested_at IS NOT NULL OR b.deleted_at IS NOT NULL)
+        WHERE p.generation_id = ${evidence.generationId} AND p.passages_index = ${evidence.passagesIndex}) AS ok`);
+  return (res.rows[0] as { ok: boolean } | undefined)?.ok === true ? 'ok' : 'gone';
+}
+
+/**
+ * Of `names`, the indices whose deletion was requested or done (`index_builds`, migration
+ * 0021). None of them is published, claimed by a new brief or made an alias target again.
+ */
+export async function deletedOrDeleting(db: DbOrTx | NodePgDatabase<Schema>, names: readonly string[]): Promise<string[]> {
+  if (names.length === 0) return [];
+  const res = await db.execute(sql`
+    SELECT index_name FROM index_builds
+    WHERE index_name IN (${sql.join(names.map((n) => sql`${n}`), sql`, `)})
+      AND (deletion_requested_at IS NOT NULL OR deleted_at IS NOT NULL)
+    ORDER BY index_name`);
+  return (res.rows as { index_name: string }[]).map((r) => r.index_name);
+}
+
+/**
  * Version of the generation verifier (`worker/ingest/verify.ts`). Bump it whenever its
  * checks change: publication requires a successful verification by this version.
  */
@@ -54,23 +124,46 @@ async function call(db: DbOrTx | NodePgDatabase<Schema>, query: SQL): Promise<Re
 }
 
 /**
+ * Bound on every statement of the lifecycle connection, the wait for the lock included.
+ * Verifying generation 1 takes about 7 s; a statement that stalls must not hold the lock,
+ * and with it every publication, pruning and pin, until an operator interrupts it.
+ */
+export const LIFECYCLE_STATEMENT_TIMEOUT_MS = 10 * 60_000;
+
+/**
  * Run `fn` on one dedicated connection that holds the lifecycle advisory lock for its
  * whole duration (session level, so a transaction started inside `fn` takes its
- * snapshot only after the lock is held).
+ * snapshot only after the lock is held). Every statement on it is bounded by
+ * `statementTimeoutMs` (default `LIFECYCLE_STATEMENT_TIMEOUT_MS`); the connection goes
+ * back to the pool without the bound, or is discarded (which also releases the lock) if
+ * unlocking or resetting fails.
  */
 export async function withLifecycleLock<T>(
   db: Db,
   fn: (q: NodePgDatabase<Schema>, client: import('pg').PoolClient) => Promise<T>,
+  opts: { statementTimeoutMs?: number } = {},
 ): Promise<T> {
+  const timeoutMs = opts.statementTimeoutMs ?? LIFECYCLE_STATEMENT_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error('statementTimeoutMs must be a positive integer');
   const client = await db.$client.connect();
   let locked = false;
+  let broken: Error | undefined;
+  const discard = (e: unknown): void => {
+    broken = e instanceof Error ? e : new Error(String(e));
+  };
+  // A session that ends meanwhile (the server releases the lock with it) fails the statement
+  // that was running; without a listener its `error` event would also end the process.
+  client.on('error', discard);
   try {
+    await client.query(`SET statement_timeout = ${timeoutMs}`);
     await client.query('SELECT pg_advisory_lock($1)', [LIFECYCLE_LOCK_KEY]);
     locked = true;
     return await fn(drizzle({ client, schema }), client);
   } finally {
-    if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]).catch(() => undefined);
-    client.release();
+    if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]).catch(discard);
+    if (!broken) await client.query('RESET statement_timeout').catch(discard);
+    client.off('error', discard);
+    client.release(broken);
   }
 }
 
@@ -89,7 +182,7 @@ export interface ActiveManifest {
 }
 
 /** The active manifest with its generation's versions, or null before the first publish. */
-export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | null> {
+export async function getActiveManifest(db: DbOrTx | NodePgDatabase<Schema>): Promise<ActiveManifest | null> {
   const [row] = await db
     .select({
       generationId: datasetManifests.generationId,
@@ -111,11 +204,12 @@ export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | nu
 }
 
 /**
- * The cases index of the manifest that pairs `generationId` with `passagesIndex` (one
- * manifest row per generation, active or retired), or null when there is none: the
- * generation is gone, or it was published again with another passages index. AI
- * retrieval with the cases channel reads the cases index a brief's pinned passages index
- * was published with, never the active manifest's (task 10e).
+ * The cases index `generationId` was last published with together with `passagesIndex`
+ * (`manifest_pairings`, migration 0021: every pair a generation was ever published with,
+ * kept while the generation exists), or null when the generation never had that pair or is
+ * gone. AI retrieval with the cases channel reads the cases index a brief's pinned passages
+ * index was published with, never the active manifest's (task 10e); publishing the
+ * generation again with another passages index leaves the brief's pair resolvable.
  *
  * It runs on the request path, so it is one bounded read (`boundedRead`): pool
  * acquisition and the statement end within `timeoutMs` or when `signal` aborts, and an
@@ -129,7 +223,7 @@ export async function manifestCasesIndex(
 ): Promise<string | null> {
   const rows = await boundedRead<{ cases_index: string }>(
     db.$client,
-    'select cases_index from dataset_manifests where generation_id = $1 and passages_index = $2',
+    'select cases_index from manifest_pairings where generation_id = $1 and passages_index = $2',
     [generationId, passagesIndex],
     opts,
   );
@@ -147,7 +241,7 @@ const INDEX_NAME = /^[a-z0-9][a-z0-9._-]{0,254}$/;
  * (rollback). `passagesIndex` null publishes a keyword-only manifest.
  */
 export async function publishManifest(
-  db: Db,
+  db: DbOrTx | NodePgDatabase<Schema>,
   generationId: number,
   casesIndex: string,
   passagesIndex: string | null,
@@ -170,6 +264,8 @@ export interface PruneOptions {
   dryRun?: boolean;
   /** Test seam: runs under the lifecycle lock after planning, before any deletion. */
   afterPlan?: (candidates: number[]) => Promise<void> | void;
+  /** Test seam: runs for each candidate about to be deleted, after its last check, before `prune_generation`, holding the brief-references lock. */
+  beforePrune?: (generationId: number) => Promise<void> | void;
 }
 
 export interface PruneReport {
@@ -178,6 +274,8 @@ export interface PruneReport {
   deleted: number[];
   /** Candidates left in place because a pin protects them. */
   skippedPinned: number[];
+  /** Candidates left in place because an unexpired AI brief cites them (migration 0021). */
+  skippedLiveBriefs: number[];
 }
 
 /**
@@ -185,23 +283,31 @@ export interface PruneReport {
  * `published_at` (the active one first) and delete every other published or retired
  * generation. Never-published generations are deleted when `failed`, or when sealed
  * and unverified/verified for longer than the grace period (counted from the seal,
- * i.e. the load's commit, or the latest verification), so a slow load committing
- * late or a generation awaiting its indices is kept. `loading`, active and pinned
- * generations are never deleted. Runs under the lifecycle lock; each deletion is one
- * `prune_generation` call.
+ * i.e. the load's commit, the latest verification or the latest index build whose index
+ * still exists and is not being deleted), so a slow load committing late or a generation awaiting publication
+ * of its (possibly paid) indices is kept. `loading`, active and pinned
+ * generations are never deleted, and neither is a generation an unexpired AI brief cites
+ * (`generations_cited_by_live_briefs()`, migration 0021; amendment A6): briefs are made
+ * only on the active generation, which publication changes only under the lifecycle
+ * lock held here, so no brief can start citing a candidate meanwhile. Runs under the
+ * lifecycle lock; each deletion is one `prune_generation` call.
  */
 export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise<PruneReport> {
   const keep = opts.keep ?? 2;
   const graceHours = opts.graceHours ?? 24;
   if (!Number.isInteger(keep) || keep < 1) throw new Error('keep must be a positive integer');
   if (!(graceHours >= 0)) throw new Error('graceHours must be zero or positive');
-  return withLifecycleLock(db, async (q) => {
+  return withLifecycleLock(db, async (q, client) => {
     const generations = await call(
       q,
       sql`select g.id::int as id, g.status, m.published_at is not null as was_published, coalesce(m.active, false) as active,
             exists (select 1 from generation_pins p where p.generation_id = g.id
               and (p.pinned_until is null or p.pinned_until > now())) as pinned,
-            greatest(g.sealed_at, g.verified_at) < now() - make_interval(secs => ${graceHours * 3600}) as past_grace
+            g.id in (select b from generations_cited_by_live_briefs() as b) as cited,
+            greatest(g.sealed_at, g.verified_at,
+              (select max(b.created_at) from index_builds b
+                where b.generation_id = g.id and b.deleted_at is null and b.deletion_requested_at is null))
+              < now() - make_interval(secs => ${graceHours * 3600}) as past_grace
           from dataset_generations g left join dataset_manifests m on m.generation_id = g.id
           order by m.active desc nulls last, m.published_at desc nulls last, g.id`,
     );
@@ -209,26 +315,49 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
     const retained = published.slice(0, keep).map((g) => Number(g.id));
     const deleted: number[] = [];
     const skippedPinned: number[] = [];
+    const skippedLiveBriefs: number[] = [];
     const candidates = generations
       .filter((g) => !retained.includes(Number(g.id)) && g.active !== true && g.status !== 'loading')
       .filter((g) => g.was_published === true || g.status === 'failed' || g.past_grace === true)
-      .map((g) => ({ id: Number(g.id), pinned: g.pinned === true }))
+      .map((g) => ({ id: Number(g.id), pinned: g.pinned === true, cited: g.cited === true }))
       .sort((a, b) => a.id - b.id);
-    await opts.afterPlan?.(candidates.filter((c) => !c.pinned).map((c) => c.id));
+    await opts.afterPlan?.(candidates.filter((c) => !c.pinned && !c.cited).map((c) => c.id));
     for (const c of candidates) {
       if (c.pinned) {
         skippedPinned.push(c.id);
         continue;
       }
-      if (opts.dryRun !== true) await call(q, sql`select prune_generation(${c.id})`);
+      if (opts.dryRun === true) {
+        (c.cited ? skippedLiveBriefs : deleted).push(c.id);
+        continue;
+      }
+      // One transaction holds the brief-references lock from the last check of the briefs that
+      // cite this generation to the commit of its deletion: a brief claiming it meanwhile
+      // waits, then finds it gone; one that committed first is seen here (gate finding 4).
+      await client.query('BEGIN');
+      try {
+        await client.query('SELECT pg_advisory_xact_lock($1)', [BRIEF_REFERENCES_LOCK_KEY]);
+        const cited = await client.query('SELECT 1 FROM generations_cited_by_live_briefs() AS g WHERE g = $1', [c.id]);
+        if ((cited.rowCount ?? 0) > 0) {
+          await client.query('COMMIT');
+          skippedLiveBriefs.push(c.id);
+          continue;
+        }
+        await opts.beforePrune?.(c.id);
+        await client.query('SELECT prune_generation($1)', [c.id]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw lifecycleError(err);
+      }
       deleted.push(c.id);
     }
-    return { retained, deleted, skippedPinned };
+    return { retained, deleted, skippedPinned, skippedLiveBriefs };
   });
 }
 
 /**
- * Protect a generation from pruning (e.g. for a live brief), until `until` or
+ * Protect a generation from pruning (an index build's pin, or an operator's), until `until` or
  * `unpinGeneration`; creating and renewing pins both go through `pin_generation`,
  * which takes the lifecycle lock. While pruning runs it waits, and fails with "does
  * not exist" if pruning removed the generation meanwhile.

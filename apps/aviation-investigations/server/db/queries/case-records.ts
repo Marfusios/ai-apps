@@ -394,7 +394,7 @@ export interface CaseRecordCounts {
 }
 
 export async function countCaseRecords(
-  db: DbOrTx,
+  db: Pick<DbOrTx, 'execute'>,
   generationId: number,
   opts: Pick<StreamCaseRecordsOptions, 'includeForeign'> = {},
 ): Promise<CaseRecordCounts> {

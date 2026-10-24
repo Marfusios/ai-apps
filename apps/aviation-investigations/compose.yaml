@@ -6,10 +6,10 @@
 #
 #   docker compose -p ai-aviation-dev --env-file <dev env file> --profile app up -d --build
 #
-# The pnpm wrappers (app:up, app:down, app:migrate, ingest, extract:image) choose
-# the project, env files and override files. Profiles: `app` (aviation-app),
-# `tools` (aviation-ingest, aviation-migrate, extract-image; one-shot with
-# `run --rm`), `tunnel` (cloudflared). Overrides: compose.tunnel.yaml (no app port, tunnel token
+# The pnpm wrappers (app:up, app:down, app:migrate, app:backup, app:restore, ingest,
+# extract:image) choose the project, env files and override files. Profiles: `app`
+# (aviation-app), `tools` (aviation-ingest, aviation-migrate, aviation-backup,
+# aviation-restore, extract-image; one-shot with `run --rm`), `tunnel` (cloudflared). Overrides: compose.tunnel.yaml (no app port, tunnel token
 # required) and compose.tracing.yaml (shared observability network).
 #
 # Containers get only the variables listed under their `environment`, never a
@@ -37,7 +37,8 @@ x-hardened: &hardened
   tmpfs:
     - /tmp:size=64m,mode=1777
 
-# Built locally, never pulled (no registry holds these names).
+# Built locally, never pulled (no registry holds these names). The wrappers pass the commit
+# the image is built from; on live it must be the commit the release's git tag names.
 x-app-image: &app-image
   image: ai-aviation/app:${APP_VERSION:-dev}
   pull_policy: never
@@ -45,6 +46,7 @@ x-app-image: &app-image
     context: .
     labels:
       ai-apps.app: aviation-investigations
+      org.opencontainers.image.revision: ${AVIATION_GIT_REVISION:-unknown}
 
 # Elasticsearch connection shared by app and ingest; each adds its own API key.
 # ELASTICSEARCH_INDEX_PREFIX is ai-aviation-<env> (the shared cluster's `ai-*` template).
@@ -55,6 +57,23 @@ x-elasticsearch-env: &elasticsearch-env
   ELASTICSEARCH_INDEX_PREFIX: ${ELASTICSEARCH_INDEX_PREFIX:-ai-aviation-${APP_ENV}}
 
 x-elasticsearch-ca: &elasticsearch-ca ${ELASTICSEARCH_CA_FILE:-/dev/null}:/run/aviation/elasticsearch-ca.pem:ro
+
+# PostgreSQL client tools for backups and restores: the server's major version (16), pinned
+# by tag and digest. They run as the host user that owns AVIATION_BACKUP_DIR
+# (AVIATION_UID/AVIATION_GID, set by the wrappers) with the migrator login.
+x-postgres-tools: &postgres-tools
+  profiles: [tools]
+  restart: "no"
+  image: postgres:16.2@sha256:4aea012537edfad80f98d870a36e6b90b4c09b27be7f4b4759d72db863baeebb
+  command: []
+  user: "${AVIATION_UID:-1000}:${AVIATION_GID:-1000}"
+  environment:
+    APP_ENV: ${APP_ENV}
+    DATABASE_MIGRATOR_URL: ${DATABASE_MIGRATOR_URL:-}
+    PGAPPNAME: aviation-backup
+  networks: [postgres]
+  mem_limit: 512m
+  cpus: 1
 
 x-embeddings-env: &embeddings-env
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -122,6 +141,9 @@ services:
     networks: [edge, postgres, elasticsearch]
     mem_limit: 1g
     cpus: 1
+    # Longer than the server's own shutdown (9 s grace, forced exit at 10 s; server/main.ts):
+    # Docker's default 10 s SIGKILL would race the step settlements of the last second.
+    stop_grace_period: 15s
     healthcheck:
       test:
         - CMD
@@ -185,6 +207,42 @@ services:
     networks: [postgres]
     mem_limit: 512m
     cpus: 1
+
+  # Backups (docs/RUNBOOK.md, "Backups"), one-shot, with the PostgreSQL client tools of the
+  # server's major version, as the migrator login (the only container besides
+  # aviation-migrate that holds it). `pnpm app:backup` writes aviation_<env>-<time>.dump into
+  # AVIATION_BACKUP_DIR (docker/postgres/backup.sh); `pnpm app:restore <file>` restores one
+  # into a freshly provisioned database in one transaction (docker/postgres/restore.sh).
+  aviation-backup:
+    <<: [*postgres-tools, *service, *hardened]
+    entrypoint: ["bash", "/opt/aviation/backup.sh"]
+    labels:
+      ai-apps.app: aviation-investigations
+      ai-apps.component: backup
+      ai-apps.environment: ${APP_ENV}
+    volumes:
+      - ./docker/postgres:/opt/aviation:ro
+      - type: bind
+        source: ${AVIATION_BACKUP_DIR:-./backup-dir-not-set}
+        target: /backup
+        bind:
+          create_host_path: false
+
+  aviation-restore:
+    <<: [*postgres-tools, *service, *hardened]
+    entrypoint: ["bash", "/opt/aviation/restore.sh"]
+    labels:
+      ai-apps.app: aviation-investigations
+      ai-apps.component: restore
+      ai-apps.environment: ${APP_ENV}
+    volumes:
+      - ./docker/postgres:/opt/aviation:ro
+      - type: bind
+        source: ${AVIATION_BACKUP_DIR:-./backup-dir-not-set}
+        target: /backup
+        read_only: true
+        bind:
+          create_host_path: false
 
   # Build-only: `docker compose build extract-image` (pnpm extract:image). The
   # worker on the host runs this image as sandboxed one-off containers named

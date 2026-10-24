@@ -33,8 +33,8 @@ import { SPEND_LOCK_KEY, accountIdentityHash } from '../../server/quota/policy.j
 import { FakeRetriever } from '../support/fake-retriever.js';
 import { FakeSiteverify, REAL_SECRET, REAL_SITE_KEY } from '../support/fake-siteverify.js';
 import { CookieJar, MockGoogle, type GoogleUser } from '../support/mock-google.js';
-import { sqlState } from './corpus-helpers.js';
-import { resetControls, testDb, testPool } from './helpers.js';
+import { publishedEvidence, sqlState } from './corpus-helpers.js';
+import { resetControls, resetCorpus, testDb, testPool } from './helpers.js';
 
 const IDENTITY_SECRET = 'test-identity-hmac-secret-0123456789';
 const NETWORK_SECRET = 'test-network-hmac-secret-0123456789';
@@ -61,7 +61,7 @@ let ingest: Db;
 let migrator: Db;
 const es = new Client({ node: 'http://localhost:9' }); // never used: these routes read no index
 /** These tests read no index: AI evidence is taken as available (no step reaches retrieval). */
-const EVIDENCE = async () => ({ generationId: 1, passagesIndex: 'aviation-test-auth' });
+const EVIDENCE = async () => published;
 const harnesses: Harness[] = [];
 /** Pools of `faultyAuthDb`, closed after the file. */
 const faultyPools: Db[] = [];
@@ -90,6 +90,15 @@ afterEach(async () => {
     await h.app.close();
   }
   vi.unstubAllGlobals();
+});
+
+// A new brief must cite a published generation (claimBriefEvidence, server/db/generations.ts).
+let published = { generationId: 0, passagesIndex: 'aviation-test-auth' };
+beforeAll(async () => {
+  published = await publishedEvidence(ingest, published.passagesIndex);
+}, 120_000);
+afterAll(async () => {
+  await resetCorpus();
 });
 
 // ---------------------------------------------------------------------------

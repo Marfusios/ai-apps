@@ -4,7 +4,8 @@
  * exactly like an interactive request: actual usage is charged, uncertain usage at the
  * full reservation, and an expired lease is charged in full. Indexing and evaluation
  * share the monthly ingestion allowance, which is enforced when reserving, together
- * with the total monthly budget. Each retry attempt is its own reservation.
+ * with the total monthly budget. Each retry attempt is its own reservation. Nothing is
+ * reserved while paid operations are held after a restore (server/quota/hold.ts).
  */
 import { sql } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../db/client.js';
@@ -18,6 +19,7 @@ import {
   toMicros,
 } from './pacing.js';
 import { LEASE_TTL_MS, QuotaInputError, SPEND_LOCK_KEY, type QuotaBudgets } from './policy.js';
+import { paidOperationsHeld } from './hold.js';
 import { isLockTimeout, setLockTimeout } from './locks.js';
 import { settleReservation, type SettleResult, type SpendUsage } from './settle.js';
 
@@ -62,7 +64,9 @@ export type SpendRefusal =
       retryAt: Date;
     }
   /** A lock wait timed out (2 s); nothing was reserved. Retry later. */
-  | { ok: false; reason: 'busy' };
+  | { ok: false; reason: 'busy' }
+  /** Paid operations are held after a restore until `pnpm worker restore-reconcile` (server/quota/hold.ts). */
+  | { ok: false; reason: 'restore_hold' };
 
 const MAX_TTL_MS = 15 * 60_000;
 const STAGE = /^[a-z][a-z0-9_]{0,39}$/;
@@ -105,6 +109,8 @@ async function reserveInTransaction(
 ): Promise<SpendReservation | SpendRefusal> {
   await setLockTimeout(tx);
   await tx.execute(sql`SELECT pg_advisory_xact_lock(${SPEND_LOCK_KEY})`);
+  // Under the spend lock, which the reconciliation also holds while it charges and releases.
+  if (await paidOperationsHeld(tx)) return { ok: false, reason: 'restore_hold' };
   const snap = await spendSnapshot(tx, now);
   const remaining = remainingCategoryMicros(snap, a.category, a.budgets);
   if (amount > remaining) {

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,17 +12,34 @@ export function readLocal(names: readonly string[]): Record<string, string> {
   return existsSync(ENV_LOCAL) ? readDotenvAllowlisted(ENV_LOCAL, names) : {};
 }
 
-/** Set or replace variables in .env.local (mode 0600) without printing values. */
-export function writeLocal(values: Record<string, string>): void {
-  const lines = existsSync(ENV_LOCAL) ? readFileSync(ENV_LOCAL, 'utf8').split('\n') : [];
+/**
+ * Set or replace variables in a dotenv file without printing values. The new content goes
+ * to a temporary file (mode 0600) next to it, which then replaces the file in one rename:
+ * an interrupted write leaves the previous file whole. `afterWrite` is a test seam.
+ */
+export function writeEnvFile(file: string, values: Record<string, string>, opts: { afterWrite?: (temp: string) => void } = {}): void {
+  const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n') : [];
   if (lines.at(-1) === '') lines.pop();
   for (const [key, value] of Object.entries(values)) {
     const i = lines.findIndex((l) => l.startsWith(`${key}=`));
     if (i >= 0) lines[i] = `${key}=${value}`;
     else lines.push(`${key}=${value}`);
   }
-  writeFileSync(ENV_LOCAL, `${lines.join('\n')}\n`, { mode: 0o600 });
-  chmodSync(ENV_LOCAL, 0o600);
+  const temp = `${file}.tmp-${process.pid}`;
+  rmSync(temp, { force: true }); // a leftover of an earlier process with this pid
+  try {
+    writeFileSync(temp, `${lines.join('\n')}\n`, { mode: 0o600, flag: 'wx' });
+    opts.afterWrite?.(temp);
+    renameSync(temp, file);
+  } catch (e) {
+    rmSync(temp, { force: true });
+    throw e;
+  }
+}
+
+/** Set or replace variables in .env.local (mode 0600) without printing values. */
+export function writeLocal(values: Record<string, string>): void {
+  writeEnvFile(ENV_LOCAL, values);
 }
 
 /** Return existing values; generate and persist random ones for missing names. */

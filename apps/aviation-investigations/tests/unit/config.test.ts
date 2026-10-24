@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadConfig } from '../../shared/config.js';
+import { configuredNames, loadConfig } from '../../shared/config.js';
 import { readDotenvAllowlisted } from '../../shared/env-files.js';
 
 let dir: string;
@@ -157,5 +157,18 @@ describe('loadConfig', () => {
     } catch (e) {
       expect(String(e)).not.toContain('secret-not-a-port-xyz');
     }
+  });
+});
+
+describe('configuredNames', () => {
+  it('names the settings a file or a nonempty process value sets, never those left to the defaults', () => {
+    const names = ['AI_MONTHLY_BUDGET_USD', 'AI_INTERACTIVE_MONTHLY_BUDGET_USD', 'AI_INGESTION_MONTHLY_BUDGET_USD'];
+    const settings = file('app.env', 'AI_MONTHLY_BUDGET_USD=200\nAI_INGESTION_MONTHLY_BUDGET_USD=\n');
+    expect(configuredNames(names, { env: {}, files: [] })).toEqual(new Set());
+    expect(configuredNames(names, { env: {}, files: [settings] })).toEqual(new Set(['AI_MONTHLY_BUDGET_USD']));
+    const env = { AI_INTERACTIVE_MONTHLY_BUDGET_USD: '150', AI_INGESTION_MONTHLY_BUDGET_USD: '' };
+    expect(configuredNames(names, { env, files: [settings] })).toEqual(new Set(['AI_MONTHLY_BUDGET_USD', 'AI_INTERACTIVE_MONTHLY_BUDGET_USD']));
+    // Without explicit files, AVIATION_ENV_FILES names them, as for loadConfig.
+    expect(configuredNames(names, { env: { AVIATION_ENV_FILES: settings } })).toEqual(new Set(['AI_MONTHLY_BUDGET_USD']));
   });
 });

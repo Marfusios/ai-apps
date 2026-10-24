@@ -24,6 +24,12 @@ export interface CitationText {
  * semicolon-terminated character reference that decodes to something else. Plain
  * narratives contain `<unintelligible>`, `<insert ...>`, `<http://...>`, `<15 dBZ`,
  * `AT&T` and similar, which must not trigger conversion.
+ *
+ * Known false positive, kept in v1: `<p` or `<div` followed by whitespace counts as a tag
+ * even without a closing `>` ("pressure <p 30.12 in"); such a text is then only trimmed
+ * and marked converted. No field of the 2026-10-16 snapshot is flagged by that alone
+ * (Task 22 data review D-M8). Requiring the `>` changes the rules: do it in the next
+ * citation text version, never within v1.
  */
 const HTML_TAG = /<\/?(?:p|span|br|div)(?=[\s/>])/i;
 const CHARACTER_REFERENCE = /&(?:#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/g;

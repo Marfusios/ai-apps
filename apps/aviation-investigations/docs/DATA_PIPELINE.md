@@ -94,7 +94,7 @@ compressed or 1 GiB expanded (counted on the bytes actually written).
 **Export.** The image is a digest-pinned `debian:bookworm-slim` with
 `mdbtools=1.0.0+dfsg-1.1`, running as uid 65534; its image ID is recorded. Each
 table runs in its own container with `--network none --read-only --cap-drop ALL
---security-opt no-new-privileges --memory 1g --cpus 2 --pids-limit 64`. The root
+--security-opt no-new-privileges --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64` (no swap beyond the 1 GB). The root
 filesystem and the MDB mount are read-only, there is no writable host mount, and the
 host streams stdout to the CSV. The flags `-D %Y-%m-%d -T
 %Y-%m-%dT%H:%M:%S` keep dates unambiguous without inventing time zones.
@@ -112,7 +112,9 @@ can report read errors and still exit 0.
   operator names, addresses, contact fields or editor IDs.
 
 The raw export is deleted, and the 0700 staging directory is published by one atomic
-rename, with `manifest.json` written last.
+rename, with `manifest.json` written last. A failed or interrupted run removes what it
+created, except a destination that already holds `manifest.json`: a signal handled just
+after the rename must not delete the finished extraction.
 
 **Why.** Parsing an external Access file is the riskiest step. In the container, a
 parser exploit gets no network, no credentials, a read-only root and input, and no
@@ -136,12 +138,16 @@ Code: `worker/ingest/normalize.ts`, `worker/ingest/scalars.ts`,
 **Errors.** Structural problems stop the run:
 
 - a missing table or column;
-- a blank or duplicate `ntsb_no`;
+- a blank or duplicate `ntsb_no`, or one with a NUL byte;
 - a duplicate composite key. Keys are typed tuples, so `1` and `01` are the same
   aircraft key.
 
 Value problems go to a quarantine list with an action (row excluded, value nulled or
-value kept) and are never coerced. Generation 1 has 25 entries, all coordinates of
+value kept) and are never coerced. Every problem is listed, not just the first. A key part
+that is not a non-negative 32-bit integer (or an `ev_id` with a NUL byte) excludes its row,
+as a blank one does; an integer field outside the 32-bit range is nulled; and any other
+value with a NUL byte, which PostgreSQL text cannot hold, is nulled (`invalid_text`; a
+narrative so nulled produces no section) without being echoed. Generation 1 has 25 entries, all coordinates of
 non-US events. 75 US events have no coordinates, so their location is null. An event
 year outside 1900–2100 stops the load instead (`LoadValueError`, naming the case): the
 API's year axis carries only 1900–2100, so one such year would otherwise pass every
@@ -214,7 +220,9 @@ sections: 1,318 event-scoped and 11 converted from HTML.
 ### 2.4 Generations in PostgreSQL
 
 Code: `server/db/schema/corpus.ts`, `worker/ingest/load.ts`,
-`worker/ingest/verify.ts`, `server/db/generations.ts`, migrations `0000`–`0004`.
+`worker/ingest/verify.ts`, `server/db/generations.ts`, migrations `0000`–`0004`, `0011`
+(`publish_manifest` with an optional passages index), `0012` (the passages triggers) and
+`0021` (generations that live briefs cite).
 
 **Load.** One transaction inserts the generation as `loading`, batch-inserts every
 row, records the run as `succeeded`, seals the generation and commits. A failure
@@ -223,15 +231,21 @@ composite, so rows reference only their own generation. The loader rejects an
 extraction whose manifest disagrees with its files or row counts. Generation 1 loaded
 in about 38 s.
 
-**Sealing.** Statement triggers reject every insert, update or delete on a
-generation that is not `loading`, for every role including the owner. The one
-exception is a guarded deletion: `prune_generation` removes a whole generation.
+**Sealing.** Statement triggers reject every insert or update on a generation that is
+not `loading`, for every role including the owner, and every delete except one: a
+session that has set `aviation.pruning_generation` to the generation, as
+`prune_generation` does in its transaction to remove a whole generation. That is a plain
+custom setting any session may set, so the owner (`aviation_migrator`) could delete a
+sealed generation's rows by hand; the runtime roles hold no DELETE on the corpus.
 
 - Status changes go only through migrator-owned `SECURITY DEFINER` functions.
   `seal_generation` runs inside the load transaction. `record_verification`,
   `publish_manifest` and `prune_generation` take one shared advisory lock, which
   verification also holds. `pin_generation` and `unpin_generation` take the same lock
-  but only protect a generation from pruning; they never change its status.
+  but only protect a generation from pruning; they never change its status. The
+  connection that holds the lock for verification, publication and pruning bounds each
+  statement, the wait for the lock included, at 10 minutes, so a stalled statement
+  fails instead of blocking the others until someone interrupts it.
 - A sealed generation is `loaded`, and verification makes it `verified` or `failed`.
   Only a `verified` generation can be published. A `failed` one must pass
   verification first; there is no direct `failed → published` transition.
@@ -268,8 +282,25 @@ run it after publishing a new generation. It:
   retired ones;
 - delete never-published generations that have failed, at once;
 - delete other never-published generations 24 hours (the default grace) after their
-  seal or latest verification;
-- never delete loading, active or pinned generations.
+  seal, latest verification or latest index build whose index still exists, so a
+  generation whose (paid) indices await publication stays;
+- never delete loading, active or pinned generations, or a generation that an AI
+  brief created in the last 24 hours cites (its later steps read that generation's
+  manifest and cases; `generations_cited_by_live_briefs()`, migration 0021). Such a
+  generation goes at the first run after its briefs have expired.
+
+A request resolves its evidence before admission, and can pause across publications
+and pruning. So a brief is inserted only after re-checking, in the inserting transaction
+and holding the brief-references lock shared, that its generation still has a manifest
+row and that the deletion of neither its passages index nor the cases index of that pair
+was requested (`claimBriefEvidence`, server/db/generations.ts); otherwise the request gets
+503 and nothing is spent. Pruning and `index delete-unused` hold the same lock exclusively,
+under the lifecycle lock and in one transaction per generation or index, from their last
+check of what unexpired briefs use until the deletion is committed (for an index: until
+`index_builds` records it as requested, which happens before Elasticsearch is asked; see
+2.10). A brief being inserted is therefore either committed first and seen by that check,
+or claims afterwards and finds the generation or index gone. The claim waits up to 2 s for
+the lock; a request that waits longer gets 503 too.
 
 Control data (usage buckets, leases, Turnstile redemptions and expired briefs) is
 pruned by a periodic job in the API server, serialized by an advisory lock.
@@ -561,12 +592,38 @@ to this.
 alias request. Everything else waits for `index delete-unused --yes`, which
 revalidates under locks and refuses:
 
-- alias targets, and indices named in any manifest;
-- indices with any committed, pending or unknown attempt, including an unknown one
-  declared abandoned;
+- alias targets (read back from Elasticsearch under the alias lock), and indices named
+  in any manifest, active or retained;
+- indices an unexpired AI brief uses: its passages index and the cases index its pair
+  was published with (`indices_cited_by_live_briefs()`, migration 0021);
+- indices with a pending or unknown attempt, including an unknown one declared
+  abandoned: the request may still land;
 - running or recent builds.
 
-It is therefore no way to retire a previously committed index routinely.
+A committed attempt does not keep an index: once a later switch has moved the alias
+away from it and no manifest names it, nothing reads it (the API reads only manifest
+indices). This is how superseded indices are retired: after `prune-generations` has
+removed a generation's manifest row, or after a rebuild replaced an index, run
+`index delete-unused --older-than <hours>` (a dry run) and then with `--yes`. An index
+that is gone cannot be published again, so keep a rollback target's age above the
+threshold until the rollback is no longer needed.
+
+**A deletion is requested before it is sent.** A PostgreSQL rollback cannot undo a
+deletion in Elasticsearch, and a response can be lost after Elasticsearch applied the
+request. So `index delete-unused`, and a build deleting its own index, first record the
+deletion as requested (`index_builds.deletion_requested_at`, migration 0021) and commit
+it, then send the delete, then record it as done (`deleted_at`) once Elasticsearch
+confirmed it or reports the index missing. Both times are set once and never cleared.
+From the request on, the index is unavailable whatever became of the request: a new brief
+refuses it, publication refuses it (in code and in `publish_manifest`), and so does an
+alias switch. The next `index delete-unused --yes` completes every requested deletion, at
+any age, after the same checks; a dry run lists them apart.
+
+**Publication holds the lifecycle lock.** `publish` checks the indices (their metadata and
+document counts, and that no deletion was requested) and writes the manifest on one
+connection holding the lifecycle lock throughout; `index delete-unused` holds it from its
+decision to the deletion it records. A cleanup that starts while a publication is checking
+an index waits, and then finds the index in the manifest.
 
 ### 2.11 Publishing, and what the API reads
 
@@ -653,11 +710,12 @@ manifest published with its passages index is used, checked against the generati
 first, and only a `cases-v3` index (the version the validation covered; a manifest
 that pairs the passages with a `cases-v2` index makes AI retrieval unavailable
 rather than run an unvalidated channel). Each brief step records the cases index it
-read (name and version) in its private metadata. The manifest pairing ties a cases
-index to a generation, not to a brief: re-publishing the passages index invalidates
-the briefs made from the old one (their later steps find no cases index paired with
-their passages index and are unavailable), while re-publishing only the cases index
-can change what later retrieval for the same question returns. Nothing in either
+read (name and version) in its private metadata. Every pair a generation was published
+with is kept in `manifest_pairings` while the generation exists (migration 0021):
+re-publishing the passages index leaves the briefs made from the old one working, with
+the cases index their pair was published with, until they expire, and `index
+delete-unused` keeps every index an unexpired brief uses; re-publishing only the cases
+index can change what later retrieval for the same question returns. Nothing in either
 index changes.
 
 - **Contract first.** Retrieval refuses (`RetrievalUnavailableError`) when the
@@ -952,8 +1010,12 @@ the id inside Elasticsearch; fix round 1 makes those changes and goes back to it
 
 - Archive download is manual; the planned host allowlist is not implemented.
 - Only `avall.zip` (2008 onward) is ingested: no weekly updates or pre-2008 archives.
-- Old indices are deleted by hand, and `delete-unused` never removes an index that
-  was ever committed to an alias. `dev` still keeps `cases-v2`.
+- Old indices are deleted only on request (`index delete-unused`), never automatically.
+- HTML detection (citation text v1) also counts `<p` or `<div` followed by whitespace
+  without a closing `>` as a tag; such a text is only trimmed and marked as converted.
+  None of the snapshot's 74,413 narrative fields is affected (337 count as HTML, all for
+  other reasons). Requiring the `>` is a rule change for the next citation text version.
+  `dev` still keeps `cases-v2`.
 - Embedding inputs still contain glued headings. Fixing that needs a new input
   template and a paid re-embedding.
 - Multi-aircraft narratives (2,197 passages) can never ground an aircraft-specific

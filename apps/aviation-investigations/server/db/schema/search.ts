@@ -38,6 +38,11 @@ export const indexBuilds = pgTable(
     generationId: bigint('generation_id', { mode: 'number' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
+    /**
+     * Set, and committed, before Elasticsearch is asked to delete the index (migration 0021):
+     * from then on no brief, publication or alias switch takes it, whatever became of the request.
+     */
+    deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true, mode: 'date' }),
   },
   (t) => [
     unique('index_builds_index_unique').on(t.indexName),

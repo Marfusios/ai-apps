@@ -1,12 +1,15 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq, getTableName, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { expect } from 'vitest';
 import type { Db } from '../../server/db/client.js';
+import { publishManifest } from '../../server/db/generations.js';
 import { GENERATION_TABLES, caseSections, cases } from '../../server/db/schema/index.js';
 import { loadFromExtract } from '../../worker/ingest/load.js';
 import { verifyCorpus } from '../../worker/ingest/verify.js';
-import { readCsv } from '../support/extract-dir.js';
+import { makeExtractDir, readCsv, removeDir } from '../support/extract-dir.js';
 
 export async function loadVerified(ingest: Db, dir: string, reportDir: string): Promise<number> {
   const r = await loadFromExtract(ingest, dir);
@@ -14,6 +17,24 @@ export async function loadVerified(ingest: Db, dir: string, reportDir: string): 
   expect(v.checks.filter((c) => !c.ok)).toEqual([]);
   expect(v).toMatchObject({ ok: true, conflict: false, status: 'verified', verificationStatus: 'ok' });
   return r.generationId;
+}
+
+/**
+ * A verified generation of the fixture extract, published under `passagesIndex` (and a cases
+ * index named after it) with no index behind either: the evidence a new brief must cite
+ * (`claimBriefEvidence`, server/db/generations.ts) in tests whose steps never retrieve.
+ */
+export async function publishedEvidence(ingest: Db, passagesIndex: string): Promise<{ generationId: number; passagesIndex: string }> {
+  const extract = await makeExtractDir();
+  const reports = mkdtempSync(join(tmpdir(), 'aviation-evidence-reports-'));
+  try {
+    const generationId = await loadVerified(ingest, extract, reports);
+    await publishManifest(ingest, generationId, `${passagesIndex}-cases`, passagesIndex);
+    return { generationId, passagesIndex };
+  } finally {
+    removeDir(extract);
+    removeDir(reports);
+  }
 }
 
 /** Every row of one generation, as sorted JSON per table (read as the ingest role, which sees every column). */

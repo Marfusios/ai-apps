@@ -43,6 +43,17 @@ export {
   type QuotaLimits,
   type QuotaPolicy,
 } from './policy.js';
+export {
+  holdPaidOperations,
+  paidOperationsHeld,
+  readPaidOperationsHold,
+  reconcileRestore,
+  ReconcileRefusedError,
+  type HoldReason,
+  type PaidOperationsHold,
+  type ReconcileInput,
+  type ReconcileReport,
+} from './hold.js';
 export { runControlMaintenance, startControlMaintenance, type MaintenanceJob, type MaintenanceResult } from './maintenance.js';
 export { pruneControls, type PruneReport } from './retention.js';
 export {

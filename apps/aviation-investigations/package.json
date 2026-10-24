@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.10.1",
+  "packageManager": "pnpm@12.10.1+sha512.ba40a37eb1a370d60fea8c4cf1d364c13bcccef518e98ad2bcee954f539d38da37458e58261a3fa55e06523450ea0ffff9f497b135be41f2c15c1642bacace6c",
   "engines": {
     "node": ">=24 <25"
   },
@@ -21,6 +21,8 @@
     "app:down": "tsx scripts/compose.ts app-down",
     "app:ps": "tsx scripts/compose.ts app-ps",
     "app:migrate": "tsx scripts/compose.ts migrate",
+    "app:backup": "tsx scripts/compose.ts backup",
+    "app:restore": "tsx scripts/compose.ts restore",
     "ingest": "tsx scripts/compose.ts ingest",
     "worker": "tsx worker/cli.ts",
     "eval:retrieval": "tsx evals/retrieval/run.ts",
@@ -32,6 +34,8 @@
     "eval:checker": "tsx evals/checker/cli.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:privileges": "tsx scripts/privileges.ts",
+    "db:restore-drill": "tsx scripts/restore-drill.ts",
     "dev:server": "tsx watch server/main.ts",
     "dev:web": "vite",
     "build:web": "vite build",

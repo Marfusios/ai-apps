@@ -6,13 +6,14 @@ import { WORKER_DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from '../ser
 import { BACKUP_EXCLUDED_DATA, emptyExcludedTables, restoreCheck } from '../server/db/backup.js';
 import { listGenerations, pruneGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
-import { pruneControls } from '../server/quota/retention.js';
-import { expireLeases } from '../server/quota/settle.js';
+import { holdPaidOperations, readPaidOperationsHold, reconcileRestore, ReconcileRefusedError } from '../server/quota/hold.js';
+import { QuotaInputError } from '../server/quota/policy.js';
+import { runControlMaintenance } from '../server/quota/maintenance.js';
 import { readAiSwitch, setAccountCheck, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
 import { formatPreflight, runAiPreflight } from './ai-preflight.js';
 import { diagnoseBrief, validDiagnoseArgs } from './brief-diagnose.js';
-import { APP_DIR, workerConfig } from './config.js';
+import { APP_DIR, workerConfig, workerConfiguredNames } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
 import { cacheOnlyEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
 import { MAX_INPUT_TOKENS } from './index/passages.js';
@@ -53,6 +54,7 @@ const USAGE = [
   '  worker ai-switch [--on | --off --note <text>] [--anonymous on | --anonymous off [--note <text>]] [--account-check suspicious | always]',
   '  worker migrate',
   '  worker restore-check [--empty]',
+  '  worker restore-reconcile (--interactive-usd <n> --ingestion-usd <n> | --charge-remaining) --note <text> [--dry-run]',
   '  worker ai-preflight',
   '  worker brief-diagnose <brief-id> [--step <n>] [--include-expired]',
 ].join('\n');
@@ -468,6 +470,7 @@ async function main(argv: string[]): Promise<number> {
         );
         if (r.dryRun) console.log(`would delete (dry run; pass --yes): ${r.wouldDelete.join(', ') || 'none'}`);
         else console.log(`deleted: ${r.deleted.join(', ') || 'none'}`);
+        if (r.pending.length > 0) console.log(`deletion requested by an earlier run, not yet confirmed (pass --yes): ${r.pending.join(', ')}`);
         if (r.missing.length > 0) console.log(`already missing: ${r.missing.join(', ')}`);
         for (const k of r.refused) console.log(`kept ${k.indexName}: ${k.reason}`);
       } finally {
@@ -603,6 +606,10 @@ async function main(argv: string[]): Promise<number> {
     console.log(
       `interactive AI ${state.enabled ? 'enabled' : 'PAUSED (maintenance)'}; ${free}; ${checked}${note}, changed ${state.updatedAt?.toISOString() ?? '-'}`,
     );
+    const hold = await withDb((db) => readPaidOperationsHold(db));
+    if (hold.held) {
+      console.log(`paid operations HELD after a restore (${hold.reason}); the switch cannot release them: pnpm worker restore-reconcile`);
+    }
     return 0;
   }
   if (command === 'prune-generations') {
@@ -618,20 +625,41 @@ async function main(argv: string[]): Promise<number> {
     console.log(`retained (active and most recently published): ${list(report.retained)}`);
     console.log(`${dryRun ? 'would delete (dry run, nothing deleted)' : 'deleted'}: ${list(report.deleted)}`);
     console.log(`skipped (pinned): ${list(report.skippedPinned)}`);
+    console.log(`skipped (cited by unexpired AI briefs): ${list(report.skippedLiveBriefs)}`);
     return 0;
   }
   if (command === 'prune-controls') {
-    // Retention of the control tables runs as aviation_app (DATABASE_URL): prune_controls() is granted to
-    // that role only, which is also the role the API's periodic job uses.
+    // The API server's maintenance pass, once, by hand (server/quota/maintenance.ts): lease expiry,
+    // retention (prune_controls(), granted to aviation_app only), brief steps whose process died and
+    // expired sign-in rows, as aviation_app (DATABASE_URL) under the same advisory lock as the API's job.
     parseArgs({ args: rest, options: {}, strict: true });
     const url = workerConfig().databaseUrl;
     if (!url) throw new Error('DATABASE_URL is not set (the aviation_app login); run pnpm services:setup');
     const db = createDb(url, { max: 2, applicationName: 'aviation-worker-controls', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {
-      const leases = await expireLeases(db);
-      const pruned = await pruneControls(db);
-      console.log(`leases expired: ${leases.expired} (charged ${leases.chargedUsd} USD)`);
-      for (const [k, v] of Object.entries(pruned)) console.log(`pruned ${k}: ${v}`);
+      const r = await runControlMaintenance(db, {
+        info: () => undefined,
+        warn: (obj, msg) => console.error(`${msg} (${(obj as { err?: { name?: string } }).err?.name ?? 'error'})`),
+      });
+      if (!r.ran) {
+        if (r.reason === 'lock_held') {
+          console.log('skipped: an API server is running the maintenance pass right now');
+          return 0;
+        }
+        console.error('the maintenance pass failed');
+        return 1;
+      }
+      if (r.expired) console.log(`leases expired: ${r.expired.expired} (charged ${r.expired.chargedUsd} USD)`);
+      for (const [k, v] of Object.entries(r.pruned ?? {})) console.log(`pruned ${k}: ${v}`);
+      if (r.orphanedSteps !== null) console.log(`brief steps failed because their process died: ${r.orphanedSteps}`);
+      if (r.authPruned) {
+        const a = r.authPruned;
+        console.log(`sign-in rows pruned: sessions ${a.sessions}, verifications ${a.verifications}, stateUses ${a.stateUses}, confirmations ${a.confirmations}`);
+      }
+      if (r.failed.length > 0) {
+        console.error(`failed: ${r.failed.join(', ')}`);
+        return 1;
+      }
     } finally {
       await closeDb(db);
     }
@@ -721,15 +749,119 @@ async function main(argv: string[]): Promise<number> {
     }
     const db = createDb(url, { max: 1, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {
-      if (values.empty) await emptyExcludedTables(db);
-      const found = await restoreCheck(db);
-      if (found.length === 0) {
+      let check = await restoreCheck(db);
+      const owned = check.privileges.missing.length + check.privileges.unexpected.length === 0;
+      // A restored ledger lacks the spend after its backup: hold every paid operation until
+      // `restore-reconcile` has charged it (server/quota/hold.ts), whatever the checks say.
+      let held = true;
+      try {
+        await holdPaidOperations(db, 'restore check: paid operations held until pnpm worker restore-reconcile');
+        console.log('paid operations held until pnpm worker restore-reconcile (RUNBOOK, "Backups")');
+      } catch (e) {
+        // With the wrong owners the migrator may not write it; a backup restored into another
+        // database holds them anyway (its row names the source database).
+        held = false;
+        console.error(`could not hold paid operations: ${describeWorkerError(e)}`);
+      }
+      if (values.empty && owned && check.rows.length > 0) {
+        await emptyExcludedTables(db);
+        check = await restoreCheck(db);
+      }
+      if (check.ok && held) {
         console.log(`restore check passed: ${BACKUP_EXCLUDED_DATA.join(', ')} are empty`);
+        console.log('restore check passed: every owner and grant is the one a freshly migrated database has');
         return 0;
       }
-      for (const { table, rows } of found) console.error(`${table}: ${rows} rows (a backup must not hold them)`);
-      console.error('restore check FAILED: empty them with pnpm worker restore-check --empty before starting the app');
+      for (const { table, rows } of check.rows) console.error(`${table}: ${rows} rows (a backup must not hold them)`);
+      if (check.rows.length > 0) console.error('restore check FAILED: empty them with pnpm worker restore-check --empty before starting the app');
+      for (const table of check.unreadable) console.error(`${table}: aviation_migrator cannot read it (another role owns it)`);
+      // Object names, owners and grantees only: nothing secret.
+      for (const l of check.privileges.unexpected) console.error(`found:    ${l}`);
+      for (const l of check.privileges.missing) console.error(`expected: ${l}`);
+      if (check.unreadable.length + check.privileges.unexpected.length + check.privileges.missing.length > 0) {
+        console.error(
+          'restore check FAILED: owners or grants differ from a freshly migrated database; restore again with pnpm app:restore ' +
+            'into a freshly provisioned database (RUNBOOK, "Backups")',
+        );
+      }
       return 1;
+    } finally {
+      await closeDb(db);
+    }
+  }
+  if (command === 'restore-reconcile') {
+    // After a restore (RUNBOOK, "Backups"): charge what the restored ledger lacks (the backup's
+    // open reservations in full, and the spend since the backup as the providers report it, or
+    // all the budgets still allow this month) and release the hold, as aviation_migrator.
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        'interactive-usd': { type: 'string' },
+        'ingestion-usd': { type: 'string' },
+        'charge-remaining': { type: 'boolean' },
+        note: { type: 'string' },
+        'dry-run': { type: 'boolean' },
+      },
+      strict: true,
+    });
+    const amountArg = (v: string | undefined): number | undefined =>
+      v === undefined ? undefined : /^\d+(\.\d{1,6})?$/.test(v) ? Number(v) : Number.NaN;
+    const interactiveUsd = amountArg(values['interactive-usd']);
+    const ingestionUsd = amountArg(values['ingestion-usd']);
+    const chargeRemaining = values['charge-remaining'] === true;
+    const amounts = interactiveUsd !== undefined && ingestionUsd !== undefined;
+    if (
+      Number.isNaN(interactiveUsd) ||
+      Number.isNaN(ingestionUsd) ||
+      amounts === chargeRemaining ||
+      (!amounts && (interactiveUsd !== undefined || ingestionUsd !== undefined)) ||
+      !values.note?.trim()
+    ) {
+      console.error(USAGE);
+      return 2;
+    }
+    const config = workerConfig();
+    const url = config.databaseMigratorUrl;
+    if (!url) {
+      console.error('DATABASE_MIGRATOR_URL is not set');
+      return 2;
+    }
+    if (chargeRemaining) {
+      // What the budgets still allow is computed from the app's own budgets, never from the
+      // defaults: charging what smaller default budgets leave would let the real ones be spent
+      // again (re-review N4). They come from the app's settings file in AVIATION_ENV_FILES.
+      const names = ['AI_MONTHLY_BUDGET_USD', 'AI_INTERACTIVE_MONTHLY_BUDGET_USD', 'AI_INGESTION_MONTHLY_BUDGET_USD'];
+      const configured = workerConfiguredNames(names);
+      const missing = names.filter((n) => !configured.has(n));
+      if (missing.length > 0) {
+        console.error(
+          'restore-reconcile --charge-remaining needs the budgets the app runs with (its settings file in AVIATION_ENV_FILES, ' +
+            `or the values set explicitly when it runs on the defaults); not set: ${missing.join(', ')}`,
+        );
+        return 2;
+      }
+      const b = config.ai.budgets;
+      console.log(`budgets used: ${b.monthlyUsd} USD a month in total, ${b.interactiveMonthlyUsd} interactive, ${b.ingestionMonthlyUsd} indexing and evaluation`);
+    }
+    const db = createDb(url, { max: 1, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
+    try {
+      const r = await reconcileRestore(db, {
+        ...(amounts ? { interactiveUsd, ingestionUsd } : { chargeRemaining: true }),
+        note: values.note,
+        budgets: config.ai.budgets,
+        dryRun: values['dry-run'] === true,
+      });
+      const prefix = r.dryRun ? 'would charge (dry run, nothing changed)' : 'charged';
+      console.log(`${prefix}: ${r.openCharged.count} reservations the backup left open, ${r.openCharged.usd.toFixed(6)} USD in full`);
+      console.log(`${prefix}: interactive ${r.charged.interactive.toFixed(6)} USD, indexing and evaluation ${r.charged.indexing.toFixed(6)} USD`);
+      console.log(r.released ? 'paid operations released' : 'paid operations stay held');
+      return 0;
+    } catch (e) {
+      if (e instanceof ReconcileRefusedError || e instanceof QuotaInputError) {
+        console.error(`restore-reconcile refused: ${e.message}`);
+        return 1;
+      }
+      throw e;
     } finally {
       await closeDb(db);
     }
@@ -742,8 +874,9 @@ async function main(argv: string[]): Promise<number> {
       console.error('DATABASE_MIGRATOR_URL is not set');
       return 2;
     }
-    await runMigrations(url);
+    const r = await runMigrations(url);
     console.log(`migrations applied to ${new URL(url).pathname.slice(1)}`);
+    if (r.reapplied.length > 0) console.log(`run again over an earlier recorded version: ${r.reapplied.join(', ')}`);
     return 0;
   }
   console.error(USAGE);

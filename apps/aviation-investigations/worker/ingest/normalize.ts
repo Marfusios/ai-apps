@@ -29,7 +29,9 @@ export { CITATION_TEXT_VERSION, TEXT_NORMALIZATION_VERSION } from './citation-te
 
 /**
  * Field normalization rules (code trimming and upper-casing, flag and scalar decoding,
- * section scoping). Citation text has its own `CITATION_TEXT_VERSION`.
+ * section scoping). Citation text has its own `CITATION_TEXT_VERSION`. (The quarantine of
+ * NUL bytes and of integers beyond 32 bits, Task 22, changes only inputs that used to stop
+ * the load, so every corpus v1 could load normalizes as before: still v1.)
  */
 export const FIELD_NORMALIZATION_VERSION = 'v1';
 
@@ -282,7 +284,9 @@ export type QuarantineReason =
   | 'coordinate_incomplete'
   | 'unknown_flag'
   | 'conflicting_defining_events'
-  | 'tag_like_text_after_html';
+  | 'tag_like_text_after_html'
+  /** A NUL byte, which PostgreSQL text cannot hold: the value is nulled. */
+  | 'invalid_text';
 
 export interface QuarantineRow {
   table: TableName;
@@ -386,6 +390,10 @@ interface KeyedRow {
 }
 
 const NON_NEGATIVE_INT = /^\d+$/;
+/** Key parts, and every integer the corpus stores, are PostgreSQL `integer` columns. */
+const INT32_MIN = -2_147_483_648;
+const INT32_MAX = 2_147_483_647;
+const NUL = '\u0000';
 
 function keyOf(
   table: KeyedTable,
@@ -399,10 +407,10 @@ function keyOf(
     const raw = row[column] ?? '';
     const value = raw.trim();
     source.push(`${column}=${JSON.stringify(raw)}`);
-    if (kind === 'id' && value !== '') {
+    if (kind === 'id' && value !== '' && !value.includes(NUL)) {
       values.push(value);
       canonical.push(`${column}=${value}`);
-    } else if (kind === 'int' && NON_NEGATIVE_INT.test(value) && Number.isSafeInteger(Number(value))) {
+    } else if (kind === 'int' && NON_NEGATIVE_INT.test(value) && Number(value) <= INT32_MAX) {
       const n = Number(value);
       values.push(n);
       canonical.push(`${column}=${n}`);
@@ -458,7 +466,15 @@ function indexRows(
     if (!k.ok) {
       if (table === 'events') problems.push(`events: blank or invalid ${k.column} (${k.sourceKey})`);
       else {
-        structural.add(table, k.sourceKey, k.column, 'invalid_key', 'row_excluded', k.value, `key column ${k.column} is blank or not a non-negative integer`);
+        structural.add(
+          table,
+          k.sourceKey,
+          k.column,
+          'invalid_key',
+          'row_excluded',
+          k.value.includes(NUL) ? null : k.value,
+          `key column ${k.column} is blank, not a non-negative 32-bit integer, or holds a NUL character`,
+        );
       }
       continue;
     }
@@ -530,9 +546,15 @@ class FieldReader {
 
   integer(column: string): number | null {
     const p = parseInteger(this.raw(column));
-    if (p.ok) return p.value;
-    this.notes.add(this.table, this.key, column, 'invalid_number', 'value_nulled', p.raw, 'not an integer');
-    return null;
+    if (!p.ok) {
+      this.notes.add(this.table, this.key, column, 'invalid_number', 'value_nulled', p.raw, 'not an integer');
+      return null;
+    }
+    if (p.value !== null && (p.value < INT32_MIN || p.value > INT32_MAX)) {
+      this.notes.add(this.table, this.key, column, 'invalid_number', 'value_nulled', this.raw(column), 'outside the 32-bit integer range');
+      return null;
+    }
+    return p.value;
   }
 
   date(column: string): string | null {
@@ -609,6 +631,37 @@ function maxString(values: readonly (string | null)[]): string | null {
   return best;
 }
 
+/**
+ * PostgreSQL text cannot hold a NUL byte. A value with one becomes blank (null) with an
+ * `invalid_text` note, never echoing it, and the rest of the row stays. Key columns and
+ * events' `ntsb_no` are left as they are: their checks exclude the row, or stop the run.
+ */
+function withoutNul(
+  tables: Readonly<Partial<Record<TableName, readonly AnyRow[]>>>,
+  notes: Notes,
+): Readonly<Partial<Record<TableName, readonly AnyRow[]>>> {
+  const out: Partial<Record<TableName, readonly AnyRow[]>> = {};
+  for (const table of TABLE_NAMES) {
+    const rows = tables[table];
+    if (rows === undefined) continue;
+    const keyed = (KEY_COLUMNS as Partial<Record<TableName, readonly (readonly [string, KeyKind])[]>>)[table];
+    const kept = new Set<string>([...(keyed ?? []).map(([c]) => c), ...(table === 'events' ? ['ntsb_no'] : [])]);
+    out[table] = rows.map((row, i) => {
+      const bad = Object.keys(row).filter((c) => !kept.has(c) && (row[c] ?? '').includes(NUL));
+      if (bad.length === 0) return row;
+      const k = keyed ? keyOf(table as KeyedTable, row) : null;
+      const key = k === null ? `row=${i + 1}` : k.ok ? k.keyed.key : k.sourceKey;
+      const clean: Record<string, string> = { ...row };
+      for (const c of bad) {
+        clean[c] = '';
+        notes.add(table, key, c, 'invalid_text', 'value_nulled', null, 'contains a NUL character');
+      }
+      return clean;
+    });
+  }
+  return out;
+}
+
 function checkColumns(tables: Readonly<Partial<Record<TableName, readonly AnyRow[]>>>): string[] {
   const problems: string[] = [];
   for (const table of TABLE_NAMES) {
@@ -655,6 +708,7 @@ function indexCorpus(tables: Readonly<Partial<Record<TableName, readonly AnyRow[
   for (const e of events) {
     const no = (e.row.ntsb_no ?? '').trim();
     if (no === '') problems.push(`events: blank ntsb_no for ${e.key}`);
+    else if (no.includes(NUL)) problems.push(`events: ntsb_no of ${e.key} contains a NUL character`);
     else ntsbCounts.set(no, (ntsbCounts.get(no) ?? 0) + 1);
   }
   for (const [no, n] of ntsbCounts) if (n > 1) problems.push(`events: duplicate ntsb_no ${no} (${n} rows)`);
@@ -833,11 +887,11 @@ function buildSections(
  */
 export function normalizeCorpus(tables: RawTables, options: NormalizeOptions = {}): NormalizeResult {
   const mapping = options.mapping ?? COMPLETION_MAPPING_V1;
-  const loose = tables as unknown as Readonly<Partial<Record<TableName, readonly AnyRow[]>>>;
-  const columnProblems = checkColumns(loose);
+  const columnProblems = checkColumns(tables as unknown as Readonly<Partial<Record<TableName, readonly AnyRow[]>>>);
   if (columnProblems.length > 0) throw new NormalizationError(columnProblems);
 
   const structural = new Notes();
+  const loose = withoutNul(tables as unknown as Readonly<Partial<Record<TableName, readonly AnyRow[]>>>, structural);
   const idx = indexCorpus(loose, structural);
   const notes = new Notes();
   const cases: CanonicalCase[] = [];
@@ -1027,7 +1081,7 @@ export function normalizeCorpus(tables: RawTables, options: NormalizeOptions = {
     cohortProvisional: isCohortProvisional(mapping),
     citationTextVersion: CITATION_TEXT_VERSION,
     fieldNormalizationVersion: FIELD_NORMALIZATION_VERSION,
-    codeLabels: resolveCodeLabels(tables.eadmspub_datadictionary as readonly DictionaryCodeRow[] | undefined),
+    codeLabels: resolveCodeLabels(loose.eadmspub_datadictionary as readonly DictionaryCodeRow[] | undefined),
     stats: computeStats(cases, quarantine),
   };
 }

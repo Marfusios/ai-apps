@@ -160,6 +160,38 @@ Passwords and keys are reused from these files on the next run, so keep them.
 Then run `pnpm app:migrate` for the environment. Langfuse projects
 (`aviation-dev`, `aviation-live`) and their keys are created in Langfuse itself.
 
+### Rotating credentials
+
+`--rotate` replaces the three login passwords at once (`ALTER ROLE ... PASSWORD`) and
+invalidates both Elasticsearch API keys before minting new ones. There is no overlap
+period: from that moment the running app's new database connections fail
+(`28P01`) and its searches answer 401, and a running `pnpm ingest`, backup or
+evaluation fails. Rotate in a quiet moment:
+
+1. Make sure no ingestion, index build, evaluation or backup is running.
+2. `pnpm provision:shared ... --rotate` (both admin files for both sides, or one side
+   alone). It writes the new values into the connection files.
+3. At once, `pnpm app:up`: Compose recreates the app container because its environment
+   changed (on `live` from the same image; nothing is rebuilt). Expect errors and a
+   failing health check for the seconds in between.
+4. Check `GET /api/health` and one search; the next ingestion and backup read the new
+   files.
+
+The application secrets live in the settings file; change one there, then
+`pnpm app:up`:
+
+- `BETTER_AUTH_SECRET`: signs everyone out and fails sign-ins in flight
+  ([Google sign-in](#google-sign-in)).
+- `IDENTITY_HMAC_SECRET`: ends every trial cookie and detaches every account from its
+  usage counts and anti-abuse record (they are keyed by it); only after a leak.
+- `IP_HMAC_SECRET`: network identities start over, so per-network rate limits reset.
+- `TUNNEL_TOKEN`: rotate it in Cloudflare Zero Trust first; the connector restarts with
+  the new token ([Tunnel mode](#tunnel-mode)).
+- Provider keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), the Google OAuth client secret
+  and the Turnstile secret: create the new one at the provider, deploy it, then revoke
+  the old one, so nothing fails in between.
+- Langfuse keys: in Langfuse, then in the Langfuse connection file.
+
 ## Containers
 
 | Service | Profile | Label `ai-apps.component` | Purpose |
@@ -167,6 +199,7 @@ Then run `pnpm app:migrate` for the environment. Langfuse projects
 | `aviation-app` | `app` | `app` | Fastify API and the built web client on one origin |
 | `aviation-ingest` | `tools` | `ingest` | Worker CLI, one-shot (`run --rm`) |
 | `aviation-migrate` | `tools` | `migrate` | Schema migrations, one-shot |
+| `aviation-backup`, `aviation-restore` | `tools` | `backup`, `restore` | `pg_dump` and `pg_restore` (PostgreSQL 16 client tools), one-shot ([Backups](#backups)) |
 | `extract-image` | `tools` | `extract` | Builds the extraction image; never runs a service |
 | `extract` (one-offs) | none | `extract` | Sandboxed `mdb-export` containers the host worker starts |
 | `tunnel` | `tunnel` | `tunnel` | Cloudflare Tunnel connector |
@@ -185,23 +218,31 @@ reach a container.
 | `aviation-app` | `DATABASE_URL` (as `aviation_app`) | `ELASTICSEARCH_READ_API_KEY` | Anthropic and OpenAI keys, `BETTER_AUTH_SECRET`, Google OAuth client, Turnstile keys, `IP_HMAC_SECRET`, `IDENTITY_HMAC_SECRET`; budgets and limits | CA file (read-only) |
 | `aviation-ingest` | `DATABASE_INGEST_URL` (as `aviation_ingest`) | `ELASTICSEARCH_WRITE_API_KEY` | OpenAI key and embedding settings; the total and ingestion budgets | `data/` read-only, `data/reports/<env>` writable, CA file (read-only) |
 | `aviation-migrate` | `DATABASE_MIGRATOR_URL` (as `aviation_migrator`) | none | none | none |
+| `aviation-backup`, `aviation-restore` | `DATABASE_MIGRATOR_URL` (as `aviation_migrator`) | none | none | `AVIATION_BACKUP_DIR` (read-only for the restore), the scripts in `docker/postgres` (read-only) |
 | `extract` | none | none | none | the MDB file read-only; no network |
 | `tunnel` | none | none | `TUNNEL_TOKEN` | none |
 
 With tracing on (see [Tracing](#tracing)), `aviation-app` and `aviation-ingest` also get
 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`.
 
+The CA file (`ELASTICSEARCH_CA_FILE`, a host path) is mounted read-only into containers
+that run as uid 1000 (`aviation-app`) and as the host user (`aviation-ingest`), not as
+its owner: make it world-readable (`chmod 644`; it is a public certificate). A root-only
+file makes them fail at start with `EACCES`.
+
 ### Hardening
 
 - The application image runs as uid 1000 (`node`); `aviation-ingest` runs as the host user
   that owns `data/` (`pnpm ingest` sets `AVIATION_UID`/`AVIATION_GID`; the
-  extraction outputs are mode 0600). Extraction containers run as uid 65534.
+  extraction outputs are mode 0600), and the backup containers as the host user that owns
+  `AVIATION_BACKUP_DIR`. Extraction containers run as uid 65534.
 - Read-only root filesystem with a 64 MB `/tmp` tmpfs, all Linux capabilities
   dropped, `no-new-privileges`, and memory/CPU limits (app 1 GB, ingest 2 GB).
 - No Docker socket, no home-directory mounts. The only host paths mounted are
   the app's `data/` directory (ingest) and the Elasticsearch CA file.
 - Logs use the `json-file` driver, 10 MB × 3 files per container. Long-running
-  services restart `unless-stopped`; one-shot tools never restart.
+  services restart `unless-stopped`; one-shot tools never restart. `aviation-app` gets
+  15 s to stop (`stop_grace_period`), more than its own 10 s forced exit.
 - Images built here use `pull_policy: never`: `ai-aviation/*` names are never
   fetched from a registry.
 
@@ -211,7 +252,7 @@ With tracing on (see [Tracing](#tracing)), `aviation-app` and `aviation-ingest` 
 | --- | --- | --- |
 | `edge` | `aviation-app`, `tunnel` | Per project. App ingress and the outbound route to Cloudflare and the model, embedding, OAuth and Turnstile APIs. Nothing else joins it. Pinned to `EDGE_SUBNET` in tunnel mode. |
 | `egress` | `aviation-ingest` | Per project. Outbound route for the embeddings API. |
-| `postgres` | `aviation-app`, `aviation-ingest`, `aviation-migrate` | External, `SHARED_POSTGRES_NETWORK`. |
+| `postgres` | `aviation-app`, `aviation-ingest`, `aviation-migrate`, `aviation-backup`, `aviation-restore` | External, `SHARED_POSTGRES_NETWORK`. |
 | `elasticsearch` | `aviation-app`, `aviation-ingest` | External, `SHARED_ELASTICSEARCH_NETWORK`. |
 | `observability` | `aviation-app`, `aviation-ingest` | External, `SHARED_OBSERVABILITY_NETWORK`; only with `compose.tracing.yaml`. |
 
@@ -238,8 +279,10 @@ refuses overlapping subnets. Changing it needs
 Compose reads env files for interpolation only. Pass them through
 `AVIATION_ENV_FILES`: comma-separated, highest priority first. Nonempty variables
 exported in the shell win over the files, as in Compose itself, so unset
-host-side values such as `DATABASE_URL` before running the wrappers. The variable
-names are documented in `.env.example`.
+host-side values such as `DATABASE_URL` before running the wrappers. (Compose lets a
+variable exported empty win too; the wrappers drop empty values of the names they check,
+so the containers get the values that were checked.) The variable names are documented
+in `.env.example`.
 
 An environment combines the generated connection files with the Langfuse
 connection file and a private file of application settings, all outside the
@@ -301,8 +344,11 @@ true. They never print values, and they refuse to run when:
   `APP_ENV` differs from the files';
 - a variable the command needs is missing;
 - the command's database URL (`DATABASE_URL` for `app:up`, `DATABASE_INGEST_URL`
-  for `ingest`, `DATABASE_MIGRATOR_URL` for `app:migrate`) does not name
-  `aviation_<APP_ENV>` or lacks the `options=-c role=<group>` switch;
+  for `ingest`, `DATABASE_MIGRATOR_URL` for `app:migrate`, `app:backup` and
+  `app:restore`) does not name `aviation_<APP_ENV>` or lacks the
+  `options=-c role=<group>` switch;
+- for `app:backup` and `app:restore`: `AVIATION_BACKUP_DIR` is missing, not a directory or
+  inside the repository, or the restore does not name one `.dump` file in it;
 - `ELASTICSEARCH_INDEX_PREFIX` is not `ai-aviation-<APP_ENV>`;
 - on `live`: `APP_VERSION` is missing or `dev` (for `app:up`, `ingest` and
   `app:migrate`), or `TUNNEL_TOKEN` is missing for `app:up`;
@@ -316,7 +362,9 @@ profile), so `live` never publishes a port. On `dev` it runs tunnel mode when
 export AVIATION_ENV_FILES=...       # see Env files
 
 pnpm app:migrate               # schema migrations (aviation-migrate container)
-pnpm app:up                    # build the image, start app (and tunnel), wait until healthy
+pnpm app:backup                # dump the database into AVIATION_BACKUP_DIR (Backups)
+pnpm app:restore <file>        # restore a backup into a freshly provisioned database (Backups)
+pnpm app:up                    # start app (and tunnel), wait until healthy; builds the image (below)
 pnpm app:ps                    # this environment's containers, one-offs included
 pnpm ingest generations        # any worker command in a one-shot ingest container
 pnpm app:down                  # stop and remove this environment's containers
@@ -326,16 +374,16 @@ pnpm extract:image             # build ai-aviation/extract:mdbtools-1.0.0
 The same with plain Compose, from the app directory:
 
 ```sh
-docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --rm aviation-migrate
+docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --build --rm aviation-migrate
 docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile app up -d --build
-docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --rm aviation-ingest generations
+docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --build --rm aviation-ingest generations
 docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile app --profile tools --profile tunnel down
 ```
 
 Pass one `--env-file` per file, lowest priority first. `compose.yaml` refuses to
 load without `APP_ENV`. Plain Compose does not apply the wrappers' checks: on
 `live` always add `-f compose.tunnel.yaml --profile tunnel`, or the app publishes
-its loopback port. Run `aviation-ingest` with
+its loopback port, and leave out `--build` (see below). Run `aviation-ingest` with
 `AVIATION_UID=$(id -u) AVIATION_GID=$(id -g)` and create `data/reports/<env>`
 first when not using the wrapper.
 
@@ -354,10 +402,44 @@ without `TRUSTED_PROXY_CIDRS`.
 4. Run the [AI preflight](#ai-preflight) with the environment's settings file.
 5. `pnpm app:up` (tunnel mode on `live`).
 
-To update: pull the code, set a new `APP_VERSION` on `live`, run
-`pnpm app:migrate` and the [AI preflight](#ai-preflight), then `pnpm app:up`. To roll
-back, set the previous `APP_VERSION` (its image is still local) and run `pnpm app:up`;
-migrations are not reversed.
+**Images.** On `dev`, `pnpm app:up`, `pnpm app:migrate` and `pnpm ingest` rebuild
+`ai-aviation/app:dev` from the checkout every time (seconds when nothing changed), so the
+migrations, the worker and the server always come from the same code. On `live` every
+release tag (`APP_VERSION`) is also a git tag, on the release's commit. Its image is built
+once, by the first command that needs it, and only from a clean checkout of that commit (no
+changed, staged or untracked file under the app directory that git does not ignore: an
+untracked file would enter the image too); it records the commit (label
+`org.opencontainers.image.revision`), and later commands
+start it as built, even after the checkout moved on. The wrappers refuse a live tag
+without a git tag, an image that records another commit than its tag, and a missing image
+unless the checkout is exactly the tagged commit: a rollback never builds the current
+code under an old tag. `--rebuild` as the first argument (`pnpm app:up --rebuild`, `pnpm
+app:migrate --rebuild`, `pnpm ingest --rebuild ...`) rebuilds a tag on purpose, again only
+from a clean checkout of its tagged commit.
+
+To update `live`: tag the release's commit (`git tag <APP_VERSION> <commit>`), check it
+out, set `APP_VERSION`, run `pnpm app:migrate` (which builds the image and applies its
+migrations) and the [AI preflight](#ai-preflight), then `pnpm app:up`. To roll back, set
+the previous `APP_VERSION` and run `pnpm app:up`: its image is still local and starts
+unchanged. If that image was removed, the wrapper refuses; check out the clean commit of
+its git tag and run the command again to build it from that commit.
+
+Releases from before these checks have no git tag, and their images no revision label (the
+release running when the checks shipped is one), so the wrappers of later releases refuse
+to start them. The first tagged release replaces such a release like any update: tag its
+commit, check it out clean, `pnpm app:migrate` builds its labelled image, `pnpm app:up`
+recreates the app container from it. A later wrapper never builds an earlier release either:
+it builds only the commit it was checked out at. To roll back to a release from before the
+checks, use that release's own checkout, whose wrapper predates them: check out its commit
+(clean) and run `pnpm app:up` there; that wrapper rebuilds the image from that commit, as it
+always did, and starts it. Keep that commit noted with the release (or tag it), since its
+image records none.
+Migrations are not reversed, so roll back only to a release that runs on the current
+schema (the migrations add, and every release so far reads the tables it knows); after a
+migration that changes what an earlier release relies on, roll forward instead. Each
+release image takes about 350 MB: keep the current and the previous two tags as rollback
+inventory and remove older ones (`docker image rm ai-aviation/app:<tag>`); `docker image
+prune` removes the untagged layers that `dev` rebuilds leave behind.
 
 ### AI preflight
 
@@ -408,12 +490,13 @@ lookup that fails or times out fails the step with `cases_index_lookup` before t
 question is embedded.
 
 Each step under `retrieval.v2` records the cases index it read in its private
-`meta.retrieval` (`casesIndex`, `casesIndexVersion`, with the mapping counts). The
-pairing ties a cases index to a generation, not to a brief: republishing the passages
-index invalidates the briefs made from the old one (their later steps fail
-`no_cases_index`), and republishing only the cases index can change what later
-retrieval returns for the same question (compare a step's `meta.retrieval.casesIndex`
-with the manifest when that matters).
+`meta.retrieval` (`casesIndex`, `casesIndexVersion`, with the mapping counts). Every pair
+a generation was published with stays resolvable while the generation exists
+(`manifest_pairings`, migration 0021), so republishing the passages index (passages-v2)
+leaves the briefs made from the old one working until they expire: `index delete-unused`
+keeps every index an unexpired brief uses. Republishing only the cases index can change
+what later retrieval returns for the same question (compare a step's
+`meta.retrieval.casesIndex` with the manifest when that matters).
 
 To switch, or to roll back:
 
@@ -445,7 +528,7 @@ APP_ENV=dev pnpm worker extract --archive data/research/avall.zip --sha256 <hex>
 Its containers are named `ai-aviation-<env>-extract-<hex>` and labelled as one-off
 containers of service `extract` in project `ai-aviation-<env>`, so they appear in
 `pnpm app:ps` while they run. They have no network, a read-only root, no
-capabilities, uid 65534, 1 GB memory, 2 CPUs and 64 processes, and are always
+capabilities, uid 65534, 1 GB memory and no swap, 2 CPUs and 64 processes, and are always
 removed afterwards.
 
 Loading, verification and the other worker commands then run in the
@@ -505,12 +588,29 @@ environment has a v3 index, `cases-v2`), and a document count that differs from 
 generation's US events, and changes nothing then. Without `--passages-index` the manifest is
 keyword-only: search, case pages and the dashboard work and AI stays off. Publishing
 an earlier generation again is the rollback. The running API picks up a new manifest
-within seconds; public responses may stay cached for up to five minutes.
+within seconds; public responses may stay cached for up to five minutes. It also refuses
+an index whose deletion `index delete-unused` requested, even one Elasticsearch still has,
+and it holds the lifecycle lock from its first check to the manifest it writes, so a
+cleanup running meanwhile waits and then keeps the index the manifest names.
 
 The `index` commands (README, "Cases index") use the environment's write API key,
 so they create and switch only `ai-aviation-<env>-*` indices. A build deletes only
 its own index, and only when it failed before any alias request; every other index
-stays until an explicit `index delete-unused --older-than <hours> --yes`.
+stays until an explicit `index delete-unused --older-than <hours> --yes`, which deletes
+indices that are older than the threshold, no alias target, in no manifest (active or
+retained) and used by no unexpired AI brief (briefs being created wait while it decides;
+one that would cite the index is refused), and refuses any with a switch request
+still pending or unknown. Run it
+without `--yes` first: it lists what it would delete. A deleted index cannot be
+published again, so pick a threshold above the age of any index you may roll back to.
+
+Each deletion is recorded as requested before Elasticsearch is asked, and as done once
+Elasticsearch confirmed it (or reports the index missing). From the request on, the index
+is gone for the app: no new brief, publication or alias switch takes it, whatever became
+of the request. If the command fails or stops meanwhile (a lost response, a database
+error, the process killed), run it again with `--yes`: it completes every requested
+deletion, at any age. A dry run lists them apart (`deletion requested by an earlier run,
+not yet confirmed`).
 
 Paths are relative to the app directory, which the container sees at the same
 relative location (`data/` is mounted at `/app/data`).
@@ -576,7 +676,11 @@ Enabling it on an environment requires, in this order:
    checklist count, the drawer's READING and QUOTES lines, Compare's markers); an older
    client would drop or mislabel them.
 4. **The setting** in the environment's settings file, then a restart of the app
-   container; `AI_PARTIAL_DISPLAY` is read at start.
+   container; `AI_PARTIAL_DISPLAY` is read at start. Until gate G6 clears it, compose.yaml
+   does not pass `AI_PARTIAL_DISPLAY` to `aviation-app`, so a Compose deployment stays in
+   `whole` mode whatever the settings file says (a unit test keeps it that way): the commit
+   that records the clearance adds `AI_PARTIAL_DISPLAY: ${AI_PARTIAL_DISPLAY:-}` to the
+   service's `environment` and updates that test.
 5. **A smoke check**: one brief on the environment, then `pnpm worker brief-diagnose
    <brief-id>` shows `display.mode: claims`, and the page shows "Evidence check completed ·
    N statements removed".
@@ -650,35 +754,155 @@ run `index cases`, `index passages` (free while the cache is complete) and `publ
 Verification reports under `data/reports/` and the extraction directories are
 derived and need no backup; the source archive is kept wherever you keep it.
 
+### Taking a backup
+
 ```sh
-# One environment's database, as a role that can read everything in it, without the rows
-# a backup never holds. Run it on the host that can reach the database; keep the file off
-# the repository and encrypted.
-pg_dump --format=custom --no-owner \
-  --exclude-table-data=auth_deletion_confirmations --exclude-table-data=auth_sessions \
-  --exclude-table-data=auth_accounts --exclude-table-data=auth_verifications \
-  --exclude-table-data=auth_state_uses --exclude-table-data=auth_users \
-  --exclude-table-data=brief_steps --exclude-table-data=briefs --exclude-table-data=idempotency \
-  --file "<backup-dir>/aviation_<env>-$(date +%F).dump" \
-  "postgresql://<backup-role>@<db-host>:<port>/aviation_<env>"
+export AVIATION_ENV_FILES=...          # the environment's .docker.env files, as for pnpm app:migrate
+export AVIATION_BACKUP_DIR=<private directory outside the repository>
+pnpm app:backup                        # writes aviation_<env>-<UTC time>.dump, mode 0600
 ```
 
-Restore, with the app stopped (`pnpm app:down`):
+`app:backup` runs `pg_dump` (docker/postgres/backup.sh) in the one-shot `aviation-backup`
+container, with the PostgreSQL 16 client tools of the shared server's version, as the
+environment's migrator login (`DATABASE_MIGRATOR_URL`). That is the only login that can
+dump the database: `pg_dump` locks every table it dumps, those whose rows it leaves out
+too, and the app and ingest logins are refused (`permission denied for schema drizzle`).
+The file appears under its final name only once it is complete. The container runs as
+the host user that owns the directory (the wrapper sets `AVIATION_UID`/`AVIATION_GID`)
+and sees only that directory and the scripts. Backup and restore connect through a private
+libpq service file (docker/postgres/libpq-service.sh, mode 0600 on the container's tmpfs,
+removed on exit, also after a failure), so the migrator password never appears in a
+process's arguments, which every local user can read in `ps`. With plain Compose, set those three
+variables and run `docker compose -p ai-aviation-<env> --env-file ... --profile tools run
+--rm aviation-backup`.
+
+### Schedule, encryption, expiry and drills
+
+Nothing in this repository schedules backups or copies them off the host: that is the
+operator's duty, at least for `live`.
+
+1. **Daily**, a host timer (cron or a systemd timer) runs, as the user that owns the
+   backup directory, `cd <checkout>/apps/aviation-investigations && pnpm app:backup` with
+   the environment's `AVIATION_ENV_FILES` and `AVIATION_BACKUP_DIR`.
+2. **Encrypted, off the host** (DESIGN §11): encrypt each new file to a key that is not on
+   the host (for example `age -r <recipient> -o <file>.age <file>`, then remove the plain
+   file) and copy the encrypted file to a destination off the host. A backup holds the
+   ledger and the HMAC-keyed quota and abuse records; treat it like the database.
+3. **Expiry**: backups expire within 30 days. Delete local and off-host copies older than
+   that (`find <dir> -name 'aviation_<env>-*.dump*' -mtime +30 -delete`, and the off-host
+   store's own lifecycle rule).
+4. **Restore drill**, monthly and after any migration that adds tables or changes grants:
+   decrypt the newest backup into a private directory and run
+   `pnpm db:restore-drill <file>`. It needs Docker only: it restores the file with the same
+   script as `app:restore` into a throwaway PostgreSQL 16 server, applies the migrations,
+   runs the restore check, confirms that paid operations are blocked (held for the app
+   login, spend refused for the ingest login), removes the server again, and ends with
+   `drill passed`; anything else fails it.
+
+### Restoring
+
+With the app stopped (`pnpm app:down`), and the backup decrypted into
+`AVIATION_BACKUP_DIR`:
 
 ```sh
-# 1. Into an empty database, then re-run the migrations to check the schema.
-pg_restore --no-owner --dbname "postgresql://<admin-role>@<db-host>:<port>/aviation_<env>" "<backup-dir>/<file>.dump"
+# 1. As the cluster administrator: drop the damaged database if it still exists, then
+#    provision the environment again (Provisioning). It creates an empty database with the
+#    roles, schemas and default privileges, and keeps the passwords of the connection files.
+psql "<administrator URL of the database server>" -c 'DROP DATABASE IF EXISTS aviation_<env> WITH (FORCE)'
+pnpm provision:shared --env <env> --out <dir> --pg-admin-env <file> ...
+# 2. Restore as the migrator login, in one transaction that also holds paid operations. It
+#    refuses a database that is not empty, and a restore that fails leaves the database
+#    empty: fix the cause, run it again.
+pnpm app:restore aviation_<env>-<time>.dump
+# 3. The migrations newer than the backup.
 pnpm app:migrate
-# 2. On a host with DATABASE_MIGRATOR_URL (as for pnpm worker migrate): the tables a backup
-#    never holds must be empty. It fails, naming them, when the dump held their rows (one
-#    made before these exclusions); only then empty them, which also checks again:
+# 4. On a host with the environment's host-side DATABASE_MIGRATOR_URL (as for pnpm worker
+#    migrate): holds paid operations (next section), then checks that every owner and grant
+#    is the one a freshly migrated database has and that the tables a backup never holds
+#    are empty, naming every difference. Only for a dump made before those exclusions:
+#    `pnpm worker restore-check --empty` empties those tables and checks again.
 pnpm worker restore-check
-#    pnpm worker restore-check --empty
-# 3. Only after it passed, open the service.
+# 5. Only after it passed, open the service. Paid operations stay held.
 pnpm app:up
+# 6. Charge the spend the restored ledger lacks, which releases them (next section).
+pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source of the figures>"
 ```
 
-Roles and grants are part of provisioning, not of the dump (`pnpm provision:shared`).
+Why it is done this way (docker/postgres/restore.sh):
+
+- **The migrator restores.** Every object is created by `aviation_migrator` and so owned
+  by it, as the migrations expect, and the dump's grants are applied as they were.
+  Restoring as the administrator with `--no-owner`, as this runbook once said, makes the
+  administrator own every table and `SECURITY DEFINER` function: `app:migrate` then fails
+  with `permission denied for table __drizzle_migrations`, and functions such as
+  `prune_controls()` and `publish_manifest()` run as a superuser.
+- **Provisioning's default privileges are suspended during the restore.** They let the
+  runtime roles read every table the migrator creates, and `pg_dump`'s grants never revoke
+  them. Restored with them in force, both runtime roles read tables they must not:
+  `aviation_ingest` the 14 sign-in, brief, idempotency, quota, lease, trial, Turnstile and
+  abuse tables, `aviation_app` all of `cases` (the internal event ids too),
+  `embedding_cache`, `quarantine` and `ingestion_runs`. The restore clears them in its
+  transaction; the dump puts them back at its end. `restore-check` names any such grant.
+- **One transaction.** `COMMIT` is sent only after `pg_restore` produced the whole dump, so
+  a truncated or corrupt file restores nothing. The schema `drizzle` (provisioning created
+  it) and the grants on schema `public` (provisioning sets them) are skipped.
+
+`restore-check` fails on any other owner, any grant too many or too few, and on an excluded
+table the migrator cannot read. Do not open a service whose database fails it: restore
+again into a freshly provisioned database. Roles, the database, its schemas and their
+grants come from provisioning (`pnpm provision:shared`); grants on tables, sequences and
+functions come from the dump and are checked against `server/db/privileges-expected.ts`
+(regenerate it with `pnpm db:privileges` after a migration that changes them).
+
+### Paid operations after a restore
+
+A backup's ledger (`cost_ledger`, `reservations`) ends when the backup was taken. What was
+spent afterwards is missing from the restored database but still billed by the providers,
+so a service opened on it could spend the same daily and monthly allowance again. A
+restored database therefore holds every paid operation (`server/quota/hold.ts`, migration
+0020): AI answers are paused for maintenance (`GET /api/ai/status` says `paused`,
+`maintenance`) and indexing and evaluation spend is refused (`restore_hold`). Search, case
+pages and the dashboard work as usual.
+
+The restore itself holds them, in its own transaction (`pnpm app:restore` ends with
+docker/postgres/after-restore.sql, which also records the restore in `drizzle.restores`),
+so a restored database never opens with paid operations allowed. A backup taken before
+migration 0020 has no hold table yet: its restore only records itself, and `pnpm
+app:migrate` then starts held. `pnpm worker restore-check` sets the hold again. Nothing
+depends on database OIDs, which a new cluster can repeat. `pnpm worker ai-switch --on` does
+not release the hold (`pnpm worker ai-switch` shows it). Only the reconciliation does. It runs as `aviation_migrator`, with the environment's host-side
+`DATABASE_MIGRATOR_URL` and the same budget settings as the app (its settings file in
+`AVIATION_ENV_FILES`):
+
+```sh
+# The spend since the backup (its file name carries the time) that the ledger lacks, from the
+# providers' usage pages for this environment's keys: Anthropic and OpenAI usage of AI
+# answers as --interactive-usd, embeddings for indexing and evaluation calls as
+# --ingestion-usd. Preview first; nothing changes.
+pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source>" --dry-run
+pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source>"
+# Without those figures: charge everything the budgets still allow this month. Paid
+# operations then stay at zero until the next UTC month. Preview it with --dry-run too.
+pnpm worker restore-reconcile --charge-remaining --note "<why>"
+```
+
+`--charge-remaining` computes what is left from the budgets the app runs with, so it
+refuses unless `AI_MONTHLY_BUDGET_USD`, `AI_INTERACTIVE_MONTHLY_BUDGET_USD` and
+`AI_INGESTION_MONTHLY_BUDGET_USD` are set (normally by the app's settings file in
+`AVIATION_ENV_FILES`); it never falls back to the defaults, which would leave larger real
+budgets spendable. For an app that runs on the defaults, set the three to them explicitly.
+It prints the budgets it used (`budgets used: ...`); check them against the app's before
+the real run.
+
+In one transaction under the spend lock it charges every reservation the backup left open
+at its full amount (the outcome of those requests is unknown), then the given amounts
+(interactive, and indexing and evaluation together, which share one allowance) to the
+current day, and releases the hold. It refuses, changing nothing, when nothing is held or
+while a reservation of the backup still has a running lease (it names the time to wait
+for). A provider's usage page counts every use of a key: when a key also serves something
+else, or a figure cannot be split between the two amounts, the larger figure is the safe
+one. After moving the database to another server by dump and restore, the ledger is
+complete: reconcile with `--interactive-usd 0 --ingestion-usd 0`.
 
 ## Retention and maintenance
 
@@ -693,21 +917,24 @@ Nothing grows without bound, but two kinds of retention run differently:
   type only) and retried at the next pass, and never stops the server. This runs as
   `aviation_app`, which already holds `EXECUTE` on `prune_controls()` and the table
   privileges lease expiry needs (migration 0008), so no grant was added and no host
-  cron or systemd timer is needed. To run it by hand (a host with `DATABASE_URL`, the
-  `aviation_app` login, in `AVIATION_ENV_FILES` or `.env.local`; the ingest container does not hold
-  that credential): `pnpm worker prune-controls`.
+  cron or systemd timer is needed. The pass also marks brief steps whose process died as
+  failed and deletes expired sign-in rows. To run the same pass once by hand, under the
+  same lock (a host with `DATABASE_URL`, the `aviation_app` login, in `AVIATION_ENV_FILES`
+  or `.env.local`; the ingest container does not hold that credential):
+  `pnpm worker prune-controls`. It prints what each step did and exits 1 if one failed.
 - **Generations** are pruned only on request. Run it after publishing a new generation
   (and after a rollback has settled):
 
   ```sh
   pnpm ingest prune-generations --dry-run    # lists what would be deleted; deletes nothing
-  pnpm ingest prune-generations              # keeps the active, pinned and the two most recently published
+  pnpm ingest prune-generations              # keeps the active, pinned and the two most recently published, and any an unexpired AI brief cites
   pnpm ingest prune-generations --grace-hours 48   # never-published generations are kept this long (default 24)
   ```
 
-  Pruned generations take their case rows with them, so run the dry run first, and
-  delete the indices that belonged to them afterwards with
-  `index delete-unused --older-than <hours>` (above).
+  Pruned generations take their case rows and manifest rows with them, so run the dry
+  run first. Their indices then belong to no manifest; delete them afterwards with
+  `pnpm ingest index delete-unused --older-than <hours>`, first without `--yes`
+  ([Ingestion](#ingestion)).
 
 ## Google sign-in
 
@@ -778,11 +1005,17 @@ pnpm worker ai-switch --account-check suspicious
 
    ```sh
    docker compose -p ai-aviation-live --env-file "$ENV_FILE" \
-     -f compose.yaml -f compose.tunnel.yaml --profile app --profile tunnel up -d --build
+     -f compose.yaml -f compose.tunnel.yaml --profile app --profile tunnel up -d
    ```
 
 4. Check that nothing is published: `APP_ENV=live pnpm app:ps` shows no ports
    for `aviation-app`.
+5. Check the connector: the `tunnel` service has no health check (its image has no
+   shell or HTTP client), so `pnpm app:up --wait` succeeds even with a wrong
+   `TUNNEL_TOKEN` while `cloudflared` keeps restarting. Read
+   `docker compose -p ai-aviation-live logs tunnel` for a registered connection and
+   check that the tunnel shows as healthy in Cloudflare Zero Trust, then open the public
+   hostname.
 
 In tunnel mode the app serves only peers inside `TRUSTED_PROXY_CIDRS` (anything else
 gets 403, except its own loopback health check) and takes the client address from
@@ -844,6 +1077,20 @@ the `DATABASE_*` and `ELASTICSEARCH_*` variables) and `test` (database
 `aviation_test`, indices `aviation-test-*`, the `TEST_DATABASE_*` and
 `TEST_ELASTICSEARCH_*_API_KEY` variables of the integration tests).
 
+`pnpm db:migrate` and the integration tests refuse a database whose recorded migrations
+differ from the checkout's: one recorded with other content (edited after it was applied),
+or missing below a later one (another checkout migrated it). Over a database that recorded
+an earlier version of migration 0020 or 0021, which changed after the local test database
+had recorded them, the migrator runs the current version again instead (it converges). For
+any other difference, reset the local test database, which holds only disposable test data:
+
+```sh
+docker compose -f compose.local-services.yaml --env-file .env.local exec postgres \
+  psql -U postgres -c 'DROP DATABASE aviation_test WITH (FORCE)'
+pnpm services:setup        # provisions aviation_test again, keeping the passwords
+pnpm db:migrate --test     # or the next pnpm test:integration
+```
+
 Both services publish loopback-only ports (`POSTGRES_PORT`, default 55432, and
 `ELASTICSEARCH_PORT`, default 59200) for host-side tools: setup, migrations, the
 integration tests and `pnpm worker`. These ports are for development only.
@@ -856,20 +1103,11 @@ name) with `SHARED_POSTGRES_NETWORK=ai-aviation-local_default`,
 `.env.local` with host `postgres:5432`, `ELASTICSEARCH_URL=http://elasticsearch:9200`
 and the API keys from `.env.local`.
 
-Earlier checkouts ran these services as project `ai-aviation`, with login-capable
-group roles and databases `aviation` and `aviation_test`. Stop that project once
-with `docker compose -p ai-aviation down` (its volumes are kept) before
-`pnpm services:up`; `ai-aviation-local` starts with empty volumes, so run
-`services:setup` and `db:migrate` again and reload data. Running the new
-`services:setup` against an old server instead converts its group roles to
-`NOLOGIN`, which locks out checkouts still using the old URLs.
-
-The local PostgreSQL ran 17.6 before it was pinned to 16.2, the shared server's
-version. A data directory cannot be reused across major versions, and the 16.2
-image refuses to start on one made by 17. A checkout whose `ai-aviation-local`
-PostgreSQL volume was made by 17.6 removes that volume once and provisions again
-(this deletes the local `aviation_dev` and `aviation_test` databases, which hold
-only disposable data; the Elasticsearch volume is not touched):
+The local PostgreSQL is pinned to 16.2, the shared server's version. A data directory
+cannot be reused across major versions, and the 16.2 image refuses to start on one
+another major version made. If that happens, remove the volume once and provision again
+(this deletes the local `aviation_dev` and `aviation_test` databases, which hold only
+disposable data; the Elasticsearch volume is not touched):
 
 ```sh
 pnpm services:down
@@ -881,9 +1119,8 @@ pnpm db:migrate
 
 ## PostgreSQL 16 compatibility
 
-The shared server and the local services both run PostgreSQL 16.2 (the local
-services ran 17.6 until they were pinned to the shared server's version, so that
-the integration tests exercise the version the deployments use). The `MAINTAIN`
+The shared server and the local services both run PostgreSQL 16.2, so that the
+integration tests exercise the version the deployments use. The `MAINTAIN`
 privilege exists only from 17, so every `MAINTAIN` grant or revoke in the
 migrations runs inside a `DO` block guarded by `server_version_num >= 170000`; the
 guards keep the migrations valid on a later server.
@@ -895,11 +1132,8 @@ guards; no new migration was needed. Later migrations follow the same pattern
 0012, `passages` and `embedding_cache`, uses `REVOKE ALL`, which covers `MAINTAIN`
 on 17 and is valid on 16; 0011 changes no privileges). The integration suite
 migrates `aviation_test` through every migration, so `pnpm test:integration` checks
-them and the suite on 16.2. `pnpm test:pg16` keeps its name from the time a
-throwaway `postgres16` service (profile `pg16`, data in tmpfs) provided 16.2 next to
-a 17.6 stack; that service no longer exists. The command checks that the test
-database's server is PostgreSQL 16 and then runs the same integration suite, so
-existing instructions keep working.
+them and the suite on 16.2. `pnpm test:pg16` checks that the test database's server is PostgreSQL 16 and then
+runs the same integration suite.
 
 ## Application image
 
@@ -913,4 +1147,12 @@ licences), plus the SQL migrations, verification profiles and the report-link
 seed; no TypeScript sources or development dependencies. `.dockerignore` keeps
 the `.gitignore` secret patterns (`.env*` except `.env.example`, keys,
 certificates, `credentials/`, `secrets/`) at any depth, every `data/` and
-`node_modules/`, build and test outputs, tests and docs out of the build context.
+`node_modules/`, build and test outputs, tests, docs and evaluations out of the build
+context. pnpm itself is pinned by version and sha512 (`packageManager`), which corepack
+checks when the image is built.
+
+Before each release, check advisories: `pnpm audit --prod` for the runtime dependencies,
+and an image scanner (for example `docker scout cves ai-aviation/app:<tag>`) for the
+release image and the pinned base images (node, `postgres:16.2`, `cloudflared`, and the
+extraction image's Debian). Fix or record each finding before deploying; update a pin's
+tag and digest together.

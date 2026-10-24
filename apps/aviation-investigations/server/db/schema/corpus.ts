@@ -163,6 +163,25 @@ export const datasetManifests = pgTable(
   ],
 );
 
+/**
+ * Every (generation, passages index) pair a generation was published with, and the cases
+ * index of that publication (migration 0021). A brief is pinned to one pair for its 24 hours;
+ * when its generation is published again with another passages index, the pair stays
+ * resolvable here (`manifestCasesIndex`) so the brief keeps its evidence. Written only by a
+ * trigger on `dataset_manifests` (publication); a generation's rows go with its manifest row
+ * when it is pruned. No foreign key, so test resets that truncate the corpus stay simple.
+ */
+export const manifestPairings = pgTable(
+  'manifest_pairings',
+  {
+    generationId: bigint('generation_id', { mode: 'number' }).notNull(),
+    passagesIndex: text('passages_index').notNull(),
+    casesIndex: text('cases_index').notNull(),
+    publishedAt: timestamp('published_at', { withTimezone: true, mode: 'date' }).notNull(),
+  },
+  (t) => [primaryKey({ name: 'manifest_pairings_pk', columns: [t.generationId, t.passagesIndex] })],
+);
+
 // ---------------------------------------------------------------------------
 // Corpus
 
@@ -531,8 +550,10 @@ export const quarantine = pgTable(
 );
 
 /**
- * Generations that pruning must keep (e.g. referenced by live briefs). A pin with a
- * null `pinned_until` holds until removed; an expired pin no longer protects.
+ * Generations that pruning must keep: an index build pins its generation while it runs
+ * (`index-build:<id>`), and an operator may pin one. A pin with a null `pinned_until`
+ * holds until removed; an expired pin no longer protects. Generations that live AI briefs
+ * cite are kept without pins (`generations_cited_by_live_briefs()`, migration 0021).
  */
 export const generationPins = pgTable(
   'generation_pins',

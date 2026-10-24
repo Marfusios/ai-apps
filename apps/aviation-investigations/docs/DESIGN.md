@@ -1175,7 +1175,8 @@ PostgreSQL/Elasticsearch for contributors and offline tests. See the
 [runbook](RUNBOOK.md).
 
 Run Langfuse as separate reusable infrastructure under Compose project
-`ai-observability`, with isolated projects/credentials and its own resource budget.
+an observability project of its own (for example `observability`), with isolated
+projects/credentials and its own resource budget.
 The experiment runner invokes the same application functions and cost gate; its
 provider calls remain metered. Tracing exports are asynchronous and best-effort.
 The [hosting plan](OBSERVABILITY_AND_EVALUATION.md#prompt-management-and-hosting)
@@ -1210,7 +1211,11 @@ Measure the actual index and allow a second index's disk space during rebuilds.
 
 Use bounded database/search timeouts and pools. Back up identity/consent/quota data
 encrypted to an off-host destination and test restore; search indices are
-rebuildable. Track freshness, latency, cost, rejects, errors, and saturation without
+rebuildable. As built (RUNBOOK, "Backups"): `pnpm app:backup` and `pnpm app:restore` dump
+and restore as the migrator login, `pnpm worker restore-check` verifies owners and grants
+and holds paid operations until `pnpm worker restore-reconcile`, and
+`pnpm db:restore-drill` tests a backup; scheduling, encryption, the off-host copy and the
+30-day expiry are the operator's host timer. Track freshness, latency, cost, rejects, errors, and saturation without
 default email/prompt logging. Document single-host downtime, rollback, and recovery.
 
 ## 12. Security review and evaluation gates

@@ -188,6 +188,11 @@ export function createLedgerSpendGate(db: Db, opts: LedgerSpendGateOptions): Spe
       );
       if (r.ok) return { reservationId: String(r.reservationId), fencingToken: r.fencingToken };
       if (r.reason === 'busy') throw new SpendRefusedError(`${category} spend of $${amount.toFixed(6)} refused: the ledger stayed busy`);
+      if (r.reason === 'restore_hold') {
+        throw new SpendRefusedError(
+          `${category} spend of $${amount.toFixed(6)} refused: paid operations are held after a restore (pnpm worker restore-reconcile, RUNBOOK "Backups")`,
+        );
+      }
       throw new SpendRefusedError(
         `${category} spend of $${amount.toFixed(6)} refused (${r.reason}): $${r.remainingUsd.toFixed(6)} left until ${r.retryAt.toISOString()}`,
       );

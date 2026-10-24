@@ -596,6 +596,72 @@ describe('normalizeCorpus rules', () => {
     ]);
   });
 
+  it('quarantines key parts and integers beyond the 32-bit range instead of failing the load (D-M2)', () => {
+    const result = normalizeCorpus(
+      corpus({
+        events: [row('events', { ev_id: 'E1', ntsb_no: 'SYN08LA001', ev_country: 'USA', ev_date: '2008-03-01T00:00:00', ev_time: '9999999999' })],
+        aircraft: [...aircraftRows('1'), row('aircraft', { ev_id: 'E1', aircraft_key: '3000000000', acft_make: 'Synthetic' })],
+        engines: [row('engines', { ev_id: 'E1', aircraft_key: '1', eng_no: '2147483648', eng_type: 'REC' })],
+      }),
+    );
+    const c = only(result);
+    expect(c.aircraft.map((a) => a.aircraftKey)).toEqual([1]);
+    expect(c.aircraft[0]!.engines).toEqual([]);
+    expect(c.fields.evTime).toBeNull();
+    expect(result.quarantine).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ table: 'aircraft', column: 'aircraft_key', reason: 'invalid_key', action: 'row_excluded', value: '3000000000' }),
+        expect.objectContaining({ table: 'engines', column: 'eng_no', reason: 'invalid_key', action: 'row_excluded', value: '2147483648' }),
+        expect.objectContaining({ table: 'events', column: 'ev_time', reason: 'invalid_number', action: 'value_nulled', value: '9999999999' }),
+      ]),
+    );
+    // 2^31 - 1 is the largest key part PostgreSQL's integer holds: kept.
+    const max = only(normalizeCorpus(corpus({ aircraft: aircraftRows('2147483647'), narratives: [] })));
+    expect(max.aircraft.map((a) => a.aircraftKey)).toEqual([2147483647]);
+  });
+
+  it('nulls a value with a NUL byte, with a quarantine note, and loads the rest of the case (D-M2)', () => {
+    const result = normalizeCorpus(
+      corpus({
+        aircraft: [row('aircraft', { ev_id: 'E1', aircraft_key: '1', ntsb_no: 'SYN08LA001', acft_make: 'Pip\u0000er', acft_model: 'PA-28' })],
+        narratives: [row('narratives', { ev_id: 'E1', aircraft_key: '1', narr_accp: 'Fine text.', narr_cause: 'Broken \u0000 cause.' })],
+      }),
+    );
+    const c = only(result);
+    expect(c.aircraft[0]!.make).toBeNull();
+    expect(c.aircraft[0]!.model).toBe('PA-28');
+    // The cause is gone; the other narrative of the row stays.
+    expect(c.sections.map((s) => s.text)).toEqual(['Fine text.']);
+    expect(result.quarantine).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ table: 'aircraft', column: 'acft_make', reason: 'invalid_text', action: 'value_nulled', value: null }),
+        expect.objectContaining({ table: 'narratives', column: 'narr_cause', reason: 'invalid_text', action: 'value_nulled', value: null }),
+      ]),
+    );
+    expect(result.quarantine).toHaveLength(2);
+  });
+
+  it('stops on a NUL byte in an event identity, naming every offender (D-M2)', () => {
+    const tables = corpus({
+      events: [
+        row('events', { ev_id: 'E\u00001', ntsb_no: 'SYN08LA001', ev_country: 'USA' }),
+        row('events', { ev_id: 'E2', ntsb_no: 'SYN08\u0000LA002', ev_country: 'USA' }),
+      ],
+    });
+    expect(() => normalizeCorpus(tables)).toThrow(NormalizationError);
+    const err = (() => {
+      try {
+        normalizeCorpus(tables);
+      } catch (e) {
+        return e as NormalizationError;
+      }
+      return null;
+    })();
+    expect(err?.problems).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^events: blank or invalid ev_id/), expect.stringMatching(/^events: ntsb_no of ev_id=E2 contains a NUL character/)]),
+    );
+  });
+
   it('changes the source revision only when the source changes', () => {
     const a = only(normalizeCorpus(corpus())).sourceRevision;
     expect(only(normalizeCorpus(corpus())).sourceRevision).toBe(a);

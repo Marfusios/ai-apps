@@ -5,7 +5,8 @@
  *    and a check that its session still exists, server/auth/lifecycle.ts), before any lock
  *    other accounts share: waiting for one account's lock never stalls another account's
  *    admission. A failure rolls everything back (`signed_out`).
- * 1. Kill switch, and the login-required emergency mode for trial principals.
+ * 1. Kill switch, the hold on paid operations after a restore (server/quota/hold.ts), and the
+ *    login-required emergency mode for trial principals.
  * 2. Lock the principal, network and global buckets in key order.
  * 3. Idempotency, scoped to the principal: the same key and request hash replays the
  *    original admission (no new attempt, quota or money); the same key with another
@@ -59,6 +60,7 @@ import {
   type Principal,
   type QuotaPolicy,
 } from './policy.js';
+import { paidOperationsHeld } from './hold.js';
 import { isLockTimeout, setLockTimeout } from './locks.js';
 import { readAiSwitch } from './switch.js';
 
@@ -349,6 +351,8 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
       if (a.precondition && !(await a.precondition(tx))) throw new PreconditionFailed('admission precondition failed');
       const aiSwitch = await readAiSwitch(tx);
       if (!aiSwitch.enabled) return { ok: false, reason: 'global_paused', pause: 'maintenance' };
+      // A restored ledger lacks the spend after its backup: nothing paid starts until it is reconciled.
+      if (await paidOperationsHeld(tx)) return { ok: false, reason: 'global_paused', pause: 'maintenance' };
       if (principal.kind === 'trial' && !aiSwitch.anonymousEnabled) return { ok: false, reason: 'login_required' };
 
       const counts = await lockBuckets(tx, [...attempts.map((b) => b.ref), ...requestBuckets]);

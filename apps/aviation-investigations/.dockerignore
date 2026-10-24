@@ -23,6 +23,7 @@ playwright-report/
 tests/
 docs/
 docker/
+evals/
 .git
 .gitignore
 .dockerignore

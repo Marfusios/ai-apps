@@ -1,9 +1,16 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   checkDatabaseUrl,
   checkEdgeSubnet,
+  checkoutDirty,
+  liveImagePlan,
   planCompose,
   versionAtLeast,
+  type LiveImageFacts,
   type Values,
 } from '../../scripts/compose.js';
 
@@ -74,7 +81,7 @@ describe('planCompose on dev', () => {
     const tracing = env('dev', { AVIATION_TRACING_ENABLED: 'true' });
     expect(planCompose('ingest', ['generations'], {}, [tracing])).toMatchObject({
       files: ['compose.yaml', 'compose.tracing.yaml'],
-      tail: ['--profile', 'tools', 'run', '--rm', 'aviation-ingest', 'generations'],
+      tail: ['--profile', 'tools', 'run', '--build', '--rm', 'aviation-ingest', 'generations'],
     });
     expect(planCompose('migrate', [], {}, [tracing]).files).toEqual(['compose.yaml']);
   });
@@ -119,6 +126,129 @@ describe('planCompose consistency checks', () => {
   });
 });
 
+describe('planCompose image builds', () => {
+  const live = env('live', { APP_VERSION: 'v1.2.0', TUNNEL_TOKEN: 'secret-token', EDGE_SUBNET: EDGE });
+
+  it('on dev rebuilds the image from the checkout for app:up, app:migrate and ingest', () => {
+    // A tag that already exists would otherwise run the previous code: new migrations unapplied.
+    expect(planCompose('app-up', [], {}, [env('dev')]).tail).toContain('--build');
+    expect(planCompose('migrate', [], {}, [env('dev')]).tail).toEqual(['--profile', 'tools', 'run', '--build', '--rm', 'aviation-migrate']);
+    expect(planCompose('ingest', ['verify', '--generation', '3'], {}, [env('dev')]).tail).toEqual([
+      '--profile', 'tools', 'run', '--build', '--rm', 'aviation-ingest', 'verify', '--generation', '3',
+    ]);
+  });
+
+  it('on live builds a release tag once: never again implicitly, so a rollback starts the image that tag was built as', () => {
+    for (const command of ['app-up', 'migrate', 'ingest'] as const) {
+      expect(planCompose(command, [], {}, [live]).tail, command).not.toContain('--build');
+    }
+    expect(planCompose('app-up', [], {}, [live]).tail).toEqual(['--profile', 'app', '--profile', 'tunnel', 'up', '-d', '--wait', '--wait-timeout', '180']);
+    expect(planCompose('migrate', [], {}, [live]).tail).toEqual(['--profile', 'tools', 'run', '--rm', 'aviation-migrate']);
+  });
+
+  it('rebuilds a tag only when asked with --rebuild, which is never passed on', () => {
+    expect(planCompose('app-up', ['--rebuild'], {}, [live]).tail).toEqual([
+      '--profile', 'app', '--profile', 'tunnel', 'up', '-d', '--build', '--wait', '--wait-timeout', '180',
+    ]);
+    expect(planCompose('migrate', ['--rebuild'], {}, [live]).tail).toEqual(['--profile', 'tools', 'run', '--build', '--rm', 'aviation-migrate']);
+    expect(planCompose('ingest', ['--rebuild', 'generations'], {}, [live]).tail).toEqual([
+      '--profile', 'tools', 'run', '--build', '--rm', 'aviation-ingest', 'generations',
+    ]);
+    expect(planCompose('ingest', ['--rebuild', 'generations'], {}, [env('dev')]).tail).not.toContain('--rebuild');
+    expect(error(() => planCompose('app-ps', ['--rebuild'], {}, [live]))).toMatch(/--rebuild/);
+  });
+});
+
+describe('live images are built once, from the commit their tag names (re-review N1)', () => {
+  const live = env('live', { APP_VERSION: 'v1.2.0', TUNNEL_TOKEN: 'secret-token', EDGE_SUBNET: EDGE });
+  const TAGGED = 'a'.repeat(40);
+  const NEWER = 'b'.repeat(40);
+  const facts = (over: Partial<LiveImageFacts> = {}): LiveImageFacts => ({
+    image: { revision: TAGGED },
+    tagCommit: TAGGED,
+    head: NEWER,
+    dirty: false,
+    ...over,
+  });
+
+  it('a rollback starts the image its tag was built as, and never builds', () => {
+    expect(liveImagePlan('v1.2.0', false, facts())).toBe('use');
+    expect(planCompose('app-up', [], {}, [live], facts()).tail).toEqual([
+      '--profile', 'app', '--profile', 'tunnel', 'up', '-d', '--no-build', '--wait', '--wait-timeout', '180',
+    ]);
+    expect(planCompose('migrate', [], {}, [live], facts()).tail).toEqual(['--profile', 'tools', 'run', '--rm', 'aviation-migrate']);
+  });
+
+  it('refuses a rollback to a tag whose image is gone instead of building the current checkout under it', () => {
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: null }))).toThrow(/not on this host.*never builds another commit/);
+    expect(() => planCompose('app-up', [], {}, [live], facts({ image: null }))).toThrow(/not on this host/);
+    expect(() => planCompose('ingest', ['generations'], {}, [live], facts({ image: null }))).toThrow(/not on this host/);
+  });
+
+  it('builds a missing tag only from a clean checkout of the commit it names', () => {
+    expect(liveImagePlan('v1.2.0', false, facts({ image: null, head: TAGGED }))).toBe('build');
+    expect(planCompose('migrate', [], {}, [live], facts({ image: null, head: TAGGED })).tail).toEqual([
+      '--profile', 'tools', 'run', '--build', '--rm', 'aviation-migrate',
+    ]);
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: null, head: TAGGED, dirty: true }))).toThrow(/not on this host/);
+  });
+
+  it('refuses an image built from another commit than its tag names, or a release without a git tag', () => {
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: { revision: NEWER } }))).toThrow(/was built from bbbbbbbbbbbb, not from the commit tagged v1\.2\.0/);
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: { revision: null } }))).toThrow(/an unrecorded commit/);
+    expect(() => liveImagePlan('v1.2.0', false, facts({ tagCommit: null }))).toThrow(/git tag v1\.2\.0/);
+  });
+
+  it('--rebuild builds only from a clean checkout of the tagged commit', () => {
+    expect(liveImagePlan('v1.2.0', true, facts({ head: TAGGED }))).toBe('build');
+    expect(planCompose('app-up', ['--rebuild'], {}, [live], facts({ head: TAGGED })).tail).toContain('--build');
+    expect(() => liveImagePlan('v1.2.0', true, facts())).toThrow(/--rebuild builds the checkout/);
+    expect(() => liveImagePlan('v1.2.0', true, facts({ head: TAGGED, dirty: true }))).toThrow(/--rebuild builds the checkout/);
+  });
+});
+
+describe('planCompose for backups and restores', () => {
+  const backups = (appEnv: 'dev' | 'live', extra: Values = {}) => env(appEnv, { AVIATION_BACKUP_DIR: '/srv/aviation-backups', ...extra });
+
+  it('backs up and restores as the migrator login with the PostgreSQL tools, without the application image', () => {
+    for (const appEnv of ['dev', 'live'] as const) {
+      // No release tag on live: these containers run the PostgreSQL image, not the application's.
+      expect(planCompose('backup', [], {}, [backups(appEnv)])).toEqual({
+        appEnv,
+        tunnel: false,
+        files: ['compose.yaml'],
+        tail: ['--profile', 'tools', 'run', '--rm', 'aviation-backup'],
+      });
+      expect(planCompose('restore', [`aviation_${appEnv}-2026-10-24T031500Z.dump`], {}, [backups(appEnv)]).tail).toEqual([
+        '--profile',
+        'tools',
+        'run',
+        '--rm',
+        'aviation-restore',
+        `aviation_${appEnv}-2026-10-24T031500Z.dump`,
+      ]);
+    }
+  });
+
+  it('needs the backup directory and the environment’s migrator URL', () => {
+    expect(error(() => planCompose('backup', [], {}, [env('dev')]))).toMatch(/missing for backup: AVIATION_BACKUP_DIR/);
+    expect(error(() => planCompose('restore', ['a.dump'], {}, [env('dev')]))).toMatch(/missing for restore: AVIATION_BACKUP_DIR/);
+    expect(
+      error(() => planCompose('backup', [], {}, [backups('dev', { DATABASE_MIGRATOR_URL: url('live', 'aviation_live_migrator', 'aviation_migrator') })])),
+    ).toMatch(/DATABASE_MIGRATOR_URL must use database aviation_dev/);
+    expect(error(() => planCompose('restore', ['a.dump'], {}, [backups('dev', { DATABASE_MIGRATOR_URL: url('dev', 'u', 'aviation_app') })]))).toMatch(
+      /role%3Daviation_migrator/,
+    );
+  });
+
+  it('restores exactly one backup file named inside the backup directory, and backs up without arguments', () => {
+    for (const args of [[], ['a.dump', 'b.dump'], ['../a.dump'], ['dir/a.dump'], ['a.sql'], ['-x.dump']]) {
+      expect(error(() => planCompose('restore', args, {}, [backups('dev')]))).toMatch(/one backup file/);
+    }
+    expect(error(() => planCompose('backup', ['--format=plain'], {}, [backups('dev')]))).toMatch(/takes no arguments/);
+  });
+});
+
 describe('helpers', () => {
   it('accepts private, aligned edge subnets from /16 to /29', () => {
     expect(() => checkEdgeSubnet(EDGE)).not.toThrow();
@@ -143,5 +273,40 @@ describe('helpers', () => {
     expect(versionAtLeast('1.29.2')).toBe(false);
     expect(versionAtLeast('3.0.0-rc1')).toBe(true);
     expect(versionAtLeast('')).toBe(false);
+  });
+});
+
+describe('a live build only from a clean checkout (re-check N9)', () => {
+  it('counts changed, staged and untracked files under the app directory, not ignored ones', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aviation-checkout-'));
+    try {
+      const git = (...a: string[]) => {
+        const r = spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+        if (r.status !== 0) throw new Error(r.stderr);
+      };
+      const app = join(repo, 'apps', 'app');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, 'index.ts'), 'export {};\n');
+      writeFileSync(join(app, '.gitignore'), 'data/\n');
+      git('init', '-q');
+      git('add', '.');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'init');
+      expect(checkoutDirty(app)).toBe(false);
+      // Ignored output and files outside the app directory do not enter its build.
+      mkdirSync(join(app, 'data'));
+      writeFileSync(join(app, 'data', 'cache.json'), '{}');
+      writeFileSync(join(repo, 'notes.txt'), 'elsewhere');
+      expect(checkoutDirty(app)).toBe(false);
+      // An untracked source file would enter the image built as the tagged commit.
+      writeFileSync(join(app, 'extra.ts'), 'export const x = 1;\n');
+      expect(checkoutDirty(app)).toBe(true);
+      rmSync(join(app, 'extra.ts'));
+      writeFileSync(join(app, 'index.ts'), 'export const changed = true;\n');
+      expect(checkoutDirty(app)).toBe(true);
+      // Not a checkout at all: unknown counts as dirty.
+      expect(checkoutDirty(join(tmpdir(), 'no-such-aviation-checkout'))).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

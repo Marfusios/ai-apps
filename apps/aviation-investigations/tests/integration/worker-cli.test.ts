@@ -1,11 +1,18 @@
-/** The maintenance commands of the worker CLI, run as child processes against the local test database only. */
+/**
+ * The maintenance commands of the worker CLI, run as child processes against the local test
+ * database only; the restore commands against a throwaway environment on the local services.
+ */
 import { execFile } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { closeDb, type Db } from '../../server/db/client.js';
+import { closeDb, createDb, type Db } from '../../server/db/client.js';
 import { listGenerations } from '../../server/db/generations.js';
+import { readPaidOperationsHold } from '../../server/quota/hold.js';
+import { localAdminUrl, withScratchEnvironment } from '../../scripts/scratch-env.js';
 import { resetControls, testDb, testDbUrl } from './helpers.js';
 
 const run = promisify(execFile);
@@ -19,17 +26,34 @@ afterAll(async () => {
   await closeDb(app);
 });
 
-async function worker(...args: string[]): Promise<{ stdout: string; stderr: string }> {
+async function workerIn(urls: { app: string; ingest: string; migrator: string }, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return workerWith(urls, {}, ...args);
+}
+
+async function workerWith(
+  urls: { app: string; ingest: string; migrator: string },
+  extra: Record<string, string>,
+  ...args: string[]
+): Promise<{ stdout: string; stderr: string }> {
   return run(resolve(APP_DIR, 'node_modules/.bin/tsx'), ['worker/cli.ts', ...args], {
     cwd: APP_DIR,
     env: {
       ...process.env,
-      // Nonempty process values win over .env.local: only the aviation_test logins are used.
-      DATABASE_URL: testDbUrl('app'),
-      DATABASE_INGEST_URL: testDbUrl('ingest'),
-      DATABASE_MIGRATOR_URL: testDbUrl('migrator'),
+      // Nonempty process values win over .env.local: only these logins are used.
+      DATABASE_URL: urls.app,
+      DATABASE_INGEST_URL: urls.ingest,
+      DATABASE_MIGRATOR_URL: urls.migrator,
+      ...extra,
     },
   });
+}
+
+/** The app's budgets, as its settings file would set them. */
+const BUDGET_SETTINGS = { AI_MONTHLY_BUDGET_USD: '200', AI_INTERACTIVE_MONTHLY_BUDGET_USD: '150', AI_INGESTION_MONTHLY_BUDGET_USD: '50' };
+
+/** The worker against aviation_test. */
+function worker(...args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return workerIn({ app: testDbUrl('app'), ingest: testDbUrl('ingest'), migrator: testDbUrl('migrator') }, ...args);
 }
 
 describe('worker maintenance commands', () => {
@@ -59,25 +83,122 @@ describe('worker maintenance commands', () => {
     }
   });
 
-  it('prune-controls expires leases and prunes as the app role', async () => {
-    const { stdout } = await worker('prune-controls');
-    expect(stdout).toMatch(/^leases expired: \d+ \(charged [\d.]+ USD\)$/m);
-    expect(stdout).toMatch(/^pruned trialIdentities: \d+$/m);
-    expect(stdout).toMatch(/^pruned costLedger: \d+$/m);
-  });
-
-  it('restore-check passes on empty sign-in, brief and idempotency tables, names any with rows, and --empty empties them', async () => {
+  it('prune-controls runs the API server’s maintenance pass by hand, sign-in retention and orphaned steps included', async () => {
     const migrator = testDb('migrator');
     try {
       await resetControls();
-      expect((await worker('restore-check')).stdout).toMatch(/^restore check passed: auth_deletion_confirmations, .*idempotency are empty$/m);
+      // An expired session and verification: the pass deletes them (pruneAuth), as the API's job does.
+      const user = await migrator.execute(sql`
+        INSERT INTO auth_users (name, email, email_verified, created_at, updated_at)
+        VALUES ('Expired', 'expired@example.com', true, now() - interval '30 days', now()) RETURNING id`);
+      const userId = (user.rows[0] as { id: string }).id;
       await migrator.execute(sql`
-        INSERT INTO auth_users (name, email, email_verified, created_at, updated_at) VALUES ('Restored', 'restored@example.com', true, now(), now())`);
-      await expect(worker('restore-check')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('auth_users: 1 rows') });
-      expect((await worker('restore-check', '--empty')).stdout).toMatch(/^restore check passed/m);
-      expect((await migrator.execute(sql`SELECT count(*)::int AS n FROM auth_users`)).rows).toEqual([{ n: 0 }]);
+        INSERT INTO auth_sessions (token, user_id, expires_at, created_at, updated_at)
+        VALUES (${'t'.repeat(32)}, ${userId}::uuid, now() - interval '1 day', now() - interval '8 days', now() - interval '8 days')`);
+      await migrator.execute(sql`
+        INSERT INTO auth_verifications (identifier, value, expires_at, created_at, updated_at)
+        VALUES ('state', 'v', now() - interval '1 hour', now() - interval '2 hours', now() - interval '2 hours')`);
+      const { stdout } = await worker('prune-controls');
+      expect(stdout).toMatch(/^leases expired: \d+ \(charged [\d.]+ USD\)$/m);
+      expect(stdout).toMatch(/^pruned trialIdentities: \d+$/m);
+      expect(stdout).toMatch(/^pruned costLedger: \d+$/m);
+      expect(stdout).toMatch(/^brief steps failed because their process died: \d+$/m);
+      expect(stdout).toMatch(/^sign-in rows pruned: sessions 1, verifications 1, stateUses 0, confirmations 0$/m);
+      expect((await migrator.execute(sql`SELECT count(*)::int AS n FROM auth_sessions`)).rows).toEqual([{ n: 0 }]);
     } finally {
+      await resetControls();
       await closeDb(migrator);
+    }
+  });
+
+  it('restore-check holds paid operations, passes on empty sign-in, brief and idempotency tables, names any with rows, and --empty empties them', async () => {
+    await withScratchEnvironment(localAdminUrl(), 'clirestore', async (urls) => {
+      const migrator = createDb(urls.migrator, { max: 1 });
+      try {
+        const passed = await workerIn(urls, 'restore-check');
+        expect(passed.stdout).toMatch(/^paid operations held until pnpm worker restore-reconcile/m);
+        expect(passed.stdout).toMatch(/^restore check passed: auth_deletion_confirmations, .*idempotency are empty$/m);
+        expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: true, reason: 'restored' });
+        await migrator.execute(sql`
+          INSERT INTO auth_users (name, email, email_verified, created_at, updated_at) VALUES ('Restored', 'restored@example.com', true, now(), now())`);
+        await expect(workerIn(urls, 'restore-check')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('auth_users: 1 rows') });
+        expect((await workerIn(urls, 'restore-check', '--empty')).stdout).toMatch(/^restore check passed/m);
+        expect((await migrator.execute(sql`SELECT count(*)::int AS n FROM auth_users`)).rows).toEqual([{ n: 0 }]);
+      } finally {
+        await closeDb(migrator);
+      }
+    });
+  });
+
+  it('restore-reconcile takes the lost spend or charges the remaining budgets, and releases the hold', async () => {
+    await withScratchEnvironment(localAdminUrl(), 'clirestore', async (urls) => {
+      const migrator = createDb(urls.migrator, { max: 1 });
+      try {
+        // Usage errors exit 2 before connecting: both or neither kind of amount, one amount alone, a malformed amount, no note.
+        for (const args of [
+          ['--note', 'n'],
+          ['--interactive-usd', '1', '--ingestion-usd', '0', '--charge-remaining', '--note', 'n'],
+          ['--interactive-usd', '1', '--note', 'n'],
+          ['--interactive-usd', '1e3', '--ingestion-usd', '0', '--note', 'n'],
+          ['--charge-remaining'],
+        ]) {
+          await expect(workerIn(urls, 'restore-reconcile', ...args)).rejects.toMatchObject({ code: 2 });
+        }
+        await expect(workerWith(urls, BUDGET_SETTINGS, 'restore-reconcile', '--charge-remaining', '--note', 'nothing held')).rejects.toMatchObject({
+          code: 1,
+          stderr: expect.stringContaining('not held'),
+        });
+        await workerIn(urls, 'restore-check');
+        const preview = await workerIn(urls, 'restore-reconcile', '--interactive-usd', '0.5', '--ingestion-usd', '0', '--note', 'console', '--dry-run');
+        expect(preview.stdout).toMatch(/^would charge \(dry run, nothing changed\): interactive 0\.500000 USD, indexing and evaluation 0\.000000 USD$/m);
+        expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: true });
+        const done = await workerIn(urls, 'restore-reconcile', '--interactive-usd', '0.5', '--ingestion-usd', '0', '--note', 'console');
+        expect(done.stdout).toMatch(/^charged: 0 reservations the backup left open, 0\.000000 USD in full$/m);
+        expect(done.stdout).toMatch(/^paid operations released$/m);
+        expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: false, note: 'console' });
+      } finally {
+        await closeDb(migrator);
+      }
+    });
+  });
+
+  it('restore-reconcile --charge-remaining uses the app’s budget settings, never defaults (re-review N4)', async () => {
+    // Settings files as AVIATION_ENV_FILES names them (it replaces .env.local): one without the budgets, the app's with them.
+    const dir = mkdtempSync(join(tmpdir(), 'aviation-reconcile-settings-'));
+    const withoutBudgets = join(dir, 'other.env');
+    writeFileSync(withoutBudgets, 'AI_INTERACTIVE_DAILY_BUDGET_USD=5\n');
+    const appSettings = join(dir, 'app.env');
+    writeFileSync(appSettings, Object.entries(BUDGET_SETTINGS).map(([k, v]) => `${k}=${v}\n`).join(''));
+    try {
+      await withScratchEnvironment(localAdminUrl(), 'clirestore', async (urls) => {
+        const migrator = createDb(urls.migrator, { max: 1 });
+        try {
+          await workerIn(urls, 'restore-check');
+          // Charging what the default budgets leave would let larger real budgets be spent again: refused, nothing changed.
+          await expect(workerWith(urls, { AVIATION_ENV_FILES: withoutBudgets }, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown')).rejects.toMatchObject({
+            code: 2,
+            stderr: expect.stringMatching(/not set: AI_MONTHLY_BUDGET_USD, AI_INTERACTIVE_MONTHLY_BUDGET_USD, AI_INGESTION_MONTHLY_BUDGET_USD$/m),
+          });
+          await expect(
+            workerWith(urls, { AVIATION_ENV_FILES: withoutBudgets, AI_MONTHLY_BUDGET_USD: '200' }, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown'),
+          ).rejects.toMatchObject({ code: 2, stderr: expect.stringMatching(/not set: AI_INTERACTIVE_MONTHLY_BUDGET_USD, AI_INGESTION_MONTHLY_BUDGET_USD$/m) });
+          expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: true });
+
+          const env = { AVIATION_ENV_FILES: appSettings };
+          const preview = await workerWith(urls, env, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown', '--dry-run');
+          expect(preview.stdout).toMatch(/^budgets used: 200 USD a month in total, 150 interactive, 50 indexing and evaluation$/m);
+          expect(preview.stdout).toMatch(/^would charge \(dry run, nothing changed\): interactive 150\.000000 USD, indexing and evaluation 50\.000000 USD$/m);
+          const done = await workerWith(urls, env, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown');
+          expect(done.stdout).toMatch(/^budgets used: 200 USD a month in total, 150 interactive, 50 indexing and evaluation$/m);
+          expect(done.stdout).toMatch(/^charged: interactive 150\.000000 USD, indexing and evaluation 50\.000000 USD$/m);
+          expect(done.stdout).toMatch(/^paid operations released$/m);
+          expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: false, note: 'figures unknown' });
+        } finally {
+          await closeDb(migrator);
+        }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
