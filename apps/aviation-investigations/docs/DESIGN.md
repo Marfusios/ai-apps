@@ -839,7 +839,14 @@ Prompts are versioned per provider and model.
   allowlisted models.
 - **Before enabling:** a provider/model combination must pass the §12 evaluation
   gates on the same versioned dataset, and its price/cap rows must exist in the
-  allowlist. The startup check refuses to enable AI otherwise.
+  allowlist. The startup check enforces the second half only: AI stays off unless every
+  reachable model is allowlisted and priced and the worst-case request fits the answer
+  model's reservation. It does not know which combinations were evaluated, so any priced
+  answer model whose worst case fits its reservation (Sonnet or Haiku 5.5) can be enabled
+  by configuration alone: running only evaluated combinations is the operator's
+  obligation (the owner chooses the production answer model from the §12 results), and
+  for the checker a unit test holds production to the calibration's frozen selection
+  (`tests/unit/checker-calibration.test.ts`; RUNBOOK "Enabling partial display").
 - **Live briefs:** a brief records the provider and model of each step. A
   refinement after a switch simply runs on the new provider; earlier answers
   were never evidence.
@@ -929,20 +936,20 @@ tests and deployments (RUNBOOK). Between preflights a unit test sizes the same
 requests offline (`cl100k_base` × 2.2 for system prompt plus schema, × 1.8 for text).
 
 **Prompt caching:** only the frozen system prefix of each stage is cached, with
-the 5-minute TTL and at most 6,500 tokens (the largest, the answer stage's, is 4,883
-with its schema). The reservation is the **sum over all stages** of each stage's
+the 5-minute TTL and at most 6,500 tokens (the largest, the answer stage's, is 5,673
+with its schema: `compose.v8`, measured by the preflight on 2026-10-23). The reservation is the **sum over all stages** of each stage's
 hard-cap cost at the worst applicable price, plus the cache-write premium on its
 cached prefix:
 
 | Answer model | Uncached sum | Answer-prefix premium | Haiku scope and check prefixes | Total | Reservation |
 | --- | --- | --- | --- | --- | --- |
-| Opus 5.5 | $0.34772 | 6,500 × $1/M = $0.0065 | $0.000325 | about $0.3545 | $0.36 |
-| Sonnet 5.5 | $0.18172 | 6,500 × $0.50/M = $0.00325 | $0.000325 | about $0.1853 | $0.19 |
-| Haiku 5.5 | $0.02402 | 6,500 × $0.025/M = $0.0001625 | $0.000325 | about $0.0245 | $0.03 |
+| Opus 5.5 | $0.34922 | 6,500 × $1/M = $0.0065 | $0.000325 | $0.356045 | $0.36 |
+| Sonnet 5.5 | $0.18322 | 6,500 × $0.50/M = $0.00325 | $0.000325 | $0.186795 | $0.19 |
+| Haiku 5.5 | $0.02552 | 6,500 × $0.025/M = $0.0001625 | $0.000325 | $0.0260075 | $0.03 |
 
-The check's share is $0.0149 (40,000 input and 21,500 output tokens on Haiku, thinking
-included); a Sonnet checker at the same caps would add $0.28 and need about $0.64 with
-the Opus answer model. With the Opus answer model, the $3 daily cap holds eight
+The check's share is $0.0164125 (40,000 input and 24,500 output tokens on Haiku, thinking
+included, and its prefix premium; the output cap since Task 16d); a Sonnet checker at the
+same caps would add about $0.31 and need about $0.67 with the Opus answer model. With the Opus answer model, the $3 daily cap holds eight
 worst-case reservations, and a fresh 30-day month's paced allowance (the lower of $3 and
 $80 / 30 = $2.67) seven.
 That is **budget capacity, not concurrency**: separate in-flight limits apply (one

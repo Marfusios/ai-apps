@@ -1382,7 +1382,7 @@ the stage with a `StageError` that says whether the call was billed.
 per-request reservations ($0.36 Opus, $0.19 Sonnet, $0.03 Haiku answer model, with the
 calibrated Haiku checker). The caps were measured with the provider's own counter
 (free) against real passages (DESIGN §9 "Hard caps"): scope 6,500 in / 600 out, answer
-28,000 / 11,000, check 40,000 / 21,500 (15,000 of it the checker's thinking allowance),
+28,000 / 11,000, check 40,000 / 24,500 (15,000 of it the checker's thinking allowance),
 in provider tokens, so the measured stress cases fit: a full
 12-passage bundle with the longest question and refinement without re-packing, and a
 check of a full bundle's complete evidence whole. `startupAiCheck(config)` enables AI only when the
@@ -1426,7 +1426,7 @@ retention are in migrations 0008 and 0009.
   whose previous request is still in flight gets `concurrency` (never a quota verdict
   that request may still change); otherwise its quota, the anonymous share and the
   total in-flight limits follow. An admitted request reserves
-  its maximum cost, takes one unit of quota and gets a 90-second lease with a fencing
+  its maximum cost, takes one unit of quota and gets a 120-second lease with a fencing
   token. Rejections: `trial_exhausted`, `daily_cap`, `monthly_cap`,
   `anonymous_share_exhausted`, `global_paused` (`daily_budget`, `monthly_budget`,
   `maintenance`), `rate_limited` (with `retryAt`), `concurrency`,
@@ -1646,7 +1646,8 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    never in a response, trace or log; deleted with the brief by the maintenance pass after
    it expires) for `pnpm worker brief-diagnose` (docs/OBSERVABILITY_AND_EVALUATION.md).
 
-The step has a 90-second deadline. Every stage enforces its own input cap with the
+The step has a 100-second deadline (`PIPELINE_DEADLINE_MS`, inside the 120-second lease).
+Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
 until the end a read shows only stage status and counts, plus, once the scope stage has
 sent the step on to search, the readings and filters it settled on

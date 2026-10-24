@@ -67,13 +67,15 @@ export const THINKING_ALLOWANCE = 1_500;
 
 /**
  * Output tokens left for thinking under the check stage's output cap, for the checker
- * configuration (Haiku 5.5, adaptive thinking at effort `low`). Measured in Task 16c (163
- * calls of 1 to 44 claims): at most 5,545 thinking tokens (held out; 4,915 in development),
- * at most about 146 a claim on checks of 30 claims or more and 222 on a 17-claim batch; at
- * the 60-claim bound (`MAX_CHECK_CLAIMS`) that is at most 13,320 → 15,000. Task 16d
- * re-measured it with the production caps (168 development calls, `check.v7` and `check.v8`):
- * at most 8,178 thinking tokens, on a 60-claim check (6,730 on the 123 held-out calls of at
- * most 44 claims).
+ * configuration (Haiku 5.5 with adaptive thinking, at effort `medium` since Task 16e's
+ * selection; `low` before). Measured in Task 16c (163 calls of 1 to 44 claims, effort
+ * `low`): at most 5,545 thinking tokens (held out; 4,915 in development), at most about
+ * 146 a claim on checks of 30 claims or more and 222 on a 17-claim batch; at the 60-claim
+ * bound (`MAX_CHECK_CLAIMS`) that is at most 13,320 → 15,000. Task 16d re-measured it with
+ * the production caps (168 development calls, `check.v7` and `check.v8`, effort `low`): at
+ * most 8,178 thinking tokens, on a 60-claim check (6,730 on the 123 held-out calls of at
+ * most 44 claims). Task 16e at effort `medium` measured at most 11,408 thinking tokens
+ * (13,405 output tokens) on a 60-claim check: still within this allowance (DESIGN §9).
  */
 export const CHECK_THINKING_ALLOWANCE = 15_000;
 

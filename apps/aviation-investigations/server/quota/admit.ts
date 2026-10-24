@@ -20,7 +20,7 @@
  *    DESIGN §9, "Uncertain calls"), the anonymous share, and the total and anonymous
  *    in-flight limits (two in total, one anonymous).
  * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
- *    (90 s) with a fencing token. Commit before any provider call.
+ *    (`LEASE_TTL_MS`, 120 s) with a fencing token. Commit before any provider call.
  *
  * Lock order: the account's lock (step 0), the bucket rows in key order, the spend lock.
  * Nothing takes buckets or the spend lock and then an account's lock.

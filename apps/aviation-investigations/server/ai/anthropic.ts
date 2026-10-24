@@ -73,11 +73,11 @@ export type ThinkingMode = 'off' | 'adaptive';
 /**
  * Each stage's thinking. The answer stage runs on Opus, which cannot turn thinking off:
  * it thinks at effort `low` within the answer output cap's thinking allowance. The check
- * stage thinks adaptively: Haiku 5.5, adaptive thinking at effort `low`, the configuration
- * the 16c calibration froze and the only one Task 16d calibrates (evals/checker,
- * `protocol.v2.ts` candidates). Without thinking, Haiku withheld 20 of 21 wholly supported
- * development briefs and passed 6 of 8 critical regressions in 16c. A change needs the
- * calibration and the check output cap's thinking allowance re-measured.
+ * stage thinks adaptively: Haiku 5.5 with adaptive thinking, at the effort the checker
+ * calibration selected (`STAGE_EFFORT.check`: `medium` since Task 16e, selection.v3; `low`
+ * in 16c and 16d, evals/checker). Without thinking, Haiku withheld 20 of 21 wholly
+ * supported development briefs and passed 6 of 8 critical regressions in 16c. A change
+ * needs the calibration and the check output cap's thinking allowance re-measured.
  */
 export const STAGE_THINKING: Readonly<Record<LlmStage, ThinkingMode>> = {
   scope: 'off',
