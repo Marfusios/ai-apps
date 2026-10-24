@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
 import { Link, type To } from 'react-router';
-import { GLYPH_KINDS, type BriefResult, type CaseCard as CaseCardData, type Gap, type SummarySegment } from '../../../../shared/contracts/briefs';
+import { GLYPH_KINDS, type BriefResult, type CaseCard as CaseCardData, type GROUP_KINDS, type Gap, type SummarySegment } from '../../../../shared/contracts/briefs';
 import { AiBlock } from '../../components/AiBlock';
 import { CaseCard, UnconfirmedTag } from './CaseCard';
 import { checkStatusLine, resultsLabel, ungroupedTitle } from './display';
@@ -10,6 +10,40 @@ import { WithheldNotice } from './WithheldNotice';
 export const SUMMARY_LABEL = 'AI summary · check the cited passages';
 
 type SheetResult = Extract<BriefResult, { kind: 'answer' | 'withheld' | 'no_match' }>;
+
+export interface SheetLayout {
+  /** An answer's evidence groups in display order, each with its cards (empty groups included). */
+  groups: { kind: (typeof GROUP_KINDS)[number]; cards: CaseCardData[] }[];
+  /** The cards shown after them: an answer's cases in no group, or every card of a withheld or no-match sheet. */
+  rest: CaseCardData[];
+}
+
+/**
+ * Where each card goes on the sheet: mechanical groups in the fixed order (causal, defect,
+ * no fault, insufficient), or the one "examples" group, then the cases in no group
+ * (unclassified, or without a reading) in the result's order. The sheet renders from it,
+ * and the drawer steps through the cards in the same order (`sheetOrder`).
+ */
+export function sheetLayout(result: SheetResult): SheetLayout {
+  if (result.kind !== 'answer') return { groups: [], rest: result.cases };
+  const byNumber = new Map(result.cases.map((c) => [c.case.ntsbNo, c] as const));
+  const listed =
+    result.grouping === 'mechanical'
+      ? GLYPH_KINDS.map((kind) => ({ kind, caseNumbers: result.groups.find((g) => g.kind === kind)?.caseNumbers ?? [] }))
+      : result.groups;
+  // Every case is on the sheet: those in no group (unclassified, or without a reading) after the groups.
+  const grouped = new Set(listed.flatMap((g) => g.caseNumbers));
+  return {
+    groups: listed.map((g) => ({ kind: g.kind, cards: g.caseNumbers.map((n) => byNumber.get(n)).filter((c): c is CaseCardData => c !== undefined) })),
+    rest: result.cases.filter((c) => !grouped.has(c.case.ntsbNo)),
+  };
+}
+
+/** The case numbers in the order the sheet shows their cards, each once: the drawer's "‹ n of N ›" (Task 22 review W-11). */
+export function sheetOrder(result: SheetResult): string[] {
+  const { groups, rest } = sheetLayout(result);
+  return [...new Set([...groups.flatMap((g) => g.cards), ...rest].map((c) => c.case.ntsbNo))];
+}
 
 export interface BriefingSheetProps {
   result: SheetResult;
@@ -172,27 +206,17 @@ export function BriefingSheet({ result, caseTo, inCompare, onToggleCompare }: Br
     );
   }
 
-  const byNumber = new Map(result.cases.map((c) => [c.case.ntsbNo, c] as const));
-  const groups =
-    result.grouping === 'mechanical'
-      ? GLYPH_KINDS.map((kind) => ({ kind, caseNumbers: result.groups.find((g) => g.kind === kind)?.caseNumbers ?? [] }))
-      : result.groups;
-  // Every case is on the sheet: those in no group (unclassified, or without a reading) after the groups.
-  const grouped = new Set(groups.flatMap((g) => g.caseNumbers));
-  const ungrouped = result.cases.filter((c) => !grouped.has(c.case.ntsbNo));
+  const { groups, rest: ungrouped } = sheetLayout(result);
   return (
     <>
       <Summary segments={result.summary} caseTo={caseTo} />
       {result.check && <CheckStatus check={result.check} />}
       {label}
-      {groups.map((g) => {
-        const cards = g.caseNumbers.map((n) => byNumber.get(n)).filter((c): c is CaseCardData => c !== undefined);
-        return (
-          <EvidenceGroup key={g.kind} kind={g.kind} count={cards.length}>
-            {cards.map((c) => card(c, g.kind === 'examples'))}
-          </EvidenceGroup>
-        );
-      })}
+      {groups.map((g) => (
+        <EvidenceGroup key={g.kind} kind={g.kind} count={g.cards.length}>
+          {g.cards.map((c) => card(c, g.kind === 'examples'))}
+        </EvidenceGroup>
+      ))}
       {ungrouped.length > 0 && (
         <Ungrouped grouping={result.grouping} count={ungrouped.length}>
           {ungrouped.map((c) => card(c))}

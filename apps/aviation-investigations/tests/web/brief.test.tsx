@@ -25,7 +25,7 @@ import {
   type TurnstileApi,
 } from '../../web/src/features/ai/TurnstileGate';
 import { BRIEF_POLL_MS, MAX_POLL_BACKOFF_MS, briefPollDelay, briefStepQuery, type PollState } from '../../web/src/features/brief/api';
-import { BriefingSheet, citationJoiner } from '../../web/src/features/brief/BriefingSheet';
+import { BriefingSheet, citationJoiner, sheetOrder } from '../../web/src/features/brief/BriefingSheet';
 import { attributionAmbiguous, evidenceAttribution, quoteAttribution, unconfirmedLines } from '../../web/src/features/brief/display';
 import { exploreHref } from '../../web/src/features/brief/filters';
 import {
@@ -789,6 +789,56 @@ describe('Try again after a failed step (review W-5, W-12)', { timeout: 20_000 }
     expect(line.textContent).toBe(`${RETRY_FAILED} If it went through, Try again opens it without using another search.`);
     // Said politely, from a region that was there before it.
     expect(line.getAttribute('aria-live')).toBe('polite');
+  });
+});
+
+describe('The drawer steps through the cards in the order they are shown (review W-11)', { timeout: 20_000 }, () => {
+  const ID = '00000000-0000-4000-8000-00000000d011';
+  // Grouped: DEN08LA103 (causal), then DFW08TA066 (defect); MIA08LA156 in no group, so it is
+  // shown last. The result lists them DFW, MIA, DEN.
+  const answer = {
+    ...RESULT_SAMPLES.answer,
+    groups: [
+      { kind: 'causal', caseNumbers: ['DEN08LA103'] },
+      { kind: 'defect_not_causal', caseNumbers: ['DFW08TA066'] },
+      { kind: 'no_fault', caseNumbers: [] },
+      { kind: 'insufficient', caseNumbers: [] },
+    ],
+  };
+  const step = BriefStepResponseSchema.parse({
+    briefId: ID,
+    step: 1,
+    steps: 1,
+    refinementsLeft: 3,
+    question: MOCK_SEED_QUESTION,
+    origin: { kind: 'question' },
+    stage: 'done',
+    checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 }, written: true, verified: 'partially_checked', removedStatements: 0 },
+    startedAt: '2026-10-22T10:00:00.000Z',
+    finishedAt: '2026-10-22T10:00:40.000Z',
+    expiresAt: '2026-10-23T10:00:00.000Z',
+    result: answer,
+  });
+
+  it('‹ n of N › and the steps follow the sheet, groups first, then the cases in no group', async () => {
+    expect(sheetOrder(step.result as Parameters<typeof sheetOrder>[0])).toEqual(['DEN08LA103', 'DFW08TA066', 'MIA08LA156']);
+    server.use(
+      http.get('*/api/briefs/:id', () => HttpResponse.json(step)),
+      http.get('*/api/briefs/:id/steps/:n/cases/:ntsbNo', () => HttpResponse.json({ error: 'not_found', message: 'Gone.' }, { status: 404 })),
+    );
+    const { router } = renderApp(`/briefs/${ID}?case=DFW08TA066`);
+    // The open drawer hides the sheet from the accessibility tree; its cards are still there.
+    const dialog = await screen.findByRole('dialog', {}, SLOW);
+    const shown = [...document.querySelectorAll('article[data-card]')].map((a) => a.getAttribute('data-card'));
+    expect(shown).toEqual(['DEN08LA103', 'DFW08TA066', 'MIA08LA156']);
+    expect(await within(dialog).findByText('2 of 3')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Previous case' }));
+    await waitFor(() => expect(currentUrl(router)).toContain('case=DEN08LA103'));
+    expect(await within(dialog).findByText('1 of 3')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Next case' }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Next case' }));
+    await waitFor(() => expect(currentUrl(router)).toContain('case=MIA08LA156'));
+    expect(await within(dialog).findByText('3 of 3')).toBeTruthy();
   });
 });
 

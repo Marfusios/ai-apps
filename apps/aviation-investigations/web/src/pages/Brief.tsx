@@ -18,7 +18,7 @@ import { busyLabel } from '../features/ai/AskAiButton';
 import { briefStepQuery, cancelBrief, isFinished } from '../features/brief/api';
 import { useAskAi } from '../features/ai/useAskAi';
 import { BriefChips } from '../features/brief/BriefChips';
-import { BriefingSheet } from '../features/brief/BriefingSheet';
+import { BriefingSheet, sheetOrder } from '../features/brief/BriefingSheet';
 import { Checklist } from '../features/brief/Checklist';
 import { exploreHref, filtersInWords } from '../features/brief/filters';
 import { rememberedAsk, rememberedChange, rememberedQuestion } from '../features/brief/memory';
@@ -355,7 +355,8 @@ export function Brief() {
   const latest = step.step === step.steps;
   const sheet = result && (result.kind === 'answer' || result.kind === 'withheld' || result.kind === 'no_match') ? result : null;
   const context = chipsContext(step, previous.data);
-  const cases = sheet?.cases.map((c) => c.case.ntsbNo) ?? [];
+  // The drawer's "‹ n of N ›" steps through the cards in the order the sheet shows them.
+  const cases = sheet ? sheetOrder(sheet) : [];
 
   // The drawer keeps the step in view (`step` stays as it is: absent means the latest).
   const caseTo = (ntsbNo: string) => {
