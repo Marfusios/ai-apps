@@ -1877,8 +1877,15 @@ lock order in migration 0019.
   one, for a tab that starts listening late and for a page restored from the
   back/forward cache, which forgets anyway when it cannot read local storage; such a tab
   then reads the account again); an AI request still under way is discarded without
-  restoring a question, a retry key or a navigation. A deletion's re-authentication is
-  counted per account (5 starts and 5 callbacks an hour), not per network.
+  restoring a question, a retry key or a navigation. As with signing out, the page forgets
+  whatever the deletion's answer: nothing started for the visitor is kept or sent from the
+  moment the deletion starts, and once the answer is in (or none can come) everything
+  private goes. Anything but the server's success, read in full, reads the account again
+  and says the server has not confirmed the deletion. The exception is a refusal read in
+  full that asks for the Google confirmation first (403 `reauth_required`): nothing was
+  deleted and the session stands, so the page goes on to that confirmation. A deletion's
+  re-authentication is counted per account (5 starts and 5 callbacks an hour), not per
+  network.
 - **Backups** never hold the rows of the sign-in tables, the briefs or the idempotency
   records (`server/db/backup.ts`; RUNBOOK, "Backups"), so a restore cannot bring back a
   deleted account, its content, a session or OAuth state; `pnpm worker restore-check`

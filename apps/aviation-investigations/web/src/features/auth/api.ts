@@ -8,8 +8,8 @@
  * Deleting the account needs a recent Google sign-in: `startDeletion` says whether this
  * session may delete now; otherwise `confirmWithGoogle` signs in with Google again,
  * coming back to `DELETE_REAUTH_PATH` (or `/account?delete=failed`). Signing out and
- * deleting forget everything private the page held (`forgetVisitor`); signing out does so
- * whatever the server answers (`signOut`).
+ * deleting forget everything private the page held (`forgetVisitor`), whatever the server
+ * answers (`signOut`, `deleteAccount`).
  */
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
 import {
@@ -27,7 +27,7 @@ import {
   type DeleteStartResponse,
   type SignInRequest,
 } from '../../../../shared/contracts/account';
-import { getJson, postJson, retry } from '../../api';
+import { ApiError, getJson, postJson, retry } from '../../api';
 import { forgetVisitor, privateRead, visitorLeaving } from './visitor';
 
 /** Google's authorization endpoint: the only other origin sign-in may open. */
@@ -156,7 +156,35 @@ export function confirmWithGoogle(navigate?: (url: string) => void): Promise<voi
   return startGoogleSignIn(DELETE_REAUTH_PATH, navigate, reauthRequest());
 }
 
+/**
+ * The server did not confirm a deletion: it answered with an error (other than asking to
+ * confirm with Google first), or no answer came, or the answer broke off. The account may
+ * be gone or not: the page has forgotten everything private all the same and told the other
+ * tabs, and reads the account again; where it is still there, it shows, to be deleted again.
+ */
+export class DeletionUnconfirmedError extends Error {
+  override readonly name = 'DeletionUnconfirmedError';
+}
+
+/**
+ * Delete the signed-in account, and forget everything private whatever the server answers,
+ * as `signOut` does: nothing started for the visitor is kept or sent from the moment the
+ * deletion starts (`visitorLeaving`), and once the server has answered, or no answer can
+ * come, this tab and every other one forget the visitor. Only the server's success, read in
+ * full, confirms the deletion; anything else reads the account again and throws
+ * `DeletionUnconfirmedError`. The one exception is a refusal read in full that asks to
+ * confirm with Google first (403 `reauth_required`): nothing was deleted and the session
+ * stands, so nothing is forgotten and the page goes on to that confirmation.
+ */
 export async function deleteAccount(queryClient: QueryClient): Promise<void> {
-  await postJson('/api/account/delete', { confirm: true }, DeleteAccountResponseSchema);
-  await forgetVisitor(queryClient);
+  visitorLeaving();
+  let deleted = false;
+  try {
+    deleted = (await postJson('/api/account/delete', { confirm: true }, DeleteAccountResponseSchema))?.deleted === true;
+  } catch (err) {
+    if (err instanceof ApiError && err.body?.error === 'reauth_required') throw err;
+    // Any other error status, no answer, or an answer cut short: not confirmed.
+  }
+  await forgetVisitor(queryClient, { reread: !deleted });
+  if (!deleted) throw new DeletionUnconfirmedError('The server has not confirmed the deletion');
 }

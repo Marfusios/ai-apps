@@ -5,7 +5,7 @@ import { DELETE_PARAM } from '../../../shared/contracts/account';
 import { ApiError, aiStatusQuery, configQuery } from '../api';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
-import { SignOutUnconfirmedError, accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
+import { DeletionUnconfirmedError, SignOutUnconfirmedError, accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
 import { GoogleButton, useSignIn } from '../features/auth/SignInDialog';
 
 /**
@@ -31,6 +31,7 @@ export const ACCOUNT_COPY = {
   deleteConfirm: 'Delete account',
   deleteKeep: 'Keep account',
   deleted: 'Your account is deleted.',
+  deleteUnconfirmed: 'This page has forgotten your account, but the server hasn’t confirmed the deletion. If your account appears here, delete it again.',
   failed: 'That didn’t work. Try again in a moment.',
   reauthText: 'To delete your account, first confirm with Google that it’s you.',
   reauthFailed: 'Google didn’t confirm it’s you, so nothing was deleted.',
@@ -121,6 +122,10 @@ export function Account() {
       if (err instanceof SignOutUnconfirmedError) {
         // Forgotten all the same; the account read again shows whether the session is still there.
         setNotice(ACCOUNT_COPY.signOutUnconfirmed);
+      } else if (err instanceof DeletionUnconfirmedError) {
+        // Forgotten all the same; the account read again shows whether it is still there.
+        setDeleting('idle');
+        setNotice(ACCOUNT_COPY.deleteUnconfirmed);
       } else if (err instanceof ApiError && err.body?.error === 'reauth_required') {
         setDeleting('reauth');
         setNotice(ACCOUNT_COPY.reauthExpired);
