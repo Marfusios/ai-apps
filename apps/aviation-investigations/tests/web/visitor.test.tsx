@@ -113,6 +113,26 @@ async function otherTabRecordsChange({ event }: { event: boolean }, change: stri
   return change;
 }
 
+/**
+ * The next sign-out answers 503 `sign_out_pending` (gate t22 finding 1): the server ended this
+ * browser's session cookie but could not confirm the session is gone. From then on the
+ * account and the AI counts read as the signed-out visitor's, as they would on the server.
+ */
+function signOutUnconfirmed(): void {
+  let signedOut = false;
+  server.use(
+    http.post('*/api/auth/sign-out', () => {
+      signedOut = true;
+      return HttpResponse.json(
+        { error: 'sign_out_pending', message: 'Signed out here; not confirmed yet.', retryAfter: 5 },
+        { status: 503, headers: { 'retry-after': '5', 'cache-control': 'no-store' } },
+      );
+    }),
+    http.get('*/api/account', () => (signedOut ? HttpResponse.json({ signedIn: false }, { headers: { 'cache-control': 'no-store' } }) : undefined)),
+    http.get('*/api/ai/status', () => (signedOut ? HttpResponse.json(AI_STATUS_SAMPLES.fresh, { headers: { 'cache-control': 'no-store' } }) : undefined)),
+  );
+}
+
 /** The other tab's sign-out on the server (the session ends there). */
 const signOutOnServer = () => fetch(new URL('/api/auth/sign-out', window.location.href), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 
@@ -158,6 +178,33 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
     expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
     expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
     expect(screen.queryByText('AI classified')).toBeNull();
+  }, 20_000);
+
+  it('a sign-out the server could not confirm forgets them all the same, in every tab, and says so (gate t22 finding 1)', async () => {
+    signedInApi();
+    const app = await briefWithDrawer();
+    signOutUnconfirmed();
+    const generation = visitorGeneration();
+    const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+    const otherTab = new BroadcastChannel(VISITOR_CHANNEL);
+    const heard: unknown[] = [];
+    otherTab.onmessage = (event: MessageEvent) => heard.push(event.data);
+    try {
+      await act(() => app.router.navigate('/account'));
+      fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
+      expect(await screen.findByText(ACCOUNT_COPY.signOutUnconfirmed)).toBeTruthy();
+      await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
+      // The same forgetting as a confirmed sign-out: the generation moves on, private queries
+      // go, and the other tabs are told (the recorded change, and the channel).
+      expect(visitorGeneration()).toBeGreaterThan(generation);
+      await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
+      const change = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+      expect(change).not.toBe(marker);
+      await waitFor(() => expect(heard).toEqual([{ type: 'visitor-changed', change, recorded: true }]));
+      expect(screen.queryByText(ACCOUNT_COPY.failed)).toBeNull();
+    } finally {
+      otherTab.close();
+    }
   }, 20_000);
 
   it('deleting the account forgets them too', async () => {
@@ -306,11 +353,24 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     return { ...app, held };
   }
 
-  async function signOutHere(app: ReturnType<typeof renderApp>): Promise<void> {
+  async function signOutHere(app: ReturnType<typeof renderApp>, { confirmed = true }: { confirmed?: boolean } = {}): Promise<void> {
+    if (!confirmed) signOutUnconfirmed();
     await act(() => app.router.navigate('/account'));
     fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
     await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
+    if (!confirmed) await screen.findByText(ACCOUNT_COPY.signOutUnconfirmed);
   }
+
+  it('a question answered after a sign-out the server could not confirm opens nothing and keeps nothing (gate t22 finding 1)', async () => {
+    signedInApi();
+    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    await signOutHere(app, { confirmed: false });
+    app.held.release();
+    await act(() => sleep(150));
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  });
 
   it('a question answered after sign-out opens nothing and keeps neither the question nor a retry key', async () => {
     signedInApi();

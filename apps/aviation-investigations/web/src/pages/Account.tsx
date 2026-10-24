@@ -5,7 +5,7 @@ import { DELETE_PARAM } from '../../../shared/contracts/account';
 import { ApiError, aiStatusQuery, configQuery } from '../api';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
-import { accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
+import { SignOutUnconfirmedError, accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
 import { GoogleButton, useSignIn } from '../features/auth/SignInDialog';
 
 /**
@@ -20,6 +20,7 @@ export const ACCOUNT_COPY = {
   unavailable: 'Sign-in isn’t available yet.',
   searchesHeading: 'AI searches left',
   signOut: 'Sign out',
+  signOutUnconfirmed: 'You’re signed out in this browser, but the server hasn’t confirmed it yet. It will finish the sign-out the next time you open this site here.',
   deleteHeading: 'Delete account',
   deleteNow:
     'Deleting your account signs you out everywhere and at once removes your name, your email, the link to your Google account and the AI searches your account holds.',
@@ -117,7 +118,10 @@ export function Account() {
     try {
       await work();
     } catch (err) {
-      if (err instanceof ApiError && err.body?.error === 'reauth_required') {
+      if (err instanceof SignOutUnconfirmedError) {
+        // Signed out here all the same: the signed-out page says the server has yet to confirm it.
+        setNotice(ACCOUNT_COPY.signOutUnconfirmed);
+      } else if (err instanceof ApiError && err.body?.error === 'reauth_required') {
         setDeleting('reauth');
         setNotice(ACCOUNT_COPY.reauthExpired);
       } else {

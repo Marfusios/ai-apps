@@ -8,7 +8,8 @@
  * Deleting the account needs a recent Google sign-in: `startDeletion` says whether this
  * session may delete now; otherwise `confirmWithGoogle` signs in with Google again,
  * coming back to `DELETE_REAUTH_PATH` (or `/account?delete=failed`). Signing out and
- * deleting forget everything private the page held (`forgetVisitor`).
+ * deleting forget everything private the page held (`forgetVisitor`), and so does a
+ * sign-out the server could not confirm (`SignOutUnconfirmedError`).
  */
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
 import {
@@ -25,7 +26,7 @@ import {
   type DeleteStartResponse,
   type SignInRequest,
 } from '../../../../shared/contracts/account';
-import { getJson, postJson, retry } from '../../api';
+import { ApiError, getJson, postJson, retry } from '../../api';
 import { forgetVisitor, privateRead } from './visitor';
 
 /** Google's authorization endpoint: the only other origin sign-in may open. */
@@ -108,8 +109,29 @@ export async function startGoogleSignIn(
   navigate(url.toString());
 }
 
+/**
+ * The server could not confirm a sign-out (503 `sign_out_pending`). This browser is signed
+ * out all the same (the server expired its session cookie) and the page has forgotten
+ * everything private it held; the server ends the session at this browser's next account
+ * read, sign-out or sign-in, and admits no new sign-in before it has.
+ */
+export class SignOutUnconfirmedError extends Error {
+  override readonly name = 'SignOutUnconfirmedError';
+}
+
+/**
+ * Sign out and forget everything private the page held. When the server could not confirm
+ * the sign-out, the page forgets just the same (and tells the other tabs), then throws
+ * `SignOutUnconfirmedError` so the page can say so.
+ */
 export async function signOut(queryClient: QueryClient): Promise<void> {
-  await postJson('/api/auth/sign-out', {}, null);
+  try {
+    await postJson('/api/auth/sign-out', {}, null);
+  } catch (err) {
+    if (!(err instanceof ApiError && err.body?.error === 'sign_out_pending')) throw err;
+    await forgetVisitor(queryClient);
+    throw new SignOutUnconfirmedError('Signed out in this browser; the server has not confirmed the sign-out yet');
+  }
   await forgetVisitor(queryClient);
 }
 
