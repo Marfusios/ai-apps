@@ -1,22 +1,16 @@
 /**
  * The mock evidence searches (web/mock/evidence.ts) that the component and end-to-end tests of
  * the evidence view read: every page and response they can produce is valid under the contract
- * (`evidence.v1`), every excerpt is a verbatim slice of its fixture section at its paragraph
- * span, and between them the samples cover every state the interface shows.
+ * (`evidence.v2`), every excerpt is a verbatim slice of its fixture section at its paragraph
+ * span, the suggestion never changes what is retrieved, and between them the samples cover
+ * every state the interface shows.
  */
 import { describe, expect, it } from 'vitest';
+import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
-import {
-  CreateEvidenceResponseSchema,
-  EVIDENCE_PAGE_SIZE,
-  EVIDENCE_TTL_MS,
-  EvidencePageSchema,
-  UNCHECKED_KINDS,
-  type EvidenceCase,
-  type EvidencePage,
-} from '../../shared/contracts/evidence.js';
+import { CreateEvidenceResponseSchema, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
 import casesJson from '../../web/mock/cases.json' with { type: 'json' };
-import { MOCK_EVIDENCE_QUESTIONS, MockEvidence, evidenceCases, readQuestion, scopeReplyFor } from '../../web/mock/evidence.js';
+import { MOCK_EVIDENCE_QUESTIONS, MockEvidence, evidenceCases, questionWords, scopeReplyFor } from '../../web/mock/evidence.js';
 
 const CASES = casesJson as unknown as Record<string, CaseDetail>;
 const KEY = (n: number): string => `evidence-key-${String(n).padStart(4, '0')}`;
@@ -45,25 +39,41 @@ function results(server: MockEvidence, question: string, n = 1): EvidencePage {
   return body.search;
 }
 
-describe('mock evidence pages are valid evidence.v1 and NTSB text only', () => {
+/** An edited search of `from`: exactly `filters`, and `terms` when given. */
+function edit(server: MockEvidence, from: EvidencePage, filters: BriefFilters, terms: string | undefined, n: number): EvidencePage {
+  const reply = server.create({ kind: 'edited', from: from.id, filters, ...(terms !== undefined ? { terms } : {}), idempotencyKey: KEY(n), turnstileToken: 'token' });
+  expect(reply.status).toBe(201);
+  const body = CreateEvidenceResponseSchema.parse(reply.body);
+  if (body.kind !== 'results') throw new Error('expected results');
+  return body.search;
+}
+
+/** Where each case's excerpts are: what retrieval chose, whatever words they mark. */
+const placement = (cases: readonly EvidenceCase[]) => cases.map((c) => [c.rank, c.case.ntsbNo, c.excerpts.map((e) => `${e.sectionKey}@${e.paragraph.start}`)]);
+
+describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
   const searches = Object.entries(MOCK_EVIDENCE_QUESTIONS).filter(([, q]) => scopeReplyFor(q) === null);
 
   it.each(searches)('%s: every page validates, and every excerpt is the section text at its paragraph span', (_name, question) => {
     const server = new MockEvidence();
     const first = results(server, question);
-    for (const c of readAll(server, first)) {
-      const detail = CASES[c.case.ntsbNo] as CaseDetail;
-      expect(detail, c.case.ntsbNo).toBeDefined();
-      // Every probable-cause statement of the case, verbatim, in section order.
-      expect(c.probableCauses.map((p) => p.text)).toEqual(detail.sections.filter((s) => s.kind === 'probable_cause').map((s) => s.text));
-      for (const e of c.excerpts) {
-        const section = detail.sections.find((s) => s.key === e.sectionKey);
-        expect(section?.revision).toBe(e.revision);
-        expect(section?.text.slice(e.paragraph.start, e.paragraph.end)).toBe(e.text);
-        expect(e.seed.end).toBeLessThanOrEqual(section?.text.length ?? 0);
-        // A whole paragraph: it starts after a line break (or at the start) and ends before one.
-        expect(e.paragraph.start === 0 || section?.text[e.paragraph.start - 1] === '\n' || /\s/.test(section?.text[e.paragraph.start - 1] ?? '')).toBe(true);
-        expect(e.text).not.toContain('\n');
+    // With its suggestion applied too, filters and words (the edited pages the interface makes).
+    const applied = first.suggestion ? [edit(server, first, first.suggestion.filters, undefined, 2), edit(server, first, first.suggestion.filters, first.suggestion.terms, 3)] : [];
+    for (const page of [first, ...applied]) {
+      for (const c of readAll(server, page)) {
+        const detail = CASES[c.case.ntsbNo] as CaseDetail;
+        expect(detail, c.case.ntsbNo).toBeDefined();
+        // Every probable-cause statement of the case, verbatim, in section order.
+        expect(c.probableCauses.map((p) => p.text)).toEqual(detail.sections.filter((s) => s.kind === 'probable_cause').map((s) => s.text));
+        for (const e of c.excerpts) {
+          const section = detail.sections.find((s) => s.key === e.sectionKey);
+          expect(section?.revision).toBe(e.revision);
+          expect(section?.text.slice(e.paragraph.start, e.paragraph.end)).toBe(e.text);
+          expect(e.seed.end).toBeLessThanOrEqual(section?.text.length ?? 0);
+          // A whole paragraph: it starts after a line break (or at the start) and ends before one.
+          expect(e.paragraph.start === 0 || section?.text[e.paragraph.start - 1] === '\n' || /\s/.test(section?.text[e.paragraph.start - 1] ?? '')).toBe(true);
+          expect(e.text).not.toContain('\n');
+        }
       }
     }
   });
@@ -72,19 +82,25 @@ describe('mock evidence pages are valid evidence.v1 and NTSB text only', () => {
     const server = new MockEvidence();
     let key = 500;
     const all = (q: string): EvidenceCase[] => readAll(server, results(server, q, (key += 1)));
-    // Several pages of one pinned ranking.
+    // Several pages of one pinned ranking; a question search applies no filter.
     const seed = results(server, MOCK_EVIDENCE_QUESTIONS.seed, 101);
     expect(seed.pages).toBeGreaterThanOrEqual(3);
     expect(seed.cases).toHaveLength(EVIDENCE_PAGE_SIZE);
+    expect([seed.query, seed.appliedFilters, seed.hint]).toEqual([{ source: 'question' }, {}, null]);
+    // A suggestion of filters and words, not applied: the question's results are every case of the cohort.
+    const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb, 102);
+    expect(carb.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'carb icing' });
+    expect(carb.total).toBe(seed.total);
     // Multi-aircraft events, their text event-scoped.
     const midair = all(MOCK_EVIDENCE_QUESTIONS.midair).filter((c) => c.case.aircraft.length > 1);
     expect(midair.length).toBeGreaterThanOrEqual(2);
     expect(midair.flatMap((c) => c.excerpts).every((e) => e.scope === 'event' && e.aircraftKey === null)).toBe(true);
-    // Literal and synonym highlights ("carburetor" for "carb"); a literal is the word itself, never a stem.
-    const carb = all(MOCK_EVIDENCE_QUESTIONS.carb).flatMap((c) => c.excerpts);
-    const marked = (match: 'literal' | 'synonym') => carb.flatMap((e) => e.highlights.filter((h) => h.match === match).map((h) => e.text.slice(h.start, h.end).toLowerCase()));
+    // The suggested words marked, literal and synonym ("carburetor" for "carb"); a literal is the word itself, never a stem.
+    const carbExcerpts = all(MOCK_EVIDENCE_QUESTIONS.carb).flatMap((c) => c.excerpts);
+    const marked = (match: 'literal' | 'synonym') => carbExcerpts.flatMap((e) => e.highlights.filter((h) => h.match === match).map((h) => e.text.slice(h.start, h.end).toLowerCase()));
     expect(marked('synonym')).toContain('carburetor');
-    expect(new Set(marked('literal'))).toEqual(new Set(['icing']));
+    expect(marked('literal')).toContain('icing');
+    expect(marked('literal').every((w) => w === 'carb' || w === 'icing')).toBe(true);
     // A highlight after multi-byte characters: the offsets are UTF-16 code units.
     const multibyte = all(MOCK_EVIDENCE_QUESTIONS.multibyte).flatMap((c) => c.excerpts);
     const after = multibyte.find((e) => {
@@ -92,31 +108,82 @@ describe('mock evidence pages are valid evidence.v1 and NTSB text only', () => {
       return at >= 0 && e.highlights.some((h) => h.start > at);
     });
     expect(after).toBeDefined();
-    // Every unchecked kind, each quoting the question's own words.
-    const unchecked = readQuestion(MOCK_EVIDENCE_QUESTIONS.unchecked).unchecked;
-    expect(unchecked.map((u) => u.kind).sort()).toEqual([...UNCHECKED_KINDS].sort());
-    for (const u of unchecked) expect(MOCK_EVIDENCE_QUESTIONS.unchecked).toContain(u.quote);
-    // A tiny and an empty result.
-    expect(results(server, MOCK_EVIDENCE_QUESTIONS.tiny, 201).total).toBe(2);
-    const empty = results(server, MOCK_EVIDENCE_QUESTIONS.empty, 202);
-    expect([empty.total, empty.pages, empty.cases.length]).toEqual([0, 0, 0]);
+    // Suggested filters that leave two cases, and none, once applied.
+    const tiny = results(server, MOCK_EVIDENCE_QUESTIONS.tiny, 201);
+    expect(tiny.suggestion?.filters).toEqual({ category: ['HELI'], state: ['TX'] });
+    expect(edit(server, tiny, tiny.suggestion?.filters ?? {}, undefined, 202).total).toBe(2);
+    const empty = results(server, MOCK_EVIDENCE_QUESTIONS.empty, 203);
+    const none = edit(server, empty, empty.suggestion?.filters ?? {}, undefined, 204);
+    expect([none.total, none.pages, none.cases.length]).toEqual([0, 0, 0]);
+    // A failed scope stage: the question's results, no suggestion.
+    const failed = results(server, MOCK_EVIDENCE_QUESTIONS.noSuggestion, 205);
+    expect([failed.suggestion, failed.hint]).toEqual([null, null]);
+    expect(failed.total).toBeGreaterThan(0);
+    // Hints, with results: an explicit counting request (with the applied filters: none), an
+    // explicit comparison request; a case number alone is neither.
+    const statistics = results(server, MOCK_EVIDENCE_QUESTIONS.statistics, 206);
+    expect(statistics.hint).toEqual({ kind: 'corpus_statistics', filters: {} });
+    expect(statistics.total).toBeGreaterThan(0);
+    const comparison = results(server, MOCK_EVIDENCE_QUESTIONS.comparison, 207);
+    expect(comparison.hint).toEqual({ kind: 'case_comparison', found: ['DFW08TA066', 'NYC08LA106'], notFound: ['ZZZ99ZZ999'] });
+    expect(comparison.total).toBeGreaterThan(0);
+    expect(results(server, MOCK_EVIDENCE_QUESTIONS.single, 208).hint).toBeNull();
     // Cases found by similarity alone keep one excerpt, or none when no passage maps (a
     // multi-aircraft event here): the case stays, with its facts and probable causes.
-    const similarityOnly = all(MOCK_EVIDENCE_QUESTIONS.carb).filter((c) => c.relevance.channels.join() === 'similarity');
+    const similarityOnly = all(MOCK_EVIDENCE_QUESTIONS.midair).filter((c) => c.relevance.channels.join() === 'similarity');
     expect(similarityOnly.filter((c) => c.case.aircraft.length === 1).every((c) => c.excerpts.length === 1)).toBe(true);
     const bare = similarityOnly.find((c) => c.excerpts.length === 0);
     expect(bare?.case.aircraft.length).toBeGreaterThan(1);
     expect(bare?.probableCauses.length).toBeGreaterThan(0);
   });
 
-  it('static scope replies come from the server templates, never a clarification round', () => {
+  it('policy replies come from the server templates, for out of scope and operational advice only', () => {
     const server = new MockEvidence();
     const kinds = (['outOfScope', 'operational', 'statistics', 'comparison'] as const).map((name, i) => {
-      const { reply, body } = ask(server, MOCK_EVIDENCE_QUESTIONS[name], 300 + i);
-      expect(reply.status).toBe(200);
+      const { body } = ask(server, MOCK_EVIDENCE_QUESTIONS[name], 300 + i);
       return body.kind === 'scope_reply' ? body.reply.kind : body.kind;
     });
-    expect(kinds).toEqual(['out_of_scope', 'operational_advice', 'corpus_statistics', 'case_comparison']);
+    expect(kinds).toEqual(['out_of_scope', 'operational_advice', 'results', 'results']);
+  });
+});
+
+describe('the suggestion is advisory only', () => {
+  it('retrieval, ranking, cohort and excerpt choice come from the question, whatever the suggestion is', () => {
+    const server = new MockEvidence();
+    for (const [i, question] of [MOCK_EVIDENCE_QUESTIONS.carb, MOCK_EVIDENCE_QUESTIONS.tiny, MOCK_EVIDENCE_QUESTIONS.statistics].entries()) {
+      const page = results(server, question, 600 + i);
+      const cases = readAll(server, page);
+      // The same ranking and excerpts as with no suggestion at all, or any other suggested words.
+      expect(placement(cases)).toEqual(placement(evidenceCases({}, questionWords(question))));
+      expect(placement(cases)).toEqual(placement(evidenceCases({}, questionWords(question), 'unrelated words entirely')));
+      // No filter applied: the relevance facts name none.
+      expect(cases.every((c) => c.relevance.filters.length === 0)).toBe(true);
+      // The marks and counts are the suggested words'.
+      const suggested = new Set((page.suggestion?.terms ?? '').split(' '));
+      expect(cases.flatMap((c) => c.relevance.terms.map((t) => t.term)).every((t) => suggested.has(t))).toBe(true);
+    }
+  });
+
+  it('applying the suggested filters keeps the question as the query; words are taken only when sent', () => {
+    const server = new MockEvidence();
+    const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb, 1);
+    const filtersOnly = edit(server, carb, { phase: ['approach'] }, undefined, 2);
+    expect([filtersOnly.question, filtersOnly.query, filtersOnly.appliedFilters, filtersOnly.suggestion, filtersOnly.hint]).toEqual([
+      carb.question,
+      { source: 'question' },
+      { phase: ['approach'] },
+      null,
+      null,
+    ]);
+    // Ranked by the question's words within the filter, the excerpts marking them.
+    expect(placement(readAll(server, filtersOnly))).toEqual(placement(evidenceCases({ phase: ['approach'] }, questionWords(carb.question))));
+    expect(filtersOnly.cases.every((c) => c.relevance.filters.join() === 'phase')).toBe(true);
+    const withWords = edit(server, carb, { phase: ['approach'] }, 'carb icing', 3);
+    expect(withWords.query).toEqual({ source: 'edited', terms: 'carb icing' });
+    // A filter cleared stays cleared, and the edited words carry on when none are sent.
+    const cleared = edit(server, withWords, {}, undefined, 4);
+    expect([cleared.query, cleared.appliedFilters]).toEqual([{ source: 'edited', terms: 'carb icing' }, {}]);
+    expect(cleared.total).toBeGreaterThan(withWords.total);
   });
 });
 
@@ -130,28 +197,16 @@ describe('the mock evidence server', () => {
     expect(server.read(first.id, first.pages + 1).status).toBe(404);
   });
 
-  it('a key replays its search; the same key for another question is a conflict', () => {
+  it('a key replays its search; the same key for another request is a conflict', () => {
     const server = new MockEvidence();
     const first = results(server, MOCK_EVIDENCE_QUESTIONS.seed, 7);
     const again = server.create({ kind: 'question', question: MOCK_EVIDENCE_QUESTIONS.seed, idempotencyKey: KEY(7), turnstileToken: 'token' });
     expect(again.replayed).toBe(true);
     expect((again.body as { search: EvidencePage }).search.id).toBe(first.id);
     expect(server.create({ kind: 'question', question: 'Another question', idempotencyKey: KEY(7), turnstileToken: 'token' }).status).toBe(409);
-  });
-
-  it('an edited search keeps the question and unchecked readings, takes filters and terms as given', () => {
-    const server = new MockEvidence();
-    const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb, 1);
-    const reply = server.create({ kind: 'edited', from: carb.id, filters: {}, terms: 'carburetor heat', idempotencyKey: KEY(2), turnstileToken: 'token' });
-    expect(reply.status).toBe(201);
-    const edited = EvidencePageSchema.parse((reply.body as { search: EvidencePage }).search);
-    expect(edited.id).not.toBe(carb.id);
-    expect(edited.edited).toBe(true);
-    expect(edited.question).toBe(carb.question);
-    expect(edited.interpretation).toEqual({ filters: {}, terms: 'carburetor heat', unchecked: carb.interpretation.unchecked });
-    // The removed phase filter stays removed: more cases than the approach phase had.
-    expect(edited.total).toBeGreaterThan(carb.total);
-    expect(evidenceCases(edited.interpretation).length).toBe(edited.total);
+    // An edit with words and one without are different requests.
+    edit(server, first, {}, 'engine', 8);
+    expect(server.create({ kind: 'edited', from: first.id, filters: {}, idempotencyKey: KEY(8), turnstileToken: 'token' }).status).toBe(409);
   });
 
   it('a search is read only by its owner until it expires; signing in from it moves it to the account', () => {
@@ -175,7 +230,8 @@ describe('the mock evidence server', () => {
   it('the full case of a ranked case comes from the search, for its owner only (GET /api/evidence/:id/cases/:ntsbNo)', () => {
     let visitor: 'trial' | 'account' = 'trial';
     const server = new MockEvidence({ visitor: () => visitor });
-    const search = results(server, MOCK_EVIDENCE_QUESTIONS.tiny);
+    const question = results(server, MOCK_EVIDENCE_QUESTIONS.tiny);
+    const search = edit(server, question, question.suggestion?.filters ?? {}, undefined, 2);
     const ranked = search.cases[0]?.case.ntsbNo as string;
     const reply = server.caseOf(search.id, ranked);
     expect(reply.status).toBe(200);

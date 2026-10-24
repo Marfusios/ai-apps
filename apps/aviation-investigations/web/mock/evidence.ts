@@ -1,29 +1,33 @@
 /**
- * Mock AI evidence searches (shared/contracts/evidence.ts, `evidence.v1`) for the MSW
- * handlers, the component tests and the end-to-end tests of the evidence view. Everything a
- * page shows is NTSB text from the fixture cases in `cases.json` and coded data from
- * `search-index.json`; offsets are computed from those texts here, never typed by hand, so
- * every excerpt is a verbatim slice of its section at its paragraph span.
+ * Mock AI evidence searches (shared/contracts/evidence.ts, `evidence.v2`: the advisory-only
+ * design) for the MSW handlers, the component tests and the end-to-end tests of the evidence
+ * view. Everything a page shows is NTSB text from the fixture cases in `cases.json` and coded
+ * data from `search-index.json`; offsets are computed from those texts here, never typed by
+ * hand, so every excerpt is a verbatim slice of its section at its paragraph span.
  *
- * - **Reading the question** (a stand-in for the scope stage `scope.e1`): a few fixed rules
- *   turn words into Explore filters ("helicopter", "on approach", "IMC", "fatal", "at night",
- *   "agricultural", a US state, "since 2015"), the rest into search terms, and phrases the
- *   data cannot check into unchecked readings (timing, causation, absence, sequence, a filter
- *   AirCase does not have, an unclear word), quoted verbatim from the question. The static
- *   scope replies are the server's own templates (server/briefs/static-replies.ts).
- * - **Ranking**: every default-cohort fixture case that passes the filters (the mock search
- *   engine's own filter rules), by how often the terms occur (probable cause counted three
- *   times), then newest first. Paging is free and reads the pinned list.
+ * - **Retrieval** never reads the scope stage: a question search ranks every default-cohort
+ *   fixture case by how often the question's own words occur (probable cause counted three
+ *   times), then newest first. An edited search applies exactly the filters sent (the mock
+ *   search engine's own filter rules) and ranks by the user's words when it has them, else by
+ *   the earlier search's query. Paging is free and reads the pinned list.
+ * - **The suggestion** (a stand-in for the scope stage): a few fixed rules turn words into
+ *   Explore filters ("helicopter", "on approach", "IMC", "fatal", "at night", "agricultural", a
+ *   US state, "since 2015") and the rest into search words. It is never applied; when there is
+ *   one, the excerpts mark its words, else the query's own. The server, not the scope stage, reads
+ *   an explicit counting request (the dashboard hint) or comparison request with case numbers (the
+ *   compare hint) from the question; both still get results. Policy replies (out of scope,
+ *   operational advice) are the server's own templates (server/briefs/static-replies.ts).
  * - **Projection**: the probable-cause statements in section order; up to three whole
  *   paragraphs (runs of text between line breaks) of the factual and analysis sections with
- *   the most term matches, highlighted as `literal` (the term, or its stem) or `synonym` (the
- *   analyzer's equivalences, worker/index/synonyms.ts); relevance facts counted from those
- *   excerpts; the channels that would find it.
+ *   the most matches of the marked words, highlighted as `literal` (the word itself) or
+ *   `synonym` (the analyzer's equivalences, shared/aviation-analysis.ts); relevance facts
+ *   counted from those excerpts; the channels that would find it.
  *
  * Questions with these words get the other outcomes (as in web/mock/briefs.ts):
  * - "poem", "recipe", "stock" or "bitcoin": out of scope; "what should i do", "right now" or
- *   "should i fly": operational advice; "how many", "how often" or "trend": counting;
- *   "compare" with case numbers: a comparison;
+ *   "should i fly": operational advice; "how many", "how often" or "trend": the dashboard hint;
+ *   "compare" or "versus" with case numbers: the compare hint;
+ * - "scope failure": the scope stage fails, so the search has no suggestion (results still come);
  * - "nothing": no investigation retrieved;
  * - "expire": the search is created, then reads of it answer 404 (it expired);
  * - "unavailable", "lost before start", "lost response" (the first time a question is asked):
@@ -41,18 +45,15 @@ import {
   type CreateEvidenceResponse,
   type EvidenceCase,
   type EvidenceExcerpt,
-  type EvidenceInterpretation,
   type EvidencePage,
   type EvidenceRelevance,
-  type UncheckedKind,
-  type UncheckedReading,
 } from '../../shared/contracts/evidence.js';
 import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters, type ScopeReply } from '../../shared/contracts/briefs.js';
 import type { CaseDetail, Section } from '../../shared/contracts/cases.js';
 import type { ErrorResponse } from '../../shared/contracts/common.js';
 import { SECTION_LABEL, defaultSearchRequest, type CaseRow, type SearchRequest } from '../../shared/contracts/search.js';
 import { US_STATE } from '../../shared/vocab.js';
-import { comparisonReply, operationalReply, outOfScopeReply, statisticsReply } from '../../server/briefs/static-replies.js';
+import { operationalReply, outOfScopeReply } from '../../server/briefs/static-replies.js';
 import { AVIATION_SYNONYMS } from '../../shared/aviation-analysis.js';
 import { searchCorpus, type MockCorpus } from './engine.js';
 import type { MockReader, MockReply } from './briefs.js';
@@ -67,25 +68,28 @@ export const MOCK_EVIDENCE_QUESTION = 'Engine power loss shortly after maintenan
 
 /** Sample questions for each state a page can be in (tests and the dev mock mode). */
 export const MOCK_EVIDENCE_QUESTIONS = {
-  /** No filters, a timing reading: 21 cases, three pages. */
+  /** A suggestion of words only: 21 cases, three pages. */
   seed: MOCK_EVIDENCE_QUESTION,
-  /** A phase filter; "carburetor" in the text is a synonym match of "carb". */
+  /** A suggested phase filter, not applied; "carburetor" in the text is a synonym match of "carb". */
   carb: 'Carb icing on approach',
   /** Two-aircraft events, event-scoped text. */
   midair: 'Midair collision after departing',
-  /** Two filters that leave two cases. */
+  /** Suggested filters that leave two cases once applied. */
   tiny: 'Helicopter power loss in Texas',
-  /** Nothing retrieved: no fixture case passes the filters. */
+  /** Suggested filters that leave none once applied. */
   empty: 'Fatal balloon accidents in Alaska',
-  /** Readings of every kind, none of them applied. */
-  unchecked:
-    'Engine failure shortly after maintenance, caused by fuel contamination, without a mayday call, then a forced landing, for student pilots in recent years',
   /** Excerpts with multi-byte characters (’) before the highlights. */
   multibyte: 'Spatial disorientation and loss of control',
+  /** The scope stage failed: the question's own results, no suggestion. */
+  noSuggestion: 'Bird strike damage, scope failure',
   outOfScope: 'Write a poem about clouds',
   operational: 'What should I do right now, my engine is running rough',
+  /** An explicit counting request: results, and the dashboard hint. */
   statistics: 'How many helicopter accidents happened in Texas',
-  comparison: 'Compare DFW08TA066 and NYC08LA106',
+  /** An explicit comparison request: results, and the compare hint (one number is in no case). */
+  comparison: 'Compare DFW08TA066 and NYC08LA106 with ZZZ99ZZ999',
+  /** One case number without a comparison request: results only. */
+  single: 'What happened in DFW08TA066',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -111,34 +115,35 @@ const FILTER_RULES: readonly FilterRule[] = [
   { pattern: /\b(?:agricultural|crop[- ]dusting)\b/i, facet: 'purpose', values: ['AAPL'] },
 ];
 
-const UNCHECKED_RULES: readonly { kind: UncheckedKind; pattern: RegExp }[] = [
-  {
-    kind: 'timing',
-    pattern: /\b(?:(?:shortly|soon|right|just|immediately|days?|hours?|weeks?)\s+)?after\s+(?:an?\s+|the\s+)?(?:maintenance|inspection|annual|oil change|overhaul|repair|engine change)\b/i,
-  },
-  { kind: 'timing', pattern: /\bwithin\s+\d+\s+(?:flight\s+)?(?:days?|hours?|weeks?|months?)\b/i },
-  { kind: 'causation', pattern: /\b(?:caused\s+by|because\s+of|due\s+to|led\s+to|resulted\s+in)\s+[\w-]+(?:\s+[\w-]+)?/i },
-  { kind: 'absence', pattern: /\b(?:without|no\s+sign\s+of|never)\s+(?:an?\s+|the\s+)?[\w-]+(?:\s+[\w-]+)?/i },
-  { kind: 'sequence', pattern: /\b(?:then|followed\s+by|before)\s+(?:an?\s+|the\s+)?[\w-]+(?:\s+[\w-]+)?/i },
-  { kind: 'unsupported_filter', pattern: /\b(?:student|low[- ]time|new|older)\s+pilots?\b/i },
-  { kind: 'ambiguous', pattern: /\brecent\s+years\b|\brecently\b/i },
-];
-
-/** Words a question is made of that are never search terms. */
+/** Words a question is made of that are never search words. */
 const NOT_TERMS = new Set([
   ...'a an and are as at be but by for if in into is it of on or such that the their then there these they this to was will with'.split(' '),
   ...'what which how where when why who did does do show find me any all were from about during since between within after before'.split(' '),
   ...'accident accidents incident incidents crash crashes case cases investigation investigations event events happened involving my i should'.split(' '),
   ...'shortly soon right just immediately caused because due led resulted without never sign followed recent recently years year found'.split(' '),
+  ...'many often compare comparing versus vs'.split(' '),
 ]);
+
+/** The words of a question, with their offsets: letters, never a piece of a case number ("DFW08TA066"). */
+function plainWords(question: string): { word: string; start: number; end: number }[] {
+  const out: { word: string; start: number; end: number }[] = [];
+  for (const m of question.matchAll(/[A-Za-z][A-Za-z'-]*/g)) {
+    const end = m.index + m[0].length;
+    if (/\d/.test(question[m.index - 1] ?? '') || /\d/.test(question[end] ?? '')) continue;
+    out.push({ word: m[0].toLowerCase().replace(/['’]s$/, ''), start: m.index, end });
+  }
+  return out;
+}
 
 const STATES = Object.entries(US_STATE) as [string, string][];
 
-/** The question's own words in `[start, end)`, verbatim: a substring of the question. */
-const quote = (question: string, start: number, end: number): string => question.slice(start, end).trim();
+/** The scope stage's suggestion for a case-search question: filters and words, never applied. */
+type Suggestion = NonNullable<EvidencePage['suggestion']>;
+type Query = EvidencePage['query'];
+type Hint = NonNullable<EvidencePage['hint']>;
 
-/** Filters, terms and unchecked readings for a question that is a case search. */
-export function readQuestion(question: string): EvidenceInterpretation {
+/** Filters and search words suggested for a question (a stand-in for the scope stage). */
+export function suggestFor(question: string): Suggestion {
   const filters: Record<string, string[] | number> = {};
   const consumed: [number, number][] = [];
   const addValues = (facet: BriefFilterFacet, values: readonly string[]): void => {
@@ -162,21 +167,13 @@ export function readQuestion(question: string): EvidenceInterpretation {
     filters.yearFrom = Number(since[1]);
     consumed.push([since.index, since.index + since[0].length]);
   }
-  const unchecked: UncheckedReading[] = [];
-  for (const rule of UNCHECKED_RULES) {
-    const m = rule.pattern.exec(question);
-    if (!m || unchecked.length >= 8) continue;
-    unchecked.push({ kind: rule.kind, quote: quote(question, m.index, m.index + m[0].length) });
-    if (rule.kind === 'unsupported_filter' || rule.kind === 'ambiguous') consumed.push([m.index, m.index + m[0].length]);
-  }
   const free = (start: number, end: number): boolean => consumed.every(([s, e]) => end <= s || start >= e);
   const words: string[] = [];
   // When every word became a filter ("fatal balloon accidents in Alaska"), the filter words are the terms.
   const filterWords: string[] = [];
-  for (const m of question.matchAll(/[A-Za-z][A-Za-z'-]*/g)) {
-    const word = m[0].toLowerCase().replace(/['’]s$/, '');
+  for (const { word, start, end } of plainWords(question)) {
     if (NOT_TERMS.has(word)) continue;
-    const list = free(m.index, m.index + m[0].length) ? words : filterWords;
+    const list = free(start, end) ? words : filterWords;
     if (!list.includes(word)) list.push(word);
   }
   let terms = (words.length > 0 ? words : filterWords).join(' ').slice(0, MAX_TERMS_CHARS).trim();
@@ -185,24 +182,41 @@ export function readQuestion(question: string): EvidenceInterpretation {
   const ordered: Record<string, unknown> = {};
   for (const facet of BRIEF_FILTER_FACETS) if (filters[facet]) ordered[facet] = filters[facet];
   if (filters.yearFrom !== undefined) ordered.yearFrom = filters.yearFrom;
-  return { filters: ordered as BriefFilters, terms, unchecked };
+  return { filters: ordered as BriefFilters, terms };
 }
 
-/** The static replies an evidence search can get (never a clarification round). */
-export type EvidenceScopeReply = Exclude<ScopeReply, { kind: 'needs_clarification' }>;
+/** The question's own words, as retrieval reads them: never the suggestion. */
+export function questionWords(question: string): string {
+  const words: string[] = [];
+  for (const { word } of plainWords(question)) if (!NOT_TERMS.has(word) && !words.includes(word)) words.push(word);
+  return words.join(' ').slice(0, MAX_TERMS_CHARS).trim() || question.trim().slice(0, MAX_TERMS_CHARS);
+}
 
-/** A static reply instead of a search (the server's own templates), or null for a case search. */
+/** The policy replies an evidence search can get instead of results (no search is made). */
+export type EvidenceScopeReply = Extract<ScopeReply, { kind: 'out_of_scope' | 'operational_advice' }>;
+
+/** A policy reply instead of a search (the server's own templates), or null for a case search. */
 export function scopeReplyFor(question: string): EvidenceScopeReply | null {
   const q = question.toLowerCase();
-  const reply = ((): ScopeReply | null => {
-    if (/\b(poem|recipe|stock|bitcoin)\b/.test(q)) return outOfScopeReply();
-    if (/what should i do|right now|should i fly/.test(q)) return operationalReply();
-    if (/how many|how often|\btrend/.test(q)) return statisticsReply(readQuestion(question).filters);
-    const numbers = question.toUpperCase().match(/\b[A-Z]{3}\d{2}[A-Z]{2}\d{3}\b/g) ?? [];
-    if (/\bcompare\b/.test(q) && numbers.length > 0) return comparisonReply(numbers.slice(0, 4), new Set(Object.keys(CASES)));
-    return null;
-  })();
-  return reply === null || reply.kind === 'needs_clarification' ? null : reply;
+  if (/\b(poem|recipe|stock|bitcoin)\b/.test(q)) return outOfScopeReply() as EvidenceScopeReply;
+  if (/what should i do|right now|should i fly/.test(q)) return operationalReply() as EvidenceScopeReply;
+  return null;
+}
+
+/**
+ * The non-blocking hint of an explicit counting or comparison request (results still come), read
+ * from the question by the server, never from the scope stage: a counting hint carries the
+ * search's applied filters (none for a question search), and a case number alone, without a
+ * comparison request, is no comparison.
+ */
+export function hintFor(question: string): Hint | null {
+  const q = question.toLowerCase();
+  if (/how many|how often|\btrend/.test(q)) return { kind: 'corpus_statistics', filters: {} };
+  const numbers = [...new Set(question.toUpperCase().match(/\b[A-Z]{3}\d{2}[A-Z]{2}\d{3}\b/g) ?? [])].slice(0, 4);
+  if (/\b(compare|comparing|versus|vs)\b/.test(q) && numbers.length > 0) {
+    return { kind: 'case_comparison', found: numbers.filter((n) => n in CASES), notFound: numbers.filter((n) => !(n in CASES)) };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,9 +338,10 @@ function filtered(filters: BriefFilters): { row: Omit<CaseRow, 'snippet'>; detai
 
 const narratives = (detail: CaseDetail): Section[] => detail.sections.filter((s) => s.kind !== 'probable_cause');
 
-function rank(interpretation: EvidenceInterpretation): Ranked[] {
-  const terms = termsOf(interpretation.terms);
-  const ranked = filtered(interpretation.filters).map(({ row, detail }) => {
+/** Retrieval: the cases that pass the applied filters, ranked by the query's words alone. */
+function rank(filters: BriefFilters, words: string): Ranked[] {
+  const terms = termsOf(words);
+  const ranked = filtered(filters).map(({ row, detail }) => {
     let score = 0;
     for (const s of detail.sections) score += hitsIn(s.text, terms).length * (s.kind === 'probable_cause' ? 3 : 1);
     return { row, detail, score };
@@ -335,10 +350,10 @@ function rank(interpretation: EvidenceInterpretation): Ranked[] {
   return ranked.slice(0, EVIDENCE_CANDIDATE_CEILING);
 }
 
-/** One whole paragraph as an excerpt, its highlights relative to the paragraph. */
-function excerptOf(section: Section, paragraph: Span, terms: readonly Term[]): EvidenceExcerpt {
+/** One whole paragraph as an excerpt, its highlights (of the marked words) relative to the paragraph. */
+function excerptOf(section: Section, paragraph: Span, marked: readonly Term[]): EvidenceExcerpt {
   const text = section.text.slice(paragraph.start, paragraph.end);
-  const highlights = hitsIn(text, terms).map(({ start, end, match }) => ({ start, end, match }));
+  const highlights = hitsIn(text, marked).map(({ start, end, match }) => ({ start, end, match }));
   // The retrieved passage: the whole section when it is short (one passage), else the paragraph.
   const seed = section.text.length <= 3_000 ? { start: 0, end: section.text.length } : paragraph;
   return {
@@ -355,7 +370,8 @@ function excerptOf(section: Section, paragraph: Span, terms: readonly Term[]): E
   };
 }
 
-function excerptsOf(detail: CaseDetail, terms: readonly Term[]): EvidenceExcerpt[] {
+/** Up to three paragraphs, chosen by the query's words (never the suggestion's), marked with `marked`. */
+function excerptsOf(detail: CaseDetail, terms: readonly Term[], marked: readonly Term[]): EvidenceExcerpt[] {
   const order = { analysis: 0, factual: 1, probable_cause: 2 } as const;
   const candidates = narratives(detail).flatMap((section) =>
     paragraphsOf(section.text)
@@ -371,14 +387,14 @@ function excerptsOf(detail: CaseDetail, terms: readonly Term[]): EvidenceExcerpt
   // its facts and probable causes, with no excerpt).
   if (matching.length === 0 && detail.aircraft.length > 1) return [];
   const chosen = matching.length > 0 ? matching : candidates.sort((a, b) => order[a.section.kind] - order[b.section.kind]).slice(0, 1);
-  return chosen.map((c) => excerptOf(c.section, c.paragraph, terms));
+  return chosen.map((c) => excerptOf(c.section, c.paragraph, marked));
 }
 
-function relevanceOf(interpretation: EvidenceInterpretation, detail: CaseDetail, excerpts: readonly EvidenceExcerpt[]): EvidenceRelevance {
-  const terms = termsOf(interpretation.terms);
-  const applied: EvidenceRelevance['filters'] = BRIEF_FILTER_FACETS.filter((f) => ((interpretation.filters as Partial<Record<BriefFilterFacet, string[]>>)[f] ?? []).length > 0);
-  if (interpretation.filters.yearFrom !== undefined || interpretation.filters.yearTo !== undefined) applied.push('years');
-  const counted = terms.map((term) => {
+/** The facts of a listing: the applied filters (every case passed them), the marked words counted in the excerpts, the channels. */
+function relevanceOf(filters: BriefFilters, detail: CaseDetail, excerpts: readonly EvidenceExcerpt[], terms: readonly Term[], marked: readonly Term[]): EvidenceRelevance {
+  const applied: EvidenceRelevance['filters'] = BRIEF_FILTER_FACETS.filter((f) => ((filters as Partial<Record<BriefFilterFacet, string[]>>)[f] ?? []).length > 0);
+  if (filters.yearFrom !== undefined || filters.yearTo !== undefined) applied.push('years');
+  const counted = marked.map((term) => {
     let literal = 0;
     let synonym = 0;
     for (const e of excerpts) {
@@ -389,21 +405,27 @@ function relevanceOf(interpretation: EvidenceInterpretation, detail: CaseDetail,
     }
     return { term: term.word.slice(0, 80), literal, synonym };
   });
-  const inExcerpts = counted.some((t) => t.literal + t.synonym > 0);
+  // The channels are the query's: its words in the passages (keyword), every word in the narrative (case-narrative keyword).
   const everywhere = narratives(detail);
+  const inPassages = terms.some((t) => everywhere.some((s) => hitsIn(s.text, [t]).length > 0));
   const inNarrative = terms.length > 0 && terms.every((t) => everywhere.some((s) => hitsIn(s.text, [t]).length > 0));
   const channels: EvidenceRelevance['channels'] = [];
-  if (inExcerpts) channels.push('keyword');
+  if (inPassages) channels.push('keyword');
   channels.push('similarity');
   if (inNarrative) channels.push('narrative');
   return { filters: applied, terms: counted, channels };
 }
 
-/** The pinned ranking of a search, projected: what every page of it shows. */
-export function evidenceCases(interpretation: EvidenceInterpretation): EvidenceCase[] {
-  const terms = termsOf(interpretation.terms);
-  return rank(interpretation).map(({ row, detail }, i) => {
-    const excerpts = excerptsOf(detail, terms);
+/**
+ * The pinned ranking of a search, projected: what every page of it shows. `words` is what
+ * retrieval reads (the question's own words, or the user's); `marked`, the words the excerpts
+ * mark and the relevance counts (the suggestion's when there is one, else `words`).
+ */
+export function evidenceCases(filters: BriefFilters, words: string, marked: string = words): EvidenceCase[] {
+  const terms = termsOf(words);
+  const marks = termsOf(marked);
+  return rank(filters, words).map(({ row, detail }, i) => {
+    const excerpts = excerptsOf(detail, terms, marks);
     return {
       rank: i + 1,
       case: row,
@@ -412,7 +434,7 @@ export function evidenceCases(interpretation: EvidenceInterpretation): EvidenceC
         .filter((s) => s.kind === 'probable_cause')
         .map((s) => ({ sectionKey: s.key, scope: s.scope, aircraftKey: s.aircraftKey, revision: s.revision, text: s.text })),
       excerpts,
-      relevance: relevanceOf(interpretation, detail, excerpts),
+      relevance: relevanceOf(filters, detail, excerpts, terms, marks),
     };
   });
 }
@@ -426,8 +448,10 @@ const GENERATION = indexJson.dataset.revision;
 interface MockSearch {
   id: string;
   question: string;
-  interpretation: EvidenceInterpretation;
-  edited: boolean;
+  query: Query;
+  appliedFilters: BriefFilters;
+  suggestion: Suggestion | null;
+  hint: Hint | null;
   cases: EvidenceCase[];
   createdAt: Date;
   owner: MockReader;
@@ -502,8 +526,10 @@ export class MockEvidence {
       version: EVIDENCE_CONTRACT_VERSION,
       id: search.id,
       question: search.question,
-      interpretation: search.interpretation,
-      edited: search.edited,
+      query: search.query,
+      appliedFilters: search.appliedFilters,
+      suggestion: search.suggestion,
+      hint: search.hint,
       generation: GENERATION,
       createdAt: stamp(search.createdAt),
       expiresAt: stamp(new Date(search.createdAt.getTime() + EVIDENCE_TTL_MS)),
@@ -514,13 +540,13 @@ export class MockEvidence {
     };
   }
 
-  private start(question: string, interpretation: EvidenceInterpretation, edited: boolean): MockSearch {
-    const cases = /\bnothing\b/i.test(question) && !edited ? [] : evidenceCases(interpretation);
+  private start(fields: Pick<MockSearch, 'question' | 'query' | 'appliedFilters' | 'suggestion' | 'hint'>, edited: boolean): MockSearch {
+    // Retrieval reads the question's own words, or the user's; the suggestion only marks the excerpts.
+    const words = fields.query.source === 'edited' ? fields.query.terms : questionWords(fields.question);
+    const cases = /\bnothing\b/i.test(fields.question) && !edited ? [] : evidenceCases(fields.appliedFilters, words, fields.suggestion?.terms ?? words);
     const search: MockSearch = {
       id: this.newId(),
-      question,
-      interpretation,
-      edited,
+      ...fields,
       cases,
       createdAt: this.now(),
       owner: this.visitor(),
@@ -532,7 +558,7 @@ export class MockEvidence {
 
   /** `POST /api/evidence`: 201 with page 1 of a new search, or 200 with a static reply. */
   create(body: CreateEvidenceRequest): MockReply<CreateEvidenceResponse> {
-    const request = body.kind === 'question' ? `q:${body.question}` : `e:${body.from}:${JSON.stringify(body.filters)}:${body.terms}`;
+    const request = body.kind === 'question' ? `q:${body.question}` : `e:${body.from}:${JSON.stringify(body.filters)}:${body.terms ?? ''}`;
     if (this.unfinished.has(body.idempotencyKey)) return error(409, 'conflict', 'This request was accepted earlier but did not start. Ask again.');
     const earlier = this.keys.get(body.idempotencyKey);
     if (earlier) {
@@ -544,8 +570,9 @@ export class MockEvidence {
     if (body.kind === 'edited') {
       const from = this.own(body.from);
       if (!from) return NOT_FOUND();
-      const interpretation = { filters: body.filters, terms: body.terms, unchecked: from.interpretation.unchecked };
-      const search = this.start(from.question, interpretation, true);
+      // Exactly the filters sent; the user's words when sent, else the earlier search's query. No scope stage.
+      const query: Query = body.terms !== undefined ? { source: 'edited', terms: body.terms } : from.query;
+      const search = this.start({ question: from.question, query, appliedFilters: body.filters, suggestion: null, hint: null }, true);
       this.keys.set(body.idempotencyKey, { request, id: search.id });
       return { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
     }
@@ -560,7 +587,10 @@ export class MockEvidence {
     }
     const reply = scopeReplyFor(body.question);
     if (reply) return { status: 200, body: { kind: 'scope_reply', reply } };
-    const search = this.start(body.question, readQuestion(body.question), false);
+    // A failed scope stage costs only the suggestion: the question's results, and the server's own hint.
+    const suggestion = /\bscope failure\b/.test(q) ? null : suggestFor(body.question);
+    const hint = hintFor(body.question);
+    const search = this.start({ question: body.question, query: { source: 'question' }, appliedFilters: {}, suggestion, hint }, false);
     this.keys.set(body.idempotencyKey, { request, id: search.id });
     const created: MockReply<CreateEvidenceResponse> = { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
     if (/\bexpire/.test(q)) search.expired = true;
