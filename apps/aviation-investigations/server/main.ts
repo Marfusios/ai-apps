@@ -32,7 +32,7 @@ import { createAuthService, type AuthLog } from './auth/better-auth.js';
 import { buildApp } from './app.js';
 import { createHybridRetriever } from './briefs/retriever.js';
 import { createBriefServices, type BriefServices } from './briefs/services.js';
-import { DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from './db/client.js';
+import { API_DB_EXECUTION, DB_CONNECT_TIMEOUT_MS, closeDb, createDb, type Db } from './db/client.js';
 import { manifestCasesIndex } from './db/generations.js';
 import { startControlMaintenance } from './quota/maintenance.js';
 import { startTracing } from './observability/tracing.js';
@@ -84,8 +84,21 @@ async function main(): Promise<void> {
   }
 
   const tracing = startTracing(config);
-  // Opening a connection or waiting for one ends after 5 s (server/db/client.ts).
-  const db = createDb(config.databaseUrl, { max: 8, applicationName: 'aviation-api', connectTimeoutMs: DB_CONNECT_TIMEOUT_MS });
+  // The server's logger exists once the app does; until then failed connections go to stderr.
+  let dbLog: { warn(obj: object, msg: string): void } | null = null;
+  // Opening a connection or waiting for one ends after 5 s; statements are bounded on the
+  // server and on the connection (API_DB_EXECUTION), and a failed connection is logged, never
+  // fatal (server/db/client.ts).
+  const db = createDb(config.databaseUrl, {
+    max: 8,
+    applicationName: 'aviation-api',
+    connectTimeoutMs: DB_CONNECT_TIMEOUT_MS,
+    execution: API_DB_EXECUTION,
+    onConnectionError: (problem) => {
+      if (dbLog) dbLog.warn({ err: problem }, 'database connection failed');
+      else process.stderr.write(`${JSON.stringify({ level: 40, msg: 'database connection failed', err: problem })}\n`);
+    },
+  });
   const es = createEsClient(config.elasticsearch, 'read', { requestTimeoutMs: 10_000, maxRetries: 1 });
   const evidence = briefServices(config, db, es);
   const ai = createAiRuntime(config, { db });
@@ -114,6 +127,7 @@ async function main(): Promise<void> {
   });
 
   authLog = app.log;
+  dbLog = app.log;
   if (signIn.problem) app.log.warn({ problem: signIn.problem }, 'Google sign-in off');
   if (evidence.problem) app.log.warn({ problem: evidence.problem }, 'AI feature off');
   else app.log.info({ retrievalVersion: config.retrieval.version }, 'AI retrieval configuration');

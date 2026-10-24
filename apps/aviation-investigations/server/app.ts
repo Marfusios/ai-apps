@@ -55,7 +55,7 @@ import { AuthUnavailableError, type AuthService } from './auth/better-auth.js';
 import type { EvidenceDataset } from './briefs/evidence.js';
 import { servableEvidence, type BriefServices } from './briefs/services.js';
 import { DatasetResolver, DatasetUnavailableError } from './dataset.js';
-import type { Db } from './db/client.js';
+import { isDatabaseUnavailable, type Db } from './db/client.js';
 import { CLIENT_IP_HEADER, compileTrustedProxies, isLoopback, resolveNetworkIdentity } from './http/network-identity.js';
 import { isNoStoreRoute, PRIVATE_NO_STORE } from './http/cache-headers.js';
 import { makeClientErrorHandler } from './http/client-error.js';
@@ -168,11 +168,13 @@ const isApiPath = (path: string): boolean => path === '/api' || path.startsWith(
 /**
  * The service, not the request, is at fault: Elasticsearch transport failures, an
  * index that is missing or overloaded, a search that timed out, PostgreSQL connection
- * failures, a bounded lock wait that timed out or a deadlock (fail closed), or no
- * servable dataset.
+ * failures (no connection free in time, a connection that broke or stalled, a statement
+ * the server ended at its timeout: `isDatabaseUnavailable`), a bounded lock wait that
+ * timed out or a deadlock (fail closed), or no servable dataset.
  */
-function isUnavailable(err: unknown): boolean {
+export function isUnavailable(err: unknown): boolean {
   if (err instanceof DatasetUnavailableError || err instanceof SearchTimedOutError || err instanceof AuthUnavailableError) return true;
+  if (isDatabaseUnavailable(err)) return true;
   const e = err as { name?: string; code?: string; meta?: { statusCode?: number } };
   if (['ConnectionError', 'TimeoutError', 'NoLivingConnectionsError'].includes(e.name ?? '')) return true;
   if (e.name === 'ResponseError' && [404, 429, 502, 503, 504].includes(e.meta?.statusCode ?? 0)) return true;

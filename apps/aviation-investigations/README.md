@@ -1226,9 +1226,10 @@ dataset revision plus a hash of the body, and a matching `If-None-Match` gets 30
 Search uses a short public cache rather than `no-store`: results change only when a
 new manifest is published, and the canonical query string makes equal searches share
 an entry. Errors are `ErrorResponse` bodies with fixed messages and `no-store`; a
-missing index, an unreachable database or search engine, or a search that ran out of
-its 5-second Elasticsearch `timeout` (`timed_out`, partial counts) is a 503, never a
-404, partial data or an internal message. The router's own refusals (a malformed URL)
+missing index, an unreachable or stalled database (no connection free within 5 s, a
+connection that broke, a statement the server ended at its timeout) or search engine,
+or a search that ran out of its 5-second Elasticsearch `timeout` (`timed_out`, partial
+counts) is a 503, logged as a warning, never a 404, partial data or an internal message. The router's own refusals (a malformed URL)
 get the same headers and a JSON 400, and the static files' refusals are 404 or 400.
 The log has one line per API request (method, route pattern, status, duration),
 without client addresses or query strings; an unmatched `/api` path is logged with
@@ -1240,6 +1241,18 @@ Requests the HTTP parser itself refuses (400, or 408 for a request timeout and 4
 oversized headers; 403 for a non-connector peer in tunnel mode) get the same security
 headers and a JSON body, and the connection is closed.
 
+- **Database connections** (`server/db/client.ts`). The API's pool (8 connections, as
+  `aviation_app`) bounds every wait: opening a connection or waiting for a free one 5 s;
+  each statement 15 s on the server (`statement_timeout`; the maintenance pass raises its
+  own to 30 s), an idle transaction 30 s (`idle_in_transaction_session_timeout`), and the
+  connection itself 45 s: a connection on which nothing moves that long (a stalled server
+  or network) is destroyed and its statement fails, so its slot is free again and the pool
+  can still close. A connection that fails, idle or in use (a PostgreSQL restart), is
+  logged with its error's name and code only (`database connection failed`) and replaced;
+  it never ends the process. One that fails in use leaves the pool at once, even if its
+  holder never gives it back. The health probe's database check is a bounded read (2 s)
+  that destroys the connection it abandons. The worker's and tools' pools keep only the
+  connect timeout (their long statements are expected) and the same failure handling.
 - **Dataset pinning (A6).** Each request resolves the active `dataset_manifests` row
   (reused for 5 seconds) and reads only that generation and its cases index, never
   the alias. Before serving a manifest the server checks the index `_meta` (same
