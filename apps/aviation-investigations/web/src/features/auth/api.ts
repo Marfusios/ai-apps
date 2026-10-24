@@ -8,8 +8,8 @@
  * Deleting the account needs a recent Google sign-in: `startDeletion` says whether this
  * session may delete now; otherwise `confirmWithGoogle` signs in with Google again,
  * coming back to `DELETE_REAUTH_PATH` (or `/account?delete=failed`). Signing out and
- * deleting forget everything private the page held (`forgetVisitor`), and so does a
- * sign-out the server could not confirm (`SignOutUnconfirmedError`).
+ * deleting forget everything private the page held (`forgetVisitor`); signing out does so
+ * whatever the server answers (`signOut`).
  */
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
 import {
@@ -22,12 +22,13 @@ import {
   ReturnPathSchema,
   SIGN_IN_ERROR_PARAM,
   SignInResponseSchema,
+  SignOutResponseSchema,
   WELCOME_PARAM,
   type DeleteStartResponse,
   type SignInRequest,
 } from '../../../../shared/contracts/account';
-import { ApiError, getJson, postJson, retry } from '../../api';
-import { forgetVisitor, privateRead } from './visitor';
+import { getJson, postJson, retry } from '../../api';
+import { forgetVisitor, privateRead, visitorLeaving } from './visitor';
 
 /** Google's authorization endpoint: the only other origin sign-in may open. */
 export const GOOGLE_ORIGIN = 'https://accounts.google.com';
@@ -110,29 +111,37 @@ export async function startGoogleSignIn(
 }
 
 /**
- * The server could not confirm a sign-out (503 `sign_out_pending`). This browser is signed
- * out all the same (the server expired its session cookie) and the page has forgotten
- * everything private it held; the server ends the session at this browser's next account
- * read, sign-out or sign-in, and admits no new sign-in before it has.
+ * The server did not confirm a sign-out: it answered with an error (503 `sign_out_pending`
+ * when it could not end the session; it then expired this browser's session cookie and
+ * ends the session at the browser's next account read, sign-out or sign-in, admitting no
+ * new sign-in before), or no answer came, or the answer broke off. The page has forgotten
+ * everything private all the same and told the other tabs, and reads the account again:
+ * where the session is still there, it shows, to be signed out again.
  */
 export class SignOutUnconfirmedError extends Error {
   override readonly name = 'SignOutUnconfirmedError';
 }
 
 /**
- * Sign out and forget everything private the page held. When the server could not confirm
- * the sign-out, the page forgets just the same (and tells the other tabs), then throws
- * `SignOutUnconfirmedError` so the page can say so.
+ * Sign out, and forget everything private the page held whatever the server answers (gate
+ * t22 finding 1, r2 finding 1). As soon as it starts, nothing started for the visitor is
+ * kept or sent (`visitorLeaving`: a late private answer is dropped, an AI request sends
+ * nothing more). Once the server has answered, or no answer can come, this tab and every
+ * other one forget the visitor (`forgetVisitor`); what they read again is then read as
+ * whoever the server says is signed in. Only the server's success, read in full, confirms
+ * the sign-out. Anything else (an error status, no answer, an answer cut short) reads the
+ * account again here too and throws `SignOutUnconfirmedError`.
  */
 export async function signOut(queryClient: QueryClient): Promise<void> {
+  visitorLeaving();
+  let confirmed = false;
   try {
-    await postJson('/api/auth/sign-out', {}, null);
-  } catch (err) {
-    if (!(err instanceof ApiError && err.body?.error === 'sign_out_pending')) throw err;
-    await forgetVisitor(queryClient);
-    throw new SignOutUnconfirmedError('Signed out in this browser; the server has not confirmed the sign-out yet');
+    confirmed = (await postJson('/api/auth/sign-out', {}, SignOutResponseSchema))?.success === true;
+  } catch {
+    // An error status, no answer, or an answer cut short: not confirmed.
   }
-  await forgetVisitor(queryClient);
+  await forgetVisitor(queryClient, { reread: !confirmed });
+  if (!confirmed) throw new SignOutUnconfirmedError('The server has not confirmed the sign-out');
 }
 
 /** Whether this session may delete the account now, or must sign in with Google again first. */

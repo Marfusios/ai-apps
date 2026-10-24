@@ -20,7 +20,7 @@ export const ACCOUNT_COPY = {
   unavailable: 'Sign-in isn’t available yet.',
   searchesHeading: 'AI searches left',
   signOut: 'Sign out',
-  signOutUnconfirmed: 'You’re signed out in this browser, but the server hasn’t confirmed it yet. It will finish the sign-out the next time you open this site here.',
+  signOutUnconfirmed: 'This page has forgotten your account, but the server hasn’t confirmed the sign-out. If your account appears here, sign out again.',
   deleteHeading: 'Delete account',
   deleteNow:
     'Deleting your account signs you out everywhere and at once removes your name, your email, the link to your Google account and the AI searches your account holds.',
@@ -119,7 +119,7 @@ export function Account() {
       await work();
     } catch (err) {
       if (err instanceof SignOutUnconfirmedError) {
-        // Signed out here all the same: the signed-out page says the server has yet to confirm it.
+        // Forgotten all the same; the account read again shows whether the session is still there.
         setNotice(ACCOUNT_COPY.signOutUnconfirmed);
       } else if (err instanceof ApiError && err.body?.error === 'reauth_required') {
         setDeleting('reauth');
