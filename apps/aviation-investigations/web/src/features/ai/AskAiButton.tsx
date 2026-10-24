@@ -3,7 +3,8 @@ import { useId } from 'react';
 import { aiStatusQuery } from '../../api';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
-import { askAvailability, askCounter } from './status';
+import { useSignIn } from '../auth/SignInDialog';
+import { askAvailability, askCounter, signedInOnlyNote, type AskAvailability } from './status';
 import type { AiPhase } from './useAiRequest';
 
 export interface AskAiButtonProps {
@@ -31,7 +32,8 @@ export function busyLabel(phase: AiPhase): string | null {
 
 /**
  * The magenta Ask AI button with its live availability (UI_DESIGN §2.6, §5):
- * "Ask AI · 3 free", "Ask AI · 18 left today", "Ask AI · sign in", or disabled with
+ * "Ask AI · 3 free", "Ask AI · 18 left today", "Ask AI · sign in" (only while sign-in is
+ * offered: otherwise disabled with the counter's words), or disabled with
  * "AI back tomorrow" / "AI back on {date}" / "AI temporarily unavailable". It shows
  * "Checking…" while the Turnstile check runs and "Starting…" while the request is on its
  * way. A disabled button stays focusable (aria-disabled) so its note is read; a click then
@@ -39,8 +41,12 @@ export function busyLabel(phase: AiPhase): string | null {
  */
 export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, size = 'md', look = 'pill', className }: AskAiButtonProps) {
   const status = useQuery(aiStatusQuery());
+  const signIn = useSignIn();
   const noteId = useId();
-  const availability = askAvailability(status.data, status.isError);
+  const read = askAvailability(status.data, status.isError);
+  // Only signed-in AI is open and nobody can sign in here: off, with the counter's words (review W-10).
+  const availability: AskAvailability =
+    read.kind === 'sign_in' && !signIn.enabled ? { kind: 'paused', note: signedInOnlyNote(read.reason), status: null } : read;
   const describedBy = availability.kind === 'paused' ? noteId : undefined;
   const busy = phase !== 'idle';
   const disabled = availability.kind === 'loading' || availability.kind === 'paused' || busy;

@@ -151,16 +151,27 @@ export interface AiNoticeBoxProps {
 /**
  * The message under an AI control after a request did not start (UI_DESIGN §5). It sits
  * in a polite live region that is rendered before any message, so screen readers announce
- * a notice when it appears.
+ * a notice when it appears. While Google sign-in is not offered, the trial-used and
+ * free-searches-paused messages leave out their sign-in lines (Task 22 review W-10).
  */
 export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNoticeBoxProps) {
   const live = useQuery(aiStatusQuery());
+  const signIn = useSignIn();
   const body = (() => {
     if (!notice) return null;
     switch (notice.kind) {
       case 'paused':
         return <Paused status={notice.status ?? (live.data?.state === 'paused' ? live.data : null)} keywordHref={keywordHref} />;
       case 'trial_used':
+        // Sign-in is not offered: the same moment, without telling the visitor to sign in (review W-10).
+        if (!signIn.enabled) {
+          return (
+            <Box title={COPY.trialUsed[0]}>
+              <p>{COPY.everythingElse}</p>
+              <KeywordLink href={keywordHref} />
+            </Box>
+          );
+        }
         return (
           <Box title={COPY.trialUsed[0]}>
             <p>{COPY.trialUsed[1]}</p>
@@ -169,6 +180,15 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
           </Box>
         );
       case 'free_paused':
+        if (!signIn.enabled) {
+          // Login-required mode with no sign-in here: nobody can ask, like a pause with no time promised.
+          if (notice.loginRequired) return <Paused status={null} keywordHref={keywordHref} />;
+          return (
+            <Box title={COPY.freePaused[0]}>
+              <p>{COPY.freePaused[2]}</p>
+            </Box>
+          );
+        }
         return (
           <Box title={COPY.freePaused[0]}>
             <p>{COPY.freePaused[1]}</p>

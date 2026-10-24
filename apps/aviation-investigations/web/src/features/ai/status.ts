@@ -55,6 +55,18 @@ export function askAvailability(status: AiStatusResponse | undefined, unreadable
   return { kind: 'available', counter: 'free', anonymous: true, firstCheck: true, check: true };
 }
 
+/**
+ * What the counter and Ask AI say when only signed-in AI is open and sign-in is not
+ * offered here (Google sign-in not configured): never "sign in" (Task 22 review W-10;
+ * Builder copy, for the owner's review). With the login-required mode nobody can ask, so
+ * it reads like any pause with no time promised.
+ */
+export function signedInOnlyNote(reason: Extract<AiStatusResponse, { state: 'signed_in_only' }>['reason']): string {
+  if (reason === 'trial_used') return 'Free AI searches used';
+  if (reason === 'anonymous_share') return 'Free AI searches paused for today';
+  return 'AI temporarily unavailable';
+}
+
 /** The counter suffix of an AI button: "3 free", "sign in", or nothing when paused. */
 export function askCounter(a: AskAvailability): string | undefined {
   if (a.kind === 'available') return a.counter;

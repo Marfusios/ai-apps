@@ -10,7 +10,9 @@ import { CRITERION_LINE } from '../../server/briefs/context';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_MIDAIR_QUESTION, MOCK_SEED_QUESTION, RESULT_SAMPLES } from '../../web/mock/briefs';
+import mockConfig from '../../web/mock/config.json';
 import { AiCounter } from '../../web/src/features/ai/AiCounter';
+import { SignInProvider } from '../../web/src/features/auth/SignInDialog';
 import { AiNoticeBox } from '../../web/src/features/ai/AiNoticeBox';
 import { AskAiButton } from '../../web/src/features/ai/AskAiButton';
 import {
@@ -125,12 +127,14 @@ async function askFromHome(question: string) {
 
 const SLOW = { timeout: 5000 };
 
-function withStatus(status: AiStatusResponse, ui: ReactNode) {
+/** `ui` with this AI status; `signIn`: Google sign-in is offered (the sign-in dialog's provider around it). */
+function withStatus(status: AiStatusResponse, ui: ReactNode, { signIn = false }: { signIn?: boolean } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(['ai-status'], status);
+  client.setQueryData(['config'], { ...mockConfig, googleEnabled: signIn });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter>{signIn ? <SignInProvider>{ui}</SignInProvider> : ui}</MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -139,15 +143,24 @@ describe('AI availability labels (UI_DESIGN §5)', () => {
   it.each([
     ['fresh', /^Ask AI\s*·\s*3 free$/, null],
     ['signedIn', /^Ask AI\s*·\s*18 left today$/, null],
-    ['trialUsed', /^Ask AI\s*·\s*sign in$/, null],
     ['pausedDaily', /^Ask AI$/, 'AI back tomorrow'],
     ['pausedMonthly', /^Ask AI$/, 'AI back on 1 Nov'],
     ['unavailable', /^Ask AI$/, 'AI temporarily unavailable'],
+    // Signed-in AI only, and sign-in is not offered: nothing says "sign in" (review W-10).
+    ['trialUsed', /^Ask AI$/, 'Free AI searches used'],
+    ['anonymousShare', /^Ask AI$/, 'Free AI searches paused for today'],
+    ['loginRequired', /^Ask AI$/, 'AI temporarily unavailable'],
   ] as const)('%s', (sample, name, note) => {
-    withStatus(AI_STATUS_SAMPLES[sample], <AskAiButton onAsk={() => {}} />);
+    const { container } = withStatus(AI_STATUS_SAMPLES[sample], <AskAiButton onAsk={() => {}} />);
     const button = screen.getByRole('button', { name });
     expect(button.getAttribute('aria-disabled')).toBe(note ? 'true' : 'false');
-    if (note) expect(screen.getByText(note)).toBeTruthy();
+    if (note) expect(document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent).toBe(note);
+    expect(container.textContent).not.toMatch(/sign in/i);
+  });
+
+  it.each(['trialUsed', 'anonymousShare', 'loginRequired'] as const)('%s, with sign-in offered: "Ask AI · sign in"', (sample) => {
+    withStatus(AI_STATUS_SAMPLES[sample], <AskAiButton onAsk={() => {}} />, { signIn: true });
+    expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');
   });
 
   it('brief controls say "· uses 1" before the click, and "Checking…" during the check', () => {
@@ -166,15 +179,27 @@ describe('AI availability labels (UI_DESIGN §5)', () => {
   it.each([
     ['fresh', 'AI searches left: 3 of 3'],
     ['oneLeft', 'AI searches left: 1 of 3'],
-    ['trialUsed', 'Sign in to keep asking'],
-    ['anonymousShare', 'Sign in to ask the AI'],
     ['signedIn', 'AI left today: 18 of 20'],
     ['pausedDaily', 'AI back tomorrow'],
     ['pausedMonthly', 'AI back on 1 Nov'],
     ['unavailable', 'AI temporarily unavailable'],
+    // Sign-in is not offered: the counter never tells the visitor to sign in (review W-10).
+    ['trialUsed', 'Free AI searches used'],
+    ['anonymousShare', 'Free AI searches paused for today'],
+    ['loginRequired', 'AI temporarily unavailable'],
   ] as const)('header counter: %s reads "%s"', (sample, text) => {
     const { container } = withStatus(AI_STATUS_SAMPLES[sample], <AiCounter />);
     expect(container.textContent).toContain(text);
+    expect(container.textContent).not.toMatch(/sign in/i);
+  });
+
+  it.each([
+    ['trialUsed', 'Sign in to keep asking'],
+    ['anonymousShare', 'Sign in to ask the AI'],
+    ['loginRequired', 'Sign in to ask the AI'],
+  ] as const)('header counter with sign-in offered: %s is the pill "%s"', (sample, text) => {
+    withStatus(AI_STATUS_SAMPLES[sample], <AiCounter />, { signIn: true });
+    expect(screen.getByRole('button', { name: text })).toBeTruthy();
   });
 });
 
@@ -221,14 +246,27 @@ describe('AI notices (UI_DESIGN §5 copy)', () => {
   });
 
   it('trial used, free searches paused (and the login-required variant), rate limit and failure', () => {
+    const offered = (n: Parameters<typeof AiNoticeBox>[0]['notice']) =>
+      withStatus(AI_STATUS_SAMPLES.trialUsed, <AiNoticeBox notice={n} keywordHref="/explore?q=x" onRetry={() => {}} />, { signIn: true }).container
+        .textContent;
+    expect(offered({ kind: 'trial_used' })).toBe(
+      'That was your third free AI search.Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.Continue with GoogleSearch, case pages, compare and the dashboard stay open without an account.',
+    );
+    expect(offered({ kind: 'free_paused', loginRequired: false })).toBe(
+      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.Continue with GoogleFree searches return tomorrow; keyword search and every case work now.',
+    );
+    expect(offered({ kind: 'free_paused', loginRequired: true })).toBe(
+      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.Continue with Google',
+    );
+    // Sign-in is not offered: the same moments, without telling the visitor to sign in (review W-10).
     expect(notice({ kind: 'trial_used' })).toBe(
-      'That was your third free AI search.Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.Search, case pages, compare and the dashboard stay open without an account.',
+      'That was your third free AI search.Everything else works: keyword search, every case, comparisons and printing.Search by keyword instead',
     );
     expect(notice({ kind: 'free_paused', loginRequired: false })).toBe(
-      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.Free searches return tomorrow; keyword search and every case work now.',
+      'Free AI searches are used up for today.Free searches return tomorrow; keyword search and every case work now.',
     );
     expect(notice({ kind: 'free_paused', loginRequired: true })).toBe(
-      'Free AI searches are used up for today.Signed-in AI search is still open today. Sign in with Google to ask.',
+      'AI search is temporarily unavailable.Everything else works: keyword search, every case, comparisons and printing.Search by keyword instead',
     );
     expect(notice({ kind: 'rate', seconds: 12 })).toBe('Slow down a moment. Try again in 12 seconds.');
     expect(notice({ kind: 'failure', spent: 'no' })).toBe(
@@ -1282,7 +1320,7 @@ describe('Unknown outcomes stay unknown until a 2xx or a 409 settles them', { ti
     if (changed) {
       await act(() => client.invalidateQueries({ queryKey: ['ai-status'] }));
       // The header shows the new status before the retry, so the retry reads it too.
-      const counter = changed === paused ? 'AI back tomorrow' : 'Sign in to keep asking';
+      const counter = changed === paused ? 'AI back tomorrow' : 'Free AI searches used';
       await waitFor(() => expect(screen.getByRole('banner').textContent).toContain(counter), SLOW);
     }
     fireEvent.click(screen.getByRole('button', { name: /^Try again/ }));

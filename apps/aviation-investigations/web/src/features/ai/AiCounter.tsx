@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { aiStatusQuery } from '../../api';
 import { useSignIn } from '../auth/SignInDialog';
-import { pausedNote } from './status';
+import { pausedNote, signedInOnlyNote } from './status';
 
 const pill =
   'inline-flex items-center rounded-full border-[1.5px] border-blue px-2.5 py-px text-meta whitespace-nowrap text-blue hover:bg-blue-wash pointer-coarse:min-h-11';
@@ -10,7 +10,8 @@ const pill =
  * The header AI counter (UI_DESIGN §5, §6). It always shows searches left, read from
  * the public AI status before anyone clicks; the number is magenta because it counts
  * AI work. The sign-in pills open the sign-in dialog, which comes back to this page; while
- * Google sign-in is not configured they are plain text.
+ * Google sign-in is not configured nothing says "sign in": "Free AI searches used", "Free
+ * AI searches paused for today" (Task 22 review W-10).
  */
 export function AiCounter() {
   const { data: status } = useQuery(aiStatusQuery());
@@ -19,8 +20,8 @@ export function AiCounter() {
   const r = status.remaining;
   if (status.state === 'paused') return <span className="text-muted">{pausedNote(status)}</span>;
   if (status.state === 'signed_in_only' && r?.kind !== 'account') {
+    if (!signIn.enabled) return <span className="text-muted">{signedInOnlyNote(status.reason)}</span>;
     const text = status.reason === 'trial_used' ? 'Sign in to keep asking' : 'Sign in to ask the AI';
-    if (!signIn.enabled) return <span className="text-muted">{text}</span>;
     return (
       <button type="button" className={`${pill} cursor-pointer`} onClick={() => signIn.open()}>
         {text}
