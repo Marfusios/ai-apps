@@ -8,7 +8,7 @@ import { DataCaution } from '../../web/src/components/DataCaution';
 import { EVIDENCE_KINDS, EVIDENCE_WORDS, EvidenceGlyph } from '../../web/src/components/EvidenceGlyph';
 import { Footer } from '../../web/src/components/Footer';
 import { Header } from '../../web/src/components/Header';
-import { StatusBadge } from '../../web/src/components/StatusBadge';
+import { STATUS_BADGE, StatusBadge } from '../../web/src/components/StatusBadge';
 import { ThemeSwitch } from '../../web/src/components/ThemeSwitch';
 import { TimingChip } from '../../web/src/components/TimingChip';
 import { localIsoDate, snapshotAge } from '../../web/src/lib/format';
@@ -178,12 +178,13 @@ describe('print', () => {
 
 describe('StatusBadge', () => {
   it('uses the UI_DESIGN §4.2 badge text and shows raw codes for other statuses', () => {
+    // Exactly the four completion classes: nothing else, such as an unused "NOT COMPLETED" (review W-15).
+    expect(STATUS_BADGE).toEqual({ completed: 'COMPLETED', in_progress: 'IN PROGRESS', status_unknown: 'STATUS UNKNOWN', other_status: 'OTHER STATUS' });
     const cases = [
       ['completed', 'COMPLETED'],
       ['in_progress', 'IN PROGRESS'],
       ['status_unknown', 'STATUS UNKNOWN'],
       ['other_status', 'OTHER STATUS'],
-      ['not_completed', 'NOT COMPLETED'],
     ] as const;
     for (const [kind, text] of cases) {
       const { unmount, container } = render(<StatusBadge kind={kind} rawStatus="P" />);
@@ -193,6 +194,22 @@ describe('StatusBadge', () => {
     }
     render(<StatusBadge kind="status_unknown" rawStatus="  " />);
     expect(screen.getByText(/NTSB status: blank/)).toBeTruthy();
+  });
+});
+
+describe('Type scale (UI_DESIGN §2.3)', () => {
+  // Every component and page's source, as text.
+  const sources = import.meta.glob(['../../web/src/**/*.tsx', '../../web/src/**/*.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+
+  it('no text is set below the 9.5 px floor of small labels (review W-15)', () => {
+    expect(Object.keys(sources).length).toBeGreaterThan(50);
+    const below: string[] = [];
+    for (const [file, text] of Object.entries(sources)) {
+      for (const m of text.matchAll(/text-\[(\d+(?:\.\d+)?)px\]/g)) {
+        if (Number(m[1]) < 9.5) below.push(`${file}: ${m[0]}`);
+      }
+    }
+    expect(below).toEqual([]);
   });
 });
 

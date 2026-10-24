@@ -137,6 +137,12 @@ describe('Explore', () => {
     }
   });
 
+  it('printing with the drawer open prints the page, not the drawer over it (review W-15)', async () => {
+    renderApp('/explore?q=carburetor+icing&case=ERA25LA016');
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.getAttribute('data-print')).toBe('hide');
+  });
+
   it(`a fifth compare tick shows "${COMPARE_FULL_MESSAGE}"`, async () => {
     const { router } = renderApp('/explore?q=carburetor+icing');
     await countLine();

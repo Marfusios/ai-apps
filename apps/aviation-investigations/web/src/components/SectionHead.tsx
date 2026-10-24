@@ -11,7 +11,7 @@ export function SectionHead({ id, children, tag }: { id?: string; children: Reac
       <Placard tone="ink" as="h3" id={id} className="tracking-label">
         {children}
       </Placard>
-      {tag && <span className="section-tag text-[9px] tracking-[.12em] text-muted uppercase">{tag}</span>}
+      {tag && <span className="section-tag text-micro tracking-[.12em] text-muted uppercase">{tag}</span>}
     </div>
   );
 }
