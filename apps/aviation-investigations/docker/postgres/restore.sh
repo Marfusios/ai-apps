@@ -18,6 +18,9 @@
 #   operations (server/quota/hold.ts), so the restored database never opens with them allowed;
 #   for a backup taken before migration 0020, the migration starts held instead.
 #
+# - The connection goes through a private libpq service file (libpq-service.sh), never through
+#   an argument.
+#
 # `pnpm worker restore-check` then verifies owners, grants and the left-out tables, and holds
 # paid operations again until `pnpm worker restore-reconcile`. Prints no credentials.
 set -euo pipefail
@@ -28,12 +31,19 @@ if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*\.dump$ ]]; then
   exit 2
 fi
 here=$(dirname "${BASH_SOURCE[0]}")
-file="/backup/$1"
+file="${AVIATION_BACKUP_MOUNT:-/backup}/$1"
 if [[ ! -f "$file" ]]; then
   echo "no backup named $1 in AVIATION_BACKUP_DIR" >&2
   exit 2
 fi
-psql=(psql -X -q -v ON_ERROR_STOP=1 --dbname "$DATABASE_MIGRATOR_URL")
+# shellcheck source=libpq-service.sh
+source "$here/libpq-service.sh"
+private=$(mktemp -d)
+trap 'rm -rf "$private"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+aviation_service_file "$private"
+psql=(psql -X -q -v ON_ERROR_STOP=1)
 
 objects=$("${psql[@]}" -tA -c "
   SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -45,8 +55,7 @@ if [[ "$objects" != 0 ]]; then
   exit 2
 fi
 
-list=$(mktemp)
-trap 'rm -f "$list"' EXIT
+list="$private/restore.list"
 pg_restore --list "$file" | grep -Ev '^[0-9]+; [0-9]+ [0-9]+ (SCHEMA - drizzle|ACL - SCHEMA public) ' > "$list"
 
 {

@@ -43,15 +43,18 @@ describe('backups never hold accounts, sign-in state or content', () => {
     const excluded = [...script.matchAll(/--exclude-table-data=([a-z_]+)/g)].map((m) => m[1]);
     expect(excluded).toEqual(pgDumpExclusions().map((o) => o.split('=')[1]));
     expect(script).toMatch(/pg_dump --format=custom/);
-    expect(script).toContain('--dbname "$DATABASE_MIGRATOR_URL"');
+    // The migrator login through a private service file, never a URL in the arguments.
+    expect(script).toContain('aviation_service_file "$private"');
+    expect(script).not.toContain('--dbname');
     // Written under a temporary name and renamed once complete, readable by its owner only.
     expect(script).toContain('umask 077');
-    expect(script).toMatch(/mv "\$partial" "\/backup\/\$\{name\}"/);
+    expect(script).toMatch(/mv "\$partial" "\$mount\/\$\{name\}"/);
   });
 
   it('the restore script restores as the migrator, with its default privileges suspended, in one transaction', () => {
     const script = readFileSync(resolve(APP_DIR, 'docker/postgres/restore.sh'), 'utf8');
-    expect(script).toContain('--dbname "$DATABASE_MIGRATOR_URL"');
+    expect(script).toContain('aviation_service_file "$private"');
+    expect(script).not.toContain('--dbname');
     expect(script).toContain('pg_restore --no-owner --use-list "$list" --file - "$file" &&');
     expect(script).toContain("echo 'BEGIN;'");
     expect(script).toContain('ON_ERROR_STOP=1');

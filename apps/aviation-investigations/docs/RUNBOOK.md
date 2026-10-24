@@ -736,7 +736,10 @@ dump the database: `pg_dump` locks every table it dumps, those whose rows it lea
 too, and the app and ingest logins are refused (`permission denied for schema drizzle`).
 The file appears under its final name only once it is complete. The container runs as
 the host user that owns the directory (the wrapper sets `AVIATION_UID`/`AVIATION_GID`)
-and sees only that directory and the scripts. With plain Compose, set those three
+and sees only that directory and the scripts. Backup and restore connect through a private
+libpq service file (docker/postgres/libpq-service.sh, mode 0600 on the container's tmpfs,
+removed on exit, also after a failure), so the migrator password never appears in a
+process's arguments, which every local user can read in `ps`. With plain Compose, set those three
 variables and run `docker compose -p ai-aviation-<env> --env-file ... --profile tools run
 --rm aviation-backup`.
 
