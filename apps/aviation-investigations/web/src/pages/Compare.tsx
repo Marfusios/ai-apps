@@ -5,6 +5,7 @@ import { Link, useLocation, useSearchParams } from 'react-router';
 import type { CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import { caseQuery, configQuery, isNotFound } from '../api';
+import { documentTitle } from '../brand';
 import { Button } from '../components/Button';
 import { DataCaution } from '../components/DataCaution';
 import { EVIDENCE_WORDS, GlyphMark } from '../components/EvidenceGlyph';
@@ -392,7 +393,7 @@ export function Compare() {
 
   return (
     <div className="mx-auto w-full max-w-page px-4 pt-5 pb-12 sm:px-[26px] sm:pt-[22px]">
-      <title>{`${title} · Aviation Casebook`}</title>
+      <title>{documentTitle(title)}</title>
       <PrintHeader title={title} cases={list} snapshotDate={config.data?.snapshotDate ?? null} />
       <nav data-print="hide" className="text-ui">
         <Link to={back} className="text-blue hover:underline">

@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { CREDIT_EMAIL, CREDIT_HREF, CREDIT_NAME } from '../brand';
 import { formatChartDate, localIsoDate } from '../lib/format';
 
 export interface FooterProps {
@@ -13,14 +14,16 @@ export interface FooterProps {
 const Dot = () => <span aria-hidden="true"> · </span>;
 
 /**
- * "Not an NTSB service · Data: NTSB, snapshot {date} · Privacy · About"
- * (UI_DESIGN §3). Print shows "Not an NTSB service · Source: NTSB · printed {date}" (§7).
+ * "Not an NTSB service · Data: NTSB, snapshot {date} · Privacy · About", and under it the
+ * owner's credit, "Built by Mariusz Kotas · m@mkotas.cz" with the address as a `mailto:`
+ * link (UI_DESIGN §3, owner decision of 2026-10-24). Print shows "Not an NTSB service ·
+ * Source: NTSB · printed {date}" (§7) and the same credit line.
  */
 export function Footer({ snapshotDate, snapshotAge, printedDate }: FooterProps) {
   const printed = formatChartDate(printedDate ?? localIsoDate());
   return (
     <footer className="mt-auto border-t border-hairline">
-      <p className="mx-auto max-w-page px-4 py-5 text-center text-label text-muted print:hidden">
+      <p className="mx-auto max-w-page px-4 pt-5 text-center text-label text-muted print:hidden">
         <span>Not an NTSB service</span>
         <Dot />
         <span>
@@ -37,8 +40,15 @@ export function Footer({ snapshotDate, snapshotAge, printedDate }: FooterProps) 
           About
         </Link>
       </p>
-      <p className="hidden px-4 py-3 text-label text-ink print:block">
+      <p className="hidden px-4 pt-3 text-label text-ink print:block">
         Not an NTSB service · Source: NTSB · printed {printed}
+      </p>
+      <p className="mx-auto max-w-page px-4 pt-1 pb-5 text-center text-label text-muted print:mx-0 print:pt-0 print:pb-3 print:text-left print:text-ink">
+        <span>Built by {CREDIT_NAME}</span>
+        <Dot />
+        <a href={CREDIT_HREF} className="link">
+          {CREDIT_EMAIL}
+        </a>
       </p>
     </footer>
   );

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { dashboardQuery } from '../api';
+import { documentTitle } from '../brand';
 import { Button } from '../components/Button';
 import { BarList } from '../features/dashboard/BarList';
 import { CohortChips } from '../features/dashboard/CohortChips';
@@ -57,7 +58,7 @@ export function Dashboard() {
 
   return (
     <div className="mx-auto w-full max-w-page px-4 pt-5 pb-12 sm:px-[26px] sm:pt-[22px]">
-      <title>The record, in questions · Aviation Casebook</title>
+      <title>{documentTitle('The record, in questions')}</title>
       <h1 className="font-serif text-[26px] leading-[1.1] font-semibold tracking-headline sm:text-[28px]">The record, in questions</h1>
       <CohortChips
         cohort={cohort}

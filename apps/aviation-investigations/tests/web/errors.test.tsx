@@ -101,7 +101,7 @@ describe('Unexpected errors never show a developer page (review W-1)', () => {
     expect(within(alert).getByRole('heading', { level: 1, name: 'Something went wrong.' })).toBeTruthy();
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeTruthy();
     expect(within(alert).getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/');
-    expect(screen.getByRole('link', { name: 'Aviation Casebook' }).getAttribute('href')).toBe('/');
+    expect(screen.getByRole('link', { name: 'AirCase' }).getAttribute('href')).toBe('/');
     expect(screen.queryByText(/Unexpected Application Error/i)).toBeNull();
     expect(document.body.textContent).not.toContain('the frame failed');
     errors.mockRestore();

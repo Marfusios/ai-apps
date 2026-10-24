@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { DELETE_PARAM } from '../../../shared/contracts/account';
 import { ApiError, aiStatusQuery, configQuery } from '../api';
+import { documentTitle } from '../brand';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { DeletionUnconfirmedError, SignOutUnconfirmedError, accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
@@ -60,7 +61,7 @@ function SearchesLeft() {
 function Frame({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mx-auto w-full max-w-reading px-4 py-10 sm:py-14">
-      <title>Account · Aviation Casebook</title>
+      <title>{documentTitle('Account')}</title>
       <div className="card px-6 py-6 sm:px-8 sm:py-7">
         <Placard as="p">Account</Placard>
         <h1 className="mt-2 font-serif text-headline font-semibold tracking-headline break-words">{title}</h1>
@@ -152,7 +153,7 @@ export function Account() {
   if (!account.data) {
     return (
       <section className="mx-auto w-full max-w-reading px-4 py-10 sm:py-14" aria-busy="true">
-        <title>Account · Aviation Casebook</title>
+        <title>{documentTitle('Account')}</title>
         <div aria-hidden="true" className="card h-48 opacity-60" />
       </section>
     );

@@ -4,6 +4,7 @@
  * sample cases are public NTSB records used in the approved mockups.
  */
 import type { ReactNode } from 'react';
+import { PRODUCT_NAME, documentTitle } from '../brand';
 import { AiBlock } from '../components/AiBlock';
 import { AiChip } from '../components/AiChip';
 import { Button } from '../components/Button';
@@ -78,7 +79,7 @@ const TOKENS = [
 export function ComponentGallery() {
   return (
     <div className="mx-auto w-full max-w-page px-4 py-8 sm:px-[22px]">
-      <title>Component gallery · Aviation Casebook</title>
+      <title>{documentTitle('Component gallery')}</title>
       <Placard as="p">Development build only</Placard>
       <h1 className="mt-2 font-serif text-headline font-semibold tracking-headline">Sectional components</h1>
       <p className="mt-2 max-w-[70ch] text-muted">
@@ -133,7 +134,7 @@ export function ComponentGallery() {
 
       <Section title="Placards" note="Plain labels by day; engraved placards at night. AI labels stay magenta.">
         <div className="flex flex-wrap items-center gap-4">
-          <span className="placard wordmark">Aviation Casebook</span>
+          <span className="placard wordmark">{PRODUCT_NAME}</span>
           <Placard>Your question</Placard>
           <Placard tone="ink">The flight</Placard>
           <Placard tone="ai">AI summary · check the cited passages</Placard>

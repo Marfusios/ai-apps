@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode, type Ref } from 
 import { Link } from 'react-router';
 import type { AircraftDetail, CaseDetail, Finding, Section } from '../../../../shared/contracts/cases';
 import type { Snippet } from '../../../../shared/contracts/search';
+import { PRODUCT_NAME } from '../../brand';
 import { DataCaution } from '../../components/DataCaution';
 import { FlightProfile } from '../../components/FlightProfile';
 import { Highlighted } from '../../components/Highlighted';
@@ -384,7 +385,7 @@ function Provenance({ detail }: { detail: CaseDetail }) {
       {!completion.mappingVerified && (
         <p>Completion status follows a provisional mapping ({completion.mappingVersion}) until NTSB metadata confirms it.</p>
       )}
-      <p>Aviation Casebook is not an NTSB service.</p>
+      <p>{PRODUCT_NAME} is not an NTSB service.</p>
     </footer>
   );
 }

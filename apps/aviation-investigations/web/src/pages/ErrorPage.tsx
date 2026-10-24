@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { documentTitle, PRODUCT_NAME } from '../brand';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 
@@ -14,7 +15,7 @@ export const ERROR_TEXT = 'This page stopped because of an unexpected error. Try
 export function RouteError() {
   return (
     <section className="mx-auto w-full max-w-reading px-4 py-14 sm:py-20">
-      <title>Something went wrong · Aviation Casebook</title>
+      <title>{documentTitle('Something went wrong')}</title>
       <div role="alert" className="card px-6 py-6 sm:px-8 sm:py-7">
         <Placard as="p">Error</Placard>
         <h1 className="mt-2 font-serif text-headline font-semibold tracking-headline">{ERROR_TITLE}</h1>
@@ -43,7 +44,7 @@ export function AppError() {
       <header className="header-rule relative z-20 bg-header">
         <div className="mx-auto flex max-w-page items-center px-4 py-[11px] sm:px-[22px]">
           <a href="/" className="placard wordmark">
-            Aviation Casebook
+            {PRODUCT_NAME}
           </a>
         </div>
       </header>

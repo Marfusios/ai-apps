@@ -92,7 +92,7 @@ export function fontLicenses(packages: readonly string[], fileName = 'licenses/f
       this.emitFile({
         type: 'asset',
         fileName,
-        source: `Fonts bundled with Aviation Casebook\n\n${sections.join('\n\n')}`,
+        source: `Fonts bundled with AirCase\n\n${sections.join('\n\n')}`,
       });
     },
   };

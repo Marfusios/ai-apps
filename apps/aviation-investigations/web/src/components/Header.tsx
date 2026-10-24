@@ -1,6 +1,7 @@
 import { Menu, X } from 'lucide-react';
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router';
+import { PRODUCT_NAME } from '../brand';
 import { cx } from '../lib/cx';
 import { ThemeSwitch } from './ThemeSwitch';
 
@@ -19,8 +20,8 @@ export interface HeaderProps {
 /**
  * Global header (UI_DESIGN §3): wordmark, Explore and Dashboard, the AI counter,
  * the Day/Night switch and sign-in, over the blue rule with its tick scale. Below
- * 640px the nav, switch and sign-in move into a ☰ menu (§6); below 1024px the
- * wordmark is shortened to "CASEBOOK" so the full header fits tablets.
+ * 640px the nav, switch and sign-in move into a ☰ menu (§6). The wordmark is one
+ * short word, so it is the same at every width.
  */
 export function Header({ aiCounter, auth }: HeaderProps) {
   const location = useLocation();
@@ -41,8 +42,7 @@ export function Header({ aiCounter, auth }: HeaderProps) {
     <header className="header-rule relative z-20 bg-header" onKeyDown={onKeyDown}>
       <div className="mx-auto flex max-w-page items-center gap-4 px-4 py-[11px] sm:px-[22px] lg:gap-[1.4rem]">
         <Link to="/" className="placard wordmark">
-          <span className="hidden lg:inline">Aviation Casebook</span>
-          <span className="lg:hidden">Casebook</span>
+          {PRODUCT_NAME}
         </Link>
         <nav aria-label="Main" className="hidden gap-[1.1rem] sm:flex" data-print="hide">
           {NAV.map((item) => (
