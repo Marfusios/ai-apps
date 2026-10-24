@@ -460,6 +460,8 @@ class Run {
    */
   private chargeUncertain(stage: LlmStage, model: string, provider: string): void {
     this.spent = true;
+    // A stage makes one call: once its usage is a known line, a later error is not a billing doubt.
+    if (this.lines.some((l) => l.stage === stage)) return;
     let usd: number;
     try {
       usd = stageWorstCaseUsd(model, STAGE_CAPS[STAGE_ROLE[stage]]);
