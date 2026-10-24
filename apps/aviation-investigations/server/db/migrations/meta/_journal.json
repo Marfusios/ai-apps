@@ -148,6 +148,13 @@
       "when": 1792762526894,
       "tag": "0020_restore_hold",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792762549341,
+      "tag": "0021_live_brief_generations",
+      "breakpoints": true
     }
   ]
 }

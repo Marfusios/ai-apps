@@ -625,6 +625,7 @@ async function main(argv: string[]): Promise<number> {
     console.log(`retained (active and most recently published): ${list(report.retained)}`);
     console.log(`${dryRun ? 'would delete (dry run, nothing deleted)' : 'deleted'}: ${list(report.deleted)}`);
     console.log(`skipped (pinned): ${list(report.skippedPinned)}`);
+    console.log(`skipped (cited by unexpired AI briefs): ${list(report.skippedLiveBriefs)}`);
     return 0;
   }
   if (command === 'prune-controls') {

@@ -743,7 +743,7 @@ Nothing grows without bound, but two kinds of retention run differently:
 
   ```sh
   pnpm ingest prune-generations --dry-run    # lists what would be deleted; deletes nothing
-  pnpm ingest prune-generations              # keeps the active, pinned and the two most recently published
+  pnpm ingest prune-generations              # keeps the active, pinned and the two most recently published, and any an unexpired AI brief cites
   pnpm ingest prune-generations --grace-hours 48   # never-published generations are kept this long (default 24)
   ```
 

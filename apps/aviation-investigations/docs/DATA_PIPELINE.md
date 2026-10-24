@@ -264,7 +264,10 @@ run it after publishing a new generation. It:
 - delete never-published generations that have failed, at once;
 - delete other never-published generations 24 hours (the default grace) after their
   seal or latest verification;
-- never delete loading, active or pinned generations.
+- never delete loading, active or pinned generations, or a generation that an AI
+  brief created in the last 24 hours cites (its later steps read that generation's
+  manifest and cases; `generations_cited_by_live_briefs()`, migration 0021). Such a
+  generation goes at the first run after its briefs have expired.
 
 Control data (usage buckets, leases, Turnstile redemptions and expired briefs) is
 pruned by a periodic job in the API server, serialized by an advisory lock.

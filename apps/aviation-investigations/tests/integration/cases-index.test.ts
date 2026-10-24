@@ -37,7 +37,7 @@ import { TABLE_NAMES } from '../../worker/ingest/tables.js';
 import { fixtureCaseRecords } from '../support/case-records.js';
 import { editTable, makeExtractDir, removeDir } from '../support/extract-dir.js';
 import { evIdOf, loadVerified, tamper } from './corpus-helpers.js';
-import { TEST_INDEX_PREFIX, resetCorpus, testDb, testEs, testEsReader } from './helpers.js';
+import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDb, testEs, testEsReader } from './helpers.js';
 
 /** A prefix of our own, so parallel runs and other suites never share an alias. */
 const RUN = randomBytes(4).toString('hex');
@@ -139,6 +139,8 @@ const realUpdateAliases = (real: Client['indices']) => (real.updateAliases as (.
 
 beforeAll(async () => {
   await resetCorpus();
+  // Briefs another test file left behind would cite these generation ids and keep them from pruning.
+  await resetControls();
   ingest = testDb('ingest');
   ingest2 = testDb('ingest');
   migrator = testDb('migrator');

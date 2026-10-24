@@ -247,8 +247,10 @@ Request-path reads keep their own, shorter bound (the cases index lookup: 2 s).
   ones. Never-published generations are deleted when `failed`, or when they were
   sealed or last verified more than 24 hours ago (configurable), so a load that
   committed late or a generation awaiting its indices stays. `loading`, active and
-  pinned generations are never deleted: `pinGeneration`/`unpinGeneration` write
-  `generation_pins` (for example for generations live briefs cite) only through
+  pinned generations are never deleted, nor generations that an unexpired AI brief
+  cites (`generations_cited_by_live_briefs()`, migration 0021: a brief's later steps
+  read its generation for up to 24 hours). `pinGeneration`/`unpinGeneration` write
+  `generation_pins` (an index build's pin, or an operator's) only through
   `pin_generation`/`unpin_generation`, which take the lifecycle lock, so a pin
   renewed during pruning either protects the generation or fails because pruning
   removed it first.

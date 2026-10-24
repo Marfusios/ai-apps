@@ -178,6 +178,8 @@ export interface PruneReport {
   deleted: number[];
   /** Candidates left in place because a pin protects them. */
   skippedPinned: number[];
+  /** Candidates left in place because an unexpired AI brief cites them (migration 0021). */
+  skippedLiveBriefs: number[];
 }
 
 /**
@@ -187,8 +189,11 @@ export interface PruneReport {
  * and unverified/verified for longer than the grace period (counted from the seal,
  * i.e. the load's commit, or the latest verification), so a slow load committing
  * late or a generation awaiting its indices is kept. `loading`, active and pinned
- * generations are never deleted. Runs under the lifecycle lock; each deletion is one
- * `prune_generation` call.
+ * generations are never deleted, and neither is a generation an unexpired AI brief cites
+ * (`generations_cited_by_live_briefs()`, migration 0021; amendment A6): briefs are made
+ * only on the active generation, which publication changes only under the lifecycle
+ * lock held here, so no brief can start citing a candidate meanwhile. Runs under the
+ * lifecycle lock; each deletion is one `prune_generation` call.
  */
 export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise<PruneReport> {
   const keep = opts.keep ?? 2;
@@ -201,6 +206,7 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
       sql`select g.id::int as id, g.status, m.published_at is not null as was_published, coalesce(m.active, false) as active,
             exists (select 1 from generation_pins p where p.generation_id = g.id
               and (p.pinned_until is null or p.pinned_until > now())) as pinned,
+            g.id in (select b from generations_cited_by_live_briefs() as b) as cited,
             greatest(g.sealed_at, g.verified_at) < now() - make_interval(secs => ${graceHours * 3600}) as past_grace
           from dataset_generations g left join dataset_manifests m on m.generation_id = g.id
           order by m.active desc nulls last, m.published_at desc nulls last, g.id`,
@@ -209,26 +215,31 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
     const retained = published.slice(0, keep).map((g) => Number(g.id));
     const deleted: number[] = [];
     const skippedPinned: number[] = [];
+    const skippedLiveBriefs: number[] = [];
     const candidates = generations
       .filter((g) => !retained.includes(Number(g.id)) && g.active !== true && g.status !== 'loading')
       .filter((g) => g.was_published === true || g.status === 'failed' || g.past_grace === true)
-      .map((g) => ({ id: Number(g.id), pinned: g.pinned === true }))
+      .map((g) => ({ id: Number(g.id), pinned: g.pinned === true, cited: g.cited === true }))
       .sort((a, b) => a.id - b.id);
-    await opts.afterPlan?.(candidates.filter((c) => !c.pinned).map((c) => c.id));
+    await opts.afterPlan?.(candidates.filter((c) => !c.pinned && !c.cited).map((c) => c.id));
     for (const c of candidates) {
       if (c.pinned) {
         skippedPinned.push(c.id);
         continue;
       }
+      if (c.cited) {
+        skippedLiveBriefs.push(c.id);
+        continue;
+      }
       if (opts.dryRun !== true) await call(q, sql`select prune_generation(${c.id})`);
       deleted.push(c.id);
     }
-    return { retained, deleted, skippedPinned };
+    return { retained, deleted, skippedPinned, skippedLiveBriefs };
   });
 }
 
 /**
- * Protect a generation from pruning (e.g. for a live brief), until `until` or
+ * Protect a generation from pruning (an index build's pin, or an operator's), until `until` or
  * `unpinGeneration`; creating and renewing pins both go through `pin_generation`,
  * which takes the lifecycle lock. While pruning runs it waits, and fails with "does
  * not exist" if pruning removed the generation meanwhile.

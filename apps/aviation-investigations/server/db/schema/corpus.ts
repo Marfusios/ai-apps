@@ -531,8 +531,10 @@ export const quarantine = pgTable(
 );
 
 /**
- * Generations that pruning must keep (e.g. referenced by live briefs). A pin with a
- * null `pinned_until` holds until removed; an expired pin no longer protects.
+ * Generations that pruning must keep: an index build pins its generation while it runs
+ * (`index-build:<id>`), and an operator may pin one. A pin with a null `pinned_until`
+ * holds until removed; an expired pin no longer protects. Generations that live AI briefs
+ * cite are kept without pins (`generations_cited_by_live_briefs()`, migration 0021).
  */
 export const generationPins = pgTable(
   'generation_pins',

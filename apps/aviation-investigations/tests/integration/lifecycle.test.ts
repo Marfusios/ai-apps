@@ -20,7 +20,7 @@ import { failStaleRuns, listRunningRuns } from '../../worker/ingest/runs.js';
 import { verifyCorpus } from '../../worker/ingest/verify.js';
 import { makeExtractDir, removeDir } from '../support/extract-dir.js';
 import { count, loadVerified, snapshot, sqlState, tamper } from './corpus-helpers.js';
-import { resetCorpus, testDb } from './helpers.js';
+import { resetControls, resetCorpus, testDb } from './helpers.js';
 
 let ingest: Db;
 let app: Db;
@@ -42,6 +42,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetCorpus();
+  // Briefs another test file left behind would cite these generation ids.
+  await resetControls();
 });
 
 const loaded = async (): Promise<number> => (await loadFromExtract(ingest, fixtureDir)).generationId;
@@ -193,7 +195,7 @@ describe('pruning', () => {
     await publish(g4 as number);
     const keptBefore = await snapshot(ingest, g2 as number);
     const report = await pruneGenerations(ingest);
-    expect(report).toEqual({ retained: [g4, g2], deleted: [g3], skippedPinned: [] });
+    expect(report).toEqual({ retained: [g4, g2], deleted: [g3], skippedPinned: [], skippedLiveBriefs: [] });
     // g1 was verified moments ago and never published: within the grace period.
     expect((await listGenerations(app)).map((g) => [g.id, g.status])).toEqual([
       [g1, 'verified'],
@@ -211,7 +213,7 @@ describe('pruning', () => {
     await pinGeneration(ingest, g1 as number, 'brief 7');
     const before = (await listGenerations(app)).map((g) => g.id);
     const planned = await pruneGenerations(ingest, { keep: 1, dryRun: true });
-    expect(planned).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1] });
+    expect(planned).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1], skippedLiveBriefs: [] });
     expect((await listGenerations(app)).map((g) => g.id)).toEqual(before);
     expect(await rowsOf(ingest, g2 as number)).toBeGreaterThan(0);
     // g4 is verified but never published and inside the grace period: not a candidate either way.
@@ -231,7 +233,7 @@ describe('pruning', () => {
       ['dataset_generations'],
       sql`update dataset_generations set created_at = now() - interval '48 hours' where id = ${late}`,
     );
-    expect(await pruneGenerations(ingest, { graceHours: 24 })).toEqual({ retained: [active], deleted: [], skippedPinned: [] });
+    expect(await pruneGenerations(ingest, { graceHours: 24 })).toEqual({ retained: [active], deleted: [], skippedPinned: [], skippedLiveBriefs: [] });
 
     // Once sealed (and verified) more than a day ago it is pruned.
     const stale = await verified();
@@ -253,8 +255,35 @@ describe('pruning', () => {
       retained: [active],
       deleted: [late, stale, failed],
       skippedPinned: [],
+      skippedLiveBriefs: [],
     });
     expect((await listGenerations(app)).map((g) => g.id)).toEqual([active, fresh]);
+  });
+
+  it('keeps a generation that an unexpired brief cites until its briefs expire (A6)', async () => {
+    const [g1, g2, g3] = [await verified(), await verified(), await verified()];
+    await publish(g1 as number);
+    const brief = (g: number, createdHoursAgo: number) =>
+      migrator.execute(sql`
+        insert into briefs (read_owner, read_owner_kind, generation_id, passages_index, created_at, expires_at)
+        values (${'b'.repeat(64)}, 'trial', ${g}, ${`aviation-test-passages-${g}`}, now() - make_interval(hours => ${createdHoursAgo}),
+          now() - make_interval(hours => ${createdHoursAgo}) + interval '24 hours')`);
+    // A brief made while g1 served, 2 hours ago, and an expired one.
+    await brief(g1 as number, 2);
+    await brief(g1 as number, 30);
+    // Two publications within the brief's life: keep = 2 alone would delete g1 under it.
+    await publish(g2 as number);
+    await publish(g3 as number);
+    const planned = await pruneGenerations(ingest, { dryRun: true });
+    expect(planned).toEqual({ retained: [g3, g2], deleted: [], skippedPinned: [], skippedLiveBriefs: [g1] });
+    expect(await pruneGenerations(ingest)).toEqual(planned);
+    expect(await rowsOf(ingest, g1 as number)).toBeGreaterThan(0);
+    // aviation_ingest learns generation ids only; it still cannot read briefs.
+    expect(await sqlState(ingest.execute(sql`select count(*) from briefs`))).toBe('42501');
+    expect(await sqlState(app.execute(sql`select * from generations_cited_by_live_briefs()`))).toBe('42501');
+    // Once its briefs are gone (expired and pruned), the generation goes too.
+    await resetControls();
+    expect(await pruneGenerations(ingest)).toEqual({ retained: [g3, g2], deleted: [g1], skippedPinned: [], skippedLiveBriefs: [] });
   });
 
   it('never deletes a pinned or the active generation', async () => {
@@ -262,7 +291,7 @@ describe('pruning', () => {
     for (const g of [g1, g2, g3]) await publish(g as number);
     await pinGeneration(ingest, g1 as number, 'brief 42');
     expect(await activePins(ingest, g1 as number)).toEqual([{ reason: 'brief 42', pinnedUntil: null }]);
-    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1] });
+    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1], skippedLiveBriefs: [] });
     // The database function refuses too.
     await expect(ingest.execute(sql`select prune_generation(${g1})`)).rejects.toMatchObject({ cause: { code: '55000' } });
     await expect(ingest.execute(sql`select prune_generation(${g3})`)).rejects.toMatchObject({
@@ -273,7 +302,7 @@ describe('pruning', () => {
     expect(await activePins(ingest, g1 as number)).toEqual([]);
     await pinGeneration(ingest, g1 as number, 'brief 43');
     expect(await unpinGeneration(ingest, g1 as number, 'brief 43')).toBe(true);
-    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual({ retained: [g3], deleted: [g1], skippedPinned: [] });
+    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual({ retained: [g3], deleted: [g1], skippedPinned: [], skippedLiveBriefs: [] });
     expect(await count(ingest, sql`select count(*) from generation_pins`)).toBe(0);
     await expect(pruneGenerations(ingest, { keep: 0 })).rejects.toThrow(/positive integer/);
   });
@@ -312,7 +341,7 @@ describe('pins', () => {
     // Renewed before pruning plans: the pin protects.
     await pinGeneration(ingest, g1 as number, 'brief', new Date(Date.now() - 1000));
     await pinGeneration(ingest, g1 as number, 'brief', null);
-    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1] });
+    expect(await pruneGenerations(ingest, { keep: 1 })).toEqual({ retained: [g3], deleted: [g2], skippedPinned: [g1], skippedLiveBriefs: [] });
 
     // Expired again; pruning plans to delete g1 and a renewal arrives meanwhile. The
     // renewal waits for the lifecycle lock, pruning deletes, and the renewal fails cleanly.
@@ -329,7 +358,7 @@ describe('pins', () => {
         await waitForLockWaiter();
       },
     });
-    expect(report).toEqual({ retained: [g3], deleted: [g1], skippedPinned: [] });
+    expect(report).toEqual({ retained: [g3], deleted: [g1], skippedPinned: [], skippedLiveBriefs: [] });
     const outcome = await renewal;
     expect(outcome).toBeInstanceOf(Error);
     expect((outcome as Error).message).toMatch(/generation \d+ does not exist/);
