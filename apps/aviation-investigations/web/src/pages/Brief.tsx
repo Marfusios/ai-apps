@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   BriefIdSchema,
@@ -258,13 +258,14 @@ export function Brief() {
     enabled: Boolean(step && !finished && step.step > 1 && !step.checklist.interpretation),
   });
 
-  // An AI request answered 2xx is settled once the step it started is on screen
-  // (web/src/features/ai/unsettled.ts `settleOnArrival`).
-  const shownBrief = step?.briefId;
-  const shownStep = step?.step;
-  useEffect(() => {
-    if (shownBrief !== undefined && shownStep !== undefined) arrived(shownBrief, shownStep);
-  }, [shownBrief, shownStep]);
+  // An AI request answered 2xx is settled once this page has taken over: a new brief as soon
+  // as the page is on screen for it, a refinement when the step it started is shown
+  // (web/src/features/ai/unsettled.ts `settleOnArrival`). A layout effect, so it runs as the
+  // page commits.
+  const shownStep = step?.briefId === id ? step.step : null;
+  useLayoutEffect(() => {
+    if (valid) arrived(id, shownStep);
+  }, [id, valid, shownStep]);
 
   // A finished step never changes: keep it under its number too, so the step switcher and
   // the next refinement's chips read it from memory.

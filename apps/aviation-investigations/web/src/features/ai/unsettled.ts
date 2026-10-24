@@ -15,13 +15,14 @@
  * - **Storage** is `sessionStorage` (this tab only, gone when it closes), under a hash of
  *   that normalised request, so no question text is stored. Every access is wrapped:
  *   when storage is unavailable or refuses a write, the entry lives in memory instead.
- * - **Lifetime:** an entry is cleared once the page shows the step a 2xx started
- *   (`settleOnArrival`, `arrived`: the brief page may still be loading after the answer, and
- *   until it shows the step a reload or a second ask replays the key), by the 409 swap (the
- *   earlier attempt never completed) and by a known refusal of its first send (nothing was
- *   admitted); it expires with the server's idempotency record, 24 hours after it was first
- *   remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or deleting the
- *   account clears them all (`forgetAllUnsettled`).
+ * - **Lifetime:** an entry is cleared once the page has taken over from a 2xx
+ *   (`settleOnArrival`, `arrived`: for a new brief when the brief page, a lazy route that may
+ *   still be loading after the answer, is on screen for it; for a refinement when the page
+ *   shows the step it started; until then a reload or a second ask replays the key), by the
+ *   409 swap (the earlier attempt never completed) and by a known refusal of its first send
+ *   (nothing was admitted); it expires with the server's idempotency record, 24 hours after it
+ *   was first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or
+ *   deleting the account clears them all (`forgetAllUnsettled`).
  */
 import type { BriefFilterFacet, BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
 import { FACET_VALUES } from '../../../../shared/contracts/search';
@@ -207,28 +208,37 @@ export function forgetUnsettled(id: string, key?: string): void {
 }
 
 /**
- * Keys whose request was answered with a 2xx, waiting for the page to show the step it
- * started, by `briefId:step` (memory only: after a reload the entry stays, and the next
- * same request replays it).
+ * Keys whose request was answered with a 2xx, waiting for the page to take over, by brief
+ * (memory only: after a reload the entry stays in storage, and the next same request
+ * replays it). `step`: `'page'` for a new brief (the brief page, a lazy route that may still
+ * be loading after the answer, is on screen for it), or the step a refinement started (the
+ * page shows that step).
  */
-const arriving = new Map<string, { id: string; key: string }>();
+const arriving = new Map<string, { id: string; key: string; step: number | 'page' }[]>();
 
 /**
- * A 2xx started step `step` of brief `briefId`: its key is settled when the page shows that
- * step (`arrived`), not before. The brief page can still be loading after the answer, and a
- * second ask in that gap must replay the key rather than start (and pay for) another.
+ * A 2xx answered a request for brief `briefId`: its key is settled when the page takes over
+ * (`arrived`), not before, so a second ask in that gap replays the key rather than start
+ * (and pay for) another.
  */
-export function settleOnArrival(briefId: string, step: number, id: string, key: string): void {
-  arriving.set(`${briefId}:${step}`, { id, key });
+export function settleOnArrival(briefId: string, step: number | 'page', id: string, key: string): void {
+  arriving.set(briefId, [...(arriving.get(briefId) ?? []), { id, key, step }]);
 }
 
-/** The page shows step `step` of brief `briefId`: a key waiting for it is settled (under its own key only). */
-export function arrived(briefId: string, step: number): void {
-  const at = `${briefId}:${step}`;
-  const waiting = arriving.get(at);
+/**
+ * The brief page is on screen for brief `briefId`, showing step `step` once read: keys
+ * waiting for that are settled (each under its own key only).
+ */
+export function arrived(briefId: string, step: number | null): void {
+  const waiting = arriving.get(briefId);
   if (!waiting) return;
-  arriving.delete(at);
-  forgetUnsettled(waiting.id, waiting.key);
+  const rest = waiting.filter((w) => {
+    if (w.step !== 'page' && w.step !== step) return true;
+    forgetUnsettled(w.id, w.key);
+    return false;
+  });
+  if (rest.length > 0) arriving.set(briefId, rest);
+  else arriving.delete(briefId);
 }
 
 /** Test hook: forget every entry, in memory and in this tab's storage. */

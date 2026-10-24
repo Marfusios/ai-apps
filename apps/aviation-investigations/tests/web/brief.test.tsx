@@ -1915,7 +1915,7 @@ describe('Write-ahead keys: a reload while the request is in flight pays once (r
     expect(keys[1]).not.toBe(keys[0]);
   });
 
-  it('a 2xx settles the key only once the brief page shows its step: a second ask while that page loads replays it (re-review N-2)', async () => {
+  it('a 2xx settles the key only once the brief page has taken over: a second ask while that page loads replays it (re-review N-2)', async () => {
     freshApi();
     installTurnstile();
     const keys: string[] = [];
@@ -1958,9 +1958,10 @@ describe('Write-ahead keys: a reload while the request is in flight pays once (r
       await waitFor(() => expect(keys).toHaveLength(2), SLOW);
       expect(keys[1]).toBe(keys[0]);
       open();
-      await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
-      // The page shows the step the request started: now it is settled.
+      // The brief page is on screen for it: now it is settled.
+      await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
       await waitFor(() => expect(stored()).toEqual({}), SLOW);
+      await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
       await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
     } finally {
       undo.forEach((u) => u());

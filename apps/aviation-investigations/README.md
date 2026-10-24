@@ -1100,34 +1100,35 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   (which says whether sign-in is offered) is on its way, those states say nothing; if it
   fails they read the same way, and the configuration is read again after 5 s, doubling up
   to 60 s, and when the tab gets focus, until it answers.
-- **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from
-  a new widget, which is removed as soon as its token is taken. Each request holds a
-  check session: a second control waits its turn ("Checking…"), and ending one session
-  never cancels another. The first request of a trial identity (`started: false`) shows
-  "Quick check before your first AI search"; later ones run invisibly while the button
-  reads "Checking…", then "Starting…" while the request is on its way (the server answers
-  once the scope stage is done). Each request's idempotency key is kept for the tab
-  right before the request leaves (write-ahead, `web/src/features/ai/unsettled.ts`:
+- **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from a
+  new widget, which is removed as soon as its token is taken. Each request holds a check
+  session: a second control waits its turn ("Checking…"), and ending one session never
+  cancels another. The first request of a trial identity (`started: false`) shows "Quick
+  check before your first AI search"; later ones run invisibly while the button reads
+  "Checking…", then "Starting…" while the request is on its way (the server answers once
+  the scope stage is done). Each request's idempotency key is kept for the tab right
+  before the request leaves (write-ahead, `web/src/features/ai/unsettled.ts`:
   `sessionStorage`, or memory when storage is unavailable) under a hash of the normalised
-  request (question and canonical filters, or brief and change), so a reload or Back while
-  it is in flight loses nothing and the same request from any page or control replays the
-  key. Closing the tab loses it, with the tab's session storage. When no answer comes back (a network or server error), the
-  notice does not claim the search was free, and Try again replays the same request under
-  the same key; if that replay is a 409 `conflict` (the earlier attempt never completed),
-  it is sent once more under a new key. The key is kept until the page shows the step a
-  2xx started (the brief page may still be loading after the answer, and a second ask in
-  that gap replays the key) or that 409 settles it: a refused retry (a failed or cancelled
-  check, a paused or used-up status, a known refusal of the replay) leaves it for the next
-  ask. A known refusal of a first send (a
+  request (question and canonical filters, or brief and change), so a reload or Back
+  while it is in flight loses nothing and the same request from any page or control
+  replays the key. Closing the tab loses it, with the tab's session storage. When no
+  answer comes back (a network or server error), the notice does not claim the search was
+  free, and Try again replays the same request under the same key; if that replay is a
+  409 `conflict` (the earlier attempt never completed), it is sent once more under a new
+  key. The key is kept until the page has taken over from a 2xx (a new brief once the
+  brief page, which may still be loading after the answer, is on screen; a refinement
+  once its step is shown; a second ask in that gap replays the key) or that 409 settles
+  it: a refused retry (a failed or cancelled check, a paused or used-up status, a known
+  refusal of the replay) leaves it for the next ask. A known refusal of a first send (a
   4xx, or a 503 `unavailable` or `ai_paused`, which release the admission) spent nothing:
-  its key is taken back, the notice says why, and the next ask uses a new key. Keys expire
-  after 24 hours, with the server's idempotency record. A rate limit of two minutes or
-  more (the per-network hourly and daily limits) reads "AI searches from this network are
-  limited for now." with the wait in minutes or as a UTC time. The site key comes from
-  `/api/config`, and Cloudflare's script loads only
-  when an AI request needs it. The server's Content-Security-Policy allows
-  `https://challenges.cloudflare.com` as a script and frame source whenever anonymous
-  AI is configured (see "Security headers" under API server).
+  its key is taken back, the notice says why, and the next ask uses a new key. Keys
+  expire after 24 hours, with the server's idempotency record. A rate limit of two
+  minutes or more (the per-network hourly and daily limits) reads "AI searches from this
+  network are limited for now." with the wait in minutes or as a UTC time. The site key
+  comes from `/api/config`, and Cloudflare's script loads only when an AI request needs
+  it. The server's Content-Security-Policy allows `https://challenges.cloudflare.com` as
+  a script and frame source whenever anonymous AI is configured (see "Security headers"
+  under API server).
 - **The brief page** polls the running step once a second and shows the answer
   checklist (completions announced politely, once each). Polling stops on a 404 (the
   expired view never polls) or another refusal, waits for `Retry-After` on a 429, and

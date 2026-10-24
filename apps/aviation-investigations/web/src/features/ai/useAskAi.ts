@@ -15,7 +15,7 @@ import { newIdempotencyKey, useAiRequest } from './useAiRequest';
  * other control in the tab, reuses that key, so a request the server already admitted is
  * replayed instead of paid for twice; if that replay answers 409 `conflict` (the earlier
  * attempt did not complete), it is sent once more under a new key. The key is kept until the
- * brief page shows the step a 2xx started, or that 409 settles it: a refusal before sending
+ * brief page has taken over after a 2xx, or that 409 settles it: a refusal before sending
  * (a failed or cancelled check, a paused or used-up status) or a known refusal of the replay
  * says nothing about the earlier send. A first send refused with a known outcome (a 4xx, or
  * a 503 `unavailable` or `ai_paused`, which release the admission) spent nothing: its key is
@@ -85,9 +85,9 @@ export function useAskAi() {
         return;
       }
       rememberQuestion(result.value.briefId, q, filters);
-      // Settled once the brief page shows the step this started; until then (the page may
-      // still be loading) a reload or a second ask replays the key.
-      settleOnArrival(result.value.briefId, result.value.step, id, idempotencyKey);
+      // Settled once the brief page is on screen for it; until then (the page may still be
+      // loading) a reload or a second ask replays the key.
+      settleOnArrival(result.value.briefId, 'page', id, idempotencyKey);
       navigate(`/briefs/${result.value.briefId}`);
     },
     [navigate, run, setNotice],
