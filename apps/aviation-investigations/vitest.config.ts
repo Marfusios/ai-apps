@@ -8,6 +8,10 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['tests/unit/**/*.test.ts'],
+          // Some unit tests are CPU-heavy (the checker calibration recomputes its figures again
+          // and again) or build the web client (web-bundle-eval); on a loaded machine the
+          // default 5 s is too tight.
+          testTimeout: 30_000,
         },
       },
       {
