@@ -5,8 +5,9 @@ import { currentUrl, renderApp, setupMockApi } from './render-app';
 
 setupMockApi();
 
+/** The results' count line, in the page's main region: the header's descriptor ends in "investigations" too. */
 const countLine = async (): Promise<string> => {
-  const strong = await screen.findByText(/completed investigations?|investigations?$/, { selector: 'p' });
+  const strong = await within(await screen.findByRole('main')).findByText(/completed investigations?|investigations?$/, { selector: 'p' });
   return strong.textContent ?? '';
 };
 

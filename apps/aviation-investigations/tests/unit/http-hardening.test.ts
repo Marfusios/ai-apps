@@ -236,6 +236,43 @@ describe('static files (platform review P6)', () => {
   });
 });
 
+describe('the brand assets in the web root', () => {
+  it('the manifest is application/manifest+json; icons and the share card have their image types; all are revalidated hourly', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'casebook-web-'));
+    try {
+      writeFileSync(join(root, 'index.html'), '<!doctype html><html><head></head><body></body></html>');
+      writeFileSync(join(root, 'manifest.webmanifest'), '{"name":"AirCase"}\n');
+      writeFileSync(join(root, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      writeFileSync(join(root, 'favicon.ico'), Buffer.from([0, 0, 1, 0, 0, 0]));
+      mkdirSync(join(root, 'social'));
+      writeFileSync(join(root, 'social', 'card.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      mkdirSync(join(root, 'assets'));
+      writeFileSync(join(root, 'assets', 'app-0123abcd.js'), 'console.log(1);\n');
+      const app = buildApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: [] }, db: {} as Db, es: {} as Client, webRoot: root });
+      try {
+        const get = (url: string) => app.inject({ method: 'GET', url, remoteAddress: '203.0.113.7' });
+        for (const [url, type] of [
+          ['/manifest.webmanifest', 'application/manifest+json'],
+          ['/favicon.svg', 'image/svg+xml'],
+          ['/favicon.ico', 'image/vnd.microsoft.icon'],
+          ['/social/card.png', 'image/png'],
+        ] as const) {
+          const r = await get(url);
+          expect(r.statusCode, url).toBe(200);
+          expect(r.headers['content-type'], url).toBe(type);
+          expect(r.headers['cache-control'], url).toBe('public, max-age=3600');
+        }
+        // Vite's hashed bundles keep their long cache.
+        expect((await get('/assets/app-0123abcd.js')).headers['cache-control']).toBe('public, max-age=31536000, immutable');
+      } finally {
+        await app.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('logged errors carry their name and code, never their message (platform review P7)', () => {
   it('Fastify’s own warning about a reply sent twice keeps the request URL out of the log', async () => {
     const lines: string[] = [];

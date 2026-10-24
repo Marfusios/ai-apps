@@ -1,8 +1,9 @@
 # AirCase: interface design
 
 **Design, agreed 2026-10-21.** The owner chose a direction for each screen from
-side-by-side mockups. On 2026-10-24 the owner renamed the product AirCase and
-asked for a credit line in the footer (§10). This document replaces the visual
+side-by-side mockups. On 2026-10-24 the owner renamed the product AirCase,
+asked for a credit line in the footer, and chose its mark, a plain-language line
+for the header and a share card for links (§10). This document replaces the visual
 direction in [DESIGN.md §10](DESIGN.md#10-interface-and-dashboard-direction).
 Everything else in DESIGN.md stays authoritative, including scope, the AI
 pipeline, limits, privacy, and security. Where this document quotes a limit or rule, DESIGN.md wins
@@ -132,6 +133,8 @@ Day is the default theme. Night is the "Panel" theme (§2.8).
 | `grid` | `rgba(31,81,154,.055)` | none | Graticule lines |
 | `tray` | `#1E2A36` | `#111214` | Compare tray background |
 | `placard` | none | `#0E0F11` | Night label placards |
+| `mark-tile` | `#1F519A` | `#2A5FAF` | The mark's folder (§2.5) |
+| `mark-glyph` | `#F3EEE1` | `#EDEDEA` | The aircraft on the folder |
 
 The mockups used muted `#5D6670`. It was darkened to `#58616B` because the
 original measured 4.49:1 on `tint`, just below the 4.5:1 AA threshold for normal
@@ -201,6 +204,16 @@ AI CLASSIFIED".
   - cardinal ticks
   - an ink diamond needle
   - a magenta centre dot
+- **The AirCase mark** ("Case file", Owner, 2026-10-24): a case folder carrying
+  an aircraft, drawn on a 64-unit grid, transparent around the folder. The folder
+  is `mark-tile` and the aircraft `mark-glyph` (§2.2), so it follows the theme and
+  prints in its day colours. It has two optical sizes: below 40px the aircraft is
+  heavier and a little larger, so that it still reads in a 16px browser tab; from
+  40px up it is the finer drawing. It stands before the wordmark in the header,
+  22px at every width and inside the home link (§3), and is the browser-tab icon, the app icons and the
+  mark on the share card. It is decorative: the wordmark beside it names the
+  link. Its geometry has one source, `shared/brand-mark.ts`; the home page keeps
+  the compass.
 - **Flight profile:** a small schematic line drawn from the NTSB event
   sequence:
   - blue solid for the flight up to the defining event
@@ -221,9 +234,19 @@ AI CLASSIFIED".
 - **Wordmark:** "AIRCASE" (the text is "AirCase"; CSS sets the capitals) in B612
   bold, 13px, letter-spacing 0.2em, chart blue. One short word, so it is the same
   at every width, and it is wider-spaced and a little larger than the two-word
-  mark it replaced (owner decision of 2026-10-24, §10). At night, where it is an
-  engraved placard, the first letter gets the same space as the tracking after the
-  last, so the text sits centred in the box. There is no logo glyph in the header.
+  mark it replaced (owner decision of 2026-10-24, §10). It is plain text in the
+  theme's `blue` by day and at night: since the owner's decision of 2026-10-24 it
+  is not an engraved placard (no box, border, highlight, padding or indent). The
+  mark stands before it.
+- **Share card** (Owner, 2026-10-24): the image link previews show for every page
+  (`og:image`, 1200×630, `web/public/social/card.png`). On chart paper with the
+  graticule and the header's tick rule: the mark and the wordmark, the header's
+  line "Plane crash & accident investigations" as a serif headline, under it "NTSB
+  investigations since 2008: what happened, the probable cause and what
+  investigators found.", the flight profile with its magenta event ring, and at
+  the foot "aircase.app" and "Independent project, not an NTSB service". It is
+  rendered from a template in the day tokens' colours and the app's own fonts
+  (README, "Brand assets").
 
 ### 2.6 Components and controls
 
@@ -274,12 +297,16 @@ Night is matte charcoal, like an instrument panel. It has no graticule. The
 colour rules in §2.1 stay the same; only the tokens change.
 
 - **Placards:** small labels (eyebrows such as "YOUR QUESTION" and section
-  heads such as "THE FLIGHT") and the wordmark become engraved placards:
+  heads such as "THE FLIGHT") become engraved placards:
   - near-white text on `placard`
   - a 1px `rgba(255,255,255,.16)` border and a 2px radius
   - inset top highlight `rgba(255,255,255,.06)`
 
-  AI eyebrows keep magenta text inside the placard.
+  AI eyebrows keep magenta text inside the placard. The wordmark is not a
+  placard: it stays plain text, in the night `blue` (owner decision of
+  2026-10-24; it was a placard until then).
+- **The mark** at night: a brighter folder (`#2A5FAF`) carrying a near-white
+  aircraft (`#EDEDEA`).
 - **Bezels:** cards and sheets get `inset 0 1px 0 rgba(255,255,255,.05), 0 1px
   0 rgba(0,0,0,.6)`.
 - **Header:** the bottom border is `rgba(255,255,255,.22)` and the tick scale is
@@ -304,7 +331,23 @@ Switching themes (Proposed):
 
 **Header** (all pages):
 
-- the wordmark, linking home
+- the mark and the wordmark, linking home; the link's name is "AirCase" alone,
+  the mark being decorative (§2.5). The link's box, and so its focus ring, holds
+  both at every width.
+- the line **"Plane crash & accident investigations"** (Owner, 2026-10-24), so a
+  stranger sees at once what the site shows. It is plain text outside the link,
+  in the header's muted meta style (11.5px, `muted`):
+  - from 1024px, beside the wordmark after a hairline;
+  - below 1024px, on tablets and phones, under the wordmark, starting where the
+    wordmark does: a second line under the rest of the header (review ruling of
+    2026-10-24 for tablets). There is no room for it beside the navigation, the
+    AI counter, the Day/Night switch and Sign in, so it runs under them, 3px
+    below the active item's underline on a tablet (§6 for phones).
+
+  It is never cut short and never wraps the navigation. The desktop and phone
+  headers keep their heights; on a tablet the header grows by the line (about
+  19px; more where touch targets make the first line taller). It does not
+  print (§7).
 - Explore and Dashboard navigation, with the active item underlined in blue
 - the AI counter (§5)
 - the Day/Night switch
@@ -1012,8 +1055,13 @@ Breakpoints:
 
 On a phone:
 
-- **Header:** the wordmark "AIRCASE" (the same as on desktop), the AI counter
-  ("AI left 2 of 3"), and a ☰ menu holding the nav, Day/Night switch and Sign in.
+- **Header:** the mark and the wordmark "AIRCASE" (the same as on desktop) with
+  the line "Plane crash & accident investigations" under the wordmark, the AI
+  counter ("AI left 2 of 3") on the wordmark's line, and a ☰ menu, centred on
+  both lines, holding the nav, Day/Night switch and Sign in. The header keeps its
+  height. The line may run under the counter; a counter too long for its place
+  is cut short, as before (the longest, "Free AI searches paused for today",
+  fits from about 382px).
 - **Filters:** a blue filled "Filters (n)" chip at the start of the chip row
   opens a bottom sheet. The sheet has a grab handle, "Filters · Clear all", the
   same facet bars, and a sticky "Show 58 investigations" button.
@@ -1037,7 +1085,9 @@ browser with the same stylesheet. Print uses:
 - magenta printed as black, with every AI element keeping its text label and
   glyph, so AI content stays identifiable in grey or black
 - hatching kept for cautions
-- a header with the page title, case numbers, snapshot date and the page URL
+- a header with the page title, case numbers, snapshot date and the page URL;
+  the site header's mark and wordmark print, in day colours, but not the line
+  "Plane crash & accident investigations"
 - the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
   line "Built by Mariusz Kotas · mkotas.cz" (the website prints as text)
 - strips that never split across pages
@@ -1175,9 +1225,11 @@ counting rules.
   live domain is `https://aircase.app`. The user-visible name is AirCase everywhere:
   the header wordmark, every page title ("{page} · AirCase"), the sign-in dialog
   ("Sign in to AirCase"), the error and not-found pages, the print header and the
-  case page's provenance line. Where the long form helps it reads "AirCase · aviation casebook":
-  the home page's title and the page before the script runs. The wordmark keeps the
-  Sectional typography (§2.5) with letter-spacing adjusted for the shorter word.
+  case page's provenance line. Where the long form helps it read "AirCase · aviation casebook":
+  the home page's title and the page before the script runs (the same day the home
+  page's title became "AirCase · Plane crash & accident investigations", below). The
+  wordmark keeps the Sectional typography (§2.5) with letter-spacing adjusted for the
+  shorter word.
   Code identifiers, package names, the `apps/aviation-investigations` directory,
   database and index names, Compose projects, environment variables and the stored
   `casebook-*` browser keys are not renamed. The working mockups in `docs/mockups/`
@@ -1199,3 +1251,26 @@ counting rules.
   Every other title stays as it was. The server sends each page's title, description
   and share image in the page's head, with the same title the page then shows
   (README, "Search engines and link previews").
+- The visual identity (Owner request: a memorable mark for the header and the
+  browser tab, icons and a share image for links, and a plain-language line in the
+  header so that strangers understand at once what the site shows). From
+  side-by-side options the owner picked:
+  - the mark **C, "Case file"**: a case folder carrying an aircraft (§2.5), over
+    "Profile" (a flight profile whose event ring doubles as a magnifying glass) and
+    "Runway A". It is the header's mark, the favicon (in place of the compass, which
+    stays on the home page), the app icons and the share card's mark;
+  - the header line **"Plane crash & accident investigations"** (§3), over "NTSB
+    plane crash investigations" and "What investigators found in US plane
+    crashes": it uses the words people search with, and "accident" keeps it true,
+    since many cases are not crashes. The home page's title becomes "AirCase ·
+    Plane crash & accident investigations"; the tagline "aviation casebook" stays
+    on the About page and as the home page's JSON-LD `alternateName`. The site
+    description becomes "Search NTSB investigations of US plane crashes and
+    aviation accidents since 2008: what happened, the probable cause and what
+    investigators found.";
+  - the **share card** as reviewed (§2.5), with that line as its headline;
+  - at night the **wordmark loses its engraved-placard box** (§2.5, §2.8); every
+    other placard keeps it.
+
+  The working mockups in `docs/mockups/` predate the mark and the header line; this
+  document wins.

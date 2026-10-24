@@ -13,6 +13,7 @@ import { pageTitle, type TitledPage } from '../../shared/page-titles';
 import indexHtml from '../../web/index.html?raw';
 import { Footer } from '../../web/src/components/Footer';
 import { SignInDialog } from '../../web/src/features/auth/SignInDialog';
+import baseCss from '../../web/src/styles/base.css?raw';
 import tokensCss from '../../web/src/styles/tokens.css?raw';
 import { cssBlock, cssVar } from './helpers';
 import { renderApp, setupMockApi } from './render-app';
@@ -181,7 +182,8 @@ describe('page titles name AirCase, never the old name (owner decision 2026-10-2
   // Each route's title, and the input the server titles the same route with (shared/page-titles.ts,
   // server/seo/head.ts): the tab shows one title before and after the script runs.
   const titles: ReadonlyArray<readonly [string, string, TitledPage]> = [
-    ['/', 'AirCase · aviation casebook', { kind: 'home' }],
+    // The home page names what AirCase shows (owner decision of 2026-10-24, UI_DESIGN §10).
+    ['/', 'AirCase · Plane crash & accident investigations', { kind: 'home' }],
     ['/explore', 'Explore · AirCase', { kind: 'explore', q: '' }],
     ['/explore?q=carburetor+icing', '“carburetor icing” · Explore · AirCase', { kind: 'explore', q: 'carburetor icing' }],
     ['/dashboard', 'The record, in questions · AirCase', { kind: 'dashboard' }],
@@ -222,28 +224,100 @@ describe('page titles name AirCase, never the old name (owner decision 2026-10-2
   });
 });
 
+/** Text as HTML gives it: the character references index.html uses decoded. */
+function htmlText(raw: string | undefined): string | undefined {
+  return raw?.replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[e] ?? '');
+}
+
 describe('the page before the script runs (web/index.html)', () => {
-  it('has the long form as its title and names AirCase for visitors without JavaScript', () => {
-    expect(/<title>([^<]*)<\/title>/.exec(indexHtml)?.[1]).toBe('AirCase · aviation casebook');
+  it("has the home page's title and the site description, and names AirCase for visitors without JavaScript", () => {
+    const title = htmlText(/<title>([^<]*)<\/title>/.exec(indexHtml)?.[1]);
+    expect(title).toBe('AirCase · Plane crash & accident investigations');
+    expect(title).toBe(pageTitle({ kind: 'home' }));
     // The site description, until the server replaces it with the page's own (shared/brand.ts).
-    const description = /<meta name="description" content="([^"]*)"/.exec(indexHtml)?.[1];
-    expect(description).toBe('Find and compare NTSB aviation investigations by their evidence, findings and probable causes.');
+    const description = htmlText(/<meta name="description" content="([^"]*)"/.exec(indexHtml)?.[1]);
+    expect(description).toBe(
+      'Search NTSB investigations of US plane crashes and aviation accidents since 2008: what happened, the probable cause and what investigators found.',
+    );
     expect(description).toBe(SITE_DESCRIPTION);
     expect(/<noscript>([^<]*)<\/noscript>/.exec(indexHtml)?.[1]).toBe('AirCase needs JavaScript to search and display investigations.');
+  });
+
+  it('links the icons and the web app manifest, and colours the browser bar like the page by day and the header at night', () => {
+    const head = new DOMParser().parseFromString(indexHtml, 'text/html').head;
+    const links = [...head.querySelectorAll('link')].map((l) => [l.rel, l.getAttribute('href'), l.getAttribute('sizes') ?? l.getAttribute('type') ?? '']);
+    expect(links).toEqual([
+      ['icon', '/favicon.ico', '48x48'],
+      ['icon', '/favicon.svg', 'image/svg+xml'],
+      ['apple-touch-icon', '/apple-touch-icon.png', ''],
+      ['manifest', '/manifest.webmanifest', ''],
+    ]);
+    const themeColours = [...head.querySelectorAll('meta[name="theme-color"]')].map((m) => [m.getAttribute('media'), m.getAttribute('content')]);
+    expect(themeColours).toEqual([
+      ['(prefers-color-scheme: light)', '#F3EEE1'],
+      ['(prefers-color-scheme: dark)', '#141618'],
+    ]);
+    expect(themeColours[0]?.[1]).toBe(cssVar(cssBlock(tokensCss, ':root,\n[data-theme="day"]'), 'paper'));
+    expect(themeColours[1]?.[1]).toBe(cssVar(cssBlock(tokensCss, '[data-theme="night"]'), 'header-bg'));
+  });
+});
+
+const DESCRIPTOR = 'Plane crash & accident investigations';
+
+/**
+ * The header's lockup (UI_DESIGN §3): the home link, named "AirCase" and nothing more, holds the
+ * decorative mark before the wordmark; the descriptor is plain text outside the link.
+ */
+function expectLockup(header: HTMLElement): void {
+  const home = within(header).getByRole('link', { name: 'AirCase' });
+  expect(home.getAttribute('href')).toBe('/');
+  // One wordmark, not a long and a short form for different widths.
+  expect(home.textContent).toBe('AirCase');
+  const marks = home.querySelectorAll('svg');
+  expect(marks).toHaveLength(1);
+  expect(home.firstElementChild).toBe(marks[0]);
+  expect(marks[0]?.getAttribute('aria-hidden')).toBe('true');
+  expect(marks[0]?.getAttribute('focusable')).toBe('false');
+  const descriptor = within(header).getByText(DESCRIPTOR);
+  expect(descriptor.textContent).toBe(DESCRIPTOR);
+  expect(home.contains(descriptor)).toBe(false);
+  expect(descriptor.closest('a, button')).toBeNull();
+  expect(within(header).queryByText('Casebook')).toBeNull();
+}
+
+describe('the header lockup: the mark, the wordmark and what AirCase shows (owner decisions of 2026-10-24)', () => {
+  const cases = ROUTES.flatMap((path) => (['day', 'night'] as const).map((theme) => [path, theme] as const));
+
+  it.each(cases)('is in the header of %s by %s', async (path, theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
+    renderApp(path);
+    expectLockup(await screen.findByRole('banner'));
+    expect(document.documentElement.getAttribute('data-theme')).toBe(theme);
+  });
+
+  it('prints the mark and the wordmark, not the descriptor (UI_DESIGN §7)', async () => {
+    renderApp('/about');
+    const header = await screen.findByRole('banner');
+    const home = within(header).getByRole('link', { name: 'AirCase' });
+    expect(home.closest('[data-print="hide"]')).toBeNull();
+    expect(within(header).getByText(DESCRIPTOR).closest('[data-print="hide"]')).not.toBeNull();
+  });
+
+  it('the wordmark is plain chart-blue text at night too, not an engraved placard', async () => {
+    renderApp('/about');
+    const home = within(await screen.findByRole('banner')).getByRole('link', { name: 'AirCase' });
+    const wordmark = within(home).getByText('AirCase');
+    expect(wordmark.className).toContain('wordmark');
+    expect(home.querySelector('.placard')).toBeNull();
+    expect(home.className).not.toContain('placard');
+    // Its colour is the theme's blue, and no night rule gives it a box, padding or an indent.
+    expect(cssBlock(baseCss, '.wordmark')).toMatch(/\bcolor: var\(--blue\);/);
+    expect(baseCss).not.toMatch(/\[data-theme="night"\][^{]*\.wordmark/);
+    expect(cssBlock(baseCss, '.wordmark')).not.toMatch(/text-indent|padding|border|background|box-shadow/);
   });
 });
 
 describe('the app frame names AirCase', () => {
-  it('the header wordmark is "AirCase" at every width and links home', async () => {
-    renderApp('/about');
-    const header = await screen.findByRole('banner');
-    const wordmark = within(header).getByRole('link', { name: 'AirCase' });
-    expect(wordmark.getAttribute('href')).toBe('/');
-    // One wordmark, not a long and a short form for different widths.
-    expect(wordmark.textContent).toBe('AirCase');
-    expect(within(header).queryByText('Casebook')).toBeNull();
-  });
-
   it('the sign-in dialog is "Sign in to AirCase"', () => {
     render(
       <QueryClientProvider client={new QueryClient()}>

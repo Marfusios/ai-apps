@@ -1,0 +1,53 @@
+<!doctype html>
+<!--
+  The share card, web/public/social/card.png (1200×630): the owner-approved design of 2026-10-24.
+  pnpm brand:build (scripts/build-brand-assets.ts) fills each slot in double braces: the fonts
+  from the app's own @fontsource packages, the colours from the day tokens (web/src/styles/tokens.css),
+  the mark (shared/brand-mark.ts) and the words (shared/brand.ts), then renders it with
+  Playwright's Chromium. The subline's grey, #3E4752, is the card's own (between ink and muted), as
+  approved; scripts/brand-assets/digest.json records this page's hash with the card's.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: B612; font-weight: 400; src: url("{{font-b612-400}}"); }
+@font-face { font-family: B612; font-weight: 700; src: url("{{font-b612-700}}"); }
+@font-face { font-family: "B612 Mono"; src: url("{{font-b612-mono-400}}"); }
+@font-face { font-family: Serif4; src: url("{{font-serif-4}}"); font-weight: 200 900; }
+* { margin: 0; box-sizing: border-box; }
+body { width: 1200px; height: 630px; overflow: hidden; }
+#card { position: relative; width: 1200px; height: 630px; background-color: {{paper}}; color: {{ink}}; font-family: B612;
+  background-image: repeating-linear-gradient(0deg, {{grid}} 0 1px, transparent 1px 56px), repeating-linear-gradient(90deg, {{grid}} 0 1px, transparent 1px 56px);
+  background-position: -8px 22px; }
+.rule { position: absolute; left: 0; right: 0; top: 0; height: 10px; border-bottom: 4px solid {{blue}}; background: {{paper}}; }
+.rule::after { content: ""; position: absolute; left: 0; right: 0; top: 14px; height: 12px; opacity: .75;
+  background: repeating-linear-gradient(90deg, {{blue}} 0 2px, transparent 2px 18px) 0 0 / 100% 6px no-repeat, repeating-linear-gradient(90deg, {{blue}} 0 2px, transparent 2px 90px) 0 0 / 100% 12px no-repeat; }
+.brand { position: absolute; left: 72px; top: 78px; display: flex; align-items: center; gap: 22px; }
+.brand svg { flex-shrink: 0; }
+.wm { font: 700 40px B612; letter-spacing: .2em; color: {{blue}}; text-transform: uppercase; }
+h1 { position: absolute; left: 72px; top: 200px; width: 760px; font: 600 70px/1.04 Serif4; letter-spacing: -.012em; font-variation-settings: "opsz" 60; }
+.sub { position: absolute; left: 74px; top: 372px; width: 640px; font: 23px/1.45 B612; color: #3E4752; }
+.foot { position: absolute; left: 74px; right: 72px; bottom: 34px; display: flex; justify-content: space-between; font: 19px B612; color: {{muted}}; letter-spacing: .02em; }
+svg.profile { position: absolute; right: 40px; bottom: 74px; }
+.phase { font: 13px "B612 Mono"; letter-spacing: .14em; fill: {{muted}}; }
+</style>
+</head>
+<body>
+<div id="card">
+  <div class="rule"></div>
+  <div class="brand">{{mark}}<span class="wm">{{name}}</span></div>
+  <h1>{{headline}}</h1>
+  <p class="sub">{{subline}}</p>
+  <svg class="profile" width="470" height="260" viewBox="0 0 470 260">
+    <path d="M10 236 H452" stroke="{{blue}}" stroke-width="1.5" opacity=".45"/>
+    <path d="M24 236 L132 92 H290" fill="none" stroke="{{blue}}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="312" cy="92" r="22" fill="none" stroke="{{magenta}}" stroke-width="4.5"/>
+    <circle cx="312" cy="92" r="9" fill="{{magenta}}"/>
+    <path d="M330 112 L420 228" fill="none" stroke="{{ink}}" stroke-width="5" stroke-linecap="round" stroke-dasharray="9 12"/>
+    <text class="phase" x="40" y="256">TAKEOFF</text><text class="phase" x="150" y="256">CLIMB</text><text class="phase" x="232" y="256">CRUISE</text><text class="phase" x="352" y="256">APPROACH</text>
+  </svg>
+  <div class="foot"><span>{{site}}</span><span>{{disclaimer}}</span></div>
+</div>
+</body>
+</html>

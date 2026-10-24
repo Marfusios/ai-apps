@@ -10,7 +10,7 @@ const MONTEVIDEO = 'Piper PA-28-235, total loss of engine power on final near Mo
 
 describe('page titles (shared by the server and the client)', () => {
   it.each<readonly [TitledPage, string]>([
-    [{ kind: 'home' }, 'AirCase · aviation casebook'],
+    [{ kind: 'home' }, 'AirCase · Plane crash & accident investigations'],
     [{ kind: 'explore', q: '' }, 'Explore · AirCase'],
     [{ kind: 'explore', q: 'carburetor icing' }, '“carburetor icing” · Explore · AirCase'],
     [{ kind: 'explore', q: '  carburetor icing  ' }, '“carburetor icing” · Explore · AirCase'],

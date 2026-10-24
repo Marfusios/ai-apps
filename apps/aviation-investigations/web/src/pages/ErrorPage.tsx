@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
-import { documentTitle, PRODUCT_NAME } from '../brand';
+import { documentTitle } from '../brand';
+import { BrandLockup } from '../components/BrandLockup';
 import { Button } from '../components/Button';
 import { CreditLine } from '../components/CreditLine';
 import { Placard } from '../components/Placard';
@@ -36,18 +37,16 @@ export function RouteError() {
 
 /**
  * When the app frame itself fails (header, footer, the providers around every page): a
- * plain frame of its own with the wordmark, so there is still a way home, and a footer of
- * its own with the owner's credit, which every page carries. It uses nothing the failed
- * frame provides.
+ * plain frame of its own with the header's lockup, whose link home loads the page afresh, so
+ * there is still a way home, and a footer of its own with the owner's credit, which every
+ * page carries. It uses nothing the failed frame provides.
  */
 export function AppError() {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="header-rule relative z-20 bg-header">
-        <div className="mx-auto flex max-w-page items-center px-4 py-[11px] sm:px-[22px]">
-          <a href="/" className="placard wordmark">
-            {PRODUCT_NAME}
-          </a>
+        <div className="mx-auto flex max-w-page flex-wrap content-center items-center gap-x-4 px-4 py-[11px] sm:px-[22px] lg:flex-nowrap">
+          <BrandLockup reload />
         </div>
       </header>
       <main id="main" className="flex flex-1 flex-col pt-2">

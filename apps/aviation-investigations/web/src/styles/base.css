@@ -101,20 +101,16 @@
   }
 
   /* "AirCase" in capitals, one short word: a little larger and more widely spaced than the
-     two-word wordmark it replaced (UI_DESIGN §2.5). */
+     two-word wordmark it replaced (UI_DESIGN §2.5). Plain text in the theme's blue by day and at
+     night: not an engraved placard (owner decision of 2026-10-24). */
   .wordmark {
-    --wordmark-tracking: .2em;
+    color: var(--blue);
     font-size: 13px;
-    letter-spacing: var(--wordmark-tracking);
+    font-weight: 700;
+    letter-spacing: .2em;
+    line-height: 1.5;
+    text-transform: uppercase;
     white-space: nowrap;
-  }
-
-  /* At night the wordmark is an engraved placard; the tracking that follows its last letter
-     would leave the text off-centre in the box, so the first letter gets the same space. */
-  @media screen {
-    [data-theme="night"] .wordmark {
-      text-indent: var(--wordmark-tracking);
-    }
   }
 
   /* Data cautions: diagonal hatching on raised (UI_DESIGN §2.7). Kept in print. */

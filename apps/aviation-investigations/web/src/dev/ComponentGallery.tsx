@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import { PRODUCT_NAME, documentTitle } from '../brand';
 import { AiBlock } from '../components/AiBlock';
 import { AiChip } from '../components/AiChip';
+import { BrandMark } from '../components/BrandMark';
 import { Button } from '../components/Button';
 import { Chip } from '../components/Chip';
 import { CompassMark } from '../components/CompassMark';
@@ -74,6 +75,8 @@ const TOKENS = [
   ['blue-wash', 'bg-blue-wash'],
   ['tray', 'bg-tray'],
   ['placard', 'bg-placard'],
+  ['mark-tile', 'bg-mark-tile'],
+  ['mark-glyph', 'bg-mark-glyph'],
 ] as const;
 
 export function ComponentGallery() {
@@ -101,6 +104,21 @@ export function ComponentGallery() {
           }
         />
         <div className="h-10" />
+      </Section>
+
+      <Section
+        title="Mark and wordmark"
+        note="UI_DESIGN §2.5. The heavier aircraft below 40 px (tab icon, header), the finer one from 40 px. The wordmark is plain blue text at night too."
+      >
+        <div className="flex flex-wrap items-end gap-4">
+          {[16, 22, 32, 40, 64, 92].map((size) => (
+            <BrandMark key={size} size={size} />
+          ))}
+        </div>
+        <div className="mt-4 flex items-center gap-2">
+          <BrandMark />
+          <span className="wordmark">{PRODUCT_NAME}</span>
+        </div>
       </Section>
 
       <Section title="Tokens" note="UI_DESIGN §2.2. Placard is transparent by day.">
@@ -134,7 +152,6 @@ export function ComponentGallery() {
 
       <Section title="Placards" note="Plain labels by day; engraved placards at night. AI labels stay magenta.">
         <div className="flex flex-wrap items-center gap-4">
-          <span className="placard wordmark">{PRODUCT_NAME}</span>
           <Placard>Your question</Placard>
           <Placard tone="ink">The flight</Placard>
           <Placard tone="ai">AI summary · check the cited passages</Placard>

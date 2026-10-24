@@ -1,0 +1,37 @@
+{
+  "note": "Written by pnpm brand:build: the SHA-256 of what each file in web/public was built from, and of the file. tests/unit/brand-assets.test.ts compares them.",
+  "files": {
+    "favicon.svg": {
+      "source": "bd79326fe548f7b5fc64efa8f218aba4ec947a9009b0dc035ed0ecef0b6a222c",
+      "output": "bd79326fe548f7b5fc64efa8f218aba4ec947a9009b0dc035ed0ecef0b6a222c"
+    },
+    "favicon.ico": {
+      "source": "c786e4a14a52e991a3c86ae36b9ca27657a1e6f12435da4860a7a7938d8fbe3c",
+      "output": "4eb28501a770342f67f5db0ced0613bd7c93333c4071b3bb2b8faa53f64466e4"
+    },
+    "apple-touch-icon.png": {
+      "source": "bf92ffb61cfa3004ebb6fdea450dc2ffff6170c38b617876f2930b1d260e009c",
+      "output": "5f6203acace8c0da83cc6efe9fe1bed920d46195323bf26f430e750fae0a2111"
+    },
+    "icon-192.png": {
+      "source": "6d40f40fe86210f18814ea1083c55c7522019838a527a40b024901f508bfea47",
+      "output": "b430a1111382a65607d9c5bb02433d80a43634252e0a0eb579fc06305cb72fbe"
+    },
+    "icon-512.png": {
+      "source": "709e6c1635ce89a883cf56164fa39b11a7aee664f527f1d0aa066613555532c1",
+      "output": "59641864227f8b3ed7d61fe3f5db3333d679bac963077e79413bc0a3ae0eb460"
+    },
+    "icon-maskable-512.png": {
+      "source": "3cff52b694c6771354e47fa7cab4368f94f60c1920fd369e94c246fdc7fa0239",
+      "output": "999cbef79be41e5379c6d5995663607c8c85463401f131406c3b4ec503538712"
+    },
+    "social/card.png": {
+      "source": "7af8995d121936d30d32a6abd617c9e8c00f54c4d8f67db5de6b8231ee92fcc1",
+      "output": "b0098eab948105dae7e034369496fde76d9969e10c27560f4e57295542310902"
+    },
+    "manifest.webmanifest": {
+      "source": "6a82286bccab7f3ba6c62e777b5934bdd8a70668777fb2639cd1d8e6f2e1e9e4",
+      "output": "6a82286bccab7f3ba6c62e777b5934bdd8a70668777fb2639cd1d8e6f2e1e9e4"
+    }
+  }
+}

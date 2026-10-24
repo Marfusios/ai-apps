@@ -134,7 +134,13 @@ describe('both error pages carry the owner credit and the product name (owner de
     expect(document.title).toBe('Something went wrong · AirCase');
     // The page's own footer: the app's footer is what failed, and this one needs nothing from the frame.
     expectCredit(screen.getByRole('contentinfo'));
-    expect(screen.getByRole('banner').textContent).toBe('AirCase');
+    // The header's lockup: the home link (the mark and the wordmark) and what AirCase shows.
+    const banner = screen.getByRole('banner');
+    expect(banner.textContent).toBe('AirCasePlane crash & accident investigations');
+    const home = within(banner).getByRole('link', { name: 'AirCase' });
+    expect(home.getAttribute('href')).toBe('/');
+    expect(home.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(home.contains(within(banner).getByText('Plane crash & accident investigations'))).toBe(false);
     errors.mockRestore();
   });
 });

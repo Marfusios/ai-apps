@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBlock } from '../../web/src/components/AiBlock';
 import { AiChip, aiLabel } from '../../web/src/components/AiChip';
+import { BrandMark } from '../../web/src/components/BrandMark';
 import { Button } from '../../web/src/components/Button';
 import { DataCaution } from '../../web/src/components/DataCaution';
 import { EVIDENCE_KINDS, EVIDENCE_WORDS, EvidenceGlyph } from '../../web/src/components/EvidenceGlyph';
@@ -12,6 +13,7 @@ import { STATUS_BADGE, StatusBadge } from '../../web/src/components/StatusBadge'
 import { ThemeSwitch } from '../../web/src/components/ThemeSwitch';
 import { TimingChip } from '../../web/src/components/TimingChip';
 import { localIsoDate, snapshotAge } from '../../web/src/lib/format';
+import { MARK_AIRCRAFT, MARK_FOLDER_PATH } from '../../shared/brand-mark';
 import printCss from '../../web/src/styles/print.css?raw';
 import tokensCss from '../../web/src/styles/tokens.css?raw';
 import { cssBlock, cssVar } from './helpers';
@@ -136,6 +138,9 @@ describe('tokens', () => {
       grid: ['rgba(31, 81, 154, .055)', 'transparent'],
       tray: ['#1E2A36', '#111214'],
       placard: ['transparent', '#0E0F11'],
+      // The AirCase mark (§2.5, owner decision of 2026-10-24): the folder and the aircraft.
+      'mark-tile': ['#1F519A', '#2A5FAF'],
+      'mark-glyph': ['#F3EEE1', '#EDEDEA'],
     };
     const day = cssBlock(tokensCss, DAY);
     const night = cssBlock(tokensCss, NIGHT);
@@ -172,7 +177,50 @@ describe('print', () => {
     // Day colours on white, whatever the screen theme; magenta prints as ink.
     expect(cssVar(tokens, 'paper')).toBe('#FFFFFF');
     expect(cssVar(tokens, 'magenta')).toBe(cssVar(tokens, 'ink'));
+    // The mark prints in its day colours, even from the night theme.
+    const day = cssBlock(tokensCss, DAY);
+    expect([cssVar(tokens, 'mark-tile'), cssVar(tokens, 'mark-glyph')]).toEqual(['#1F519A', '#F3EEE1']);
+    expect([cssVar(tokens, 'mark-tile'), cssVar(tokens, 'mark-glyph')]).toEqual([cssVar(day, 'mark-tile'), cssVar(day, 'mark-glyph')]);
     expect(block).toMatchSnapshot();
+  });
+});
+
+describe('BrandMark (UI_DESIGN §2.5)', () => {
+  it('is decorative: hidden from assistive technology and never focusable', () => {
+    const { container } = render(<BrandMark />);
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+    expect(svg?.getAttribute('focusable')).toBe('false');
+    expect(svg?.getAttribute('role')).toBeNull();
+    expect(container.querySelector('title')).toBeNull();
+  });
+
+  it('draws the folder and the aircraft on the 64-unit grid, 22 px by default', () => {
+    const { container } = render(<BrandMark />);
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 64 64');
+    expect([svg?.getAttribute('width'), svg?.getAttribute('height')]).toEqual(['22', '22']);
+    expect(container.querySelector('path')?.getAttribute('d')).toBe(MARK_FOLDER_PATH);
+  });
+
+  it.each([
+    [16, 'small'],
+    [22, 'small'],
+    [39, 'small'],
+    [40, 'large'],
+    [92, 'large'],
+  ] as const)('at %i px draws the %s aircraft (the heavier one below 40 px)', (size, variant) => {
+    const { container } = render(<BrandMark size={size} />);
+    const aircraft = container.querySelector('g');
+    expect(aircraft?.getAttribute('transform')).toBe(MARK_AIRCRAFT[variant].transform);
+    expect(aircraft?.children).toHaveLength(MARK_AIRCRAFT[variant].shapes.length);
+  });
+
+  it('takes its colours from the mark tokens, so it follows the theme and prints in day colours', () => {
+    const { container } = render(<BrandMark />);
+    expect(container.querySelector('path')?.getAttribute('class')).toBe('fill-mark-tile');
+    expect(container.querySelector('g')?.getAttribute('class')).toBe('fill-mark-glyph');
+    expect(container.innerHTML).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|\bfill="/i);
   });
 });
 
