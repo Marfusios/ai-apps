@@ -55,6 +55,20 @@ describe('Home', () => {
   });
 });
 
+describe('Privacy', () => {
+  it('names Cloudflare Turnstile, which only an AI request loads, and the retry key kept while a search is on its way (review W-14, W-2)', async () => {
+    renderApp('/privacy');
+    await screen.findByRole('heading', { level: 1, name: 'Privacy' });
+    const text = document.querySelector('main')?.textContent ?? '';
+    expect(text).toContain('Cloudflare Turnstile');
+    expect(text).toContain('challenges.cloudflare.com');
+    expect(text).toContain('only when an AI request needs a check');
+    expect(text).toContain('Cloudflare may set its own cookies');
+    expect(text).toContain('While an AI search is on its way, and if it gets no reply');
+    expect(text).not.toContain('If an AI search gets no reply');
+  });
+});
+
 describe('Explore', () => {
   it('shows the count line, rows with highlighted probable causes, and facets with counts', async () => {
     renderApp('/explore?q=carburetor+icing');
