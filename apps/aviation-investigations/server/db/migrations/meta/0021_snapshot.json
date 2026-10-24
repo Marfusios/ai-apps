@@ -4372,6 +4372,51 @@
         }
       },
       "isRLSEnabled": false
+    },
+    "public.manifest_pairings": {
+      "name": "manifest_pairings",
+      "schema": "",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "passages_index": {
+          "name": "passages_index",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cases_index": {
+          "name": "cases_index",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "manifest_pairings_pk": {
+          "name": "manifest_pairings_pk",
+          "columns": [
+            "generation_id",
+            "passages_index"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     }
   },
   "enums": {},

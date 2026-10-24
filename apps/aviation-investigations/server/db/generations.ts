@@ -130,11 +130,12 @@ export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | nu
 }
 
 /**
- * The cases index of the manifest that pairs `generationId` with `passagesIndex` (one
- * manifest row per generation, active or retired), or null when there is none: the
- * generation is gone, or it was published again with another passages index. AI
- * retrieval with the cases channel reads the cases index a brief's pinned passages index
- * was published with, never the active manifest's (task 10e).
+ * The cases index `generationId` was last published with together with `passagesIndex`
+ * (`manifest_pairings`, migration 0021: every pair a generation was ever published with,
+ * kept while the generation exists), or null when the generation never had that pair or is
+ * gone. AI retrieval with the cases channel reads the cases index a brief's pinned passages
+ * index was published with, never the active manifest's (task 10e); publishing the
+ * generation again with another passages index leaves the brief's pair resolvable.
  *
  * It runs on the request path, so it is one bounded read (`boundedRead`): pool
  * acquisition and the statement end within `timeoutMs` or when `signal` aborts, and an
@@ -148,7 +149,7 @@ export async function manifestCasesIndex(
 ): Promise<string | null> {
   const rows = await boundedRead<{ cases_index: string }>(
     db.$client,
-    'select cases_index from dataset_manifests where generation_id = $1 and passages_index = $2',
+    'select cases_index from manifest_pairings where generation_id = $1 and passages_index = $2',
     [generationId, passagesIndex],
     opts,
   );

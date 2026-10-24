@@ -1,0 +1,104 @@
+/**
+ * A brief keeps the evidence it was made with until it expires (Task 22 fix round 2: gate
+ * finding 3, re-review N2). Publishing its generation again with another passages index (the
+ * planned passages-v2 rollout) must neither let `index delete-unused` delete the index the
+ * brief is pinned to, nor stop its next step from retrieving: the pairing it was made with
+ * stays resolvable (manifest_pairings, migration 0021) and cleanup refuses every index an
+ * unexpired brief uses (indices_cited_by_live_briefs()). Fixture corpus in aviation_test,
+ * indices under aviation-test-*.
+ */
+import { randomBytes } from 'node:crypto';
+import type { Client } from '@elastic/elasticsearch';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createHybridRetriever } from '../../server/briefs/retriever.js';
+import { insertBrief } from '../../server/briefs/store.js';
+import { closeDb, type Db } from '../../server/db/client.js';
+import { manifestCasesIndex } from '../../server/db/generations.js';
+import { RETRIEVAL_V2 } from '../../server/search/retrieval-config.js';
+import { passagesAlias } from '../../worker/index/passages-index.js';
+import { deleteUnusedIndices } from '../../worker/index/publications.js';
+import { publishGeneration } from '../../worker/index/publish.js';
+import { FIXTURE_EMBEDDING, buildFixturePassagesIndex, deleteIndices, fixtureEmbedder, publishFixtureDataset } from '../support/api-dataset.js';
+import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDb, testEs, testEsReader } from './helpers.js';
+
+const PREFIX = `${TEST_INDEX_PREFIX}evid${randomBytes(4).toString('hex')}`;
+const DAY = 24 * 3_600_000;
+
+let appDb: Db;
+let ingest: Db;
+let reader: Client;
+let writer: Client;
+let generationId: number;
+let casesIndex: string;
+let firstPassages: string;
+
+beforeAll(async () => {
+  appDb = testDb('app');
+  ingest = testDb('ingest');
+  reader = testEsReader();
+  writer = testEs();
+  await resetControls();
+  const published = await publishFixtureDataset(ingest, writer, PREFIX, { passages: true });
+  generationId = published.generationId;
+  casesIndex = published.casesIndex;
+  firstPassages = published.passagesIndex!;
+}, 180_000);
+
+afterAll(async () => {
+  await deleteIndices(writer, PREFIX);
+  await resetControls();
+  await resetCorpus();
+  await Promise.all([closeDb(appDb), closeDb(ingest), reader.close(), writer.close()]);
+});
+
+beforeEach(async () => {
+  await resetControls();
+});
+
+const retriever = () =>
+  createHybridRetriever({
+    es: reader,
+    embedder: fixtureEmbedder(),
+    retrieval: RETRIEVAL_V2,
+    casesIndexOf: (d, signal) => manifestCasesIndex(appDb, d.generationId, d.passagesIndex, { timeoutMs: 2_000, signal }),
+  });
+
+describe('a live brief across a republish of its generation', () => {
+  it('cleanup keeps the brief’s passages index, and the brief’s next step still retrieves from it', async () => {
+    // A brief made on the published pair, as POST /api/briefs stores it.
+    await insertBrief(appDb, {
+      readOwner: 'a'.repeat(64),
+      readOwnerKind: 'trial',
+      generationId,
+      passagesIndex: firstPassages,
+      now: new Date(),
+      ttlMs: DAY,
+    });
+    // The same generation published again with a new passages index; the alias moves on.
+    const secondPassages = await buildFixturePassagesIndex(writer, generationId, PREFIX);
+    await publishGeneration(writer, ingest, { generationId, casesIndex, passagesIndex: secondPassages, embedding: FIXTURE_EMBEDDING });
+
+    const kept = await deleteUnusedIndices(writer, ingest, { olderThanHours: 0, yes: true, aliases: [passagesAlias(PREFIX)] });
+    expect(kept.refused).toContainEqual({ indexName: firstPassages, reason: 'used by an unexpired AI brief' });
+    expect(kept.deleted).not.toContain(firstPassages);
+    expect(await writer.indices.exists({ index: firstPassages })).toBe(true);
+
+    // What a refinement does first (routes/briefs.ts readyFor) and then its retrieval, under retrieval.v2:
+    // the cases index the brief's pair was published with is still found.
+    expect(await manifestCasesIndex(appDb, generationId, firstPassages, { timeoutMs: 2_000 })).toBe(casesIndex);
+    const pinned = { generationId, passagesIndex: firstPassages };
+    expect(await retriever().available(pinned)).toBe(true);
+    const step = await retriever().retrieve(
+      { dataset: pinned, text: 'engine power loss shortly after maintenance', keywordText: 'engine power loss maintenance', filters: {} },
+      new AbortController().signal,
+      () => undefined,
+    );
+    expect(step.bundle.cases.length).toBeGreaterThan(0);
+
+    // Once no unexpired brief uses it, the superseded index goes.
+    await resetControls();
+    const retired = await deleteUnusedIndices(writer, ingest, { olderThanHours: 0, yes: true, aliases: [passagesAlias(PREFIX)] });
+    expect(retired.deleted).toContain(firstPassages);
+    expect(retired.refused.map((r) => r.indexName)).toContain(secondPassages);
+  }, 180_000);
+});

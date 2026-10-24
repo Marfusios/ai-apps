@@ -299,8 +299,8 @@ pnpm worker index cleanup-builds --older-than <hours>
 - **Cleanup is explicit.** `worker index delete-unused --older-than <hours>` lists
   (and with `--yes` deletes) indices of stopped builds that are older than the
   threshold, are no alias target, appear in no `dataset_manifests` row (active or
-  retained), and have no pending or unknown switch attempt (a committed one does not
-  keep an index the alias has since moved away from). Every
+  retained), are used by no unexpired AI brief, and have no pending or unknown switch
+  attempt (a committed one does not keep an index the alias has since moved away from). Every
   candidate is rechecked just before deletion while holding its build lock (free),
   its alias lock and the lifecycle lock. `worker index cleanup-builds --older-than
   <hours>` removes the pins of builds that are no longer running and nothing else.
@@ -1701,14 +1701,15 @@ embedder):
   `retrievalVersion` attribute of `brief.retrieve`, and under `retrieval.v2` the cases
   index read and the mapping counts in `meta.retrieval` (`{casesIndex,
   casesIndexVersion, mapped, unmapped}`; private: `stepResponse` never returns `meta`).
-  For the cases channel it reads the cases index the manifest of the brief's generation
-  pairs with the brief's pinned passages index (`manifestCasesIndex`, a bounded read:
-  2 s, and the request's signal), before anything is embedded; none (the generation was
-  published again with another passages index, or is gone) is `unavailable` with
-  reason `no_cases_index`, and a lookup that fails or times out is `failed` or
-  `timeout` with reason `cases_index_lookup`. `available()` bounds the same lookup by
-  its check deadline. Republishing the passages index invalidates the briefs made from
-  the old one (their later steps are `no_cases_index`); republishing only the cases
+  For the cases channel it reads the cases index the brief's generation was published
+  with together with the brief's pinned passages index (`manifestCasesIndex` over
+  `manifest_pairings`, every pair a generation was published with; a bounded read: 2 s,
+  and the request's signal), before anything is embedded; none (the generation never had
+  that pair, or is gone) is `unavailable` with reason `no_cases_index`, and a lookup that
+  fails or times out is `failed` or `timeout` with reason `cases_index_lookup`.
+  `available()` bounds the same lookup by its check deadline. Republishing the passages
+  index leaves the briefs made from the old one working until they expire (`index
+  delete-unused` keeps the indices of unexpired briefs); republishing only the cases
   index can change what later retrieval returns, which `meta.retrieval.casesIndex`
   shows.
 - Failures become a `RetrievalFailure` with a fixed kind (`unavailable`, `timeout`,

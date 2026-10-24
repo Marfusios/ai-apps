@@ -16,10 +16,11 @@
  *   target keeps the alias blocked until an operator runs `declareAbandoned` with a
  *   reason, which only unblocks switching and deletes nothing.
  * - `deleteUnusedIndices` (dry run unless told otherwise) deletes old indices of
- *   stopped builds that are no alias target, appear in no dataset manifest and have
- *   no pending or unknown switch attempt, rechecking all of it under the build, alias
- *   and lifecycle locks just before deleting. A committed attempt does not keep an
- *   index: once the alias read-back no longer shows it, a later switch replaced it.
+ *   stopped builds that are no alias target, appear in no dataset manifest, are used by
+ *   no unexpired AI brief and have no pending or unknown switch attempt, rechecking all
+ *   of it under the build, alias and lifecycle locks just before deleting. A committed
+ *   attempt does not keep an index: once the alias read-back no longer shows it, a later
+ *   switch replaced it.
  * - `cleanupStalePins` removes the pins of stopped builds, and nothing else.
  */
 import type { Client } from '@elastic/elasticsearch';
@@ -230,6 +231,10 @@ async function refusal(es: Client, q: pg.PoolClient, buildId: string, seconds: n
   if (attempts.rows[0]) return `has a switch attempt that is ${attempts.rows[0].outcome}`;
   const manifests = await q.query(`select 1 from dataset_manifests where cases_index = $1 or passages_index = $1 limit 1`, [b.index_name]);
   if ((manifests.rowCount ?? 0) > 0) return 'referenced by a dataset manifest';
+  // An unexpired brief's passages index, or the cases index its pair was published with
+  // (migration 0021): the brief's later steps read them until it expires.
+  const cited = await q.query(`select 1 from indices_cited_by_live_briefs() as i where i = $1 limit 1`, [b.index_name]);
+  if ((cited.rowCount ?? 0) > 0) return 'used by an unexpired AI brief';
   try {
     const found = await es.indices.getAlias({ index: b.index_name });
     const aliases = Object.keys(found[b.index_name]?.aliases ?? {});

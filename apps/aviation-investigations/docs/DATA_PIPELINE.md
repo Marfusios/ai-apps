@@ -576,6 +576,8 @@ revalidates under locks and refuses:
 
 - alias targets (read back from Elasticsearch under the alias lock), and indices named
   in any manifest, active or retained;
+- indices an unexpired AI brief uses: its passages index and the cases index its pair
+  was published with (`indices_cited_by_live_briefs()`, migration 0021);
 - indices with a pending or unknown attempt, including an unknown one declared
   abandoned: the request may still land;
 - running or recent builds.
@@ -672,11 +674,12 @@ manifest published with its passages index is used, checked against the generati
 first, and only a `cases-v3` index (the version the validation covered; a manifest
 that pairs the passages with a `cases-v2` index makes AI retrieval unavailable
 rather than run an unvalidated channel). Each brief step records the cases index it
-read (name and version) in its private metadata. The manifest pairing ties a cases
-index to a generation, not to a brief: re-publishing the passages index invalidates
-the briefs made from the old one (their later steps find no cases index paired with
-their passages index and are unavailable), while re-publishing only the cases index
-can change what later retrieval for the same question returns. Nothing in either
+read (name and version) in its private metadata. Every pair a generation was published
+with is kept in `manifest_pairings` while the generation exists (migration 0021):
+re-publishing the passages index leaves the briefs made from the old one working, with
+the cases index their pair was published with, until they expire, and `index
+delete-unused` keeps every index an unexpired brief uses; re-publishing only the cases
+index can change what later retrieval for the same question returns. Nothing in either
 index changes.
 
 - **Contract first.** Retrieval refuses (`RetrievalUnavailableError`) when the

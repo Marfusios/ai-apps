@@ -471,12 +471,13 @@ lookup that fails or times out fails the step with `cases_index_lookup` before t
 question is embedded.
 
 Each step under `retrieval.v2` records the cases index it read in its private
-`meta.retrieval` (`casesIndex`, `casesIndexVersion`, with the mapping counts). The
-pairing ties a cases index to a generation, not to a brief: republishing the passages
-index invalidates the briefs made from the old one (their later steps fail
-`no_cases_index`), and republishing only the cases index can change what later
-retrieval returns for the same question (compare a step's `meta.retrieval.casesIndex`
-with the manifest when that matters).
+`meta.retrieval` (`casesIndex`, `casesIndexVersion`, with the mapping counts). Every pair
+a generation was published with stays resolvable while the generation exists
+(`manifest_pairings`, migration 0021), so republishing the passages index (passages-v2)
+leaves the briefs made from the old one working until they expire: `index delete-unused`
+keeps every index an unexpired brief uses. Republishing only the cases index can change
+what later retrieval returns for the same question (compare a step's
+`meta.retrieval.casesIndex` with the manifest when that matters).
 
 To switch, or to roll back:
 
@@ -574,8 +575,9 @@ The `index` commands (README, "Cases index") use the environment's write API key
 so they create and switch only `ai-aviation-<env>-*` indices. A build deletes only
 its own index, and only when it failed before any alias request; every other index
 stays until an explicit `index delete-unused --older-than <hours> --yes`, which deletes
-indices that are older than the threshold, no alias target and in no manifest (active
-or retained), and refuses any with a switch request still pending or unknown. Run it
+indices that are older than the threshold, no alias target, in no manifest (active or
+retained) and used by no unexpired AI brief, and refuses any with a switch request still
+pending or unknown. Run it
 without `--yes` first: it lists what it would delete. A deleted index cannot be
 published again, so pick a threshold above the age of any index you may roll back to.
 
