@@ -1082,37 +1082,54 @@ keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearT
 `sort`, `page`), the open case (`case`), the compare selection (`cases`) and, for
 briefs, the step (`step`) and the brief a case or compare page was opened from
 (`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
-compare bar.
+compare bar. The footer gives the snapshot's real age once it is more than 45 days old
+(DESIGN §4: monthly full snapshots). A page that fails unexpectedly (a render error, or
+code that could not load) shows "Something went wrong." with Try again (a reload) and
+Home inside the header and footer, never the router's developer page; if the frame
+itself fails, a plain frame with the wordmark does the same (`web/src/pages/ErrorPage.tsx`).
 
 The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
 
 - **Ask AI and the counter** read `GET /api/ai/status` before anyone clicks ("Ask AI ·
   3 free", "AI searches left: 2 of 3", "AI back tomorrow"). Ask AI needs a click or
-  Ctrl/Cmd+Enter; Enter runs the free Search.
+  Ctrl/Cmd+Enter; Enter runs the free Search. While the status cannot be read the
+  controls say "AI temporarily unavailable" and the status is read again every 15 s and
+  when the tab gets focus. Where Google sign-in is not configured nothing says "sign in":
+  the signed-in-only states read "Free AI searches used" or "Free AI searches paused for
+  today", and Ask AI is off with the same words.
 - **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from
   a new widget, which is removed as soon as its token is taken. Each request holds a
   check session: a second control waits its turn ("Checking…"), and ending one session
   never cancels another. The first request of a trial identity (`started: false`) shows
   "Quick check before your first AI search"; later ones run invisibly while the button
-  reads "Checking…". When no answer comes back (a network or server error), the notice
-  does not claim the search was free, and Try again replays the same request under the
-  same idempotency key; if that replay is a 409 `conflict` (the earlier attempt never
-  completed), it is sent once more under a new key. The key is kept until a 2xx or that
-  409 settles it: a refused retry (a failed or cancelled check, a paused or used-up status,
-  a known refusal of the replay) leaves it for the next ask. Such keys are kept for the
-  tab (`web/src/features/ai/unsettled.ts`: `sessionStorage`, or memory when storage is
-  unavailable) under a hash of the normalised request (question and canonical filters, or
-  brief and change), so the same request from any page or control replays them; they
-  expire after 24 hours, with the server's idempotency record. A 503 `unavailable` or `ai_paused`
-  released the admission and spent nothing: the paused copy shows, and the next ask uses
-  a new key. The site key comes from `/api/config`, and Cloudflare's script loads only
+  reads "Checking…", then "Starting…" while the request is on its way (the server answers
+  once the scope stage is done). Each request's idempotency key is kept for the tab
+  right before the request leaves (write-ahead, `web/src/features/ai/unsettled.ts`:
+  `sessionStorage`, or memory when storage is unavailable) under a hash of the normalised
+  request (question and canonical filters, or brief and change), so a reload, Back or a
+  closed tab while it is in flight loses nothing, and the same request from any page or
+  control replays the key. When no answer comes back (a network or server error), the
+  notice does not claim the search was free, and Try again replays the same request under
+  the same key; if that replay is a 409 `conflict` (the earlier attempt never completed),
+  it is sent once more under a new key. The key is kept until a 2xx or that 409 settles
+  it: a refused retry (a failed or cancelled check, a paused or used-up status, a known
+  refusal of the replay) leaves it for the next ask. A known refusal of a first send (a
+  4xx, or a 503 `unavailable` or `ai_paused`, which release the admission) spent nothing:
+  its key is taken back, the notice says why, and the next ask uses a new key. Keys expire
+  after 24 hours, with the server's idempotency record. A rate limit of two minutes or
+  more (the per-network hourly and daily limits) reads "AI searches from this network are
+  limited for now." with the wait in minutes or as a UTC time. The site key comes from
+  `/api/config`, and Cloudflare's script loads only
   when an AI request needs it. The server's Content-Security-Policy allows
   `https://challenges.cloudflare.com` as a script and frame source whenever anonymous
   AI is configured (see "Security headers" under API server).
 - **The brief page** polls the running step once a second and shows the answer
   checklist (completions announced politely, once each). Polling stops on a 404 (the
   expired view never polls) or another refusal, waits for `Retry-After` on a 429, and
-  backs off exponentially (up to 30 s) after other failures. The chips stay on top
+  backs off exponentially (up to 30 s) after other failures; a read that gets no answer
+  within 15 s (headers and body) is such a failure (POSTs never time out: an aborted paid
+  request stays an unknown outcome). While reads of a running step fail, the checklist
+  says "Still checking… connection trouble." until one gets through. The chips stay on top
   while a step runs: the scope stage's `checklist.interpretation` once it is sent,
   else, for a refinement, the previous step's. Then the briefing sheet:
   the AI summary with case citations, evidence groups, case cards with WHY IT
@@ -1122,7 +1139,13 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   aircraft, or the event narrative, which is never attributed to one aircraft.
   Withheld summaries, the explicit abstention, scope replies, failures and
   cancels use the server's or UI_DESIGN's copy. Every control that runs the AI on a
-  brief says "· uses 1" before the click.
+  brief says "· uses 1" before the click. Try again after a failed step sends the same
+  request: a first step as a new brief with the reader's filters, a refinement with its
+  change (text and filters from the step, an edited or picked reading from the page's
+  memory); where that is impossible (no refinements left, a reading sent before a
+  reload, an earlier answer) there is no Try again, only a note and New search. A Try
+  again that fails too is said in the same card. The drawer's "‹ n of N ›" follows the
+  order the sheet shows the cards in.
 - **AI context** for a case (the drawer, the case page, compare's AI columns) comes
   only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, never merged into the
   public case data. A citation opens the drawer at the cited passage, with the quoted

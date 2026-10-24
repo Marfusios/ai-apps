@@ -307,7 +307,10 @@ Switching themes (Proposed):
 
 **Footer** (all pages): "Not an NTSB service · Data: NTSB, snapshot {date} ·
 Privacy · About". The snapshot date comes from the ingestion run. If the snapshot
-is older than expected, the footer shows its real age (DESIGN §4).
+is older than expected, the footer shows its real age (DESIGN §4). As built (Task
+22, Proposed): more than 45 days after a snapshot, against DESIGN §4's monthly full
+snapshots, the date is followed by "(46 days old)", and from two whole months by
+"(2 months old)".
 
 **Routes and URL state** (Proposed). Every view a user might share or refresh
 lives in the URL:
@@ -381,6 +384,12 @@ Two columns on desktop: a 236px facet column and the results column.
 - Counts for other values update as filters change. Within one facet the counts
   ignore that facet's own selection, so alternatives stay visible.
 - Unknown and not-reported values are shown in muted text and never hidden.
+- The aircraft facets (phase, aircraft, engine, operation, purpose) count an
+  event once per value any of its aircraft has, so they can add up to more than
+  the total (G0 #14). As built (Task 22, Proposed wording): under Phase, "3
+  investigations here involved more than one aircraft, so phase counts can add up
+  to more than 21."; once above the aircraft facets in "More filters", "… so
+  aircraft, engine, operation and purpose counts can add up to more than 21."
 
 Facet order:
 
@@ -640,7 +649,12 @@ checklist card like a cockpit checklist:
 - **The current row** has a faint magenta wash and magenta result text. Rows not
   yet reached are muted.
 - **Note under the card:** "Nothing is shown until each quote matches the report
-  text word for word. Up to a minute." It ends with a **Cancel** link.
+  text word for word. Usually about a minute; up to two." It ends with a
+  **Cancel** link. (Task 22, Proposed: the owner's "Up to a minute." replaced as the
+  gate asked, from the measured stages, scope 2–4 s, retrieve 1–2 s, compose
+  19–23 s and check 20–38 s at p50–p95, within the 100 s pipeline deadline.)
+- **While reads of the step fail** (Task 22, Proposed): a muted line under the
+  note, "Still checking… connection trouble.", until a read gets through.
 
 The four rows map to the pipeline's scope, retrieve, compose and validate stages.
 Admission (Turnstile and quota) happens before the checklist appears, and
@@ -779,12 +793,18 @@ by its chart:
 1. **How complete is the recent record?** (full width) This comes first. Stacked
    year bars show completed and other records per year. Example
    sentence: "2025 has 758 completed of 1,176 events, and 2026 only 270 of 870,
-   so recent years look smaller than they will be."
+   so recent years look smaller than they will be." The legend reads "Completed"
+   and "Other records (not a verified completed status)" (Task 22: never "in
+   progress" or "status unknown" while the mapping is unverified, decision 20).
 2. **When in the flight did it happen?** Phase bars, with a sentence that
-   includes "That counts investigations, not risk per landing."
+   includes "That counts investigations, not risk per landing." Phase is each
+   aircraft's defining-event phase, so the panel states the overlap (G0 #14; Task
+   22, Proposed wording): "3 investigations involved more than one aircraft, so
+   phase counts can add up to more than 21."
 3. **How serious were the outcomes?** Highest-injury bars.
 4. **What was the weather?** VMC, IMC and unknown.
-5. **What was flying?** Aircraft category.
+5. **What was flying?** Aircraft category, with the same statement ending "so
+   aircraft counts can add up to more than 21."
 6. **Where?** A static dot map of coordinates for the lower 48, with Alaska and
    Hawaii as insets later. A sentence states how many cases lack coordinates.
    There are no tiles (DESIGN §10).
@@ -834,7 +854,10 @@ then state the processed cohort (DESIGN §5).
     deleted.
 - **Privacy page:** plain-language processing notice, linked from the footer
   and the sign-in dialog. The content follows DESIGN §7. The owner provides
-  the final text.
+  the final text. It must name Cloudflare Turnstile (Task 22 review W-14): asking
+  the AI loads Cloudflare's script and frame from challenges.cloudflare.com, only
+  when an AI request needs a check, and Cloudflare may set its own cookies for it.
+  The draft says so.
 
 ## 5. States and copy (Owner-approved)
 
@@ -847,6 +870,8 @@ then state the processed cohort (DESIGN §5).
 | Trial used | Blue outline pill "Sign in to keep asking" |
 | Signed in | "AI left today: **18 of 20**" (always the number left) |
 | Free searches paused, sign-in still open (Proposed) | Blue outline pill "Sign in to ask the AI" |
+| Trial used, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches used" |
+| Free searches paused, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches paused for today"; in the login-required mode "AI temporarily unavailable" |
 | Signed-in cap reached (Proposed) | Muted "AI back tomorrow" (daily) or "AI back on 1 Nov" (monthly) |
 | Paused for everyone | Muted "AI back tomorrow" for the daily budget, "AI back on 1 Nov" for the monthly budget, or "AI temporarily unavailable" when the recovery time is unknown |
 
@@ -867,26 +892,32 @@ It reveals no budget amounts. Labels follow it:
 | --- | --- |
 | `available` | "Ask AI · 3 free" |
 | `signed_in_only`, anonymous visitor | "Ask AI · sign in" |
+| `signed_in_only`, sign-in not offered (Task 22, Proposed) | Button disabled, with the counter's words ("Free AI searches used"…); never "sign in" |
 | `paused` with `retryAt` | Button disabled, with "AI back tomorrow" or "AI back on {date}" |
 | `paused` without `retryAt` | Button disabled, with "AI temporarily unavailable" |
+
+When the status cannot be read, the button is disabled with "AI temporarily
+unavailable" too, and the page reads the status again every 15 seconds and when
+the tab gets focus until it can (Task 22).
 
 **Messages:**
 
 | Moment | Copy and behaviour |
 | --- | --- |
 | First Ask AI, anonymous | Panel titled "Quick check before your first AI search", with "Up to three free AI searches, subject to daily availability. Search, cases and comparisons never need this." The Turnstile widget sits inside it. The explanation is shown once per trial identity. |
-| Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly. Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
-| Trial used up | "That was your third free AI search." / "Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days." / [Continue with Google] / "Search, case pages, compare and the dashboard stay open without an account." Shown **only while signed-in capacity remains**. |
+| Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly, then "Starting…" while the request is on its way (Task 22, Proposed: the server answers once the scope stage is done, a few seconds). Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
+| Trial used up | "That was your third free AI search." / "Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days." / [Continue with Google] / "Search, case pages, compare and the dashboard stay open without an account." Shown **only while signed-in capacity remains**. Where sign-in is not offered (Task 22, Proposed): "That was your third free AI search." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
 | AI paused for today | Ink-edged box: "AI search is done for today." / "This beta runs on a small daily AI budget, and today's is used up. It resets at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. Shown to everyone, signed in or not. This is a normal state. Proposed variants: for the monthly budget, "AI search is done for this month." / "It returns on {date}."; for maintenance or a provider outage, "AI search is temporarily unavailable." with no time promised. |
 | Operational question | Blue-edged box: "This tool studies past investigations." / "It can't help with a flight in progress or a maintenance decision. In flight, contact ATC. For airworthiness, use your aircraft's approved data and a certificated mechanic." / "You can still look for past cases like yours:" plus two blue suggestion chips. Static text; no AI-written advice. |
-| Failure | "The AI search didn't finish." / "Something went wrong before an answer was ready." / [Try again] [Search by keyword instead]. Add "This didn't use one of your searches." if nothing was spent, or "This counted as a search, because the AI work was already under way." if it was. |
+| Failure | "The AI search didn't finish." / "Something went wrong before an answer was ready." / [Try again] [Search by keyword instead]. Add "This didn't use one of your searches." if nothing was spent, or "This counted as a search, because the AI work was already under way." if it was. Try again sends the same request (Task 22, Proposed): a failed refinement is refined again with its change; where that is impossible there is no Try again but "This brief has used its three refinements. Start a new search to keep going." or "The changed reading can't be tried again from here. Start a new search to keep going." with [New search]. A Try again that fails too adds, in the same card, "Trying again didn't finish either." and whether it counted. |
 | No results | "No completed investigations match all of this." Below it, the query and filters in words, and suggestion chips with real counts for removing one filter at a time, e.g. "without Fatal · 1 case", "without Phase: Taxi · 102 cases", "include other records". |
-| Free searches paused, visitor's trial untouched (Proposed) | "Free AI searches are used up for today." / "Signed-in AI search is still open today. Sign in with Google to ask." / [Continue with Google] / "Free searches return tomorrow; keyword search and every case work now." Also used in the login-required emergency mode (DESIGN §7), with the last sentence dropped. |
+| Free searches paused, visitor's trial untouched (Proposed) | "Free AI searches are used up for today." / "Signed-in AI search is still open today. Sign in with Google to ask." / [Continue with Google] / "Free searches return tomorrow; keyword search and every case work now." Also used in the login-required emergency mode (DESIGN §7), with the last sentence dropped. Where sign-in is not offered (Task 22, Proposed): "Free AI searches are used up for today." / "Free searches return tomorrow; keyword search and every case work now."; in the login-required mode, the "AI search is temporarily unavailable." box. |
 | Signed-in daily cap (Proposed) | "You've used today's 20 AI searches." (5 for new accounts) / "They reset at 00:00 UTC. Keyword search, cases and compare work as usual." |
 | Signed-in monthly cap (Proposed) | "You've used this month's 150 AI searches." / "They reset on 1 {month}. Keyword search, cases and compare work as usual." |
 | Extra check, signed in (Proposed) | Same panel as the first anonymous check, titled "Quick check before this AI search". |
-| Brief expired (Proposed) | "This AI search has expired. We delete questions and answers after 24 hours." / An empty search box with [Search] and [Ask AI]. The server keeps nothing to restore. If the question is still held in the memory of the page already open in this tab, [Ask again] can refill the box. The question is never written to browser storage; if an AI request gets no reply, the tab's session storage keeps a one-way hash of that request, a random retry key and the time it saved them, so trying again within 24 hours isn't counted twice. Server retention is never extended. |
-| Limit reached (rate) (Proposed) | "Slow down a moment. Try again in {n} seconds." Uses the 429 retry information. |
+| Brief expired (Proposed) | "This AI search has expired. We delete questions and answers after 24 hours." / An empty search box with [Search] and [Ask AI]. The server keeps nothing to restore. If the question is still held in the memory of the page already open in this tab, [Ask again] can refill the box. The question is never written to browser storage; while an AI request is on its way, and if it gets no reply, the tab's session storage keeps a one-way hash of that request, a random retry key and the time it saved them, so trying again within 24 hours isn't counted twice (Task 22: written before the request leaves, so a reload in flight replays it). Server retention is never extended. |
+| Limit reached (rate) (Proposed) | "Slow down a moment. Try again in {n} seconds." Uses the 429 retry information. For two minutes or more, the per-network hourly and daily limits (Task 22, Proposed): ink-edged box "AI searches from this network are limited for now." / "Try again in 58 minutes." (under an hour) or "Try again after 15:01 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
+| Unexpected error (Task 22, Proposed) | Any page that fails: "Something went wrong." / "This page stopped because of an unexpected error. Try again, or start again from the home page." / [Try again] (reloads) [Home], inside the header and footer; never the router's developer page or the error itself. |
 
 **Counting rules (Owner-approved):**
 
