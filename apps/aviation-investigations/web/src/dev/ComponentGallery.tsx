@@ -106,11 +106,18 @@ export function ComponentGallery() {
         <div className="h-10" />
       </Section>
 
-      <Section title="Mark" note="UI_DESIGN §2.5. The heavier aircraft below 40 px (tab icon, header), the finer one from 40 px.">
+      <Section
+        title="Mark and wordmark"
+        note="UI_DESIGN §2.5. The heavier aircraft below 40 px (tab icon, header), the finer one from 40 px. The wordmark is plain blue text at night too."
+      >
         <div className="flex flex-wrap items-end gap-4">
           {[16, 22, 32, 40, 64, 92].map((size) => (
             <BrandMark key={size} size={size} />
           ))}
+        </div>
+        <div className="mt-4 flex items-center gap-2">
+          <BrandMark />
+          <span className="wordmark">{PRODUCT_NAME}</span>
         </div>
       </Section>
 
@@ -145,7 +152,6 @@ export function ComponentGallery() {
 
       <Section title="Placards" note="Plain labels by day; engraved placards at night. AI labels stay magenta.">
         <div className="flex flex-wrap items-center gap-4">
-          <span className="placard wordmark">{PRODUCT_NAME}</span>
           <Placard>Your question</Placard>
           <Placard tone="ink">The flight</Placard>
           <Placard tone="ai">AI summary · check the cited passages</Placard>

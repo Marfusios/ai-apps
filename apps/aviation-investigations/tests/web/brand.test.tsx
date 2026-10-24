@@ -13,6 +13,7 @@ import { pageTitle, type TitledPage } from '../../shared/page-titles';
 import indexHtml from '../../web/index.html?raw';
 import { Footer } from '../../web/src/components/Footer';
 import { SignInDialog } from '../../web/src/features/auth/SignInDialog';
+import baseCss from '../../web/src/styles/base.css?raw';
 import tokensCss from '../../web/src/styles/tokens.css?raw';
 import { cssBlock, cssVar } from './helpers';
 import { renderApp, setupMockApi } from './render-app';
@@ -249,16 +250,62 @@ describe('the page before the script runs (web/index.html)', () => {
   });
 });
 
-describe('the app frame names AirCase', () => {
-  it('the header wordmark is "AirCase" at every width and links home', async () => {
+const DESCRIPTOR = 'Plane crash & accident investigations';
+
+/**
+ * The header's lockup (UI_DESIGN §3): the home link, named "AirCase" and nothing more, holds the
+ * decorative mark before the wordmark; the descriptor is plain text outside the link.
+ */
+function expectLockup(header: HTMLElement): void {
+  const home = within(header).getByRole('link', { name: 'AirCase' });
+  expect(home.getAttribute('href')).toBe('/');
+  // One wordmark, not a long and a short form for different widths.
+  expect(home.textContent).toBe('AirCase');
+  const marks = home.querySelectorAll('svg');
+  expect(marks).toHaveLength(1);
+  expect(home.firstElementChild).toBe(marks[0]);
+  expect(marks[0]?.getAttribute('aria-hidden')).toBe('true');
+  expect(marks[0]?.getAttribute('focusable')).toBe('false');
+  const descriptor = within(header).getByText(DESCRIPTOR);
+  expect(descriptor.textContent).toBe(DESCRIPTOR);
+  expect(home.contains(descriptor)).toBe(false);
+  expect(descriptor.closest('a, button')).toBeNull();
+  expect(within(header).queryByText('Casebook')).toBeNull();
+}
+
+describe('the header lockup: the mark, the wordmark and what AirCase shows (owner decisions of 2026-10-24)', () => {
+  const cases = ROUTES.flatMap((path) => (['day', 'night'] as const).map((theme) => [path, theme] as const));
+
+  it.each(cases)('is in the header of %s by %s', async (path, theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
+    renderApp(path);
+    expectLockup(await screen.findByRole('banner'));
+    expect(document.documentElement.getAttribute('data-theme')).toBe(theme);
+  });
+
+  it('prints the mark and the wordmark, not the descriptor (UI_DESIGN §7)', async () => {
     renderApp('/about');
     const header = await screen.findByRole('banner');
-    const wordmark = within(header).getByRole('link', { name: 'AirCase' });
-    expect(wordmark.getAttribute('href')).toBe('/');
-    // One wordmark, not a long and a short form for different widths.
-    expect(wordmark.textContent).toBe('AirCase');
-    expect(within(header).queryByText('Casebook')).toBeNull();
+    const home = within(header).getByRole('link', { name: 'AirCase' });
+    expect(home.closest('[data-print="hide"]')).toBeNull();
+    expect(within(header).getByText(DESCRIPTOR).closest('[data-print="hide"]')).not.toBeNull();
   });
+
+  it('the wordmark is plain chart-blue text at night too, not an engraved placard', async () => {
+    renderApp('/about');
+    const home = within(await screen.findByRole('banner')).getByRole('link', { name: 'AirCase' });
+    const wordmark = within(home).getByText('AirCase');
+    expect(wordmark.className).toContain('wordmark');
+    expect(home.querySelector('.placard')).toBeNull();
+    expect(home.className).not.toContain('placard');
+    // Its colour is the theme's blue, and no night rule gives it a box, padding or an indent.
+    expect(cssBlock(baseCss, '.wordmark')).toMatch(/\bcolor: var\(--blue\);/);
+    expect(baseCss).not.toMatch(/\[data-theme="night"\][^{]*\.wordmark/);
+    expect(cssBlock(baseCss, '.wordmark')).not.toMatch(/text-indent|padding|border|background|box-shadow/);
+  });
+});
+
+describe('the app frame names AirCase', () => {
 
   it('the sign-in dialog is "Sign in to AirCase"', () => {
     render(

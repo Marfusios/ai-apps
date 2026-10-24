@@ -1,8 +1,8 @@
 import { Menu, X } from 'lucide-react';
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Link, NavLink, useLocation } from 'react-router';
-import { PRODUCT_NAME } from '../brand';
+import { NavLink, useLocation } from 'react-router';
 import { cx } from '../lib/cx';
+import { BrandLockup } from './BrandLockup';
 import { ThemeSwitch } from './ThemeSwitch';
 
 const NAV = [
@@ -18,10 +18,12 @@ export interface HeaderProps {
 }
 
 /**
- * Global header (UI_DESIGN §3): wordmark, Explore and Dashboard, the AI counter,
- * the Day/Night switch and sign-in, over the blue rule with its tick scale. Below
- * 640px the nav, switch and sign-in move into a ☰ menu (§6). The wordmark is one
- * short word, so it is the same at every width.
+ * Global header (UI_DESIGN §3): the lockup (the mark and the wordmark linking home, and what
+ * AirCase shows), Explore and Dashboard, the AI counter, the Day/Night switch and sign-in,
+ * over the blue rule with its tick scale. Below 640px the nav, switch and sign-in move into
+ * a ☰ menu (§6), and the row wraps: the wordmark and the AI counter on its first line, the
+ * descriptor on the second, the ☰ centred beside both. The wordmark is one short word, so it
+ * is the same at every width.
  */
 export function Header({ aiCounter, auth }: HeaderProps) {
   const location = useLocation();
@@ -40,10 +42,8 @@ export function Header({ aiCounter, auth }: HeaderProps) {
 
   return (
     <header className="header-rule relative z-20 bg-header" onKeyDown={onKeyDown}>
-      <div className="mx-auto flex max-w-page items-center gap-4 px-4 py-[11px] sm:px-[22px] lg:gap-[1.4rem]">
-        <Link to="/" className="placard wordmark">
-          {PRODUCT_NAME}
-        </Link>
+      <div className="relative mx-auto flex min-h-[66px] max-w-page flex-wrap content-center items-center gap-x-3 py-[11px] pr-[62px] pl-4 sm:min-h-0 sm:flex-nowrap sm:gap-x-4 sm:px-[22px] lg:gap-x-[1.4rem]">
+        <BrandLockup />
         <nav aria-label="Main" className="hidden gap-[1.1rem] sm:flex" data-print="hide">
           {NAV.map((item) => (
             <NavLink key={item.to} to={item.to} className={navClass}>
@@ -51,7 +51,8 @@ export function Header({ aiCounter, auth }: HeaderProps) {
             </NavLink>
           ))}
         </nav>
-        <div className="ml-auto flex min-w-0 items-center gap-3.5" data-print="hide">
+        {/* Grows from nothing, so on a phone it stays on the wordmark's line and a long counter is cut short there. */}
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-3.5" data-print="hide">
           {aiCounter && <div className="min-w-0 truncate text-meta text-muted">{aiCounter}</div>}
           <div className="hidden sm:block">
             <ThemeSwitch />
@@ -63,7 +64,7 @@ export function Header({ aiCounter, auth }: HeaderProps) {
             aria-expanded={open}
             aria-controls={menuId}
             onClick={() => setOpenOn(open ? null : location.key)}
-            className="-mr-2 inline-flex size-11 cursor-pointer items-center justify-center rounded-full text-ink hover:bg-blue-wash sm:hidden"
+            className="absolute top-1/2 right-2 inline-flex size-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-ink hover:bg-blue-wash sm:hidden"
           >
             {open ? <X size={20} strokeWidth={1.5} aria-hidden="true" /> : <Menu size={20} strokeWidth={1.5} aria-hidden="true" />}
             <span className="sr-only">Menu</span>
