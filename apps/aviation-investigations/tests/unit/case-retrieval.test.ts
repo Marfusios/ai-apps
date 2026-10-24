@@ -9,7 +9,7 @@ import type { estypes } from '@elastic/elasticsearch';
 import { describe, expect, it } from 'vitest';
 import { QueryEmbeddingError, queryEmbeddingInput, type Embedder, type EmbedResult } from '../../server/ai/embeddings.js';
 import { RetrievalFailure, type EmbeddingUsage, type EvidenceQuery } from '../../server/briefs/evidence.js';
-import { createHybridRetriever } from '../../server/briefs/retriever.js';
+import { createHybridRetriever, retrievalFailureOf } from '../../server/briefs/retriever.js';
 import { exactRrf, uniqueCases } from '../../server/search/case-fusion.js';
 import { MAX_EXACT_CANDIDATES, mapCasesToPassages } from '../../server/search/case-mapping.js';
 import { retrieveCandidatesWith, retrieveCaseCandidates, type CaseRetrievalQuery } from '../../server/search/case-retrieval.js';
@@ -206,6 +206,25 @@ describe('case-level stage 1: requests, fusion and mapping', () => {
     expect(f.kinds().slice(before)).toEqual(['fetch']);
     expect(smaller.tokens).toBeLessThanOrEqual(60);
     for (const c of smaller.cases) expect(c.passages.some((p) => p.reserved && p.fusedRank !== null)).toBe(true);
+  });
+
+  it('an evidence fetch that matched more passages than it returned is an incomplete search (task 22 S-M2)', async () => {
+    const f = fake({
+      tamper: {
+        fetch: (res) => {
+          res.hits.total = { value: res.hits.hits.length + 5, relation: 'eq' };
+        },
+      },
+    });
+    const r = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
+    const err = await fetchAndPack(f.es, r.index, r.filter, r.cases, r.params).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(IncompleteSearchError);
+    expect(err).toMatchObject({ request: 'fetch' });
+    // The step records it as such, not as an unexplained failure.
+    expect(retrievalFailureOf(err, undefined, 'none')).toMatchObject({ kind: 'failed', reason: 'incomplete_search' });
   });
 
   it('several case-only cases, long ones among them, compete for the six slots in fused order, each mapped by itself', async () => {

@@ -635,7 +635,9 @@ export async function fetchAndPack(
   const res = await es.search<Record<string, unknown>>(body, transport(params, signal));
   assertCompleteResponse(res, 'fetch');
   const total = typeof res.hits.total === 'number' ? res.hits.total : (res.hits.total?.value ?? 0);
-  if (total > res.hits.hits.length) throw new Error(`the evidence fetch matched ${total} passages but returned ${res.hits.hits.length}`);
+  // More matched than fit the fetch (a case with more cause passages than the room): fail
+  // closed as an incomplete search (the step records `incomplete_search`), never pack a part.
+  if (total > res.hits.hits.length) throw new IncompleteSearchError('fetch', `matched ${total} passages but returned ${res.hits.hits.length}`);
 
   const texts = new Map<string, PassageWithText>();
   const causes = new Map<string, PassageWithText[]>();
