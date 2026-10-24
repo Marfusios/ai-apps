@@ -423,6 +423,17 @@ migrations) and the [AI preflight](#ai-preflight), then `pnpm app:up`. To roll b
 the previous `APP_VERSION` and run `pnpm app:up`: its image is still local and starts
 unchanged. If that image was removed, the wrapper refuses; check out the clean commit of
 its git tag and run the command again to build it from that commit.
+
+Releases from before these checks have no git tag, and their images no revision label (the
+release running when the checks shipped is one), so the wrappers of later releases refuse
+to start them. The first tagged release replaces such a release like any update: tag its
+commit, check it out clean, `pnpm app:migrate` builds its labelled image, `pnpm app:up`
+recreates the app container from it. A later wrapper never builds an earlier release either:
+it builds only the commit it was checked out at. To roll back to a release from before the
+checks, use that release's own checkout, whose wrapper predates them: check out its commit
+(clean) and run `pnpm app:up` there; that wrapper rebuilds the image from that commit, as it
+always did, and starts it. Keep that commit noted with the release (or tag it), since its
+image records none.
 Migrations are not reversed, so roll back only to a release that runs on the current
 schema (the migrations add, and every release so far reads the tables it knows); after a
 migration that changes what an earlier release relies on, roll forward instead. Each
