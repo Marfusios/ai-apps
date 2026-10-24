@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { COMPARE_FULL_MESSAGE } from '../../web/src/features/explore/CompareTray';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
@@ -25,6 +25,25 @@ describe('Home', () => {
     // The coverage line is computed from /api/config.
     renderApp('/');
     expect(await screen.findByText(/completed US NTSB investigations · 2008 → 2026 · snapshot 16 OCT 2026/)).toBeTruthy();
+  });
+
+  it('the footer gives the snapshot\'s real age once it is older than expected (review W-8)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // The mock snapshot is 16 Oct 2026; a month and a bit later the age is not shown yet.
+      vi.setSystemTime(new Date('2026-11-20T12:00:00Z'));
+      const fresh = renderApp('/');
+      const footer = await screen.findByRole('contentinfo');
+      await waitFor(() => expect(footer.textContent).toContain('snapshot 16 OCT 2026'));
+      expect(footer.textContent).not.toContain('old)');
+      fresh.unmount();
+      vi.setSystemTime(new Date('2027-12-20T12:00:00Z'));
+      renderApp('/');
+      const later = await screen.findByRole('contentinfo');
+      await waitFor(() => expect(later.textContent).toContain('Data: NTSB, snapshot 16 OCT 2026 (14 months old)'));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Ask AI shows the live AI counter, like the header', async () => {
