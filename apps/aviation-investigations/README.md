@@ -1430,8 +1430,10 @@ retention are in migrations 0008 and 0009.
   token. Rejections: `trial_exhausted`, `daily_cap`, `monthly_cap`,
   `anonymous_share_exhausted`, `global_paused` (`daily_budget`, `monthly_budget`,
   `maintenance`), `rate_limited` (with `retryAt`), `concurrency`,
-  `idempotency_conflict`, and `busy`. Lock waits in admission, settlement and spend
-  reservation are bounded at 2 seconds; a timeout rolls back and returns `busy`
+  `idempotency_conflict`, `uncertain_limit` (DESIGN §9, "Uncertain calls") and `busy`.
+  Lock waits in admission, settlement, spend
+  reservation, giving a search back and counting an attempt are bounded at 2 seconds; a
+  timeout rolls back and returns `busy`
   (503, fail closed).
 - **Limits.** A trial has 3 searches and lasts 30 days. Signed-in users get 20 a day
   and 150 a month, 5 a day during their first 3 days. Attempts are limited to 2 a

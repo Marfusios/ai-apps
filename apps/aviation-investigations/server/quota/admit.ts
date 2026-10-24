@@ -25,7 +25,8 @@
  * Lock order: the account's lock (step 0), the bucket rows in key order, the spend lock.
  * Nothing takes buckets or the spend lock and then an account's lock.
  *
- * Lock waits are bounded (2 s); a timeout rolls back and returns `busy`.
+ * Lock waits are bounded (2 s) here and in `releaseQuota` and `recordAttempt`; a timeout
+ * rolls back and returns `busy`.
  *
  * The quota unit is taken at admission so two concurrent requests can never both use
  * the last trial search. A reply that must not count (off-topic, operational, nothing
@@ -465,7 +466,8 @@ export interface AttemptInput {
   now?: Date;
 }
 
-export type AttemptResult = { ok: true } | { ok: false; reason: 'rate_limited'; retryAt: Date };
+/** `busy`: a lock wait timed out (2 s); nothing was counted (fail closed). */
+export type AttemptResult = { ok: true } | { ok: false; reason: 'rate_limited'; retryAt: Date } | { ok: false; reason: 'busy' };
 
 /**
  * Count one AI attempt that makes no paid call (for example a request refused before
@@ -475,26 +477,33 @@ export async function recordAttempt(db: Db, a: AttemptInput): Promise<AttemptRes
   const now = a.now ?? new Date();
   const pHash = a.principal ? principalHash(a.policy, a.principal) : null;
   const attempts = attemptBuckets(a.policy, a.principal, pHash, a.networkId, now);
-  return db.transaction(async (tx): Promise<AttemptResult> => {
-    const counts = await lockBuckets(
-      tx,
-      attempts.map((b) => b.ref),
-    );
-    const until = rateLimitedUntil(counts, attempts);
-    if (until) return { ok: false, reason: 'rate_limited', retryAt: until };
-    await addToBuckets(
-      tx,
-      attempts.map((b) => b.ref),
-      'attempts',
-      1,
-    );
-    return { ok: true };
-  });
+  try {
+    return await db.transaction(async (tx): Promise<AttemptResult> => {
+      await setLockTimeout(tx);
+      const counts = await lockBuckets(
+        tx,
+        attempts.map((b) => b.ref),
+      );
+      const until = rateLimitedUntil(counts, attempts);
+      if (until) return { ok: false, reason: 'rate_limited', retryAt: until };
+      await addToBuckets(
+        tx,
+        attempts.map((b) => b.ref),
+        'attempts',
+        1,
+      );
+      return { ok: true };
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) return { ok: false, reason: 'busy' };
+    throw err;
+  }
 }
 
+/** `busy`: a lock wait timed out (2 s); nothing changed, the search stays counted (fail closed). */
 export type ReleaseResult =
   | { released: true }
-  | { released: false; reason: 'stale_token' | 'not_open' | 'already_released' | 'lease_expired' };
+  | { released: false; reason: 'stale_token' | 'not_open' | 'already_released' | 'lease_expired' | 'busy' };
 
 /**
  * Give back the quota unit an admission took, for a reply that must not count: an
@@ -512,7 +521,18 @@ export async function releaseQuota(
 ): Promise<ReleaseResult> {
   const now = opts.now ?? new Date();
   const pHash = principalHash(opts.policy, admission.principal);
+  try {
+    return await releaseInTransaction(db, admission, fencingToken, pHash, now);
+  } catch (err) {
+    if (isLockTimeout(err)) return { released: false, reason: 'busy' };
+    throw err;
+  }
+}
+
+function releaseInTransaction(db: Db, admission: Admission, fencingToken: string, pHash: string, now: Date): Promise<ReleaseResult> {
   return db.transaction(async (tx): Promise<ReleaseResult> => {
+    // Lock waits are bounded like the rest of the gate's (2 s; DESIGN §8).
+    await setLockTimeout(tx);
     const res = await tx.execute(sql`
       SELECT principal_kind, principal_hash, status, fencing_token::text AS fencing_token, quota_counted,
         (extract(epoch FROM lease_expires_at) * 1000)::bigint AS lease_expires_ms,

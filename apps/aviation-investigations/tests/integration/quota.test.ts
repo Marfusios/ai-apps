@@ -556,6 +556,31 @@ describe('settlement', () => {
     admitted(await admit(p, { now: new Date('2026-11-02T00:00:01Z') }));
   });
 
+  it('giving a search back and counting an attempt wait at most 2 s for a lock, then answer busy (task 22 AI M2)', async () => {
+    const p = account('u');
+    const a = admitted(await admit(p));
+    // Another transaction holds every bucket row (an admission stuck behind its precondition, a maintenance pass).
+    const holder = await wide.$client.connect();
+    const within = <T>(work: Promise<T>) =>
+      Promise.race([work, new Promise<'still waiting'>((resolve) => setTimeout(() => resolve('still waiting'), 5_000))]);
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM usage_buckets FOR UPDATE');
+      let started = performance.now();
+      expect(await within(releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(T0, 1_000) }))).toEqual({ released: false, reason: 'busy' });
+      expect(performance.now() - started).toBeLessThan(4_000);
+      started = performance.now();
+      expect(await within(recordAttempt(app, { policy: POLICY, principal: p, networkId: 'net-a', now: at(T0, 2_000) }))).toEqual({ ok: false, reason: 'busy' });
+      expect(performance.now() - started).toBeLessThan(4_000);
+    } finally {
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
+    // Nothing changed meanwhile: the search is still counted, and can be given back now.
+    expect(await releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(T0, 3_000) })).toEqual({ released: true });
+    expect(await recordAttempt(app, { policy: POLICY, principal: p, networkId: 'net-a', now: at(T0, 4_000) })).toEqual({ ok: true });
+  });
+
   it('stale fencing token cannot settle', async () => {
     const p = account('u');
     const key = newKey();

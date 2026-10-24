@@ -1028,6 +1028,7 @@ class Run {
       try {
         const r = await releaseQuota(db, this.admission, this.admission.fencingToken, { policy, now: this.now() });
         released = r.released;
+        if (!r.released && r.reason === 'busy') this.log.warn({}, 'brief step: the free search could not be given back (busy)');
       } catch (err) {
         this.log.warn({ err: { name: (err as Error)?.name } }, 'brief step: the free search could not be given back');
       }
