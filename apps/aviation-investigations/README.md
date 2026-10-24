@@ -11,8 +11,9 @@ and the `casebook-*` keys in browser storage keep their names.
 
 **Status: Experimental.** Keyword search, case pages and the dashboard are live on the
 dev environment (API server, web client, container deployment, trial identity and AI
-status). The evidence-view backend is implemented; UI integration and its narrower G6
-clearance remain pending. Generated summaries stay disabled.
+status). The evidence view is implemented, server and interface (the interface tested
+against the mock API); a run of the two together with AI on, and the view's narrower G6
+clearance, remain pending. Generated summaries stay disabled.
 The live deployment is at `https://aircase.app` (public, with Google sign-in and the
 published privacy notice; AI features are not enabled yet).
 
@@ -1095,11 +1096,13 @@ breakpoints. Components never use raw colours.
 Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with facet
 counts, the case drawer and the compare tray), the full case page and Compare
 (flight strips with NTSB columns, "Same in all", sort and Print for class), the AI
-brief (`/briefs/:id`), plus About and Privacy. View state is in the URL: the search
+evidence search (`/ai/:id`), AI briefs that exist (`/briefs/:id`; the interface starts
+none), plus About and Privacy. View state is in the URL: the search
 keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`,
-`sort`, `page`), the open case (`case`), the compare selection (`cases`) and, for
-briefs, the step (`step`) and the brief a case or compare page was opened from
-(`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
+`sort`, `page`), the open case (`case`), the compare selection (`cases`), for an
+evidence search the pages shown (`pages`) and the search Compare was opened from
+(`evidence`, `pages`) and, for briefs, the step (`step`) and the brief a case or compare
+page was opened from (`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
 compare bar. The footer gives the snapshot's real age once it is more than 45 days old
 (DESIGN §4: monthly full snapshots), and carries the owner's credit under it, "Built by
 Mariusz Kotas · mkotas.cz" with the website as a link (a new tab), on every page and in
@@ -1122,10 +1125,14 @@ The link's box, and so its focus ring, holds the mark and the wordmark at every 
 line keeps the desktop and phone headers as tall as they were (a tablet's grows by it), and it
 does not print. At night the wordmark is plain blue text like by day, not an engraved placard.
 
-The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
+The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,brief,evidence}`):
 
 - **Ask AI and the counter** read `GET /api/ai/status` before anyone clicks ("Ask AI ·
-  3 free", "AI searches left: 2 of 3", "AI back tomorrow"). Ask AI needs a click or
+  10 free", "AI searches left: 9 of 10", "AI left 9 of 10" below 700px, "AI back
+  tomorrow"). Every allowance the copy states (the first check's "Up to ten free AI
+  searches a day", the welcome's "20 AI searches a day for your first three days, then
+  50", the trial's "Free AI searches return at 00:00 UTC.") comes from `/api/config`'s
+  `aiLimits` and the visitor's status; a number the API does not report is left out. Ask AI needs a click or
   Ctrl/Cmd+Enter; Enter runs the free Search. While the status cannot be read the
   controls say "AI temporarily unavailable" and the status is read again every 15 s and
   when the tab gets focus. Where Google sign-in is not configured nothing says "sign in":
@@ -1149,7 +1156,8 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   answer comes back (a network or server error), the notice does not claim the search was
   free, and Try again replays the same request under the same key; if that replay is a
   409 `conflict` (the earlier attempt never completed), it is sent once more under a new
-  key. The key is kept until the page has taken over from a 2xx (a new brief once the
+  key. The key is kept until the page has taken over from a 2xx (an evidence search once
+  its page is on screen; a new brief once the
   brief page, which may still be loading after the answer, is on screen; a refinement
   once its step is shown; a second ask in that gap replays the key) or that 409 settles
   it: a refused retry (a failed or cancelled check, a paused or used-up status, a known
@@ -1163,6 +1171,34 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   it. The server's Content-Security-Policy allows `https://challenges.cloudflare.com` as
   a script and frame source whenever anonymous AI is configured (see "Security headers"
   under API server).
+- **The evidence view** (`/ai/:id`, UI_DESIGN §4.9): Ask AI on Home or Explore sends
+  `POST /api/evidence` (`kind: "question"`). A static scope reply shows under the box and
+  uses no search; results open the search's page, seeded from the answer. The page shows
+  the question as asked, the AI's reading of it as editable chips (search words and filters,
+  under the magenta "AI reading of your question") and the readings AirCase did not apply
+  ("Not applied", with the quoted words), then the contract's heading and notice, the count
+  ("7 retrieved · best match first · not every matching investigation") and the cards:
+  Explore's case facts, every aircraft of a multi-aircraft event, every probable-cause
+  variant with its scope, and up to three whole paragraphs with their section and scope.
+  Literal matches are marked with a solid underline and fill, synonyms with a dotted
+  underline, with a legend and words for screen readers, never colour alone. The relevance
+  line gives only the coded filters met, the word counts in the shown paragraphs and the
+  retrieval channels ("found by keyword and similarity search"). "Show the full analysis
+  section" reads the section from `GET /api/evidence/:id/cases/:ntsbNo` (the search's
+  generation, never the public case endpoint) and marks the excerpt's paragraph at its
+  offsets; a paragraph over 3,000 characters folds and opens whole, never cut. "Show 10
+  more" reads the next saved page for free (`?pages=n` keeps them on a reload) under the
+  total. Editing a chip is free until "Search again · uses 1" sends `kind: "edited"`, a
+  new 24-hour search that keeps the question and its unchecked readings; "Show keyword
+  results" opens Explore with the edited words and filters, free. An empty or tiny result
+  shows its filters and a free keyword search without them; a gone search (a 404) says so
+  and offers to ask again. The drawer, Compare (`?evidence=:id&pages=n`) and print show
+  the same projection under the heading and notice. Nothing on these surfaces is written
+  by AI: only NTSB text, coded data, the contract's fixed copy and the reader's own
+  question and edits (a component test checks every text node).
+- **Briefs that exist**: the interface starts none. While the server has briefs off
+  (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
+  failed step offers New search, not Try again.
 - **The brief page** polls the running step once a second and shows the answer
   checklist (completions announced politely, once each). Polling stops on a 404 (the
   expired view never polls) or another refusal, waits for `Retry-After` on a 429, and
@@ -1188,7 +1224,8 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   again that fails too is said in the same card. The drawer's "‹ n of N ›" follows the
   order the sheet shows the cards in.
 - **AI context** for a case (the drawer, the case page, compare's AI columns) comes
-  only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, never merged into the
+  only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo` (an evidence search's, from its
+  pages and `GET /api/evidence/:id/cases/:ntsbNo`), never merged into the
   public case data. A citation opens the drawer at the cited passage, with the quoted
   spans highlighted from their UTF-16 offsets; all AI and NTSB text is rendered as
   text.
@@ -1204,9 +1241,9 @@ pnpm test:e2e:real    # Playwright against the real API server: the fixture inde
 
 ### API contracts and the mock API
 
-`shared/contracts/{config,search,cases,dashboard,ai,briefs}.ts` are the Zod contracts of the
+`shared/contracts/{config,search,cases,dashboard,ai,briefs,evidence}.ts` are the Zod contracts of the
 public API (`GET /api/config`, `/api/search`, `/api/cases/:ntsbNo`,
-`/api/dashboard`, `/api/ai/status`, and the [AI brief](#ai-briefs) routes). Every object is strict, `ev_id` never appears, and the case
+`/api/dashboard`, `/api/ai/status`, and the [AI evidence](#ai-evidence-view) and [AI brief](#ai-briefs) routes). Every object is strict, `ev_id` never appears, and the case
 detail is NTSB-only by construction (a test walks the schema for AI fields). The
 web client validates every response against them. `shared/case-view.ts` builds the
 deterministic headline, finding text and data cautions; `shared/vocab.ts` holds the
@@ -1236,13 +1273,27 @@ of scope, operational, counting, comparison, clarification, no results) or, the 
 a question is asked, a failure: "unavailable" (503, its key then a 409), "lost before
 start" (no answer, its key then a 409) and "lost response" (no answer, its key then
 replays the started brief).
+The evidence routes are answered by `web/mock/evidence.ts`: a stand-in scope stage (rules
+that read search words, filters and unchecked readings from a question, and the server's
+static replies), a ranking over the fixture index with the real filter rules, whole
+paragraphs located in the fixture texts with literal and declared-synonym highlights,
+saved pages of 10 (past the last, a 404), 24-hour ownership handed over on sign-in, and
+idempotency keys (a replay answers the same search, another body under the same key is a
+409). `MOCK_EVIDENCE_QUESTIONS` names the questions the tests ask: 21, 7, 2 and no results,
+a midair, every kind of unchecked reading, multi-byte text and the static replies; a
+question with "nothing" retrieves none, one with "expire" makes a search that is gone at
+once, and the brief's failure keywords work here too. Every answer is checked against the contract in `tests/unit/evidence-mock.test.ts`.
+`/api/config` reports `aiLimits` (`MOCK_AI_LIMITS` in `web/mock/ai-status.ts`: 10 a day
+anonymous, 50 per account, 20 in an account's first 3 days, 600 a month; briefs on, so the
+brief pages stay testable; `createHandlers({ aiLimits })` changes them).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
-`--with-deps` on a fresh Linux machine). `tests/e2e/brief.spec.ts` installs a local
-stand-in for Cloudflare's widget before the app loads, so the AI tests make no
-network requests.
+`--with-deps` on a fresh Linux machine). The AI specs install a local stand-in for
+Cloudflare's widget before the app loads (`tests/e2e/fake-turnstile.ts`), so the AI tests
+make no network requests. `tests/e2e/evidence.spec.ts` runs the evidence view on a desktop
+by day and a phone at night.
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`

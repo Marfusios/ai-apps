@@ -103,6 +103,11 @@ mid-brief", §5) and lives 24 hours. AI content therefore appears only on:
 - a drawer opened from that brief
 - the case page or compare page opened from that brief, while it lives
 
+The AI evidence view (§4.9, Task 23) is the AI that opens first. Its page (`/ai/:id`), the drawer
+opened from it and Compare opened from its tray are private to the search's owner for its 24 hours;
+the only AI there is the interpretation of the question (magenta, labelled "AI reading of your
+question", editable) and the readings it did not apply. Every result is NTSB text or coded data.
+
 Explore, keyword compare, case pages reached any other way, and the dashboard
 show NTSB data only. Those responses stay deterministic and publicly cacheable
 (DESIGN §11).
@@ -379,6 +384,8 @@ lives in the URL:
 | `/briefs/:id` | An AI result, showing the latest step. Visible only to the brief's current read owner and only while the brief lives (24 hours, DESIGN §2). Otherwise the expired state in §5 is shown. |
 | `/briefs/:id?step=n` | An earlier answer in the same brief (steps 1–4). A small "Answer 1 · 2 · 3" switcher sits under the question. |
 | `/briefs/:id?step=n&case=DFW08TA066` | Drawer open over a brief, with that step's AI context |
+| `/ai/:id` | An AI evidence search (§4.9): private to its owner while it lives (24 hours), otherwise the gone state. `?pages=n` shows the first n pages, `?case=` opens the drawer |
+| `/compare?cases=A,B&evidence=:id&pages=n` | Compare plus the evidence search's rows and notice |
 | `/cases/:ntsbNo` | Full case page, NTSB data only |
 | `/cases/:ntsbNo?brief=:id&step=n` | Full case page plus that brief step's AI context |
 | `/compare?cases=A,B,C,D` | Compare, up to four, NTSB columns only |
@@ -416,7 +423,8 @@ A centred, nearly empty page on the graticule:
 - the headline **"Learn from the record."**
 - a large question box with the serif italic placeholder "What happened, and
   what did investigators establish?"
-- two buttons, **Search** and **Ask AI · 3 free**
+- two buttons, **Search** and **Ask AI · 10 free** (the counter is the visitor's own, from the AI
+  status; Ask AI starts an AI evidence search, §4.9)
 - three example chips: "Carb icing on climb-out", "Stall/spin in the pattern"
   and "Power loss after maintenance"
 - one coverage line at the bottom: "24,291 completed US NTSB investigations ·
@@ -469,8 +477,11 @@ Facet order:
     (fatal in bold ink)
   - probable cause in serif, with matched terms highlighted in `blue-wash` with
     a blue underline
-- A quiet magenta-bordered nudge at the end: "Want these grouped and explained?
-  Ask the AI with these filters." It has its own Ask AI button.
+- A quiet magenta-bordered nudge at the end, with its own Ask AI button. Task 23 (Builder copy):
+  "Ask in plain English: AI reads your question into search words and filters you can check and
+  edit." and, while filters are set, "It reads only the question, not the filters set here." (an
+  AI search reads the question alone; it never groups or explains results). It replaced "Want
+  these grouped and explained? Ask the AI with these filters."
 
 Keyword results are complete matches with a real total. They are not "examples".
 
@@ -891,13 +902,14 @@ then state the processed cohort (DESIGN §5).
   Google" button, and then what is kept:
   - "We keep your Google account ID, email and name, and how many AI searches
     you've used."
-  - "Questions and answers are held for up to 24 hours to deliver them, then
-    deleted."
+  - "Questions and results are held for up to 24 hours to deliver them, then
+    deleted." (Task 23: "answers" became "results".)
   - "Delete your account any time from Account."
 
   It ends with a link to the privacy notice.
-- **First sign-in:** "Welcome aboard. You have 5 AI searches a day for your
-  first three days, then 20." Then a Continue button. The training-email
+- **First sign-in:** "Welcome aboard. You have 20 AI searches a day for your
+  first three days, then 50." with the numbers from `/api/config`'s `aiLimits` (Task 23; without
+  them, the account's own limit today: "You have 20 AI searches today."). Then a Continue button. The training-email
   checkbox the owner saw in the mockup is **deferred** (Owner) until an email
   provider exists, together with email/password accounts. When it returns, it
   is a separate, unticked opt-in, as DESIGN §7 requires.
@@ -927,7 +939,10 @@ then state the processed cohort (DESIGN §5).
 - **About page** (`/about`, a reading column like Privacy): "About AirCase" says
   what AirCase is (an aviation casebook for flight instructors and safety
   analysts), what it does today (keyword search with filters, a page for each case,
-  Compare for up to four cases, the dashboard; AI features are not available yet),
+  Compare for up to four cases, the dashboard; AI features are not available yet while the AI
+  status says AI is off, and once AI searches are offered (Task 23) "Ask in plain English: AI turns
+  your question into search filters and terms you can edit, and AirCase shows the investigations it
+  retrieved, in their own words."; while the status is unknown, neither),
   where the data comes from (the NTSB database, with the snapshot and coverage), what
   it is not (not an NTSB service, no operational advice), and, under "Built by", that
   it is built by Mariusz Kotas, with his website mkotas.cz (a link, in a new tab) and
@@ -935,16 +950,129 @@ then state the processed cohort (DESIGN §5).
   Kotas. Website: mkotas.cz. Contact: m@mkotas.cz." (Owner, 2026-10-24). The browser
   tab reads "About · AirCase".
 
+### 4.9 AI evidence view: "Investigations retrieved" (Owner, 2026-10-24; Task 23)
+
+The AI feature that opens first. Ask AI turns a plain-English question into an editable search
+interpretation and shows the NTSB investigations retrieved for it, in their own words. No AI
+writes result text: every result surface shows NTSB text, coded data, fixed copy or the reader's
+own words (gate G6 for generated summaries stays closed; contract `evidence.v1`,
+`shared/contracts/evidence.ts`; the design review's conditions 1, 2, 3 and 7). Briefs (§4.3–§4.6)
+stay readable while they live, but the interface starts none; while the server has briefs off
+(`aiLimits.briefsEnabled`), a brief shows no Refine, reading or Try again (Builder copy: "AirCase
+no longer refines or reruns briefs. Start a new AI search to keep going.").
+
+**Route** (Proposed): `/ai/:id`, private to its owner and linkable while the search lives (24 hours;
+the server sends it as a noindexed page titled "AI search · AirCase"). `?case=` opens the drawer,
+`?pages=n` shows the first n pages of the ranking, `?cases=` holds the compare selection. A sign-in
+started from the page moves the search to the account, like a brief.
+
+**Asking.** Ask AI on Home and Explore (and on an expired page) sends the question alone (`POST
+/api/evidence`, `kind: 'question'`) with the usual Turnstile, idempotency, visitor and quota
+handling; results open the page with page 1 already read. Explore's filters do not carry over (the
+contract's question request has none): the nudge under the results says so — "Ask in plain English:
+AI reads your question into search words and filters you can check and edit." and, with filters
+set, "It reads only the question, not the filters set here." A static scope reply (out of scope,
+operational, counting, comparison) has no page: it shows under the box, in the brief's form (§4.3
+"Scope outcomes"), and uses no search.
+
+**Layout**, one reading column (640px), top to bottom:
+
+1. YOUR QUESTION and the question as asked, in serif.
+2. **The interpretation**, a bordered box labelled "AI reading of your question" (magenta placard,
+   magenta-soft border, magenta wash) with three rows: SEARCH WORDS (a chip with ✎), FILTERS (a
+   muted context chip "Completed US investigations", one removable chip per filter value or year
+   range, "+ Filter") and NOT APPLIED: each unchecked reading as its fixed label in bold
+   (`UNCHECKED_LABEL`, e.g. "AirCase cannot check timing") and the question's own words in serif
+   italic quotes. Chips the AI chose are magenta; chips the reader added or changed are blue. After an
+   edited search the box is labelled "Your edited search" (blue) with "You changed the words or
+   filters of an earlier AI reading. The readings above that were not applied are from your
+   question."
+3. **Editing.** Removing chips, editing the words (Enter keeps, Escape cancels, empty is refused:
+   "Type at least one search word.") and "+ Filter" (a facet value, or a year range checked against
+   the coverage years) change a draft for free. Once it differs, "Search again · uses 1" (the AI
+   button, an `edited` search: a new 24-hour search with the original question and unchecked
+   readings) and "Undo changes" appear; before, a muted "Change the words or filters to search
+   again." "Show keyword results" (free) opens Explore with the draft's words and filters at any time.
+4. **"Investigations retrieved for your search"** (`EVIDENCE_HEADING`) and under it, always,
+   `EVIDENCE_NOTICE` in an ink-ruled note: "AirCase matched your words and filters. It has not checked
+   timing, causes or things that did not happen: read the excerpts."
+5. A count line: "21 retrieved · best match first · not every matching investigation" (DESIGN §5;
+   at the ceiling it adds "the most one search ranks"), and the key to the marks: "Marked in the
+   excerpts: your words · synonyms AirCase searched too".
+6. **Cards**, in rank order:
+   - the case facts exactly as Explore's rows show them (case number, date, aircraft, place,
+     status, Compare; the mono line, or one line per aircraft in a multi-aircraft event), the case
+     number and aircraft being the card's heading;
+   - every probable-cause statement, verbatim, labelled "NTSB · PROBABLE CAUSE", with its scope in a
+     multi-aircraft event ("· EVENT, BOTH AIRCRAFT" or "· AIRCRAFT A · …") and "· 1 OF 2" when there
+     are several; the report link ("NTSB report ↗", or the labelled search fallback) on the first
+     label line;
+   - up to three excerpts, each a whole paragraph under "NTSB · ANALYSIS" (section label, scope, and
+     "· TEXT 2" when the card shows two texts of one kind), on a 2px rule. A paragraph longer than
+     3,000 characters is collapsed under a fade with "Show the whole paragraph (n words)"; it is
+     never cut, all of it is in the page and all of it prints. A case with no passage to quote says
+     "No excerpt for this case. Its case page has the whole report narrative." with a link;
+   - the relevance facts in muted interface text, never as a reason: the applied filters it
+     satisfies, each search word's count in the excerpts shown ("“icing” 3 times", "a synonym of
+     “carb” 9 times", "not in these excerpts: “maintenance”"), and the searches that found it ("found
+     by keyword, similarity and case-narrative keyword search"; never "meaning match").
+7. **"Show the full section"** under each excerpt ("Show the full analysis section") opens the
+   section in place, read at the search's own generation (`GET /api/evidence/:id/cases/:ntsbNo`, never
+   the public case), at the excerpt's paragraph: that paragraph in ink on a 2px blue rule with the
+   search's marks, the rest of the section muted around it, scrolled into view and given focus
+   (screen readers hear "Start of the excerpt." and "End of the excerpt."). Text only, never markup.
+   If the section changed or is gone, it says so ("This section has changed since your search, so
+   the excerpt is not marked in it." / "This section is no longer in the case record, so it can't be
+   shown here."). "Show the excerpt only" closes it.
+8. **Paging**: "Showing 1–10 of 21 · Show 10 more" (free; the pinned ranking, ten at a time) moves
+   focus to the first new case; then "That's all 21 retrieved."
+9. "Only you can open this search. AirCase deletes it on 25 Oct 2026 at 22:13 UTC."
+
+**Highlights.** A literal occurrence of a search word is the existing `hit` mark (blue wash, solid
+blue underline); a synonym the analyzer matched is `hit-synonym` (no wash, dotted blue underline)
+and carries " (synonym)" for screen readers. Line and fill differ, so print and greyscale keep the
+difference; the legend says it in words.
+
+**States** (Builder copy unless quoted from the contract):
+
+| State | What shows |
+| --- | --- |
+| Empty | "No investigations were retrieved for this search." with "Filters: …" in words, the search words, and "Keyword search for “…”, without filters" (free) |
+| Tiny (1–2) | The cards, then "Only two investigations were retrieved." with the same filters and way out |
+| Gone or unknown | "This AI search is no longer available." / "AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it." with an empty box (Search, Ask AI) and [Ask again] from this page's memory only; tab "AI search expired · AirCase" |
+| Load failure | "This AI search didn't load." with Try again; a page that fails "The next investigations didn't load." |
+| Static reply | Under the box where it was asked, as §4.3 shows them |
+
+**Drawer, Compare and print.** The drawer opened from a card adds, after what investigators
+established, a section under the same heading with the notice, the relevance facts and the excerpts
+(each with its full section); "‹ n of N ›" follows the ranking and, past the last card shown, shows
+more. Compare opened from the tray (`/compare?cases=…&evidence=:id&pages=n`) shows "From your search
+“…”", the heading as a placard and the notice, and a last row per strip, "RETRIEVED FOR YOUR SEARCH":
+the relevance facts and the best excerpt, with "2 more excerpts on the search's page."; a case the
+search did not show says "Not among the investigations shown for your search."; a search that is gone
+says "The AI search these cases came from is no longer available, so its excerpts are not shown."
+Print (§7) keeps the heading, the notice, the interpretation and its unchecked readings, and the cards
+(collapsed paragraphs print whole, open sections print open); the editing, paging and section
+controls do not print; a print-only header names the page, the case numbers and the snapshot.
+
+**Phones.** The same order in one column: the interpretation's labels stack over their chips,
+chips wrap, the report link wraps under its label, and the page never scrolls sideways. The drawer is
+the full-screen case sheet (§6).
+
+**Limits.** Every number shown comes from the API: `/api/config`'s `aiLimits` (anonymous 10 a day,
+accounts 50 a day, new accounts 20 a day for their first 3 days, 600 a month, reset 00:00 UTC) and the
+visitor's own counts in `/api/ai/status`. Without them a line leaves the number out (§5).
+
 ## 5. States and copy (Owner-approved)
 
 **AI counter in the header:**
 
 | State | Text |
 | --- | --- |
-| Anonymous, fresh | "AI searches left: **3 of 3**" (number in magenta) |
-| Anonymous, one left | "AI searches left: **1 of 3**" |
+| Anonymous, fresh | "AI searches left: **10 of 10**" (number in magenta; every number from the visitor's AI status; "AI left **10 of 10**" below 700px, where the long form no longer fits) |
+| Anonymous, one left | "AI searches left: **1 of 10**" |
 | Trial used | Blue outline pill "Sign in to keep asking" |
-| Signed in | "AI left today: **18 of 20**" (always the number left) |
+| Signed in | "AI left today: **48 of 50**" (always the number left) |
 | Free searches paused, sign-in still open (Proposed) | Blue outline pill "Sign in to ask the AI" |
 | Trial used, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches used" (also while the configuration that says whether sign-in is offered cannot be read: it is read again until it can; nothing is said while its first read is on its way) |
 | Free searches paused, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches paused for today"; in the login-required mode "AI temporarily unavailable" (the same while the configuration cannot be read) |
@@ -980,16 +1108,16 @@ the tab gets focus until it can (Task 22).
 
 | Moment | Copy and behaviour |
 | --- | --- |
-| First Ask AI, anonymous | Panel titled "Quick check before your first AI search", with "Up to three free AI searches, subject to daily availability. Search, cases and comparisons never need this." The Turnstile widget sits inside it. The explanation is shown once per trial identity. |
+| First Ask AI, anonymous | Panel titled "Quick check before your first AI search", with "Up to ten free AI searches a day, subject to daily availability. Search, cases and comparisons never need this." (Task 23: the number and "a day" from `aiLimits`; with the visitor's status only, "Up to ten free AI searches, subject to daily availability."; with neither, "Free AI searches are subject to daily availability.") The Turnstile widget sits inside it. The explanation is shown once per trial identity. |
 | Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly, then "Starting…" while the request is on its way (Task 22, Proposed: the server answers once the scope stage is done, a few seconds). Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
-| Trial used up | "That was your third free AI search." / "Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days." / [Continue with Google] / "Search, case pages, compare and the dashboard stay open without an account." Shown **only while signed-in capacity remains**. Where sign-in is not offered (Task 22, Proposed): "That was your third free AI search." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
+| Trial used up | "That was your tenth free AI search today." / "Sign in with Google to keep asking. New accounts start with 20 AI searches a day, rising to 50 after three days." / [Continue with Google] / "Free AI searches return at 00:00 UTC. Search, case pages, compare and the dashboard stay open without an account." Shown **only while signed-in capacity remains**. Task 23: the anonymous allowance is daily; every number comes from `aiLimits` and the time from the status's `retryAt`, and a line the API gives no number for leaves it out ("Sign in with Google to keep asking."). Where sign-in is not offered (Task 22, Proposed): "That was your tenth free AI search today." / "Free AI searches return at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
 | AI paused for today | Ink-edged box: "AI search is done for today." / "This beta runs on a small daily AI budget, and today's is used up. It resets at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. Shown to everyone, signed in or not. This is a normal state. Proposed variants: for the monthly budget, "AI search is done for this month." / "It returns on {date}."; for maintenance or a provider outage, "AI search is temporarily unavailable." with no time promised. |
 | Operational question | Blue-edged box: "This tool studies past investigations." / "It can't help with a flight in progress or a maintenance decision. In flight, contact ATC. For airworthiness, use your aircraft's approved data and a certificated mechanic." / "You can still look for past cases like yours:" plus two blue suggestion chips. Static text; no AI-written advice. |
 | Failure | "The AI search didn't finish." / "Something went wrong before an answer was ready." / [Try again] [Search by keyword instead]. Add "This didn't use one of your searches." if nothing was spent, or "This counted as a search, because the AI work was already under way." if it was. Try again sends the same request (Task 22, Proposed): a failed refinement is refined again with its change; where that is impossible there is no Try again but "This brief has used its three refinements. Start a new search to keep going." or "The changed reading can't be tried again from here. Start a new search to keep going." with [New search]. A Try again that fails too adds, in the same card, "Trying again didn't finish either." and whether it counted. |
 | No results | "No completed investigations match all of this." Below it, the query and filters in words, and suggestion chips with real counts for removing one filter at a time, e.g. "without Fatal · 1 case", "without Phase: Taxi · 102 cases", "include other records". |
 | Free searches paused, visitor's trial untouched (Proposed) | "Free AI searches are used up for today." / "Signed-in AI search is still open today. Sign in with Google to ask." / [Continue with Google] / "Free searches return tomorrow; keyword search and every case work now." Also used in the login-required emergency mode (DESIGN §7), with the last sentence dropped. Where sign-in is not offered (Task 22, Proposed): "Free AI searches are used up for today." / "Free searches return tomorrow; keyword search and every case work now."; in the login-required mode, the "AI search is temporarily unavailable." box. |
-| Signed-in daily cap (Proposed) | "You've used today's 20 AI searches." (5 for new accounts) / "They reset at 00:00 UTC. Keyword search, cases and compare work as usual." |
-| Signed-in monthly cap (Proposed) | "You've used this month's 150 AI searches." / "They reset on 1 {month}. Keyword search, cases and compare work as usual." |
+| Signed-in daily cap (Proposed) | "You've used today's 50 AI searches." (20 for new accounts; the account's own limit from its status) / "They reset at 00:00 UTC. Keyword search, cases and compare work as usual." |
+| Signed-in monthly cap (Proposed) | "You've used this month's 600 AI searches." / "They reset on 1 {month}. Keyword search, cases and compare work as usual." |
 | Extra check, signed in (Proposed) | Same panel as the first anonymous check, titled "Quick check before this AI search". |
 | Brief expired (Proposed) | "This AI search has expired. We delete questions and answers after 24 hours." / An empty search box with [Search] and [Ask AI]. The server keeps nothing to restore. If the question is still held in the memory of the page already open in this tab, [Ask again] can refill the box. The question is never written to browser storage; while an AI request is on its way, and if it gets no reply, the tab's session storage keeps a one-way hash of that request, a random retry key and the time it saved them, so trying again within 24 hours isn't counted twice (Task 22: written before the request leaves, so a reload in flight replays it). Server retention is never extended. |
 | Limit reached (rate) (Proposed) | "Slow down a moment. Try again in {n} seconds." Uses the 429 retry information. For two minutes or more, the per-network hourly and daily limits (Task 22, Proposed): ink-edged box "AI searches from this network are limited for now." / "Try again in 58 minutes." (under an hour) or "Try again after 15:01 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
@@ -1091,6 +1219,8 @@ browser with the same stylesheet. Print uses:
 - the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
   line "Built by Mariusz Kotas · mkotas.cz" (the website prints as text)
 - strips that never split across pages
+- the AI evidence view (§4.9) with its heading, notice, interpretation and unchecked readings, and
+  its cards whole (long paragraphs print open); its controls do not print
 
 ## 8. Accessibility (Proposed)
 
@@ -1274,3 +1404,19 @@ counting rules.
 
   The working mockups in `docs/mockups/` predate the mark and the header line; this
   document wins.
+- **The AI feature launches as an extractive evidence view** (§4.9; Task 23). A question becomes an
+  editable search interpretation, and AirCase shows the NTSB investigations retrieved for it, in their
+  own words; AI writes no result text. Generated summaries stay gated (G6 closed); the brief pipeline
+  stays in the code, off by default on the server, and the interface starts no brief. The design
+  review's conditions bind the interface: "retrieved for your search", never "matching" or "answering";
+  the fixed notice on every surface whatever the unchecked readings say; whole paragraphs, the full
+  canonical section as the context view; unchecked readings shown and never applied; "similarity
+  search", never "meaning match"; the two paths kept apart.
+- **Limits** (owner decision of 2026-10-24): anonymous visitors 10 AI searches a day, accounts 50 a
+  day, new accounts 20 a day for their first 3 days, 600 a month, all reset at 00:00 UTC. The interface
+  states only numbers the API reports (`/api/config` `aiLimits`, `/api/ai/status`).
+- Builder calls, for the owner's review: the route `/ai/:id`; the labels "AI reading of your
+  question", "Search words", "Not applied", "Your edited search"; "Show more" paging with `?pages=n`;
+  the relevance line's wording; the empty, tiny and gone copy; collapsing paragraphs over 3,000
+  characters; the Explore nudge's new copy; the header counter's short form below 700px; and a brief
+  made read-only while the server has briefs off.

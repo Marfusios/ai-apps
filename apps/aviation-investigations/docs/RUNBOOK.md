@@ -48,7 +48,9 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    Restart with the new environment settings, then use `pnpm worker ai-switch --on`
    only after clearance. A restore hold still blocks payment until reconciliation.
 6. Check `/api/config.aiLimits` and `/api/ai/status`, the default-off brief POST/refine
-   gate (404), and metadata-only traces. Start any authorized paid smoke test with one
+   gate (404), and metadata-only traces. The web client states only the limits these two
+   report (Ask AI, the counter, the first check, the welcome), and its Ask AI starts an
+   evidence search, never a brief. Start any authorized paid smoke test with one
    request inside the existing ledger; do not bypass admission for a demonstration.
 
 `pnpm worker ai-switch --off` immediately refuses new paid evidence searches; saved
@@ -991,10 +993,10 @@ on for an environment:
    `shared/privacy.ts`, and deploy (done: the owner approved the notice on 24 October
    2026). Without a final notice live keeps sign-in off whatever is
    configured, and says so in the startup log ("Google sign-in off ... final privacy
-   notice"). In the same release that opens AI searches, update the About page too:
-   `web/src/pages/About.tsx` says "AI features are not available yet." as fixed text,
-   not tied to the AI switch, so it goes stale the day AI opens (`tests/web/brand.test.tsx`
-   checks the line and needs the same change).
+   notice"). The About page's AI line follows the AI status (Task 23): "AI features are
+   not available yet." while `/api/ai/status` says AI is off, and the evidence view's line
+   once AI searches are offered, so opening AI needs no change there
+   (`tests/web/brand.test.tsx` checks both).
 1. In the Google Cloud console, configure the OAuth consent screen (External; the app
    name AirCase, support email and the privacy notice URL `<APP_URL>/privacy`; scopes `openid`,
    `email` and `profile` only, which need no verification) and create an OAuth client of
