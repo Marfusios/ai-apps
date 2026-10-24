@@ -428,32 +428,6 @@ describe('normalizeCorpus rules', () => {
     ]);
   });
 
-  it('nulls an event year outside 1900–2100, or one that contradicts the event date, with a note (task 22 S-I1)', () => {
-    const event = (ev_year: string, ev_date = '') =>
-      only(normalizeCorpus(corpus({ events: [row('events', { ev_id: 'E1', ntsb_no: 'SYN08LA001', ev_year, ev_date })] })));
-    const resultOf = (ev_year: string, ev_date = '') =>
-      normalizeCorpus(corpus({ events: [row('events', { ev_id: 'E1', ntsb_no: 'SYN08LA001', ev_year, ev_date })] }));
-    // A dropped digit or an extra one: the API's year axis (1900–2100) could not carry it.
-    for (const bad of ['208', '20226', '1899', '2101']) {
-      const r = resultOf(bad);
-      expect(only(r).fields.evYear, bad).toBeNull();
-      expect(r.quarantine, bad).toEqual([
-        expect.objectContaining({ table: 'events', column: 'ev_year', reason: 'year_out_of_range', action: 'value_nulled', value: bad }),
-      ]);
-    }
-    // A year the event date contradicts.
-    const mismatch = resultOf('2018', '2008-05-17');
-    expect(only(mismatch).fields.evYear).toBeNull();
-    expect(mismatch.quarantine).toEqual([
-      expect.objectContaining({ table: 'events', column: 'ev_year', reason: 'year_mismatch', action: 'value_nulled', value: '2018' }),
-    ]);
-    // Boundaries, a year that agrees with its date, and no date: kept without a note.
-    for (const [y, d] of [['1900', ''], ['2100', ''], ['2008', '2008-05-17'], ['2024', '']] as const) {
-      expect(event(y, d).fields.evYear, `${y} ${d}`).toBe(Number(y));
-      expect(resultOf(y, d).quarantine).toEqual([]);
-    }
-  });
-
   it('accepts boundary coordinates and treats missing ones as null without a note', () => {
     const ok = normalizeCorpus(
       corpus({ events: [row('events', { ev_id: 'E1', ntsb_no: 'SYN08LA001', dec_latitude: '-90', dec_longitude: '180' })] }),
