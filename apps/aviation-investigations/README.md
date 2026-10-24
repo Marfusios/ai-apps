@@ -1739,34 +1739,43 @@ log what keeps any part off (setting names only). The tables are in migration 00
 
 ### AI evidence view
 
-The backend contract is `evidence.v1` (`shared/contracts/evidence.ts`). This is an
-extractive search, not a generated answer. `scope.e2` produces editable, typed filters
-and search terms plus verbatim fragments of the question labelled as unchecked
-readings. Unsupported timing, causation, absence and ambiguity remain unapplied.
-There are no default timing windows. The UI must always display `EVIDENCE_NOTICE`,
-including when the model emitted no specific unchecked readings.
+The backend contract is `evidence.v2` (`shared/contracts/evidence.ts`). Original-question
+retrieval runs independently of the advisory `scope.e3` generator. Its suggested filters
+and terms are **not applied**. Render them as text under `EVIDENCE_SUGGESTION_LABEL`;
+never render model text as HTML. All surfaces keep `EVIDENCE_NOTICE`. This beta has no
+specific unchecked readings or generated factual prose.
 
 `POST /api/evidence` accepts either:
 
-- `{kind: "question", question, idempotencyKey, turnstileToken?}`: one scope call,
-  then one query embedding and retrieval.
-- `{kind: "edited", from, filters, terms, idempotencyKey, turnstileToken?}`: an owned,
-  unexpired search's original question and unchecked readings, with the user's new
-  filters and terms. It skips scope; a cleared filter stays cleared. It creates a new
-  search against the current published generation.
+- `{kind: "question", question, idempotencyKey, turnstileToken?}`: one optional-suggestion
+  scope attempt, then one query embedding and retrieval over the default cohort with
+  **no model-applied filters**. Scope error, timeout, invalid or over-cap output returns
+  ordinary results with `suggestion: null` and settles any scope spend.
+- `{kind: "edited", from, filters, terms?, idempotencyKey, turnstileToken?}`: an owned,
+  unexpired search's original question, with exactly the user-supplied filters. Omitted
+  `terms` retains the parent's executed query; present `terms` explicitly accepts or
+  types a replacement. Applying suggested filters alone never accepts suggested terms.
+  A removed filter stays removed. Edits skip scope and use the current publication.
 
-The result is a synchronous 201 with `{kind: "results", search: EvidencePage}`.
-Off-topic, operational-advice, statistics and named-case-comparison requests get
-200 `{kind: "scope_reply", reply}` from static server templates. There is no
-clarification round or generated-summary fallback. An invalid scope output,
-incomplete retrieval or projection failure answers 503 with no private diagnostic.
+A synchronous 201 returns `{kind: "results", search: EvidencePage}`. The page records
+`query: {source: "question"} | {source: "edited", terms}`, `appliedFilters`, nullable
+`suggestion: {filters, terms}` and nullable `hint`. It has no `interpretation` or `edited`
+response field. A filter-only edit may still have `query.source: "question"`.
+Explicit statistics and named-case comparisons add non-blocking hints above results:
+`{kind: "corpus_statistics", filters}` links to the dashboard with applied filters;
+`{kind: "case_comparison", found, notFound}` links up to four case numbers. A single ID,
+a negated comparison or an injected ID list is insufficient. Only explicit off-topic
+or operational-advice requests recognized by the server's conservative versioned
+routing grammar receive static 200 policy replies and no results. Model intents have
+no routing authority. Ambiguous requests keep search available. There is no generated
+answer or clarification fallback. Retrieval/projection failures still return 503.
 
-`retrieval.v2` fuses the production three channels (passage BM25, passage similarity,
-and cases narrative BM25), 200 candidates per channel with its existing exact fusion
-and tie ordering. For a question, all three channels use the original question with the interpreted
-filters. Model terms only drive highlights and relevance counts and initialize the
-editable terms. For an edit, all three channels use the user's edited terms.
-`evidence.v1` extends mapping to the first 100 cases. Mapping uses at most eight concurrent requests within the shared retrieval deadline.
+`retrieval.v2` fuses passage BM25, passage similarity and cases narrative BM25, 200
+candidates per channel with the existing fusion and tie ordering. All three channels,
+cohort, ranking, excerpts and pagination use only the executed query and user filters.
+Suggested terms affect highlights and occurrence labels only; without a suggestion,
+those use the executed query's words. They do not establish satisfaction of the question.
+`evidence.v2` maps at most 100 cases with eight concurrent requests inside the shared deadline.
 It stores that ranking, concrete
 indices, canonical generation, retrieval seed spans, channels and result projection.
 It has 10 cases/page and at most 10 pages; `total` is the saved candidate count, not
@@ -1802,6 +1811,10 @@ before storage and enforced by the database. Oversized results fail without trun
 returning the quota unit and settling actual spend.
 Generation and index cleanup honor the live-search references, including after republish.
 
+The ordinary result is projected and byte-checked before suggested highlights are added.
+If optional suggestion metadata would exceed the storage budget, it is omitted and the
+original query's highlights remain. Canonical text and selection never change to make room.
+
 Each finished, replayable results search counts once; edits count again; paging and
 idempotent retries are free. Static scope replies and failures return the quota unit,
 while actual or uncertain provider spend remains charged. A lost HTTP response can be
@@ -1814,21 +1827,32 @@ the first 3 days; accounts also have 600/month. `/api/config.aiLimits` and
 `/api/ai/status` report the configured limits and the visitor's remaining allowance.
 The legacy setting name `AI_ANONYMOUS_TRIAL_REQUESTS` now means per UTC day.
 
-With the repository's Haiku scope and OpenAI embedding price rows, the hard maximum
-is $0.0011325 (scope input 6,500, output 600, full cache-write premium; embedding
-1,000 tokens), rounded up to a **$0.0012 reservation**. Startup derives this from the
-configured models; it is not the generated-summary reservation. No generation retries
-run. Over-cap or truncated scope output fails closed without cropping. The free
-`ai-preflight` also measures `scope.e2`; provider measurement and scope/excerpt quality
-checks remain required before public AI launch. Offline tests are not model-quality
-clearance. The schema-bound output is larger than the existing 600-token cap; the
-preflight reports this explicitly. Caps and prices have not been raised. Resolve this
-with measured provider counts and a reviewed schema/cap choice before public launch.
-The flat scope output is versioned `scope.e2` (the module path stays `scope.e1.ts` for
-existing tooling); scope quality evaluation must use this new version.
-Anthropic receives a strict `{result: ...}` output envelope; the adapter unwraps it
-before returning the logical scope result. Token counting and output preflight use
-the same envelope. This transport encoding does not change prompt or filter rules.
+The evidence scope caps are separate from the disabled summary pipeline: 10,000 input
+and 2,500 output tokens, plus a cache-write premium on up to 6,500 prefix tokens and
+1,000 embedding tokens. With the repository's Haiku/OpenAI price rows this costs at most
+**$0.0024325**, rounded up to a **$0.0025 reservation**. Edits keep that conservative
+reservation and settle only their embedding. No generation retries run. A scope failure
+only removes the suggestion; successful retrieval still consumes one search unit.
+
+`scope.e3` uses the revision1 suggestion prompt, with unchecked readings removed and
+advisory wording. It retains the single-value enum discriminator inside the strict
+`{result: ...}` wire envelope. The adapter unwraps it and validates the inner union;
+counting and generation share the same schema. The free provider preflight measured
+5,701 fixed input tokens, 5,674 cached prefix, 6,192 Latin / 7,190 dense question input
+and 1,118 bounded-output tokens; all fit. Run it again for the deployed configuration.
+These are sizing checks, not interpretation-quality clearance.
+
+Pre-v2 saved searches are not re-labelled or reused as edit parents: reads return 404
+and those private rows expire normally. Migration `0024_evidence_query` makes the stored
+version, query and applied filters immutable even while scope is running. Idempotency
+hashes include the contract version.
+
+Before public launch, freeze the routing grammar, prompt/schema/caps and UI contract,
+then confirm on fresh questions: 100% static-template routing accuracy, zero false
+static blocks on critical searches, zero injection-induced unauthorized behaviour,
+with routing errors and Wilson intervals reported. Track C/N is regression material;
+the earlier failed scope evaluation is not clearance. The excerpt/provenance/UI gates
+also remain required. Generated summaries remain separately gated.
 
 `AI_BRIEFS_ENABLED=false` is the default and must stay off while G6 for generated
 summaries is closed. It disables create/refine with 404 even with provider keys present;

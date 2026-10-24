@@ -383,22 +383,30 @@ copy of source evidence or the store for users/quotas.
 
 ## 5. Hybrid retrieval and bounded RAG
 
-### Evidence-view MVP (`evidence.v1`)
+### Evidence-view MVP (`evidence.v2`)
 
 This is the initial AI product; the composed-answer pipeline below is disabled.
-`POST /api/evidence` calls `scope.e2` then one embedding, or skips scope for an edit of
-an owned search. Scope returns supported `BriefFilters`, editable terms and several
-allowlisted unchecked categories with exact quotes from the question. It never
-applies a default timing/causation interpretation. The fixed notice about unchecked
-conditions is mandatory regardless of what the model detected. Off-topic, operational,
-statistics and comparison intents use static server replies, not model prose.
+`POST /api/evidence` tries the advisory `scope.e3` stage then embeds the original
+question; edits skip scope. Scope is revision1 with unchecked readings removed,
+advisory wording and a strict `{result: ...}` envelope around its discriminated union.
+Suggestions are labelled **not applied**, escaped/rendered as text, and never control
+routing or retrieval. The result carries the executed `query`, `appliedFilters`,
+nullable `suggestion` and nullable `hint`; no specific unchecked readings are shown.
+The fixed `EVIDENCE_NOTICE` remains mandatory. Provider errors, timeouts, invalid or
+over-cap scope output remove only the suggestion; retrieval and its quota unit remain.
+Only server-recognized explicit off-topic/operational requests get static policy
+replies. Statistics and comparison requests instead add non-blocking hints; an ID alone
+never requests comparison. Ambiguous, negated and injected requests stay ordinary search.
+The versioned server grammar needs fresh routing confirmation before public launch.
 
 The three-channel `retrieval.v2` ranking stays unchanged (200/channel, exact case RRF,
 deterministic lexical cutoffs; kNN remains approximate). Delivery is separately versioned:
 100 candidates, ten/page, mapping over those first 100 with the same query vector
 and at most eight concurrent Elasticsearch requests. All three channels use the
-original question, with interpreted filters; model terms only initialize edits and
-drive highlights/relevance counts. An edit uses user terms for all three channels. A
+original question with no suggested filters. Explicit edits apply exactly the submitted
+filters. Omitted terms inherit the parent's executed query, never the suggestion;
+supplied terms explicitly replace it. Highlights/counts use suggested terms when present,
+otherwise the executed query words, and describe occurrences, not question satisfaction. A
 search stores its ranking and projection, generation, both concrete indices and seeds.
 A new edited search uses the current publication. An existing search's free pages never
 change or call a provider. Prune/cleanup preserve its references until the 24-hour expiry.
@@ -429,11 +437,20 @@ and the 30-second server deadline can stop it.
 Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
 context-loss counterexamples through the actual UI, including required context on the
 initial surface; test exact provenance and no generated factual prose across all views.
-Scope evaluation needs fresh question families, per-field precision/recall (targets
-98%/95%), and zero observed critical erroneous hard filters; critical unchecked-note
-recall is 100%, overall target 95%. Track C/N is regression material, not fresh confirmation.
-Provider token-count preflight is separate from offline software tests. The old summary
-G6, partial-display gate and disabled `check.v9/medium` baseline are unchanged.
+Fresh confirmation must retain 100% static-template routing accuracy, zero false static
+blocks on critical search questions and zero injection-induced unauthorized behaviour;
+report every routing error and Wilson intervals. Freeze `evidence.v2`, `scope.e3` and
+`evidence-routing.v2`. The earlier scope evaluation remains failed; Track C/N supplies
+regressions only. Metamorphic tests vary every model output while holding all three
+retrieval channels, default cohort, ranking, excerpt selection and pagination fixed.
+The ordinary result is projected and byte-checked before suggested highlights are added.
+If optional suggestion metadata would exceed the storage budget, it is omitted and the
+original query's highlights remain. Canonical text and selection never change to make room.
+
+Provider token-count preflight is separate from model-quality confirmation. The old
+summary G6, partial-display gate and disabled `check.v9/medium` baseline are unchanged.
+Pre-v2 searches stay unreadable and cannot be edit parents; they expire at their
+original deadline. Migration 0024 freezes version, executed query and applied filters.
 
 ### Experimental composed-answer pipeline (disabled)
 
@@ -679,7 +696,7 @@ and once
 
 Describe the offer as “Up to ten free AI searches a day, subject to availability.”
 The anonymous share is still 25% of the paced interactive allowance. At the evidence
-reservation of $0.0012, $0.67 can admit about 558 searches at their worst case; these
+reservation of $0.0025, $0.67 can admit about 268 searches at their worst case; these
 are monetary ceilings, not a promised visitor allocation. Network and concurrency
 limits still apply. Exhausted capacity remains a normal
 state, not an edge case. Offer “Sign in to continue” only while authenticated
@@ -878,22 +895,21 @@ initially; ambiguous retries must not multiply unaccounted charges.
 
 `server/evidence/pricing.ts` derives the reservation from the configured scope and
 embedding models and their hard caps. With Haiku 5.5 and `text-embedding-3-small`,
-6,500 scope input tokens (including a possible cache-write premium on all 6,500),
-600 output tokens and 1,000 embedding tokens cost at most **$0.0011325**. Round up
-to $0.0012 per admitted search. Edited searches skip scope but use the same conservative
-reservation; settlement releases the unused amount. There is one attempt per stage,
-no fallback to another model or generated summary. A scope output that hits its cap
-fails closed and returns its search unit while keeping the provider charge.
+10,000 scope input tokens, a cache-write premium on up to 6,500 prefix tokens,
+2,500 output tokens and 1,000 embedding tokens cost at most **$0.0024325**. Round up
+to **$0.0025** per admitted search. These scope caps are independent of `scope.v2` for
+summaries. Edited searches skip scope but keep the conservative reservation; settlement
+releases the unused amount. One attempt per stage, no model or generated-summary fallback.
+A failed scope is charged for known usage or its own worst case when uncertain;
+retrieval continues with no suggestion. Only a search without results refunds its unit.
 
-Startup validates the evidence reservation while `AI_BRIEFS_ENABLED` is false. The
-free `ai-preflight` counts the actual `scope.e2` prompt/schema, maximal questions,
-cache prefix and output at its schema bounds. The flat scope.e2 schema currently
-allows output exceeding the 600-token cap; preflight reports OVER, and public launch
-requires a measured, reviewed schema/cap decision. No cap or reservation is raised
-automatically. Re-enabling briefs would inherit the shared daily evidence allowances. Its measured input cap stays enforced at
-runtime. No provider calls are made by the offline test suite. Frozen scope-quality
-and fresh provider preflight gates remain necessary before enabling public traffic.
-The generated-summary prices below describe the disabled experimental path.
+Startup derives and validates the evidence reservation. Free `ai-preflight` counts the
+actual `scope.e3` prompt/schema, questions, cache prefix and bounded output: measured
+5,701 fixed / 5,674 cached, 6,192 Latin / 7,190 dense input, 1,118 output, all within caps.
+Repeat against the deployment's frozen settings. No provider calls run in offline tests.
+Fresh routing/quality confirmation is still required. Re-enabling briefs would inherit
+the evidence-sized daily allowances and needs separate quota/cost review. The prices
+below describe the disabled generated-summary pipeline.
 
 ### Provider switching
 
