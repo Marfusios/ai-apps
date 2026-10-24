@@ -15,7 +15,7 @@ import { Placard } from '../components/Placard';
 import { SearchBox } from '../components/SearchBox';
 import { AiNoticeBox, COPY } from '../features/ai/AiNoticeBox';
 import { busyLabel } from '../features/ai/AskAiButton';
-import { arrived } from '../features/ai/unsettled';
+import { arrived, departed } from '../features/ai/unsettled';
 import { briefStepQuery, cancelBrief, isFinished } from '../features/brief/api';
 import { useAskAi } from '../features/ai/useAskAi';
 import { BriefChips } from '../features/brief/BriefChips';
@@ -264,7 +264,9 @@ export function Brief() {
   // page commits.
   const shownStep = step?.briefId === id ? step.step : null;
   useLayoutEffect(() => {
-    if (valid) arrived(id, shownStep);
+    if (!valid) return;
+    arrived(id, shownStep);
+    return () => departed(id, shownStep);
   }, [id, valid, shownStep]);
 
   // A finished step never changes: keep it under its number too, so the step switcher and

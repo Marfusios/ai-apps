@@ -2002,6 +2002,64 @@ describe('Write-ahead keys: a reload while the request is in flight pays once (r
     }
   });
 
+  it('a lost refinement replayed for the step the page already shows is settled at once: the next same change starts a new step (re-review F-1)', { timeout: 20_000 }, async () => {
+    freshApi();
+    installTurnstile();
+    const ID = '00000000-0000-4000-8000-00000000f011';
+    const at = '2026-10-22T10:00:00.000Z';
+    const common = { briefId: ID, question: MOCK_SEED_QUESTION, startedAt: at, expiresAt: '2099-10-23T10:00:00.000Z' };
+    const answer = { ...common, step: 1, origin: { kind: 'question' }, stage: 'done', finishedAt: at, result: RESULT_SAMPLES.answer, checklist: { question: 'in_scope', searched: { cases: 3, passages: 9 }, written: true, verified: 'partially_checked', removedStatements: 0 } };
+    const failedStep = (n: number) => ({ ...common, step: n, origin: { kind: 'text', text: 'only helicopters' }, stage: 'failed', finishedAt: at, result: { kind: 'failed', countedAsSearch: false }, checklist: {} });
+    // A small brief server: step 1 answered; each refinement adds a failed step; a key it has seen replays its step.
+    const steps: Record<string, unknown>[] = [answer];
+    const byKey = new Map<string, number>();
+    const keys: string[] = [];
+    let loseNext = true;
+    const view = (n: number) => BriefStepResponseSchema.parse({ ...steps[n - 1], steps: steps.length, refinementsLeft: 4 - steps.length });
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) => {
+        const n = Number(new URL(request.url).searchParams.get('step') ?? steps.length);
+        return HttpResponse.json(view(n));
+      }),
+      http.post('*/api/briefs/:id/refine', async ({ request }) => {
+        const key = ((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey;
+        keys.push(key);
+        let n = byKey.get(key);
+        if (n === undefined) {
+          steps.push(failedStep(steps.length + 1));
+          n = steps.length;
+          byKey.set(key, n);
+        }
+        if (loseNext) {
+          // Admitted and started, but the answer never arrives.
+          loseNext = false;
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({ kind: 'started', briefId: ID, step: n, stage: 'failed' }, { status: 202 });
+      }),
+    );
+    const first = renderApp(`/briefs/${ID}`);
+    fireEvent.change(await screen.findByRole('textbox', { name: /^refine$/i }, SLOW), { target: { value: 'only helicopters' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
+    expect(await screen.findByText('If it went through, Try again opens it without using another search.', {}, SLOW)).toBeTruthy();
+    // A reload: the page now shows the step the lost request started (it failed).
+    first.unmount();
+    forgetUnsettledMemoryForTests();
+    renderApp(`/briefs/${ID}`);
+    const switcher = await screen.findByRole('navigation', { name: 'Answers in this brief' }, SLOW);
+    expect(within(switcher).getByRole('link', { name: 'Answer 2, latest' })).toBeTruthy();
+    // Try again sends the same change: a replay of the lost request's key, answered with the step on screen ...
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    await waitFor(() => expect(keys).toHaveLength(2), SLOW);
+    expect(keys[1]).toBe(keys[0]);
+    // ... which settles it at once: Try again again starts a new step under a new key.
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    await waitFor(() => expect(keys).toHaveLength(3), SLOW);
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(await screen.findByRole('link', { name: 'Answer 3, latest' }, SLOW)).toBeTruthy();
+    expect(stored()).toEqual({});
+  });
+
   it('a check refused before anything is sent writes nothing for the tab', async () => {
     freshApi();
     window.turnstile = {

@@ -216,13 +216,27 @@ export function forgetUnsettled(id: string, key?: string): void {
  */
 const arriving = new Map<string, { id: string; key: string; step: number | 'page' }[]>();
 
+/** What the brief page shows now (`arrived`, `departed`): a 2xx for what is already on screen settles at once. */
+let onScreen: { briefId: string; step: number | null } | null = null;
+
 /**
  * A 2xx answered a request for brief `briefId`: its key is settled when the page takes over
  * (`arrived`), not before, so a second ask in that gap replays the key rather than start
- * (and pay for) another.
+ * (and pay for) another. A 2xx for what the page already shows (a replay answered with the
+ * step on screen, after a lost response and a reload) settles at once: nothing more will
+ * arrive for it (re-review F-1).
  */
 export function settleOnArrival(briefId: string, step: number | 'page', id: string, key: string): void {
+  if (onScreen?.briefId === briefId && (step === 'page' || onScreen.step === step)) {
+    forgetUnsettled(id, key);
+    return;
+  }
   arriving.set(briefId, [...(arriving.get(briefId) ?? []), { id, key, step }]);
+}
+
+/** The brief page no longer shows step `step` of brief `briefId` (it moved on, or left). */
+export function departed(briefId: string, step: number | null): void {
+  if (onScreen?.briefId === briefId && onScreen.step === step) onScreen = null;
 }
 
 /**
@@ -230,6 +244,7 @@ export function settleOnArrival(briefId: string, step: number | 'page', id: stri
  * waiting for that are settled (each under its own key only).
  */
 export function arrived(briefId: string, step: number | null): void {
+  onScreen = { briefId, step };
   const waiting = arriving.get(briefId);
   if (!waiting) return;
   const rest = waiting.filter((w) => {
@@ -250,6 +265,7 @@ export function resetUnsettledForTests(): void {
 export function forgetUnsettledMemoryForTests(): void {
   memory.clear();
   arriving.clear();
+  onScreen = null;
 }
 
 /** Forget every entry, in memory and in this tab's storage (the visitor changed: web/src/features/auth/visitor.ts). */
