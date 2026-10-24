@@ -94,7 +94,7 @@ compressed or 1 GiB expanded (counted on the bytes actually written).
 **Export.** The image is a digest-pinned `debian:bookworm-slim` with
 `mdbtools=1.0.0+dfsg-1.1`, running as uid 65534; its image ID is recorded. Each
 table runs in its own container with `--network none --read-only --cap-drop ALL
---security-opt no-new-privileges --memory 1g --cpus 2 --pids-limit 64`. The root
+--security-opt no-new-privileges --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64` (no swap beyond the 1 GB). The root
 filesystem and the MDB mount are read-only, there is no writable host mount, and the
 host streams stdout to the CSV. The flags `-D %Y-%m-%d -T
 %Y-%m-%dT%H:%M:%S` keep dates unambiguous without inventing time zones.
@@ -112,7 +112,9 @@ can report read errors and still exit 0.
   operator names, addresses, contact fields or editor IDs.
 
 The raw export is deleted, and the 0700 staging directory is published by one atomic
-rename, with `manifest.json` written last.
+rename, with `manifest.json` written last. A failed or interrupted run removes what it
+created, except a destination that already holds `manifest.json`: a signal handled just
+after the rename must not delete the finished extraction.
 
 **Why.** Parsing an external Access file is the riskiest step. In the container, a
 parser exploit gets no network, no credentials, a read-only root and input, and no

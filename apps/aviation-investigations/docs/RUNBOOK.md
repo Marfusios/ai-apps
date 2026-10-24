@@ -470,7 +470,7 @@ APP_ENV=dev pnpm worker extract --archive data/research/avall.zip --sha256 <hex>
 Its containers are named `ai-aviation-<env>-extract-<hex>` and labelled as one-off
 containers of service `extract` in project `ai-aviation-<env>`, so they appear in
 `pnpm app:ps` while they run. They have no network, a read-only root, no
-capabilities, uid 65534, 1 GB memory, 2 CPUs and 64 processes, and are always
+capabilities, uid 65534, 1 GB memory and no swap, 2 CPUs and 64 processes, and are always
 removed afterwards.
 
 Loading, verification and the other worker commands then run in the

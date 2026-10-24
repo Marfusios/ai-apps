@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { Transform, Writable } from 'node:stream';
@@ -36,6 +36,8 @@ export const SANDBOX_FLAGS = [
   '--security-opt', 'no-new-privileges',
   '--user', '65534:65534',
   '--memory', '1g',
+  // Without it the container could use as much swap again.
+  '--memory-swap', '1g',
   '--cpus', '2',
   '--pids-limit', '64',
 ] as const;
@@ -459,6 +461,17 @@ export interface ExtractOptions {
 }
 
 /**
+ * Remove what an interrupted or failed extraction leaves: its staging directory, and the
+ * reserved destination unless that already holds the finished extraction. The rename that
+ * publishes it can complete before the run records it (a signal handled in between), so the
+ * destination's `manifest.json`, written last and absent from the empty reservation, decides.
+ */
+export function cleanupExtraction(paths: { dest: string; staging: string }, state: { stagingCreated: boolean; published: boolean }): void {
+  if (state.stagingCreated) rmSync(paths.staging, { recursive: true, force: true });
+  if (!state.published && !existsSync(join(paths.dest, 'manifest.json'))) rmSync(paths.dest, { recursive: true, force: true });
+}
+
+/**
  * Verify, unpack, export in the sandbox, project to allowlisted columns, delete the
  * raw export and write manifest.json.
  *
@@ -484,10 +497,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
   }
   let published = false;
   let stagingCreated = false;
-  const cleanup = (): void => {
-    if (stagingCreated) rmSync(staging, { recursive: true, force: true });
-    if (!published) rmSync(dest, { recursive: true, force: true });
-  };
+  const cleanup = (): void => cleanupExtraction({ dest, staging }, { stagingCreated, published });
   const onSignal = (sig: NodeJS.Signals): void => {
     beginShutdown();
     void removeAllContainers().then((failures) => {
@@ -532,6 +542,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractManif
     };
     await writeFile(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     await rename(staging, dest); // replaces the empty reservation atomically
+    stagingCreated = false;
     published = true;
     return manifest;
   } catch (err) {
