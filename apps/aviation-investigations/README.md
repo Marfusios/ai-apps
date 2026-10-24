@@ -11,9 +11,9 @@ and the `casebook-*` keys in browser storage keep their names.
 
 **Status: Experimental.** Keyword search, case pages and the dashboard are live on the
 dev environment (API server, web client, container deployment, trial identity and AI
-status); AI briefs and Google sign-in are in progress (sign-in waits for an OAuth client).
-The live deployment is at `https://aircase.app` (public; AI features and Google sign-in are
-not enabled yet).
+status); AI searches are in progress (the evidence view).
+The live deployment is at `https://aircase.app` (public, with Google sign-in and the
+published privacy notice; AI features are not enabled yet).
 
 - [Implementation design](docs/DESIGN.md): TypeScript stack, retrieval, UI,
   authentication, cost controls, deployment, and delivery milestones.

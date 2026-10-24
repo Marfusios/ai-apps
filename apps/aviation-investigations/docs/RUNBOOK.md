@@ -944,7 +944,8 @@ on for an environment:
 
 0. Publish the owner's final privacy notice first (DESIGN §7: before collecting real
    users): replace the text of `web/src/pages/Privacy.tsx` and set `final: true` in
-   `shared/privacy.ts`, and deploy. Until then live keeps sign-in off whatever is
+   `shared/privacy.ts`, and deploy (done: the owner approved the notice on 24 October
+   2026). Without a final notice live keeps sign-in off whatever is
    configured, and says so in the startup log ("Google sign-in off ... final privacy
    notice"). In the same release that opens AI searches, update the About page too:
    `web/src/pages/About.tsx` says "AI features are not available yet." as fixed text,

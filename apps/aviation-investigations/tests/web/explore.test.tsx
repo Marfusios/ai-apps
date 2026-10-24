@@ -67,6 +67,23 @@ describe('Privacy', () => {
     expect(text).toContain('While an AI search is on its way, and if it gets no reply');
     expect(text).not.toContain('If an AI search gets no reply');
   });
+
+  it('is the final notice the owner approved: who is responsible, every cookie, retention, the authority, no draft line', async () => {
+    renderApp('/privacy');
+    await screen.findByRole('heading', { level: 1, name: 'Privacy' });
+    const main = screen.getByRole('main');
+    const text = main.textContent ?? '';
+    expect(text).toContain('Mariusz Kotas, a private individual in the Czech Republic, runs AirCase');
+    for (const cookie of ['__Host-aviation_trial', '__Host-aviation_session', '__Host-aviation_oauth_state', '__Secure-aviation_signout']) {
+      expect(text).toContain(cookie);
+    }
+    expect(text).toContain('Backups: daily, kept 14 days on the same computer.');
+    expect(text).toContain('Last updated: 24 October 2026');
+    expect(text).not.toContain('Draft notice');
+    expect(within(main).getByRole('link', { name: 'uoou.gov.cz' }).getAttribute('href')).toBe('https://uoou.gov.cz');
+    const mail = within(main).getAllByRole('link', { name: 'm@mkotas.cz' });
+    expect(mail.map((a) => a.getAttribute('href'))).toEqual(['mailto:m@mkotas.cz', 'mailto:m@mkotas.cz']);
+  });
 });
 
 describe('Explore', () => {
