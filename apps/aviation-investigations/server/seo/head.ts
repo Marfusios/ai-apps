@@ -10,13 +10,15 @@
  * with `<`, `>`, `&`, U+2028 and U+2029 escaped, so no text can end its script element.
  *
  * Descriptions are plain text by fixed rules, never by AI: fixed ones for the pages without
- * data of their own (shared/brand.ts), and one built from its record for a case
- * (server/seo/case-description.ts).
+ * data of their own (shared/brand.ts), one built from its record for a case
+ * (server/seo/case-description.ts), and the API's own message for a page that could not be
+ * served (a refusal or a failure: 429, 500, 503), which is never indexed.
  */
 import { PAGE_DESCRIPTIONS, PRODUCT_NAME, PRODUCT_TAGLINE, SHARE_IMAGE, SITE_DESCRIPTION } from '../../shared/brand.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { readCompare, readSearchRequest } from '../../shared/page-params.js';
 import { pageTitle, type TitledPage } from '../../shared/page-titles.js';
+import { ERROR_MESSAGES } from '../http/reply.js';
 import { caseDescription } from './case-description.js';
 
 /** A page the server sends, with what its head is built from. */
@@ -27,20 +29,27 @@ export type PageRoute =
   | { kind: 'brief'; id: string }
   /** A case that `GET /api/cases/:ntsbNo` serves. */
   | { kind: 'case'; detail: CaseDetail }
-  /** `/cases/:ntsbNo` with a number no case has: `requested` as the path gave it. */
+  /**
+   * A case page without its record, `requested` as the path gave it: a number no case has
+   * (404), or, with a failure, one that could not be read.
+   */
   | { kind: 'missing_case'; requested: string };
 
+/** A page request that was refused (429) or failed (500, 503): the page goes out with that status. */
+export type PageFailure = 429 | 500 | 503;
+
 export interface PagePolicy {
-  status: 200 | 404;
+  status: 200 | 404 | PageFailure;
   robots: string;
-  /** Path of the canonical URL on APP_URL's origin; null for a page that is not found. */
+  /** Path of the canonical URL on APP_URL's origin; null for a page that is not found or not served. */
   canonicalPath: string | null;
 }
 
 const INDEX = 'index, follow';
 
 /** Status, robots and canonical URL per route (README, "Search engines and link previews"). */
-export function pagePolicy(route: PageRoute): PagePolicy {
+export function pagePolicy(route: PageRoute, failure?: PageFailure): PagePolicy {
+  if (failure !== undefined) return { status: failure, robots: 'noindex', canonicalPath: null };
   switch (route.kind) {
     case 'home':
       return { status: 200, robots: INDEX, canonicalPath: '/' };
@@ -96,6 +105,13 @@ function descriptionOf(route: PageRoute): string {
   }
 }
 
+/** What a page that could not be served says: the API's message for the same refusal or failure. */
+const FAILURE_DESCRIPTIONS: Readonly<Record<PageFailure, string>> = {
+  429: ERROR_MESSAGES.rate_limited,
+  500: ERROR_MESSAGES.internal,
+  503: ERROR_MESSAGES.unavailable,
+};
+
 const HTML_ESCAPES: Readonly<Record<string, string>> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 /** Text for an HTML text node or a quoted attribute value. */
@@ -133,15 +149,19 @@ const meta = (attribute: 'name' | 'property', key: string, content: string): str
 /** " · AirCase": what a shared title drops (the home page's long name has no such ending). */
 const PRODUCT_SUFFIX = ` · ${PRODUCT_NAME}`;
 
-/** The head elements of a page on `origin` (APP_URL's origin), one per line. */
-export function pageHead(route: PageRoute, origin: string): string {
-  const policy = pagePolicy(route);
+/**
+ * The head elements of a page on `origin` (APP_URL's origin), one per line. With a `failure`
+ * the page keeps its title, says the failure's message, is noindex and has no canonical URL
+ * and no JSON-LD.
+ */
+export function pageHead(route: PageRoute, origin: string, failure?: PageFailure): string {
+  const policy = pagePolicy(route, failure);
   const title = pageTitle(titledPage(route));
   const shareTitle = title.endsWith(PRODUCT_SUFFIX) ? title.slice(0, -PRODUCT_SUFFIX.length) : title;
-  const description = descriptionOf(route);
+  const description = failure === undefined ? descriptionOf(route) : FAILURE_DESCRIPTIONS[failure];
   const canonical = policy.canonicalPath === null ? null : `${origin}${policy.canonicalPath}`;
   const image = `${origin}${SHARE_IMAGE.path}`;
-  const data = structuredData(route, origin);
+  const data = failure === undefined ? structuredData(route, origin) : null;
   return [
     `<title>${escapeHtml(title)}</title>`,
     meta('name', 'description', description),

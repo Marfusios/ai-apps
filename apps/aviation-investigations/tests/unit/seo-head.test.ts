@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { pageTitle } from '../../shared/page-titles.js';
 import { caseDescription } from '../../server/seo/case-description.js';
-import { jsonLd, pageHead, pagePolicy, type PageRoute } from '../../server/seo/head.js';
+import { jsonLd, pageHead, pagePolicy, type PageFailure, type PageRoute } from '../../server/seo/head.js';
 import { renderPage, splitTemplate } from '../../server/seo/page-template.js';
 import { APP_DIR } from '../support/extract-dir.js';
 import { HOSTILE_COMPARES, HOSTILE_SEARCHES } from '../support/hostile-queries.js';
@@ -24,8 +24,8 @@ const NONCE = 'AAAAAAAAAAAAAAAAAAAAAAAA';
 const fixture = (ntsbNo: string): CaseDetail => mockCase(ntsbNo);
 
 /** The whole page for a route, parsed as a browser would. */
-function parsed(route: PageRoute, template = SOURCE_TEMPLATE) {
-  const html = renderPage(splitTemplate(template), pageHead(route, ORIGIN), NONCE);
+function parsed(route: PageRoute, template = SOURCE_TEMPLATE, failure?: PageFailure) {
+  const html = renderPage(splitTemplate(template), pageHead(route, ORIGIN, failure), NONCE);
   const document = parseHtml(html);
   const meta = (attr: 'name' | 'property', key: string): string | null =>
     document.head.querySelector(`meta[${attr}="${key}"]`)?.getAttribute('content') ?? null;
@@ -154,11 +154,33 @@ describe('descriptions', () => {
   it("a case page's is built from its record (server/seo/case-description.ts)", () => {
     const detail = fixture('DFW08TA066');
     expect(parsed({ kind: 'case', detail }).description).toBe(caseDescription(detail));
-    expect(parsed({ kind: 'case', detail: fixture('CEN23LA137') }).description).toMatch(/\. Status: P$/);
+    expect(parsed({ kind: 'case', detail: fixture('CEN23LA137') }).description).toMatch(/Other investigation status \(NTSB status P\)\.$/);
   });
 
 });
 
+
+describe('a page that could not be served: refused (429) or failed (500, 503)', () => {
+  const MESSAGES = {
+    429: 'Too many requests. Wait a moment and try again.',
+    500: 'Something went wrong on our side.',
+    503: 'The service is temporarily unavailable. Try again shortly.',
+  } as const;
+
+  it.each([429, 500, 503] as const)('%i: that status, noindex, no canonical or JSON-LD, its title, and the API’s message', (status) => {
+    const route: PageRoute = { kind: 'missing_case', requested: 'dfw08ta066' };
+    expect(pagePolicy(route, status)).toEqual({ status, robots: 'noindex', canonicalPath: null });
+    const page = parsed(route, SOURCE_TEMPLATE, status);
+    expect(page).toMatchObject({ title: 'NTSB DFW08TA066 · AirCase', robots: 'noindex', canonical: null, ld: [], description: MESSAGES[status] });
+    expect(page.meta('property', 'og:url')).toBeNull();
+    expect(page.meta('property', 'og:description')).toBe(MESSAGES[status]);
+  });
+
+  it('any page keeps its own title', () => {
+    expect(parsed({ kind: 'home' }, SOURCE_TEMPLATE, 503)).toMatchObject({ title: 'AirCase · aviation casebook', robots: 'noindex', canonical: null, ld: [] });
+    expect(parsed({ kind: 'explore', query: new URLSearchParams('q=icing') }, SOURCE_TEMPLATE, 429).title).toBe('“icing” · Explore · AirCase');
+  });
+});
 
 describe('Open Graph and Twitter', () => {
   it('a case page carries the full set, with the share image and the title without the product name', () => {

@@ -24,7 +24,8 @@
  *   - the web client's routes (`ASSET_ROUTES`: the pages, robots.txt and the static files)
  *     and the not-found handler (the 404 page or a plain 404), which need no client address
  *     and are not limited; a case page (`/cases/:ntsbNo`) and the sitemaps read the database
- *     and are limited like the API, and
+ *     and are limited like the API (a page request refused or failing, 429, 500 or 503, gets
+ *     the page with that status: `Pages.failed`, server/routes/pages.ts), and
  *   - `GET /api/health` from loopback (the container's own health check).
  *   In tunnel mode only the trusted connector may connect at all (403 otherwise).
  * - Every response carries the security headers (server/http/security-headers.ts),
@@ -374,8 +375,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   app.addHook('onRequest', async (request, reply) => {
-    // Closing: nothing new starts (onSend closes the connection).
-    if (closing) return sendError(reply, 503, 'unavailable');
+    // Closing: nothing new starts (onSend closes the connection); a page request gets the page.
+    if (closing) return pages.failed(request, reply, 503) ?? sendError(reply, 503, 'unavailable');
     // The route the router matched on the decoded path; the raw target is never consulted.
     const access = accessOf(request.routeOptions.url, request.method);
     const peer = request.raw.socket.remoteAddress;
@@ -396,7 +397,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const decision = (access === 'poll' ? pollLimiter : limiter).take(identity.identity);
     if (!decision.ok) {
       reply.header('retry-after', String(decision.retryAfterSeconds));
-      return sendError(reply, 429, 'rate_limited', { retryAfter: decision.retryAfterSeconds });
+      // A refused page request (a case page) gets the page with 429; the API its ErrorResponse.
+      return pages.failed(request, reply, 429) ?? sendError(reply, 429, 'rate_limited', { retryAfter: decision.retryAfterSeconds });
     }
   });
 
@@ -425,7 +427,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.setErrorHandler(async (err, request, reply) => {
     if (isUnavailable(err)) {
       request.log.warn({ err: { name: (err as Error).name } }, 'dependency unavailable');
-      return sendError(reply, 503, 'unavailable');
+      return pages.failed(request, reply, 503) ?? sendError(reply, 503, 'unavailable');
     }
     if (isRequestError(err)) {
       const status = (err as { statusCode: number }).statusCode;
@@ -444,7 +446,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return [403, 404, 410].includes(status) ? sendError(reply, 404, 'not_found') : sendError(reply, 400, 'bad_request');
     }
     request.log.error({ err: { name: (err as Error).name, type: (err as { meta?: { body?: { error?: { type?: string } } } }).meta?.body?.error?.type } }, 'request failed');
-    return sendError(reply, 500, 'internal');
+    return pages.failed(request, reply, 500) ?? sendError(reply, 500, 'internal');
   });
 
   healthRoutes(app, ctx, deps.healthCacheMs);
@@ -469,7 +471,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    * that attribute from the DOM, so the client reads the element's `nonce` property,
    * web/src/csp-nonce.ts), plus robots.txt and the sitemaps.
    */
-  const pageNotFound = pageRoutes(app, ctx, {
+  const pages = pageRoutes(app, ctx, {
     origin: new URL(deps.config.appUrl).origin,
     live,
     template,
@@ -499,7 +501,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // Decide on the path the router saw: `/%61pi/nope` is an API 404, not the page.
     const path = routerPath(request.url);
     if (isApiPath(path)) return sendError(reply, 404, 'not_found');
-    return pageNotFound(request, reply, path);
+    return pages.notFound(request, reply, path);
   });
 
   return app;

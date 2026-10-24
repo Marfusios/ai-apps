@@ -1,8 +1,9 @@
 /**
  * The pages search engines and link previews read (server/routes/pages.ts, server/seo/), against
  * the fixture corpus (tests/integration/api-fixture.ts): each page's status and head, the
- * redirects, the rate limit a case page shares with the API, X-Robots-Tag, robots.txt and the
- * sitemaps.
+ * redirects, the rate limit a case page shares with the API, pages that are refused or fail,
+ * X-Robots-Tag, robots.txt and the sitemaps. Pages that need no database are also tested
+ * offline (tests/unit/pages-http.test.ts).
  */
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -86,7 +87,10 @@ describe('pages for search engines and link previews', () => {
     // A record outside the default cohort keeps its indexable page.
     const other = await page('/cases/CEN23LA137');
     expect(other.status).toBe(200);
-    expect(headOf(other)).toMatchObject({ robots: 'index, follow', description: expect.stringMatching(/\. Status: P$/) });
+    expect(headOf(other)).toMatchObject({
+      robots: 'index, follow',
+      description: expect.stringMatching(/, no injuries\. Other investigation status \(NTSB status P\)\.$/),
+    });
   });
 
   it('statuses, robots and canonicals of the other pages', async () => {
@@ -101,7 +105,6 @@ describe('pages for search engines and link previews', () => {
       ['/account', 200, 'noindex, nofollow', '/account', 'Account · AirCase'],
       [`/briefs/${BRIEF_ID}?step=2`, 200, 'noindex, nofollow', `/briefs/${BRIEF_ID}`, 'AI brief · AirCase'],
       ['/no-such-page', 404, 'noindex', null, 'Page not found · AirCase'],
-      ['/index.html', 404, 'noindex', null, 'Page not found · AirCase'],
     ];
     for (const [url, status, robots, canonical, title] of table) {
       const r = await page(url);
@@ -126,13 +129,24 @@ describe('pages for search engines and link previews', () => {
     expect((await page('/cases/zzz99zz999')).status).toBe(404);
   });
 
-  it('a page path with a trailing slash is 301 to the path without it, the query dropped', async () => {
+  it('a page path with a trailing slash or in the wrong letter case is 301 to its own, the query dropped', async () => {
     for (const [url, to] of [
       ['/explore/', '/explore'],
       ['/explore/?q=carburetor', '/explore'],
       ['/about/', '/about'],
       ['/compare/?cases=DFW08TA066', '/compare'],
       [`/briefs/${BRIEF_ID}/`, `/briefs/${BRIEF_ID}`],
+    ] as const) {
+      const r = await page(url);
+      expect(r.status, url).toBe(301);
+      expect(r.headers.location, url).toBe(to);
+    }
+    // A page path in the wrong letter case, and the template file, go to their pages.
+    for (const [url, to] of [
+      ['/About', '/about'],
+      ['/EXPLORE?q=carb', '/explore'],
+      ['/Cases/DFW08TA066', '/cases/DFW08TA066'],
+      ['/index.html?x=1', '/'],
     ] as const) {
       const r = await page(url);
       expect(r.status, url).toBe(301);
@@ -182,13 +196,19 @@ describe('pages for search engines and link previews', () => {
     expect((await page('/cases/DFW08TA066', { app: limited })).status).toBe(200);
     expect((await get('/api/cases/DFW08TA066', { app: limited })).status).toBe(200);
     expect((await page('/cases/ZZZ99ZZ999', { app: limited })).status).toBe(404);
+    // A refused page request gets the page with 429, noindex, and the Retry-After the API sends.
     const refused = await page('/cases/DFW08TA066', { app: limited });
     expect(refused.status).toBe(429);
-    const body = ErrorResponseSchema.parse(refused.json);
-    expect(body.error).toBe('rate_limited');
-    expect(refused.headers['retry-after']).toBe(String(body.retryAfter));
+    expect(refused.body).toContain('<div id="root">');
+    expect(headOf(refused)).toMatchObject({ title: 'NTSB DFW08TA066 · AirCase', robots: 'noindex', canonical: null, ld: [] });
     expect(refused.headers['cache-control']).toBe('no-store');
-    expect((await get('/api/cases/DFW08TA066', { app: limited })).status).toBe(429);
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThanOrEqual(1);
+    expect((await page('/cases/ZZZ99ZZ999', { app: limited })).status).toBe(429);
+    const api = await get('/api/cases/DFW08TA066', { app: limited });
+    expect(api.status).toBe(429);
+    const body = ErrorResponseSchema.parse(api.json);
+    expect(body.error).toBe('rate_limited');
+    expect(api.headers['retry-after']).toBe(String(body.retryAfter));
     expect((await get('/sitemap.xml', { app: limited })).status).toBe(429);
     // The other pages, robots.txt and the files are not limited.
     for (const url of ['/', '/explore?q=carb', '/about', '/no-such-page', '/robots.txt', '/assets/app-0123abcd.js']) {
@@ -262,7 +282,7 @@ describe('pages for search engines and link previews', () => {
     expect((await get(`/sitemaps/cases-${files + 1}.xml`, { app: small })).status).toBe(404);
   });
 
-  it('while no dataset can be served, the index lists the pages only, case sitemaps are 404 and case pages 503', async () => {
+  it('while no dataset can be served, the index lists the pages only, case sitemaps are 404 and a case page is the page with 503', async () => {
     const mapping = await es.indices.getMapping({ index: dataset.casesIndex });
     const current = mapping[dataset.casesIndex]?.mappings._meta ?? {};
     try {
@@ -274,10 +294,15 @@ describe('pages for search engines and link previews', () => {
       expect(locs(parseXml(index.body))).toEqual([`${ORIGIN}/sitemaps/pages.xml`]);
       expect((await get('/sitemaps/pages.xml', { app: broken })).status).toBe(200);
       expect((await get('/sitemaps/cases-1.xml', { app: broken })).status).toBe(404);
-      // A case page keeps the API's error contract.
+      // A case page is the page with 503, noindex; the API keeps its ErrorResponse.
       const unavailable = await page('/cases/DFW08TA066', { app: broken });
       expect(unavailable.status).toBe(503);
-      expect(ErrorResponseSchema.parse(unavailable.json).error).toBe('unavailable');
+      expect(unavailable.body).toContain('<div id="root">');
+      expect(headOf(unavailable)).toMatchObject({ title: 'NTSB DFW08TA066 · AirCase', robots: 'noindex', canonical: null, ld: [] });
+      expect(unavailable.headers['cache-control']).toBe('no-store');
+      const api = await get('/api/cases/DFW08TA066', { app: broken });
+      expect(api.status).toBe(503);
+      expect(ErrorResponseSchema.parse(api.json).error).toBe('unavailable');
       // Pages without data are still served.
       expect((await page('/explore', { app: broken })).status).toBe(200);
     } finally {

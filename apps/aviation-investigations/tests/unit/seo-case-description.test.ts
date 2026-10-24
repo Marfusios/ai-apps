@@ -1,11 +1,11 @@
 /**
  * A case page's description (server/seo/case-description.ts): the case's type, number, date,
- * aircraft and injuries, then its probable cause or, without one, its raw NTSB status; cut at
- * a word to 200 characters. Case records come from the mock API's fixture projection; expected
+ * aircraft and injuries, then its probable cause or, without one, what its status is; cut at a
+ * word to 200 characters. Case records come from the mock API's fixture projection; expected
  * strings are written out.
  */
 import { describe, expect, it } from 'vitest';
-import { caseDescription, injuryPhrase, truncateAtWord } from '../../server/seo/case-description.js';
+import { caseDescription, injuryPhrase, statusSentence, truncateAtWord } from '../../server/seo/case-description.js';
 import { mockCase as fixture } from '../support/mock-cases.js';
 
 describe('a case description', () => {
@@ -26,14 +26,28 @@ describe('a case description', () => {
     );
   });
 
-  it('a record without probable-cause text gives its raw NTSB status as the case page shows it', () => {
+  it('a record without probable-cause text says what its status is, with the raw NTSB status', () => {
     expect(caseDescription(fixture('CEN23LA137'))).toBe(
-      'NTSB accident investigation CEN23LA137, 4 Mar 2023: N131HL (Piper PA-46-600TP), no injuries. Status: P',
+      'NTSB accident investigation CEN23LA137, 4 Mar 2023: N131HL (Piper PA-46-600TP), no injuries. Other investigation status (NTSB status P).',
     );
-    expect(caseDescription(fixture('CEN22LA442'))).toBe('NTSB accident investigation CEN22LA442, 27 Sep 2022: N7207 (Piper PA-18), no injuries. Status: blank');
+    expect(caseDescription(fixture('CEN22LA442'))).toBe(
+      'NTSB accident investigation CEN22LA442, 27 Sep 2022: N7207 (Piper PA-18), no injuries. Other investigation status (NTSB status blank).',
+    );
+    // Completed without probable-cause text: what the case page says beside its badge.
     expect(caseDescription(fixture('ENG08WA029'))).toBe(
-      'NTSB incident investigation ENG08WA029, 6 Jun 2008: OB-1799-P (Boeing 737-2A5), no injuries. Status: B',
+      'NTSB incident investigation ENG08WA029, 6 Jun 2008: OB-1799-P (Boeing 737-2A5), no injuries. Probable-cause text unavailable.',
     );
+  });
+
+  it('each completion class has its own words (a verified mapping classes records in progress or unknown)', () => {
+    expect(statusSentence({ class: 'completed', rawStatus: 'B' })).toBe('Probable-cause text unavailable.');
+    expect(statusSentence({ class: 'in_progress', rawStatus: 'P' })).toBe('Investigation in progress (NTSB status P).');
+    expect(statusSentence({ class: 'status_unknown', rawStatus: null })).toBe('Investigation status unknown (NTSB status blank).');
+    expect(statusSentence({ class: 'status_unknown', rawStatus: '  ' })).toBe('Investigation status unknown (NTSB status blank).');
+    expect(statusSentence({ class: 'other_status', rawStatus: ' F ' })).toBe('Other investigation status (NTSB status F).');
+    const inProgress = fixture('CEN23LA137');
+    inProgress.completion = { ...inProgress.completion, class: 'in_progress', mappingVerified: true };
+    expect(caseDescription(inProgress)).toMatch(/, no injuries\. Investigation in progress \(NTSB status P\)\.$/);
   });
 
   it('a record with probable-cause text gives it whatever its status', () => {
@@ -47,10 +61,10 @@ describe('a case description', () => {
     d.eventType = { code: null, label: 'Not reported' };
     d.date = null;
     d.aircraft[0]!.registration = '  ';
-    expect(caseDescription(d)).toBe('NTSB investigation CEN23LA137: Piper PA-46-600TP, no injuries. Status: P');
+    expect(caseDescription(d)).toBe('NTSB investigation CEN23LA137: Piper PA-46-600TP, no injuries. Other investigation status (NTSB status P).');
     d.eventType = { code: 'UNK', label: 'Unknown event type' };
     d.aircraft = [];
-    expect(caseDescription(d)).toBe('NTSB investigation CEN23LA137: Unidentified aircraft, no injuries. Status: P');
+    expect(caseDescription(d)).toBe('NTSB investigation CEN23LA137: Unidentified aircraft, no injuries. Other investigation status (NTSB status P).');
     d.eventType = { code: 'INC', label: 'Incident' };
     expect(caseDescription(d)).toMatch(/^NTSB incident investigation CEN23LA137: /);
   });
