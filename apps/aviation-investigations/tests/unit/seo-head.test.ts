@@ -22,6 +22,7 @@ import {
 } from '../../server/seo/head.js';
 import cases from '../../web/mock/cases.json' with { type: 'json' };
 import { APP_DIR } from '../support/extract-dir.js';
+import { HOSTILE_COMPARES, HOSTILE_SEARCHES } from '../support/hostile-queries.js';
 import { parseHtml } from '../support/markup.js';
 
 const ORIGIN = 'https://aircase.app';
@@ -397,5 +398,33 @@ describe('the page template', () => {
     expect(html).toBe(
       `<!doctype html><html><head><meta charset="utf-8"><title>$& $' $\` $$</title><meta property="csp-nonce" nonce="${NONCE}"></head><body></body></html>`,
     );
+  });
+});
+
+// Explore and Compare are not rate limited, and their titles read the query string.
+describe('a hostile query string of 16 KB costs little', () => {
+  /**
+   * Milliseconds for one head: the fastest of a number of builds after a warm-up, which is the
+   * work itself whatever else the machine is doing (the whole suite runs in parallel).
+   */
+  function perHead(route: PageRoute, runs = 15): number {
+    pageHead(route, ORIGIN);
+    let fastest = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < runs; i++) {
+      const start = performance.now();
+      pageHead(route, ORIGIN);
+      fastest = Math.min(fastest, performance.now() - start);
+    }
+    return fastest;
+  }
+
+  it.each(HOSTILE_SEARCHES)('Explore, %s: the head is built in a few milliseconds', (_name, qs) => {
+    expect(qs.length).toBeGreaterThan(15_000);
+    expect(perHead({ kind: 'explore', query: new URLSearchParams(qs) })).toBeLessThan(5);
+  });
+
+  it.each(HOSTILE_COMPARES)('Compare, %s: the head is built in a few milliseconds', (_name, qs) => {
+    expect(qs.length).toBeGreaterThan(15_000);
+    expect(perHead({ kind: 'compare', query: new URLSearchParams(qs) })).toBeLessThan(5);
   });
 });

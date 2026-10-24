@@ -11,7 +11,8 @@ import { PHASE_GROUPS, type PhaseGroup } from '../codes.js';
 import type { CompletionClass } from '../completion.js';
 
 /** Event-level public case number, e.g. `DFW08TA066`. Never the internal `ev_id`. */
-export const NtsbNoSchema = z.string().regex(/^[A-Z0-9]{5,20}$/, 'not an NTSB case number');
+export const NTSB_NO_PATTERN = /^[A-Z0-9]{5,20}$/;
+export const NtsbNoSchema = z.string().regex(NTSB_NO_PATTERN, 'not an NTSB case number');
 
 export const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
