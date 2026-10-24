@@ -10,6 +10,7 @@ import {
   createTrialIdentity,
   dailyAllowanceUsd,
   expireLeases,
+  forgetIdempotency,
   pruneControls,
   quotaPolicy,
   recordAttempt,
@@ -613,6 +614,26 @@ describe('settlement', () => {
 });
 
 describe('idempotency', () => {
+  it('an admission that made nothing can be forgotten, so the same request is admitted afresh; one with a result never is (task 22 AI M3)', async () => {
+    const p = account('u');
+    const key = newKey();
+    const a = admitted(await admit(p, { key }));
+    await releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(T0, 500) });
+    await settle(app, a, 0, a.fencingToken, at(T0, 600));
+    // At the instant it was made (a frozen clock): it still expires, after its creation.
+    await forgetIdempotency(app, a, T0);
+    const again = admitted(await admit(p, { key, now: at(T0, 1_000) }));
+    expect(again.reservationId).not.toBe(a.reservationId);
+    await settle(app, again, 0, again.fencingToken, at(T0, 1_500));
+    // A record that points at a result stays: the same request replays it.
+    const other = newKey();
+    const b = admitted(await admit(p, { key: other, now: at(T0, MIN) }));
+    await setResultRef(app, b, 'brief-step:00000000-0000-4000-8000-000000000000');
+    await settle(app, b, 0.01, b.fencingToken, at(T0, MIN + 500));
+    await forgetIdempotency(app, b, at(T0, MIN + 600));
+    expect(await admit(p, { key: other, now: at(T0, MIN + 1_000) })).toMatchObject({ ok: true, replay: true, reservationId: b.reservationId });
+  });
+
   it('idempotent retry returns same admission, different body same key is 409', async () => {
     const trial = await newTrial();
     const key = newKey();

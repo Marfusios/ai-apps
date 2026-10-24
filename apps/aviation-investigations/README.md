@@ -1664,7 +1664,8 @@ no longer blocks a refinement, and the maintenance pass marks it failed once its
 reservation is closed. Closing the server runs within one 9 s deadline (the process
 exits by force at 10 s): first, before the HTTP drain, running steps are aborted (they
 fail and settle), paid requests still in the gate, admission or step creation are
-refused with 503 `unavailable` (an admission is given back and settled at zero) or
+refused with 503 `unavailable` (an admission is given back, settled at zero and its
+idempotency record forgotten, so the same request can be sent again) or
 stop before any provider call, and closing waits for both; requests that arrive
 meanwhile get 503 `unavailable`. Then Node's `server.close()` closes idle keep-alive
 connections, responses sent while closing close their connection, and anything still

@@ -2928,8 +2928,9 @@ describe('orphaned and interrupted steps', () => {
     const lock = await holdAdvisory(SPEND_LOCK_KEY);
     let t0: number;
     let asked: ReturnType<typeof ask>;
+    const idempotencyKey = key();
     try {
-      asked = ask(h, 'Engine power loss shortly after maintenance');
+      asked = ask(h, 'Engine power loss shortly after maintenance', { idempotencyKey });
       await untilAsync(async () => (await waitingOnAdvisory()) === 1);
       t0 = Date.now();
       const closing = h.app.close();
@@ -2947,6 +2948,15 @@ describe('orphaned and interrupted steps', () => {
     expect(await count('brief_steps')).toBe(0);
     expect(await trialUsed()).toEqual([0]);
     expect(h.llm.calls).toHaveLength(0);
+    // Nothing ran, so the same request sent again (same key and body) is admitted afresh, not
+    // pinned to a 409 "did not start" for the key's 24 hours (task 22 AI M3).
+    const restarted = harness(answering());
+    advance(MIN);
+    const again = await ask(restarted, 'Engine power loss shortly after maintenance', { idempotencyKey, cookie: cookieOf(r.setCookie) });
+    expect(again.status, JSON.stringify(again.json)).toBe(202);
+    expect(again.json).toMatchObject({ kind: 'started', step: 1 });
+    await restarted.svc.settled();
+    expect(await count('brief_steps')).toBe(1);
   });
 
   it('while closing, a new request gets 503 unavailable, and one still in the gate is refused before admission', async () => {

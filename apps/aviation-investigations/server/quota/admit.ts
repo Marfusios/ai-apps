@@ -580,6 +580,19 @@ function releaseInTransaction(db: Db, admission: Admission, fencingToken: string
   });
 }
 
+/**
+ * Forget the idempotency record of an admission that made nothing (it was given back and
+ * settled at zero: a shutdown, a signed-out account, a conflicting refinement), so the
+ * same request sent again is admitted afresh instead of answering "did not start" for the
+ * key's 24 hours (task 22 AI M3). A record that points at a result is never touched.
+ */
+export async function forgetIdempotency(db: DbOrTx, admission: Admission, now: Date): Promise<void> {
+  // A record must expire after it was created (its CHECK), even within the same instant.
+  await db.execute(sql`
+    UPDATE idempotency SET expires_at = greatest(created_at + interval '1 millisecond', ${now})
+    WHERE principal_hash = ${admission.principalHash} AND reservation_id = ${admission.reservationId} AND result_ref IS NULL`);
+}
+
 /** Point the admission's idempotency record at its stored result (e.g. the brief step). */
 export async function setResultRef(db: DbOrTx, admission: Admission, resultRef: string): Promise<void> {
   if (resultRef.length === 0 || resultRef.length > 200) throw new QuotaInputError('Invalid result reference');
