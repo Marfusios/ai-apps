@@ -1,30 +1,14 @@
-/**
- * The AI evidence view, contract `evidence.v1` (Task 23; owner decision of 2026-10-24; Astra's
- * conditions 1-7 for the narrower G6, recorded in the implementation ledger).
- *
- * A question becomes an editable search interpretation (scope stage `scope.e2`: validated
- * filters, search terms, and readings AirCase cannot check, which stay visible and are never
- * applied). Production retrieval (`retrieval.v2`) ranks completed investigations once, and the
- * ranked list is pinned and paged without further paid calls. Results are NTSB text and coded
- * data only: no AI-written prose ever reaches a result surface.
- *
- * - One search costs one scope call and one query embedding; an edited interpretation skips the
- *   scope call. Every created search counts as one AI search; paging is free.
- * - A stored search is private to its owner (the trial or the account that created it), expires
- *   24 hours after creation, moves to the account at sign-in like a brief, is deleted with the
- *   account and is never in a backup.
- * - Excerpts are whole paragraphs of canonical section text. Offsets are UTF-16 code units,
- *   validated against the stored section; highlights never change text.
- * - Every result surface shows `EVIDENCE_NOTICE`; unchecked readings supplement it, never
- *   replace it.
+/** Advisory evidence search: only the question and explicit user edits control retrieval.
+ * Suggestions are unapplied, untrusted text. Render them as labelled text, never HTML.
+ * Every surface keeps EVIDENCE_NOTICE. Canonical paragraphs and cause variants are unchanged.
  */
 import { z } from 'zod';
 import { BRIEF_FILTER_FACETS, BriefFiltersSchema, IdempotencyKeySchema, QuestionSchema, ScopeReplySchema, TurnstileTokenSchema } from './briefs.js';
 import { ReportLinkSchema } from './cases.js';
-import { Sha256Schema } from './common.js';
+import { NtsbNoSchema, Sha256Schema } from './common.js';
 import { CaseRowSchema, SectionKindSchema, SpanSchema } from './search.js';
 
-export const EVIDENCE_CONTRACT_VERSION = 'evidence.v1';
+export const EVIDENCE_CONTRACT_VERSION = 'evidence.v2';
 export const EVIDENCE_PAGE_SIZE = 10;
 /** Retrieval ranks at most this many cases for one search (10 pages). */
 export const EVIDENCE_CANDIDATE_CEILING = 100;
@@ -40,47 +24,28 @@ export const EVIDENCE_HEADING = 'Investigations retrieved for your search';
 export const EVIDENCE_NOTICE =
   'AirCase matched your words and filters. It has not checked timing, causes or things that did not happen: read the excerpts.';
 
-/** Readings of a question that AirCase cannot check against the data: shown with the chips, never applied. */
-export const UNCHECKED_KINDS = ['timing', 'causation', 'absence', 'sequence', 'unsupported_filter', 'ambiguous'] as const;
-export type UncheckedKind = (typeof UNCHECKED_KINDS)[number];
-export const UNCHECKED_LABEL: Readonly<Record<UncheckedKind, string>> = {
-  timing: 'AirCase cannot check timing',
-  causation: 'AirCase cannot check what caused what',
-  absence: 'AirCase cannot check that something did not happen',
-  sequence: 'AirCase cannot check the order of events',
-  unsupported_filter: 'AirCase has no filter for this',
-  ambiguous: 'Unclear, so not applied',
-};
-
-// ---------------------------------------------------------------------------
-// Requests
-
+/** Required label beside model suggestions; accepting filters never accepts terms. */
+export const EVIDENCE_SUGGESTION_LABEL = 'Suggested filters and terms — not applied';
 export const EvidenceSearchIdSchema = z.uuid();
 export type EvidenceSearchId = z.infer<typeof EvidenceSearchIdSchema>;
-
-export const UncheckedReadingSchema = z.strictObject({
-  kind: z.enum(UNCHECKED_KINDS),
-  /** The words of the question this reading comes from, verbatim (a substring of the question). */
-  quote: z.string().min(1).max(300),
-});
-export type UncheckedReading = z.infer<typeof UncheckedReadingSchema>;
-
-/** The editable search interpretation: filters Explore can apply, and the search terms. */
-export const EvidenceInterpretationSchema = z.strictObject({
+export const EvidenceSuggestionSchema = z.strictObject({
   filters: BriefFiltersSchema,
-  /** Plain editable terms: highlights initially; all retrieval channels after the user edits them. */
   terms: z.string().min(1).max(MAX_TERMS_CHARS).regex(/\S/, 'the search terms are empty'),
-  /** Readings that were not applied, always shown beside the chips. */
-  unchecked: z.array(UncheckedReadingSchema).max(8),
 });
-export type EvidenceInterpretation = z.infer<typeof EvidenceInterpretationSchema>;
+export type EvidenceSuggestion = z.infer<typeof EvidenceSuggestionSchema>;
+export const EvidenceQuerySchema = z.discriminatedUnion('source', [
+  z.strictObject({ source: z.literal('question') }),
+  z.strictObject({ source: z.literal('edited'), terms: EvidenceSuggestionSchema.shape.terms }),
+]);
+export type EvidenceQuery = z.infer<typeof EvidenceQuerySchema>;
+export const EvidenceHintSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('corpus_statistics'), filters: BriefFiltersSchema }),
+  z.strictObject({ kind: z.literal('case_comparison'), found: z.array(NtsbNoSchema).max(4), notFound: z.array(NtsbNoSchema).max(4) }),
+]);
+export type EvidenceHint = z.infer<typeof EvidenceHintSchema>;
 
-/**
- * `POST /api/evidence`. `question`: the scope stage reads the question. `edited`: the user changed
- * the chips or terms of an earlier search they own; no scope call, the edits are taken as given
- * (a removed filter stays removed), and the earlier search's question and unchecked readings carry
- * over. Both count as one AI search and take the usual Turnstile and sign-in checks.
- */
+/** Edited filters are exact. Omitted terms retain the parent's executed query; supplied
+ * terms are explicit user acceptance. No scope call runs on edits. Paging is free. */
 export const CreateEvidenceRequestSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('question'),
@@ -92,7 +57,7 @@ export const CreateEvidenceRequestSchema = z.discriminatedUnion('kind', [
     kind: z.literal('edited'),
     from: EvidenceSearchIdSchema,
     filters: BriefFiltersSchema,
-    terms: EvidenceInterpretationSchema.shape.terms,
+    terms: EvidenceSuggestionSchema.shape.terms.optional(),
     idempotencyKey: IdempotencyKeySchema,
     turnstileToken: TurnstileTokenSchema,
   }),
@@ -159,7 +124,7 @@ export type ProbableCauseVariant = z.infer<typeof ProbableCauseVariantSchema>;
 
 /**
  * Why a case is listed, in checkable facts only: the applied filters it satisfies (from coded
- * fields), the query terms counted in the excerpts shown (literal occurrences and synonym matches
+ * fields), the suggested terms (or executed query words) counted in the excerpts shown (literal occurrences and synonym matches
  * separately), and which retrieval channels found it. Never a model-written reason.
  */
 export const EvidenceRelevanceSchema = z.strictObject({
@@ -195,9 +160,10 @@ export const EvidencePageSchema = z.strictObject({
   id: EvidenceSearchIdSchema,
   /** The question as asked (an edited search keeps its original question). */
   question: QuestionSchema,
-  interpretation: EvidenceInterpretationSchema,
-  /** The interpretation is the user's edit, not the scope stage's reading. */
-  edited: z.boolean(),
+  query: EvidenceQuerySchema,
+  appliedFilters: BriefFiltersSchema,
+  suggestion: EvidenceSuggestionSchema.nullable(),
+  hint: EvidenceHintSchema.nullable(),
   /** The dataset generation the ranking is pinned to. */
   generation: z.string().min(1).max(80),
   createdAt: z.iso.datetime(),
@@ -211,8 +177,8 @@ export const EvidencePageSchema = z.strictObject({
 export type EvidencePage = z.infer<typeof EvidencePageSchema>;
 
 /** The scope replies an evidence search can get instead of results (static server templates; no AI search used). */
-export const EvidenceScopeReplySchema = ScopeReplySchema.refine((reply) => reply.kind !== 'needs_clarification', {
-  message: 'ambiguity becomes an unchecked reading, never a clarification round',
+export const EvidenceScopeReplySchema = ScopeReplySchema.refine((reply) => reply.kind === 'out_of_scope' || reply.kind === 'operational_advice', {
+  message: 'only policy replies may replace evidence results',
 });
 
 /** `POST /api/evidence` → 201 `results` (page 1 of the new search) or 200 `scope_reply`. */
