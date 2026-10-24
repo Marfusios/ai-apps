@@ -4,7 +4,7 @@
 tracing, scores, datasets, and experiments. Implement aviation-specific evaluators
 in TypeScript. Keep Vitest, Fastify injection tests, and Playwright for ordinary
 software behavior. A shared Langfuse v4 service exists with separate development
-and production projects; the application is not implemented or instrumented yet.
+and production projects; the application exports metadata-only traces (implementation details below).
 See the [implementation design](DESIGN.md) for the application and launch gates.
 
 Use Langfuse's existing UI. Jaeger and a custom Jaeger dashboard/plugin are outside
@@ -29,6 +29,30 @@ analytics in its [observability UI](https://langfuse.com/docs/observability/over
 It has a [JS/TS experiment runner](https://langfuse.com/docs/evaluation/experiments/experiments-via-sdk)
 that accepts local or hosted datasets and application/evaluator functions. We still
 write the aviation pipeline, reference labels, and scoring rules.
+
+## Evidence-view instrumentation
+
+The initial AI flow has `evidence.request`, `evidence.scope`, `evidence.embed` and
+`evidence.retrieve` spans. It calls no compose/check model. They use the existing
+closed attribute allowlist: stage/model/provider/prompt/retrieval versions, token
+counts, USD, duration, generation, case count and fixed outcomes. Errors export no
+raw SDK or database message. Idempotent replay and free paging make no paid stage.
+
+Question text, model-derived terms, unchecked quotes, filters that might reveal a
+question, user/account/trial identifiers, cookies, canonical passages, vectors and
+returned pages never enter these spans or ordinary logs. Private search data stays in
+PostgreSQL for at most 24 hours, is excluded from backups and removed on account
+deletion. Langfuse remains optional; an exporter outage cannot change retrieval or
+settlement. Known embedding usage is captured before downstream failures.
+
+Evidence scope has its own version (`scope.e1`) and does not inherit `scope.v2`'s
+default timing reading. Offline schema/projection/lifecycle tests do not calibrate the
+model. Before paid evaluation, freeze prompts, models, caps, `paragraphs.v1`,
+`evidence.v1` delivery, labels, thresholds and the ledger allocation. Track C/N supplies
+regressions; fresh question families confirm filter precision (98% target), recall
+(95%), and critical unchecked-note coverage (100%). Context-dependent counterexamples
+must preserve needed context on the initial UI surface, not only behind a link.
+Generated-summary/checker evaluations remain a separate disabled track.
 
 ## One request, one trace
 

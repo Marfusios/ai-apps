@@ -11,7 +11,8 @@ and the `casebook-*` keys in browser storage keep their names.
 
 **Status: Experimental.** Keyword search, case pages and the dashboard are live on the
 dev environment (API server, web client, container deployment, trial identity and AI
-status); AI searches are in progress (the evidence view).
+status). The evidence-view backend is implemented; UI integration and its narrower G6
+clearance remain pending. Generated summaries stay disabled.
 The live deployment is at `https://aircase.app` (public, with Google sign-in and the
 published privacy notice; AI features are not enabled yet).
 
@@ -1322,7 +1323,10 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
 | `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
 | `GET /api/ai/status` | `AiStatusResponse` for this visitor ([anonymous gate](#anonymous-gate-and-ai-status)) | `no-store` |
-| `POST /api/briefs`, `POST /api/briefs/:id/refine` | `StartBriefResponse` ([AI briefs](#ai-briefs)) | `no-store` |
+| `POST /api/evidence` | 201 `results` (page 1), or 200 static `scope_reply`; [evidence view](#ai-evidence-view) | `private, no-store` |
+| `GET /api/evidence/:id?page=n` | `EvidencePage`, read owner only; free paging | `private, no-store` |
+| `GET /api/evidence/:id/cases/:ntsbNo` | full `CaseDetail` at the pinned generation, canonical section revision IDs; read owner only | `private, no-store` |
+| `POST /api/briefs`, `POST /api/briefs/:id/refine` | `StartBriefResponse` only with `AI_BRIEFS_ENABLED=true`; otherwise 404 ([AI briefs](#ai-briefs)) | `no-store` |
 | `GET /api/briefs/:id?step=n`, `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, `POST /api/briefs/:id/cancel` | the step, the case context, 204; read owner only | `no-store` |
 
 Every response is validated against its contract before it is sent. ETags are the
@@ -1341,7 +1345,7 @@ the route `unmatched` and nothing of the request target. A logged error carries 
 code and (Elasticsearch's) error type, never its message or stack, and any message string
 loses the query string of a path it quotes (Fastify's own warnings quote the request URL).
 The static files never include a dotfile or a dot directory (404). Per-visitor routes
-(`/api/ai`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
+(`/api/ai`, `/api/evidence`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
 prefix, so later routes are covered) answer `Cache-Control: private, no-store`; public
 data routes are cacheable and keyed by the dataset revision; errors are `no-store`.
 Requests the HTTP parser itself refuses (400, or 408 for a request timeout and 431 for
@@ -1613,8 +1617,8 @@ retention are in migrations 0008 and 0009.
   reservation, giving a search back and counting an attempt are bounded at 2 seconds; a
   timeout rolls back and returns `busy`
   (503, fail closed).
-- **Limits.** A trial has 3 searches and lasts 30 days. Signed-in users get 20 a day
-  and 150 a month, 5 a day during their first 3 days. Attempts are limited to 2 a
+- **Limits.** A trial gets 10 searches per UTC day; its identity lasts 30 days. Signed-in users get 50 a day
+  and 600 a month, 20 a day during their first 3 days. Attempts are limited to 2 a
   minute anonymously and 5 signed in, and per network identity and class to 10 an
   hour and 20 a day anonymously, 30 an hour and 100 a day signed in. One request per
   principal, two in total and one anonymous request can be in flight. A principal whose
@@ -1733,7 +1737,90 @@ log what keeps any part off (setting names only). The tables are in migration 00
   names no passages index, or evidence retrieval is not bound or refuses it) or (for
   anonymous visitors) Turnstile are missing.
 
+### AI evidence view
+
+The backend contract is `evidence.v1` (`shared/contracts/evidence.ts`). This is an
+extractive search, not a generated answer. `scope.e1` produces editable, typed filters
+and search terms plus verbatim fragments of the question labelled as unchecked
+readings. Unsupported timing, causation, absence and ambiguity remain unapplied.
+There are no default timing windows. The UI must always display `EVIDENCE_NOTICE`,
+including when the model emitted no specific unchecked readings.
+
+`POST /api/evidence` accepts either:
+
+- `{kind: "question", question, idempotencyKey, turnstileToken?}`: one scope call,
+  then one query embedding and retrieval.
+- `{kind: "edited", from, filters, terms, idempotencyKey, turnstileToken?}`: an owned,
+  unexpired search's original question and unchecked readings, with the user's new
+  filters and terms. It skips scope; a cleared filter stays cleared. It creates a new
+  search against the current published generation.
+
+The result is a synchronous 201 with `{kind: "results", search: EvidencePage}`.
+Off-topic, operational-advice, statistics and named-case-comparison requests get
+200 `{kind: "scope_reply", reply}` from static server templates. There is no
+clarification round or generated-summary fallback. An invalid scope output,
+incomplete retrieval or projection failure answers 503 with no private diagnostic.
+
+`retrieval.v2` fuses the production three channels (passage BM25, passage similarity,
+and cases narrative BM25), 200 candidates per channel with its existing exact fusion
+and tie ordering. The editable terms feed both lexical queries and the one embedding.
+`evidence.v1` extends mapping to the first 100 cases. It stores that ranking, concrete
+indices, canonical generation, retrieval seed spans, channels and result projection.
+It has 10 cases/page and at most 10 pages; `total` is the saved candidate count, not
+the number of relevant investigations in the corpus. Zero results is page 1 with
+`pages: 0`. Beyond the last page is 404. Pages never re-rank, embed or call a model.
+
+Every card has coded facts, every canonical probable-cause variant and up to three
+**whole-paragraph previews** (`paragraphs.v1`). Paragraphs are not shortened; UTF-16
+spans are checked against canonical sections and the stored passage rows. Multi-aircraft
+narratives stay event-scoped. Literal and explicitly declared analyzer-synonym matches
+are distinguished; stemming or semantic similarity is never presented as a word match.
+Relevance fields contain only satisfied coded filters, occurrence counts in the shown
+paragraphs and retrieval-channel enums. They establish no causal or timing relationship.
+
+For authoritative context use `GET /api/evidence/:id/cases/:ntsbNo`, **not the current
+public case endpoint**: it reads this search's generation. Its section `revision` is
+the canonical revision ID used by the excerpts (the public case endpoint uses a text
+hash). Both paragraphs and full sections must be rendered as text, with validated
+highlights, never HTML. Search creation/expiry timestamps are UTC instants ending in Z.
+
+Ownership is checked in the query reading private content. Unowned, missing and expired
+searches are indistinguishable 404s. The 24-hour lifetime never extends on read, retry or
+sign-in. Sign-in from `/ai/:id` or `/evidence/:id`, or a signed-in edit/retry from the
+owning trial browser, moves read ownership once; original charges stay on the original
+principal. Account deletion removes searches and their idempotent results. Maintenance
+deletes expired searches. Backup and restore checks exclude `evidence_searches` data.
+Generation and index cleanup honor the live-search references, including after republish.
+
+Each finished, replayable results search counts once; edits count again; paging and
+idempotent retries are free. Static scope replies and failures return the quota unit,
+while actual or uncertain provider spend remains charged. A lost HTTP response can be
+replayed with the original key. A new anonymous POST (including replay) needs a fresh
+Turnstile token. Signed-in step-up, network limits, concurrency, restore hold and the
+existing $3/day / $80 interactive / $20 indexing+evaluation / $100 total monthly gates
+are retained. Daily limits reset at 00:00 UTC: 10/trial, 50/account, 20/account during
+the first 3 days; accounts also have 600/month. `/api/config.aiLimits` and
+`/api/ai/status` report the configured limits and the visitor's remaining allowance.
+The legacy setting name `AI_ANONYMOUS_TRIAL_REQUESTS` now means per UTC day.
+
+With the repository's Haiku scope and OpenAI embedding price rows, the hard maximum
+is $0.0011325 (scope input 6,500, output 600, full cache-write premium; embedding
+1,000 tokens), rounded up to a **$0.0012 reservation**. Startup derives this from the
+configured models; it is not the generated-summary reservation. No generation retries
+run. Over-cap or truncated scope output fails closed without cropping. The free
+`ai-preflight` also measures `scope.e1`; provider measurement and scope/excerpt quality
+checks remain required before public AI launch. Offline tests are not model-quality
+clearance.
+
+`AI_BRIEFS_ENABLED=false` is the default and must stay off while G6 for generated
+summaries is closed. It disables create/refine with 404 even with provider keys present;
+legacy reads and cancel still work until expiry. `AI_PARTIAL_DISPLAY` stays off too.
+See [RUNBOOK](docs/RUNBOOK.md#enabling-the-evidence-view) for enabling evidence after review.
+
 ### AI briefs
+
+The following describes the experimental generated-summary pipeline. Its writes are
+disabled by default (`AI_BRIEFS_ENABLED=false`); it is not the evidence-view flow.
 
 `server/briefs/` runs a brief (DESIGN §2, §5; UI_DESIGN §4.3–§4.6): one question plus
 at most three refinements, each a step through the anonymous gate, admission, and
@@ -1992,8 +2079,8 @@ lock order in migration 0019.
   Auth's goes to the console; telemetry is off. A callback that fails unexpectedly (its
   account deleted while it completes, say) lands on the sign-in error page.
 - **Signed in, AI.** A signed-in visitor's AI requests are billed to the account: its
-  quota key is HMAC(issuer, sub) (`abuse_records`, usage buckets), its daily allowance 5
-  for the first 3 days (from the account's creation), then 20, and 150 a month.
+  quota key is HMAC(issuer, sub) (`abuse_records`, usage buckets), its daily allowance 20
+  for the first 3 days (from the account's creation), then 50, and 600 a month.
   `GET /api/ai/status` reports the account's counts. Ordinary use takes no Turnstile
   check; a request takes one when the account made 3 AI attempts this minute, has used
   half of today's allowance, or its network made 10 signed-in attempts this hour, and

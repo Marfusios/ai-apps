@@ -1,19 +1,13 @@
 # AirCase: implementation design
 
-**Draft, updated 2026-10-21.** Initial data research: 2026-10-16. Design only;
-the application is not built. Tracing/evaluation decision: self-hosted Langfuse.
-Working assumptions: English-first public beta, all completed US investigations
-as the eventual scope, and a **$100/month AI-provider ceiling**, set by the owner
-on 2026-10-21 while $200 of Anthropic credits are available. These are proposed
-defaults pending owner feedback, not deployed limits. Language-model calls start
-on the Anthropic API, behind a provider interface that operators can switch to
-OpenAI at deployment (§9). Embeddings stay on OpenAI.
-
-Build a small TypeScript application that finds relevant investigations, explains
-why they match, and compares supporting evidence. Start with the 2008-onward
-dataset and add historical coverage later. The experience is search with an
-evidence-based answer and comparison table, alongside browsable cases and a modest
-dashboard. The first implementation should be a complete, small vertical slice.
+**As built, updated 2026-10-25.** AirCase's public search, case pages and accounts
+use TypeScript, PostgreSQL and Elasticsearch. The initial AI feature is an extractive
+**evidence view** (§5): typed query interpretation, pinned retrieval and canonical
+NTSB text. Generated summaries remain experimental and disabled behind
+`AI_BRIEFS_ENABLED=false`; their previous design and calibration history is retained
+below. The independent evidence-view G6 and UI integration must clear before AI opens.
+The owner-set ceilings remain $100/month total, $80 interactive, $20 indexing and
+evaluation, and at most $3/day interactive. Scope uses Anthropic; embeddings use OpenAI.
 
 ## 1. Recommended stack
 
@@ -57,6 +51,10 @@ dependency. The [tracing and evaluation guide](OBSERVABILITY_AND_EVALUATION.md)
 defines instrumentation, development experiments, production assessment, and hosting.
 
 ## 2. First-release behavior
+
+The evidence-view MVP in §5 supersedes the composed-answer behavior below for launch.
+Public AI returns canonical NTSB text and coded facts only. The following brief and
+refinement behavior remains the disabled experimental summary track.
 
 An instructor can ask:
 
@@ -385,6 +383,51 @@ copy of source evidence or the store for users/quotas.
 
 ## 5. Hybrid retrieval and bounded RAG
 
+### Evidence-view MVP (`evidence.v1`)
+
+This is the initial AI product; the composed-answer pipeline below is disabled.
+`POST /api/evidence` calls `scope.e1` then one embedding, or skips scope for an edit of
+an owned search. Scope returns supported `BriefFilters`, editable terms and several
+allowlisted unchecked categories with exact quotes from the question. It never
+applies a default timing/causation interpretation. The fixed notice about unchecked
+conditions is mandatory regardless of what the model detected. Off-topic, operational,
+statistics and comparison intents use static server replies, not model prose.
+
+The three-channel `retrieval.v2` ranking stays unchanged (200/channel, exact case RRF,
+deterministic lexical cutoffs; kNN remains approximate). Delivery is separately versioned:
+100 candidates, ten/page, mapping over those first 100 with the same query vector. A
+search stores its ranking and projection, generation, both concrete indices and seeds.
+A new edited search uses the current publication. An existing search's free pages never
+change or call a provider. Prune/cleanup preserve its references until the 24-hour expiry.
+
+Canonical rows provide the facts and every probable-cause variant. `paragraphs.v1`
+expands retrieval seeds to whole blank-line-delimited paragraphs (UTF-16 offsets,
+canonical LF text) and deduplicates them, up to three previews per case. It does not
+crop paragraphs. The private `/api/evidence/:id/cases/:ntsbNo` endpoint provides full
+sections at that generation with canonical revision IDs. Multi-aircraft sections stay
+event-scoped; every aircraft must meet the active aircraft filter conjunction. Literal
+and declared-synonym highlights are deterministic; relevance facts are coded-filter
+checks, counts in displayed excerpts and channel enums. No summary, classification,
+chronology assertion or model-written gap note exists in this result contract.
+
+Search ownership and content are read together. Handover changes read ownership once,
+never billing or expiry. Edited requests recheck and lock their source under the same
+account lifecycle protocol. Deletion removes searches and replay references; backups
+omit them. Provider calls settle with result storage in one transaction. Static replies
+and failures return quota units but retain real spend. Crash recovery closes abandoned
+searches and returns their units while charging the reservation conservatively.
+
+Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
+context-loss counterexamples through the actual UI, including required context on the
+initial surface; test exact provenance and no generated factual prose across all views.
+Scope evaluation needs fresh question families, per-field precision/recall (targets
+98%/95%), and zero observed critical erroneous hard filters; critical unchecked-note
+recall is 100%, overall target 95%. Track C/N is regression material, not fresh confirmation.
+Provider token-count preflight is separate from offline software tests. The old summary
+G6, partial-display gate and disabled `check.v9/medium` baseline are unchanged.
+
+### Experimental composed-answer pipeline (disabled)
+
 Embeddings represent text numerically so differently worded passages can match.
 RAG retrieves evidence and supplies it to a model to write an answer. Neither
 establishes whether a suspected cause was confirmed; provenance and evaluation
@@ -599,10 +642,10 @@ Proposed configurable ceilings, all subordinate to the global spend limit:
 
 | Identity/action | Initial limit |
 | --- | --- |
-| Anonymous trial | 3 AI requests per server-tracked identity retained for 30 days |
+| Anonymous trial | 10 AI searches per UTC day; server-tracked identity retained for 30 days |
 | Anonymous burst | 2 AI attempts/minute; one in flight per identity |
 | Anonymous network backstop | 10 attempts/hour and 20/day per normalized IP or IPv6 /64 |
-| Signed-in AI | 20/day, 150/month/account; 5 attempts/minute; one in flight; new accounts get 5/day for their first 3 days |
+| Signed-in AI | 50/day, 600/month/account; 5 attempts/minute; one in flight; new accounts get 20/day for their first 3 days |
 | Signed-in network backstop | 30 attempts/hour and 100/day per normalized IP or IPv6 /64, with tuning for shared networks |
 | Global AI | 2 in flight, at most 1 anonymous; anonymous spend at most 25% of daily interactive allowance |
 | Browsing/search/dashboard | No AI quota; bounded queries and initially 60 HTTP requests/minute/network identity |
@@ -618,18 +661,18 @@ allocation: retain a login-required emergency mode and expect a small beta under
 this budget, not abuse-proof availability.
 
 Use a random signed HttpOnly trial cookie backed by a database record, not a
-browser-only counter. After three requests, explain the limit and offer Google
-sign-in while keeping browsing available. A live brief can move to the new
+browser-only counter. After ten results searches in a UTC day, explain the reset and offer Google
+sign-in while keeping browsing available. A live search or brief can move to the new
 account at sign-in. Each step keeps the billing principal it was admitted under
 (later refinements bill the account), and only read ownership moves, atomically
 and once
 ([interface design](UI_DESIGN.md) §5, "Signing in mid-brief").
 
-Describe the offer as “Up to three free AI searches, subject to daily availability.”
-Pacing makes the anonymous allowance small. With $80 spread over a fresh 30-day
-month, roughly $2.67/day is interactive and $0.67/day anonymous. With the default
-Opus answer model (§9), that is about 7 anonymous requests, or 2 complete trials,
-a day. Exhausted capacity is therefore a normal
+Describe the offer as “Up to ten free AI searches a day, subject to availability.”
+The anonymous share is still 25% of the paced interactive allowance. At the evidence
+reservation of $0.0012, $0.67 can admit about 558 searches at their worst case; these
+are monetary ceilings, not a promised visitor allocation. Network and concurrency
+limits still apply. Exhausted capacity remains a normal
 state, not an edge case. Offer “Sign in to continue” only while authenticated
 capacity remains; when the global allowance is exhausted, say AI search is
 temporarily unavailable and keep keyword search, case reading, and deterministic
@@ -821,6 +864,24 @@ Bound timeouts/tokens/context/concurrency and disable automatic SDK retries
 initially; ambiguous retries must not multiply unaccounted charges.
 
 ## 9. Model providers, choices and cost envelope
+
+### Evidence pricing (initial AI feature)
+
+`server/evidence/pricing.ts` derives the reservation from the configured scope and
+embedding models and their hard caps. With Haiku 5.5 and `text-embedding-3-small`,
+6,500 scope input tokens (including a possible cache-write premium on all 6,500),
+600 output tokens and 1,000 embedding tokens cost at most **$0.0011325**. Round up
+to $0.0012 per admitted search. Edited searches skip scope but use the same conservative
+reservation; settlement releases the unused amount. There is one attempt per stage,
+no fallback to another model or generated summary. A scope output that hits its cap
+fails closed and returns its search unit while keeping the provider charge.
+
+Startup validates the evidence reservation while `AI_BRIEFS_ENABLED` is false. The
+free `ai-preflight` counts the actual `scope.e1` prompt/schema, maximal questions,
+cache prefix and a multi-reading output. Its measured input cap stays enforced at
+runtime. No provider calls are made by the offline test suite. Frozen scope-quality
+and fresh provider preflight gates remain necessary before enabling public traffic.
+The generated-summary prices below describe the disabled experimental path.
 
 ### Provider switching
 
