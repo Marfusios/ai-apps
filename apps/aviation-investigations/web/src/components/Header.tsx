@@ -20,10 +20,11 @@ export interface HeaderProps {
 /**
  * Global header (UI_DESIGN §3): the lockup (the mark and the wordmark linking home, and what
  * AirCase shows), Explore and Dashboard, the AI counter, the Day/Night switch and sign-in,
- * over the blue rule with its tick scale. Below 640px the nav, switch and sign-in move into
- * a ☰ menu (§6), and the row wraps: the wordmark and the AI counter on its first line, the
- * descriptor on the second, the ☰ centred beside both. The wordmark is one short word, so it
- * is the same at every width.
+ * over the blue rule with its tick scale. Below 1024px the row wraps: the descriptor takes a
+ * second line under the wordmark, with the rest of the header on the first (3px apart on a
+ * tablet, clear of the active item's underline). Below 640px the nav, switch and sign-in move
+ * into a ☰ menu (§6), centred on both lines. The wordmark is one short word, so it is the same
+ * at every width.
  */
 export function Header({ aiCounter, auth }: HeaderProps) {
   const location = useLocation();
@@ -42,7 +43,7 @@ export function Header({ aiCounter, auth }: HeaderProps) {
 
   return (
     <header className="header-rule relative z-20 bg-header" onKeyDown={onKeyDown}>
-      <div className="relative mx-auto flex min-h-[66px] max-w-page flex-wrap content-center items-center gap-x-3 py-[11px] pr-[62px] pl-4 sm:min-h-0 sm:flex-nowrap sm:gap-x-4 sm:px-[22px] lg:gap-x-[1.4rem]">
+      <div className="relative mx-auto flex min-h-[66px] max-w-page flex-wrap content-center items-center gap-x-3 py-[11px] pr-[62px] pl-4 sm:min-h-0 sm:gap-x-4 sm:gap-y-[3px] sm:px-[22px] lg:flex-nowrap lg:gap-x-[1.4rem]">
         <BrandLockup />
         <nav aria-label="Main" className="hidden gap-[1.1rem] sm:flex" data-print="hide">
           {NAV.map((item) => (

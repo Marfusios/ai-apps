@@ -1115,10 +1115,11 @@ The header (UI_DESIGN §3) starts with the AirCase mark and the wordmark, one li
 "AirCase" (the mark, `BrandMark`, is decorative; its geometry is in `shared/brand-mark.ts`,
 its colours are the `mark-tile` and `mark-glyph` tokens), and the line "Plane crash &
 accident investigations" (`PRODUCT_DESCRIPTOR` in `shared/brand.ts`) as plain text outside
-the link (`BrandLockup`): beside the wordmark from 1024px, left out on tablets, where the
-header has no room for it, and under the wordmark on phones, with the mark centred beside
-both lines. It never changes the header's height, and it does not print. At night the
-wordmark is plain blue text like by day, not an engraved placard.
+the link (`BrandLockup`): beside the wordmark from 1024px, and below that, on tablets and
+phones, on a second line under the wordmark, running under the navigation or the AI counter.
+The link's box, and so its focus ring, holds the mark and the wordmark at every width. The
+line keeps the desktop and phone headers as tall as they were (a tablet's grows by it), and it
+does not print. At night the wordmark is plain blue text like by day, not an engraved placard.
 
 The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
 

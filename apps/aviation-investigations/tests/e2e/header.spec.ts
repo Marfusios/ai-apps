@@ -1,13 +1,16 @@
 /**
  * The header's lockup in a real browser (UI_DESIGN §3, §6, owner decisions of 2026-10-24): the
- * mark and the wordmark link home; the descriptor sits beside the wordmark after a hairline from
- * 1024px, is left out on tablets, where the header has no room for it, and goes under the
- * wordmark on phones. It is never cut short, never wraps the navigation and leaves the header
- * as tall as it was. At night the wordmark is plain blue text, not a placard.
+ * mark and the wordmark link home, and the link's box (so its focus ring) holds both at every
+ * width; the descriptor sits beside the wordmark after a hairline from 1024px and under it below
+ * that, on tablets and phones. It is never cut short and never wraps the navigation; the
+ * desktop and phone headers stay as tall as they were. At night the wordmark is plain blue
+ * text, not a placard.
  */
 import { expect, test, type Page } from '@playwright/test';
 
 const DESCRIPTOR = 'Plane crash & accident investigations';
+/** The header's height from 1024px (and on tablets before the line went under the wordmark). */
+const DESKTOP_HEIGHT = 47.25;
 
 interface Box {
   x: number;
@@ -20,21 +23,32 @@ const right = (b: Box): number => b.x + b.width;
 const bottom = (b: Box): number => b.y + b.height;
 const middle = (b: Box): number => b.y + b.height / 2;
 const apart = (a: Box, b: Box): boolean => right(a) <= b.x || right(b) <= a.x || bottom(a) <= b.y || bottom(b) <= a.y;
+const contains = (outer: Box, inner: Box): boolean =>
+  inner.x >= outer.x - 0.5 && inner.y >= outer.y - 0.5 && right(inner) <= right(outer) + 0.5 && bottom(inner) <= bottom(outer) + 0.5;
 
-async function open(page: Page, width: number, theme: 'day' | 'night', path = '/explore'): Promise<void> {
+type Visitor = 'signed out' | 'signed in';
+
+async function open(page: Page, width: number, theme: 'day' | 'night', path = '/explore', visitor: Visitor = 'signed out'): Promise<void> {
   await page.setViewportSize({ width, height: 700 });
   await page.addInitScript(`localStorage.setItem('casebook-theme', '${theme}')`);
+  // The mock API keeps this tab's sign-in in session storage (web/src/mocks/handlers.ts).
+  if (visitor === 'signed in') await page.addInitScript(`sessionStorage.setItem('casebook-mock-account', '{"signedIn":true,"registered":true}')`);
   await page.goto(path);
   await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
   await page.evaluate('document.fonts.ready');
-  // The AI counter has read the status: the header is complete.
+  // The AI counter has read the status, and the sign-in slot its answer: the header is complete.
   await expect
     .poll(() => page.locator('header').evaluate((h) => h.querySelector('button[aria-controls]')?.parentElement?.firstElementChild?.textContent ?? ''))
     .toMatch(/^AI /);
+  if (width >= 640) {
+    const slot = visitor === 'signed in' ? page.getByRole('banner').getByRole('link', { name: 'Account' }) : page.getByRole('banner').getByRole('button', { name: 'Sign in' });
+    await expect(slot.first()).toBeVisible();
+  }
 }
 
 interface Measured {
   header: Box;
+  link: Box | null;
   mark: Box | null;
   wordmark: Box | null;
   /** The descriptor's text, when it shows. */
@@ -66,6 +80,7 @@ async function measure(page: Page): Promise<Measured> {
     const counter = menu?.parentElement?.firstElementChild;
     return {
       header: box(header) as Rect,
+      link: box(home),
       mark: box(home?.querySelector('svg')),
       wordmark: box(home?.querySelector('.wordmark')),
       descriptor: text && box(text) ? box(range) : null,
@@ -97,69 +112,111 @@ async function styleOf(locator: ReturnType<Page['locator']>, ...names: string[])
   }, names);
 }
 
+/** The parts every width shares: the mark before the wordmark inside the link's box, and the line whole, on one line. */
+function expectLinkAndLine(m: Measured): { mark: Box; wordmark: Box; descriptor: Box } {
+  const { link, mark, wordmark, descriptor } = m;
+  if (!link || !mark || !wordmark || !descriptor) throw new Error(`missing part: ${JSON.stringify(m)}`);
+  expect(contains(link, mark), 'the link holds the mark').toBe(true);
+  expect(contains(link, wordmark), 'the link holds the wordmark').toBe(true);
+  expect(right(mark)).toBeLessThanOrEqual(wordmark.x);
+  expect(Math.abs(middle(mark) - middle(wordmark))).toBeLessThanOrEqual(1.5);
+  expect(m.descriptorLines).toBe(1);
+  expect(m.descriptorCut).toBe(false);
+  return { mark, wordmark, descriptor };
+}
+
+/** Two lines: the descriptor under the wordmark, starting where the wordmark does. */
+function expectUnderWordmark(wordmark: Box, descriptor: Box): void {
+  expect(descriptor.y).toBeGreaterThanOrEqual(bottom(wordmark) - 1);
+  expect(Math.abs(descriptor.x - wordmark.x)).toBeLessThanOrEqual(1);
+}
+
 for (const theme of ['day', 'night'] as const) {
   test.describe(`by ${theme}`, () => {
-    test('phone (390px): the descriptor under the wordmark, the mark centred beside both, the counter whole', async ({ page }) => {
-      await open(page, 390, theme);
-      await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase', exact: true })).toBeVisible();
-      await expect(page.getByRole('banner').getByText(DESCRIPTOR)).toBeVisible();
-      const m = await measure(page);
-      const { mark, wordmark, descriptor, counter, menu } = m;
-      if (!mark || !wordmark || !descriptor || !counter || !menu) throw new Error(`missing part: ${JSON.stringify(m)}`);
-      // Two lines: the descriptor starts under the wordmark, at its left edge, on one line, whole.
-      expect(descriptor.y).toBeGreaterThanOrEqual(bottom(wordmark) - 1);
-      expect(Math.abs(descriptor.x - wordmark.x)).toBeLessThanOrEqual(1);
-      expect(m.descriptorLines).toBe(1);
-      expect(m.descriptorCut).toBe(false);
-      // The mark sits left of both lines, centred on them.
-      expect(right(mark)).toBeLessThanOrEqual(wordmark.x);
-      expect(Math.abs(middle(mark) - (wordmark.y + bottom(descriptor)) / 2)).toBeLessThanOrEqual(1.5);
-      // The AI counter keeps the wordmark's line and its whole text; nothing touches the menu button.
-      expect(Math.abs(middle(counter) - middle(wordmark))).toBeLessThanOrEqual(1.5);
-      expect(apart(counter, menu) && apart(descriptor, menu) && apart(descriptor, counter)).toBe(true);
-      expect(m.counterCut).toBe(false);
-      // As tall as the menu button's row was, and no sideways scrolling.
-      expect(m.header.height).toBe(await heightWithoutLockup(page));
-      expect(m.pageWidth).toBe(390);
-    });
-
-    test('tablet (768px): the mark and the wordmark, no descriptor, the nav on one line', async ({ page }) => {
-      await open(page, 768, theme);
-      await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase', exact: true })).toBeVisible();
-      await expect(page.getByRole('banner').getByText(DESCRIPTOR)).toBeHidden();
-      const m = await measure(page);
-      expect(m.mark).not.toBeNull();
-      expect(m.navLinks).toHaveLength(2);
-      for (const link of m.navLinks) expect(link.height).toBeLessThan(30);
-      expect(m.header.height).toBe(await heightWithoutLockup(page));
-      expect(m.pageWidth).toBe(768);
-    });
-
-    for (const width of [1024, 1280]) {
-      test(`desktop (${width}px): the descriptor beside the wordmark after a hairline, the header as tall as before`, async ({ page }) => {
-        await open(page, width, theme);
-        await expect(page.getByRole('banner').getByText(DESCRIPTOR)).toBeVisible();
+    for (const visitor of ['signed out', 'signed in'] as const) {
+      test(`phone (390px), ${visitor}: the line under the wordmark, the counter whole on the wordmark's line`, async ({ page }) => {
+        await open(page, 390, theme, '/explore', visitor);
+        await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase', exact: true })).toBeVisible();
         const m = await measure(page);
-        const { mark, wordmark, descriptor, counter } = m;
-        if (!mark || !wordmark || !descriptor || !counter) throw new Error(`missing part: ${JSON.stringify(m)}`);
-        expect(right(mark)).toBeLessThanOrEqual(wordmark.x);
-        expect(descriptor.x).toBeGreaterThan(right(wordmark));
-        expect(Math.abs(middle(descriptor) - middle(wordmark))).toBeLessThanOrEqual(2);
-        expect(m.descriptorLines).toBe(1);
-        expect(m.descriptorCut).toBe(false);
-        // Nothing overlaps, and the nav stays on one line.
-        for (const link of m.navLinks) {
-          expect(link.height).toBeLessThan(30);
-          expect(apart(descriptor, link)).toBe(true);
-        }
-        expect(right(descriptor)).toBeLessThan(m.navLinks[0]?.x ?? 0);
-        expect(apart(descriptor, counter)).toBe(true);
-        // A hairline before it.
-        expect(await styleOf(page.getByRole('banner').getByText(DESCRIPTOR), 'border-left-width', 'border-left-style')).toEqual(['1px', 'solid']);
+        const { wordmark, descriptor } = expectLinkAndLine(m);
+        expectUnderWordmark(wordmark, descriptor);
+        const { counter, menu } = m;
+        if (!counter || !menu) throw new Error(`missing part: ${JSON.stringify(m)}`);
+        expect(Math.abs(middle(counter) - middle(wordmark))).toBeLessThanOrEqual(1.5);
+        expect(apart(counter, menu) && apart(descriptor, menu) && apart(descriptor, counter)).toBe(true);
+        expect(m.counterCut).toBe(false);
+        // As tall as the menu button's row was, and no sideways scrolling.
         expect(m.header.height).toBe(await heightWithoutLockup(page));
-        expect(m.pageWidth).toBe(width);
+        expect(m.pageWidth).toBe(390);
       });
     }
+
+    for (const width of [640, 700, 768, 900, 1023]) {
+      test(`tablet (${width}px): the line under the wordmark and below the navigation, nothing cut or wrapped`, async ({ page }) => {
+        for (const visitor of ['signed out', 'signed in'] as const) {
+          await open(page, width, theme, '/explore', visitor);
+          await expect(page.getByRole('banner').getByText(DESCRIPTOR), visitor).toBeVisible();
+          const m = await measure(page);
+          const { wordmark, descriptor } = expectLinkAndLine(m);
+          expectUnderWordmark(wordmark, descriptor);
+          // The navigation keeps its one line, and the line runs below it.
+          expect(m.navLinks, visitor).toHaveLength(2);
+          for (const link of m.navLinks) {
+            expect(link.height, visitor).toBeLessThan(30);
+            expect(descriptor.y, visitor).toBeGreaterThanOrEqual(bottom(link));
+          }
+          expect(Math.abs((m.navLinks[0]?.y ?? 0) - (m.navLinks[1]?.y ?? 99)), visitor).toBeLessThan(1);
+          expect(m.counterCut, visitor).toBe(false);
+          expect(m.counter && apart(descriptor, m.counter), visitor).toBe(true);
+          // The header grows by the line alone (and 3px of air above it).
+          const without = await heightWithoutLockup(page);
+          expect(without, visitor).toBe(DESKTOP_HEIGHT);
+          expect(m.header.height - without, visitor).toBeGreaterThan(15);
+          expect(m.header.height - without, visitor).toBeLessThanOrEqual(20);
+          expect(m.pageWidth, visitor).toBe(width);
+        }
+      });
+    }
+
+    for (const width of [1024, 1280]) {
+      test(`desktop (${width}px): the line beside the wordmark after a hairline, the header as tall as before`, async ({ page }) => {
+        for (const visitor of ['signed out', 'signed in'] as const) {
+          await open(page, width, theme, '/explore', visitor);
+          await expect(page.getByRole('banner').getByText(DESCRIPTOR), visitor).toBeVisible();
+          const m = await measure(page);
+          const { wordmark, descriptor } = expectLinkAndLine(m);
+          expect(descriptor.x, visitor).toBeGreaterThan(right(wordmark));
+          expect(Math.abs(middle(descriptor) - middle(wordmark)), visitor).toBeLessThanOrEqual(2);
+          // Nothing overlaps, and the nav stays on one line.
+          for (const link of m.navLinks) {
+            expect(link.height, visitor).toBeLessThan(30);
+            expect(apart(descriptor, link), visitor).toBe(true);
+          }
+          expect(right(descriptor), visitor).toBeLessThan(m.navLinks[0]?.x ?? 0);
+          expect(m.counter && apart(descriptor, m.counter), visitor).toBe(true);
+          expect(m.counterCut, visitor).toBe(false);
+          // A hairline before it.
+          expect(await styleOf(page.getByRole('banner').getByText(DESCRIPTOR), 'border-left-width', 'border-left-style'), visitor).toEqual(['1px', 'solid']);
+          expect(m.header.height, visitor).toBe(DESKTOP_HEIGHT);
+          expect(await heightWithoutLockup(page), visitor).toBe(DESKTOP_HEIGHT);
+          expect(m.pageWidth, visitor).toBe(width);
+        }
+      });
+    }
+
+    test('the home link’s focus ring goes round the mark and the wordmark at every width', async ({ page }) => {
+      for (const width of [390, 768, 1280]) {
+        await open(page, width, theme);
+        const home = page.getByRole('banner').getByRole('link', { name: 'AirCase', exact: true });
+        // From the top of the page: the skip link, then the home link.
+        await page.keyboard.press('Tab');
+        await page.keyboard.press('Tab');
+        await expect(home, `${width}px`).toBeFocused();
+        expect(await styleOf(home, 'outline-style', 'outline-width'), `${width}px`).toEqual(['solid', '2px']);
+        const m = await measure(page);
+        expect(m.link && m.mark && contains(m.link, m.mark), `${width}px`).toBe(true);
+      }
+    });
 
     test('the wordmark is plain text in the theme blue, the mark in its tokens; other placards keep their style', async ({ page }) => {
       await open(page, 1280, theme, '/cases/DFW08TA066');

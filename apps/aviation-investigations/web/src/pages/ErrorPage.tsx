@@ -45,7 +45,7 @@ export function AppError() {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="header-rule relative z-20 bg-header">
-        <div className="relative mx-auto flex max-w-page flex-wrap content-center items-center gap-x-4 px-4 py-[11px] sm:flex-nowrap sm:px-[22px]">
+        <div className="mx-auto flex max-w-page flex-wrap content-center items-center gap-x-4 px-4 py-[11px] sm:px-[22px] lg:flex-nowrap">
           <BrandLockup reload />
         </div>
       </header>

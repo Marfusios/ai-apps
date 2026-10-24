@@ -209,8 +209,8 @@ AI CLASSIFIED".
   is `mark-tile` and the aircraft `mark-glyph` (§2.2), so it follows the theme and
   prints in its day colours. It has two optical sizes: below 40px the aircraft is
   heavier and a little larger, so that it still reads in a 16px browser tab; from
-  40px up it is the finer drawing. It stands before the wordmark in the header
-  (22px; 24px on a phone, §3) and is the browser-tab icon, the app icons and the
+  40px up it is the finer drawing. It stands before the wordmark in the header,
+  22px at every width and inside the home link (§3), and is the browser-tab icon, the app icons and the
   mark on the share card. It is decorative: the wordmark beside it names the
   link. Its geometry has one source, `shared/brand-mark.ts`; the home page keeps
   the compass.
@@ -331,19 +331,22 @@ Switching themes (Proposed):
 **Header** (all pages):
 
 - the mark and the wordmark, linking home; the link's name is "AirCase" alone,
-  the mark being decorative (§2.5)
+  the mark being decorative (§2.5). The link's box, and so its focus ring, holds
+  both at every width.
 - the line **"Plane crash & accident investigations"** (Owner, 2026-10-24), so a
   stranger sees at once what the site shows. It is plain text outside the link,
   in the header's muted meta style (11.5px, `muted`):
   - from 1024px, beside the wordmark after a hairline;
-  - on tablets (640–1023px) it is left out: beside the navigation, the AI
-    counter, the Day/Night switch and Sign in, the header has no room for it on
-    its one line (Builder, from screenshots at 390, 768, 1024 and 1280px);
-  - on phones, under the wordmark: two lines, with the mark (24px) centred
-    beside both (§6).
+  - below 1024px, on tablets and phones, under the wordmark, starting where the
+    wordmark does: a second line under the rest of the header (review ruling of
+    2026-10-24 for tablets). There is no room for it beside the navigation, the
+    AI counter, the Day/Night switch and Sign in, so it runs under them, 3px
+    below the active item's underline on a tablet (§6 for phones).
 
-  It is never cut short, never wraps the navigation and leaves the header as
-  tall as before. It does not print (§7).
+  It is never cut short and never wraps the navigation. The desktop and phone
+  headers keep their heights; on a tablet the header grows by the line (about
+  19px; more where touch targets make the first line taller). It does not
+  print (§7).
 - Explore and Dashboard navigation, with the active item underlined in blue
 - the AI counter (§5)
 - the Day/Night switch
@@ -1054,7 +1057,7 @@ On a phone:
   both lines, holding the nav, Day/Night switch and Sign in. The header keeps its
   height. The line may run under the counter; a counter too long for its place
   is cut short, as before (the longest, "Free AI searches paused for today",
-  fits from about 390px).
+  fits from about 382px).
 - **Filters:** a blue filled "Filters (n)" chip at the start of the chip row
   opens a bottom sheet. The sheet has a grab handle, "Filters · Clear all", the
   same facet bars, and a sticky "Show 58 investigations" button.
