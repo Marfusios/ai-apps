@@ -31,12 +31,16 @@ const int16 = (n: number) => {
 };
 const cstring = (s: string) => Buffer.concat([Buffer.from(s, 'utf8'), Buffer.from([0])]);
 
-/** One int4 column, `?column?`. */
-const ROW_DESCRIPTION = message(
-  'T',
-  Buffer.concat([int16(1), cstring('?column?'), int32(0), int16(0), int32(23), int16(4), int32(-1), int16(0)]),
-);
-const DATA_ROW = message('D', Buffer.concat([int16(1), int32(1), Buffer.from('1')]));
+/** The one column every answer has: its name, type (an OID, e.g. 23 int4, 16 bool) and text value. */
+export interface FakeColumn {
+  name: string;
+  typeOid: number;
+  value: string;
+}
+
+const rowDescription = (c: FakeColumn) =>
+  message('T', Buffer.concat([int16(1), cstring(c.name), int32(0), int16(0), int32(c.typeOid), int16(-1), int32(-1), int16(0)]));
+const dataRow = (c: FakeColumn) => message('D', Buffer.concat([int16(1), int32(Buffer.byteLength(c.value)), Buffer.from(c.value)]));
 const COMMAND_COMPLETE = message('C', cstring('SELECT 1'));
 const READY = message('Z', Buffer.from('I'));
 
@@ -48,6 +52,8 @@ export class FakePg {
   queries = 0;
   /** Connections accepted. */
   accepted = 0;
+  /** What every query answers: one row of one column (default `?column?` int4 1). */
+  column: FakeColumn = { name: '?column?', typeOid: 23, value: '1' };
 
   private constructor(
     private readonly server: Server,
@@ -124,7 +130,7 @@ export class FakePg {
     if (this.mode === 'stall') return;
     switch (type) {
       case 'Q':
-        socket.write(Buffer.concat([ROW_DESCRIPTION, DATA_ROW, COMMAND_COMPLETE, READY]));
+        socket.write(Buffer.concat([rowDescription(this.column), dataRow(this.column), COMMAND_COMPLETE, READY]));
         return;
       case 'P':
         socket.write(message('1'));
@@ -134,10 +140,10 @@ export class FakePg {
         return;
       case 'D':
         // A statement is described with its parameters first; a portal with its row only.
-        socket.write(body[0] === 0x53 ? Buffer.concat([message('t', int16(0)), ROW_DESCRIPTION]) : ROW_DESCRIPTION);
+        socket.write(body[0] === 0x53 ? Buffer.concat([message('t', int16(0)), rowDescription(this.column)]) : rowDescription(this.column));
         return;
       case 'E':
-        socket.write(Buffer.concat([DATA_ROW, COMMAND_COMPLETE]));
+        socket.write(Buffer.concat([dataRow(this.column), COMMAND_COMPLETE]));
         return;
       case 'C':
         socket.write(message('3'));
