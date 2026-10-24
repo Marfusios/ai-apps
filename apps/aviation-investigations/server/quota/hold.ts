@@ -8,9 +8,11 @@
  * `maintenance`, the AI status shows it paused, `reserveSpend` refuses indexing and
  * evaluation spend) until an operator has reconciled the ledger:
  *
- * - `holdPaidOperations` (run by `pnpm worker restore-check`) sets the hold. A restore into
- *   another database holds paid operations even before that: the row it brings along names
- *   the database the backup was taken from (`database_oid`), not this one.
+ * - The restore sets the hold in its own transaction (docker/postgres/after-restore.sql), and
+ *   migration 0020 starts held on a database restored from a backup taken before it.
+ *   `holdPaidOperations` (run by `pnpm worker restore-check`) sets it again. A row written in
+ *   another database (`database_oid`) holds them too, but nothing relies on that: a new
+ *   cluster can repeat an OID.
  * - `reconcileRestore` (`pnpm worker restore-reconcile`) charges, under the spend lock and
  *   in one transaction: every reservation the backup left open, in full (its request's
  *   outcome is unknown, so it is charged like an expired lease), and the spend the restored
@@ -31,7 +33,8 @@ import { microsToNumeric, microsToUsd, remainingCategoryMicros, spendSnapshot, t
 import { QuotaInputError, SPEND_LOCK_KEY, type QuotaBudgets } from './policy.js';
 import { expireLeases } from './settle.js';
 
-export type HoldReason = 'restore_check' | 'other_database' | 'missing';
+/** `restored`: `held_at` is set (the restore, migration 0020 or the restore check). */
+export type HoldReason = 'restored' | 'other_database' | 'missing';
 
 export interface PaidOperationsHold {
   held: boolean;
@@ -60,7 +63,7 @@ export async function readPaidOperationsHold(db: DbOrTx): Promise<PaidOperations
     FROM paid_operations_hold WHERE id = 1`);
   const row = res.rows[0] as HoldRow | undefined;
   if (!row) return { held: true, reason: 'missing', heldAt: null, reconciledAt: null, note: null };
-  const reason: HoldReason | null = row.held_ms !== null ? 'restore_check' : row.same_database !== true ? 'other_database' : null;
+  const reason: HoldReason | null = row.held_ms !== null ? 'restored' : row.same_database !== true ? 'other_database' : null;
   return {
     held: reason !== null,
     reason,

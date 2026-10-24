@@ -125,7 +125,7 @@ describe('paid operations after a restore', () => {
 
   it('the restore check holds paid operations in the same database too, and the runtime roles cannot release them', async () => {
     const held = await holdPaidOperations(migrator, 'restore check', T0);
-    expect(held).toMatchObject({ held: true, reason: 'restore_check', note: 'restore check' });
+    expect(held).toMatchObject({ held: true, reason: 'restored', note: 'restore check' });
     expect(await admit(await trial())).toMatchObject({ ok: false, reason: 'global_paused' });
     for (const role of [app, ingest]) {
       expect(await sqlState(role.execute(sql`UPDATE paid_operations_hold SET held_at = NULL WHERE id = 1`))).toBe('42501');

@@ -14,15 +14,20 @@
 #   first error stops psql, so a failed restore leaves the database as it was. Skipped: the
 #   schema `drizzle`, which provisioning created (its journal table is restored), and the
 #   grants on schema `public`, which provisioning sets and only its owner could change.
+# - The same transaction ends with after-restore.sql: it records the restore and holds paid
+#   operations (server/quota/hold.ts), so the restored database never opens with them allowed;
+#   for a backup taken before migration 0020, the migration starts held instead.
 #
 # `pnpm worker restore-check` then verifies owners, grants and the left-out tables, and holds
-# paid operations until `pnpm worker restore-reconcile`. Prints no credentials.
+# paid operations again until `pnpm worker restore-reconcile`. Prints no credentials.
 set -euo pipefail
 : "${DATABASE_MIGRATOR_URL:?DATABASE_MIGRATOR_URL is not set}"
-if [[ $# -ne 1 || "$1" == */* || "$1" != *.dump ]]; then
+# A plain name (it is also written into the restore record): no path, no quotes.
+if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*\.dump$ ]]; then
   echo "usage: aviation-restore <file>.dump (a file in AVIATION_BACKUP_DIR)" >&2
   exit 2
 fi
+here=$(dirname "${BASH_SOURCE[0]}")
 file="/backup/$1"
 if [[ ! -f "$file" ]]; then
   echo "no backup named $1 in AVIATION_BACKUP_DIR" >&2
@@ -63,6 +68,9 @@ BEGIN
   END LOOP;
 END $$;
 SQL
-  pg_restore --no-owner --use-list "$list" --file - "$file" && echo 'COMMIT;'
+  pg_restore --no-owner --use-list "$list" --file - "$file" &&
+    printf "SET LOCAL aviation.restored_from = '%s';\n" "$1" &&
+    cat "$here/after-restore.sql" &&
+    echo 'COMMIT;'
 } | "${psql[@]}" --output /dev/null
 echo "restored $1"

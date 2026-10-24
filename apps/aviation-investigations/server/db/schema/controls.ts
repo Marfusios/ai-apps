@@ -94,10 +94,12 @@ export const RESTORE_RECONCILE_STAGE = 'restore_reconcile';
  * restored ledger lacks what was spent after the backup was taken, although the providers
  * still bill it, so after a restore no paid call may start until an operator has charged
  * that spend (`pnpm worker restore-reconcile`). Paid operations are held when `held_at` is
- * set (`pnpm worker restore-check` sets it), when `database_oid` is not the current
- * database's OID (a restore or copy into another database carries the old row), or when
- * the row is missing. Admission, `GET /api/ai/status` and `reserveSpend` read it; only the
- * schema owner (aviation_migrator) changes it (migration 0020).
+ * set (the restore sets it in its own transaction, docker/postgres/after-restore.sql; so do
+ * migration 0020 on a database restored from an older backup and `pnpm worker
+ * restore-check`), or when the row is missing. A `database_oid` other than the current
+ * database's holds them too, an extra signal nothing relies on (OIDs can repeat). Admission,
+ * `GET /api/ai/status` and `reserveSpend` read it; only the schema owner (aviation_migrator)
+ * changes it (migration 0020).
  */
 export const paidOperationsHold = pgTable(
   'paid_operations_hold',

@@ -7,10 +7,10 @@
  * It starts a throwaway PostgreSQL server of the shared server's version (the backup tools'
  * image, compose.yaml) on its own Docker network with a random password and a loopback port,
  * provisions environment `drill` on it, restores the file with docker/postgres/restore.sh
- * exactly as `pnpm app:restore` does, applies the migrations, runs the restore check and reads
- * the hold on paid operations, prints a summary, and removes the server and network again. It
- * exits 0 only when the restore and the check passed. Needs Docker, not the shared services.
- * Never prints credentials.
+ * exactly as `pnpm app:restore` does, applies the migrations, runs the restore check, confirms
+ * that paid operations are blocked (the app login sees the hold, the ingest login's spend is
+ * refused), prints a summary, and removes the server and network again. It exits 0 only when
+ * all of that holds. Needs Docker, not the shared services. Never prints credentials.
  */
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -18,10 +18,12 @@ import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import pg from 'pg';
-import { restoreCheck } from '../server/db/backup.js';
+import { restoreCheck, type RestoreCheckReport } from '../server/db/backup.js';
 import { closeDb, createDb } from '../server/db/client.js';
 import { runMigrations } from '../server/db/migrate.js';
-import { readPaidOperationsHold } from '../server/quota/hold.js';
+import { paidOperationsHeld, readPaidOperationsHold } from '../server/quota/hold.js';
+import { reserveSpend } from '../server/quota/spend.js';
+import { loadConfig } from '../shared/config.js';
 import { APP_DIR } from './local-env.js';
 import { provisionPostgres, roleUrl } from './provision.js';
 
@@ -39,6 +41,23 @@ function docker(args: string[], opts: { quiet?: boolean; env?: NodeJS.ProcessEnv
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export interface DrillFindings {
+  check: Pick<RestoreCheckReport, 'ok'>;
+  /** The app login sees paid operations held. */
+  held: boolean;
+  /** The ingest login's indexing spend was refused with `restore_hold`. */
+  spendRefused: boolean;
+}
+
+/** Why the drill fails; empty when it passes. A restore that leaves paid operations allowed fails. */
+export function drillFailures(f: DrillFindings): string[] {
+  const out: string[] = [];
+  if (!f.check.ok) out.push('the restore check found differences');
+  if (!f.held) out.push('paid operations are NOT held after the restore');
+  if (!f.spendRefused) out.push('indexing spend was NOT refused after the restore');
+  return out;
+}
 
 async function drill(file: string): Promise<number> {
   const id = randomBytes(4).toString('hex');
@@ -88,9 +107,20 @@ async function drill(file: string): Promise<number> {
     }
     await runMigrations(hostUrl);
     const db = createDb(hostUrl, { max: 1, applicationName: 'aviation-drill' });
+    const app = createDb(roleUrl(adminUrl, ENV, 'app', passwords.app), { max: 1, applicationName: 'aviation-drill' });
+    const ingest = createDb(roleUrl(adminUrl, ENV, 'ingest', passwords.ingest), { max: 1, applicationName: 'aviation-drill' });
     try {
       const check = await restoreCheck(db);
       const hold = await readPaidOperationsHold(db);
+      // Before any restore-check: the restore itself must have blocked every paid operation.
+      const held = await paidOperationsHeld(app);
+      const spend = await reserveSpend(ingest, {
+        category: 'indexing',
+        usd: 0.01,
+        request: { provider: 'drill', model: 'drill', stage: 'drill' },
+        budgets: loadConfig({ env: {}, files: [] }).ai.budgets,
+      });
+      const spendRefused = !spend.ok && spend.reason === 'restore_hold';
       const counts = (
         await db.$client.query<{ generations: string; active: string | null; ledger: string; usd: string }>(
           `select (select count(*) from dataset_generations) as generations,
@@ -99,14 +129,21 @@ async function drill(file: string): Promise<number> {
         )
       ).rows[0]!;
       console.log(`drill: ${counts.generations} generations (active ${counts.active ?? 'none'}), ${counts.ledger} ledger lines, ${counts.usd} USD`);
-      console.log(`drill: paid operations ${hold.held ? `held (${hold.reason})` : 'NOT held'}`);
+      console.log(`drill: paid operations ${held ? `held (${hold.reason})` : 'NOT held'}; indexing spend ${spendRefused ? 'refused' : 'NOT refused'}`);
       for (const { table, rows } of check.rows) console.error(`drill: ${table} holds ${rows} rows (a backup must not hold them)`);
+      for (const table of check.unreadable) console.error(`drill: aviation_migrator cannot read ${table}`);
       for (const l of check.privileges.unexpected) console.error(`drill: found    ${l}`);
       for (const l of check.privileges.missing) console.error(`drill: expected ${l}`);
-      console.log(check.ok ? 'drill passed: restored, migrated, owners and grants as expected' : 'drill FAILED: see the differences above');
-      return check.ok ? 0 : 1;
+      const failures = drillFailures({ check, held, spendRefused });
+      for (const f of failures) console.error(`drill: ${f}`);
+      console.log(
+        failures.length === 0
+          ? 'drill passed: restored, migrated, owners and grants as expected, paid operations held'
+          : 'drill FAILED: see above',
+      );
+      return failures.length === 0 ? 0 : 1;
     } finally {
-      await closeDb(db);
+      await Promise.all([closeDb(db), closeDb(app), closeDb(ingest)]);
     }
   } finally {
     docker(['rm', '-f', '-v', name], { quiet: true });

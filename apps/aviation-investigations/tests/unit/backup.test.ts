@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getTableName, isTable } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { POSTGRES_TOOLS_IMAGE } from '../../scripts/restore-drill.js';
+import { POSTGRES_TOOLS_IMAGE, drillFailures } from '../../scripts/restore-drill.js';
 import { BACKUP_EXCLUDED_DATA, pgDumpExclusions } from '../../server/db/backup.js';
 import * as schema from '../../server/db/schema/index.js';
 
@@ -52,7 +52,7 @@ describe('backups never hold accounts, sign-in state or content', () => {
   it('the restore script restores as the migrator, with its default privileges suspended, in one transaction', () => {
     const script = readFileSync(resolve(APP_DIR, 'docker/postgres/restore.sh'), 'utf8');
     expect(script).toContain('--dbname "$DATABASE_MIGRATOR_URL"');
-    expect(script).toContain('pg_restore --no-owner --use-list "$list" --file - "$file" && echo \'COMMIT;\'');
+    expect(script).toContain('pg_restore --no-owner --use-list "$list" --file - "$file" &&');
     expect(script).toContain("echo 'BEGIN;'");
     expect(script).toContain('ON_ERROR_STOP=1');
     expect(script).toMatch(/ALTER DEFAULT PRIVILEGES FOR ROLE %I %s REVOKE ALL ON %s FROM %s/);
@@ -60,6 +60,26 @@ describe('backups never hold accounts, sign-in state or content', () => {
     expect(script).toMatch(/restore only into a freshly provisioned database/);
     // Never as an administrator, never with ownership taken from elsewhere.
     expect(script).not.toMatch(/PG_ADMIN|--role|--single-transaction/);
+  });
+
+  it('the restore ends its transaction by recording itself and holding paid operations', () => {
+    const script = readFileSync(resolve(APP_DIR, 'docker/postgres/restore.sh'), 'utf8');
+    const tail = script.slice(script.indexOf('pg_restore --no-owner --use-list'));
+    // after-restore.sql goes in after the dump and before COMMIT, all only when pg_restore succeeded.
+    expect(tail).toMatch(/--file - "\$file" &&\n\s+printf "SET LOCAL aviation\.restored_from = '%s';\\n" "\$1" &&\n\s+cat "\$here\/after-restore\.sql" &&\n\s+echo 'COMMIT;'/);
+    const after = readFileSync(resolve(APP_DIR, 'docker/postgres/after-restore.sql'), 'utf8');
+    expect(after).toContain('INSERT INTO drizzle.restores');
+    expect(after).toMatch(/ON CONFLICT \(id\) DO UPDATE SET held_at = now\(\)/);
+    // The file name goes into SQL: the script accepts plain names only.
+    expect(script).toContain('^[A-Za-z0-9_][A-Za-z0-9_.-]*\\.dump$');
+  });
+
+  it('the drill fails unless the restore blocked every paid operation', () => {
+    const ok = { check: { ok: true }, held: true, spendRefused: true };
+    expect(drillFailures(ok)).toEqual([]);
+    expect(drillFailures({ ...ok, held: false })).toEqual(['paid operations are NOT held after the restore']);
+    expect(drillFailures({ ...ok, spendRefused: false })).toEqual(['indexing spend was NOT refused after the restore']);
+    expect(drillFailures({ ...ok, check: { ok: false } })).toHaveLength(1);
   });
 
   it('the drill restores with the same PostgreSQL tools image as the backup containers', () => {

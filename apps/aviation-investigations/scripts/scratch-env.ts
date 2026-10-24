@@ -34,19 +34,20 @@ export async function dropEnvironment(adminUrl: string, env: string): Promise<vo
 }
 
 /**
- * Provision and migrate throwaway environment `env`, run `fn` with its role URLs, and remove
- * it again, also when `fn` fails.
+ * Provision and migrate throwaway environment `env` (up to migration `upTo` when given),
+ * run `fn` with its role URLs, and remove it again, also when `fn` fails.
  */
 export async function withScratchEnvironment<T>(
   adminUrl: string,
   env: string,
   fn: (urls: Record<RoleKind, string>) => Promise<T>,
+  opts: { upTo?: string } = {},
 ): Promise<T> {
   await dropEnvironment(adminUrl, env);
   try {
     const passwords = await provisionPostgres({ env, adminUrl, log: () => undefined });
     const urls = Object.fromEntries(ROLE_KINDS.map((k) => [k, roleUrl(adminUrl, env, k, passwords[k])])) as Record<RoleKind, string>;
-    await runMigrations(urls.migrator);
+    await runMigrations(urls.migrator, opts);
     return await fn(urls);
   } finally {
     await dropEnvironment(adminUrl, env);

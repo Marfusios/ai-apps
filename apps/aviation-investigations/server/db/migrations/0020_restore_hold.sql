@@ -2,13 +2,17 @@
 --
 -- A restored ledger lacks the spend of the time between the backup and the restore, which
 -- the providers still bill, so the same allowance could be spent twice. One row says whether
--- paid operations may start: they are held while `held_at` is set (the restore check sets
--- it), while `database_oid` is not this database's OID (a restore or copy into another
--- database brings the old row along, so a restore holds them even before the check runs),
--- and when the row is missing. Interactive admission, the AI status and the indexing and
--- evaluation spend gate read it; only aviation_migrator, the owner, changes it
--- (`pnpm worker restore-check` holds, `pnpm worker restore-reconcile` charges the lost
--- spend and releases).
+-- paid operations may start: they are held while `held_at` is set, and when the row is
+-- missing. The restore sets it in its own transaction (docker/postgres/after-restore.sql),
+-- `pnpm worker restore-check` sets it again, and only `pnpm worker restore-reconcile`
+-- clears it, after charging the lost spend. `database_oid` (the database the row was
+-- written in) holds them too when it differs, but nothing relies on it: a new cluster can
+-- repeat an OID. Interactive admission, the AI status and the indexing and evaluation spend
+-- gate read the row; only aviation_migrator, the owner, changes it.
+--
+-- Every restore is recorded in drizzle.restores (the migrator's; the runtime roles cannot
+-- read that schema). A backup taken before this migration has no hold table, so its restore
+-- only records itself; this migration, run on such a restored database, starts held.
 --
 -- The reconciliation charges lost interactive spend as an interactive reservation of
 -- principal kind `system`, stage `restore_reconcile`: the money of no known visitor. The
@@ -30,10 +34,21 @@ ALTER TABLE "reservations" ADD CONSTRAINT "reservations_principal_check" CHECK (
           or ("reservations"."category" = 'interactive' and "reservations"."principal_kind" = 'system' and "reservations"."stage" = 'restore_reconcile'))
         and ("reservations"."principal_hash" is null or "reservations"."principal_hash" ~ '^[0-9a-f]{64}$'));
 --> statement-breakpoint
--- The database this ledger belongs to: the one being migrated, so an existing environment
--- keeps its paid operations.
-INSERT INTO "paid_operations_hold" ("id", "database_oid")
-  SELECT 1, d.oid::bigint FROM pg_database d WHERE d.datname = current_database();
+-- Restores recorded by docker/postgres/after-restore.sql (which creates the table as well).
+CREATE TABLE IF NOT EXISTS "drizzle"."restores" (
+  "restored_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "backup" text
+);
+--> statement-breakpoint
+-- An existing environment keeps its paid operations; a database restored from a backup taken
+-- before this migration starts held.
+INSERT INTO "paid_operations_hold" ("id", "database_oid", "held_at", "note")
+  SELECT 1, d.oid::bigint, r.held_at, r.note
+  FROM pg_database d,
+    LATERAL (SELECT CASE WHEN EXISTS (SELECT 1 FROM "drizzle"."restores") THEN now() END AS held_at,
+      CASE WHEN EXISTS (SELECT 1 FROM "drizzle"."restores")
+        THEN 'restored from a backup taken before migration 0020: run pnpm worker restore-reconcile' END AS note) r
+  WHERE d.datname = current_database();
 --> statement-breakpoint
 GRANT SELECT ON TABLE "paid_operations_hold" TO aviation_app, aviation_ingest;
 --> statement-breakpoint

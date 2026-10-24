@@ -128,6 +128,7 @@ export const EXPECTED_PRIVILEGES: readonly string[] = [
   "sequence public.ingestion_runs_id_seq | owner=aviation_migrator | acl=aviation_app:SELECT aviation_ingest:SELECT,USAGE aviation_migrator:SELECT,UPDATE,USAGE",
   "sequence public.reservations_id_seq | owner=aviation_migrator | acl=aviation_app:SELECT,USAGE aviation_ingest:SELECT,USAGE aviation_migrator:SELECT,UPDATE,USAGE",
   "table drizzle.__drizzle_migrations | owner=aviation_migrator | rls=off | acl=aviation_migrator:DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE",
+  "table drizzle.restores | owner=aviation_migrator | rls=off | acl=aviation_migrator:DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE",
   "table public.abuse_records | owner=aviation_migrator | rls=off | acl=aviation_app:INSERT,SELECT,UPDATE aviation_migrator:DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE",
   "table public.ai_switch | owner=aviation_migrator | rls=off | acl=aviation_app:SELECT aviation_ingest:SELECT aviation_migrator:DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE",
   "table public.auth_accounts | owner=aviation_migrator | rls=off | acl=aviation_app:INSERT,SELECT aviation_migrator:DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE",

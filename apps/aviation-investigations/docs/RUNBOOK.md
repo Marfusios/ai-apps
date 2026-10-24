@@ -759,7 +759,9 @@ operator's duty, at least for `live`.
    decrypt the newest backup into a private directory and run
    `pnpm db:restore-drill <file>`. It needs Docker only: it restores the file with the same
    script as `app:restore` into a throwaway PostgreSQL 16 server, applies the migrations,
-   runs the restore check, removes the server again, and ends with `drill passed`.
+   runs the restore check, confirms that paid operations are blocked (held for the app
+   login, spend refused for the ingest login), removes the server again, and ends with
+   `drill passed`; anything else fails it.
 
 ### Restoring
 
@@ -772,8 +774,9 @@ With the app stopped (`pnpm app:down`), and the backup decrypted into
 #    roles, schemas and default privileges, and keeps the passwords of the connection files.
 psql "<administrator URL of the database server>" -c 'DROP DATABASE IF EXISTS aviation_<env> WITH (FORCE)'
 pnpm provision:shared --env <env> --out <dir> --pg-admin-env <file> ...
-# 2. Restore as the migrator login, in one transaction. It refuses a database that is not
-#    empty, and a restore that fails leaves the database empty: fix the cause, run it again.
+# 2. Restore as the migrator login, in one transaction that also holds paid operations. It
+#    refuses a database that is not empty, and a restore that fails leaves the database
+#    empty: fix the cause, run it again.
 pnpm app:restore aviation_<env>-<time>.dump
 # 3. The migrations newer than the backup.
 pnpm app:migrate
@@ -823,11 +826,13 @@ restored database therefore holds every paid operation (`server/quota/hold.ts`, 
 `maintenance`) and indexing and evaluation spend is refused (`restore_hold`). Search, case
 pages and the dashboard work as usual.
 
-The hold starts by itself when a backup is restored into another database (the restored
-`paid_operations_hold` row names the database the backup was taken from; provisioning
-always creates a new one), and `pnpm worker restore-check` sets it in any case.
-`pnpm worker ai-switch --on` does not release it (`pnpm worker ai-switch` shows it). Only
-the reconciliation does. It runs as `aviation_migrator`, with the environment's host-side
+The restore itself holds them, in its own transaction (`pnpm app:restore` ends with
+docker/postgres/after-restore.sql, which also records the restore in `drizzle.restores`),
+so a restored database never opens with paid operations allowed. A backup taken before
+migration 0020 has no hold table yet: its restore only records itself, and `pnpm
+app:migrate` then starts held. `pnpm worker restore-check` sets the hold again. Nothing
+depends on database OIDs, which a new cluster can repeat. `pnpm worker ai-switch --on` does
+not release the hold (`pnpm worker ai-switch` shows it). Only the reconciliation does. It runs as `aviation_migrator`, with the environment's host-side
 `DATABASE_MIGRATOR_URL` and the same budget settings as the app (its settings file in
 `AVIATION_ENV_FILES`):
 

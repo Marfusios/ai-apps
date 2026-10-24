@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
@@ -28,8 +29,18 @@ const JOURNAL = 'drizzle.__drizzle_migrations';
  * database privilege at all. Provisioning creates the `drizzle` schema, owned by
  * aviation_migrator; the runtime roles cannot read it. Concurrent runs wait on an
  * advisory lock.
+ *
+ * `upTo` (tests only) stops after the migration with that tag, to build a database of an
+ * earlier schema (for example a backup taken before a migration).
  */
-export async function runMigrations(url: string): Promise<void> {
+export async function runMigrations(url: string, opts: { upTo?: string } = {}): Promise<void> {
+  let lastMillis = Number.POSITIVE_INFINITY;
+  if (opts.upTo !== undefined) {
+    const journal = JSON.parse(readFileSync(resolve(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string; when: number }[] };
+    const entry = journal.entries.find((e) => e.tag === opts.upTo);
+    if (!entry) throw new Error(`no migration ${opts.upTo}`);
+    lastMillis = entry.when;
+  }
   const client = new pg.Client({ connectionString: url, application_name: 'aviation-migrate', connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS });
   await client.connect();
   try {
@@ -46,7 +57,7 @@ export async function runMigrations(url: string): Promise<void> {
     await client.query(`CREATE TABLE IF NOT EXISTS ${JOURNAL} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`);
     const last = (await client.query<{ created_at: string }>(`SELECT created_at FROM ${JOURNAL} ORDER BY created_at DESC LIMIT 1`)).rows[0];
     const pending = readMigrationFiles({ migrationsFolder: MIGRATIONS_DIR }).filter(
-      (m) => !last || Number(last.created_at) < m.folderMillis,
+      (m) => (!last || Number(last.created_at) < m.folderMillis) && m.folderMillis <= lastMillis,
     );
     if (pending.length === 0) return;
     await client.query('BEGIN');

@@ -104,7 +104,7 @@ describe('worker maintenance commands', () => {
         const passed = await workerIn(urls, 'restore-check');
         expect(passed.stdout).toMatch(/^paid operations held until pnpm worker restore-reconcile/m);
         expect(passed.stdout).toMatch(/^restore check passed: auth_deletion_confirmations, .*idempotency are empty$/m);
-        expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: true, reason: 'restore_check' });
+        expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: true, reason: 'restored' });
         await migrator.execute(sql`
           INSERT INTO auth_users (name, email, email_verified, created_at, updated_at) VALUES ('Restored', 'restored@example.com', true, now(), now())`);
         await expect(workerIn(urls, 'restore-check')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('auth_users: 1 rows') });
