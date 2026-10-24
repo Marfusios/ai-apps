@@ -177,9 +177,11 @@ export const EvidencePageSchema = z.strictObject({
 export type EvidencePage = z.infer<typeof EvidencePageSchema>;
 
 /** The scope replies an evidence search can get instead of results (static server templates; no AI search used). */
-export const EvidenceScopeReplySchema = ScopeReplySchema.refine((reply) => reply.kind === 'out_of_scope' || reply.kind === 'operational_advice', {
-  message: 'only policy replies may replace evidence results',
-});
+// Keep the inferred TypeScript union as narrow as the runtime contract.
+export const EvidenceScopeReplySchema = z.discriminatedUnion('kind', [
+  ScopeReplySchema.options[0], // out_of_scope
+  ScopeReplySchema.options[1], // operational_advice
+]);
 
 /** `POST /api/evidence` → 201 `results` (page 1 of the new search) or 200 `scope_reply`. */
 export const CreateEvidenceResponseSchema = z.discriminatedUnion('kind', [
