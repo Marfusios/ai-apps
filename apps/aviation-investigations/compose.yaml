@@ -37,7 +37,8 @@ x-hardened: &hardened
   tmpfs:
     - /tmp:size=64m,mode=1777
 
-# Built locally, never pulled (no registry holds these names).
+# Built locally, never pulled (no registry holds these names). The wrappers pass the commit
+# the image is built from; on live it must be the commit the release's git tag names.
 x-app-image: &app-image
   image: ai-aviation/app:${APP_VERSION:-dev}
   pull_policy: never
@@ -45,6 +46,7 @@ x-app-image: &app-image
     context: .
     labels:
       ai-apps.app: aviation-investigations
+      org.opencontainers.image.revision: ${AVIATION_GIT_REVISION:-unknown}
 
 # Elasticsearch connection shared by app and ingest; each adds its own API key.
 # ELASTICSEARCH_INDEX_PREFIX is ai-aviation-<env> (the shared cluster's `ai-*` template).

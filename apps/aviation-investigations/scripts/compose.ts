@@ -19,9 +19,12 @@
  *
  * Images: on dev, app:up, app:migrate and ingest rebuild `ai-aviation/app:dev` from the
  * checkout every time, so all three run the same, current code. On live a release tag
- * (APP_VERSION) is built once, from the checkout of its release, when it does not exist
- * yet; it is never rebuilt implicitly, so rolling back to an earlier tag starts the image
- * that tag was built as. `--rebuild` as the first argument rebuilds the tag on purpose.
+ * (APP_VERSION) must also be a git tag; its image is built once, from a clean checkout of
+ * the commit that tag names, records that commit (label `org.opencontainers.image.revision`),
+ * and is never rebuilt implicitly, so rolling back to an earlier tag starts the image that
+ * tag was built as. A tag whose image is gone, or was built from another commit, is refused
+ * (`liveImagePlan`). `--rebuild` as the first argument rebuilds the tag on purpose, from
+ * its clean tagged commit only.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -57,6 +60,53 @@ export const NAMES = [
 ] as const;
 export type Name = (typeof NAMES)[number];
 export type Values = Partial<Record<Name, string>>;
+
+/** What the wrapper knows about a live release tag's image and the checkout (`liveImagePlan`). */
+export interface LiveImageFacts {
+  /** `ai-aviation/app:<tag>` on this host, with the commit it records (null: none recorded); null: no such image. */
+  image: { revision: string | null } | null;
+  /** The commit the git tag named APP_VERSION points to, or null when there is no such tag. */
+  tagCommit: string | null;
+  /** The checkout's HEAD commit (null when unknown) and whether tracked files have changes. */
+  head: string | null;
+  dirty: boolean;
+}
+
+const short = (commit: string | null): string | null => (commit ? commit.slice(0, 12) : null);
+
+/**
+ * Whether a live command may start the tag's image as it is (`use`) or must build it
+ * (`build`), or a UsageError. A tag is built only from a clean checkout of the commit its
+ * git tag names: the first build, or `--rebuild`. An existing image must record that same
+ * commit. A missing image is never built from another commit (a rollback to a removed
+ * image would otherwise start the current code under the old name).
+ */
+export function liveImagePlan(tag: string, rebuild: boolean, f: LiveImageFacts): 'use' | 'build' {
+  if (!f.tagCommit) {
+    throw new UsageError(`live needs its release tagged in git: git tag ${tag} <commit> (docs/RUNBOOK.md, "Deploying an environment")`);
+  }
+  const atTag = f.head === f.tagCommit && !f.dirty;
+  if (rebuild) {
+    if (!atTag) throw new UsageError(`--rebuild builds the checkout: check out the clean commit tagged ${tag} first`);
+    return 'build';
+  }
+  if (f.image) {
+    if (f.image.revision !== f.tagCommit) {
+      throw new UsageError(
+        `ai-aviation/app:${tag} was built from ${short(f.image.revision) ?? 'an unrecorded commit'}, not from the commit tagged ${tag}; ` +
+          `rebuild it with --rebuild from a clean checkout of that commit`,
+      );
+    }
+    return 'use';
+  }
+  if (!atTag) {
+    throw new UsageError(
+      `ai-aviation/app:${tag} is not on this host, and live never builds another commit under its tag: ` +
+        `check out the clean commit tagged ${tag} to build it, or load the image`,
+    );
+  }
+  return 'build';
+}
 
 /** Commands that run the application image (`ai-aviation/app:<APP_VERSION>`). */
 const IMAGE_COMMANDS: readonly Command[] = ['app-up', 'migrate', 'ingest'];
@@ -147,7 +197,7 @@ export interface Plan {
  * `processEnv` and `fileEnvs` (one record per env file, highest priority first) hold the
  * allowlisted names only. Throws UsageError naming the problem, never a value.
  */
-export function planCompose(command: Command, rawArgs: string[], processEnv: Values, fileEnvs: Values[]): Plan {
+export function planCompose(command: Command, rawArgs: string[], processEnv: Values, fileEnvs: Values[], live?: LiveImageFacts): Plan {
   const rebuild = rawArgs[0] === REBUILD;
   if (rebuild && !IMAGE_COMMANDS.includes(command)) throw new UsageError(`${REBUILD} applies to app:up, app:migrate and ingest only`);
   const args = rebuild ? rawArgs.slice(1) : rawArgs;
@@ -198,12 +248,15 @@ export function planCompose(command: Command, rawArgs: string[], processEnv: Val
   if (tunnel) files.push('compose.tunnel.yaml');
   if (tracing && (command === 'app-up' || command === 'ingest')) files.push('compose.tracing.yaml');
 
-  // dev: always the checkout's code. live: a tag is built once (Compose builds a missing one).
-  const build = appEnv === 'dev' || rebuild ? ['--build'] : [];
+  // dev: always the checkout's code. live: a tag is built once, from its tagged commit (liveImagePlan).
+  const livePlan = appEnv === 'live' && usesImage && live ? liveImagePlan(values.APP_VERSION!, rebuild, live) : null;
+  const build = appEnv === 'dev' || rebuild || livePlan === 'build' ? ['--build'] : [];
+  // `up` would build a missing image itself; a live image that is used as it is never is.
+  const upBuild = livePlan === 'use' ? ['--no-build'] : build;
   let tail: string[];
   switch (command) {
     case 'app-up':
-      tail = ['--profile', 'app', ...(tunnel ? ['--profile', 'tunnel'] : []), 'up', '-d', ...build, '--wait', '--wait-timeout', '180', ...args];
+      tail = ['--profile', 'app', ...(tunnel ? ['--profile', 'tunnel'] : []), 'up', '-d', ...upBuild, '--wait', '--wait-timeout', '180', ...args];
       break;
     case 'app-down':
       tail = ['--profile', 'app', '--profile', 'tools', '--profile', 'tunnel', 'down', ...args];
@@ -251,9 +304,29 @@ function main(): number {
   const fileEnvs = envFiles.map((f) => readDotenvAllowlisted(f, NAMES) as Values);
   const processEnv: Values = {};
   for (const n of NAMES) if (process.env[n]) processEnv[n] = process.env[n];
-  const plan = planCompose(command, args, processEnv, fileEnvs);
+  const git = (...a: string[]): string | null => {
+    const r = spawnSync('git', ['-C', APP_DIR, ...a], { encoding: 'utf8' });
+    return r.status === 0 ? r.stdout.trim() : null;
+  };
+  const head = git('rev-parse', 'HEAD');
+  const appEnvOf = processEnv.APP_ENV ?? fileEnvs.find((f) => f.APP_ENV)?.APP_ENV;
+  const appVersion = processEnv.APP_VERSION ?? fileEnvs.find((f) => f.APP_VERSION)?.APP_VERSION;
+  let live: LiveImageFacts | undefined;
+  if (appEnvOf === 'live' && ['app-up', 'migrate', 'ingest'].includes(command) && appVersion && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(appVersion)) {
+    const inspected = spawnSync('docker', ['image', 'inspect', `ai-aviation/app:${appVersion}`, '--format', '{{ index .Config.Labels "org.opencontainers.image.revision" }}'], { encoding: 'utf8' });
+    const revision = inspected.stdout.trim();
+    live = {
+      image: inspected.status === 0 ? { revision: /^[0-9a-f]{40}$/.test(revision) ? revision : null } : null,
+      tagCommit: git('rev-parse', '-q', '--verify', `refs/tags/${appVersion}^{commit}`),
+      head,
+      dirty: (git('status', '--porcelain', '--untracked-files=no') ?? 'unknown') !== '',
+    };
+  }
+  const plan = planCompose(command, args, processEnv, fileEnvs, live);
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env, APP_ENV: plan.appEnv };
+  // Recorded in the image it builds (compose.yaml, x-app-image): the commit the image was built from.
+  if (head) childEnv.AVIATION_GIT_REVISION = head;
   // Compose lets a variable exported empty override the env files; the checks above used the
   // files' value then, so pass Compose that same value.
   for (const n of NAMES) if (childEnv[n] === '') delete childEnv[n];

@@ -404,17 +404,23 @@ without `TRUSTED_PROXY_CIDRS`.
 
 **Images.** On `dev`, `pnpm app:up`, `pnpm app:migrate` and `pnpm ingest` rebuild
 `ai-aviation/app:dev` from the checkout every time (seconds when nothing changed), so the
-migrations, the worker and the server always come from the same code. On `live` a release
-tag (`APP_VERSION`) is built once: the first command that needs it builds it from the
-checkout, and later commands start that image as built, even after the checkout moved on.
-Give every release its own `APP_VERSION` and tag its commit in git with the same name.
-`--rebuild` as the first argument (`pnpm app:up --rebuild`, `pnpm app:migrate --rebuild`,
-`pnpm ingest --rebuild ...`) rebuilds a tag on purpose, from the current checkout.
+migrations, the worker and the server always come from the same code. On `live` every
+release tag (`APP_VERSION`) is also a git tag, on the release's commit. Its image is built
+once, by the first command that needs it, and only from a clean checkout of that commit;
+it records the commit (label `org.opencontainers.image.revision`), and later commands
+start it as built, even after the checkout moved on. The wrappers refuse a live tag
+without a git tag, an image that records another commit than its tag, and a missing image
+unless the checkout is exactly the tagged commit: a rollback never builds the current
+code under an old tag. `--rebuild` as the first argument (`pnpm app:up --rebuild`, `pnpm
+app:migrate --rebuild`, `pnpm ingest --rebuild ...`) rebuilds a tag on purpose, again only
+from a clean checkout of its tagged commit.
 
-To update `live`: check out the release's commit, set its new `APP_VERSION`, run
-`pnpm app:migrate` (which builds the image and applies its migrations) and the
-[AI preflight](#ai-preflight), then `pnpm app:up`. To roll back, set the previous
-`APP_VERSION` and run `pnpm app:up`: its image is still local and starts unchanged.
+To update `live`: tag the release's commit (`git tag <APP_VERSION> <commit>`), check it
+out, set `APP_VERSION`, run `pnpm app:migrate` (which builds the image and applies its
+migrations) and the [AI preflight](#ai-preflight), then `pnpm app:up`. To roll back, set
+the previous `APP_VERSION` and run `pnpm app:up`: its image is still local and starts
+unchanged. If that image was removed, the wrapper refuses; check out the clean commit of
+its git tag and run the command again to build it from that commit.
 Migrations are not reversed, so roll back only to a release that runs on the current
 schema (the migrations add, and every release so far reads the tables it knows); after a
 migration that changes what an earlier release relies on, roll forward instead. Each

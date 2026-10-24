@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   checkDatabaseUrl,
   checkEdgeSubnet,
+  liveImagePlan,
   planCompose,
   versionAtLeast,
+  type LiveImageFacts,
   type Values,
 } from '../../scripts/compose.js';
 
@@ -149,6 +151,54 @@ describe('planCompose image builds', () => {
     ]);
     expect(planCompose('ingest', ['--rebuild', 'generations'], {}, [env('dev')]).tail).not.toContain('--rebuild');
     expect(error(() => planCompose('app-ps', ['--rebuild'], {}, [live]))).toMatch(/--rebuild/);
+  });
+});
+
+describe('live images are built once, from the commit their tag names (re-review N1)', () => {
+  const live = env('live', { APP_VERSION: 'v1.2.0', TUNNEL_TOKEN: 'secret-token', EDGE_SUBNET: EDGE });
+  const TAGGED = 'a'.repeat(40);
+  const NEWER = 'b'.repeat(40);
+  const facts = (over: Partial<LiveImageFacts> = {}): LiveImageFacts => ({
+    image: { revision: TAGGED },
+    tagCommit: TAGGED,
+    head: NEWER,
+    dirty: false,
+    ...over,
+  });
+
+  it('a rollback starts the image its tag was built as, and never builds', () => {
+    expect(liveImagePlan('v1.2.0', false, facts())).toBe('use');
+    expect(planCompose('app-up', [], {}, [live], facts()).tail).toEqual([
+      '--profile', 'app', '--profile', 'tunnel', 'up', '-d', '--no-build', '--wait', '--wait-timeout', '180',
+    ]);
+    expect(planCompose('migrate', [], {}, [live], facts()).tail).toEqual(['--profile', 'tools', 'run', '--rm', 'aviation-migrate']);
+  });
+
+  it('refuses a rollback to a tag whose image is gone instead of building the current checkout under it', () => {
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: null }))).toThrow(/not on this host.*never builds another commit/);
+    expect(() => planCompose('app-up', [], {}, [live], facts({ image: null }))).toThrow(/not on this host/);
+    expect(() => planCompose('ingest', ['generations'], {}, [live], facts({ image: null }))).toThrow(/not on this host/);
+  });
+
+  it('builds a missing tag only from a clean checkout of the commit it names', () => {
+    expect(liveImagePlan('v1.2.0', false, facts({ image: null, head: TAGGED }))).toBe('build');
+    expect(planCompose('migrate', [], {}, [live], facts({ image: null, head: TAGGED })).tail).toEqual([
+      '--profile', 'tools', 'run', '--build', '--rm', 'aviation-migrate',
+    ]);
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: null, head: TAGGED, dirty: true }))).toThrow(/not on this host/);
+  });
+
+  it('refuses an image built from another commit than its tag names, or a release without a git tag', () => {
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: { revision: NEWER } }))).toThrow(/was built from bbbbbbbbbbbb, not from the commit tagged v1\.2\.0/);
+    expect(() => liveImagePlan('v1.2.0', false, facts({ image: { revision: null } }))).toThrow(/an unrecorded commit/);
+    expect(() => liveImagePlan('v1.2.0', false, facts({ tagCommit: null }))).toThrow(/git tag v1\.2\.0/);
+  });
+
+  it('--rebuild builds only from a clean checkout of the tagged commit', () => {
+    expect(liveImagePlan('v1.2.0', true, facts({ head: TAGGED }))).toBe('build');
+    expect(planCompose('app-up', ['--rebuild'], {}, [live], facts({ head: TAGGED })).tail).toContain('--build');
+    expect(() => liveImagePlan('v1.2.0', true, facts())).toThrow(/--rebuild builds the checkout/);
+    expect(() => liveImagePlan('v1.2.0', true, facts({ head: TAGGED, dirty: true }))).toThrow(/--rebuild builds the checkout/);
   });
 });
 
