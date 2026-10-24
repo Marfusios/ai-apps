@@ -132,14 +132,16 @@ function configRetryDelay(failures: number): number {
 
 /**
  * Public configuration: the snapshot, the coverage facts, the Turnstile site key and whether
- * Google sign-in is offered. Until it has been read once, it is read again after a failure,
- * with a growing pause, and when the tab gets focus (Task 22 re-review N-3); once read, a
- * failed refresh keeps what was read.
+ * Google sign-in is offered. A read that gets no answer gives up after `READ_TIMEOUT_MS`.
+ * Until it has been read once, it is read again after a failure, with a growing pause, and
+ * when the tab gets focus (Task 22 re-review N-3); once read, a failed refresh keeps what was
+ * read.
  */
 export const configQuery = () =>
   queryOptions({
     queryKey: ['config'],
-    queryFn: ({ signal }) => getJson('/api/config', ConfigResponseSchema, signal),
+    // A read that hangs ends like a failed one, so the re-read and the neutral note take over (re-review F-3).
+    queryFn: ({ signal }) => getJson('/api/config', ConfigResponseSchema, signal, { timeoutMs: READ_TIMEOUT_MS }),
     staleTime: 10 * 60_000,
     retry,
     refetchInterval: (query) => (query.state.data === undefined && query.state.status === 'error' ? configRetryDelay(query.state.errorUpdateCount) : false),

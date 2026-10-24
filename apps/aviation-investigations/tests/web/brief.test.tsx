@@ -1007,6 +1007,7 @@ describe('Polling (stops, honours Retry-After, backs off)', () => {
     server.use(
       http.get('*/api/briefs/:id', () => new Promise<Response>(() => {})),
       http.get('*/api/ai/status', () => new Promise<Response>(() => {})),
+      http.get('*/api/config', () => new Promise<Response>(() => {})),
     );
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -1019,15 +1020,21 @@ describe('Polling (stops, honours Retry-After, backs off)', () => {
         () => 'answered',
         (err: unknown) => err,
       );
+      // The configuration too (re-review F-3): a hung read ends, and its re-read and neutral note take over.
+      const config = (configQuery().queryFn as (c: typeof context) => Promise<unknown>)(context).then(
+        () => 'answered',
+        (err: unknown) => err,
+      );
       await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 100);
       let settled = false;
       void poll.then(() => (settled = true));
       await Promise.resolve();
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(200);
-      const [pollErr, statusErr] = await Promise.all([poll, status]);
+      const [pollErr, statusErr, configErr] = await Promise.all([poll, status, config]);
       expect(pollErr).toBeInstanceOf(ReadTimeoutError);
       expect(statusErr).toBeInstanceOf(ReadTimeoutError);
+      expect(configErr).toBeInstanceOf(ReadTimeoutError);
       // Not an ApiError: polling backs off and tries again, as after any failed read.
       expect(briefPollDelay(query({ data: running, dataUpdatedAt: 1, status: 'error', error: pollErr, errorUpdateCount: 1 }))).toBe(2_000);
     } finally {
