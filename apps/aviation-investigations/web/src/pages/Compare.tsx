@@ -2,7 +2,7 @@ import { useQueries, useQuery, type UseQueryResult } from '@tanstack/react-query
 import { X } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
-import type { BriefFilters, CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
+import type { CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import { EVIDENCE_CANDIDATE_CEILING, EVIDENCE_PAGE_SIZE, EvidenceSearchIdSchema, type EvidenceCase } from '../../../shared/contracts/evidence';
 import { compareHeading, pageTitle } from '../../../shared/page-titles';
@@ -31,9 +31,10 @@ import { briefStepQuery, caseContextQuery } from '../features/brief/api';
 import { UnconfirmedTag } from '../features/brief/CaseCard';
 import { evidenceAttribution } from '../features/brief/display';
 import { evidencePageQuery } from '../features/evidence/api';
-import { EVIDENCE_HEADING } from '../features/evidence/display';
+import { EVIDENCE_HEADING, relevanceContext, type RelevanceContext } from '../features/evidence/display';
 import { RelevanceLine } from '../features/evidence/EvidenceCard';
 import { Excerpt } from '../features/evidence/Excerpt';
+import { MatchLegend } from '../features/evidence/MatchedText';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
 import { EvidenceNotice } from '../features/evidence/Notice';
 import { Placard } from '../components/Placard';
@@ -72,13 +73,13 @@ export function readEvidenceRef(params: URLSearchParams): { id: string; pages: n
  * The evidence row of a strip (UI_DESIGN §4.9): how the search found the case and its best
  * excerpt, a whole paragraph with the matches marked, under the page's heading and notice.
  */
-function StripEvidence({ searchId, item, filters }: { searchId: string; item: EvidenceCase | undefined; filters: BriefFilters }) {
+function StripEvidence({ searchId, item, context }: { searchId: string; item: EvidenceCase | undefined; context: RelevanceContext }) {
   return (
     <div className="border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1]" data-strip-evidence="">
       <p className="text-micro tracking-caps text-muted uppercase">Retrieved for your search</p>
       {item ? (
         <>
-          <RelevanceLine item={item} filters={filters} />
+          <RelevanceLine item={item} context={context} />
           {item.excerpts[0] && (
             <div className="mt-1.5">
               <Excerpt searchId={searchId} ntsbNo={item.case.ntsbNo} aircraft={item.case.aircraft} excerpt={item.excerpts[0]} />
@@ -227,7 +228,7 @@ function Strip({
   onRemove: () => void;
   ai: StripAi | null;
   /** Opened from an evidence search: the case as that search shows it (`item` undefined: not among its investigations read). */
-  evidence?: { searchId: string; item: EvidenceCase | undefined; filters: BriefFilters } | null;
+  evidence?: { searchId: string; item: EvidenceCase | undefined; context: RelevanceContext } | null;
 }) {
   const multi = detail.aircraft.length > 1;
   const injury = injuryShort(detail.highestInjury);
@@ -322,7 +323,7 @@ function Strip({
         </p>
         <span className="flex-none text-meta whitespace-nowrap">{sourceLink(detail)}</span>
       </div>
-      {evidence && <StripEvidence searchId={evidence.searchId} item={evidence.item} filters={evidence.filters} />}
+      {evidence && <StripEvidence searchId={evidence.searchId} item={evidence.item} context={evidence.context} />}
     </article>
   );
 }
@@ -432,7 +433,7 @@ export function Compare() {
   const evidenceGone = eref === 'invalid' || (evidenceRef !== null && isNotFound(firstEvidence.error));
   const evidenceFailed = evidenceRef !== null && firstEvidence.isError && !isNotFound(firstEvidence.error);
   const evidenceFor = (ntsbNo: string) =>
-    evidenceSearch ? { searchId: evidenceSearch.id, item: evidenceCases.get(ntsbNo), filters: evidenceSearch.interpretation.filters } : null;
+    evidenceSearch ? { searchId: evidenceSearch.id, item: evidenceCases.get(ntsbNo), context: relevanceContext(evidenceSearch) } : null;
   const [sort, setSort] = useState<SortKey>('added');
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const from = (location.state as { from?: string } | null)?.from;
@@ -531,6 +532,7 @@ export function Compare() {
             {EVIDENCE_HEADING}
           </Placard>
           <EvidenceNotice className="mt-1.5" />
+          <MatchLegend marked={relevanceContext(evidenceSearch).marked} className="mt-1.5" />
         </section>
       )}
       {/* Rendered before any note, so a gone or failed brief read is announced when it appears. */}

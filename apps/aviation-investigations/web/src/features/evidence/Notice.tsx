@@ -3,9 +3,9 @@ import { EVIDENCE_NOTICE } from './display';
 
 /**
  * The contract's fixed notice (`EVIDENCE_NOTICE`): on every surface that shows an evidence
- * search's results (the sheet, the drawer, Compare, print and phones), whatever the unchecked
- * readings say. Ink on `raised` with an ink rule: a standing condition of the results, not an
- * error and not a data caution. A note, never a live region: it is there from the first paint.
+ * search's results (the sheet, the drawer, Compare, print and phones). Ink on `raised` with an
+ * ink rule: a standing condition of the results, not an error and not a data caution. A note,
+ * never a live region: it is there from the first paint.
  */
 export function EvidenceNotice({ className }: { className?: string }) {
   return (

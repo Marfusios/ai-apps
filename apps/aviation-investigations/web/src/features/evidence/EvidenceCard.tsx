@@ -1,9 +1,8 @@
 import { Link, type To } from 'react-router';
-import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import type { EvidenceCase } from '../../../../shared/contracts/evidence';
 import { cx } from '../../lib/cx';
 import { CaseFacts } from '../explore/CaseFacts';
-import { NO_EXCERPT, numberedKinds, probableCauseLabel, relevanceParts } from './display';
+import { NO_EXCERPT, numberedKinds, probableCauseLabel, relevanceParts, type RelevanceContext } from './display';
 import { Excerpt, LongText } from './Excerpt';
 
 /** The report link, or the labelled search fallback (DESIGN §4). */
@@ -28,13 +27,14 @@ export function ReportLink({ item }: { item: Pick<EvidenceCase, 'report' | 'case
 
 /**
  * Why a case is listed, in checkable facts (contract `EvidenceRelevance`): "Phase: Approach ·
- * “icing” 6 times · found by keyword and similarity search". Interface text, never NTSB's.
+ * Suggested terms in these excerpts: “icing” appears 6 times · found by keyword and similarity
+ * search". Interface text, never NTSB's, and never a claim that the question is answered.
  */
-export function RelevanceLine({ item, filters, className }: { item: Pick<EvidenceCase, 'relevance' | 'excerpts'>; filters: BriefFilters; className?: string }) {
+export function RelevanceLine({ item, context, className }: { item: Pick<EvidenceCase, 'relevance' | 'excerpts'>; context: RelevanceContext; className?: string }) {
   return (
     <p className={cx('text-meta text-muted', className)} data-relevance="">
       <span className="sr-only">How it was found: </span>
-      {relevanceParts(item.relevance, filters, item.excerpts.length > 0).join(' · ')}
+      {relevanceParts(item.relevance, context, item.excerpts.length > 0).join(' · ')}
     </p>
   );
 }
@@ -80,8 +80,8 @@ export interface EvidenceCardProps {
   /** The search the case was retrieved for (its full sections come from it). */
   searchId: string;
   item: EvidenceCase;
-  /** The search's filters, for the relevance facts. */
-  filters: BriefFilters;
+  /** The filters the search applied and whose words it marks, for the relevance facts. */
+  context: RelevanceContext;
   /** Opens the drawer over the sheet (`?case=`). */
   caseTo: To;
   inCompare: boolean;
@@ -94,7 +94,7 @@ export interface EvidenceCardProps {
  * label and scope and the matches marked, the relevance facts, and the report link. NTSB text
  * and coded data only.
  */
-export function EvidenceCard({ searchId, item, filters, caseTo, inCompare, onToggleCompare }: EvidenceCardProps) {
+export function EvidenceCard({ searchId, item, context, caseTo, inCompare, onToggleCompare }: EvidenceCardProps) {
   const { case: row } = item;
   const numbered = numberedKinds(item.excerpts);
   return (
@@ -117,7 +117,7 @@ export function EvidenceCard({ searchId, item, filters, caseTo, inCompare, onTog
           </Link>
         </p>
       )}
-      <RelevanceLine item={item} filters={filters} className="mt-2.5 border-t border-dashed border-hairline pt-2" />
+      <RelevanceLine item={item} context={context} className="mt-2.5 border-t border-dashed border-hairline pt-2" />
     </article>
   );
 }

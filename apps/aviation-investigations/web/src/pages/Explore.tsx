@@ -39,11 +39,11 @@ import {
 
 /**
  * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23; Builder copy for the owner's
- * review): what an AI search does, never a promise to explain or group the results. Its filters
- * come from its own reading of the question, so the nudge says when the ones set here stay behind.
+ * review): what an AI search does, never a promise to explain or group the results. It searches
+ * the question alone (contract `evidence.v2`), so the nudge says when the filters set here stay behind.
  */
-export const AI_NUDGE = 'Ask in plain English: AI reads your question into search words and filters you can check and edit.';
-export const AI_NUDGE_FILTERS = 'It reads only the question, not the filters set here.';
+export const AI_NUDGE = 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.';
+export const AI_NUDGE_FILTERS = 'It searches the question alone, not the filters set here.';
 
 interface ExploreLocationState {
   /** The drawer was opened from this list, so closing it can go back one entry. */

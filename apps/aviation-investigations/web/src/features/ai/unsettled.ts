@@ -47,8 +47,8 @@ export type AiRequestShape =
   | { kind: 'refine'; briefId: string; change: RefinementChange }
   /** An evidence search for a question (`POST /api/evidence`, `kind: 'question'`). */
   | { kind: 'evidence'; question: string }
-  /** An edited evidence search: the search it changes, its filters and words (`kind: 'edited'`). */
-  | { kind: 'evidence-edited'; from: string; filters: BriefFilters; terms: string };
+  /** An edited evidence search: the search it changes, its filters, and words when it sends them (`kind: 'edited'`). */
+  | { kind: 'evidence-edited'; from: string; filters: BriefFilters; terms?: string | undefined };
 
 /**
  * Filters as the server hashes them (server/briefs/intent.ts `canonicalFilters`): facets in
@@ -70,7 +70,7 @@ export function canonicalFilters(f: BriefFilters): BriefFilters {
 export function normalisedRequest(r: AiRequestShape): unknown {
   if (r.kind === 'create') return { op: 'brief.create', question: r.question, filters: canonicalFilters(r.filters ?? {}) };
   if (r.kind === 'evidence') return { op: 'evidence.question', question: r.question };
-  if (r.kind === 'evidence-edited') return { op: 'evidence.edited', from: r.from, filters: canonicalFilters(r.filters), terms: r.terms };
+  if (r.kind === 'evidence-edited') return { op: 'evidence.edited', from: r.from, filters: canonicalFilters(r.filters), ...(r.terms !== undefined ? { terms: r.terms } : {}) };
   const change = r.change.kind === 'filters' ? { ...r.change, filters: canonicalFilters(r.change.filters) } : r.change;
   return { op: 'brief.refine', briefId: r.briefId, change };
 }

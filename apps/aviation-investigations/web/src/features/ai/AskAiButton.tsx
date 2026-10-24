@@ -18,6 +18,8 @@ export interface AskAiButtonProps {
   size?: 'sm' | 'md';
   /** `chip`: a magenta interpretation chip (AI suggested readings) instead of the filled pill. */
   look?: 'pill' | 'chip';
+  /** Off while another control of the same request runs (its own `phase` shows on that one). */
+  disabled?: boolean;
   className?: string;
 }
 
@@ -39,7 +41,7 @@ export function busyLabel(phase: AiPhase): string | null {
  * way. A disabled button stays focusable (aria-disabled) so its note is read; a click then
  * explains instead of asking.
  */
-export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, size = 'md', look = 'pill', className }: AskAiButtonProps) {
+export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, size = 'md', look = 'pill', disabled: off = false, className }: AskAiButtonProps) {
   const status = useQuery(aiStatusQuery());
   const signIn = useSignIn();
   const noteId = useId();
@@ -54,10 +56,10 @@ export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne =
         : { kind: 'paused', note: signedInOnlyNote(read.reason), status: null };
   const describedBy = availability.kind === 'paused' ? noteId : undefined;
   const busy = phase !== 'idle';
-  const disabled = availability.kind === 'loading' || availability.kind === 'paused' || busy;
+  const disabled = availability.kind === 'loading' || availability.kind === 'paused' || busy || off;
   const counter = busy ? undefined : availability.kind === 'available' && usesOne ? 'uses 1' : askCounter(availability);
   const click = (): void => {
-    if (busy || availability.kind === 'loading') return;
+    if (busy || off || availability.kind === 'loading') return;
     onAsk();
   };
   return (

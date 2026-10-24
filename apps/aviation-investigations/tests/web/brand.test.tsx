@@ -174,7 +174,7 @@ describe('the About page (UI_DESIGN §4.8)', () => {
     // The AI line follows the AI status (Task 23): the mock's visitor has AI searches.
     await waitFor(() =>
       expect(screen.getByRole('main').textContent).toContain(
-        'Ask in plain English: AI turns your question into search filters and terms you can edit, and AirCase shows the investigations it retrieved, in their own words.',
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.',
       ),
     );
     expect(screen.getByRole('main').textContent).not.toContain('AI features are not available yet.');
@@ -196,7 +196,7 @@ describe('the About page says whether AI searches are offered, as the AI status 
     server.use(...createHandlers({ aiStatus: AI_STATUS_SAMPLES[sample] }));
     renderApp('/about');
     const main = await screen.findByRole('main');
-    const line = on ? 'Ask in plain English: AI turns your question into search filters' : 'AI features are not available yet.';
+    const line = on ? 'Ask in plain English: AirCase shows the investigations it retrieved' : 'AI features are not available yet.';
     await waitFor(() => expect(main.textContent).toContain(line));
     expect(main.textContent).not.toContain(on ? 'AI features are not available yet.' : 'Ask in plain English');
   });

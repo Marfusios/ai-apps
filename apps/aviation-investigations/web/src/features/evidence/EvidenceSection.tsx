@@ -1,7 +1,6 @@
-import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import type { EvidenceCase } from '../../../../shared/contracts/evidence';
 import { SectionHead } from '../../components/SectionHead';
-import { EVIDENCE_HEADING, NO_EXCERPT, numberedKinds } from './display';
+import { EVIDENCE_HEADING, NO_EXCERPT, numberedKinds, type RelevanceContext } from './display';
 import { RelevanceLine } from './EvidenceCard';
 import { Excerpt } from './Excerpt';
 import { MatchLegend } from './MatchedText';
@@ -12,8 +11,8 @@ export interface DrawerEvidence {
   /** The search the case was retrieved for (its full sections come from it). */
   searchId: string;
   item: EvidenceCase;
-  /** The search's filters, for the relevance facts. */
-  filters: BriefFilters;
+  /** The filters the search applied and whose words it marks, for the relevance facts. */
+  context: RelevanceContext;
 }
 
 /**
@@ -21,14 +20,14 @@ export interface DrawerEvidence {
  * contract's heading and notice, the relevance facts and the excerpts, each able to open its
  * full section. It follows what investigators established, as the brief's sections do (§4.5).
  */
-export function EvidenceSection({ searchId, item, filters }: DrawerEvidence) {
+export function EvidenceSection({ searchId, item, context }: DrawerEvidence) {
   const numbered = numberedKinds(item.excerpts);
   return (
     <section className="mt-6" aria-label={EVIDENCE_HEADING} data-evidence-section="">
       <SectionHead tag={<span className="whitespace-nowrap">NTSB text</span>}>{EVIDENCE_HEADING}</SectionHead>
       <EvidenceNotice />
-      <RelevanceLine item={item} filters={filters} className="mt-2" />
-      {item.excerpts.some((e) => e.highlights.length > 0) && <MatchLegend className="mt-1" />}
+      <RelevanceLine item={item} context={context} className="mt-2" />
+      {item.excerpts.some((e) => e.highlights.length > 0) && <MatchLegend marked={context.marked} className="mt-1" />}
       {item.excerpts.length > 0 ? (
         <div className="mt-3 space-y-4">
           {item.excerpts.map((e) => (

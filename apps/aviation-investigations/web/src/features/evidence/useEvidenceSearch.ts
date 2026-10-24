@@ -10,21 +10,22 @@ import { rememberQuestion } from '../brief/memory';
 import { CASES_PARAM } from '../explore/url-state';
 import { evidencePageKey, evidencePath } from './keys';
 
-/** A static scope reply (never a clarification round, contract `evidence.v1`), with the question it answers. */
+/** A policy reply (out of scope, operational advice: contract `evidence.v2`), with the question it answers. */
 export interface ShownScopeReply {
   question: string;
-  reply: Exclude<ScopeReply, { kind: 'needs_clarification' }>;
+  reply: Extract<ScopeReply, { kind: 'out_of_scope' | 'operational_advice' }>;
 }
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
 
 /**
  * AI evidence searches (UI_DESIGN §4.9): `ask` sends a question (Ask AI on Home, Explore and
- * the expired page), `edit` the changed words and filters of a search the reader owns (Search
- * again). Both are one AI search with the usual Turnstile check, status and sign-in handling
- * (useAiRequest). Results open the search's page, with page 1 already in the cache (the POST
- * answers with it); a static scope reply (out of scope, operational, counting, comparison) has
- * no page and shows where the question was asked (`reply`); it uses no search.
+ * the expired page), `edit` a search the reader owns with exactly the filters they chose and,
+ * only when they accepted or typed them, words (Search again, Apply). Both are one AI search with
+ * the usual Turnstile check, status and sign-in handling (useAiRequest). Results open the
+ * search's page, with page 1 already in the cache (the POST answers with it); a policy reply (out
+ * of scope, operational advice) has no page and shows where the question was asked (`reply`); it
+ * uses no search.
  *
  * The idempotency key is kept for the tab right before the request leaves (write-ahead,
  * web/src/features/ai/unsettled.ts), so a reload or Back while it is on its way loses nothing,
@@ -86,7 +87,8 @@ export function useEvidenceSearch() {
       if (answer.kind === 'scope_reply') {
         // Nothing was searched, and there is no page to arrive at: settled now.
         forgetUnsettled(id, idempotencyKey);
-        setReply({ question, reply: answer.reply });
+        const policy = answer.reply;
+        if (policy.kind === 'out_of_scope' || policy.kind === 'operational_advice') setReply({ question, reply: policy });
         return true;
       }
       const search = answer.search;
@@ -115,14 +117,17 @@ export function useEvidenceSearch() {
     [send, setNotice],
   );
 
-  /** Search again with changed words and filters (an `edited` search of `from`, which the reader owns). */
+  /**
+   * An `edited` search of `from` (which the reader owns): exactly `filters`, and `terms` only when
+   * the reader accepted or typed them; without, it keeps `from`'s query (its question, or its words).
+   */
   const edit = useCallback(
-    async (from: string, question: string, filters: BriefFilters, terms: string): Promise<boolean> => {
+    async (from: string, question: string, filters: BriefFilters, terms?: string): Promise<boolean> => {
       setReply(null);
-      const words = terms.trim();
+      const words = terms?.trim() || undefined;
       return send(
         { kind: 'evidence-edited', from, filters, terms: words },
-        (idempotencyKey, turnstileToken) => ({ kind: 'edited', from, filters, terms: words, idempotencyKey, turnstileToken }),
+        (idempotencyKey, turnstileToken) => ({ kind: 'edited', from, filters, ...(words !== undefined ? { terms: words } : {}), idempotencyKey, turnstileToken }),
         question,
         true,
       );

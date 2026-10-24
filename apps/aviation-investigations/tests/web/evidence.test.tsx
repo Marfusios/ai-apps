@@ -1,29 +1,24 @@
 /**
- * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v1`) over the mock API
- * (web/mock/evidence.ts): Ask AI, the results page and every state it can be in, editing the
- * interpretation, the drawer, Compare and print, accessibility, and the rule that a result
- * surface shows NTSB text, coded data, fixed copy and the reader's own words only (gate G6
- * stays closed). Shapes the fixture corpus lacks (several probable-cause statements, astral
- * characters, a paragraph too long for a card, a resolved report link) come from synthetic
- * pages, each validated with the contract first.
+ * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only design) over
+ * the mock API (web/mock/evidence.ts): Ask AI, the results page and every state it can be in,
+ * the suggestion shown unapplied and applied only by choice, editing the search, the hints, the
+ * drawer, Compare and print, accessibility, and the rule that a result surface shows NTSB text,
+ * coded data, fixed copy and the reader's own words only, the suggested words only as labelled
+ * counts and marks (gate G6 stays closed for generated text). Shapes the fixture corpus lacks
+ * (several probable-cause statements, astral characters, a paragraph too long for a card, a
+ * resolved report link, a suggestion carrying markup) come from synthetic pages, each validated
+ * with the contract first.
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CaseDetail } from '../../shared/contracts/cases';
 import { REPORT_URL_PREFIX } from '../../shared/contracts/cases';
-import {
-  CreateEvidenceResponseSchema,
-  EVIDENCE_HEADING,
-  EVIDENCE_NOTICE,
-  EvidencePageSchema,
-  UNCHECKED_LABEL,
-  type EvidenceCase,
-  type EvidencePage,
-} from '../../shared/contracts/evidence';
+import type { BriefFilters } from '../../shared/contracts/briefs';
+import { CreateEvidenceResponseSchema, EVIDENCE_HEADING, EVIDENCE_NOTICE, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence';
 import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../web/mock/ai-status';
 import casesJson from '../../web/mock/cases.json';
-import { MOCK_EVIDENCE_QUESTIONS, readQuestion } from '../../web/mock/evidence';
+import { MOCK_EVIDENCE_QUESTIONS } from '../../web/mock/evidence';
 import { firstCheckText } from '../../web/src/features/ai/limits';
 import { FIRST_CHECK_TITLE, LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { resetUnsettledForTests } from '../../web/src/features/ai/unsettled';
@@ -32,15 +27,22 @@ import { formatDate } from '../../web/src/lib/format';
 import { aircraftName, aircraftSummary, letterOf, phaseEventShort, placeShort, rowMonoParts } from '../../web/src/features/case/display';
 import { evidencePageQuery } from '../../web/src/features/evidence/api';
 import {
+  APPLY_BOTH,
+  APPLY_FILTERS,
+  COMPARISON_HINT,
   EDITED_LABEL,
-  EDITED_NOTE,
   EMPTY_TITLE,
   EMPTY_WORDS,
   EXPIRED_TEXT,
   EXPIRED_TITLE,
-  INTERPRETATION_LABEL,
   LEGEND,
   NO_EXCERPT,
+  OWN_WORDS,
+  QUESTION_AS_ASKED,
+  STATISTICS_HINT,
+  SUGGESTION_LABEL,
+  SUGGESTION_NOTE,
+  YOUR_SEARCH_LABEL,
   allShownLine,
   countLine,
   excerptLabel,
@@ -48,9 +50,11 @@ import {
   fullSectionLabel,
   numberedKinds,
   probableCauseLabel,
+  relevanceContext,
   relevanceParts,
   showMoreLabel,
   showingLine,
+  termInWords,
 } from '../../web/src/features/evidence/display';
 import { LONG_TEXT_CHARS } from '../../web/src/features/evidence/Excerpt';
 import { evidencePageKey } from '../../web/src/features/evidence/keys';
@@ -138,12 +142,33 @@ async function makeSearch(question: string): Promise<EvidencePage> {
   return answer.search;
 }
 
+/** An edited search of `from` made through the mock API: exactly `filters`, and `terms` when given (page 1 of it). */
+async function makeEdit(from: EvidencePage, filters: BriefFilters, terms?: string): Promise<EvidencePage> {
+  const response = await fetch(new URL('/api/evidence', window.location.origin), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ kind: 'edited', from: from.id, filters, ...(terms !== undefined ? { terms } : {}), idempotencyKey: crypto.randomUUID(), turnstileToken: TOKEN }),
+  });
+  const answer = CreateEvidenceResponseSchema.parse(await response.json());
+  if (answer.kind !== 'results') throw new Error('expected results');
+  return answer.search;
+}
+
 /** A search made through the mock API, then opened. */
 async function openSearch(question: string, query = '') {
   const search = await makeSearch(question);
   const app = renderApp(`/ai/${search.id}${query}`);
   await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
   return { ...app, search };
+}
+
+/** A question's search with its suggested filters applied (an edited search), then opened. */
+async function openApplied(question: string) {
+  const asked = await makeSearch(question);
+  const search = await makeEdit(asked, asked.suggestion?.filters ?? {});
+  const app = renderApp(`/ai/${search.id}`);
+  await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
+  return { ...app, asked, search };
 }
 
 /** Waits until `find` finds something, and returns it. */
@@ -244,9 +269,7 @@ describe('Ask AI opens an AI search (UI_DESIGN §4.9)', { timeout: 20_000 }, () 
   it.each([
     [MOCK_EVIDENCE_QUESTIONS.outOfScope, 'This tool only searches NTSB aviation investigations.', 'Search by keyword instead'],
     [MOCK_EVIDENCE_QUESTIONS.operational, 'This tool studies past investigations.', 'Power loss after maintenance'],
-    [MOCK_EVIDENCE_QUESTIONS.statistics, 'Counting questions are answered from the data directly, not by the AI.', 'Open the dashboard'],
-    [MOCK_EVIDENCE_QUESTIONS.comparison, 'Comparing cases is free; it doesn’t need the AI.', 'Compare DFW08TA066, NYC08LA106 →'],
-  ])('a static scope reply shows under the box, uses no search and opens no page: "%s"', async (question, title, link) => {
+  ])('a policy reply shows under the box, uses no search and opens no page: "%s"', async (question, title, link) => {
     freshApi();
     installTurnstile(5);
     const { router } = renderApp('/');
@@ -259,21 +282,78 @@ describe('Ask AI opens an AI search (UI_DESIGN §4.9)', { timeout: 20_000 }, () 
     expect(currentUrl(router)).toBe('/');
     await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 10 of 10'), SLOW);
   });
+
+  it('a counting request gets its results and, above them, the dashboard hint; filters the search applied go to Explore too', async () => {
+    freshApi();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.statistics);
+    const hint = document.querySelector('[data-hint="corpus_statistics"]') as HTMLElement;
+    expect(hint.textContent).toContain(STATISTICS_HINT);
+    expect(within(hint).getByRole('link', { name: 'Open the dashboard' }).getAttribute('href')).toBe('/dashboard');
+    // A question search applies no filter, so there is nothing to take to Explore.
+    expect(within(hint).getAllByRole('link')).toHaveLength(1);
+    // Results still come, from the question, with no filter applied.
+    expect(search.total).toBeGreaterThan(2);
+    expect(document.querySelectorAll('article[data-card]').length).toBe(Math.min(10, search.total));
+    expect(hint.compareDocumentPosition(screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // With applied filters (a synthetic page), the hint takes them to Explore, said as these filters.
+    const page = servePage({ ...search, id: '00000000-0000-4000-9000-0000000057a7', appliedFilters: { category: ['HELI'] }, hint: { kind: 'corpus_statistics', filters: { category: ['HELI'] } } });
+    renderApp(`/ai/${page.id}`);
+    const link = await screen.findByRole('link', { name: 'Explore with these filters: Aircraft: Helicopter' }, SLOW);
+    expect(link.getAttribute('href')).toBe('/explore?category=HELI');
+  });
+
+  it('a comparison request gets its results and the compare hint: the cases found, Compare, and the numbers no case has; a case number alone gets no hint', async () => {
+    freshApi();
+    await openSearch(MOCK_EVIDENCE_QUESTIONS.comparison);
+    const hint = document.querySelector('[data-hint="case_comparison"]') as HTMLElement;
+    expect(hint.textContent).toContain(COMPARISON_HINT);
+    expect(within(hint).getByRole('link', { name: 'Compare DFW08TA066, NYC08LA106 →' }).getAttribute('href')).toBe('/compare?cases=DFW08TA066,NYC08LA106');
+    expect(within(hint).getByRole('link', { name: 'DFW08TA066' }).getAttribute('href')).toBe('/cases/DFW08TA066');
+    expect(hint.textContent).toContain('Not found: ZZZ99ZZ999');
+    expect(document.querySelectorAll('article[data-card]').length).toBeGreaterThan(0);
+    freshApi();
+    await openSearch(MOCK_EVIDENCE_QUESTIONS.single);
+    await waitFor(() => expect(document.querySelectorAll('article[data-card]').length).toBeGreaterThan(10));
+    expect(document.querySelectorAll('[data-hint]')).toHaveLength(1);
+  });
 });
 
 describe('the results page', { timeout: 20_000 }, () => {
-  it('the question as asked; the AI reading as chips; and beside them the readings AirCase cannot check, each with its label and the question’s own words', async () => {
+  it('the question as asked is what was searched; the AI’s suggestion stands beside it, labelled and not applied', async () => {
     freshApi();
-    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.unchecked);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(MOCK_EVIDENCE_QUESTIONS.unchecked);
-    const reading = screen.getByRole('region', { name: INTERPRETATION_LABEL });
-    expect(within(reading).getByRole('button', { name: `${search.interpretation.terms}, edit the search words` })).toBeTruthy();
-    const unchecked = reading.querySelector('[data-unchecked]') as HTMLElement;
-    const lines = [...unchecked.querySelectorAll('li')].map((li) => visibleText(li));
-    expect(lines).toEqual(search.interpretation.unchecked.map((u) => `${UNCHECKED_LABEL[u.kind]}: “${u.quote}”`));
-    expect(lines).toHaveLength(6);
-    // Nothing of them is applied: no filter chip comes from them.
-    expect(within(reading).queryByRole('button', { name: /student|recent/i })).toBeNull();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(MOCK_EVIDENCE_QUESTIONS.carb);
+    // Your search: the question as asked, the cohort, no filter applied.
+    const yours = screen.getByRole('region', { name: YOUR_SEARCH_LABEL });
+    expect(yours.textContent).toContain(QUESTION_AS_ASKED);
+    expect(within(yours).getByRole('button', { name: OWN_WORDS })).toBeTruthy();
+    expect(within(yours).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(0);
+    // The suggestion: magenta, dashed, its filters as labels (not controls), its words in quotes.
+    const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+    expect(suggestion.textContent).toContain(SUGGESTION_NOTE);
+    expect(within(suggestion).getByRole('list', { name: 'Suggested filters' }).textContent).toBe('Phase: Approach');
+    expect(within(suggestion).getByRole('heading', { level: 2 }).textContent).toBe('Suggested filters and terms — not applied');
+    expect(within(suggestion).queryByRole('button', { name: /Phase: Approach/ })).toBeNull();
+    expect(suggestion.textContent).toContain('“carb icing”');
+    expect(within(suggestion).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) })).toBeTruthy();
+    expect(within(suggestion).getByRole('button', { name: new RegExp(`^${APPLY_BOTH}\\s*·\\s*uses 1$`) })).toBeTruthy();
+    // Not applied: the results are the question's, every case of the cohort, and no card claims the filter.
+    expect(search.appliedFilters).toEqual({});
+    expect(document.querySelector('[data-count-line]')?.textContent).toMatch(/^21 retrieved/);
+    expect([...document.querySelectorAll('[data-relevance]')].some((r) => r.textContent?.includes('Phase: Approach'))).toBe(false);
+    // No unchecked readings in this beta, anywhere.
+    expect(document.body.textContent).not.toMatch(/AirCase cannot check|Not applied|AI reading of your question/);
+  });
+
+  it('a search whose scope stage failed shows the question’s results with no suggestion; the marks are the reader’s words', async () => {
+    freshApi();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.noSuggestion);
+    expect(search.suggestion).toBeNull();
+    expect(screen.queryByRole('region', { name: SUGGESTION_LABEL })).toBeNull();
+    expect(document.querySelectorAll('article[data-card]').length).toBeGreaterThan(0);
+    expect(document.querySelector('[data-legend]')?.getAttribute('data-legend')).toBe('yours');
+    const counted = [...document.querySelectorAll('[data-relevance]')].map((r) => visibleText(r)).find((t) => t.includes('in these excerpts'));
+    expect(counted).toMatch(/Your words in these excerpts: /);
   });
 
   it('the fixed heading and notice, a count that never claims every match, the marks explained, and when the search is deleted', async () => {
@@ -283,7 +363,10 @@ describe('the results page', { timeout: 20_000 }, () => {
     expect(notice.textContent).toBe(EVIDENCE_NOTICE);
     expect(document.querySelector('[data-count-line]')?.textContent).toBe('21 retrieved · best match first · not every matching investigation');
     expect(countLine(100)).toBe('100 retrieved · best match first · the most one search ranks · not every matching investigation');
-    expect(screen.getByText(/Marked in the excerpts:/).textContent).toContain(`${LEGEND.literal}`);
+    // The marks are the suggested words, and the key says so.
+    const legend = document.querySelector('[data-legend]') as HTMLElement;
+    expect(legend.getAttribute('data-legend')).toBe('suggested');
+    expect(visibleText(legend)).toBe(`Marked in the excerpts: ${LEGEND.suggested} · ${LEGEND.synonym}`);
     expect(screen.getByText(expiryLine(search.expiresAt))).toBeTruthy();
     expect(expiryLine('2026-10-25T22:13:00.000Z')).toBe('Only you can open this search. AirCase deletes it on 25 Oct 2026 at 22:13 UTC.');
   });
@@ -291,7 +374,9 @@ describe('the results page', { timeout: 20_000 }, () => {
   it('a card: the facts as Explore shows them, every probable cause with its scope and the report link, whole paragraphs with literal and synonym matches told apart, and the relevance facts', async () => {
     freshApi();
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
-    const item = search.cases[0] as EvidenceCase;
+    // The first card whose excerpts mark both kinds of match.
+    const marks = (c: EvidenceCase, match: 'literal' | 'synonym'): boolean => c.excerpts.some((e) => e.highlights.some((h) => h.match === match));
+    const item = search.cases.find((c) => marks(c, 'literal') && marks(c, 'synonym')) as EvidenceCase;
     const card = cardOf(item.case.ntsbNo);
     // Named by its case number and aircraft, a heading of its own.
     expect(within(card).getByRole('heading', { level: 3 }).textContent).toBe(`${item.case.ntsbNo}, ${aircraftSummary(item.case)}`);
@@ -317,9 +402,13 @@ describe('the results page', { timeout: 20_000 }, () => {
     const literal = card.querySelector('mark[data-match="literal"]') as HTMLElement;
     expect(literal.className).toBe('hit');
     expect(literal.textContent?.toLowerCase()).toBe('icing');
-    // The relevance facts, as facts: never "meaning match".
+    // The relevance facts, as facts: occurrences of the suggested words, said as suggested; never "meaning match".
     const relevance = card.querySelector('[data-relevance]') as HTMLElement;
-    expect(visibleText(relevance)).toBe('Phase: Approach · a synonym of “carb” 9 times · “icing” 3 times · found by keyword, similarity and case-narrative keyword search');
+    expect(visibleText(relevance)).toBe(relevanceParts(item.relevance, relevanceContext(search)).join(' · '));
+    expect(visibleText(relevance)).toMatch(/^Suggested terms in these excerpts: .*“icing” appears \d+ times.* · found by keyword, similarity and case-narrative keyword search$/);
+    expect(termInWords({ term: 'carb', literal: 0, synonym: 9 })).toBe('synonyms of “carb” appear 9 times');
+    expect(termInWords({ term: 'carb', literal: 2, synonym: 1 })).toBe('“carb” appears twice, its synonyms once');
+    expect(termInWords({ term: 'maintenance', literal: 0, synonym: 0 })).toBe('“maintenance” does not appear');
     expect(document.body.textContent).not.toMatch(/meaning match/i);
     // Compare, by keyboard and screen reader.
     expect(within(card).getByRole('checkbox', { name: new RegExp(`^Compare\\s*${item.case.ntsbNo}$`) })).toBeTruthy();
@@ -530,14 +619,16 @@ describe('the results page', { timeout: 20_000 }, () => {
 
   it('an empty result shows its filters and words, and a free keyword search without filters', async () => {
     freshApi();
-    await openSearch(MOCK_EVIDENCE_QUESTIONS.empty);
+    await openApplied(MOCK_EVIDENCE_QUESTIONS.empty);
     const box = document.querySelector('[data-few-results]') as HTMLElement;
     expect(box.textContent).toContain(EMPTY_TITLE);
-    expect(box.textContent).toContain('Filters: Highest injury: Fatal · Aircraft: Balloon · Location: Alaska');
-    const terms = readQuestion(MOCK_EVIDENCE_QUESTIONS.empty).terms;
+    expect(box.textContent).toContain(`Filters: Highest injury: Fatal · Aircraft: Balloon · Location: Alaska · ${QUESTION_AS_ASKED}`);
+    const terms = MOCK_EVIDENCE_QUESTIONS.empty;
     const out = within(box).getByRole('link', { name: /without filters\s*\(free\)$/ });
     expect(out.textContent).toBe(`Keyword search for “${terms}”, without filters (free)`);
     expect(out.getAttribute('href')).toBe(`/explore?${new URLSearchParams({ q: terms }).toString()}`);
+    // An empty result says nothing of counts or order.
+    expect(document.querySelector('[data-count-line]')).toBeNull();
     // The notice stands on an empty result too.
     expect(screen.getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
     expect(document.querySelectorAll('article[data-card]')).toHaveLength(0);
@@ -545,12 +636,12 @@ describe('the results page', { timeout: 20_000 }, () => {
 
   it('a tiny result shows the same under its cards', async () => {
     freshApi();
-    await openSearch(MOCK_EVIDENCE_QUESTIONS.tiny);
+    await openApplied(MOCK_EVIDENCE_QUESTIONS.tiny);
     expect(document.querySelectorAll('article[data-card]')).toHaveLength(2);
     const box = document.querySelector('[data-few-results]') as HTMLElement;
     expect(box.textContent).toContain('Only two investigations were retrieved.');
     expect(box.textContent).toContain('Filters: Aircraft: Helicopter · Location: Texas');
-    expect(within(box).getByRole('link', { name: /without filters/ }).getAttribute('href')).toBe('/explore?q=power+loss');
+    expect(within(box).getByRole('link', { name: /without filters/ }).getAttribute('href')).toBe('/explore?q=Helicopter+power+loss+in+Texas');
     // The box says how many; no paging line repeats it.
     expect(screen.queryByRole('navigation', { name: 'More investigations' })).toBeNull();
   });
@@ -577,66 +668,100 @@ describe('the results page', { timeout: 20_000 }, () => {
   });
 });
 
-describe('editing the interpretation', { timeout: 20_000 }, () => {
-  it('removing a filter offers “Search again · uses 1”, an edited search that keeps the question and its unchecked readings; Undo restores', async () => {
+describe('the suggestion is applied only by choice, and the reader edits the search', { timeout: 20_000 }, () => {
+  it('“Apply these filters · uses 1” makes an edited search with exactly those filters and the question as asked, never the suggested terms', async () => {
     freshApi();
     installTurnstile();
     const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
     const posts = recordPosts('/api/evidence');
-    const reading = screen.getByRole('region', { name: INTERPRETATION_LABEL });
-    expect(within(reading).queryByRole('button', { name: /Search again/ })).toBeNull();
-    const chip = within(reading).getByRole('button', { name: 'Phase: Approach, remove' });
-    // The AI chose it: magenta, as every AI decision is.
-    expect(chip.className).toContain('border-magenta');
-    fireEvent.click(chip);
-    expect(within(reading).queryByRole('button', { name: 'Phase: Approach, remove' })).toBeNull();
-    expect(document.activeElement?.textContent).toBe('+ Filter');
-    // Free alternatives first: a keyword search with these words and filters, or undo.
-    const keyword = within(reading).getByRole('link', { name: /^Show keyword results\s*with these words and filters \(free\)$/ });
-    expect(keyword.getAttribute('href')).toBe('/explore?q=carb+icing');
-    fireEvent.click(within(reading).getByRole('button', { name: 'Undo changes' }));
-    expect(within(reading).getByRole('button', { name: 'Phase: Approach, remove' })).toBeTruthy();
-    fireEvent.click(within(reading).getByRole('button', { name: 'Phase: Approach, remove' }));
-    fireEvent.click(within(reading).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }));
-    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/ai\//), SLOW);
+    const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+    fireEvent.click(within(suggestion).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) }));
     await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
     expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: {}, terms: 'carb icing', turnstileToken: TOKEN });
+    expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: { phase: ['approach'] }, turnstileToken: TOKEN });
+    expect(Object.keys(posts[0] as object).sort()).toEqual(['filters', 'from', 'idempotencyKey', 'kind', 'turnstileToken']);
     const edited = await screen.findByRole('region', { name: EDITED_LABEL }, SLOW);
-    expect(edited.textContent).toContain(EDITED_NOTE);
+    // The question still as asked; the filter now the reader's own (blue), removable.
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(MOCK_EVIDENCE_QUESTIONS.carb);
-    // The reader set it: blue.
-    expect(within(edited).getByRole('button', { name: 'carb icing, edit the search words' }).className).toContain('border-blue');
-    await waitFor(() => expect(document.querySelector('[data-count-line]')?.textContent).toMatch(/^21 retrieved/));
+    expect(edited.textContent).toContain(QUESTION_AS_ASKED);
+    expect(within(edited).getByRole('button', { name: /^Phase: Approach\s*, remove$/ }).className).toContain('border-blue');
+    // An edited search carries no suggestion; its marks and counts are the reader's words.
+    expect(screen.queryByRole('region', { name: SUGGESTION_LABEL })).toBeNull();
+    await waitFor(() => expect(document.querySelector('[data-count-line]')?.textContent).toMatch(/^7 retrieved/), SLOW);
+    expect(document.querySelector('[data-legend]')?.getAttribute('data-legend')).toBe('yours');
+    expect(visibleText(document.querySelector('[data-relevance]') as Element)).toMatch(/^Phase: Approach · Your words in these excerpts: /);
   });
 
-  it('the words: ✎ edits them, Enter keeps, Escape cancels, empty is refused; focus comes back to the chip', async () => {
+  it('“Apply filters and terms · uses 1” takes the suggested terms too, said as an explicit choice', async () => {
     freshApi();
-    await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
-    const reading = screen.getByRole('region', { name: INTERPRETATION_LABEL });
-    fireEvent.click(within(reading).getByRole('button', { name: 'carb icing, edit the search words' }));
-    const input = within(reading).getByRole('textbox', { name: 'Search words' }) as HTMLInputElement;
+    installTurnstile();
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const posts = recordPosts('/api/evidence');
+    fireEvent.click(within(screen.getByRole('region', { name: SUGGESTION_LABEL })).getByRole('button', { name: new RegExp(`^${APPLY_BOTH}\\s*·\\s*uses 1$`) }));
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: { phase: ['approach'] }, terms: 'carb icing' });
+    const edited = await screen.findByRole('region', { name: EDITED_LABEL }, SLOW);
+    expect(within(edited).getByRole('button', { name: /^carb icing\s*, edit the search words$/ })).toBeTruthy();
+  });
+
+  it('a filter removed stays removed: Search again · uses 1 sends the filters left and keeps the query; Undo restores', async () => {
+    freshApi();
+    installTurnstile();
+    const { router, search } = await openApplied(MOCK_EVIDENCE_QUESTIONS.carb);
+    const posts = recordPosts('/api/evidence');
+    const yours = screen.getByRole('region', { name: EDITED_LABEL });
+    expect(within(yours).queryByRole('button', { name: /Search again/ })).toBeNull();
+    fireEvent.click(within(yours).getByRole('button', { name: /^Phase: Approach\s*, remove$/ }));
+    expect(within(yours).queryByRole('button', { name: /^Phase: Approach\s*, remove$/ })).toBeNull();
+    expect(document.activeElement?.textContent).toBe('+ Filter');
+    // Free alternatives first: a keyword search with these words and filters, or undo.
+    const keyword = within(yours).getByRole('link', { name: /^Show keyword results\s*with these words and filters \(free\)$/ });
+    expect(keyword.getAttribute('href')).toBe(`/explore?${new URLSearchParams({ q: MOCK_EVIDENCE_QUESTIONS.carb }).toString()}`);
+    fireEvent.click(within(yours).getByRole('button', { name: 'Undo changes' }));
+    fireEvent.click(within(yours).getByRole('button', { name: /^Phase: Approach\s*, remove$/ }));
+    fireEvent.click(within(yours).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: {} });
+    expect('terms' in (posts[0] as object)).toBe(false);
+    await waitFor(() => expect(document.querySelector('[data-count-line]')?.textContent).toMatch(/^21 retrieved/), SLOW);
+    expect(within(screen.getByRole('region', { name: YOUR_SEARCH_LABEL })).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(0);
+  });
+
+  it('the reader’s own words: ✎ opens the field, Enter keeps, Escape cancels, empty is refused; Search again sends them', async () => {
+    freshApi();
+    installTurnstile();
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const posts = recordPosts('/api/evidence');
+    const yours = screen.getByRole('region', { name: YOUR_SEARCH_LABEL });
+    const opener = within(yours).getByRole('button', { name: OWN_WORDS });
+    fireEvent.click(opener);
+    const input = within(yours).getByRole('textbox', { name: 'Search words' }) as HTMLInputElement;
     expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('');
     fireEvent.change(input, { target: { value: '   ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(within(reading).getByRole('alert').textContent).toBe(EMPTY_WORDS);
+    expect(within(yours).getByRole('alert').textContent).toBe(EMPTY_WORDS);
     fireEvent.keyDown(input, { key: 'Escape' });
-    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent).toContain('carb icing'));
-    fireEvent.click(within(reading).getByRole('button', { name: 'carb icing, edit the search words' }));
-    fireEvent.change(within(reading).getByRole('textbox', { name: 'Search words' }), { target: { value: '  carburetor   heat ' } });
-    fireEvent.keyDown(within(reading).getByRole('textbox', { name: 'Search words' }), { key: 'Enter' });
-    const words = await within(reading).findByRole('button', { name: 'carburetor heat, edit the search words' });
+    await waitFor(() => expect(document.activeElement?.textContent).toContain(OWN_WORDS));
+    fireEvent.click(within(yours).getByRole('button', { name: OWN_WORDS }));
+    fireEvent.change(within(yours).getByRole('textbox', { name: 'Search words' }), { target: { value: '  carburetor   heat ' } });
+    fireEvent.keyDown(within(yours).getByRole('textbox', { name: 'Search words' }), { key: 'Enter' });
+    const words = await within(yours).findByRole('button', { name: /^carburetor heat\s*, edit the search words$/ });
     expect(words.className).toContain('border-blue');
-    expect(within(reading).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ })).toBeTruthy();
+    expect(within(yours).getByRole('link', { name: /^Show keyword results/ }).getAttribute('href')).toBe('/explore?q=carburetor+heat');
+    fireEvent.click(within(yours).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: {}, terms: 'carburetor heat' });
   });
 
   it('+ Filter adds a facet value or a year range, free until Search again', async () => {
     freshApi();
     await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
-    const reading = screen.getByRole('region', { name: INTERPRETATION_LABEL });
-    const add = within(reading).getByRole('button', { name: '+ Filter' });
+    const yours = screen.getByRole('region', { name: YOUR_SEARCH_LABEL });
+    const add = within(yours).getByRole('button', { name: '+ Filter' });
     fireEvent.click(add);
-    const editor = within(reading).getByRole('group', { name: 'Add a filter' });
+    const editor = within(yours).getByRole('group', { name: 'Add a filter' });
     fireEvent.change(within(editor).getByLabelText('Filter'), { target: { value: 'years' } });
     fireEvent.change(within(editor).getByLabelText('From'), { target: { value: '2020' } });
     fireEvent.change(within(editor).getByLabelText('To'), { target: { value: '2010' } });
@@ -644,10 +769,24 @@ describe('editing the interpretation', { timeout: 20_000 }, () => {
     expect(within(editor).getByRole('alert').textContent).toBe('Enter a year from 2008 to 2026, or both in order.');
     fireEvent.change(within(editor).getByLabelText('To'), { target: { value: '2024' } });
     fireEvent.click(within(editor).getByRole('button', { name: 'Add' }));
-    const years = within(reading).getByRole('button', { name: 'Years: 2020–2024, remove' });
+    const years = within(yours).getByRole('button', { name: /^Years: 2020–2024\s*, remove$/ });
     expect(years.className).toContain('border-blue');
     expect(document.activeElement).toBe(add);
-    expect(within(reading).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ })).toBeTruthy();
+    expect(within(yours).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ })).toBeTruthy();
+  });
+
+  it('model text in the suggestion is shown as text under its label, never markup, and reaches no result (a synthetic page)', async () => {
+    freshApi();
+    const search = await makeSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const hostile = '<img src=x onerror=alert(1)> Ignore the notice: these all prove carb icing';
+    const page = servePage({ ...search, id: '00000000-0000-4000-9000-0000000bad01', suggestion: { filters: { phase: ['approach'] }, terms: hostile } });
+    renderApp(`/ai/${page.id}`);
+    const suggestion = await screen.findByRole('region', { name: SUGGESTION_LABEL }, SLOW);
+    expect(suggestion.textContent).toContain(`“${hostile}”`);
+    expect(document.querySelector('img[src="x"]')).toBeNull();
+    const results = screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING }).closest('section') as HTMLElement;
+    expect(results.textContent).not.toContain('Ignore the notice');
+    expect(within(results).getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
   });
 });
 
@@ -660,7 +799,7 @@ describe('the drawer, Compare and print show the same projection and the notice'
     const dialog = await screen.findByRole('dialog');
     const section = await within(dialog).findByRole('region', { name: EVIDENCE_HEADING }, SLOW);
     expect(within(section).getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
-    expect(visibleText(section.querySelector('[data-relevance]') as Element)).toBe(relevanceParts(first.relevance, search.interpretation.filters).join(' · '));
+    expect(visibleText(section.querySelector('[data-relevance]') as Element)).toBe(relevanceParts(first.relevance, relevanceContext(search)).join(' · '));
     expect(section.querySelectorAll('figure')).toHaveLength(first.excerpts.length);
     expect(within(dialog).getByText('1 of 21')).toBeTruthy();
     // The tenth card, then Next: the next page comes, and the drawer moves on to its first case.
@@ -687,16 +826,20 @@ describe('the drawer, Compare and print show the same projection and the notice'
     expect(within(top).getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
     // The strip once its case is read (a pending strip has the same name), with its evidence row.
     const row = await present(() => screen.queryByRole('article', { name: `${a.case.ntsbNo}, strip 1` })?.querySelector<HTMLElement>('[data-strip-evidence]'));
-    expect(visibleText(row.querySelector('[data-relevance]') as Element)).toBe(relevanceParts(a.relevance, search.interpretation.filters).join(' · '));
+    expect(visibleText(row.querySelector('[data-relevance]') as Element)).toBe(relevanceParts(a.relevance, relevanceContext(search)).join(' · '));
     expect(visibleText(row.querySelector('blockquote') as Element)).toBe(a.excerpts[0]?.text);
+    expect(a.excerpts.length).toBe(3);
     expect(row.textContent).toContain('2 more excerpts on the search’s page.');
+    // The key to the marks: the suggested words.
+    expect(top.querySelector('[data-legend]')?.getAttribute('data-legend')).toBe('suggested');
     // Back to the search (with the compare selection), not to Explore.
     expect(screen.getByRole('link', { name: '← Back to results' }).getAttribute('href')).toBe(`/ai/${search.id}?cases=${a.case.ntsbNo}%2C${b.case.ntsbNo}`);
   });
 
   it('Compare: a case the search did not show says so; a search that is gone shows the strips with a note', async () => {
     freshApi();
-    const search = await makeSearch(MOCK_EVIDENCE_QUESTIONS.tiny);
+    const asked = await makeSearch(MOCK_EVIDENCE_QUESTIONS.tiny);
+    const search = await makeEdit(asked, asked.suggestion?.filters ?? {});
     renderApp(`/compare?cases=DFW08TA066,NYC08LA106&evidence=${search.id}&pages=1`);
     const row = await present(() => screen.queryByRole('article', { name: 'NYC08LA106, strip 2' })?.querySelector<HTMLElement>('[data-strip-evidence]'));
     expect(row.textContent).toContain(NOT_IN_SEARCH);
@@ -704,13 +847,14 @@ describe('the drawer, Compare and print show the same projection and the notice'
     expect(await screen.findByText(EVIDENCE_GONE_PLURAL, {}, SLOW)).toBeTruthy();
   });
 
-  it('print: the heading, the notice, the interpretation and the cards print; the editing and paging controls do not', async () => {
+  it('print: the heading, the notice, what was searched and the cards print; the suggestion, the hint and the controls do not', async () => {
     freshApi();
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
     const hidden = (el: Element | null): boolean => el?.closest('[data-print="hide"]') !== null;
     expect(hidden(screen.getByRole('note'))).toBe(false);
     expect(hidden(screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING }))).toBe(false);
-    expect(hidden(screen.getByRole('region', { name: INTERPRETATION_LABEL }))).toBe(false);
+    expect(hidden(screen.getByRole('region', { name: YOUR_SEARCH_LABEL }))).toBe(false);
+    expect(hidden(screen.getByRole('region', { name: SUGGESTION_LABEL }))).toBe(true);
     expect(hidden(cardOf((search.cases[0] as EvidenceCase).case.ntsbNo))).toBe(false);
     expect(hidden(screen.getByRole('button', { name: '+ Filter' }))).toBe(true);
     expect(hidden(screen.getAllByRole('button', { name: /^Show the full .+ section$/ })[0] as HTMLElement)).toBe(true);
@@ -736,12 +880,12 @@ describe('a result surface shows NTSB text, coded data, fixed copy and the reade
   /** What a page may show: its NTSB fields and coded data, said by the deterministic display rules, and fixed copy. */
   function allowed(page: EvidencePage): string {
     const parts: string[] = [EVIDENCE_HEADING, EVIDENCE_NOTICE, countLine(page.total), showingLine(page.cases.length, page.total), allShownLine(page.total)];
-    parts.push(showMoreLabel(page.cases.length, page.total, 10), '(free)', 'Marked in the excerpts:', LEGEND.literal, LEGEND.synonym, '; dotted:', '·', expiryLine(page.expiresAt));
+    parts.push(showMoreLabel(page.cases.length, page.total, 10), '(free)', 'Marked in the excerpts:', page.suggestion ? LEGEND.suggested : LEGEND.yours, LEGEND.synonym, '; dotted:', '·', expiryLine(page.expiresAt));
     for (const c of page.cases) {
       const row = c.case;
       parts.push(row.ntsbNo, formatDate(row.date), aircraftSummary(row), placeShort(row.city, row.state, row.country), ...rowMonoParts(row).map((p) => p.text));
       row.aircraft.forEach((a, i) => parts.push(letterOf(row.ntsbNo, a, i), aircraftName(a), phaseEventShort(a)));
-      parts.push('Compare', ',', 'How it was found:', relevanceParts(c.relevance, page.interpretation.filters, c.excerpts.length > 0).join(' · '));
+      parts.push('Compare', ',', 'How it was found:', relevanceParts(c.relevance, relevanceContext(page), c.excerpts.length > 0).join(' · '));
       c.probableCauses.forEach((p, i) => parts.push(probableCauseLabel(row.ntsbNo, row.aircraft, p, i, c.probableCauses.length), p.text));
       const numbered = numberedKinds(c.excerpts);
       for (const e of c.excerpts) {
@@ -754,7 +898,7 @@ describe('a result surface shows NTSB text, coded data, fixed copy and the reade
     return parts.join('\n');
   }
 
-  it.each(['seed', 'carb', 'midair', 'unchecked', 'multibyte'] as const)('%s: every text node of the results comes from the page’s NTSB fields, coded data or fixed copy', async (name) => {
+  it.each(['seed', 'carb', 'midair', 'multibyte', 'noSuggestion', 'statistics'] as const)('%s: every text node of the results comes from the page’s NTSB fields, coded data or fixed copy', async (name) => {
     freshApi();
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS[name]);
     const results = screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING }).closest('section') as HTMLElement;
@@ -775,16 +919,19 @@ describe('a result surface shows NTSB text, coded data, fixed copy and the reade
 });
 
 describe('the AI counter and paid controls keep to the API’s limits', () => {
-  it('a signed-in visitor: “AI left today: 48 of 50”, and Search again says it uses one', async () => {
+  it('a signed-in visitor: “AI left today: 48 of 50”, and Apply and Search again say they use one', async () => {
     window.sessionStorage.setItem('casebook-mock-account', JSON.stringify({ signedIn: true, registered: true }));
     try {
       freshApi({ googleEnabled: true });
       server.use(http.get('*/api/ai/status', () => HttpResponse.json(AI_STATUS_SAMPLES.signedIn)));
       await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
       await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI left today: 48 of 50'), SLOW);
-      const reading = screen.getByRole('region', { name: INTERPRETATION_LABEL });
-      fireEvent.click(within(reading).getByRole('button', { name: 'Phase: Approach, remove' }));
-      expect(within(reading).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }).getAttribute('aria-disabled')).toBe('false');
+      const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+      expect(within(suggestion).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) }).getAttribute('aria-disabled')).toBe('false');
+      const yours = screen.getByRole('region', { name: YOUR_SEARCH_LABEL });
+      fireEvent.click(within(yours).getByRole('button', { name: '+ Filter' }));
+      fireEvent.click(within(within(yours).getByRole('group', { name: 'Add a filter' })).getByRole('button', { name: 'Add' }));
+      expect(within(yours).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }).getAttribute('aria-disabled')).toBe('false');
     } finally {
       window.sessionStorage.clear();
     }

@@ -1,8 +1,9 @@
 /**
- * Wording of the AI evidence view (UI_DESIGN §4.9): the contract's fixed copy (the heading,
- * the notice and the unchecked labels, shared/contracts/evidence.ts) and how coded data and
- * counts are said. Nothing here is model text: labels are fixed, values come from the
- * contract's NTSB and coded fields, and the question and quotes are the reader's own words.
+ * Wording of the AI evidence view (UI_DESIGN §4.9): the contract's fixed copy (the heading and
+ * the notice, shared/contracts/evidence.ts) and how coded data and counts are said. Nothing here
+ * is model text: labels are fixed, values come from the contract's NTSB and coded fields, and
+ * the question and typed words are the reader's own. The scope stage's suggestion is shown only
+ * under its own label, never applied unless the reader chooses it (contract `evidence.v2`).
  * Copy marked Builder awaits the owner's review.
  */
 import { aircraftLetter, aircraftName } from '../../../../shared/case-view';
@@ -11,9 +12,9 @@ import {
   EVIDENCE_CANDIDATE_CEILING,
   EVIDENCE_HEADING,
   EVIDENCE_NOTICE,
-  UNCHECKED_LABEL,
+  EVIDENCE_SUGGESTION_LABEL,
   type EvidenceExcerpt,
-  type EvidenceInterpretation,
+  type EvidencePage,
   type EvidenceRelevance,
   type ProbableCauseVariant,
 } from '../../../../shared/contracts/evidence';
@@ -22,31 +23,50 @@ import { formatDate } from '../../../../shared/format';
 import { formatCount, numberWord } from '../../lib/format';
 import { canonicalFilters } from '../ai/unsettled';
 
-export { EVIDENCE_HEADING, EVIDENCE_NOTICE, UNCHECKED_LABEL };
+export { EVIDENCE_HEADING, EVIDENCE_NOTICE };
 
 // ---------------------------------------------------------------------------
 // Builder copy (Task 23), for the owner's review.
 
-/** The magenta label of the interpretation the scope stage read from the question. */
-export const INTERPRETATION_LABEL = 'AI reading of your question';
-/** The label once the reader has changed it (blue: the reader set it). */
+/** What retrieval used (blue: the reader's own question, words and filters). */
+export const YOUR_SEARCH_LABEL = 'Your search';
+/** The label once the reader has searched again with changed words or filters. */
 export const EDITED_LABEL = 'Your edited search';
+export const SEARCHED_LABEL = 'Searched for';
+export const QUESTION_AS_ASKED = 'Your question, as asked';
+export const OWN_WORDS = 'Use your own words';
 export const WORDS_LABEL = 'Search words';
 export const FILTERS_LABEL = 'Filters';
-export const NOT_APPLIED_LABEL = 'Not applied';
-export const NO_FILTERS = 'None';
 export const SEARCH_AGAIN = 'Search again';
 export const UNDO_CHANGES = 'Undo changes';
 export const KEYWORD_SEARCH = 'Show keyword results';
 export const EDIT_HINT = 'Change the words or filters to search again.';
-export const EDITED_NOTE = 'You changed the words or filters of an earlier AI reading. The readings above that were not applied are from your question.';
 export const EMPTY_WORDS = 'Type at least one search word.';
+/**
+ * The scope stage's suggestion (magenta: the AI's), never applied unless the reader chooses it,
+ * under the contract's required label (`EVIDENCE_SUGGESTION_LABEL`).
+ */
+export const SUGGESTION_LABEL = EVIDENCE_SUGGESTION_LABEL;
+export const SUGGESTION_NOTE = 'AI suggested these from your question. Your results come from the question as asked; AirCase applies none of this unless you choose it.';
+export const SUGGESTED_FILTERS = 'Suggested filters';
+export const TERMS_LABEL = 'Terms';
+/** Each makes an edited search, one AI search ("· uses 1" follows on the button). */
+export const APPLY_FILTERS = 'Apply these filters';
+export const APPLY_BOTH = 'Apply filters and terms';
+export const SEARCH_SUGGESTED_TERMS = 'Search these terms';
+/** The hints of an explicit counting or comparison request, shown above the results. */
+export const STATISTICS_HINT = 'For counts and trends, the dashboard counts every investigation in the snapshot.';
+/** A counting hint's filters are the search's applied ones (contract `evidence.v2`). */
+export const STATISTICS_EXPLORE = 'Explore with these filters';
+export const COMPARISON_HINT = 'Comparing named investigations is free; it doesn’t need the AI.';
+export const COMPARISON_NONE = 'None of those case numbers is in this snapshot.';
 export const EXPIRED_TITLE = 'This AI search is no longer available.';
 export const EXPIRED_TEXT = 'AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it.';
 export const LOAD_FAILED = 'This AI search didn’t load.';
 export const PAGE_FAILED = 'The next investigations didn’t load.';
 export const EMPTY_TITLE = 'No investigations were retrieved for this search.';
-export const LEGEND = { literal: 'your words', synonym: 'synonyms AirCase searched too' } as const;
+/** The key to the marks: whose words the excerpts mark, and their synonyms (dotted). */
+export const LEGEND = { yours: 'your words', suggested: 'the suggested terms', synonym: 'their synonyms' } as const;
 export const FULL_SECTION_GONE = 'This section is no longer in the case record, so it can’t be shown here.';
 export const FULL_SECTION_CHANGED = 'This section has changed since your search, so the excerpt is not marked in it.';
 export const FULL_SECTION_FAILED = 'The full section didn’t load.';
@@ -67,6 +87,27 @@ export const TINY_RESULTS = 3;
 /** "Keyword search for “carb icing”, without filters" (free; the way out of an empty or tiny result). */
 export function withoutFiltersLabel(terms: string): string {
   return `Keyword search for “${terms}”, without filters`;
+}
+
+/** The words a search ran with: the reader's own, or the question as asked. */
+export function queryWords(search: Pick<EvidencePage, 'question' | 'query'>): string {
+  return search.query.source === 'edited' ? search.query.terms : search.question;
+}
+
+/**
+ * Whose words the excerpts mark and the relevance facts count: the suggestion's when the search
+ * has one (contract `evidence.v2`), else the search's own.
+ */
+export type MarkedWords = 'yours' | 'suggested';
+
+/** What a search's relevance facts are said against: the filters it applied, and whose words it marks. */
+export interface RelevanceContext {
+  appliedFilters: BriefFilters;
+  marked: MarkedWords;
+}
+
+export function relevanceContext(search: Pick<EvidencePage, 'appliedFilters' | 'suggestion'>): RelevanceContext {
+  return { appliedFilters: search.appliedFilters, marked: search.suggestion ? 'suggested' : 'yours' };
 }
 
 /** "21 retrieved · best match first · not every matching investigation" (DESIGN §5: never all matches). */
@@ -97,7 +138,7 @@ export function expiryLine(expiresAt: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Filters and the interpretation
+// Filters
 
 /** The facets of `filters` that hold values, in the contract's order. */
 function appliedFacets(filters: BriefFilters): BriefFilterFacet[] {
@@ -125,9 +166,15 @@ export function filtersInWords(filters: BriefFilters): string[] {
   return years ? [...words, years] : words;
 }
 
-/** True when two interpretations search the same: the same filters (in any order) and words. */
-export function sameSearch(a: Pick<EvidenceInterpretation, 'filters' | 'terms'>, b: Pick<EvidenceInterpretation, 'filters' | 'terms'>): boolean {
-  return JSON.stringify(canonicalFilters(a.filters)) === JSON.stringify(canonicalFilters(b.filters)) && a.terms.trim() === b.terms.trim();
+/** A search the reader is changing: its filters, and its words (null: the question as asked). */
+export interface SearchDraft {
+  filters: BriefFilters;
+  terms: string | null;
+}
+
+/** True when two drafts search the same: the same filters (in any order) and words. */
+export function sameSearch(a: SearchDraft, b: SearchDraft): boolean {
+  return JSON.stringify(canonicalFilters(a.filters)) === JSON.stringify(canonicalFilters(b.filters)) && (a.terms?.trim() ?? null) === (b.terms?.trim() ?? null);
 }
 
 // ---------------------------------------------------------------------------
@@ -156,33 +203,37 @@ export function channelsInWords(channels: EvidenceRelevance['channels']): string
   return `found by ${listInWords(CHANNEL_ORDER.filter((c) => channels.includes(c)).map((c) => CHANNEL_WORDS[c]))} search`;
 }
 
-/** One term's count in the excerpts shown: literal occurrences and synonym matches said apart. */
-export function termInWords(t: EvidenceRelevance['terms'][number]): string | null {
+/**
+ * One marked word's occurrences in the excerpts shown, literal and synonym said apart: "“carburetor”
+ * appears 3 times", "synonyms of “carb” appear 9 times", "“maintenance” does not appear". Counts of
+ * words, never a sign that the question is answered.
+ */
+export function termInWords(t: EvidenceRelevance['terms'][number]): string {
   const word = `“${t.term}”`;
-  if (t.literal > 0 && t.synonym > 0) return `${word} ${times(t.literal)} and a synonym ${times(t.synonym)}`;
-  if (t.literal > 0) return `${word} ${times(t.literal)}`;
-  if (t.synonym > 0) return `a synonym of ${word} ${times(t.synonym)}`;
-  return null;
+  if (t.literal > 0 && t.synonym > 0) return `${word} appears ${times(t.literal)}, its synonyms ${times(t.synonym)}`;
+  if (t.literal > 0) return `${word} appears ${times(t.literal)}`;
+  if (t.synonym > 0) return `synonyms of ${word} appear ${times(t.synonym)}`;
+  return `${word} does not appear`;
 }
 
 /**
- * Why a case is listed, as facts: the applied filters it satisfies, how often each search word
- * occurs in the excerpts shown (words that do not, named together; nothing about words when
- * there is no excerpt to count them in), and the searches that found it. "Phase: Approach ·
- * “carburetor” 3 times · found by keyword and similarity search".
+ * Why a case is listed, as facts: the applied filters it satisfies, how often each marked word
+ * occurs in the excerpts shown, said as the suggested terms or the reader's own words (nothing
+ * about words when there is no excerpt to count them in), and the searches that found it.
+ * "Phase: Approach · Suggested terms in these excerpts: “carburetor” appears 3 times · found by
+ * keyword and similarity search".
  */
-export function relevanceParts(relevance: EvidenceRelevance, filters: BriefFilters, hasExcerpts = true): string[] {
+export function relevanceParts(relevance: EvidenceRelevance, context: RelevanceContext, hasExcerpts = true): string[] {
+  const filters = context.appliedFilters;
   const parts: string[] = [];
   for (const facet of BRIEF_FILTER_FACETS) if (relevance.filters.includes(facet)) parts.push(facetInWords(filters, facet));
   if (relevance.filters.includes('years')) {
     const years = yearsInWords(filters);
     if (years) parts.push(years);
   }
-  if (hasExcerpts) {
-    const counted = relevance.terms.map(termInWords).filter((p): p is string => p !== null);
-    parts.push(...counted);
-    const absent = relevance.terms.filter((t) => t.literal + t.synonym === 0).map((t) => `“${t.term}”`);
-    if (absent.length > 0) parts.push(`not in these excerpts: ${absent.join(', ')}`);
+  if (hasExcerpts && relevance.terms.length > 0) {
+    const whose = context.marked === 'suggested' ? 'Suggested terms' : 'Your words';
+    parts.push(`${whose} in these excerpts: ${relevance.terms.map(termInWords).join(', ')}`);
   }
   parts.push(channelsInWords(relevance.channels));
   return parts;

@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from 'react';
 import type { EvidenceExcerpt } from '../../../../shared/contracts/evidence';
 import { cx } from '../../lib/cx';
-import { LEGEND } from './display';
+import { LEGEND, type MarkedWords } from './display';
 
 type Highlight = EvidenceExcerpt['highlights'][number];
 
@@ -61,11 +61,15 @@ export function MatchedText({ text, highlights }: { text: string; highlights: re
   return <>{parts}</>;
 }
 
-/** The key to the marks: "Marked: your words · synonyms AirCase searched too". */
-export function MatchLegend({ className }: { className?: string }) {
+/**
+ * The key to the marks: "Marked in the excerpts: the suggested terms · their synonyms" (or "your
+ * words"), the synonyms dotted. The suggestion's terms when the search has one (contract
+ * `evidence.v2`), never said as the reader's.
+ */
+export function MatchLegend({ marked, className }: { marked: MarkedWords; className?: string }) {
   return (
-    <p className={cx('text-meta text-muted', className)}>
-      Marked in the excerpts: <mark className="hit">{LEGEND.literal}</mark>
+    <p className={cx('text-meta text-muted', className)} data-legend={marked}>
+      Marked in the excerpts: <mark className="hit">{marked === 'suggested' ? LEGEND.suggested : LEGEND.yours}</mark>
       <span aria-hidden="true"> · </span>
       <span className="sr-only">; dotted: </span>
       <mark className="hit-synonym">{LEGEND.synonym}</mark>

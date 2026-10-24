@@ -21,17 +21,21 @@ import {
   LOAD_FAILED,
   PAGE_FAILED,
   TINY_RESULTS,
+  QUESTION_AS_ASKED,
   allShownLine,
   countLine,
   expiryLine,
   filtersInWords,
+  queryWords,
+  relevanceContext,
   showMoreLabel,
   showingLine,
   tinyTitle,
   withoutFiltersLabel,
 } from '../features/evidence/display';
 import { EvidenceCard } from '../features/evidence/EvidenceCard';
-import { Interpretation } from '../features/evidence/Interpretation';
+import { EvidenceHint } from '../features/evidence/Hint';
+import { SearchPanel } from '../features/evidence/SearchPanel';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
 import { MatchLegend } from '../features/evidence/MatchedText';
 import { EvidenceNotice } from '../features/evidence/Notice';
@@ -99,15 +103,15 @@ function Expired({ id }: { id: string }) {
   );
 }
 
-/** An empty or tiny result (UI_DESIGN §4.9): the filters and words applied, and the free way out. */
+/** An empty or tiny result (UI_DESIGN §4.9): the filters and words the search ran with, and the free way out. */
 function FewResults({ search }: { search: EvidencePage }) {
-  const { filters, terms } = search.interpretation;
-  const words = filtersInWords(filters);
+  const terms = queryWords(search);
+  const words = filtersInWords(search.appliedFilters);
   return (
     <div className="card mt-3 px-4 py-3.5" data-few-results="">
       <p className="font-serif text-[18px] leading-tight font-semibold">{search.total === 0 ? EMPTY_TITLE : tinyTitle(search.total)}</p>
       <p className="mt-1 text-ui text-muted">
-        {words.length > 0 ? `Filters: ${words.join(' · ')}` : 'No filters'} · Search words: “{terms}”
+        {words.length > 0 ? `Filters: ${words.join(' · ')}` : 'No filters'} · {search.query.source === 'edited' ? <>Search words: “{terms}”</> : QUESTION_AS_ASKED}
       </p>
       <div className="mt-2.5">
         <Link to={`/explore?${new URLSearchParams({ q: terms }).toString()}`} className={pill}>
@@ -120,12 +124,14 @@ function FewResults({ search }: { search: EvidencePage }) {
 }
 
 /**
- * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v1`): the question as asked, the
- * AI's reading of it as editable chips with the readings AirCase cannot check, then the
- * investigations retrieved for it under the fixed heading and notice, as cards of NTSB text and
- * coded data, best match first, ten at a time ("Show more" is free and reads the pinned
- * ranking). The drawer, Compare and print show the same projection and the notice. Every read
- * is the viewer's own; a search that is gone, or not theirs, shows the expired state.
+ * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only design): the
+ * question as asked, what the search ran with (the question, or the reader's own words and
+ * filters, editable) and the AI's suggestion beside it, never applied unless the reader chooses
+ * it, a hint for an explicit counting or comparison request, then the investigations retrieved
+ * under the fixed heading and notice, as cards of NTSB text and coded data, best match first,
+ * ten at a time ("Show more" is free and reads the pinned ranking). The drawer, Compare and print
+ * show the same projection and the notice. Every read is the viewer's own; a search that is gone,
+ * or not theirs, shows the expired state.
  */
 export function Evidence() {
   const { id = '' } = useParams();
@@ -288,7 +294,7 @@ export function Evidence() {
     setNotice(r === 'full' ? COMPARE_FULL_MESSAGE : null);
     return r;
   };
-  const filters = search.interpretation.filters;
+  const context = relevanceContext(search);
 
   return (
     <>
@@ -298,7 +304,8 @@ export function Evidence() {
         <PrintHeader title={EVIDENCE_HEADING} cases={cases.map((c) => c.case.ntsbNo)} snapshotDate={config?.snapshotDate ?? null} />
         <Placard as="p">Your question</Placard>
         <h1 className="mt-1 mb-3 font-serif text-[17px] leading-[1.3] break-words sm:text-[19px]">{search.question}</h1>
-        <Interpretation key={search.id} search={search} />
+        <SearchPanel key={search.id} search={search} />
+        <EvidenceHint hint={search.hint} className="mt-3" />
 
         <section aria-labelledby="evidence-heading" className="mt-5">
           <h2 id="evidence-heading" className="font-serif text-[19px] leading-tight font-semibold tracking-headline sm:text-[21px]">
@@ -310,7 +317,7 @@ export function Evidence() {
               {countLine(search.total)}
             </p>
           )}
-          {search.total > 0 && <MatchLegend className="mt-0.5 mb-2" />}
+          {search.total > 0 && <MatchLegend marked={context.marked} className="mt-0.5 mb-2" />}
           {search.total === 0 ? (
             <FewResults search={search} />
           ) : (
@@ -320,7 +327,7 @@ export function Evidence() {
                   <EvidenceCard
                     searchId={search.id}
                     item={c}
-                    filters={filters}
+                    context={context}
                     caseTo={caseTo(c.case.ntsbNo)}
                     inCompare={compare.selected.includes(c.case.ntsbNo)}
                     onToggleCompare={() => toggle(c.case.ntsbNo)}
@@ -373,7 +380,7 @@ export function Evidence() {
           fullPage={openCase ? `/cases/${openCase}` : '/'}
           fullPageState={{ from: here }}
           matched={null}
-          evidence={at >= 0 ? { searchId: search.id, item: cases[at] as EvidenceCase, filters } : null}
+          evidence={at >= 0 ? { searchId: search.id, item: cases[at] as EvidenceCase, context } : null}
         />
       </div>
     </>
