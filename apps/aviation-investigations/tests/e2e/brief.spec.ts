@@ -1,83 +1,52 @@
 import { expect, test, type Page } from '@playwright/test';
+import { FAKE_TURNSTILE } from './fake-turnstile.js';
 
 /**
- * The AI brief interface against the mock API (web/mock/briefs.ts, the fake provider's
- * hand-written seed readings). Cloudflare's Turnstile is replaced by a local stand-in
- * installed before the app loads (the app then never fetches Cloudflare's script, and
- * the mock's service worker would hide that request from routing anyway), so nothing
- * leaves the machine. It records each widget's parameters and answers with the dummy
- * token of Cloudflare's always-passing test keys.
+ * AI briefs that exist, against the mock API (web/mock/briefs.ts, the fake provider's
+ * hand-written seed readings). The interface no longer starts briefs (Task 23: Ask AI starts an
+ * AI evidence search, tests/e2e/evidence.spec.ts), so each test makes one through the mock API
+ * from the page, as the trial's request would, and opens it by its link without a reload (the
+ * mock keeps it in the page's memory). Cloudflare's Turnstile is a local stand-in
+ * (tests/e2e/fake-turnstile.ts).
  */
 
 const SEED_QUESTION = 'Engine power loss shortly after maintenance';
-const TEST_SITE_KEY = '1x00000000000000000000AA';
-
-const FAKE_TURNSTILE = `
-window.__turnstile = { renders: [], removed: 0 };
-window.__reads = [];
-const realFetch = window.fetch.bind(window);
-window.fetch = (input, init) => {
-  try {
-    const url = new URL(input instanceof Request ? input.url : String(input), location.origin);
-    window.__reads.push({ method: (init && init.method) || (input instanceof Request ? input.method : 'GET'), path: url.pathname });
-  } catch {}
-  return realFetch(input, init);
-};
-window.turnstile = {
-  _n: 0,
-  _widgets: {},
-  render(host, params) {
-    const id = 'w' + (++this._n);
-    window.__turnstile.renders.push({ sitekey: params.sitekey, action: params.action, appearance: params.appearance, theme: params.theme });
-    const box = document.createElement('div');
-    box.textContent = 'Verifying…';
-    box.style.cssText = 'border:1px solid #c9c4b4;border-radius:4px;padding:9px 12px;background:#fafafa;color:#1E2A36;font:12px sans-serif;width:250px';
-    if (params.appearance === 'interaction-only') box.style.display = 'none';
-    host.appendChild(box);
-    this._widgets[id] = box;
-    setTimeout(() => {
-      if (!this._widgets[id]) return;
-      box.textContent = 'Success!';
-      params.callback('XXXX.DUMMY.TOKEN.XXXX');
-    }, window.__checkDelay ?? 700);
-    return id;
-  },
-  remove(id) {
-    const box = this._widgets[id];
-    if (box) box.remove();
-    delete this._widgets[id];
-    window.__turnstile.removed += 1;
-  },
-};
-`;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(FAKE_TURNSTILE);
   await page.emulateMedia({ colorScheme: 'light' });
 });
 
-async function ask(page: Page, question: string): Promise<void> {
+/**
+ * A brief that exists: made through the mock API from the page, then opened by its link (no
+ * reload). With `searchedFirst`, the visitor first asks an AI search on Home, so the trial's
+ * first check (the visible one) is behind them, as it would be for anyone holding a brief.
+ */
+async function ask(page: Page, question: string, { searchedFirst = false } = {}): Promise<void> {
   await page.goto('/');
-  await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(question);
-  await page.getByRole('button', { name: /^Ask AI · \d free$/ }).click();
-  await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole('button', { name: /^Ask AI · \d+ free$/ })).toBeVisible();
+  if (searchedFirst) {
+    await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill('Carb icing on approach');
+    await page.getByRole('button', { name: /^Ask AI · \d+ free$/ }).click();
+    await expect(page).toHaveURL(/\/ai\/[0-9a-f-]{36}$/);
+    await expect(page.getByRole('banner').getByText('AI searches left: 9 of 10')).toBeVisible();
+  }
+  const id = await page.evaluate(async (q) => {
+    const response = await fetch('/api/briefs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: q, idempotencyKey: crypto.randomUUID(), turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' }),
+    });
+    return ((await response.json()) as { briefId: string }).briefId;
+  }, question);
+  await page.evaluate(`history.pushState(null, '', ${JSON.stringify(`/briefs/${id}`)}); dispatchEvent(new PopStateEvent('popstate'));`);
+  await expect(page).toHaveURL(new RegExp(`/briefs/${id}$`));
 }
 
 const summaryLabel = (page: Page) => page.getByRole('heading', { name: /^AI summary · check the cited passages$/i });
 
-test('ask AI shows checklist then briefing sheet with magenta summary label', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.getByRole('banner').getByText('AI searches left: 3 of 3')).toBeVisible();
-  await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
-  await page.getByRole('button', { name: 'Ask AI · 3 free' }).click();
-
-  // The first AI search of a trial identity explains the check, with the widget inside.
-  const check = page.getByRole('dialog', { name: 'Quick check before your first AI search' });
-  await expect(check).toBeVisible();
-  await expect(check).toContainText('Up to three free AI searches, subject to daily availability. Search, cases and comparisons never need this.');
-  await expect(check.getByText('Verifying…')).toBeVisible();
-
-  await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
+test('a brief that exists shows the checklist, then the briefing sheet with the magenta summary label', async ({ page }) => {
+  await ask(page, SEED_QUESTION);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(SEED_QUESTION);
   const checklist = page.getByRole('region', { name: /answer checklist/i });
   await expect(checklist).toBeVisible();
@@ -101,10 +70,6 @@ test('ask AI shows checklist then briefing sheet with magenta summary label', as
   // MIA08LA156's timing is only "first flight": unconfirmed against a 30-day/10-hour window.
   await expect(page.locator('article[data-card="MIA08LA156"]')).toContainText(/unconfirmed/i);
   await expect(page.getByRole('button', { name: 'Refine · uses 1' })).toBeVisible();
-
-  const renders = await page.evaluate<unknown[]>('window.__turnstile.renders');
-  expect(renders).toEqual([{ sitekey: TEST_SITE_KEY, action: 'ask-ai', appearance: 'always', theme: 'light' }]);
-  await expect(page.getByRole('banner').getByText('AI searches left: 2 of 3')).toBeVisible();
 });
 
 test('withheld notice copy exact', async ({ page }) => {
@@ -172,13 +137,14 @@ test('case number citation opens drawer at passage', async ({ page }) => {
 });
 
 test('refine uses 1 and adds step switcher', async ({ page }) => {
-  await ask(page, SEED_QUESTION);
+  await ask(page, SEED_QUESTION, { searchedFirst: true });
   await expect(summaryLabel(page)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('navigation', { name: 'Answers in this brief' })).toHaveCount(0);
 
   const refine = page.getByRole('button', { name: 'Refine · uses 1' });
   await expect(refine).toBeVisible();
-  await expect(page.getByText('AI searches left: 2 of 3 · 3 of 3 refinements left in this brief')).toBeVisible();
+  // (the count as this page last read it: the brief was made from the page without a re-read)
+  await expect(page.getByText(/^AI searches left: \d+ of 10 · 3 of 3 refinements left in this brief$/)).toBeVisible();
   await page.getByRole('textbox', { name: /^refine$/i }).fill('only helicopters');
   await refine.click();
   // Every anonymous AI request takes a fresh check; later ones run invisibly while the button says so.
@@ -191,8 +157,9 @@ test('refine uses 1 and adds step switcher', async ({ page }) => {
   await expect(switcher.getByRole('link', { name: 'Answer 2, latest' })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByText('Refined: “only helicopters”')).toBeVisible();
   await expect(summaryLabel(page)).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('AI searches left: 1 of 3 · 2 of 3 refinements left in this brief')).toBeVisible();
+  await expect(page.getByText('AI searches left: 7 of 10 · 2 of 3 refinements left in this brief')).toBeVisible();
 
+  // The AI search on Home took the first check; the refinement took a fresh, invisible one.
   const renders = await page.evaluate<{ appearance: string }[]>('window.__turnstile.renders');
   expect(renders.map((r) => r.appearance)).toEqual(['always', 'interaction-only']);
 
@@ -227,12 +194,14 @@ test('expired brief shows empty search', async ({ page }) => {
   await expect(page).toHaveURL(/\/explore\?q=carburetor\+icing$/);
 });
 
-test('trial used up: the button and counter change, and a click explains', async ({ page }) => {
+test('today\'s free searches used up: the button and counter change, and a click explains', async ({ page }) => {
+  await page.addInitScript('window.__checkDelay = 40;');
   await page.goto('/');
-  for (const left of [3, 2, 1]) {
-    await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
+  // Ask AI starts an AI evidence search; the trial has ten a day.
+  for (let left = 10; left >= 1; left--) {
+    await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(`${SEED_QUESTION} ${left}`);
     await page.getByRole('button', { name: `Ask AI · ${left} free` }).click();
-    await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
+    await expect(page).toHaveURL(/\/ai\/[0-9a-f-]{36}$/);
     // Back home inside the app: the mock keeps the trial in this page's memory.
     await page.getByRole('link', { name: 'AirCase' }).click();
     await expect(page).toHaveURL(/\/$/);
@@ -240,21 +209,21 @@ test('trial used up: the button and counter change, and a click explains', async
   await expect(page.getByRole('banner').getByRole('button', { name: 'Sign in to keep asking' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
   await page.getByRole('button', { name: 'Ask AI · sign in' }).click();
-  await expect(page.getByText('That was your third free AI search.')).toBeVisible();
+  await expect(page.getByText('That was your tenth free AI search today.')).toBeVisible();
   await expect(
-    page.getByText('Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.'),
+    page.getByText('Sign in with Google to keep asking. New accounts start with 20 AI searches a day, rising to 50 after three days.'),
   ).toBeVisible();
-  await expect(page.getByText('Search, case pages, compare and the dashboard stay open without an account.')).toBeVisible();
-  // Refused before any work: no fourth brief was requested.
-  const posts = await page.evaluate<number>("window.__reads.filter((r) => r.method === 'POST' && r.path === '/api/briefs').length");
-  expect(posts).toBe(3);
+  await expect(page.getByText(/^Free AI searches return at 00:00 UTC\. Search, case pages, compare and the dashboard stay open without an account\.$/)).toBeVisible();
+  // Refused before any work: no eleventh search was requested.
+  const posts = await page.evaluate<number>("window.__reads.filter((r) => r.method === 'POST' && r.path === '/api/evidence').length");
+  expect(posts).toBe(10);
 });
 
 test('cancelling the first check gives the button back', async ({ page }) => {
   await page.addInitScript('window.__checkDelay = 1e9;');
   await page.goto('/');
   await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
-  const ask = page.getByRole('button', { name: 'Ask AI · 3 free' });
+  const ask = page.getByRole('button', { name: 'Ask AI · 10 free' });
   await ask.click();
   const check = page.getByRole('dialog', { name: 'Quick check before your first AI search' });
   await expect(check).toBeVisible();
