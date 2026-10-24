@@ -105,8 +105,10 @@ mid-brief", §5) and lives 24 hours. AI content therefore appears only on:
 
 The AI evidence view (§4.9, Task 23) is the AI that opens first. Its page (`/ai/:id`), the drawer
 opened from it and Compare opened from its tray are private to the search's owner for its 24 hours;
-the only AI there is the interpretation of the question (magenta, labelled "AI reading of your
-question", editable) and the readings it did not apply. Every result is NTSB text or coded data.
+the only AI there is a suggestion of filters and terms (magenta, dashed, under the contract's label
+"Suggested filters and terms — not applied"), which changes nothing unless the reader applies it.
+Every result is NTSB text or coded data, retrieved for the question as asked or the reader's own
+words and filters.
 
 Explore, keyword compare, case pages reached any other way, and the dashboard
 show NTSB data only. Those responses stay deterministic and publicly cacheable
@@ -478,10 +480,10 @@ Facet order:
   - probable cause in serif, with matched terms highlighted in `blue-wash` with
     a blue underline
 - A quiet magenta-bordered nudge at the end, with its own Ask AI button. Task 23 (Builder copy):
-  "Ask in plain English: AI reads your question into search words and filters you can check and
-  edit." and, while filters are set, "It reads only the question, not the filters set here." (an
-  AI search reads the question alone; it never groups or explains results). It replaced "Want
-  these grouped and explained? Ask the AI with these filters."
+  "Ask in plain English: AirCase searches with your question, and AI suggests filters you can
+  choose to apply." and, while filters are set, "It searches the question alone, not the filters set
+  here." (an AI search reads the question alone; it never groups or explains results). It replaced
+  "Want these grouped and explained? Ask the AI with these filters."
 
 Keyword results are complete matches with a real total. They are not "examples".
 
@@ -940,9 +942,9 @@ then state the processed cohort (DESIGN §5).
   what AirCase is (an aviation casebook for flight instructors and safety
   analysts), what it does today (keyword search with filters, a page for each case,
   Compare for up to four cases, the dashboard; AI features are not available yet while the AI
-  status says AI is off, and once AI searches are offered (Task 23) "Ask in plain English: AI turns
-  your question into search filters and terms you can edit, and AirCase shows the investigations it
-  retrieved, in their own words."; while the status is unknown, neither),
+  status says AI is off, and once AI searches are offered (Task 23) "Ask in plain English: AirCase
+  shows the investigations it retrieved for your question, in their own words, and AI suggests
+  filters you can choose to apply."; while the status is unknown, neither),
   where the data comes from (the NTSB database, with the snapshot and coverage), what
   it is not (not an NTSB service, no operational advice), and, under "Built by", that
   it is built by Mariusz Kotas, with his website mkotas.cz (a link, in a new tab) and
@@ -950,56 +952,70 @@ then state the processed cohort (DESIGN §5).
   Kotas. Website: mkotas.cz. Contact: m@mkotas.cz." (Owner, 2026-10-24). The browser
   tab reads "About · AirCase".
 
-### 4.9 AI evidence view: "Investigations retrieved" (Owner, 2026-10-24; Task 23)
+### 4.9 AI evidence view: "Investigations retrieved" (Owner, 2026-10-24; gate, 2026-10-25; Task 23)
 
-The AI feature that opens first. Ask AI turns a plain-English question into an editable search
-interpretation and shows the NTSB investigations retrieved for it, in their own words. No AI
-writes result text: every result surface shows NTSB text, coded data, fixed copy or the reader's
-own words (gate G6 for generated summaries stays closed; contract `evidence.v1`,
-`shared/contracts/evidence.ts`; the design review's conditions 1, 2, 3 and 7). Briefs (§4.3–§4.6)
-stay readable while they live, but the interface starts none; while the server has briefs off
-(`aiLimits.briefsEnabled`), a brief shows no Refine, reading or Try again (Builder copy: "AirCase
-no longer refines or reruns briefs. Start a new AI search to keep going.").
+The AI feature that opens first. Ask AI searches the NTSB investigations with the question as asked
+and shows those retrieved, in their own words. No AI writes result text: every result surface shows
+NTSB text, coded data, fixed copy or the reader's own words (gate G6 for generated summaries stays
+closed; contract `evidence.v2`, `shared/contracts/evidence.ts`; the design review's conditions). The
+AI's filters are **advisory only** (gate decision of 2026-10-25): the scope stage suggests filters and
+terms beside the results and never changes them. Briefs (§4.3–§4.6) stay readable while they live,
+but the interface starts none; while the server has briefs off (`aiLimits.briefsEnabled`), a brief
+shows no Refine, reading or Try again (Builder copy: "AirCase no longer refines or reruns briefs.
+Start a new AI search to keep going.").
 
 **Route** (Proposed): `/ai/:id`, private to its owner and linkable while the search lives (24 hours;
-the server sends it as a noindexed page titled "AI search · AirCase"). `?case=` opens the drawer,
-`?pages=n` shows the first n pages of the ranking, `?cases=` holds the compare selection. A sign-in
-started from the page moves the search to the account, like a brief.
+the server sends it as a private, noindexed page titled "AI search · AirCase"). `?case=` opens the
+drawer, `?pages=n` shows the first n pages of the ranking, `?cases=` holds the compare selection. A
+sign-in started from the page moves the search to the account, like a brief.
 
 **Asking.** Ask AI on Home and Explore (and on an expired page) sends the question alone (`POST
 /api/evidence`, `kind: 'question'`) with the usual Turnstile, idempotency, visitor and quota
 handling; results open the page with page 1 already read. Explore's filters do not carry over (the
 contract's question request has none): the nudge under the results says so — "Ask in plain English:
-AI reads your question into search words and filters you can check and edit." and, with filters
-set, "It reads only the question, not the filters set here." A static scope reply (out of scope,
-operational, counting, comparison) has no page: it shows under the box, in the brief's form (§4.3
-"Scope outcomes"), and uses no search.
+AirCase searches with your question, and AI suggests filters you can choose to apply." and, with
+filters set, "It searches the question alone, not the filters set here." A policy reply (out of
+scope, operational advice) has no page: it shows under the box, in the brief's form (§4.3 "Scope
+outcomes"), and uses no search. Counting and comparison questions get results, with a hint.
 
 **Layout**, one reading column (640px), top to bottom:
 
 1. YOUR QUESTION and the question as asked, in serif.
-2. **The interpretation**, a bordered box labelled "AI reading of your question" (magenta placard,
-   magenta-soft border, magenta wash) with three rows: SEARCH WORDS (a chip with ✎), FILTERS (a
-   muted context chip "Completed US investigations", one removable chip per filter value or year
-   range, "+ Filter") and NOT APPLIED: each unchecked reading as its fixed label in bold
-   (`UNCHECKED_LABEL`, e.g. "AirCase cannot check timing") and the question's own words in serif
-   italic quotes. Chips the AI chose are magenta; chips the reader added or changed are blue. After an
-   edited search the box is labelled "Your edited search" (blue) with "You changed the words or
-   filters of an earlier AI reading. The readings above that were not applied are from your
-   question."
-3. **Editing.** Removing chips, editing the words (Enter keeps, Escape cancels, empty is refused:
-   "Type at least one search word.") and "+ Filter" (a facet value, or a year range checked against
-   the coverage years) change a draft for free. Once it differs, "Search again · uses 1" (the AI
-   button, an `edited` search: a new 24-hour search with the original question and unchecked
-   readings) and "Undo changes" appear; before, a muted "Change the words or filters to search
-   again." "Show keyword results" (free) opens Explore with the draft's words and filters at any time.
-4. **"Investigations retrieved for your search"** (`EVIDENCE_HEADING`) and under it, always,
+2. **Your search** (blue placard, `raised` box): what retrieval used, the reader's own. SEARCHED FOR:
+   "Your question, as asked" with "✎ Use your own words", or the reader's words as a blue chip with ✎;
+   FILTERS: a muted context chip "Completed US investigations", one removable blue chip per applied
+   filter value or year range (from `appliedFilters`, never from the suggestion), "+ Filter". After an
+   edit the box is labelled "Your edited search".
+3. **Editing.** Typing words (Enter keeps, Escape cancels, empty is refused: "Type at least one search
+   word."), removing chips and "+ Filter" (a facet value, or a year range checked against the coverage
+   years) change a draft for free. Once it differs, "Search again · uses 1" (the AI button, an `edited`
+   search: a new 24-hour search with the original question, exactly the filters left, and the words
+   only when the reader typed new ones; a filter removed stays removed) and "Undo changes" appear;
+   before, a muted "Change the words or filters to search again." "Show keyword results" (free) opens
+   Explore with the draft's words (or the question) and filters at any time.
+4. **The suggestion** (magenta, dashed: not applied; only a question search can have one) under the
+   contract's label `EVIDENCE_SUGGESTION_LABEL`, "Suggested filters and terms — not applied", with
+   "AI suggested these from your question. Your results come from the question as asked; AirCase
+   applies none of this unless you choose it." FILTERS: the suggested values as dashed magenta labels
+   (not controls), or "None"; TERMS: the suggested terms in quotes, as text. Then "Apply these filters ·
+   uses 1" (an edited search with exactly those filters and the question as asked: never the terms)
+   and "Apply filters and terms · uses 1" (the explicit choice to take the terms too); without
+   suggested filters, "Search these terms · uses 1". A search whose scope stage failed simply has no
+   suggestion; an edited search never has one.
+5. **A hint** (only for an explicit counting or comparison request, read by the server from the
+   question; non-blocking, above the results): "For counts and trends, the dashboard counts every
+   investigation in the snapshot." with [Open the dashboard] (and "Explore with these filters: …" when
+   the search applied filters); or "Comparing named investigations is free; it doesn't need the AI."
+   with [Compare A, B →], each case number found as a link, and "Not found: …" ("None of those case
+   numbers is in this snapshot." when none is).
+6. **"Investigations retrieved for your search"** (`EVIDENCE_HEADING`) and under it, always,
    `EVIDENCE_NOTICE` in an ink-ruled note: "AirCase matched your words and filters. It has not checked
    timing, causes or things that did not happen: read the excerpts."
-5. A count line: "21 retrieved · best match first · not every matching investigation" (DESIGN §5;
-   at the ceiling it adds "the most one search ranks"), and the key to the marks: "Marked in the
-   excerpts: your words · synonyms AirCase searched too".
-6. **Cards**, in rank order:
+7. A count line: "21 retrieved · best match first · not every matching investigation" (DESIGN §5;
+   at the ceiling it adds "the most one search ranks"; none for an empty result), and the key to the
+   marks: "Marked in the excerpts: the suggested terms · their synonyms" (or "your words" when the
+   search has no suggestion).
+8. **Cards**, in rank order:
    - the case facts exactly as Explore's rows show them (case number, date, aircraft, place,
      status, Compare; the mono line, or one line per aircraft in a multi-aircraft event), the case
      number and aircraft being the card's heading;
@@ -1013,10 +1029,12 @@ operational, counting, comparison) has no page: it shows under the box, in the b
      never cut, all of it is in the page and all of it prints. A case with no passage to quote says
      "No excerpt for this case. Its case page has the whole report narrative." with a link;
    - the relevance facts in muted interface text, never as a reason: the applied filters it
-     satisfies, each search word's count in the excerpts shown ("“icing” 3 times", "a synonym of
-     “carb” 9 times", "not in these excerpts: “maintenance”"), and the searches that found it ("found
-     by keyword, similarity and case-narrative keyword search"; never "meaning match").
-7. **"Show the full section"** under each excerpt ("Show the full analysis section") opens the
+     satisfies, the marked terms' occurrences in the excerpts shown, said as whose they are ("Suggested
+     terms in these excerpts: “icing” appears 3 times, synonyms of “carb” appear 9 times,
+     “maintenance” does not appear", or "Your words in these excerpts: …"), and the searches that found
+     it ("found by keyword, similarity and case-narrative keyword search"; never "meaning match").
+     Counts of words, never a sign that the question is answered.
+9. **"Show the full section"** under each excerpt ("Show the full analysis section") opens the
    section in place, read at the search's own generation (`GET /api/evidence/:id/cases/:ntsbNo`, never
    the public case), at the excerpt's paragraph: that paragraph in ink on a 2px blue rule with the
    search's marks, the rest of the section muted around it, scrolled into view and given focus
@@ -1024,40 +1042,46 @@ operational, counting, comparison) has no page: it shows under the box, in the b
    If the section changed or is gone, it says so ("This section has changed since your search, so
    the excerpt is not marked in it." / "This section is no longer in the case record, so it can't be
    shown here."). "Show the excerpt only" closes it.
-8. **Paging**: "Showing 1–10 of 21 · Show 10 more" (free; the pinned ranking, ten at a time) moves
-   focus to the first new case; then "That's all 21 retrieved."
-9. "Only you can open this search. AirCase deletes it on 25 Oct 2026 at 22:13 UTC."
+10. **Paging**: "Showing 1–10 of 21 · Show 10 more" (free; the pinned ranking, ten at a time) moves
+    focus to the first new case; then "That's all 21 retrieved."
+11. "Only you can open this search. AirCase deletes it on 25 Oct 2026 at 22:13 UTC."
 
-**Highlights.** A literal occurrence of a search word is the existing `hit` mark (blue wash, solid
+**Highlights.** A literal occurrence of a marked term is the existing `hit` mark (blue wash, solid
 blue underline); a synonym the analyzer matched is `hit-synonym` (no wash, dotted blue underline)
 and carries " (synonym)" for screen readers. Line and fill differ, so print and greyscale keep the
-difference; the legend says it in words.
+difference; the legend says it in words, and whose terms they are.
+
+**Model text.** The suggestion's terms (and anything else the scope stage wrote) are untrusted text:
+always rendered as text under the "not applied" label, never markup, never on a result surface except
+as the labelled counts and marks above.
 
 **States** (Builder copy unless quoted from the contract):
 
 | State | What shows |
 | --- | --- |
-| Empty | "No investigations were retrieved for this search." with "Filters: …" in words, the search words, and "Keyword search for “…”, without filters" (free) |
-| Tiny (1–2) | The cards, then "Only two investigations were retrieved." with the same filters and way out |
+| Empty | "No investigations were retrieved for this search." with "Filters: …" in words, the words searched ("Your question, as asked" or "Search words: “…”"), and "Keyword search for “…”, without filters" (free) |
+| Tiny (1–2) | The cards, then "Only two investigations were retrieved." with the same filters and way out (no paging line) |
+| No suggestion | The results, the "Your search" box and no suggestion block (the scope stage failed, or the search is an edit); the marks are the reader's words |
 | Gone or unknown | "This AI search is no longer available." / "AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it." with an empty box (Search, Ask AI) and [Ask again] from this page's memory only; tab "AI search expired · AirCase" |
 | Load failure | "This AI search didn't load." with Try again; a page that fails "The next investigations didn't load." |
-| Static reply | Under the box where it was asked, as §4.3 shows them |
+| Policy reply | Under the box where it was asked, as §4.3 shows them (out of scope, operational advice) |
 
 **Drawer, Compare and print.** The drawer opened from a card adds, after what investigators
-established, a section under the same heading with the notice, the relevance facts and the excerpts
-(each with its full section); "‹ n of N ›" follows the ranking and, past the last card shown, shows
-more. Compare opened from the tray (`/compare?cases=…&evidence=:id&pages=n`) shows "From your search
-“…”", the heading as a placard and the notice, and a last row per strip, "RETRIEVED FOR YOUR SEARCH":
-the relevance facts and the best excerpt, with "2 more excerpts on the search's page."; a case the
-search did not show says "Not among the investigations shown for your search."; a search that is gone
-says "The AI search these cases came from is no longer available, so its excerpts are not shown."
-Print (§7) keeps the heading, the notice, the interpretation and its unchecked readings, and the cards
-(collapsed paragraphs print whole, open sections print open); the editing, paging and section
-controls do not print; a print-only header names the page, the case numbers and the snapshot.
+established, a section under the same heading with the notice, the relevance facts, the key to the
+marks and the excerpts (each with its full section); "‹ n of N ›" follows the ranking and, past the
+last card shown, shows more. Compare opened from the tray (`/compare?cases=…&evidence=:id&pages=n`)
+shows "From your search “…”", the heading as a placard, the notice and the key to the marks, and a
+last row per strip, "RETRIEVED FOR YOUR SEARCH": the relevance facts and the best excerpt, with "2 more
+excerpts on the search's page."; a case the search did not show says "Not among the investigations
+shown for your search."; a search that is gone says "The AI search these cases came from is no longer
+available, so its excerpts are not shown." Print (§7) keeps the heading, the notice, "Your search"
+and the cards (collapsed paragraphs print whole, open sections print open); the suggestion, the hint,
+the editing, paging and section controls do not print; a print-only header names the page, the case
+numbers and the snapshot.
 
-**Phones.** The same order in one column: the interpretation's labels stack over their chips,
-chips wrap, the report link wraps under its label, and the page never scrolls sideways. The drawer is
-the full-screen case sheet (§6).
+**Phones.** The same order in one column: the boxes' labels stack over their chips, chips wrap, the
+report link wraps under its label, and the page never scrolls sideways. The drawer is the full-screen
+case sheet (§6).
 
 **Limits.** Every number shown comes from the API: `/api/config`'s `aiLimits` (anonymous 10 a day,
 accounts 50 a day, new accounts 20 a day for their first 3 days, 600 a month, reset 00:00 UTC) and the
@@ -1219,8 +1243,8 @@ browser with the same stylesheet. Print uses:
 - the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
   line "Built by Mariusz Kotas · mkotas.cz" (the website prints as text)
 - strips that never split across pages
-- the AI evidence view (§4.9) with its heading, notice, interpretation and unchecked readings, and
-  its cards whole (long paragraphs print open); its controls do not print
+- the AI evidence view (§4.9) with its heading, notice, what was searched ("Your search") and its
+  cards whole (long paragraphs print open); the suggestion, the hint and the controls do not print
 
 ## 8. Accessibility (Proposed)
 
@@ -1404,19 +1428,30 @@ counting rules.
 
   The working mockups in `docs/mockups/` predate the mark and the header line; this
   document wins.
-- **The AI feature launches as an extractive evidence view** (§4.9; Task 23). A question becomes an
-  editable search interpretation, and AirCase shows the NTSB investigations retrieved for it, in their
-  own words; AI writes no result text. Generated summaries stay gated (G6 closed); the brief pipeline
-  stays in the code, off by default on the server, and the interface starts no brief. The design
-  review's conditions bind the interface: "retrieved for your search", never "matching" or "answering";
-  the fixed notice on every surface whatever the unchecked readings say; whole paragraphs, the full
-  canonical section as the context view; unchecked readings shown and never applied; "similarity
-  search", never "meaning match"; the two paths kept apart.
+- **The AI feature launches as an extractive evidence view** (§4.9; Task 23). AirCase shows the
+  NTSB investigations retrieved for a question, in their own words; AI writes no result text.
+  Generated summaries stay gated (G6 closed); the brief pipeline stays in the code, off by default on
+  the server, and the interface starts no brief. The design review's conditions bind the interface:
+  "retrieved for your search", never "matching" or "answering"; the fixed notice on every surface;
+  whole paragraphs, the full canonical section as the context view; "similarity search", never
+  "meaning match"; the two paths kept apart.
+- **The AI's filters are advisory only** (gate decision of 2026-10-25; contract `evidence.v2`). The
+  scope stage missed its accuracy targets, so nothing it produces narrows or changes results: they
+  come from the question as asked, or from the reader's own words and filters. Its filters and terms
+  are a suggestion under the contract's label "Suggested filters and terms — not applied"; applying the
+  filters makes an edited search with exactly those filters and the question, and its terms are taken
+  only by an explicit choice ("Apply filters and terms") or typed by the reader. Each edit says it uses
+  one AI search. Term counts are occurrences of the marked terms, said as the suggested terms or the
+  reader's words, never a sign the question is answered. No unchecked readings in this beta; the
+  notice stays on every surface. Counting and comparison questions get results with a hint above them;
+  only out-of-scope and operational-advice questions get a policy reply instead.
 - **Limits** (owner decision of 2026-10-24): anonymous visitors 10 AI searches a day, accounts 50 a
   day, new accounts 20 a day for their first 3 days, 600 a month, all reset at 00:00 UTC. The interface
   states only numbers the API reports (`/api/config` `aiLimits`, `/api/ai/status`).
-- Builder calls, for the owner's review: the route `/ai/:id`; the labels "AI reading of your
-  question", "Search words", "Not applied", "Your edited search"; "Show more" paging with `?pages=n`;
-  the relevance line's wording; the empty, tiny and gone copy; collapsing paragraphs over 3,000
-  characters; the Explore nudge's new copy; the header counter's short form below 700px; and a brief
-  made read-only while the server has briefs off.
+- Builder calls, for the owner's review: the route `/ai/:id`; the labels "Your search", "Searched
+  for", "Your question, as asked", "Use your own words", "Your edited search"; the suggestion's note
+  and its two buttons, "Apply these filters" and "Apply filters and terms" (or "Search these terms"
+  without filters); the hints' copy; "Show more" paging with `?pages=n`; the relevance line's wording;
+  the empty, tiny and gone copy; collapsing paragraphs over 3,000 characters; the Explore nudge's and
+  About's new copy; the header counter's short form below 700px; and a brief made read-only while the
+  server has briefs off.
