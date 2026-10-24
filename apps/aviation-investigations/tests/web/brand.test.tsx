@@ -248,6 +248,24 @@ describe('the page before the script runs (web/index.html)', () => {
     expect(description).toBe(SITE_DESCRIPTION);
     expect(/<noscript>([^<]*)<\/noscript>/.exec(indexHtml)?.[1]).toBe('AirCase needs JavaScript to search and display investigations.');
   });
+
+  it('links the icons and the web app manifest, and colours the browser bar like the page by day and the header at night', () => {
+    const head = new DOMParser().parseFromString(indexHtml, 'text/html').head;
+    const links = [...head.querySelectorAll('link')].map((l) => [l.rel, l.getAttribute('href'), l.getAttribute('sizes') ?? l.getAttribute('type') ?? '']);
+    expect(links).toEqual([
+      ['icon', '/favicon.ico', '48x48'],
+      ['icon', '/favicon.svg', 'image/svg+xml'],
+      ['apple-touch-icon', '/apple-touch-icon.png', ''],
+      ['manifest', '/manifest.webmanifest', ''],
+    ]);
+    const themeColours = [...head.querySelectorAll('meta[name="theme-color"]')].map((m) => [m.getAttribute('media'), m.getAttribute('content')]);
+    expect(themeColours).toEqual([
+      ['(prefers-color-scheme: light)', '#F3EEE1'],
+      ['(prefers-color-scheme: dark)', '#141618'],
+    ]);
+    expect(themeColours[0]?.[1]).toBe(cssVar(cssBlock(tokensCss, ':root,\n[data-theme="day"]'), 'paper'));
+    expect(themeColours[1]?.[1]).toBe(cssVar(cssBlock(tokensCss, '[data-theme="night"]'), 'header-bg'));
+  });
 });
 
 const DESCRIPTOR = 'Plane crash & accident investigations';

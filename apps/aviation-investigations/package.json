@@ -45,6 +45,7 @@
     "fixtures:build": "tsx scripts/build-fixtures.ts",
     "fixtures:build-ui": "tsx scripts/build-ui-fixtures.ts",
     "mock:build": "tsx scripts/build-mock-api.ts",
+    "brand:build": "tsx scripts/build-brand-assets.ts",
     "test:e2e": "playwright test",
     "test:e2e:real": "playwright test -c playwright.real.config.ts"
   },

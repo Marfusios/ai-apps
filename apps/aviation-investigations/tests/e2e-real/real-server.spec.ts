@@ -203,3 +203,62 @@ test('Explore with a query is noindex, follow; without one it is indexed', async
   expect(searched.title).toBe('“x” · Explore · AirCase');
   expect(serverHead(await (await request.get('/explore', { headers: { accept: 'text/html' } })).text()).robots).toBe('index, follow');
 });
+
+// The brand assets (web/public, pnpm brand:build): the icons, the web app manifest and the share card.
+
+/** A PNG's size, from its IHDR chunk. */
+function pngSize(body: Buffer): { width: number; height: number } {
+  expect(body.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true);
+  return { width: body.readUInt32BE(16), height: body.readUInt32BE(20) };
+}
+
+test('the icons, the web app manifest and the share card are served, and every page links the icons', async ({ request }) => {
+  for (const path of ['/', '/cases/DFW08TA066', '/no-such-page']) {
+    const html = await (await request.get(path, { headers: { accept: 'text/html' } })).text();
+    const links = [...html.matchAll(/<link rel="(icon|apple-touch-icon|manifest)" href="([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`);
+    expect(links, path).toEqual(['icon /favicon.ico', 'icon /favicon.svg', 'apple-touch-icon /apple-touch-icon.png', 'manifest /manifest.webmanifest']);
+    expect(html.match(/<meta name="theme-color"/g), path).toHaveLength(2);
+  }
+  for (const [path, type] of [
+    ['/favicon.svg', 'image/svg+xml'],
+    ['/favicon.ico', 'image/vnd.microsoft.icon'],
+    ['/apple-touch-icon.png', 'image/png'],
+  ] as const) {
+    const response = await request.get(path);
+    expect(response.status(), path).toBe(200);
+    expect(response.headers()['content-type'], path).toBe(type);
+  }
+  expect(pngSize(await (await request.get('/apple-touch-icon.png')).body())).toEqual({ width: 180, height: 180 });
+  // The manifest: valid JSON naming AirCase, whose icons resolve at their stated sizes.
+  const manifest = await request.get('/manifest.webmanifest');
+  expect(manifest.status()).toBe(200);
+  expect(manifest.headers()['content-type']).toBe('application/manifest+json');
+  const parsed = JSON.parse(await manifest.text()) as { name: string; icons: { src: string; sizes: string; type: string; purpose: string }[] };
+  expect(parsed.name).toBe('AirCase');
+  expect(parsed.icons.map((i) => i.purpose)).toEqual(['any', 'any', 'maskable']);
+  for (const icon of parsed.icons) {
+    const response = await request.get(icon.src);
+    expect(response.status(), icon.src).toBe(200);
+    expect(response.headers()['content-type'], icon.src).toBe(icon.type);
+    const { width, height } = pngSize(await response.body());
+    expect(`${width}x${height}`, icon.src).toBe(icon.sizes);
+  }
+  // The share card every page's og:image names.
+  const card = await request.get('/social/card.png');
+  expect(card.status()).toBe(200);
+  expect(card.headers()['content-type']).toBe('image/png');
+  expect(pngSize(await card.body())).toEqual({ width: 1200, height: 630 });
+});
+
+test('the browser reads the web app manifest under the CSP, without errors or a violation', async ({ page }) => {
+  const problems = await watchPage(page);
+  await page.goto('/');
+  await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase', exact: true })).toBeVisible();
+  // Chromium fetches and parses the manifest the page links, as it would to install the app.
+  const cdp = await page.context().newCDPSession(page);
+  const manifest = (await cdp.send('Page.getAppManifest')) as { url: string; errors: { message: string }[]; data?: string };
+  expect(new URL(manifest.url).pathname).toBe('/manifest.webmanifest');
+  expect(manifest.errors).toEqual([]);
+  expect(JSON.parse(manifest.data ?? '{}')).toMatchObject({ name: 'AirCase', start_url: '/', display: 'standalone' });
+  expect(problems).toEqual([]);
+});
