@@ -287,13 +287,20 @@ export function orderValues(facet: FacetKey, values: readonly string[]): string[
   return [...values].sort((a, b) => order.indexOf(a) - order.indexOf(b));
 }
 
-/** URLSearchParams to the plain object the schema parses (repeated keys become arrays). */
+/**
+ * URLSearchParams to the plain object the schema parses (repeated keys become arrays), in one
+ * pass: the server reads page URLs with it on every request, so many distinct keys must not
+ * cost a scan each.
+ */
 export function paramsToQuery(params: URLSearchParams): Record<string, string | string[]> {
-  const out: Record<string, string | string[]> = {};
-  for (const key of new Set(params.keys())) {
-    const all = params.getAll(key);
-    out[key] = all.length === 1 ? (all[0] as string) : all;
+  const grouped = new Map<string, string[]>();
+  for (const [key, value] of params) {
+    const values = grouped.get(key);
+    if (values) values.push(value);
+    else grouped.set(key, [value]);
   }
+  const out: Record<string, string | string[]> = {};
+  for (const [key, values] of grouped) out[key] = values.length === 1 ? (values[0] as string) : values;
   return out;
 }
 

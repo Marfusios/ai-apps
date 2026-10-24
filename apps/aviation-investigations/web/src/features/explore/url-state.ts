@@ -7,56 +7,13 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams, type SetURLSearchParams } from 'react-router';
 import { NtsbNoSchema } from '../../../../shared/contracts/common';
-import {
-  FACET_KEYS,
-  SearchRequestSchema,
-  defaultSearchRequest,
-  paramsToQuery,
-  searchRequestToParams,
-  type SearchRequest,
-} from '../../../../shared/contracts/search';
+import { searchRequestToParams, type SearchRequest } from '../../../../shared/contracts/search';
+import { CASES_PARAM, COMPARE_LIMIT, SEARCH_KEYS, readCompare, readSearchRequest } from '../../../../shared/page-params';
+
+// The readers the server shares (it titles Explore and Compare as this client does).
+export { CASES_PARAM, COMPARE_LIMIT, readCompare, readSearchRequest } from '../../../../shared/page-params';
 
 export const CASE_PARAM = 'case';
-export const CASES_PARAM = 'cases';
-export const COMPARE_LIMIT = 4;
-
-const SEARCH_KEYS = new Set<string>([
-  'q',
-  'mentionedIn',
-  ...FACET_KEYS,
-  'yearFrom',
-  'yearTo',
-  'sort',
-  'page',
-  'pageSize',
-]);
-
-/**
- * Reads the search request from URL parameters, leniently: a value the contract
- * rejects (a mistyped facet value, an out-of-range page) is dropped instead of
- * breaking the page.
- */
-export function readSearchRequest(params: URLSearchParams): SearchRequest {
-  const query = paramsToQuery(params);
-  const strict = SearchRequestSchema.safeParse(query);
-  if (strict.success) return strict.data;
-  const kept: Record<string, string | string[]> = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (!SEARCH_KEYS.has(key)) continue;
-    if (SearchRequestSchema.safeParse({ [key]: value }).success) {
-      kept[key] = value;
-      continue;
-    }
-    // Keep the valid members of a list.
-    const items = (Array.isArray(value) ? value : [value]).flatMap((v) => v.split(','));
-    const valid = items.filter((item) => SearchRequestSchema.safeParse({ [key]: item }).success);
-    if (valid.length > 0 && FACET_KEYS.includes(key as (typeof FACET_KEYS)[number])) kept[key] = valid;
-  }
-  const lenient = SearchRequestSchema.safeParse(kept);
-  if (lenient.success) return lenient.data;
-  const { yearFrom: _from, yearTo: _to, ...rest } = kept;
-  return SearchRequestSchema.safeParse(rest).data ?? defaultSearchRequest();
-}
 
 /** `params` with the search keys replaced by the canonical form of `request`. */
 export function withSearchRequest(params: URLSearchParams, request: SearchRequest): URLSearchParams {
@@ -65,15 +22,6 @@ export function withSearchRequest(params: URLSearchParams, request: SearchReques
     if (!SEARCH_KEYS.has(key)) next.append(key, value);
   }
   return next;
-}
-
-export function readCompare(params: URLSearchParams): string[] {
-  const raw = params.get(CASES_PARAM) ?? '';
-  const list = raw
-    .split(',')
-    .map((s) => s.trim().toUpperCase())
-    .filter((s) => NtsbNoSchema.safeParse(s).success);
-  return [...new Set(list)].slice(0, COMPARE_LIMIT);
 }
 
 export function withCompare(params: URLSearchParams, list: readonly string[]): URLSearchParams {

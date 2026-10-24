@@ -1103,7 +1103,8 @@ compare bar. The footer gives the snapshot's real age once it is more than 45 da
 (DESIGN §4: monthly full snapshots), and carries the owner's credit under it, "Built by
 Mariusz Kotas · mkotas.cz" with the website as a link (a new tab), on every page and in
 print, the plain fallback page of a failed frame included (`CreditLine`; the name,
-website, e-mail address and product name are in `web/src/brand.ts`; the About page has a
+website, e-mail address and product name are in `shared/brand.ts`, which the server shares
+and `web/src/brand.ts` re-exports; the About page has a
 "Built by" section with the name, the website and the e-mail address as a `mailto:`
 link). A page that fails unexpectedly (a render error, or
 code that could not load) shows "Something went wrong." with Try again (a reload) and
@@ -1254,9 +1255,11 @@ pnpm worker publish --generation <id> --cases-index <name> [--passages-index <na
 ```
 
 `server/main.ts` starts `buildApp(deps)` (`server/app.ts`): Fastify 5 with
-`trustProxy: false`, serving the API and the built web client (`dist/web`, with an
-SPA fallback) on one origin. It reads configuration like the worker (`AVIATION_ENV_FILES`,
-otherwise `.env.local`), connects as `aviation_app` (`DATABASE_URL`) and reads
+`trustProxy: false`, serving the API and the built web client (`dist/web`, each page with a
+head and status built for its route, see
+[Search engines and link previews](#search-engines-and-link-previews)) on one origin.
+It reads configuration like the worker (`AVIATION_ENV_FILES`, otherwise `.env.local`),
+connects as `aviation_app` (`DATABASE_URL`) and reads
 Elasticsearch with `ELASTICSEARCH_READ_API_KEY` only. With `APP_ENV=live` it refuses to
 start unless `TRUSTED_PROXY_CIDRS` is set (tunnel mode) to private, narrow networks only:
 RFC 1918 IPv4 at /16 or narrower, unique-local IPv6 at /64 or narrower (the tunnel overlay
@@ -1379,10 +1382,12 @@ stalled connections are checked every 5 s.
   matched on the decoded path, never the raw request target, so `/%61pi/search` and an
   absolute-form `GET http://host/api/search` are treated exactly like `/api/search`.
   Default deny: every matched route needs a network identity and is rate limited,
-  except the web client's routes (`ASSET_ROUTES`: the page and the static files) and
-  the not-found handler (the page or a 404), which need no client address and are not
-  limited, and `GET /api/health` over loopback (the container's health check). Whether
-  a 404 is JSON or the page also follows the decoded path (`/%61pi/nope` is a JSON 404).
+  except the web client's routes (`ASSET_ROUTES`: the pages, robots.txt and the static
+  files) and the not-found handler (the 404 page or a plain 404), which need no client
+  address and are not limited, and `GET /api/health` over loopback (the container's health
+  check). A case page (`/cases/:ntsbNo`) and the sitemaps read the database, so they are
+  limited like the API. Whether a 404 is JSON or the page also follows the decoded path
+  (`/%61pi/nope` is a JSON 404).
 - **Network identity** (`server/http/network-identity.ts`). Without trusted proxies
   the bucket key is the socket address. With `TRUSTED_PROXY_CIDRS` (tunnel mode) only
   peers inside those networks are served (403 `forbidden` otherwise, static files
@@ -1424,6 +1429,60 @@ second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.
 (localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
 callback as it would with Google; that server empties `aviation_test`'s control and auth
 tables when it starts.
+
+### Search engines and link previews
+
+AirCase renders in the browser, but the server builds each page's head
+(`server/seo/head.ts`, `server/routes/pages.ts`), so search engines and link previews read
+the page's own title and description before any script runs: `<title>` (the text the client
+then shows: every route's title is built once, in `shared/page-titles.ts`), the meta
+description, `robots`, a canonical URL on `APP_URL`, Open Graph and Twitter tags with the
+share image, and JSON-LD (a `WebSite` on `/`, a `BreadcrumbList` AirCase → Explore → the case
+on a case page). Descriptions are plain text by fixed rules, never AI: fixed ones for the
+pages without data (`shared/brand.ts`), and for a case "NTSB accident investigation
+DFW08TA066, 8 Feb 2008: N66372 (Hughes OH-6), minor injuries. Probable cause: The contract
+mechanic's failure …", cut at a word to 200 characters (`server/seo/case-description.ts`). A
+record without probable-cause text ends with its status instead: "Probable-cause text
+unavailable." when it is completed, otherwise "Investigation in progress (NTSB status P).",
+"Investigation status unknown (…)" or "Other investigation status (…)" with its raw NTSB
+status. NTSB text is escaped for HTML, and JSON-LD for its script element. The case page's tab
+title is "{headline} ({event year}) · NTSB {ntsbNo} · AirCase".
+
+| Path | Status | robots | canonical |
+| --- | --- | --- | --- |
+| `/`, `/dashboard`, `/about`, `/privacy` | 200 | index, follow | itself |
+| `/explore` | 200 | index, follow; with any query parameter noindex, follow | `/explore` |
+| `/compare`, `/account`, `/briefs/:id` | 200 | noindex, nofollow | itself, no query |
+| `/cases/:ntsbNo`, a case `GET /api/cases/:ntsbNo` serves | 200 | index, follow | `/cases/{ntsbNo}` |
+| `/cases/:ntsbNo`, no such case (a number too long for the router included) | 404 | noindex | none |
+| any other path without a file extension | 404 | noindex | none |
+
+The client renders every page (a 404 shows its not-found page). Redirects (301) drop the query
+string: a served case number not in canonical form (`/cases/dfw08ta066`), a page path with a
+trailing slash, a page path in the wrong letter case (`/About` to `/about`) and `/index.html`
+(to `/`). The page goes to GET and HEAD requests whose `Accept` is absent or takes `text/html`
+or `*/*`; other requests, and a path with a file extension that no route serves, get a
+plain-text 404. A case page reads the database: it counts against the API's rate limit and
+needs a network identity. A page request that is refused (429) or fails (500, 503) gets the
+page with that status, noindex, without a canonical URL, and with the `Retry-After` the API
+would send; the API keeps its `ErrorResponse`. Explore's and Compare's titles read the query
+string with bounded work (`shared/page-params.ts`), as those pages are not rate limited.
+
+- **robots.txt**: on `APP_ENV=live`, `Allow: /` and `Sitemap: {APP_URL}/sitemap.xml` (Cloudflare
+  prepends its comment-only content-signals block); elsewhere `Disallow: /`. The API is not
+  disallowed: search engines call it to render the pages. Outside live every response carries
+  `X-Robots-Tag: noindex, nofollow`; on live, API responses carry `X-Robots-Tag: noindex`.
+- **Sitemaps**: `/sitemap.xml` lists `/sitemaps/pages.xml` (`/`, `/explore`, `/dashboard`,
+  `/about`, `/privacy`) and `/sitemaps/cases-{n}.xml`, at most 10,000 URLs each: the canonical
+  page of every case in the active dataset's default cohort (US, completed, with probable-cause
+  text), by NTSB number, with the snapshot date as `<lastmod>`. They are built once per active
+  manifest and kept in memory; without a servable dataset the index lists the pages only. Other
+  records keep their indexable pages but are not listed.
+- **Share image**: `og:image` and `twitter:image` are `{APP_URL}/social/card.png` (1200×630),
+  served from `web/public/social/card.png`, which the visual-identity work adds.
+
+Registering live with Google Search Console and Bing Webmaster Tools:
+[runbook](docs/RUNBOOK.md#search-engines).
 
 ### Language-model provider
 

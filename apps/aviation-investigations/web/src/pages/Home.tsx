@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { HOME_EXAMPLES } from '../../../shared/examples';
+import { pageTitle } from '../../../shared/page-titles';
 import { configQuery } from '../api';
-import { PRODUCT_LONG_NAME } from '../brand';
 import { Chip } from '../components/Chip';
 import { CompassMark } from '../components/CompassMark';
 import { SearchBox } from '../components/SearchBox';
@@ -34,7 +34,7 @@ export function Home() {
 
   return (
     <>
-      <title>{PRODUCT_LONG_NAME}</title>
+      <title>{pageTitle({ kind: 'home' })}</title>
       <section className="flex flex-1 flex-col items-center justify-center px-4 pt-10 pb-8 text-center sm:pt-14">
         <CompassMark />
         <h1 className="mt-3.5 font-serif text-[28px] leading-[1.08] font-semibold tracking-headline sm:text-[30px]">

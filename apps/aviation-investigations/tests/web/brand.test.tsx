@@ -5,8 +5,11 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
+import { http } from 'msw';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
+import { SITE_DESCRIPTION } from '../../shared/brand';
+import { pageTitle, type TitledPage } from '../../shared/page-titles';
 import indexHtml from '../../web/index.html?raw';
 import { Footer } from '../../web/src/components/Footer';
 import { SignInDialog } from '../../web/src/features/auth/SignInDialog';
@@ -14,7 +17,7 @@ import tokensCss from '../../web/src/styles/tokens.css?raw';
 import { cssBlock, cssVar } from './helpers';
 import { renderApp, setupMockApi } from './render-app';
 
-setupMockApi();
+const server = setupMockApi();
 
 const CREDIT_LINE = 'Built by Mariusz Kotas';
 const SITE = 'mkotas.cz';
@@ -174,31 +177,58 @@ describe('the About page (UI_DESIGN §4.8)', () => {
 });
 
 describe('page titles name AirCase, never the old name (owner decision 2026-10-24)', () => {
-  const titles: ReadonlyArray<readonly [string, string | RegExp]> = [
-    ['/', 'AirCase · aviation casebook'],
-    ['/explore', 'Explore · AirCase'],
-    ['/explore?q=carburetor+icing', '“carburetor icing” · Explore · AirCase'],
-    ['/dashboard', 'The record, in questions · AirCase'],
-    ['/cases/DFW08TA066', /^DFW08TA066: .+ · AirCase$/],
-    ['/compare?cases=DFW08TA066', 'Comparing 1 case · AirCase'],
-    ['/account', 'Account · AirCase'],
-    ['/privacy', 'Privacy · AirCase'],
-    ['/about', 'About · AirCase'],
-    ['/no-such-page', 'Page not found · AirCase'],
+  const VALENTINE = 'Hughes OH-6 helicopter, total loss of engine power while maneuvering near Valentine, Texas';
+  // Each route's title, and the input the server titles the same route with (shared/page-titles.ts,
+  // server/seo/head.ts): the tab shows one title before and after the script runs.
+  const titles: ReadonlyArray<readonly [string, string, TitledPage]> = [
+    ['/', 'AirCase · aviation casebook', { kind: 'home' }],
+    ['/explore', 'Explore · AirCase', { kind: 'explore', q: '' }],
+    ['/explore?q=carburetor+icing', '“carburetor icing” · Explore · AirCase', { kind: 'explore', q: 'carburetor icing' }],
+    ['/dashboard', 'The record, in questions · AirCase', { kind: 'dashboard' }],
+    // The case page: headline, event year and NTSB number (owner request of 2026-10-24, SEO).
+    [
+      '/cases/DFW08TA066',
+      `${VALENTINE} (2008) · NTSB DFW08TA066 · AirCase`,
+      { kind: 'case', ntsbNo: 'DFW08TA066', detail: { headline: VALENTINE, date: '2008-02-08' } },
+    ],
+    ['/cases/ZZZ99ZZ999', 'NTSB ZZZ99ZZ999 · AirCase', { kind: 'case', ntsbNo: 'ZZZ99ZZ999', detail: null }],
+    ['/compare?cases=DFW08TA066', 'Comparing 1 case · AirCase', { kind: 'compare', count: 1 }],
+    ['/account', 'Account · AirCase', { kind: 'account' }],
+    ['/privacy', 'Privacy · AirCase', { kind: 'privacy' }],
+    ['/about', 'About · AirCase', { kind: 'about' }],
+    ['/no-such-page', 'Page not found · AirCase', { kind: 'not_found' }],
   ];
 
-  it.each(titles)('%s', async (path, expected) => {
+  it.each(titles)('%s is "%s", the shared title the server sends', async (path, expected, page) => {
+    expect(pageTitle(page)).toBe(expected);
     renderApp(path);
-    await waitFor(() => {
-      if (typeof expected === 'string') expect(document.title).toBe(expected);
-      else expect(document.title).toMatch(expected);
-    });
+    await waitFor(() => expect(document.title).toBe(expected));
+  });
+
+  it('a case number still matches in any case (the server redirects it to upper case)', async () => {
+    renderApp('/cases/dfw08ta066');
+    await waitFor(() => expect(document.title).toBe(`${VALENTINE} (2008) · NTSB DFW08TA066 · AirCase`));
+  });
+
+  it('a case page says its NTSB number while the case loads', async () => {
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    // Holds the case until released, then lets the mock API answer it.
+    server.use(http.get('*/api/cases/:ntsbNo', async () => void (await held)));
+    renderApp('/cases/DFW08TA066');
+    await waitFor(() => expect(document.title).toBe('NTSB DFW08TA066 · AirCase'));
+    release();
+    await waitFor(() => expect(document.title).toBe(`${VALENTINE} (2008) · NTSB DFW08TA066 · AirCase`));
   });
 });
 
 describe('the page before the script runs (web/index.html)', () => {
   it('has the long form as its title and names AirCase for visitors without JavaScript', () => {
     expect(/<title>([^<]*)<\/title>/.exec(indexHtml)?.[1]).toBe('AirCase · aviation casebook');
+    // The site description, until the server replaces it with the page's own (shared/brand.ts).
+    const description = /<meta name="description" content="([^"]*)"/.exec(indexHtml)?.[1];
+    expect(description).toBe('Find and compare NTSB aviation investigations by their evidence, findings and probable causes.');
+    expect(description).toBe(SITE_DESCRIPTION);
     expect(/<noscript>([^<]*)<\/noscript>/.exec(indexHtml)?.[1]).toBe('AirCase needs JavaScript to search and display investigations.');
   });
 });

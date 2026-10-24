@@ -1,20 +1,16 @@
 /**
  * The HTTP API against the fixture corpus in the local `test` environment: both
  * fixture sets loaded into aviation_test, verified, indexed under this run's own
- * prefix and published as a keyword-only manifest (tests/support/api-dataset.ts).
+ * prefix and published as a keyword-only manifest (tests/integration/api-fixture.ts).
+ * The pages are tested in tests/integration/pages.test.ts.
  */
-import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { Writable } from 'node:stream';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildApp, type AppDeps } from '../../server/app.js';
-import { closeDb, type Db } from '../../server/db/client.js';
+import { describe, expect, it } from 'vitest';
 import { getActiveManifest } from '../../server/db/generations.js';
 import { CaseDetailSchema, type CaseDetail } from '../../shared/contracts/cases.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
@@ -42,55 +38,12 @@ import { PublishRefusedError, publishGeneration } from '../../worker/index/publi
 import { normalizeCorpus } from '../../worker/ingest/normalize.js';
 import { SAMPLE_SEARCHES, buildMockCorpus, readFixtureTables } from '../../scripts/mock-api/build.js';
 import { searchCorpus } from '../../web/mock/engine.js';
-import { deleteIndices, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
 import { APP_DIR, FIXTURES_DIR, UI_FIXTURES_DIR, readCsv } from '../support/extract-dir.js';
-import { testDb, testEs, testEsReader } from './helpers.js';
+import { LOCAL, app, appDb, dataset, es, get, ingest, makeApp, reader, useApiFixture, type Got } from './api-fixture.js';
 
-const RUN = randomBytes(4).toString('hex');
-const PREFIX = `aviation-test-api${RUN}`;
-const LOCAL = '127.0.0.1';
-
-let ingest: Db;
-let appDb: Db;
-let es: Client;
-let reader: Client;
-let dataset: FixtureDataset;
-let app: FastifyInstance;
-let webRoot: string;
-const apps: FastifyInstance[] = [];
+const PREFIX = useApiFixture('api');
 
 const fixtureEvIds = [FIXTURES_DIR, UI_FIXTURES_DIR].flatMap((d) => readCsv(join(d, 'events.csv')).map((r) => r.ev_id as string));
-
-function makeApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
-  const built = buildApp({
-    config: { appUrl: 'http://localhost:3000', trustedProxyCidrs: [] },
-    db: appDb,
-    es: reader,
-    webRoot,
-    rateLimit: { limit: 100_000, windowMs: 60_000 },
-    ...overrides,
-  });
-  apps.push(built);
-  return built;
-}
-
-interface Got {
-  status: number;
-  headers: Record<string, string | string[] | number | undefined>;
-  body: string;
-  json: unknown;
-}
-
-async function get(url: string, opts: { app?: FastifyInstance; from?: string; headers?: Record<string, string> } = {}): Promise<Got> {
-  const r = await (opts.app ?? app).inject({ method: 'GET', url, remoteAddress: opts.from ?? LOCAL, headers: opts.headers ?? {} });
-  let json: unknown = null;
-  try {
-    json = JSON.parse(r.body);
-  } catch {
-    json = null;
-  }
-  return { status: r.statusCode, headers: r.headers, body: r.body, json };
-}
 
 async function search(params: Record<string, string>): Promise<SearchResponse> {
   const r = await get(`/api/search?${new URLSearchParams(params).toString()}`);
@@ -111,27 +64,6 @@ async function sqlCounts(query: ReturnType<typeof sql>): Promise<Record<string, 
   const rows = (await appDb.execute(query)).rows as { v: string; n: number }[];
   return Object.fromEntries(rows.map((r) => [r.v, Number(r.n)]));
 }
-
-beforeAll(async () => {
-  ingest = testDb('ingest');
-  appDb = testDb('app');
-  es = testEs();
-  reader = testEsReader();
-  dataset = await publishFixtureDataset(ingest, es, PREFIX);
-  webRoot = mkdtempSync(join(tmpdir(), 'aviation-api-web-'));
-  mkdirSync(join(webRoot, 'assets'));
-  writeFileSync(join(webRoot, 'index.html'), '<!doctype html><html><head><title>AirCase · aviation casebook</title></head><body><div id="root"></div></body></html>');
-  writeFileSync(join(webRoot, 'assets', 'app-0123abcd.js'), 'console.log(1);\n');
-  app = makeApp();
-}, 180_000);
-
-afterAll(async () => {
-  for (const a of apps) await a.close();
-  if (es) await deleteIndices(es, PREFIX);
-  if (ingest) await closeDb(ingest);
-  if (appDb) await closeDb(appDb);
-  if (webRoot) rmSync(webRoot, { recursive: true, force: true });
-});
 
 describe('manifest', () => {
   it('is keyword-only (no passages index) and names this run’s cases index', async () => {
@@ -677,7 +609,7 @@ describe('http', () => {
     expect((await get('/api/nope-secret-path?q=private+text', { app: logged })).status).toBe(404);
     expect((await get('/%61pi/also-nope', { app: logged })).status).toBe(404);
     expect((await get('/api/config', { app: logged })).status).toBe(200);
-    expect((await get('/some-page', { app: logged, headers: { accept: 'text/html' } })).status).toBe(200);
+    expect((await get('/some-page', { app: logged, headers: { accept: 'text/html' } })).status).toBe(404);
     const api = lines.filter((l) => l.msg === 'api request');
     expect(api.map((l) => [l.route, l.status])).toEqual([
       ['unmatched', 404],
@@ -802,8 +734,10 @@ describe('request targets the router decodes', () => {
     for (const url of ['/assets/app%00.js', '//api/search', '/assets/..%2f..%2fpackage.json', '/%2e%2e/%2e%2e/package.json']) {
       const r = await get(url);
       expect(r.status, url).toBe(404);
-      // Either the router's refusal (JSON) or the plain 404 of a missing file; never a file outside the root.
+      // The router's refusal (JSON), the 404 page (a path without an extension) or the plain 404
+      // of a missing file; never a file outside the root.
       if (r.json !== null) expect(ErrorResponseSchema.parse(r.json).error, url).toBe('not_found');
+      else if (!url.includes('.')) expect(r.body, url).toContain('<meta name="robots" content="noindex" />');
       else expect(r.body, url).toBe('Not found');
     }
   });
