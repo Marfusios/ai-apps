@@ -1,7 +1,8 @@
-/** evidence.v1 delivers a pinned, paged ranking, not the old six-case answer bundle. */
+/** evidence.v2 delivers a pinned, paged ranking, not the old six-case answer bundle. */
+import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Client } from '@elastic/elasticsearch';
-import type { EvidenceInterpretation, EvidenceCase } from '../../shared/contracts/evidence.js';
+import type { EvidenceCase } from '../../shared/contracts/evidence.js';
 import { EVIDENCE_CANDIDATE_CEILING } from '../../shared/contracts/evidence.js';
 import { stageSpan } from '../observability/tracing.js';
 import { fitQueryText } from '../briefs/retriever.js';
@@ -24,10 +25,12 @@ export const EVIDENCE_RETRIEVAL = Object.freeze({ ...RETRIEVAL_V2,
   params: Object.freeze({ ...RETRIEVAL_V2.params, packCandidates: EVIDENCE_CANDIDATE_CEILING }),
 });
 export interface EvidenceRetrievalResult { ranking: RankedEvidenceCase[]; cases: EvidenceCase[] }
+/** Only server-owned question/user edits may populate this plan. */
+export interface EvidenceSearchPlan { text: string; filters: BriefFilters }
 export interface EvidenceRetriever {
   available(pinned: PinnedDataset): Promise<boolean>;
-  search(pinned: PinnedDataset, interpretation: EvidenceInterpretation, signal: AbortSignal,
-    onEmbedding: (usage: QueryEmbeddingUsage) => void, queryText: string): Promise<EvidenceRetrievalResult>;
+  search(pinned: PinnedDataset, plan: EvidenceSearchPlan, signal: AbortSignal,
+    onEmbedding: (usage: QueryEmbeddingUsage) => void, highlightTerms: string): Promise<EvidenceRetrievalResult>;
 }
 
 export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbedder | Embedder): EvidenceRetriever {
@@ -44,7 +47,7 @@ export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbed
         return true;
       } catch { return false; }
     },
-    async search(pinned, interpretation, signal, onEmbedding, queryText) {
+    async search(pinned, plan, signal, onEmbedding, highlightTerms) {
       const generation = pinned.manifest.generationId;
       // Unknown failures after dispatch cannot silently lose an embedding charge.
       const safeEmbedder: QueryEmbedder = { ...embedder,
@@ -66,7 +69,7 @@ export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbed
       };
       const result = await retrieveCaseCandidates(es, safeEmbedder, EVIDENCE_RETRIEVAL, {
         dataset: { generationId: generation, passagesIndex: pinned.manifest.passagesIndex }, casesIndex: pinned.manifest.casesIndex,
-        text: fitQueryText(queryText), keywordText: queryText, filters: interpretation.filters, signal, onQueryEmbedding: onEmbedding,
+        text: fitQueryText(plan.text), keywordText: plan.text, filters: plan.filters, signal, onQueryEmbedding: onEmbedding,
       });
       signal.throwIfAborted();
       const ranking: RankedEvidenceCase[] = result.cases.slice(0, EVIDENCE_CANDIDATE_CEILING).map((c) => ({
@@ -97,7 +100,7 @@ export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbed
         return ranking.map((c, i) => {
           const record = records.get(c.ntsbNo), row = rows.get(c.ntsbNo);
           if (!record || !row) throw new Error('missing evidence case');
-          return projectCase(record, row, reportLink(links.filter((l) => l.ntsbNo === c.ntsbNo)), c, i + 1, interpretation.filters, interpretation.terms);
+          return projectCase(record, row, reportLink(links.filter((l) => l.ntsbNo === c.ntsbNo)), c, i + 1, plan.filters, highlightTerms);
         });
       });
       signal.throwIfAborted();

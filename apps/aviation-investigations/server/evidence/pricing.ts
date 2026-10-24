@@ -1,10 +1,10 @@
-/** Evidence uses only scope.e2 and one embedding. No generated-answer reservation. */
+/** Evidence uses only scope.e3 and one embedding. No generated-answer reservation. */
 import type { AppConfig } from '../../shared/config.js';
-import { embeddingWorstCaseUsd, stageWorstCaseUsd, STAGE_CAPS, startupAiCheck, type AiStartupCheck } from '../ai/pricing.js';
+import { embeddingWorstCaseUsd, stageWorstCaseUsd, EVIDENCE_SCOPE_CAPS, startupAiCheck, type AiStartupCheck } from '../ai/pricing.js';
 
 export function evidenceReservation(scope: string, embed: string): { worstCaseUsd: number; reservationUsd: number } {
-  const worstCaseUsd = stageWorstCaseUsd(scope, STAGE_CAPS.scope) + embeddingWorstCaseUsd(embed);
-  // Round upward to a hundredth of a cent: $0.0011325 -> $0.0012.
+  const worstCaseUsd = stageWorstCaseUsd(scope, EVIDENCE_SCOPE_CAPS) + embeddingWorstCaseUsd(embed);
+  // Round upward to a hundredth of a cent; includes the complete scope and embedding caps.
   const reservationUsd = Math.ceil(worstCaseUsd * 10_000) / 10_000;
   if (!Number.isFinite(reservationUsd) || reservationUsd <= 0 || reservationUsd > 0.05) throw new Error('invalid evidence reservation');
   return { worstCaseUsd, reservationUsd };

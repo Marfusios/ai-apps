@@ -1,11 +1,13 @@
+import { ScopeReplySchema } from '../../shared/contracts/briefs.js';
 /**
  * The evidence view's contract (`evidence.v2`, shared/contracts/evidence.ts): what a page of a
  * stored search may carry, and the refusals that keep generated text and clarification rounds out.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   CreateEvidenceRequestSchema,
   CreateEvidenceResponseSchema,
+  type CreateEvidenceResponse,
   EVIDENCE_NOTICE,
   EvidenceExcerptSchema,
   EvidencePageSchema,
@@ -106,11 +108,13 @@ it('distinguishes executed query from suggestions and rejects the old contract',
   expect(EvidenceQuerySchema.safeParse({ source: 'edited', terms: 'power loss' }).success).toBe(true);
 });
 it('keeps statistics and comparison as bounded hints, not blocking scope replies', () => {
+  expectTypeOf<Extract<CreateEvidenceResponse, { kind: 'scope_reply' }>['reply']['kind']>().toEqualTypeOf<'out_of_scope' | 'operational_advice'>();
   const stats = { kind: 'corpus_statistics', filters: {} };
   const compare = { kind: 'case_comparison', found: ['SEA08LA057'], notFound: [] };
   for (const hint of [stats, compare]) expect(EvidenceHintSchema.safeParse(hint).success).toBe(true);
   expect(EvidenceHintSchema.safeParse({ ...compare, found: Array(5).fill('SEA08LA057') }).success).toBe(false);
-  for (const kind of ['corpus_statistics', 'case_comparison']) {
-    expect(CreateEvidenceResponseSchema.safeParse({ kind: 'scope_reply', reply: { kind, filters: {}, found: [], notFound: [], label: 'x', line: 'x' } }).success).toBe(false);
+  for (const reply of [{ kind: 'corpus_statistics', filters: {}, lines: ['Use the dashboard'] }, compare]) {
+    expect(ScopeReplySchema.safeParse(reply).success).toBe(true);
+    expect(CreateEvidenceResponseSchema.safeParse({ kind: 'scope_reply', reply }).success).toBe(false);
   }
 });

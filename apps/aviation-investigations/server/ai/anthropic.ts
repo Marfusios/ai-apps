@@ -5,6 +5,7 @@
  * it (adaptive for the check), a cached frozen system prompt, no retries, prefill, sampling
  * parameters, server tools or refusal fallbacks.
  */
+import { EVIDENCE_SCOPE_CAPS } from './pricing.js';
 import { EvidenceScopeInputSchema, EvidenceScopeWireOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from './prompts/scope.e1.js';
 import Anthropic, {
   APIConnectionError,
@@ -131,6 +132,7 @@ export interface AnthropicProviderConfig {
 }
 
 interface StageSpec<I, O> {
+  caps?: { readonly input: number; readonly output: number };
   stage: LlmStage;
   promptVersion: string;
   system: string;
@@ -338,7 +340,7 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
 
     /** Validate, then bound the whole stage call by the caller's signal and `timeoutMs`. */
     function prepare(rawInput: I, ctx: StageCtx) {
-      if (!isValidStageCtx(spec.stage, ctx)) throw fail('invalid_input', NOT_BILLED);
+      if (!isValidStageCtx(spec.stage, ctx, spec.caps)) throw fail('invalid_input', NOT_BILLED);
       const parsed = spec.input.safeParse(rawInput);
       if (!parsed.success) throw fail('invalid_input', NOT_BILLED);
       if (ctx.signal.aborted) throw fail('timeout', NOT_BILLED);
@@ -407,6 +409,7 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
   }
 
   const evidenceScope = stage({
+    caps: EVIDENCE_SCOPE_CAPS,
     stage: 'scope', promptVersion: EVIDENCE_SCOPE_VERSION, system: EVIDENCE_SCOPE_SYSTEM,
     input: EvidenceScopeInputSchema, output: EvidenceScopeWireOutputSchema, render: renderEvidenceScopeUser,
   });

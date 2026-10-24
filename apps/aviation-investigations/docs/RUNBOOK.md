@@ -29,8 +29,8 @@ clear. Software tests do not establish scope-filter quality or excerpt context s
 Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
 **`AI_PARTIAL_DISPLAY=false`** in both environments.
 
-1. Migrate with the environment's migrator role (including `0022_evidence_searches`
-   and `0023_evidence_storage_bound`).
+1. Migrate with the environment's migrator role (including `0022_evidence_searches`,
+   `0023_evidence_storage_bound` and `0024_evidence_query`).
    Verify the privilege baseline and backup exclusions. The app role owns no schema
    objects; the ingest role cannot read evidence searches.
 2. Publish a verified generation with compatible cases and passages indices. Evidence
@@ -44,11 +44,15 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    paced daily allowance for anonymous users. Limits are 10/trial/day, 50/account/day,
    20/day in an account's first 3 days, 600/account/month. Daily resets are 00:00 UTC.
    The old name `AI_ANONYMOUS_TRIAL_REQUESTS` now denotes the daily allowance.
-5. Run `pnpm worker ai-preflight` (counts only, no generation), including `scope.e2`.
-   Require all preflight rows to pass. The flat scope.e2 output at its full schema
-   bounds exceeds the existing 600-token cap in offline sizing; resolve that explicit
-   OVER row with provider counts and a reviewed schema/cap decision before enabling.
-   Check the startup reservation: currently $0.0011325 worst case → $0.0012 reserved.
+5. Run `pnpm worker ai-preflight` (free counts only, no generation), including `scope.e3`.
+   Require no OVER rows. Evidence has separate 10,000/2,500 input/output caps; measured
+   5,701 fixed / 5,674 cached input, 6,192 Latin / 7,190 dense input and 1,118 output.
+   Check the derived reservation: $0.0024325 worst case → $0.0025 reserved.
+   Freeze evidence.v2 and the advisory prompt/routing guards; require fresh confirmation
+   (100% static-template routing accuracy, no critical false blocks or injection-induced
+   unauthorized behaviour, with Wilson intervals) plus the existing excerpt/UI gates.
+   Scope failures leave ordinary retrieval available. Suggestions remain unapplied;
+   filter-only edits retain the parent query. Statistics/comparison hints do not block.
    Restart with the new environment settings, then use `pnpm worker ai-switch --on`
    only after clearance. A restore hold still blocks payment until reconciliation.
 6. Check `/api/config.aiLimits` and `/api/ai/status`, the default-off brief POST/refine
@@ -61,7 +65,9 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
 pages and canonical context remain readable by their owner until their 24-hour expiry.
 New searches use the current publication; republishing never reranks existing pages.
 Do not delete indices or generations manually: cleanup and pruning honor saved search
-references. Migration 0022 extends those existing brief-reference functions.
+references. Migration 0022 extends those existing brief-reference functions. Migration 0024 freezes
+the executed query and filters. Pre-v2 searches return 404 and cannot be edited; their
+rows and generation/index protections remain until the original 24-hour expiry.
 
 `evidence_searches` is excluded from every backup and checked empty after restore,
 like briefs and sign-in state. Maintenance deletes expired searches and marks orphaned
@@ -757,7 +763,7 @@ and each needs an explicit flag or key:
 | `pnpm eval:retrieval:narrative judge --set relevance --confirm-cost --allocation <name>` (stage 2) | the rest of the pools (about 2,110 pairs; 2,627 in the built pools) | about $6.01 expected before the pools were built ($14.47 at the bound); the cache keeps stage 1, so it is not paid again. Measured on 2026-10-23: $4.10, nearly all of it both judges on the 2,627 pairs; the allocation's cap stopped the escalations after one. The 455 left cost about $9.70 in a later month, from the cache, under a fresh allocation; run it with `--concurrency 3` or lower until the ledger's connection pressure is fixed (at 6, a ledger connection timed out) |
 | `pnpm eval:checker retrieve [--questions 16d\|16e] --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9; 17 with `16d`; 16 with `16e`) | about $0.000005 |
 | `pnpm eval:checker run --candidate <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input of a split (Task 16e: 179 development or 105 held-out calls) | $0.46 a development pass at effort `low`, $0.62 at `medium`, $0.39 the held-out pilot at `medium`; `inventory` (free) prints the expected and worst-case cost first; charged to the allocation `checker-16e-2026-10` and stopped before a call that would take it over $2.50 or the ledger's evaluation allowance below the $12 protected for another track |
-| Evidence search | scope.e2 and one query embedding; edits skip scope | at most $0.0011325 at the configured defaults, reserving $0.0012; same global budgets |
+| Evidence search | advisory scope.e3 and one query embedding; edits skip scope | at most $0.0024325, reserving $0.0025; same global budgets |
 | AI briefs (disabled) | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
 | `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |

@@ -38,21 +38,32 @@ closed attribute allowlist: stage/model/provider/prompt/retrieval versions, toke
 counts, USD, duration, generation, case count and fixed outcomes. Errors export no
 raw SDK or database message. Idempotent replay and free paging make no paid stage.
 
-Question text, model-derived terms, unchecked quotes, filters that might reveal a
+Question text, model-derived suggestions, filters that might reveal a
 question, user/account/trial identifiers, cookies, canonical passages, vectors and
 returned pages never enter these spans or ordinary logs. Private search data stays in
 PostgreSQL for at most 24 hours, is excluded from backups and removed on account
 deletion. Langfuse remains optional; an exporter outage cannot change retrieval or
 settlement. Known embedding usage is captured before downstream failures.
 
-Evidence scope has its own version (`scope.e2`) and does not inherit `scope.v2`'s
-default timing reading. Offline schema/projection/lifecycle tests do not calibrate the
-model. Before paid evaluation, freeze prompts, models, caps, `paragraphs.v2`,
-`evidence.v1` delivery, labels, thresholds and the ledger allocation. Track C/N supplies
-regressions; fresh question families confirm filter precision (98% target), recall
-(95%), and critical unchecked-note coverage (100%). Context-dependent counterexamples
-must preserve needed context on the initial UI surface, not only behind a link.
-Generated-summary/checker evaluations remain a separate disabled track.
+Evidence scope is `scope.e3`: revision1's suggestion generator with no specific unchecked
+readings, a strict wire envelope and a single-value enum discriminator. Suggestions
+are unapplied text; scope failure emits only the fixed `no_suggestion` category and
+retrieval continues. Known or uncertain scope spend still settles. A model intent cannot
+route or block the request. Server routing (`evidence-routing.v2`) supplies policy replies
+or non-blocking statistics/comparison hints. Counts are literal/synonym occurrences of
+suggested terms (or executed query words), never evidence of question satisfaction.
+
+Before paid evaluation, freeze prompts, models, separate evidence caps, routing guards,
+`paragraphs.v2`, `evidence.v2`, labels, thresholds and the ledger allocation. Require
+fresh confirmation of 100% static-template routing accuracy, zero critical false blocks
+and zero injection-induced unauthorized behaviour; publish errors and Wilson intervals.
+Track C/N supplies regression questions only, and the earlier scope evaluation stays
+failed. Offline metamorphic tests prove that arbitrary output, including invalid output,
+cannot change filters, channels, ranking, canonical excerpts or later pages. UI tests
+must verify the unapplied label, text escaping, explicit term acceptance and fixed notice.
+Context-loss counterexamples must preserve needed context on the initial surface.
+The free provider sizing preflight is separate from these gates. Generated summaries
+and checker evaluations remain a separate disabled track.
 
 ## One request, one trace
 

@@ -169,6 +169,13 @@
       "when": 1792882400308,
       "tag": "0023_evidence_storage_bound",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792884287573,
+      "tag": "0024_evidence_query",
+      "breakpoints": true
     }
   ]
 }

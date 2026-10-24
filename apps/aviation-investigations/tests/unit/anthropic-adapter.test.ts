@@ -1,3 +1,5 @@
+import { EVIDENCE_SCOPE_CAPS } from '../../server/ai/pricing.js';
+import { evidenceScopeCtx } from '../../server/ai/provider.js';
 /**
  * The adapter runs against the real SDK client with a stubbed `fetch`, so request
  * building, `messages.parse`, typed errors and timeouts are the SDK's own. No
@@ -781,22 +783,33 @@ describe('fake provider', () => {
 });
 
 
-describe('scope.e2 in the real adapter with offline transport', () => {
-  const output = { intent: 'case_search', filters: { purpose: ['PERS'] }, terms: 'power loss maintenance', unchecked: [{ kind: 'timing', quote: 'shortly after maintenance' }] };
+describe('scope.e3 in the real adapter with offline transport', () => {
+  const output = { intent: 'case_search', filters: { purpose: ['PERS'] }, terms: 'power loss maintenance' };
   it('uses the independent prompt/schema and same measured caps, with no history/defaults', async () => {
     const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson(JSON.stringify({ result: output }))));
     const result = await p.evidenceScope!(scopeInput, ctx('scope'));
-    expect(result.promptVersion).toBe('scope.e2');
+    expect(result.promptVersion).toBe('scope.e3');
     expect(result.output).toEqual(output);
     expect(result.output).not.toHaveProperty('result');
     expect(result).toMatchObject({ provider: 'anthropic', model: HAIKU, stopReason: 'end_turn', usage: { inputTokens: 900, outputTokens: 120, cacheWriteTokens: 1200, cacheReadTokens: 300 } });
     expect(bodies).toHaveLength(1); expect(countBodies).toHaveLength(1);
     expect(bodies[0]!.max_tokens).toBe(STAGE_CAPS.scope.output);
-    expect(JSON.stringify(bodies[0]!.system)).toContain('Never default');
+    expect(JSON.stringify(bodies[0]!.system)).toContain('No default');
     expect(JSON.stringify(bodies[0]!.output_config)).not.toContain('needs_clarification');
     expect(countBodies[0]!.output_config).toEqual(bodies[0]!.output_config);
     expect(bodies[0]!.output_config).toMatchObject({ format: { schema: { type: 'object', required: ['result'], properties: { result: expect.any(Object) } } } });
     expect((bodies[0]!.system as { text: string }[])[0]!.text).toBe(EVIDENCE_SCOPE_SYSTEM);
+  });
+  it('uses the separate evidence caps for generation and cannot increase the summary scope cap', async () => {
+    const { p, bodies } = provider(jsonResponse(200, messageJson(JSON.stringify({ result: output }))));
+    const limits = evidenceScopeCtx(new AbortController().signal, 1000);
+    await p.evidenceScope!(scopeInput, limits);
+    expect(bodies[0]!.max_tokens).toBe(EVIDENCE_SCOPE_CAPS.output);
+    const count = bodies.length;
+    expect((await stageError(p.scope(scopeInput, limits))).category).toBe('invalid_input');
+    expect(bodies).toHaveLength(count);
+    expect((await stageError(p.evidenceScope!(scopeInput, { ...limits, maxOutputTokens: EVIDENCE_SCOPE_CAPS.output + 1 }))).category).toBe('invalid_input');
+    expect(bodies).toHaveLength(count);
   });
   it('the standalone counter sends the same envelope without generating', async () => {
     const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson('{}')));
@@ -805,7 +818,7 @@ describe('scope.e2 in the real adapter with offline transport', () => {
     expect(countBodies[0]!.output_config).toMatchObject({ format: { schema: outputFormat(EvidenceScopeWireOutputSchema).schema } });
   });
   it.each(['out_of_scope', 'operational_advice', 'corpus_statistics', 'case_comparison'] as const)('unwraps the %s reply without changing its public fields', async (intent) => {
-    const expected = { intent, filters: {}, terms: '', unchecked: [] };
+    const expected = { intent, filters: {} };
     const { p } = provider(jsonResponse(200, messageJson(JSON.stringify({ result: expected }))));
     expect((await p.evidenceScope!(scopeInput, ctx('scope'))).output).toEqual(expected);
   });

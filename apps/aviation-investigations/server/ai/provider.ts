@@ -16,7 +16,7 @@ import {
   SPEAKERS,
   type ComposeOutput,
 } from '../../shared/contracts/briefs.js';
-import { CACHED_PREFIX_MAX, STAGE_CAPS } from './pricing.js';
+import { CACHED_PREFIX_MAX, STAGE_CAPS, EVIDENCE_SCOPE_CAPS } from './pricing.js';
 
 export { ComposeOutputSchema, GLYPH_KINDS, GROUP_KINDS, type ComposeOutput };
 
@@ -86,7 +86,7 @@ export interface StageCtx {
   signal: AbortSignal;
   /** Budget for the whole stage call in milliseconds (token count plus generation). */
   timeoutMs: number;
-  /** Hard caps; never above `STAGE_CAPS` for the stage. */
+  /** Hard caps; never above the adapter stage’s configured caps. */
   maxInputTokens: number;
   maxOutputTokens: number;
 }
@@ -97,9 +97,13 @@ export function stageCtx(stage: LlmStage, signal: AbortSignal, timeoutMs: number
   return { signal, timeoutMs, maxInputTokens: caps.input, maxOutputTokens: caps.output };
 }
 
-/** True when the context's caps are positive integers within `STAGE_CAPS` and the timeout is positive. */
-export function isValidStageCtx(stage: LlmStage, ctx: StageCtx): boolean {
-  const caps = STAGE_CAPS[STAGE_ROLE[stage]];
+/** Independent scope budget for advisory evidence; summary caps remain unchanged. */
+export function evidenceScopeCtx(signal: AbortSignal, timeoutMs: number): StageCtx {
+  return { signal, timeoutMs, maxInputTokens: EVIDENCE_SCOPE_CAPS.input, maxOutputTokens: EVIDENCE_SCOPE_CAPS.output };
+}
+
+/** True when caps are positive integers within the stage maximum and the timeout is positive. */
+export function isValidStageCtx(stage: LlmStage, ctx: StageCtx, caps = STAGE_CAPS[STAGE_ROLE[stage]]): boolean {
   const within = (n: number, max: number) => Number.isInteger(n) && n > 0 && n <= max;
   return (
     within(ctx.maxOutputTokens, caps.output) &&
