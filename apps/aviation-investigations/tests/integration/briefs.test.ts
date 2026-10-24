@@ -2311,6 +2311,58 @@ describe('gate G6: evidence semantics through the routes', () => {
     });
   });
 
+  /** A comparison step whose case lookup fails: the step breaks outside its stages (`runBriefStep`'s last resort). */
+  const failingLookup = (gate?: Promise<void>) => ({
+    scope: { output: scopeOut({ intent: 'case_comparison' as const, caseNumbers: ['DFW08TA066'], ambiguity: undefined }) },
+    catalog: (real: CaseCatalog): CaseCatalog => ({
+      ...real,
+      async summaries() {
+        await gate;
+        throw new Error('SENTINEL: the case lookup failed');
+      },
+    }),
+  });
+
+  it('a step that breaks outside its stages is charged in full, but never toward the daily cap of uncertain calls (task 22 re-review N1)', async () => {
+    const broken = failingLookup();
+    const h = harness({ ...answering(), scope: broken.scope }, { catalog: broken.catalog, anonymousShare: 1 });
+    const first = await ask(h, 'Compare DFW08TA066 with similar cases');
+    expect(first.status).toBeLessThan(300);
+    await h.svc.settled();
+    const step = await stepRow(first.json.briefId);
+    expect(step).toMatchObject({ status: 'failed', meta: { failure: { stage: 'pipeline', category: 'unexpected' } } });
+    // No call can be named: the whole reservation, on one line of its own.
+    const [res] = await reservations();
+    expect(res).toMatchObject({ status: 'settled', uncertain: true, charged: res!.usd });
+    expect(await ledgerLines()).toEqual([[{ stage: 'uncertain', usd: res!.usd, uncertain: true }]]);
+    expect(step.cost_usd).toBe(res!.usd);
+    // The server's failure is not the visitor's uncertain call: the next question is admitted.
+    advance(MIN);
+    const again = await ask(h, 'Engine power loss shortly after maintenance', { cookie: cookieOf(first.setCookie) });
+    expect(again.status, JSON.stringify(again.json)).toBe(202);
+    expect(h.logs.join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('a step that breaks outside its stages after the sweep closed its reservation records what the sweep charged (task 22 re-review N3)', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const broken = failingLookup(held);
+    const h = harness({ ...answering(), scope: broken.scope }, { catalog: broken.catalog });
+    // The request waits for the scope outcome, which waits for the held lookup.
+    const asked = ask(h, 'Compare DFW08TA066 with similar cases');
+    // The maintenance sweep closes the lease first (charged in full).
+    await until(() => h.llm.calls.some((c) => c.stage === 'scope'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await expireLeases(appDb, new Date(clock.getTime() + 10 * MIN))).toMatchObject({ expired: 1 });
+    release();
+    const first = await asked;
+    expect(first.status).toBeLessThan(300);
+    await h.svc.settled();
+    const [res] = await reservations();
+    expect(res).toMatchObject({ status: 'expired_charged', charged: res!.usd });
+    expect((await stepRow(first.json.briefId)).cost_usd).toBe(res!.charged);
+  });
+
   it('a result outside its contract fails the step cleanly and still settles', async () => {
     const h = harness(answering(), {
       catalog: (real) => ({

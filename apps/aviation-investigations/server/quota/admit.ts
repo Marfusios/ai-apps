@@ -51,6 +51,7 @@ import {
   IDEMPOTENCY_TTL_MS,
   QuotaInputError,
   SPEND_LOCK_KEY,
+  UNCERTAIN_CALL_STAGES,
   UNCERTAIN_DAILY_RESERVATIONS,
   UnknownPrincipalError,
   networkHash,
@@ -305,17 +306,17 @@ function accountQuota(
 }
 
 /**
- * µ$ of the principal's uncertain ledger lines on `day` (calls of unknown usage, each at
- * its own worst case, and any settlement charged in full for uncertainty). Lease expiry
- * is left out: it follows a server failure, not a request's outcome (it still counts in
- * full against the budgets).
+ * µ$ of the principal's uncertain ledger lines on `day` from its named calls
+ * (`UNCERTAIN_CALL_STAGES`: each call of unknown usage at its own worst case). A charge in
+ * full that follows a server failure (lease expiry, a step that broke outside its stages)
+ * is left out: it is not a request's outcome (it still counts in full against the budgets).
  */
 export async function uncertainChargedMicros(tx: DbOrTx, pHash: string, day: string): Promise<number> {
   const res = await tx.execute(sql`
     SELECT (coalesce(sum(l.usd), 0) * 1000000)::bigint AS micros
     FROM reservations r JOIN cost_ledger l ON l.reservation_id = r.id
     WHERE r.category = 'interactive' AND r.principal_hash = ${pHash} AND r.accounting_day = ${day}::date
-      AND r.status <> 'open' AND l.uncertain AND l.stage <> 'lease_expired'`);
+      AND r.status <> 'open' AND l.uncertain AND l.stage = ANY(${sql.param([...UNCERTAIN_CALL_STAGES])}::text[])`);
   return Number((res.rows[0] as { micros: string }).micros);
 }
 

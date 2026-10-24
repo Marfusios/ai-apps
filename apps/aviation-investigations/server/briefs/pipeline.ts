@@ -345,8 +345,11 @@ export async function runBriefStep(deps: BriefDeps, stepId: string, admission: A
     );
   } catch (err) {
     log.warn({ err: { name: (err as Error)?.name } }, 'brief step failed unexpectedly');
-    // No stage can be named: the full reservation, as lease expiry would charge.
+    // No stage can be named: the full reservation, as lease expiry would charge (a server
+    // failure: it never counts toward the principal's uncertain calls, UNCERTAIN_CALL_STAGES).
     const settled = await settle(deps.db, admission, 'uncertain', admission.fencingToken, now()).catch(() => null);
+    // Charged by this settlement, or already (the sweep closed the lease first): the step records it (task 22 re-review N3).
+    const charged = settled?.ok ? settled.chargedUsd : settled && settled.reason !== 'busy' ? (settled.chargedUsd ?? null) : null;
     await finishStep(deps.db, stepId, {
       stage: 'failed',
       status: 'failed',
@@ -355,11 +358,11 @@ export async function runBriefStep(deps: BriefDeps, stepId: string, admission: A
       provider: deps.llm.name,
       model: null,
       meta: { failure: { stage: 'pipeline', category: 'unexpected' }, ...(hooks.requestId ? { requestId: hooks.requestId } : {}) },
-      costUsd: settled?.ok ? microsToNumeric(toMicros(settled.chargedUsd)) : null,
+      costUsd: charged === null ? null : microsToNumeric(toMicros(charged)),
       now: now(),
     }).catch(() => false);
     scoped({ kind: 'ended', stage: 'failed' });
-    return { status: 'failed', chargedUsd: settled?.ok ? settled.chargedUsd : null, released: false };
+    return { status: 'failed', chargedUsd: charged, released: false };
   }
 }
 

@@ -1006,9 +1006,11 @@ day add up to one reservation (`UNCERTAIN_DAILY_RESERVATIONS`, $0.36 with the Op
 model) is refused further AI requests until 00:00 UTC: admission answers `uncertain_limit`,
 the API 429 `quota_exhausted` with `Retry-After`, nothing reserved and no search taken.
 That allows at most two answer-stage cancels or timeouts a day (about $0.68, the cost of
-six finished briefs) and some thirty check-stage ones. Lease expiry is left out (it
-follows a server failure, not a request's outcome) but still counts in full against the
-budgets. Many principals can still spend the allowance together, with or without cancels:
+six finished briefs) and some thirty check-stage ones. Only the named calls count (scope,
+answer, check, query embedding: `UNCERTAIN_CALL_STAGES`). A charge in full that follows a
+server failure is not the principal's uncertain call and is left out, though it still
+counts in full against the budgets: lease expiry, and a step that broke outside its stages
+(a database error between stages, an exception while the result is built). Many principals can still spend the allowance together, with or without cancels:
 that is the accepted exhaustion risk (SECURITY_REVIEW F4).
 
 ### Anthropic call settings

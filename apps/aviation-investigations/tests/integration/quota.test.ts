@@ -429,10 +429,10 @@ describe('settlement', () => {
     expect(await expireLeases(app, at(T0, 10 * MIN))).toEqual({ expired: 0, chargedUsd: 0 });
     expect(await ledger(a.reservationId)).toEqual([{ stage: 'uncertain', usd: '0.140000', uncertain: true }]);
 
-    // A lease that expires before settlement is charged in full and stays charged. (Another
-    // account: one reservation of uncertain charges stops `p` for the day, gate 22 AI I1.)
-    expect(await admit(p, { now: at(T0, MIN) })).toMatchObject({ ok: false, reason: 'uncertain_limit' });
-    const b = admitted(await admit(account('u2'), { now: at(T0, MIN) }));
+    // A lease that expires before settlement is charged in full and stays charged. A charge in
+    // full that no named call accounts for is a server failure: it never counts toward the
+    // principal's daily bound of uncertain calls (task 22 re-review N1), so `p` is admitted.
+    const b = admitted(await admit(p, { now: at(T0, MIN) }));
     expect(await expireLeases(app, b.leaseExpiresAt)).toEqual({ expired: 1, chargedUsd: RESERVATION });
     expect(await settle(app, b, 0.01, b.fencingToken, at(b.leaseExpiresAt, 1_000))).toEqual({
       ok: false,
@@ -444,7 +444,7 @@ describe('settlement', () => {
     expect(await ledger(b.reservationId)).toEqual([{ stage: 'lease_expired', usd: '0.140000', uncertain: true }]);
 
     // A settlement arriving after the lease ran out (before any sweep) charges the full amount too.
-    const c = admitted(await admit(account('u3'), { now: at(T0, 2 * MIN) }));
+    const c = admitted(await admit(p, { now: at(T0, 2 * MIN) }));
     expect(await settle(app, c, 0.01, c.fencingToken, c.leaseExpiresAt)).toEqual({
       ok: false,
       reason: 'lease_expired',
