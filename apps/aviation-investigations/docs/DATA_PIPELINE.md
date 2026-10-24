@@ -138,12 +138,16 @@ Code: `worker/ingest/normalize.ts`, `worker/ingest/scalars.ts`,
 **Errors.** Structural problems stop the run:
 
 - a missing table or column;
-- a blank or duplicate `ntsb_no`;
+- a blank or duplicate `ntsb_no`, or one with a NUL byte;
 - a duplicate composite key. Keys are typed tuples, so `1` and `01` are the same
   aircraft key.
 
 Value problems go to a quarantine list with an action (row excluded, value nulled or
-value kept) and are never coerced. Generation 1 has 25 entries, all coordinates of
+value kept) and are never coerced. Every problem is listed, not just the first. A key part
+that is not a non-negative 32-bit integer (or an `ev_id` with a NUL byte) excludes its row,
+as a blank one does; an integer field outside the 32-bit range is nulled; and any other
+value with a NUL byte, which PostgreSQL text cannot hold, is nulled (`invalid_text`; a
+narrative so nulled produces no section) without being echoed. Generation 1 has 25 entries, all coordinates of
 non-US events. 75 US events have no coordinates, so their location is null.
 
 **Scalars and codes.** A blank field becomes `null` before any numeric conversion.
