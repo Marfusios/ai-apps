@@ -113,6 +113,8 @@ export interface AppDeps {
   shutdownGraceMs?: number;
   /** How long a health probe result is shared (default `HEALTH_CACHE_MS`). */
   healthCacheMs?: number;
+  /** The whole-request bound (default `REQUEST_TIMEOUT_MS`; tests shorten it). */
+  requestTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -130,6 +132,17 @@ export const SHUTDOWN_GRACE_MS = 9_000;
  * their connection.
  */
 export const KEEP_ALIVE_TIMEOUT_MS = 95_000;
+/**
+ * The longest a client may take to send one whole request, headers and body (platform
+ * review P1). Fastify's default is none (0), and Node's own header timeout does not
+ * cover the body, so a client that sent headers and then stalled or trickled its body
+ * held a socket and a request for ever. Every legitimate body here is at most 16 KB.
+ * Node refuses a header timeout above the request timeout, so the header timeout is kept
+ * within it; stalled connections are checked every `CONNECTION_CHECK_MS` (Node's default
+ * is 30 s), so one is answered 408 (`clientErrorHandler`) and closed within about 65 s.
+ */
+export const REQUEST_TIMEOUT_MS = 60_000;
+export const CONNECTION_CHECK_MS = 5_000;
 
 /** Route patterns of the web client: the page and the static files (`@fastify/static`'s wildcard). */
 export const ASSET_ROUTES: ReadonlySet<string> = new Set(['/', '/index.html', '/*']);
@@ -209,6 +222,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   };
 
   const identityOf = (peer: string | undefined, clientIp: string | string[] | undefined) => resolveNetworkIdentity(peer, clientIp, trusted);
+  const requestTimeout = deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
 
   const app = Fastify({
     logger: deps.logger ?? false,
@@ -216,6 +230,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // Request logs would hold client addresses and search text; responses are logged below without either.
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 16 * 1024,
+    // A request must arrive whole within this bound (REQUEST_TIMEOUT_MS); the header timeout
+    // stays within it (Node requires that), and stalled connections are checked often.
+    requestTimeout,
+    http: {
+      headersTimeout: Math.min(60_000, requestTimeout),
+      connectionsCheckingInterval: Math.min(CONNECTION_CHECK_MS, Math.max(100, Math.floor(requestTimeout / 2))),
+    },
     // While closing, `onRequest` refuses new requests itself (503 `unavailable`, with the
     // security headers), instead of Fastify's own bare 503.
     return503OnClosing: false,

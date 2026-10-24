@@ -1239,7 +1239,10 @@ prefix, so later routes are covered) answer `Cache-Control: private, no-store`; 
 data routes are cacheable and keyed by the dataset revision; errors are `no-store`.
 Requests the HTTP parser itself refuses (400, or 408 for a request timeout and 431 for
 oversized headers; 403 for a non-connector peer in tunnel mode) get the same security
-headers and a JSON body, and the connection is closed.
+headers and a JSON body, and the connection is closed. A request must arrive whole,
+headers and body, within 60 s (`REQUEST_TIMEOUT_MS`; every body here is at most 16 KB):
+one that stalls or trickles in is answered 408 and closed within about 65 s, since
+stalled connections are checked every 5 s.
 
 - **Database connections** (`server/db/client.ts`). The API's pool (8 connections, as
   `aviation_app`) bounds every wait: opening a connection or waiting for a free one 5 s;
