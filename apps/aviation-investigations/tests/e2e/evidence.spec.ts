@@ -2,17 +2,19 @@ import { expect, test, type Page } from '@playwright/test';
 import { FAKE_TURNSTILE, TEST_SITE_KEY } from './fake-turnstile.js';
 
 /**
- * The AI evidence view (UI_DESIGN §4.9) against the mock API (web/mock/evidence.ts), on a
- * desktop and a phone, by day and at night: Ask AI, the reading and its unchecked readings,
- * the heading and notice on every surface, cards with marked whole paragraphs, the full
- * section, free paging, an edited search, the drawer, Compare, print, and a gone search.
- * Cloudflare's Turnstile is a local stand-in (tests/e2e/fake-turnstile.ts).
+ * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only design)
+ * against the mock API (web/mock/evidence.ts), on a desktop and a phone, by day and at night:
+ * Ask AI, what was searched and the AI's suggestion beside it, not applied, the heading and
+ * notice on every surface, cards with marked whole paragraphs, the full section, free paging,
+ * applying the suggestion and the reader's own edits, the hints, the drawer, Compare, print,
+ * and a gone search. Cloudflare's Turnstile is a local stand-in (tests/e2e/fake-turnstile.ts).
  */
 
 const HEADING = 'Investigations retrieved for your search';
 const NOTICE = 'AirCase matched your words and filters. It has not checked timing, causes or things that did not happen: read the excerpts.';
 const CARB = 'Carb icing on approach';
 const SEED = 'Engine power loss shortly after maintenance';
+const SUGGESTION = 'Suggested filters and terms — not applied';
 
 type Theme = 'day' | 'night';
 
@@ -61,24 +63,31 @@ for (const [width, theme] of [
     expect(renders).toEqual([{ sitekey: TEST_SITE_KEY, action: 'ask-ai', appearance: 'always', theme: theme === 'night' ? 'dark' : 'light' }]);
     await expect(page.getByRole('banner').getByText(width < 640 ? 'AI left 9 of 10' : 'AI searches left: 9 of 10')).toBeVisible();
 
-    // The question as asked, and the AI's reading of it as chips you can edit.
+    // The question as asked is what was searched; the AI's suggestion stands beside it, not applied.
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(CARB);
-    const reading = page.getByRole('region', { name: 'AI reading of your question' });
-    // (Chrome names them "carb icing , edit…": the screen-reader words are a block of their own)
-    await expect(reading.getByRole('button', { name: /^carb icing\s*, edit the search words$/ })).toBeVisible();
-    await expect(reading.getByRole('button', { name: /^Phase: Approach\s*, remove$/ })).toBeVisible();
-    // The heading, the notice, the count that never claims every match.
+    const yours = page.getByRole('region', { name: 'Your search', exact: true });
+    await expect(yours).toContainText('Your question, as asked');
+    const suggestion = page.getByRole('region', { name: SUGGESTION });
+    await expect(suggestion.getByRole('list', { name: 'Suggested filters' })).toHaveText('Phase: Approach');
+    await expect(suggestion).toContainText('“carb icing”');
+    await expect(suggestion.getByRole('button', { name: /^Apply these filters\s*·\s*uses 1$/ })).toBeVisible();
+    await expect(suggestion.getByRole('button', { name: /^Apply filters and terms\s*·\s*uses 1$/ })).toBeVisible();
+    // The heading, the notice, the count that never claims every match: the question's results, unfiltered.
     await expect(page.getByRole('heading', { level: 2, name: HEADING })).toBeVisible();
     await expect(page.getByRole('note').first()).toHaveText(NOTICE);
-    await expect(page.locator('[data-count-line]')).toHaveText('7 retrieved · best match first · not every matching investigation');
+    await expect(page.locator('[data-count-line]')).toHaveText('21 retrieved · best match first · not every matching investigation');
+    // (its text holds the screen-reader words "; dotted:" between the two marks)
+    await expect(page.locator('[data-legend]')).toHaveText(/^Marked in the excerpts: the suggested terms · .*their synonyms$/);
     await fitsTheWidth(page);
 
     // A card: whole paragraphs, literal and synonym matches told apart by line and fill.
-    const card = page.locator('article[data-card]').first();
+    const card = page.locator('article[data-card]').filter({ has: page.locator('mark.hit') }).filter({ has: page.locator('mark.hit-synonym') }).first();
     await expect(card.locator('mark.hit').first()).toBeVisible();
     await expect(card.locator('mark.hit-synonym').first()).toBeVisible();
+    const ntsbNo = (await card.getAttribute('data-card')) as string;
+    const rank = (await card.getAttribute('data-rank')) as string;
     const lines = await page.evaluate<{ literal: string[]; synonym: string[] }>(`(() => {
-      const card = document.querySelector('article[data-card]');
+      const card = document.querySelector('article[data-card="${ntsbNo}"]');
       const literal = getComputedStyle(card.querySelector('mark.hit'));
       const synonym = getComputedStyle(card.querySelector('mark.hit-synonym'));
       return { literal: [literal.borderBottomStyle, literal.backgroundColor], synonym: [synonym.borderBottomStyle, synonym.backgroundColor] };
@@ -87,7 +96,8 @@ for (const [width, theme] of [
     expect(lines.synonym[0]).toBe('dotted');
     expect(lines.synonym[1]).toBe('rgba(0, 0, 0, 0)');
     expect(lines.literal[1]).not.toBe('rgba(0, 0, 0, 0)');
-    await expect(card.locator('[data-relevance]')).toContainText('found by keyword, similarity and case-narrative keyword search');
+    // Occurrences of the suggested terms, said as suggested; no filter claimed.
+    await expect(card.locator('[data-relevance]')).toHaveText(/^How it was found:\s*Suggested terms in these excerpts: .+ · found by .+ search$/);
 
     // The full section, at the excerpt's paragraph, marked and in view.
     await card.getByRole('button', { name: 'Show the full analysis section' }).click();
@@ -98,14 +108,13 @@ for (const [width, theme] of [
     await expect(marked).toHaveCount(0);
 
     // The drawer: the same projection under the heading and notice.
-    const ntsbNo = (await card.getAttribute('data-card')) as string;
     await card.getByRole('link', { name: ntsbNo, exact: true }).click();
     const drawer = page.getByRole('dialog', { name: new RegExp(`^${ntsbNo}: `) });
     await expect(drawer).toBeVisible();
     const section = drawer.getByRole('region', { name: HEADING });
     await section.scrollIntoViewIfNeeded();
     await expect(section.getByRole('note')).toHaveText(NOTICE);
-    await expect(drawer.getByText('1 of 7')).toBeVisible();
+    await expect(drawer.getByText(`${rank} of 21`)).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(drawer).toBeHidden();
     await expect(card.getByRole('link', { name: ntsbNo, exact: true })).toBeFocused();
@@ -133,7 +142,7 @@ for (const [width, theme] of [
   });
 }
 
-test('Show more pages the pinned ranking for free, with the total; an edited search says it uses one', async ({ page }) => {
+test('Show more pages the pinned ranking for free, with the total; the reader’s own words make an edited search that says it uses one', async ({ page }) => {
   await open(page, { width: 1280, theme: 'day' });
   await ask(page, SEED);
   await expect(page.locator('article[data-card]')).toHaveCount(10);
@@ -148,27 +157,40 @@ test('Show more pages the pinned ranking for free, with the total; an edited sea
   // Paging asked the AI nothing: the one POST is the search itself.
   expect(await posts(page, '/api/evidence')).toBe(1);
 
-  // Edit the words: free until Search again, which says it uses one AI search.
-  const reading = page.getByRole('region', { name: 'AI reading of your question' });
-  await reading.getByRole('button', { name: /edit the search words$/ }).click();
-  await reading.getByRole('textbox', { name: 'Search words' }).fill('engine power loss');
-  await reading.getByRole('textbox', { name: 'Search words' }).press('Enter');
-  await expect(reading.getByRole('link', { name: /^Show keyword results/ })).toHaveAttribute('href', '/explore?q=engine+power+loss');
-  await reading.getByRole('button', { name: 'Search again · uses 1' }).click();
-  await expect(page.getByRole('region', { name: 'Your edited search' })).toBeVisible();
+  // The reader's own words: free until Search again, which says it uses one AI search.
+  const yours = page.getByRole('region', { name: 'Your search', exact: true });
+  await yours.getByRole('button', { name: 'Use your own words' }).click();
+  await yours.getByRole('textbox', { name: 'Search words' }).fill('engine power loss');
+  await yours.getByRole('textbox', { name: 'Search words' }).press('Enter');
+  await expect(yours.getByRole('link', { name: /^Show keyword results/ })).toHaveAttribute('href', '/explore?q=engine+power+loss');
+  await yours.getByRole('button', { name: 'Search again · uses 1' }).click();
+  const edited = page.getByRole('region', { name: 'Your edited search', exact: true });
+  await expect(edited).toBeVisible();
   expect(await posts(page, '/api/evidence')).toBe(2);
-  // The question as asked, and its unchecked reading, carry over.
+  // The question as asked carries over; the words are the reader's; an edited search has no suggestion.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(SEED);
-  await expect(page.getByRole('region', { name: 'Your edited search' })).toContainText('AirCase cannot check timing: “shortly after maintenance”');
+  await expect(edited.getByRole('button', { name: /^engine power loss\s*, edit the search words$/ })).toBeVisible();
+  await expect(page.getByRole('region', { name: SUGGESTION })).toHaveCount(0);
+  await expect(page.locator('[data-legend]')).toHaveText(/^Marked in the excerpts: your words/);
 });
 
-test('an empty result shows its filters and a free way out; a gone search says so and offers to ask again', async ({ page }) => {
+test('applying the suggested filters, which here leave nothing: the empty result shows its filters and a free way out; a gone search says so', async ({ page }) => {
   await open(page, { width: 390, theme: 'day' });
   await ask(page, 'Fatal balloon accidents in Alaska');
+  // The question's own results first: the suggestion is not applied.
+  await expect(page.locator('article[data-card]').first()).toBeVisible();
+  const suggestion = page.getByRole('region', { name: SUGGESTION });
+  await expect(suggestion.getByRole('list', { name: 'Suggested filters' })).toHaveText(/Highest injury: Fatal\s*Aircraft: Balloon\s*Location: Alaska/);
+  await fitsTheWidth(page);
+  await suggestion.getByRole('button', { name: /^Apply these filters\s*·\s*uses 1$/ }).click();
+  await expect(page.getByRole('region', { name: 'Your edited search', exact: true })).toBeVisible();
+  // Exactly the suggested filters, and the question as asked (no terms sent).
+  const sent = await page.evaluate<number>(`window.__reads.filter((r) => r.method === 'POST' && r.path === '/api/evidence').length`);
+  expect(sent).toBe(2);
   const box = page.locator('[data-few-results]');
   await expect(box).toContainText('No investigations were retrieved for this search.');
-  await expect(box).toContainText('Filters: Highest injury: Fatal · Aircraft: Balloon · Location: Alaska');
-  await expect(box.getByRole('link', { name: /without filters/ })).toHaveAttribute('href', '/explore?q=fatal+balloon+alaska');
+  await expect(box).toContainText('Filters: Highest injury: Fatal · Aircraft: Balloon · Location: Alaska · Your question, as asked');
+  await expect(box.getByRole('link', { name: /without filters/ })).toHaveAttribute('href', '/explore?q=Fatal+balloon+accidents+in+Alaska');
   await expect(page.getByRole('note')).toHaveText(NOTICE);
   await fitsTheWidth(page);
 
@@ -177,6 +199,15 @@ test('an empty result shows its filters and a free way out; a gone search says s
   await expect(page.getByText('AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it.')).toBeVisible();
   await expect(page.getByRole('button', { name: /^Ask AI/ })).toBeVisible();
   await expect(page).toHaveTitle('AI search expired · AirCase');
+});
+
+test('a counting request gets its results with the dashboard hint above them', async ({ page }) => {
+  await open(page, { width: 1280, theme: 'night' });
+  await ask(page, 'How many helicopter accidents happened in Texas');
+  const hint = page.locator('[data-hint="corpus_statistics"]');
+  await expect(hint).toContainText('For counts and trends, the dashboard counts every investigation in the snapshot.');
+  await expect(hint.getByRole('link', { name: 'Open the dashboard' })).toHaveAttribute('href', '/dashboard');
+  await expect(page.locator('article[data-card]').first()).toBeVisible();
 });
 
 test('a static reply shows under the box and uses no search', async ({ page }) => {
