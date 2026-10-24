@@ -107,3 +107,34 @@ describe('Unexpected errors never show a developer page (review W-1)', () => {
     errors.mockRestore();
   });
 });
+
+describe('both error pages carry the owner credit and the product name (owner decisions of 2026-10-24)', () => {
+  /** The credit line in the footer, as paragraph text and link. */
+  function expectCredit(footer: HTMLElement): void {
+    const line = within(footer).getByText('Built by Mariusz Kotas').closest('p');
+    expect(line?.textContent).toBe('Built by Mariusz Kotas · m@mkotas.cz');
+    expect(within(footer).getByRole('link', { name: 'm@mkotas.cz' }).getAttribute('href')).toBe('mailto:m@mkotas.cz');
+  }
+
+  it('a page that fails keeps the app footer, with the credit', async () => {
+    const errors = quietErrors();
+    fail.page = true;
+    renderApp('/about');
+    await screen.findByRole('alert');
+    expect(document.title).toBe('Something went wrong · AirCase');
+    expectCredit(screen.getByRole('contentinfo'));
+    errors.mockRestore();
+  });
+
+  it('when the frame itself fails, the plain error page has the credit too', async () => {
+    const errors = quietErrors();
+    fail.frame = true;
+    renderApp('/explore');
+    await screen.findByRole('alert');
+    expect(document.title).toBe('Something went wrong · AirCase');
+    // The page's own footer: the app's footer is what failed, and this one needs nothing from the frame.
+    expectCredit(screen.getByRole('contentinfo'));
+    expect(screen.getByRole('banner').textContent).toBe('AirCase');
+    errors.mockRestore();
+  });
+});

@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import { documentTitle, PRODUCT_NAME } from '../brand';
 import { Button } from '../components/Button';
+import { CreditLine } from '../components/CreditLine';
 import { Placard } from '../components/Placard';
 
 /** Builder copy (Task 22 review W-1), for the owner's review. */
@@ -35,8 +36,9 @@ export function RouteError() {
 
 /**
  * When the app frame itself fails (header, footer, the providers around every page): a
- * plain frame of its own with the wordmark, so there is still a way home. It uses nothing
- * the failed frame provides.
+ * plain frame of its own with the wordmark, so there is still a way home, and a footer of
+ * its own with the owner's credit, which every page carries. It uses nothing the failed
+ * frame provides.
  */
 export function AppError() {
   return (
@@ -51,6 +53,9 @@ export function AppError() {
       <main id="main" className="flex flex-1 flex-col pt-2">
         <RouteError />
       </main>
+      <footer className="mt-auto border-t border-hairline pt-4">
+        <CreditLine />
+      </footer>
     </div>
   );
 }
