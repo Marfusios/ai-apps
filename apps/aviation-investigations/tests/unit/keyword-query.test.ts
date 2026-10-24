@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SearchRequestSchema } from '../../shared/contracts/search.js';
 import { contentSecurityPolicy, securityHeaders } from '../../server/http/security-headers.js';
-import { FRAGMENT_SIZE, buildSearchBody, parseQuery, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
+import { FRAGMENT_SIZE, SECTION_EDGE, buildSearchBody, parseQuery, sectionEdges, snippetFromHighlights, textQuery, unmark } from '../../server/search/keyword.js';
 import { SEARCH_TIMEOUT, SearchIncompleteError, SearchTimedOutError, assertComplete } from '../../server/search/timeout.js';
 import { isUnavailable } from '../../server/app.js';
 import { THEME_SCRIPT_HASH } from '../../web/src/csp-hashes.js';
@@ -148,6 +148,39 @@ describe('snippets from highlights', () => {
     const long = snippetFromHighlights({ factual: [`${'word '.repeat(300)}${S}carb${E}${' tail'.repeat(300)}`] });
     expect(long?.text.length).toBeLessThanOrEqual(1200);
     expect(long?.highlights).toHaveLength(1);
+  });
+
+  it('marks a passage truncated only on a side where its section goes on (task 22 S-M7)', () => {
+    const section = 'The pilot applied carb heat. The engine recovered. Then it quit again over the lake.';
+    const edges = (...sections: string[]) => sectionEdges(sections);
+    // The section's first sentences: nothing before them, more after.
+    const first = snippetFromHighlights({ analysis: [`The pilot applied ${S}carb${E} heat. The engine recovered.`] }, { analysis: edges(section) });
+    expect(first).toMatchObject({ section: 'analysis', truncatedStart: false, truncatedEnd: true });
+    // Its last sentence: more before, nothing after.
+    const last = snippetFromHighlights({ analysis: [`Then it quit again over the ${S}lake${E}.`] }, { analysis: edges(section) });
+    expect(last).toMatchObject({ truncatedStart: true, truncatedEnd: false });
+    // The whole section, in one of several (an event's per-aircraft variants).
+    const whole = snippetFromHighlights({ factual: [section.replace('carb', `${S}carb${E}`)] }, { factual: edges('Another aircraft.', section) });
+    expect(whole).toMatchObject({ section: 'factual', truncatedStart: false, truncatedEnd: false });
+    // The middle, or no edges reported: truncated on both sides, as before.
+    expect(snippetFromHighlights({ analysis: [`The engine ${S}recovered${E}.`] }, { analysis: edges(section) })).toMatchObject({ truncatedStart: true, truncatedEnd: true });
+    expect(snippetFromHighlights({ analysis: [`The pilot applied ${S}carb${E} heat.`] })).toMatchObject({ truncatedStart: true, truncatedEnd: true });
+    // A long section: only its edges are known, and a passage that begins it is still found.
+    const long = `Long opening sentence about the ${'approach '.repeat(40)}path. ${'More text. '.repeat(60)}End.`;
+    const head = long.slice(0, long.indexOf('. ') + 1);
+    expect(snippetFromHighlights({ analysis: [head.replace('opening', `${S}opening${E}`)] }, { analysis: edges(long) })).toMatchObject({
+      truncatedStart: false,
+      truncatedEnd: true,
+    });
+  });
+
+  it('asks Elasticsearch for each long section’s edges only, never its text', () => {
+    const { body } = buildSearchBody('ix', request({ q: 'icing' }));
+    expect(body._source).toBe(false);
+    expect(Object.keys(body.script_fields ?? {}).sort()).toEqual(['analysis_edges', 'factual_edges']);
+    expect(JSON.stringify(body.script_fields)).toContain(`"edge":${SECTION_EDGE}`);
+    expect(buildSearchBody('ix', request({ q: 'icing', mentionedIn: 'probable_cause' })).body.script_fields).toBeUndefined();
+    expect(buildSearchBody('ix', request({})).body.script_fields).toBeUndefined();
   });
 
   it('is null when no narrative section matched', () => {

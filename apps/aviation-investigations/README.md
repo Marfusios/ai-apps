@@ -1316,8 +1316,11 @@ stalled connections are checked every 5 s.
   highlights (private-use markers turned into offsets): the probable cause, which
   Elasticsearch returns whole, when the words match there; otherwise the analysis or
   factual passage (one best passage of about 300 characters, so long sections never
-  come back whole) with the most marks, shown as an excerpt with ellipses on both sides
-  (`shared/snippet.ts`, shared with the mock API).
+  come back whole) with the most marks, shown as an excerpt (`shared/snippet.ts`, shared
+  with the mock API), with an ellipsis on each side where its section goes on. The
+  highlighter does not say where a passage sits, so the search also asks for the first and
+  last 120 characters of each analysis and factual section (`script_fields`, never the
+  whole text) and compares them with the passage.
 - **Dashboard** (`server/search/dashboard.ts`). Bars are the facet counts of the
   cohort's empty search, from the same code, so a bar opened in Explore shows its
   count. METAR coverage and coordinates come from PostgreSQL for the same generation;
