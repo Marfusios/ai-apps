@@ -985,7 +985,8 @@ reservation is charged in full. The whole reservation is charged only when no ca
 named: a lease that expires (the process died or the settlement failed) and a step that
 failed outside its stages. A reservation charged in full for uncertainty is marked
 `uncertain` (migration 0009 holds it to at least its amount); one charged less is not, and
-carries its uncertain lines instead.
+carries its uncertain lines instead. A step records what its reservation was charged even
+when the lease sweep closed the reservation before the step could settle it.
 
 | Call of unknown usage | Charged (Opus answer, Haiku scope and check) |
 | --- | --- |
@@ -1006,12 +1007,13 @@ day add up to one reservation (`UNCERTAIN_DAILY_RESERVATIONS`, $0.36 with the Op
 model) is refused further AI requests until 00:00 UTC: admission answers `uncertain_limit`,
 the API 429 `quota_exhausted` with `Retry-After`, nothing reserved and no search taken.
 That allows at most two answer-stage cancels or timeouts a day (about $0.68, the cost of
-six finished briefs) and some thirty check-stage ones. Only the named calls count (scope,
-answer, check, query embedding: `UNCERTAIN_CALL_STAGES`). A charge in full that follows a
-server failure is not the principal's uncertain call and is left out, though it still
-counts in full against the budgets: lease expiry, and a step that broke outside its stages
-(a database error between stages, an exception while the result is built). Many principals can still spend the allowance together, with or without cancels:
-that is the accepted exhaustion risk (SECURITY_REVIEW F4).
+six finished briefs) and some thirty check-stage ones. Only the named calls count (the
+scope, the answer's compose, the check and the query embedding: `UNCERTAIN_CALL_STAGES`).
+A charge in full that follows a server failure is not the principal's uncertain call and
+is left out, though it still counts in full against the budgets: lease expiry, and a step
+that broke outside its stages (a database error between stages, an exception while the
+result is built). Many principals can still spend the allowance together, with or without
+cancels: that is the accepted exhaustion risk (SECURITY_REVIEW F4).
 
 ### Anthropic call settings
 

@@ -1455,7 +1455,8 @@ retention are in migrations 0008 and 0009.
   principal, two in total and one anonymous request can be in flight. A principal whose
   calls of unknown usage today (cancelled or timed out mid-call, each charged at its own
   worst case) add up to one reservation is refused until 00:00 UTC (429
-  `quota_exhausted`; DESIGN §9, "Uncertain calls").
+  `quota_exhausted`; DESIGN §9, "Uncertain calls"). A full charge after a server failure
+  (lease expiry, a step that broke outside its stages) is not counted there.
 - **Quota units.** The unit is taken at admission, so concurrent requests can never
   both use the last trial search. `releaseQuota` gives it back for a reply that must
   not count (off-topic, operational, nothing spent); the attempt still counts.
