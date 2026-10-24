@@ -289,10 +289,12 @@ and pruning. So a brief is inserted only after re-checking, in the inserting tra
 and holding the brief-references lock shared, that its generation still has a manifest
 row and that neither its passages index nor the cases index of that pair was deleted
 (`claimBriefEvidence`, server/db/generations.ts); otherwise the request gets 503 and
-nothing is spent. Pruning and `index delete-unused` take the same lock exclusively for an
-instant, under the lifecycle lock, before they read which generations and indices
-unexpired briefs use, so every brief being inserted is either committed and seen, or
-re-checks after the deletion and is refused.
+nothing is spent. Pruning and `index delete-unused` hold the same lock exclusively, under
+the lifecycle lock and in one transaction per generation or index, from their last check
+of what unexpired briefs use until the deletion is committed (for an index: until
+`index_builds` records it). A brief being inserted is therefore either committed first and
+seen by that check, or claims afterwards and finds the generation or index gone. The
+claim waits up to 2 s for the lock; a request that waits longer gets 503 too.
 
 Control data (usage buckets, leases, Turnstile redemptions and expired briefs) is
 pruned by a periodic job in the API server, serialized by an advisory lock.

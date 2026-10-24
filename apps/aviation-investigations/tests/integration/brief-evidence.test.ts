@@ -116,7 +116,7 @@ describe('a live brief across a republish of its generation', () => {
     let committed = false;
     try {
       await creator.query('BEGIN');
-      expect(await claimBriefEvidence(drizzle({ client: creator, schema }), pinned)).toBe(true);
+      expect(await claimBriefEvidence(drizzle({ client: creator, schema }), pinned)).toBe('ok');
       await drizzle({ client: creator }).execute(sql`
         insert into briefs (read_owner, read_owner_kind, generation_id, passages_index, created_at, expires_at)
         values (${'d'.repeat(64)}, 'trial', ${generationId}, ${pinned.passagesIndex}, now(), now() + interval '1 hour')`);
@@ -143,5 +143,35 @@ describe('a live brief across a republish of its generation', () => {
       if (!committed) await creator.query('ROLLBACK').catch(() => undefined);
       creator.release();
     }
+  }, 180_000);
+
+  it('a brief created between cleanup’s last check and the deletion never cites the deleted index (gate finding 4)', async () => {
+    // A superseded passages index: published, then replaced by another one.
+    const superseded = await buildFixturePassagesIndex(writer, generationId, PREFIX);
+    await publishGeneration(writer, ingest, { generationId, casesIndex, passagesIndex: superseded, embedding: FIXTURE_EMBEDDING });
+    const current = await buildFixturePassagesIndex(writer, generationId, PREFIX);
+    await publishGeneration(writer, ingest, { generationId, casesIndex, passagesIndex: current, embedding: FIXTURE_EMBEDDING });
+    let creation: Promise<string> | undefined;
+    const report = await deleteUnusedIndices(writer, ingest, {
+      olderThanHours: 0,
+      yes: true,
+      aliases: [passagesAlias(PREFIX)],
+      beforeDelete: async (index) => {
+        if (index !== superseded) return;
+        // A request whose evidence (resolved while that index was published) arrives now.
+        creation = appDb.transaction(async (tx) => {
+          const claim = await claimBriefEvidence(tx, { generationId, passagesIndex: superseded });
+          if (claim !== 'ok') return claim;
+          await tx.execute(sql`
+            insert into briefs (read_owner, read_owner_kind, generation_id, passages_index, created_at, expires_at)
+            values (${'e'.repeat(64)}, 'trial', ${generationId}, ${superseded}, now(), now() + interval '1 hour')`);
+          return 'created';
+        });
+        await Promise.race([creation.catch(() => undefined), new Promise((r) => setTimeout(r, 300))]);
+      },
+    });
+    expect(report.deleted).toContain(superseded);
+    expect(await creation).not.toBe('created');
+    expect(await count(migrator, sql`select count(*) from briefs where passages_index = ${superseded}`)).toBe(0);
   }, 180_000);
 });

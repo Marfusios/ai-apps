@@ -224,7 +224,7 @@ function sendRejection(reply: FastifyReply, r: Rejection, now: Date): FastifyRep
 
 const RESULT_REF = /^brief-step:([0-9a-f-]{36})$/;
 
-/** A new brief's evidence went away while the request was admitted (server/db/generations.ts, `claimBriefEvidence`). */
+/** A new brief's evidence went away while the request was admitted, or a deletion of it is in progress (server/db/generations.ts, `claimBriefEvidence`). */
 const EVIDENCE_GONE = Symbol('evidence gone');
 
 /** The response for a step: its static reply when it ended with one, otherwise its stage. */
@@ -576,8 +576,8 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
     try {
       created = await stepTransaction(ctx, payer, async (tx) => {
         // The evidence was resolved before admission: it must still exist, checked under the
-        // lock that pruning and index cleanup wait for (server/db/generations.ts).
-        if (!(await claimBriefEvidence(tx, r.evidence))) return EVIDENCE_GONE;
+        // lock that pruning and index cleanup hold while they delete (server/db/generations.ts).
+        if ((await claimBriefEvidence(tx, r.evidence)) !== 'ok') return EVIDENCE_GONE;
         const now = r.ai.now();
         // The asker reads the brief and pays for its first step: the account, or the trial.
         const brief = await insertBrief(tx, {

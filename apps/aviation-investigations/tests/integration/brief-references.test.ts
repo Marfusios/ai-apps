@@ -2,8 +2,8 @@
  * Creating a brief and pruning the generation it cites (Task 22 fix round 2, gate finding 4):
  * a request resolves its evidence before admission and can pause across publications and
  * pruning. The brief is inserted holding the brief-references lock shared after checking the
- * evidence still exists (`claimBriefEvidence`); pruning waits for every insert in progress
- * before it reads which generations unexpired briefs cite (`waitForBriefInserts`).
+ * evidence still exists (`claimBriefEvidence`); pruning holds the lock exclusively, per
+ * generation, from its last check of the briefs that cite it until the deletion commits.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -65,7 +65,37 @@ async function waitForReferenceWaiter(): Promise<void> {
   throw new Error('no session waits for the brief-references lock');
 }
 
+/** POST /api/briefs's transaction, reduced to the claim and the insert; what the claim said. */
+async function createBrief(g: number): Promise<string> {
+  return app.transaction(async (tx) => {
+    const claim = await claimBriefEvidence(tx, { generationId: g, passagesIndex: passages(g) });
+    if (claim !== 'ok') return claim;
+    await tx.execute(insertBriefRow(g));
+    return 'created';
+  });
+}
+
+/** Give `p` up to `ms` to settle, without waiting longer or failing. */
+const settledWithin = (p: Promise<unknown>, ms: number) => Promise.race([p.catch(() => undefined), new Promise((r) => setTimeout(r, ms))]);
+
 describe('a brief being created while its generation is pruned', () => {
+  it('a brief created between pruning’s last check and the deletion never cites the deleted generation', async () => {
+    const [g1, g2, g3] = [await verified(), await verified(), await verified()];
+    for (const g of [g1, g2, g3]) await publish(g);
+    let creation: Promise<string> | undefined;
+    const report = await pruneGenerations(ingest, {
+      beforePrune: async (id) => {
+        if (id !== g1) return;
+        // A request whose evidence (g1, resolved while it was active) arrives now.
+        creation = createBrief(g1);
+        await settledWithin(creation, 300);
+      },
+    });
+    expect(report.deleted).toEqual([g1]);
+    expect(await creation).not.toBe('created');
+    expect(await count(migrator, sql`select count(*) from briefs b where not exists (select 1 from dataset_generations g where g.id = b.generation_id)`)).toBe(0);
+  });
+
   it('pruning waits for the insert, then keeps the generation the new brief cites', async () => {
     const [g1, g2, g3] = [await verified(), await verified(), await verified()];
     await publish(g1);
@@ -74,7 +104,7 @@ describe('a brief being created while its generation is pruned', () => {
     let committed = false;
     try {
       await creator.query('BEGIN');
-      expect(await claimBriefEvidence(drizzle({ client: creator, schema }), { generationId: g1, passagesIndex: passages(g1) })).toBe(true);
+      expect(await claimBriefEvidence(drizzle({ client: creator, schema }), { generationId: g1, passagesIndex: passages(g1) })).toBe('ok');
       await drizzle({ client: creator }).execute(insertBriefRow(g1));
       // Meanwhile two publications leave g1 outside the two most recent: a pruning candidate.
       await publish(g2);
@@ -101,10 +131,10 @@ describe('a brief being created while its generation is pruned', () => {
     await publish(g3);
     expect((await pruneGenerations(ingest)).deleted).toEqual([g1]); // ... pruned meanwhile
     await app.transaction(async (tx) => {
-      expect(await claimBriefEvidence(tx, evidence)).toBe(false);
+      expect(await claimBriefEvidence(tx, evidence)).toBe('gone');
       // The current generation, retired or active, still takes briefs.
-      expect(await claimBriefEvidence(tx, { generationId: g2, passagesIndex: passages(g2) })).toBe(true);
-      expect(await claimBriefEvidence(tx, { generationId: g3, passagesIndex: passages(g3) })).toBe(true);
+      expect(await claimBriefEvidence(tx, { generationId: g2, passagesIndex: passages(g2) })).toBe('ok');
+      expect(await claimBriefEvidence(tx, { generationId: g3, passagesIndex: passages(g3) })).toBe('ok');
     });
   });
 
@@ -116,12 +146,12 @@ describe('a brief being created while its generation is pruned', () => {
         insert into index_builds (build_id, index_name, alias, generation_id, deleted_at)
         values (${buildId}, ${name}, 'aviation-test-refs', ${g}, ${deleted ? sql`now()` : sql`null`})`);
     await record('refkept', passages(g), false);
-    await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: passages(g) })).toBe(true));
+    await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: passages(g) })).toBe('ok'));
     // An index cleanup deleted (recorded as deleted): the pair's cases index ...
     await record('refcases', `aviation-test-refs-cases-${g}`, true);
-    await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: passages(g) })).toBe(false));
+    await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: passages(g) })).toBe('gone'));
     // ... or another passages index of the generation.
     await record('refold', `aviation-test-refs-old-${g}`, true);
-    await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: `aviation-test-refs-old-${g}` })).toBe(false));
+    await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: `aviation-test-refs-old-${g}` })).toBe('gone'));
   });
 });

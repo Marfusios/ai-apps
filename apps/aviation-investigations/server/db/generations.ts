@@ -24,10 +24,10 @@ export const LIFECYCLE_LOCK_KEY = 7_311_905_022;
 /**
  * Advisory lock between creating a brief and deleting what briefs cite (Task 22 fix round 2,
  * gate finding 4). A brief is inserted holding it shared (`claimBriefEvidence`), so briefs
- * are created concurrently; pruning and index cleanup take it exclusively for an instant
- * (`waitForBriefInserts`), while they hold the lifecycle lock, before they read which
- * generations and indices unexpired briefs use. A brief therefore either commits before that
- * read, and is seen, or claims afterwards, and sees what the deletion removed.
+ * are created concurrently. Pruning and index cleanup hold it exclusively, in one
+ * transaction per generation or index, from their last check of what unexpired briefs use
+ * until the deletion is committed (or recorded). A brief therefore either commits first and
+ * is seen by that check, or claims afterwards and finds what the deletion removed.
  */
 export const BRIEF_REFERENCES_LOCK_KEY = 7_311_905_025;
 
@@ -37,32 +37,39 @@ export interface BriefEvidence {
 }
 
 /**
+ * `ok`: the brief may be inserted. `gone`: its generation was pruned, or its passages index or
+ * the cases index of its pair was deleted. `busy`: a pruning or cleanup step held the lock
+ * longer than the claim waits. Only `ok` lets the caller create the brief.
+ */
+export type BriefClaim = 'ok' | 'gone' | 'busy';
+
+/**
  * In the transaction that inserts a brief, before the insert: take the brief-references lock
  * shared (it lasts until the transaction ends) and confirm the evidence still exists. The
  * evidence was resolved before admission, and a request can pause across publications and
- * pruning: false when the generation has no manifest row any more (pruned), or when its
- * passages index, or the cases index that pair was published with, was deleted (recorded in
- * `index_builds`). Then the caller creates no brief.
+ * pruning. The lock is tried for up to `waitMs` (default 2 s, the transaction's lock bound),
+ * so a long deletion makes the request `busy` rather than failing its transaction; a deleted
+ * index is the one `index_builds` records as deleted.
  */
-export async function claimBriefEvidence(tx: DbOrTx | NodePgDatabase<Schema>, evidence: BriefEvidence): Promise<boolean> {
-  await tx.execute(sql`SELECT pg_advisory_xact_lock_shared(${BRIEF_REFERENCES_LOCK_KEY})`);
+export async function claimBriefEvidence(
+  tx: DbOrTx | NodePgDatabase<Schema>,
+  evidence: BriefEvidence,
+  opts: { waitMs?: number } = {},
+): Promise<BriefClaim> {
+  const deadline = Date.now() + (opts.waitMs ?? 2_000);
+  for (;;) {
+    const locked = await tx.execute(sql`SELECT pg_try_advisory_xact_lock_shared(${BRIEF_REFERENCES_LOCK_KEY}) AS ok`);
+    if ((locked.rows[0] as { ok?: boolean } | undefined)?.ok === true) break;
+    if (Date.now() >= deadline) return 'busy';
+    await new Promise((r) => setTimeout(r, 25));
+  }
   const res = await tx.execute(sql`
     SELECT EXISTS (SELECT 1 FROM dataset_manifests WHERE generation_id = ${evidence.generationId})
       AND NOT EXISTS (SELECT 1 FROM index_builds WHERE index_name = ${evidence.passagesIndex} AND deleted_at IS NOT NULL)
       AND NOT EXISTS (
         SELECT 1 FROM manifest_pairings p JOIN index_builds b ON b.index_name = p.cases_index AND b.deleted_at IS NOT NULL
         WHERE p.generation_id = ${evidence.generationId} AND p.passages_index = ${evidence.passagesIndex}) AS ok`);
-  return (res.rows[0] as { ok: boolean } | undefined)?.ok === true;
-}
-
-/**
- * Wait until every brief insert in progress has committed or rolled back (an exclusive
- * acquisition of the brief-references lock, released again at once). Call it holding the
- * lifecycle lock, right before reading which generations or indices unexpired briefs use.
- */
-export async function waitForBriefInserts(q: DbOrTx | NodePgDatabase<Schema>): Promise<void> {
-  await q.execute(sql`SELECT pg_advisory_lock(${BRIEF_REFERENCES_LOCK_KEY})`);
-  await q.execute(sql`SELECT pg_advisory_unlock(${BRIEF_REFERENCES_LOCK_KEY})`);
+  return (res.rows[0] as { ok: boolean } | undefined)?.ok === true ? 'ok' : 'gone';
 }
 
 /**
@@ -234,6 +241,8 @@ export interface PruneOptions {
   dryRun?: boolean;
   /** Test seam: runs under the lifecycle lock after planning, before any deletion. */
   afterPlan?: (candidates: number[]) => Promise<void> | void;
+  /** Test seam: runs for each candidate about to be deleted, after its last check, before `prune_generation`, holding the brief-references lock. */
+  beforePrune?: (generationId: number) => Promise<void> | void;
 }
 
 export interface PruneReport {
@@ -265,9 +274,7 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
   const graceHours = opts.graceHours ?? 24;
   if (!Number.isInteger(keep) || keep < 1) throw new Error('keep must be a positive integer');
   if (!(graceHours >= 0)) throw new Error('graceHours must be zero or positive');
-  return withLifecycleLock(db, async (q) => {
-    // Briefs being created now finish first, so the planning below sees them (gate finding 4).
-    await waitForBriefInserts(q);
+  return withLifecycleLock(db, async (q, client) => {
     const generations = await call(
       q,
       sql`select g.id::int as id, g.status, m.published_at is not null as was_published, coalesce(m.active, false) as active,
@@ -296,11 +303,29 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
         skippedPinned.push(c.id);
         continue;
       }
-      if (c.cited) {
-        skippedLiveBriefs.push(c.id);
+      if (opts.dryRun === true) {
+        (c.cited ? skippedLiveBriefs : deleted).push(c.id);
         continue;
       }
-      if (opts.dryRun !== true) await call(q, sql`select prune_generation(${c.id})`);
+      // One transaction holds the brief-references lock from the last check of the briefs that
+      // cite this generation to the commit of its deletion: a brief claiming it meanwhile
+      // waits, then finds it gone; one that committed first is seen here (gate finding 4).
+      await client.query('BEGIN');
+      try {
+        await client.query('SELECT pg_advisory_xact_lock($1)', [BRIEF_REFERENCES_LOCK_KEY]);
+        const cited = await client.query('SELECT 1 FROM generations_cited_by_live_briefs() AS g WHERE g = $1', [c.id]);
+        if ((cited.rowCount ?? 0) > 0) {
+          await client.query('COMMIT');
+          skippedLiveBriefs.push(c.id);
+          continue;
+        }
+        await opts.beforePrune?.(c.id);
+        await client.query('SELECT prune_generation($1)', [c.id]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw lifecycleError(err);
+      }
       deleted.push(c.id);
     }
     return { retained, deleted, skippedPinned, skippedLiveBriefs };

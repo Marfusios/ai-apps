@@ -200,6 +200,8 @@ export interface DeleteUnusedOptions {
   aliases?: string[];
   /** Test seam: runs after candidates are chosen, before any lock is taken. */
   afterSelect?: (indexNames: string[]) => Promise<void> | void;
+  /** Test seam: runs for each index about to be deleted, after its last check, before Elasticsearch deletes it, holding the brief-references lock. */
+  beforeDelete?: (indexName: string) => Promise<void> | void;
 }
 
 export interface DeleteUnusedReport {
@@ -273,28 +275,34 @@ export async function deleteUnusedIndices(es: Client, db: Db, opts: DeleteUnused
       withAliasLock(db, c.alias, async (client) => {
         await client.query('select pg_advisory_lock($1)', [LIFECYCLE_LOCK_KEY]);
         try {
-          // Briefs being created now finish first, so the check below sees them (gate finding 4).
-          await client.query('select pg_advisory_lock($1)', [BRIEF_REFERENCES_LOCK_KEY]);
-          await client.query('select pg_advisory_unlock($1)', [BRIEF_REFERENCES_LOCK_KEY]);
-          const why = await refusal(es, client, c.build_id, seconds);
-          if (why === 'missing') {
-            report.missing.push(c.index_name);
-            if (opts.yes) await client.query('update index_builds set deleted_at = now() where build_id = $1 and deleted_at is null', [c.build_id]);
-            return;
+          // One transaction holds the brief-references lock from the check of what unexpired
+          // briefs use until the deletion is recorded in index_builds: a brief claiming this
+          // index meanwhile waits, then finds it deleted; one that committed first is seen by
+          // the check (gate finding 4). A failed deletion rolls the record back.
+          await client.query('BEGIN');
+          try {
+            await client.query('select pg_advisory_xact_lock($1)', [BRIEF_REFERENCES_LOCK_KEY]);
+            const why = await refusal(es, client, c.build_id, seconds);
+            if (why === 'missing') {
+              report.missing.push(c.index_name);
+              if (opts.yes) await client.query('update index_builds set deleted_at = now() where build_id = $1 and deleted_at is null', [c.build_id]);
+            } else if (why !== null) {
+              report.refused.push({ indexName: c.index_name, reason: why });
+            } else if (!opts.yes) {
+              report.wouldDelete.push(c.index_name);
+            } else {
+              await opts.beforeDelete?.(c.index_name);
+              await es.indices.delete({ index: c.index_name }).catch((e: unknown) => {
+                if (statusOf(e) !== 404) throw e;
+              });
+              await client.query('update index_builds set deleted_at = now() where build_id = $1 and deleted_at is null', [c.build_id]);
+              report.deleted.push(c.index_name);
+            }
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw err;
           }
-          if (why !== null) {
-            report.refused.push({ indexName: c.index_name, reason: why });
-            return;
-          }
-          if (!opts.yes) {
-            report.wouldDelete.push(c.index_name);
-            return;
-          }
-          await es.indices.delete({ index: c.index_name }).catch((e: unknown) => {
-            if (statusOf(e) !== 404) throw e;
-          });
-          await client.query('update index_builds set deleted_at = now() where build_id = $1 and deleted_at is null', [c.build_id]);
-          report.deleted.push(c.index_name);
         } finally {
           await client.query('select pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]);
         }
