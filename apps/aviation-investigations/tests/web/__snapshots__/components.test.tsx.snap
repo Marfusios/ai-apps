@@ -45,6 +45,8 @@ exports[`print > print stylesheet hides graticule 1`] = `
     --placard-border: none;
     --placard-highlight: none;
     --placard-pad: 0;
+    --mark-tile: #1F519A;
+    --mark-glyph: #F3EEE1;
   }
 
   html,

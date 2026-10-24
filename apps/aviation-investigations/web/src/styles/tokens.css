@@ -27,6 +27,11 @@
   --tray: #1E2A36;
   --placard: transparent;
 
+  /* The AirCase mark (§2.5): the folder and the aircraft it carries. The icons and the share card
+     are drawn in these day values (scripts/build-brand-assets.ts). */
+  --mark-tile: #1F519A;
+  --mark-glyph: #F3EEE1;
+
   /* Derived from the approved mockups (Builder). */
   --rule: rgba(30, 42, 54, .30);
   --caution-edge: rgba(30, 42, 54, .45);
@@ -83,6 +88,10 @@
   --grid: transparent;
   --tray: #111214;
   --placard: #0E0F11;
+
+  /* The mark at night: a brighter folder and a near-white aircraft. */
+  --mark-tile: #2A5FAF;
+  --mark-glyph: #EDEDEA;
 
   /* Derived from the approved mockups (Builder). */
   --rule: rgba(237, 237, 234, .28);

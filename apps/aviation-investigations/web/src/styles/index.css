@@ -79,6 +79,8 @@
   --color-tray-ink: var(--tray-ink);
   --color-tray-accent: var(--tray-accent);
   --color-placard: var(--placard);
+  --color-mark-tile: var(--mark-tile);
+  --color-mark-glyph: var(--mark-glyph);
   --color-rule: var(--rule);
   --color-caution-edge: var(--caution-edge);
   --color-shade: var(--shade);
