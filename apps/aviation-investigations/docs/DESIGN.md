@@ -766,8 +766,10 @@ another user's result. Comparisons, future exports, and ingestion/evaluation job
 must use the same cost gate.
 
 Settle actual usage and release unused reservations. If a paid call has no reliable
-usage result, settle its reservation at the full maximum, marked uncertain; never
-automatically refund it on timeout or lease expiry. Operator reconciliation against
+usage result, charge that call at its own worst case (its stage's hard caps, §9
+"Uncertain calls"), marked uncertain, and the full reservation when no call can be named
+(lease expiry, a failure outside the stages); never automatically refund it on timeout or
+lease expiry. Operator reconciliation against
 the dedicated provider project's billing can correct verified over-reservations
 or reduce remaining headroom when observed spend is higher. Aggregate billing
 does not prove an individual request was free. Provider organization/admin billing
@@ -779,8 +781,9 @@ deadline of 100 seconds (`PIPELINE_DEADLINE_MS`: the sum of the stage timeouts, 
 retrieval 8, answer 35 and check 45 seconds, plus 2 seconds of margin, so the check always
 gets its full timeout after slow earlier stages; Task 16c's 90 seconds were less than that
 sum), per-stage timeouts within it (each cut to what is left), and a longer lease TTL
-(120 seconds; a running step is stale after 150). A call that runs out of time settles
-uncertain and is charged its whole reservation, because the provider may still bill it.
+(120 seconds; a running step is stale after 150). A call that runs out of time is
+charged at its own worst case, marked uncertain, because the provider may still bill it
+(§9 "Uncertain calls"; until Task 22 the whole reservation).
 The check timeout is the one the calibration ran with (Task 16d gate condition 4); since
 Task 16e it is derived from the measured latency (1.25 times the slowest development call,
 within 30 to 45 seconds), which kept 45 seconds (§12).
@@ -957,6 +960,50 @@ configured reservation, or if any reachable model's pricing is unknown. A
 per-stage check is not enough. Low output caps can truncate verification; measure abstention and
 truncation rather than treating them as good quality.
 
+### Uncertain calls
+
+A call whose usage is not known may still be billed: the reader cancelled it, its stage
+timed out, a server shutdown aborted it, the provider answered 5xx or the connection
+broke, an error the adapter could not classify came after the request was sent, or a
+query embedding came back without a usable usage report. It is charged at **its own worst
+case**, as one ledger line marked uncertain: its stage's hard caps at its model's price
+(the input cap at the input rate, the output cap, thinking included, at the output rate,
+and the cache-write premium on the 6,500-token cached prefix; the query embedding at its
+1,000-token cap). No bill for the call can exceed that: the stage counted its exact input
+with the provider's counter under the input cap before sending it, `max_tokens` is the
+output cap, only the frozen system prefix is cached, and a stage makes one call with no
+retries. What the other stages reported stays itemized. Uncertain lines never take the
+charge past the reservation; where they would, they are cut to what it leaves and the
+reservation is charged in full. The whole reservation is charged only when no call can be
+named: a lease that expires (the process died or the settlement failed) and a step that
+failed outside its stages. A reservation charged in full for uncertainty is marked
+`uncertain` (migration 0009 holds it to at least its amount); one charged less is not, and
+carries its uncertain lines instead.
+
+| Call of unknown usage | Charged (Opus answer, Haiku scope and check) |
+| --- | --- |
+| Scope | $0.0011125 |
+| Query embedding | $0.00002 |
+| Answer | $0.3385 |
+| Check | $0.0164125 |
+
+A cancelled or timed-out check therefore costs what the step had spent plus $0.0164
+(about $0.12 in all, close to a finished brief) instead of the $0.36 reservation, and a
+cancel during the answer stage about $0.34. Until Task 22 every such call was charged the
+whole reservation: a cancel cost the shared allowance 3.3 times a finished brief, and nine
+cancels from one account paused AI for everyone for the day (the review's finding I1).
+
+**Per principal.** A cancel during the answer stage still costs about three finished
+briefs. So a principal (a trial or an account) whose uncertain lines of the current UTC
+day add up to one reservation (`UNCERTAIN_DAILY_RESERVATIONS`, $0.36 with the Opus answer
+model) is refused further AI requests until 00:00 UTC: admission answers `uncertain_limit`,
+the API 429 `quota_exhausted` with `Retry-After`, nothing reserved and no search taken.
+That allows at most two answer-stage cancels or timeouts a day (about $0.68, the cost of
+six finished briefs) and some thirty check-stage ones. Lease expiry is left out (it
+follows a server failure, not a request's outcome) but still counts in full against the
+budgets. Many principals can still spend the allowance together, with or without cancels:
+that is the accepted exhaustion risk (SECURITY_REVIEW F4).
+
 ### Anthropic call settings
 
 - Construct the client with `maxRetries: 0` and a per-request `timeout` (in
@@ -1002,8 +1049,8 @@ rule, the shipped budgets and the shipped reservations):
 
 The anonymous column applies the same rule to the 25% anonymous share of the allowance.
 These are budget capacity, not concurrency (see the reservation table above), and none
-is a guaranteed allocation: abuse, uncertain settlements (charged at the whole
-reservation) and unresolved reservations reduce them. The typical costs are estimates
+is a guaranteed allocation: abuse, uncertain calls (each charged at its own worst case,
+see [Uncertain calls](#uncertain-calls)) and unresolved reservations reduce them. The typical costs are estimates
 from measured request sizes; the paid runs' settled usage replaces them.
 
 **Capacity trade-off** (the owner's decision after the paid run): the Opus answer
@@ -1017,8 +1064,8 @@ share would also raise them, at the cost of truncated answers or of signed-in ca
 The anonymous share and daily caps stay as they are. Opus 5.5 stays the default answer
 model; the owner picks the production model from the evaluation results (§12).
 
-Compute remaining money after subtracting settled charges and the full amount of
-all unsettled or uncertain reservations. Pacing must never make those funds
+Compute remaining money after subtracting settled charges (uncertain calls at their
+worst case) and the full amount of all unsettled or expired reservations. Pacing must never make those funds
 available again merely because a request or lease expired.
 
 The provisional corpus has approximately 31.9 million tokens before deduplication

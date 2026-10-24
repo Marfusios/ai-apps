@@ -4,9 +4,18 @@
  *
  * - Settling needs the reservation's fencing token and an open, unexpired lease. It
  *   writes the reported usage to the ledger and releases the rest of the reservation.
- * - Usage that is uncertain (no reliable usage report, timeout, abort) settles at the
- *   full reservation, marked uncertain. Known lines are kept and the remainder up to
- *   the reservation is charged as one uncertain line.
+ * - A call whose usage is not known (no reliable usage report, a timeout, an abort) is
+ *   one line marked uncertain, charged at that call's own worst case (`SpendLine.uncertain`;
+ *   DESIGN §9, "Uncertain calls"): its stage's maximum at its hard caps, which no bill
+ *   for the call can exceed. Uncertain lines together never take the charge past the
+ *   reservation; where they would, they are cut to what the reservation leaves and the
+ *   reservation is charged in full.
+ * - Usage that is uncertain as a whole (`'uncertain'`, or `uncertain: true` with known
+ *   lines: the caller cannot tell which call it was) settles at the full reservation:
+ *   known lines are kept and the remainder up to the reservation is one uncertain line.
+ * - A reservation charged in full because of uncertainty is marked `uncertain` (migration
+ *   0009 holds such a reservation to at least its amount). One charged less, with
+ *   uncertain lines at their worst cases, is not; its uncertain lines are.
  * - A lease that expires first is charged the full reservation (`expired_charged`) and
  *   never refunded; a late settlement is refused. Expiry frees the concurrency slot.
  */
@@ -26,17 +35,24 @@ export interface SpendLine {
   stage?: string;
   /** Token counts by kind; no content. */
   tokens?: Readonly<Record<string, number>>;
+  /**
+   * The call's usage is not known: `usd` is its own worst case (the stage's maximum at its
+   * hard caps, DESIGN §9), charged as an uncertain line.
+   */
+  uncertain?: boolean;
 }
 
 /**
  * What a reservation is charged: a USD amount, `'uncertain'` (the full reservation),
- * or itemized lines, optionally marked uncertain (lines plus the rest of the reservation).
+ * or itemized lines (an uncertain line at its call's worst case), optionally marked
+ * uncertain as a whole (the lines plus the rest of the reservation).
  */
 export type SpendUsage = number | 'uncertain' | { readonly lines: readonly SpendLine[]; readonly uncertain?: boolean };
 
 export type SettleRefusal = 'stale_token' | 'not_open' | 'lease_expired';
 
 export type SettleResult =
+  /** `uncertain`: some of the charge is for usage that is not known (uncertain lines, or the full reservation). */
   | { ok: true; chargedUsd: number; uncertain: boolean }
   | {
       ok: false;
@@ -101,18 +117,24 @@ function validTokens(tokens: SpendLine['tokens']): Record<string, number> | null
   return out;
 }
 
-function ledgerLines(usage: SpendUsage, row: ReservationRow): { lines: LedgerLine[]; uncertain: boolean } {
+/**
+ * The ledger lines of a settlement, and whether it is charged in full because of
+ * uncertainty (`full`, the reservation's `uncertain` column) or carries any uncertain
+ * line (`uncertain`, the result's).
+ */
+function ledgerLines(usage: SpendUsage, row: ReservationRow): { lines: LedgerLine[]; uncertain: boolean; full: boolean } {
   const defaultStage = row.stage ?? 'request';
+  const reservation = Number(row.usd_micros);
   let lines: LedgerLine[];
-  let uncertain: boolean;
+  let remainder: boolean;
   if (usage === 'uncertain') {
     lines = [];
-    uncertain = true;
+    remainder = true;
   } else if (typeof usage === 'number') {
     lines = [
       { micros: toMicros(usage), provider: row.provider, model: row.model, stage: defaultStage, tokens: null, uncertain: false },
     ];
-    uncertain = false;
+    remainder = false;
   } else {
     if (usage.lines.length > MAX_LINES) throw new QuotaInputError(`At most ${MAX_LINES} lines per settlement`);
     lines = usage.lines.map((l) => {
@@ -124,15 +146,27 @@ function ledgerLines(usage: SpendUsage, row: ReservationRow): { lines: LedgerLin
         model: label(l.model, row.model, 100),
         stage,
         tokens: validTokens(l.tokens),
-        uncertain: false,
+        uncertain: l.uncertain === true,
       };
     });
-    uncertain = usage.uncertain === true;
+    remainder = usage.uncertain === true;
   }
-  if (uncertain) {
-    const known = lines.reduce((s, l) => s + l.micros, 0);
+  // Uncertain lines (each at its call's worst case) never take the charge past the
+  // reservation: in order, each is cut to what the known lines and those before it leave.
+  let room = Math.max(0, reservation - lines.reduce((s, l) => s + (l.uncertain ? 0 : l.micros), 0));
+  let cut = false;
+  for (const l of lines) {
+    if (!l.uncertain) continue;
+    if (l.micros > room) {
+      l.micros = room;
+      cut = true;
+    }
+    room -= l.micros;
+  }
+  if (remainder) {
+    const charged = lines.reduce((s, l) => s + l.micros, 0);
     lines.push({
-      micros: Math.max(0, Number(row.usd_micros) - known),
+      micros: Math.max(0, reservation - charged),
       provider: row.provider,
       model: row.model,
       stage: 'uncertain',
@@ -142,7 +176,7 @@ function ledgerLines(usage: SpendUsage, row: ReservationRow): { lines: LedgerLin
   } else if (lines.length === 0) {
     lines.push({ micros: 0, provider: row.provider, model: row.model, stage: defaultStage, tokens: null, uncertain: false });
   }
-  return { lines, uncertain };
+  return { lines, uncertain: lines.some((l) => l.uncertain), full: remainder || cut };
 }
 
 async function lockReservation(tx: DbOrTx, id: number): Promise<ReservationRow> {
@@ -157,7 +191,10 @@ async function lockReservation(tx: DbOrTx, id: number): Promise<ReservationRow> 
   return row;
 }
 
-/** Close an open reservation with these ledger lines and release its lease. */
+/**
+ * Close an open reservation with these ledger lines and release its lease. `uncertain`:
+ * charged in full because of uncertainty (the reservation's column).
+ */
 async function close(
   tx: DbOrTx,
   row: ReservationRow,
@@ -217,8 +254,8 @@ export async function settleReservation(
         );
         return { ok: false, reason: 'lease_expired', status: 'expired_charged', chargedUsd: microsToUsd(charged) };
       }
-      const { lines, uncertain } = ledgerLines(usage, row);
-      const charged = await close(tx, row, 'settled', lines, uncertain, now);
+      const { lines, uncertain, full } = ledgerLines(usage, row);
+      const charged = await close(tx, row, 'settled', lines, full, now);
       return { ok: true, chargedUsd: microsToUsd(charged), uncertain };
     });
   } catch (err) {

@@ -186,14 +186,25 @@ export function stageWorstCaseUsd(
   return (caps.input * rates.input + caps.output * rates.output + prefix * premium) / PER_MILLION;
 }
 
+/**
+ * Worst-case cost of the query embedding: its input cap (`STAGE_CAPS.embed`) at `model`'s
+ * price or, when the model is not known, at the highest embedding price in the table.
+ */
+export function embeddingWorstCaseUsd(model?: string): number {
+  const price =
+    model !== undefined
+      ? embeddingPrice(model).input
+      : Math.max(...Object.values(PRICE_TABLE).flatMap((r) => (r.kind === 'embedding' ? [r.input] : [])));
+  return (STAGE_CAPS.embed.input * price) / PER_MILLION;
+}
+
 /** Sum over all stages of one request at its hard caps (DESIGN §9). */
 export function worstCaseRequestUsd(models: RequestModels): number {
-  const embed = embeddingPrice(models.embed ?? DEFAULT_EMBEDDING_MODEL);
   return (
     stageWorstCaseUsd(models.scope, STAGE_CAPS.scope) +
     stageWorstCaseUsd(models.answer, STAGE_CAPS.answer) +
     stageWorstCaseUsd(models.check, STAGE_CAPS.check) +
-    (STAGE_CAPS.embed.input * embed.input) / PER_MILLION
+    embeddingWorstCaseUsd(models.embed ?? DEFAULT_EMBEDDING_MODEL)
   );
 }
 

@@ -201,6 +201,7 @@ function sendRejection(reply: FastifyReply, r: Rejection, now: Date): FastifyRep
       return sendError(reply, 429, 'trial_used');
     case 'daily_cap':
     case 'monthly_cap':
+    case 'uncertain_limit':
       return retry(429, 'quota_exhausted');
     case 'anonymous_share_exhausted':
       return retry(429, 'free_searches_paused');

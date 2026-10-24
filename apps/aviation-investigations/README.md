@@ -1421,15 +1421,19 @@ retention are in migrations 0008 and 0009.
   and 150 a month, 5 a day during their first 3 days. Attempts are limited to 2 a
   minute anonymously and 5 signed in, and per network identity and class to 10 an
   hour and 20 a day anonymously, 30 an hour and 100 a day signed in. One request per
-  principal, two in total and one anonymous request can be in flight.
+  principal, two in total and one anonymous request can be in flight. A principal whose
+  calls of unknown usage today (cancelled or timed out mid-call, each charged at its own
+  worst case) add up to one reservation is refused until 00:00 UTC (429
+  `quota_exhausted`; DESIGN §9, "Uncertain calls").
 - **Quota units.** The unit is taken at admission, so concurrent requests can never
   both use the last trial search. `releaseQuota` gives it back for a reply that must
   not count (off-topic, operational, nothing spent); the attempt still counts.
   `recordAttempt` counts an attempt that makes no paid call.
 - **Settlement.** `settle` (interactive) and `settleSpend` (indexing, evaluation) need
   the reservation's fencing token and a live lease. They charge the reported usage,
-  optionally itemized by provider, model, stage and token counts, or the full
-  reservation when the usage is uncertain. A lease that runs out first is charged in
+  optionally itemized by provider, model, stage and token counts. A call whose usage is
+  not known is an uncertain line at its own worst case (never past the reservation);
+  usage uncertain as a whole is the full reservation. A lease that runs out first is charged in
   full and never refunded (`expireLeases` sweeps; a late settlement is refused). Expiry
   frees the concurrency slot, not the money.
 - **Budgets.** Spend is the append-only `cost_ledger` plus the full amount of every
@@ -1631,8 +1635,10 @@ sent the step on to search, the readings and filters it settled on
 (`checklist.interpretation`: chips rendered from the stored intent with the server's
 templates, and the validated filters, the same as the finished result's; a cancelled or
 failed step keeps them, a static reply has none). Each stage's usage is settled
-as itemized ledger lines with one request id; a call without reliable usage (timeout,
-abort) settles the full reservation as uncertain. Scope replies (settled before they
+as itemized ledger lines with one request id; a call without reliable usage (a timeout,
+a cancel, a shutdown, a provider 5xx) is charged at its own stage's worst case, as an
+uncertain line (DESIGN §9, "Uncertain calls"); only a step that fails outside its stages
+settles the full reservation. Scope replies (settled before they
 are sent), empty results and failures before any spend give the free search back;
 withheld summaries, abstentions, cancellations and failures after spending keep it.
 A step still running 150 s after it started has lost its process: it reads as failed,
@@ -1680,8 +1686,8 @@ embedder):
   that fits) remains as a fallback.
 - The query embedding is settled exactly once, from retrieval's `onQueryEmbedding`
   callback, which runs before any search: an Elasticsearch, packing or provenance
-  failure afterwards keeps that one `embed` line, and `billing: uncertain` settles
-  the step at its full reservation. A failed embedding is settled by its
+  failure afterwards keeps that one `embed` line, and `billing: uncertain` charges the
+  embedding at its 1,000-token cap as an uncertain line. A failed embedding is settled by its
   `QueryEmbeddingError` billing (`none`, the billed `usage`, or `uncertain`); an
   embedding aborted mid-request (cancel or deadline) is `uncertain`. A usage callback
   arriving after `retrieve` returned or threw is ignored.

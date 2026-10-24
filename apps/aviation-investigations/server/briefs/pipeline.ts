@@ -35,8 +35,12 @@
  *    withholds the summary. A contradicted "do not settle" claim is recorded as
  *    `chronology_missed`. A check input over the checker's cap withholds the summary with
  *    the cap failure in the step's `meta`; the evidence is never cut to fit.
- * 5. **Settle**: itemized ledger lines per stage; any call without reliable usage makes
- *    the settlement uncertain, charging the full reservation (Task 15).
+ * 5. **Settle**: itemized ledger lines per stage. A call whose usage is not known (an
+ *    abort, a timeout, a lost usage report, a failure the provider may still have billed)
+ *    is charged at its own stage's worst case at its hard caps, as an uncertain line
+ *    (DESIGN §9, "Uncertain calls"; gate 22): a cancelled check costs the check's worst
+ *    case, not the whole reservation. Only when no stage can be named (the step failed
+ *    outside its stages) is the full reservation charged.
  *
  * Every stage enforces its own complete-input cap with the provider's counter (the
  * provider counts the exact request before sending and refuses above the cap, unbilled):
@@ -69,9 +73,10 @@
  */
 import { BriefResultSchema, type BriefResult, type Checklist, type ComposeOutput, type ScopeReply, type WithheldReason } from '../../shared/contracts/briefs.js';
 import type { Db } from '../db/client.js';
-import { stageCostUsd, STAGE_CAPS } from '../ai/pricing.js';
+import { embeddingWorstCaseUsd, stageCostUsd, stageWorstCaseUsd, STAGE_CAPS } from '../ai/pricing.js';
 import { COMPOSE_PROMPT_VERSION } from '../ai/prompts/compose.v8.js';
 import {
+  STAGE_ROLE,
   StageError,
   stageCtx,
   type LlmProvider,
@@ -129,9 +134,9 @@ export interface StageTimeouts {
 /**
  * The check stage's timeout is the calibrated checker's (Haiku 5.5 with adaptive thinking,
  * evals/checker; Task 16d measures it at the maximum claim count, `MAX_CHECK_CLAIMS`). A
- * check that runs out of time withholds the summary, like any failed check, and settles
- * as `uncertain`: the whole reservation is charged. The stage timeouts add up to at most
- * the step's deadline (`PIPELINE_DEADLINE_MS`).
+ * check that runs out of time withholds the summary, like any failed check, and its call
+ * is charged at the check's worst case (an uncertain line). The stage timeouts add up to
+ * at most the step's deadline (`PIPELINE_DEADLINE_MS`).
  */
 export const STAGE_TIMEOUTS: Readonly<StageTimeouts> = Object.freeze({
   scope: 10_000,
@@ -340,7 +345,7 @@ export async function runBriefStep(deps: BriefDeps, stepId: string, admission: A
     );
   } catch (err) {
     log.warn({ err: { name: (err as Error)?.name } }, 'brief step failed unexpectedly');
-    // Settle conservatively; lease expiry would do the same.
+    // No stage can be named: the full reservation, as lease expiry would charge.
     const settled = await settle(deps.db, admission, 'uncertain', admission.fencingToken, now()).catch(() => null);
     await finishStep(deps.db, stepId, {
       stage: 'failed',
@@ -373,7 +378,13 @@ class Run {
   private readonly signal: AbortSignal;
   private readonly cancel: AbortSignal;
   private readonly lines: SpendLine[] = [];
-  private uncertain = false;
+  /**
+   * Calls whose usage is not known, at most one per stage (each stage makes at most one
+   * paid call): each charged at its own worst case (`chargeUncertain`).
+   */
+  private readonly uncertainCalls = new Map<LlmStage | 'embed', SpendLine>();
+  /** An uncertain call with no price to bound it: the whole reservation is charged. */
+  private uncertainWhole = false;
   private spent = false;
   /** A cancel recorded in the database (another instance, or before the run's controller existed). */
   private cancelled = false;
@@ -440,15 +451,52 @@ class Run {
   }
 
   /**
-   * Record what a failed stage cost: billed usage, nothing, or uncertain. `called`: the
-   * paid call had started, so an error that is not a `StageError` may have been billed.
+   * A paid call whose usage is not known (DESIGN §9, "Uncertain calls"): charged at its
+   * stage's worst case at the hard caps it ran under, which no bill for it can exceed (its
+   * input was counted under the input cap before it was sent, `max_tokens` bounds its
+   * output and thinking, the cached prefix is at most `CACHED_PREFIX_MAX`, and a stage
+   * makes one call with no retries). A model without a price row is charged the rest of
+   * the reservation instead.
+   */
+  private chargeUncertain(stage: LlmStage, model: string, provider: string): void {
+    this.spent = true;
+    let usd: number;
+    try {
+      usd = stageWorstCaseUsd(model, STAGE_CAPS[STAGE_ROLE[stage]]);
+    } catch {
+      this.uncertainWhole = true;
+      return;
+    }
+    this.uncertainCalls.set(stage, { usd, provider, model, stage, uncertain: true });
+  }
+
+  /** The query embedding, its usage not known: charged at its input cap (at the highest embedding price when the model is unknown). */
+  private chargeUncertainEmbedding(model?: string, tokens?: number): void {
+    this.spent = true;
+    let usd: number;
+    try {
+      usd = embeddingWorstCaseUsd(model);
+    } catch {
+      usd = embeddingWorstCaseUsd();
+    }
+    this.uncertainCalls.set('embed', {
+      usd,
+      provider: 'openai',
+      ...(model ? { model } : {}),
+      stage: 'embed',
+      ...(tokens !== undefined ? { tokens: { input: tokens } } : {}),
+      uncertain: true,
+    });
+  }
+
+  /**
+   * Record what a failed stage cost: billed usage, nothing, or its worst case when the
+   * usage is not known. `called`: the paid call had started, so an error that is not a
+   * `StageError` may have been billed.
    */
   private chargeFailure(err: unknown, stage: LlmStage, called: boolean): void {
     if (!(err instanceof StageError)) {
-      if (called) {
-        this.uncertain = true;
-        this.spent = true;
-      }
+      if (called) this.chargeUncertain(stage, this.deps.llm.models[STAGE_ROLE[stage]], this.deps.llm.name);
       return;
     }
     this.meta.promptVersions[stage] = err.promptVersion;
@@ -459,8 +507,7 @@ class Run {
       this.noteThinking(stage, err.billing.usage);
       this.spent = true;
     } else if (err.billing.kind === 'uncertain') {
-      this.uncertain = true;
-      this.spent = true;
+      this.chargeUncertain(stage, err.model, err.provider);
     }
   }
 
@@ -640,9 +687,9 @@ class Run {
               },
               signal,
               (u) => {
-                this.lines.push({ usd: u.usd, provider: u.provider, model: u.model, stage: 'embed', tokens: { input: u.tokens } });
+                if (u.billing === 'uncertain') this.chargeUncertainEmbedding(u.model, u.tokens);
+                else this.lines.push({ usd: u.usd, provider: u.provider, model: u.model, stage: 'embed', tokens: { input: u.tokens } });
                 this.spent = true;
-                if (u.billing === 'uncertain') this.uncertain = true;
               },
             );
             s.setAttrs({ caseCount: out.bundle.cases.length, passageCount: out.bundle.passages });
@@ -656,15 +703,12 @@ class Run {
         retrieved = got.out;
         cases = got.verified;
       } catch (err) {
+        const embedded = this.lines.some((l) => l.stage === 'embed') || this.uncertainCalls.has('embed');
         if (err instanceof RetrievalFailure) {
-          if (err.embedding === 'uncertain') {
-            this.uncertain = true;
-            this.spent = true;
-          }
-        } else if (!(err instanceof BundleIntegrityError) && !this.lines.some((l) => l.stage === 'embed')) {
+          if (err.embedding === 'uncertain' && !embedded) this.chargeUncertainEmbedding();
+        } else if (!(err instanceof BundleIntegrityError) && !embedded) {
           // Retrieval broke without reporting its embedding: it may have been billed.
-          this.uncertain = true;
-          this.spent = true;
+          this.chargeUncertainEmbedding();
         }
         this.meta.timingsMs.retrieve = Math.round(performance.now() - t0);
         if (err instanceof BundleIntegrityError) this.log.warn({ reason: err.reason }, 'brief evidence refused');
@@ -989,8 +1033,9 @@ class Run {
       }
     }
     let chargedUsd: number | null = null;
+    const usage = { lines: [...this.lines, ...this.uncertainCalls.values()], uncertain: this.uncertainWhole };
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const s = await settle(db, this.admission, { lines: this.lines, uncertain: this.uncertain }, this.admission.fencingToken, this.now()).catch(
+      const s = await settle(db, this.admission, usage, this.admission.fencingToken, this.now()).catch(
         (err: unknown) => {
           this.log.warn({ err: { name: (err as Error)?.name } }, 'brief step: settlement failed');
           return null;

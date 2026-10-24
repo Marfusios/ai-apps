@@ -15,7 +15,9 @@
  * 5. Under the spend lock: the monthly and paced daily budgets; then `concurrency` if
  *    the principal already has a request in flight (so a running request never shows
  *    as an exhausted quota); then the principal's quota (trial searches, account
- *    daily/monthly searches), the anonymous share, and the total and anonymous
+ *    daily/monthly searches), its uncertain charges today (`uncertain_limit`: calls of
+ *    unknown usage, each charged at its own worst case, add up to one reservation;
+ *    DESIGN §9, "Uncertain calls"), the anonymous share, and the total and anonymous
  *    in-flight limits (two in total, one anonymous).
  * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
  *    (90 s) with a fencing token. Commit before any provider call.
@@ -48,6 +50,7 @@ import {
   IDEMPOTENCY_TTL_MS,
   QuotaInputError,
   SPEND_LOCK_KEY,
+  UNCERTAIN_DAILY_RESERVATIONS,
   UnknownPrincipalError,
   networkHash,
   principalHash,
@@ -71,7 +74,14 @@ export type RejectionReason =
   /** The caller's `precondition` failed (a signed-in account's session ended): nothing is kept (403). */
   | 'signed_out'
   /** A lock wait timed out; nothing was admitted (fail closed, 503). */
-  | 'busy';
+  | 'busy'
+  /**
+   * The principal's calls of unknown usage today (cancelled or timed out mid-call, each
+   * charged at its own worst case) add up to `UNCERTAIN_DAILY_RESERVATIONS` reservations:
+   * refused until UTC midnight (429, like an exhausted daily quota), so cancels cannot
+   * spend the shared daily allowance faster than finished briefs would.
+   */
+  | 'uncertain_limit';
 
 /** Why AI is paused for everyone. */
 export type PauseReason = 'daily_budget' | 'monthly_budget' | 'maintenance';
@@ -293,6 +303,21 @@ function accountQuota(
   return null;
 }
 
+/**
+ * µ$ of the principal's uncertain ledger lines on `day` (calls of unknown usage, each at
+ * its own worst case, and any settlement charged in full for uncertainty). Lease expiry
+ * is left out: it follows a server failure, not a request's outcome (it still counts in
+ * full against the budgets).
+ */
+export async function uncertainChargedMicros(tx: DbOrTx, pHash: string, day: string): Promise<number> {
+  const res = await tx.execute(sql`
+    SELECT (coalesce(sum(l.usd), 0) * 1000000)::bigint AS micros
+    FROM reservations r JOIN cost_ledger l ON l.reservation_id = r.id
+    WHERE r.category = 'interactive' AND r.principal_hash = ${pHash} AND r.accounting_day = ${day}::date
+      AND r.status <> 'open' AND l.uncertain AND l.stage <> 'lease_expired'`);
+  return Number((res.rows[0] as { micros: string }).micros);
+}
+
 async function inFlight(tx: DbOrTx, pHash: string, now: Date): Promise<{ mine: number; total: number; anonymous: number }> {
   const res = await tx.execute(sql`
     SELECT count(*) FILTER (WHERE principal_hash = ${pHash})::int AS mine, count(*)::int AS total,
@@ -361,6 +386,9 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
           ? await trialQuota(tx, policy, principal, now)
           : accountQuota(policy, principal, counts, account!, now);
       if (quota) return quota;
+      if ((await uncertainChargedMicros(tx, pHash, utcDay(now))) >= reservation * UNCERTAIN_DAILY_RESERVATIONS) {
+        return { ok: false, reason: 'uncertain_limit', retryAt: nextUtcMidnight(now) };
+      }
       if (anonymous && !budget.anonymousOk) {
         return { ok: false, reason: 'anonymous_share_exhausted', retryAt: nextUtcMidnight(now) };
       }
