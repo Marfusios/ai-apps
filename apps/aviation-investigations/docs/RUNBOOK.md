@@ -1029,6 +1029,32 @@ The connector (`cloudflare/cloudflared:2026.10.0`, pinned) shares only the `edge
 network with `aviation-app`. Test origin restrictions from outside and from another
 container on the host before launch (DESIGN §11).
 
+## Search engines
+
+Only live is open to crawlers: its `/robots.txt` allows everything and names
+`https://aircase.app/sitemap.xml`, while every other environment disallows everything and sends
+`X-Robots-Tag: noindex, nofollow` on every response (README, "Search engines and link
+previews"). Registering live with the search engines is an owner step, done once:
+
+1. **Google Search Console** (search.google.com/search-console): add a property of type
+   *Domain* for `aircase.app`. Google shows a TXT record (`google-site-verification=…`). In
+   Cloudflare, under the zone's DNS records, add a record of type TXT, name `@` (the apex),
+   with that value as content, then select *Verify* in Search Console. A domain property
+   covers `https://aircase.app` and any subdomain; keep the record, since Google checks it
+   again later.
+2. In the property, under *Sitemaps*, submit `https://aircase.app/sitemap.xml`. It lists the
+   page sitemap and one file per 10,000 case pages; it changes with each published dataset,
+   and search engines read it again on their own.
+3. **Bing Webmaster Tools** (bing.com/webmasters): sign in and import the site from Google
+   Search Console, which verifies it through the Google property; or add `https://aircase.app`
+   and verify it with the DNS record Bing shows, added in Cloudflare like Google's. Under
+   *Sitemaps*, submit `https://aircase.app/sitemap.xml`.
+4. Check: `curl -s https://aircase.app/robots.txt` shows Cloudflare's content-signals comments
+   followed by `User-agent: *`, `Allow: /` and the `Sitemap:` line; `curl -sI
+   https://aircase.app/cases/<a number>` answers 200 without an `X-Robots-Tag`, and an unknown
+   number 404. Search Console's URL inspection of a case page shows that the canonical URL it
+   found is the page's own.
+
 ## Tracing
 
 Tracing is off unless `AVIATION_TRACING_ENABLED=true`. Then the wrappers add

@@ -740,6 +740,12 @@ a 680px column and adds:
 It has no AI content unless opened from the user's own live brief; in that case
 the "why it's in your results" section is included.
 
+Its browser tab reads "{headline} ({event year}) · NTSB {ntsbNo} · AirCase", for
+example "Piper PA-28-235, total loss of engine power on final near Montevideo,
+Minnesota (2026) · NTSB CEN26LA211 · AirCase", and "NTSB {ntsbNo} · AirCase" while
+the case loads or when no case has that number (Owner request, 2026-10-24, SEO; the
+year is left out when no event date is recorded).
+
 ### 4.6 Compare: "Flight strips" (Owner)
 
 Compare is a page, not a modal. The top of the page has:
@@ -1184,3 +1190,9 @@ counting rules.
   for each case, Compare (up to four cases) and the dashboard, with the NTSB data
   source and attribution; it says the AI features are not available yet, and
   promises none.
+- Search engines and link previews (Owner request, SEO): the case page's tab title
+  is "{headline} ({event year}) · NTSB {ntsbNo} · AirCase" (§4.5), so a search
+  result names the aircraft, what happened, where, the year and the case number.
+  Every other title stays as it was. The server sends each page's title, description
+  and share image in the page's head, with the same title the page then shows
+  (README, "Search engines and link previews").
