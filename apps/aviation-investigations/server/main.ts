@@ -8,7 +8,8 @@
  * and serves the built web client from `dist/web` when it exists.
  *
  * A live deployment must run in tunnel mode: with APP_ENV=live the server refuses to
- * start unless TRUSTED_PROXY_CIDRS is set.
+ * start unless TRUSTED_PROXY_CIDRS is set, and set to private, narrow networks only (the
+ * tunnel's edge network: RFC 1918 at /16 or narrower, unique-local IPv6 at /64 or narrower).
  *
  * AI briefs read their evidence through hybrid retrieval (server/briefs/retriever.ts)
  * with the OpenAI query embedder (OPENAI_API_KEY, OPENAI_EMBEDDING_MODEL and
@@ -37,6 +38,7 @@ import { manifestCasesIndex } from './db/generations.js';
 import { startControlMaintenance } from './quota/maintenance.js';
 import { startTracing } from './observability/tracing.js';
 import { createEsClient } from './search/es.js';
+import { trustedProxyProblem } from './http/network-identity.js';
 import { retrievalConfig } from './search/retrieval-config.js';
 
 const APP_DIR = resolve(fileURLToPath(import.meta.url), '../..');
@@ -82,6 +84,9 @@ async function main(): Promise<void> {
   if (config.appEnv === 'live' && config.trustedProxyCidrs.length === 0) {
     fail('APP_ENV=live requires tunnel mode: set TRUSTED_PROXY_CIDRS (compose.tunnel.yaml sets it from EDGE_SUBNET)');
   }
+  // Only the tunnel's own private, narrow edge network may be trusted (platform review P4).
+  const proxyProblem = config.appEnv === 'live' ? trustedProxyProblem(config.trustedProxyCidrs) : null;
+  if (proxyProblem) fail(proxyProblem);
 
   const tracing = startTracing(config);
   // The server's logger exists once the app does; until then failed connections go to stderr.

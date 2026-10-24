@@ -1206,7 +1206,10 @@ pnpm worker publish --generation <id> --cases-index <name> [--passages-index <na
 SPA fallback) on one origin. It reads configuration like the worker (`AVIATION_ENV_FILES`,
 otherwise `.env.local`), connects as `aviation_app` (`DATABASE_URL`) and reads
 Elasticsearch with `ELASTICSEARCH_READ_API_KEY` only. With `APP_ENV=live` it refuses to
-start unless `TRUSTED_PROXY_CIDRS` is set (tunnel mode). The API answers 503 until
+start unless `TRUSTED_PROXY_CIDRS` is set (tunnel mode) to private, narrow networks only:
+RFC 1918 IPv4 at /16 or narrower, unique-local IPv6 at /64 or narrower (the tunnel overlay
+sets it from `EDGE_SUBNET`); a wider or public network would let any peer in it forge the
+client address. The API answers 503 until
 a dataset is published: load, verify and index a generation, then `pnpm worker
 publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 

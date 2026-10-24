@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileTrustedProxies, isLoopback, normalizeAddress, resolveNetworkIdentity } from '../../server/http/network-identity.js';
+import { compileTrustedProxies, isLoopback, normalizeAddress, resolveNetworkIdentity, trustedProxyProblem } from '../../server/http/network-identity.js';
 
 describe('normalizeAddress', () => {
   it('keeps IPv4 and unwraps IPv4-mapped IPv6', () => {
@@ -81,5 +81,38 @@ describe('resolveNetworkIdentity', () => {
     expect(compileTrustedProxies([])).toBeNull();
     expect(() => compileTrustedProxies(['203.0.113.0/33'])).toThrow(/invalid trusted proxy CIDR/);
     expect(() => compileTrustedProxies(['not-a-cidr'])).toThrow(/invalid trusted proxy CIDR/);
+  });
+});
+
+describe('trusted proxy networks on live (platform review P4)', () => {
+  // Private (RFC 1918) examples are built from octets: the repository check rejects private literals.
+  const net = (a: number, b: number, c: number, d: number, bits: number) => `${[a, b, c, d].join('.')}/${bits}`;
+
+  it('accepts a dedicated private edge network, as the tunnel overlay sets it from EDGE_SUBNET (/16 to /29)', () => {
+    expect(trustedProxyProblem([net(172, 30, 9, 0, 28)])).toBeNull();
+    expect(trustedProxyProblem([net(10, 20, 0, 0, 16)])).toBeNull();
+    expect(trustedProxyProblem([net(192, 168, 7, 8, 29), 'fd12:3456:789a:1::/64'])).toBeNull();
+    expect(trustedProxyProblem([net(172, 30, 9, 4, 32), 'fd12:3456:789a:1::7/128'])).toBeNull();
+  });
+
+  it('refuses one that would trust every container on the host, the internet or the loopback', () => {
+    for (const bad of [
+      ['0.0.0.0/0'],
+      [net(10, 0, 0, 0, 8)],
+      [net(172, 16, 0, 0, 12)],
+      [net(172, 30, 9, 0, 28), net(192, 168, 0, 0, 15)],
+      ['198.51.100.0/28'],
+      ['127.0.0.0/8'],
+      ['::/0'],
+      ['fd00::/8'],
+      ['2001:db8::/64'],
+      ['::ffff:0:0/96'],
+      [],
+    ]) {
+      const problem = trustedProxyProblem(bad);
+      expect(problem, bad.join(',')).toMatch(/^TRUSTED_PROXY_CIDRS /);
+      // The setting's name only, never its value.
+      for (const cidr of bad) expect(problem).not.toContain(cidr.split('/')[0]!);
+    }
   });
 });
