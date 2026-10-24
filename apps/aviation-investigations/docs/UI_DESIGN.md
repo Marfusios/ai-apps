@@ -351,7 +351,7 @@ Switching themes (Proposed):
 - Explore and Dashboard navigation, with the active item underlined in blue
 - the AI counter (§5)
 - the Day/Night switch
-- Sign in, or an account menu when signed in
+- Sign in, or when signed in a person icon linking to the Account page (its name is "Account"; the word shows beside it in the phone menu; Owner, 2026-10-24)
 
 **Footer** (all pages): "Not an NTSB service · Data: NTSB, snapshot {date} ·
 Privacy · About", and under it a quieter line, "Built by Mariusz Kotas ·

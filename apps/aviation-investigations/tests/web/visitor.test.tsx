@@ -506,6 +506,16 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
     expect(await screen.findByText("You were signed out, so this AI search didn't start. Sign in to ask again.")).toBeTruthy();
     await waitFor(() => expect(app.client.getQueryData(['account'])).toEqual({ signedIn: false }));
   });
+
+  it('signed in, the header shows a person icon named "Account"; the word itself shows only in the phone menu (owner, 2026-10-24)', async () => {
+    signedInApi();
+    renderApp('/');
+    const link = await within(await screen.findByRole('banner')).findByRole('link', { name: 'Account' });
+    expect(link.getAttribute('href')).toBe('/account');
+    expect(link.getAttribute('title')).toBe('Account');
+    expect(link.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(within(link).getByText('Account').className).toContain('sm:sr-only');
+  });
 });
 
 describe('an AI request whose visitor changes before it ends keeps nothing (Task 20 gate)', () => {

@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
+import { CircleUserRound } from 'lucide-react';
 import { NavLink } from 'react-router';
 import { cx } from '../../lib/cx';
 import { accountQuery } from './api';
 import { useSignIn } from './SignInDialog';
 
 /**
- * The header's sign-in slot (UI_DESIGN §3): "Sign in", which opens the sign-in dialog, or
- * "Account" when signed in. Nothing while Google sign-in is not configured.
+ * The header's sign-in slot (UI_DESIGN §3): "Sign in", which opens the sign-in dialog, or the
+ * account link when signed in: a person icon in the header bar (owner request, 2026-10-24),
+ * with "Account" beside it in the phone menu, where the slot sits among text links. The link's
+ * name is "Account" everywhere. Nothing while Google sign-in is not configured.
  */
 export function HeaderAuth() {
   const signIn = useSignIn();
@@ -16,11 +19,16 @@ export function HeaderAuth() {
     return (
       <NavLink
         to="/account"
+        title="Account"
         className={({ isActive }) =>
-          cx('inline-flex items-center border-b-2 pb-px text-ui pointer-coarse:min-h-11', isActive ? 'border-blue text-ink' : 'border-transparent text-blue hover:text-ink')
+          cx(
+            'inline-flex items-center gap-2 border-b-2 pb-px text-ui pointer-coarse:min-h-11 sm:pointer-coarse:min-w-11 sm:pointer-coarse:justify-center',
+            isActive ? 'border-blue text-ink' : 'border-transparent text-blue hover:text-ink',
+          )
         }
       >
-        Account
+        <CircleUserRound size={20} strokeWidth={1.5} aria-hidden="true" focusable="false" className="shrink-0" />
+        <span className="sm:sr-only">Account</span>
       </NavLink>
     );
   }
