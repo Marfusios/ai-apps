@@ -84,7 +84,13 @@ export interface MappingConfig {
    * then the best `passagesPerCase` by score, then passage id.
    */
   readonly selection: 'count-then-exact-all-then-score-then-id';
-  /** The documented mapping-size limit: a case with more passages under the filter is `too_many_passages`, never packed. */
+  /**
+   * The documented mapping-size limit: a case with more passages under the filter is
+   * `too_many_passages`, never packed (`mapCasesToPassages`'s `maxMappablePassages`). Not the
+   * packing limit of the same name (`RetrievalParams.maxPassagesPerCase`, 3). The key keeps its
+   * name because it is part of the frozen, hashed configuration: renaming it would change
+   * `retrieval.v2`'s sha256, which evals/retrieval/narrative/frozen-pools.json records.
+   */
   readonly maxPassagesPerCase: number;
 }
 

@@ -548,7 +548,7 @@ export async function poolRun(
     Array.from(vector),
     forced.map((c) => c.id),
     s.params,
-    { passagesPerCase: config.mapping.passagesPerCase, maxPassagesPerCase: config.mapping.maxPassagesPerCase, maxCases: s.params.packCandidates },
+    { passagesPerCase: config.mapping.passagesPerCase, maxMappablePassages: config.mapping.maxPassagesPerCase, maxCases: s.params.packCandidates },
   );
   // Mapped passages rank after every fused passage, as the production ranking places them.
   const candidates = caseCandidates(forced, new Map(), m.passages, r.fusedPassages.length, 2);

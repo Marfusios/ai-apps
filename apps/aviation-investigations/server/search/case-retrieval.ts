@@ -193,7 +193,7 @@ export async function retrieveCaseCandidates(es: Client, embedder: Embedder | Qu
     .filter((n) => !byCase.has(n));
   const mapping = await mapCasesToPassages(es, index, filter, vector, toMap, params, {
     passagesPerCase: mappingConfig.passagesPerCase,
-    maxPassagesPerCase: mappingConfig.maxPassagesPerCase,
+    maxMappablePassages: mappingConfig.maxPassagesPerCase,
     maxCases: params.packCandidates,
     ...(q.signal ? { signal: q.signal } : {}),
   });

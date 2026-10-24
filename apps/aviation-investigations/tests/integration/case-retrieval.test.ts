@@ -371,7 +371,7 @@ describe('case-level retrieval on real Elasticsearch', () => {
   it('mapping reports a case with no passage under the filter, and considers every passage of a long case', async () => {
     const filter = compileFilters(HELI, { eventAircraftQualification: true }).bool.filter;
     const vector = Array.from(fakeVector('anything', DIMS));
-    const opts = { passagesPerCase: 3, maxPassagesPerCase: MAX_MAPPED_PASSAGES, maxCases: 12 };
+    const opts = { passagesPerCase: 3, maxMappablePassages: MAX_MAPPED_PASSAGES, maxCases: 12 };
     const m = await mapCasesToPassages(reader, passagesV2, filter, vector, ['CEN24FA064', 'DCA25MA108', 'WPR15FA010', GHOST], retrievalParams(), opts);
     expect(m.cases.map((c) => [c.ntsbNo, c.status, c.reason])).toEqual([
       ['CEN24FA064', 'unmapped', 'no_passages'],

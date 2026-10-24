@@ -9,7 +9,7 @@
  *   of its passages under the request's passages filter (`n`), then a kNN restricted to
  *   that case under the same filter with `k` = `num_candidates` = `n`. A long case cannot
  *   take another case's slots, and every request and result is bounded: at most
- *   `2 × maxCases` searches, at most `maxPassagesPerCase` hits a case.
+ *   `2 × maxCases` searches, at most `maxMappablePassages` hits a case.
  * - **Exact, and verified.** With `num_candidates` at least the number of documents the
  *   filter admits, Lucene scores every one of the case's passages exactly (a filtered kNN
  *   whose filter cost does not exceed `k` runs the exact search, as Elasticsearch
@@ -22,7 +22,7 @@
  *   then passage id, so ties at the cut do not depend on the order of the response.
  * - **Two outcomes that are not failures**, reported per case and never packed:
  *   `no_passages` (none under the filter: an event without aircraft rows, for instance)
- *   and `too_many_passages` (more than `maxPassagesPerCase`, the documented mapping-size
+ *   and `too_many_passages` (more than `maxMappablePassages`, the documented mapping-size
  *   limit; the largest dev case holds 63).
  * - **Fail fast.** All requests share one controller with the caller's signal: the first
  *   failed request aborts the others, in both waves, so a failing mapping leaves nothing
@@ -112,8 +112,12 @@ export function verifiedMappingHits(res: estypes.SearchResponse<Record<string, u
 
 export interface MappingOptions {
   passagesPerCase: number;
-  /** The mapping-size limit (`MappingConfig.maxPassagesPerCase`). */
-  maxPassagesPerCase: number;
+  /**
+   * The mapping-size limit: a case with more passages under the filter is not mapped
+   * (`MappingConfig.maxPassagesPerCase` in the frozen configuration; not the packing limit
+   * `RetrievalParams.maxPassagesPerCase`).
+   */
+  maxMappablePassages: number;
   /** The most cases one request may map (`packCandidates`). */
   maxCases: number;
   signal?: AbortSignal;
@@ -132,7 +136,7 @@ export async function mapCasesToPassages(
   if (new Set(cases).size !== cases.length) throw new Error('a case is asked to be mapped twice');
   if (cases.length > opts.maxCases) throw new Error(`${cases.length} cases to map, at most ${opts.maxCases}`);
   if (!Number.isSafeInteger(opts.passagesPerCase) || opts.passagesPerCase < 1) throw new Error('invalid passages per mapped case');
-  if (!Number.isSafeInteger(opts.maxPassagesPerCase) || opts.maxPassagesPerCase < opts.passagesPerCase || opts.maxPassagesPerCase > MAX_EXACT_CANDIDATES) {
+  if (!Number.isSafeInteger(opts.maxMappablePassages) || opts.maxMappablePassages < opts.passagesPerCase || opts.maxMappablePassages > MAX_EXACT_CANDIDATES) {
     throw new Error('invalid mapping-size limit');
   }
   if (cases.length === 0) return { passages: new Map(), cases: [], requests: [], ms: 0 };
@@ -170,7 +174,7 @@ export async function mapCasesToPassages(
         (async () => {
           const n = e.passagesUnderFilter;
           if (n === 0) return;
-          if (n > opts.maxPassagesPerCase) {
+          if (n > opts.maxMappablePassages) {
             e.reason = 'too_many_passages';
             return;
           }
