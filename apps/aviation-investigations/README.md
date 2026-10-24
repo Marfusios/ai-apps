@@ -1441,9 +1441,12 @@ share image, and JSON-LD (a `WebSite` on `/`, a `BreadcrumbList` AirCase → Exp
 on a case page). Descriptions are plain text by fixed rules, never AI: fixed ones for the
 pages without data (`shared/brand.ts`), and for a case "NTSB accident investigation
 DFW08TA066, 8 Feb 2008: N66372 (Hughes OH-6), minor injuries. Probable cause: The contract
-mechanic's failure …", cut at a word to 200 characters (or "Status: P", the raw NTSB status,
-for a record without probable-cause text). NTSB text is escaped for HTML, and JSON-LD for its script element. The
-case page's tab title is "{headline} ({event year}) · NTSB {ntsbNo} · AirCase".
+mechanic's failure …", cut at a word to 200 characters (`server/seo/case-description.ts`). A
+record without probable-cause text ends with its status instead: "Probable-cause text
+unavailable." when it is completed, otherwise "Investigation in progress (NTSB status P).",
+"Investigation status unknown (…)" or "Other investigation status (…)" with its raw NTSB
+status. NTSB text is escaped for HTML, and JSON-LD for its script element. The case page's tab
+title is "{headline} ({event year}) · NTSB {ntsbNo} · AirCase".
 
 | Path | Status | robots | canonical |
 | --- | --- | --- | --- |
@@ -1451,15 +1454,19 @@ case page's tab title is "{headline} ({event year}) · NTSB {ntsbNo} · AirCase"
 | `/explore` | 200 | index, follow; with any query parameter noindex, follow | `/explore` |
 | `/compare`, `/account`, `/briefs/:id` | 200 | noindex, nofollow | itself, no query |
 | `/cases/:ntsbNo`, a case `GET /api/cases/:ntsbNo` serves | 200 | index, follow | `/cases/{ntsbNo}` |
-| `/cases/:ntsbNo`, no such case | 404 | noindex | none |
-| any other path without a file extension, `/index.html` | 404 | noindex | none |
+| `/cases/:ntsbNo`, no such case (a number too long for the router included) | 404 | noindex | none |
+| any other path without a file extension | 404 | noindex | none |
 
-The client renders every page (a 404 shows its not-found page). A served case number not in
-canonical form (`/cases/dfw08ta066`) and a page path with a trailing slash are redirected
-(301), without the query string. The page goes to GET and HEAD requests whose `Accept` is
-absent or takes `text/html` or `*/*`; other requests, and a path with a file extension that no
-route serves, get a plain-text 404. A case page reads the database: it counts against the API's
-rate limit and needs a network identity, and its refusals (429, 503) are `ErrorResponse`s.
+The client renders every page (a 404 shows its not-found page). Redirects (301) drop the query
+string: a served case number not in canonical form (`/cases/dfw08ta066`), a page path with a
+trailing slash, a page path in the wrong letter case (`/About` to `/about`) and `/index.html`
+(to `/`). The page goes to GET and HEAD requests whose `Accept` is absent or takes `text/html`
+or `*/*`; other requests, and a path with a file extension that no route serves, get a
+plain-text 404. A case page reads the database: it counts against the API's rate limit and
+needs a network identity. A page request that is refused (429) or fails (500, 503) gets the
+page with that status, noindex, without a canonical URL, and with the `Retry-After` the API
+would send; the API keeps its `ErrorResponse`. Explore's and Compare's titles read the query
+string with bounded work (`shared/page-params.ts`), as those pages are not rate limited.
 
 - **robots.txt**: on `APP_ENV=live`, `Allow: /` and `Sitemap: {APP_URL}/sitemap.xml` (Cloudflare
   prepends its comment-only content-signals block); elsewhere `Disallow: /`. The API is not
