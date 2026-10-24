@@ -40,7 +40,7 @@ import {
   unsettledKey,
 } from '../../web/src/features/ai/unsettled';
 import { canonicalFilters as serverCanonicalFilters } from '../../server/briefs/intent';
-import { IDEMPOTENCY_TTL_MS } from '../../server/quota/policy';
+import { IDEMPOTENCY_TTL_MS, PIPELINE_DEADLINE_MS } from '../../server/quota/policy';
 import { AI_STATUS_RETRY_MS, ApiError, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery } from '../../web/src/api';
 import { CHANGE_NOT_KEPT, RETRY_FAILED, chipsContext } from '../../web/src/pages/Brief';
 import { REFINEMENTS_USED } from '../../web/src/features/brief/RefineBox';
@@ -346,6 +346,14 @@ describe('Checklist (UI_DESIGN §4.4)', () => {
     expect(screen.getByText(/0:0\d/).getAttribute('aria-hidden')).toBe('true');
     expect(screen.getByText(new RegExp(CHECKLIST_NOTE.replace('.', '\\.')))).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+  });
+
+  it('the note says how long it usually takes, as measured, and its bound (review W-13)', () => {
+    // Measured: scope 2–4 s, retrieve 1–2 s, compose 19–23 s, check 20–38 s (p50–p95); deadline 100 s.
+    expect(CHECKLIST_NOTE).toBe('Nothing is shown until each quote matches the report text word for word. Usually about a minute; up to two.');
+    expect(PIPELINE_DEADLINE_MS).toBeLessThanOrEqual(2 * 60_000);
+    render(<Checklist {...props} stage="scope" checklist={{}} />);
+    expect(screen.getByText(/Usually about a minute; up to two\./)).toBeTruthy();
   });
 
   it('says what the evidence check did, from the actual count; never a blanket status (Task 16e)', () => {

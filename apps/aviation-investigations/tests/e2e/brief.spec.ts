@@ -83,7 +83,7 @@ test('ask AI shows checklist then briefing sheet with magenta summary label', as
   await expect(checklist).toBeVisible();
   await expect(checklist.getByRole('listitem').first()).toContainText('IN SCOPE');
   await expect(checklist.getByRole('listitem').nth(1)).toContainText('4 CASES · 9 PASSAGES');
-  await expect(checklist).toContainText('Nothing is shown until each quote matches the report text word for word. Up to a minute.');
+  await expect(checklist).toContainText('Nothing is shown until each quote matches the report text word for word. Usually about a minute; up to two.');
   await expect(checklist.getByRole('button', { name: 'Cancel' })).toBeVisible();
 
   const label = summaryLabel(page);

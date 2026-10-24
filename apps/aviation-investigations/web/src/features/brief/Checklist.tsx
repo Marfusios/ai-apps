@@ -4,7 +4,13 @@ import { cx } from '../../lib/cx';
 import { formatCount } from '../../lib/format';
 
 export const CHECKLIST_TITLE = 'Answer checklist';
-export const CHECKLIST_NOTE = 'Nothing is shown until each quote matches the report text word for word. Up to a minute.';
+/**
+ * The note under the checklist (UI_DESIGN §4.4). The timing is what the pipeline does, not
+ * a promise (Task 22 review W-13, Astra 16e; for the owner's review): measured scope 2–4 s,
+ * retrieve 1–2 s, compose 19–23 s and check 20–38 s (p50–p95, DESIGN §12), within the
+ * 100 s pipeline deadline (server/quota/policy.ts `PIPELINE_DEADLINE_MS`).
+ */
+export const CHECKLIST_NOTE = 'Nothing is shown until each quote matches the report text word for word. Usually about a minute; up to two.';
 /** While reads of the running step fail (Builder copy, Task 22 review W-3; for the owner's review). */
 export const POLL_TROUBLE = 'Still checking… connection trouble.';
 
