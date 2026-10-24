@@ -32,6 +32,10 @@ export const isNotFound = (err: unknown): boolean => err instanceof ApiError && 
 /** While the AI status cannot be read, it is read again this often (and when the tab gets focus). */
 export const AI_STATUS_RETRY_MS = 15_000;
 
+/** While the configuration cannot be read, it is read again after this pause, doubling each time up to `CONFIG_RETRY_MAX_MS`. */
+export const CONFIG_RETRY_MS = 5_000;
+export const CONFIG_RETRY_MAX_MS = 60_000;
+
 /** How long a read that repeats by itself (a brief poll, the AI status) waits for an answer. */
 export const READ_TIMEOUT_MS = 15_000;
 
@@ -121,12 +125,25 @@ export function retry(failures: number, err: unknown): boolean {
   return failures < 1;
 }
 
+/** The pause before reading the configuration again after `failures` failed reads (it doubles, up to the maximum). */
+function configRetryDelay(failures: number): number {
+  return Math.min(CONFIG_RETRY_MAX_MS, CONFIG_RETRY_MS * 2 ** Math.max(0, failures - 1));
+}
+
+/**
+ * Public configuration: the snapshot, the coverage facts, the Turnstile site key and whether
+ * Google sign-in is offered. Until it has been read once, it is read again after a failure,
+ * with a growing pause, and when the tab gets focus (Task 22 re-review N-3); once read, a
+ * failed refresh keeps what was read.
+ */
 export const configQuery = () =>
   queryOptions({
     queryKey: ['config'],
     queryFn: ({ signal }) => getJson('/api/config', ConfigResponseSchema, signal),
     staleTime: 10 * 60_000,
     retry,
+    refetchInterval: (query) => (query.state.data === undefined && query.state.status === 'error' ? configRetryDelay(query.state.errorUpdateCount) : false),
+    refetchOnWindowFocus: (query) => query.state.data === undefined && query.state.status === 'error',
   });
 
 /** Canonical query string of a request: equal requests share a cache entry. */

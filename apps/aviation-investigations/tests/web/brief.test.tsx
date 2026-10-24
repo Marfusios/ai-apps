@@ -41,7 +41,7 @@ import {
 } from '../../web/src/features/ai/unsettled';
 import { canonicalFilters as serverCanonicalFilters } from '../../server/briefs/intent';
 import { IDEMPOTENCY_TTL_MS, PIPELINE_DEADLINE_MS } from '../../server/quota/policy';
-import { AI_STATUS_RETRY_MS, ApiError, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery } from '../../web/src/api';
+import { AI_STATUS_RETRY_MS, ApiError, CONFIG_RETRY_MAX_MS, CONFIG_RETRY_MS, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery, configQuery } from '../../web/src/api';
 import { CHANGE_NOT_KEPT, RETRY_FAILED, chipsContext } from '../../web/src/pages/Brief';
 import { REFINEMENTS_USED } from '../../web/src/features/brief/RefineBox';
 import { Checklist, CHECKLIST_NOTE, POLL_TROUBLE } from '../../web/src/features/brief/Checklist';
@@ -185,6 +185,83 @@ describe('AI availability labels (UI_DESIGN §5)', () => {
     act(() => answer?.());
     expect(await screen.findByRole('button', { name: 'Sign in to keep asking' })).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');
+  });
+
+  it('a failed configuration read leaves no silent state: a neutral note, and the configuration is read again until it answers (re-review N-3)', { timeout: 15_000 }, async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let failing = true;
+    let reads = 0;
+    server.use(
+      http.get('*/api/config', () => {
+        reads += 1;
+        return failing ? HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 }) : HttpResponse.json({ ...mockConfig, googleEnabled: true });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.trialUsed);
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SignInProvider>
+            <header>
+              <AiCounter />
+            </header>
+            <AskAiButton onAsk={() => {}} />
+          </SignInProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    // The read and its one retry fail: the controls say what is true either way, never "sign in".
+    const header = screen.getByRole('banner');
+    await waitFor(() => expect(header.textContent).toBe('Free AI searches used'), SLOW);
+    const ask = screen.getByRole('button', { name: /^Ask AI$/ });
+    expect(ask.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(ask.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Free AI searches used');
+    // It is read again (with a growing pause), and once it answers the controls follow it.
+    const before = reads;
+    failing = false;
+    await act(() => vi.advanceTimersByTimeAsync(CONFIG_RETRY_MS));
+    await waitFor(() => expect(reads).toBeGreaterThan(before), SLOW);
+    expect(await screen.findByRole('button', { name: 'Sign in to keep asking' }, SLOW)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');
+  });
+
+  it('the configuration is read again with a growing pause while it fails, and not at all once read (re-review N-3)', () => {
+    const interval = configQuery().refetchInterval as (q: never) => number | false;
+    const at = (state: { status: 'error' | 'success' | 'pending'; data?: unknown; errorUpdateCount: number }) => ({ state }) as never;
+    expect(interval(at({ status: 'error', errorUpdateCount: 1 }))).toBe(CONFIG_RETRY_MS);
+    expect(interval(at({ status: 'error', errorUpdateCount: 2 }))).toBe(2 * CONFIG_RETRY_MS);
+    expect(interval(at({ status: 'error', errorUpdateCount: 20 }))).toBe(CONFIG_RETRY_MAX_MS);
+    expect(interval(at({ status: 'success', data: mockConfig, errorUpdateCount: 3 }))).toBe(false);
+    // Read once: a later failed refresh keeps what was read, and nothing changes for the controls.
+    expect(interval(at({ status: 'error', data: mockConfig, errorUpdateCount: 4 }))).toBe(false);
+  });
+
+  it('a notice raised before the configuration arrives says only what is true either way, then adds the right lines (re-review N-4)', async () => {
+    let answer: (() => void) | null = null;
+    server.use(
+      http.get('*/api/config', async () => {
+        await new Promise<void>((resolve) => (answer = resolve));
+        return HttpResponse.json({ ...mockConfig, googleEnabled: true });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.trialUsed);
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SignInProvider>
+            <AiNoticeBox notice={{ kind: 'trial_used' }} keywordHref="/explore?q=x" />
+          </SignInProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(answer).not.toBeNull());
+    // While it is unknown whether sign-in is offered: only the title, which both versions share.
+    expect(container.textContent).toBe('That was your third free AI search.');
+    act(() => answer?.());
+    await waitFor(() => expect(container.textContent).toContain('Sign in with Google to keep asking.'), SLOW);
+    expect(container.textContent).not.toContain('Everything else works');
   });
 
   it.each(['trialUsed', 'anonymousShare', 'loginRequired'] as const)('%s, with sign-in offered: "Ask AI · sign in"', (sample) => {

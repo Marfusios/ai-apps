@@ -163,6 +163,8 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
       case 'paused':
         return <Paused status={notice.status ?? (live.data?.state === 'paused' ? live.data : null)} keywordHref={keywordHref} />;
       case 'trial_used':
+        // Not known yet whether sign-in is offered: only the title both versions share (re-review N-4).
+        if (signIn.pending) return <Box title={COPY.trialUsed[0]} />;
         // Sign-in is not offered: the same moment, without telling the visitor to sign in (review W-10).
         if (!signIn.enabled) {
           return (
@@ -180,6 +182,7 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
           </Box>
         );
       case 'free_paused':
+        if (signIn.pending) return <Box title={COPY.freePaused[0]} />;
         if (!signIn.enabled) {
           // Login-required mode with no sign-in here: nobody can ask, like a pause with no time promised.
           if (notice.loginRequired) return <Paused status={null} keywordHref={keywordHref} />;

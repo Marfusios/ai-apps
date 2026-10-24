@@ -870,8 +870,8 @@ then state the processed cohort (DESIGN §5).
 | Trial used | Blue outline pill "Sign in to keep asking" |
 | Signed in | "AI left today: **18 of 20**" (always the number left) |
 | Free searches paused, sign-in still open (Proposed) | Blue outline pill "Sign in to ask the AI" |
-| Trial used, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches used" |
-| Free searches paused, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches paused for today"; in the login-required mode "AI temporarily unavailable" |
+| Trial used, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches used" (also while the configuration that says whether sign-in is offered cannot be read: it is read again until it can; nothing is said while its first read is on its way) |
+| Free searches paused, sign-in not offered (Task 22, Proposed) | Muted "Free AI searches paused for today"; in the login-required mode "AI temporarily unavailable" (the same while the configuration cannot be read) |
 | Signed-in cap reached (Proposed) | Muted "AI back tomorrow" (daily) or "AI back on 1 Nov" (monthly) |
 | Paused for everyone | Muted "AI back tomorrow" for the daily budget, "AI back on 1 Nov" for the monthly budget, or "AI temporarily unavailable" when the recovery time is unknown |
 

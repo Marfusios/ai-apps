@@ -24,14 +24,19 @@ export const SIGN_IN_UNAVAILABLE = "Sign-in couldn't start. Try again in a momen
 interface SignInState {
   /** Google sign-in is configured (`GET /api/config` `googleEnabled`): otherwise nothing offers it. */
   enabled: boolean;
-  /** The configuration has been read, so `enabled` is known (false until then). */
-  known: boolean;
+  /**
+   * The first read of the configuration is still on its way, so whether sign-in is offered is
+   * not known yet: controls say nothing about sign-in for that moment. Once a read has failed
+   * it is no longer pending: until a later read answers (it is read again, `configQuery`),
+   * sign-in is not offered and the controls say what is true either way (Task 22 re-review N-3).
+   */
+  pending: boolean;
   /** Open the dialog; `failed` adds the line that the last sign-in did not complete. */
   open(options?: { failed?: boolean }): void;
 }
 
-// Outside the provider nothing offers sign-in, and that is known.
-const SignInContext = createContext<SignInState>({ enabled: false, known: true, open: () => {} });
+// Outside the provider nothing offers sign-in, and that is settled.
+const SignInContext = createContext<SignInState>({ enabled: false, pending: false, open: () => {} });
 
 /** The sign-in dialog of the page (any control that offers sign-in opens it). */
 export function useSignIn(): SignInState {
@@ -63,8 +68,9 @@ export function SignInProvider({ children }: { children: ReactNode }) {
   const open = useCallback((options?: { failed?: boolean }) => {
     setDialog({ open: true, failed: options?.failed === true });
   }, []);
-  const known = config.data !== undefined;
-  const value = useMemo<SignInState>(() => ({ enabled, known, open }), [enabled, known, open]);
+  // Pending only until the first answer or the first failure (a re-read after a failure is not).
+  const pending = config.data === undefined && config.errorUpdateCount === 0;
+  const value = useMemo<SignInState>(() => ({ enabled, pending, open }), [enabled, pending, open]);
 
   return (
     <SignInContext.Provider value={value}>

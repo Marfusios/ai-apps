@@ -1096,7 +1096,10 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   controls say "AI temporarily unavailable" and the status is read again every 15 s and
   when the tab gets focus. Where Google sign-in is not configured nothing says "sign in":
   the signed-in-only states read "Free AI searches used" or "Free AI searches paused for
-  today", and Ask AI is off with the same words.
+  today", and Ask AI is off with the same words. While the first read of `/api/config`
+  (which says whether sign-in is offered) is on its way, those states say nothing; if it
+  fails they read the same way, and the configuration is read again after 5 s, doubling up
+  to 60 s, and when the tab gets focus, until it answers.
 - **Turnstile** (`TurnstileGate`): every anonymous AI request takes a fresh token from
   a new widget, which is removed as soon as its token is taken. Each request holds a
   check session: a second control waits its turn ("Checking…"), and ending one session
