@@ -3,7 +3,7 @@ import { useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import type { RefinementChange } from '../../../../shared/contracts/briefs';
 import { CASES_PARAM } from '../explore/url-state';
-import { forgetUnsettled, rememberUnsettled, unsettledId, unsettledKey } from '../ai/unsettled';
+import { forgetUnsettled, rememberUnsettled, settleOnArrival, unsettledId, unsettledKey } from '../ai/unsettled';
 import { newIdempotencyKey, useAiRequest } from '../ai/useAiRequest';
 import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
 import { refineBrief } from './api';
@@ -16,8 +16,8 @@ import { rememberChange } from './memory';
  * kept for the tab right before the request leaves (write-ahead, web/src/features/ai/
  * unsettled.ts), so a reload while it is on its way loses nothing. A retry of the same
  * change on the same brief while its outcome is unknown reuses that key (the server replays
- * it) until a 2xx settles it; a 409 `conflict` to that replay sends it once more under a new
- * key; a known refusal of a first send takes the key back. A refinement whose visitor signs
+ * it) until the page shows the step a 2xx started; a 409 `conflict` to that replay sends it
+ * once more under a new key; a known refusal of a first send takes the key back. A refinement whose visitor signs
  * out or deletes the account before it ends sends nothing more (refineBrief checks the
  * visitor right before it sends), keeps nothing (no retry key) and moves nowhere.
  */
@@ -72,6 +72,8 @@ export function useRefine(briefId: string) {
       }
       // Try again after this step fails sends the same change (an edited reading's value is not in the step).
       rememberChange(briefId, result.value.step, change);
+      // Settled once the page shows the new step; until then a reload or a second send replays the key.
+      settleOnArrival(briefId, result.value.step, id, idempotencyKey);
       await queryClient.invalidateQueries({ queryKey: ['brief', briefId] });
       // The visitor changed while the brief was read again: the page goes nowhere for them
       // (and forgetting them cleared the tab's keys).
@@ -79,8 +81,6 @@ export function useRefine(briefId: string) {
       const next = new URLSearchParams();
       if (cases) next.set(CASES_PARAM, cases);
       navigate(`/briefs/${briefId}${next.size > 0 ? `?${next.toString()}` : ''}`);
-      // Settled once the page shows the new step: until then a reload still replays it.
-      forgetUnsettled(id, idempotencyKey);
       return true;
     },
     [briefId, cases, navigate, queryClient, run],

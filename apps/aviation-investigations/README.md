@@ -1111,9 +1111,11 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   key. Closing the tab loses it, with the tab's session storage. When no answer comes back (a network or server error), the
   notice does not claim the search was free, and Try again replays the same request under
   the same key; if that replay is a 409 `conflict` (the earlier attempt never completed),
-  it is sent once more under a new key. The key is kept until a 2xx or that 409 settles
-  it: a refused retry (a failed or cancelled check, a paused or used-up status, a known
-  refusal of the replay) leaves it for the next ask. A known refusal of a first send (a
+  it is sent once more under a new key. The key is kept until the page shows the step a
+  2xx started (the brief page may still be loading after the answer, and a second ask in
+  that gap replays the key) or that 409 settles it: a refused retry (a failed or cancelled
+  check, a paused or used-up status, a known refusal of the replay) leaves it for the next
+  ask. A known refusal of a first send (a
   4xx, or a 503 `unavailable` or `ai_paused`, which release the admission) spent nothing:
   its key is taken back, the notice says why, and the next ask uses a new key. Keys expire
   after 24 hours, with the server's idempotency record. A rate limit of two minutes or

@@ -49,6 +49,7 @@ import { WithheldNotice, withheldText } from '../../web/src/features/brief/Withh
 import { PassageText, cleanSpans, paragraphRanges } from '../../web/src/features/case/BriefContext';
 import { TURNSTILE_TEST_SITE_KEY, createHandlers } from '../../web/src/mocks/handlers';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
+import { routes } from '../../web/src/routes';
 import printCss from '../../web/src/styles/print.css?raw';
 
 const server = setupMockApi({ briefPolls: 1 });
@@ -1623,8 +1624,9 @@ describe('Unknown-outcome keys for the tab (web/src/features/ai/unsettled.ts)', 
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
     await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
-    // Settled by the 2xx: nothing is left for the tab.
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: LOST, filters: {} }))).toBeNull();
+    // Settled once the brief page shows the step the replay returned: nothing is left for the tab.
+    const id = await unsettledId({ kind: 'create', question: LOST, filters: {} });
+    await waitFor(() => expect(unsettledKey(id)).toBeNull(), SLOW);
   });
 
   it('a different question gets a new key', async () => {
@@ -1761,8 +1763,8 @@ describe('Write-ahead keys: a reload while the request is in flight pays once (r
     posts.release();
     await waitFor(() => expect(currentUrl(second.router)).toMatch(/^\/briefs\//), SLOW);
     await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
-    // Settled by the 2xx: nothing is left for the tab.
-    expect(stored()).toEqual({});
+    // Settled once the brief page shows the step the 2xx started: nothing is left for the tab.
+    await waitFor(() => expect(stored()).toEqual({}), SLOW);
   });
 
   it('Refine keeps its key for the tab before the request leaves; the same change after a reload replays it', async () => {
@@ -1814,6 +1816,58 @@ describe('Write-ahead keys: a reload while the request is in flight pays once (r
     await waitFor(() => expect(currentUrl(router)).toMatch(/^\/briefs\//), SLOW);
     expect(keys).toHaveLength(2);
     expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('a 2xx settles the key only once the brief page shows its step: a second ask while that page loads replays it (re-review N-2)', async () => {
+    freshApi();
+    installTurnstile();
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        keys.push(((await request.clone().json()) as { idempotencyKey: string }).idempotencyKey);
+        return undefined;
+      }),
+    );
+    // The brief page is a lazy route: hold its code back, as a slow network would.
+    type Route = { path?: string; lazy?: () => Promise<unknown>; children?: Route[] };
+    let open = (): void => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const undo: (() => void)[] = [];
+    const hold = (list: Route[]): void => {
+      for (const route of list) {
+        if (route.path === 'briefs/:id' && route.lazy) {
+          const lazy = route.lazy;
+          route.lazy = async () => {
+            await gate;
+            return lazy();
+          };
+          undo.push(() => (route.lazy = lazy));
+        }
+        if (route.children) hold(route.children);
+      }
+    };
+    hold(routes as unknown as Route[]);
+    try {
+      const { router } = renderApp('/');
+      fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+      fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }));
+      await waitFor(() => expect(keys).toHaveLength(1), SLOW);
+      // Answered 2xx; the brief page is still loading, so the key is still kept ...
+      await waitFor(() => expect(router.state.navigation.state).toBe('loading'), SLOW);
+      const id = await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION });
+      expect(stored()).toEqual({ [id]: { key: keys[0], at: expect.any(Number) } });
+      // ... and a second ask in that gap replays it rather than starting (and paying for) another.
+      fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*2 free$/ }, SLOW));
+      await waitFor(() => expect(keys).toHaveLength(2), SLOW);
+      expect(keys[1]).toBe(keys[0]);
+      open();
+      await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+      // The page shows the step the request started: now it is settled.
+      await waitFor(() => expect(stored()).toEqual({}), SLOW);
+      await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 2 of 3'), SLOW);
+    } finally {
+      undo.forEach((u) => u());
+    }
   });
 
   it('a check refused before anything is sent writes nothing for the tab', async () => {

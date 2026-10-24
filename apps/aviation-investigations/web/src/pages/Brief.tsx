@@ -15,6 +15,7 @@ import { Placard } from '../components/Placard';
 import { SearchBox } from '../components/SearchBox';
 import { AiNoticeBox, COPY } from '../features/ai/AiNoticeBox';
 import { busyLabel } from '../features/ai/AskAiButton';
+import { arrived } from '../features/ai/unsettled';
 import { briefStepQuery, cancelBrief, isFinished } from '../features/brief/api';
 import { useAskAi } from '../features/ai/useAskAi';
 import { BriefChips } from '../features/brief/BriefChips';
@@ -256,6 +257,14 @@ export function Brief() {
     ...briefStepQuery(id, (step?.step ?? 1) - 1),
     enabled: Boolean(step && !finished && step.step > 1 && !step.checklist.interpretation),
   });
+
+  // An AI request answered 2xx is settled once the step it started is on screen
+  // (web/src/features/ai/unsettled.ts `settleOnArrival`).
+  const shownBrief = step?.briefId;
+  const shownStep = step?.step;
+  useEffect(() => {
+    if (shownBrief !== undefined && shownStep !== undefined) arrived(shownBrief, shownStep);
+  }, [shownBrief, shownStep]);
 
   // A finished step never changes: keep it under its number too, so the step switcher and
   // the next refinement's chips read it from memory.

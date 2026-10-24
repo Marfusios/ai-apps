@@ -15,11 +15,13 @@
  * - **Storage** is `sessionStorage` (this tab only, gone when it closes), under a hash of
  *   that normalised request, so no question text is stored. Every access is wrapped:
  *   when storage is unavailable or refuses a write, the entry lives in memory instead.
- * - **Lifetime:** an entry is cleared by a 2xx, by the 409 swap (the earlier attempt never
- *   completed) and by a known refusal of its first send (nothing was admitted); it expires
- *   with the server's idempotency record, 24 hours after it was first remembered
- *   (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or deleting the account
- *   clears them all (`forgetAllUnsettled`).
+ * - **Lifetime:** an entry is cleared once the page shows the step a 2xx started
+ *   (`settleOnArrival`, `arrived`: the brief page may still be loading after the answer, and
+ *   until it shows the step a reload or a second ask replays the key), by the 409 swap (the
+ *   earlier attempt never completed) and by a known refusal of its first send (nothing was
+ *   admitted); it expires with the server's idempotency record, 24 hours after it was first
+ *   remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or deleting the
+ *   account clears them all (`forgetAllUnsettled`).
  */
 import type { BriefFilterFacet, BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
 import { FACET_VALUES } from '../../../../shared/contracts/search';
@@ -204,19 +206,46 @@ export function forgetUnsettled(id: string, key?: string): void {
   remove(id);
 }
 
+/**
+ * Keys whose request was answered with a 2xx, waiting for the page to show the step it
+ * started, by `briefId:step` (memory only: after a reload the entry stays, and the next
+ * same request replays it).
+ */
+const arriving = new Map<string, { id: string; key: string }>();
+
+/**
+ * A 2xx started step `step` of brief `briefId`: its key is settled when the page shows that
+ * step (`arrived`), not before. The brief page can still be loading after the answer, and a
+ * second ask in that gap must replay the key rather than start (and pay for) another.
+ */
+export function settleOnArrival(briefId: string, step: number, id: string, key: string): void {
+  arriving.set(`${briefId}:${step}`, { id, key });
+}
+
+/** The page shows step `step` of brief `briefId`: a key waiting for it is settled (under its own key only). */
+export function arrived(briefId: string, step: number): void {
+  const at = `${briefId}:${step}`;
+  const waiting = arriving.get(at);
+  if (!waiting) return;
+  arriving.delete(at);
+  forgetUnsettled(waiting.id, waiting.key);
+}
+
 /** Test hook: forget every entry, in memory and in this tab's storage. */
 export function resetUnsettledForTests(): void {
   forgetAllUnsettled();
 }
 
-/** Test hook: what a reload does here: the in-memory fallback goes, this tab's storage stays. */
+/** Test hook: what a reload does here: memory goes (the fallback, the 2xx waiting for their step), this tab's storage stays. */
 export function forgetUnsettledMemoryForTests(): void {
   memory.clear();
+  arriving.clear();
 }
 
 /** Forget every entry, in memory and in this tab's storage (the visitor changed: web/src/features/auth/visitor.ts). */
 export function forgetAllUnsettled(): void {
   memory.clear();
+  arriving.clear();
   try {
     const store = session();
     if (!store) return;

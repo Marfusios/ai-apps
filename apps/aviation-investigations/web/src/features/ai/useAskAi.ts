@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
 import { rememberQuestion } from '../brief/memory';
-import { forgetUnsettled, rememberUnsettled, unsettledId, unsettledKey } from './unsettled';
+import { forgetUnsettled, rememberUnsettled, settleOnArrival, unsettledId, unsettledKey } from './unsettled';
 import { newIdempotencyKey, useAiRequest } from './useAiRequest';
 
 /**
@@ -14,12 +14,12 @@ import { newIdempotencyKey, useAiRequest } from './useAiRequest';
  * same question with the same filters again while its outcome is unknown, from this or any
  * other control in the tab, reuses that key, so a request the server already admitted is
  * replayed instead of paid for twice; if that replay answers 409 `conflict` (the earlier
- * attempt did not complete), it is sent once more under a new key. The key is kept until a
- * 2xx or that 409 settles it: a refusal before sending (a failed or cancelled check, a
- * paused or used-up status) or a known refusal of the replay says nothing about the earlier
- * send. A first send refused with a known outcome (a 4xx, or a 503 `unavailable` or
- * `ai_paused`, which release the admission) spent nothing: its key is taken back, so the
- * next ask uses a new one.
+ * attempt did not complete), it is sent once more under a new key. The key is kept until the
+ * brief page shows the step a 2xx started, or that 409 settles it: a refusal before sending
+ * (a failed or cancelled check, a paused or used-up status) or a known refusal of the replay
+ * says nothing about the earlier send. A first send refused with a known outcome (a 4xx, or
+ * a 503 `unavailable` or `ai_paused`, which release the admission) spent nothing: its key is
+ * taken back, so the next ask uses a new one.
  *
  * An ask belongs to the visitor it started under: if that visitor signs out or deletes the
  * account (here or in another tab) before it ends, nothing more of it is sent (the check
@@ -85,8 +85,10 @@ export function useAskAi() {
         return;
       }
       rememberQuestion(result.value.briefId, q, filters);
+      // Settled once the brief page shows the step this started; until then (the page may
+      // still be loading) a reload or a second ask replays the key.
+      settleOnArrival(result.value.briefId, result.value.step, id, idempotencyKey);
       navigate(`/briefs/${result.value.briefId}`);
-      forgetUnsettled(id, idempotencyKey);
     },
     [navigate, run, setNotice],
   );
