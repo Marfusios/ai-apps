@@ -205,6 +205,12 @@ describe('page titles name AirCase, never the old name (owner decision 2026-10-2
     await waitFor(() => expect(document.title).toBe(expected));
   });
 
+  it.each(['/About', '/EXPLORE', '/Cases/DFW08TA066'])('%s is not a page: paths match in their case, like the server’s routes (a 404 there)', async (path) => {
+    renderApp(path);
+    await waitFor(() => expect(document.title).toBe('Page not found · AirCase'));
+    expect(screen.getByRole('heading', { level: 1, name: 'There is no page here.' })).toBeTruthy();
+  });
+
   it('a case number still matches in any case (the server redirects it to upper case)', async () => {
     renderApp('/cases/dfw08ta066');
     await waitFor(() => expect(document.title).toBe(`${VALENTINE} (2008) · NTSB DFW08TA066 · AirCase`));

@@ -8,19 +8,21 @@ import { Privacy } from './pages/Privacy';
 
 /**
  * Routes from UI_DESIGN §3. View state (query, facets, open case, compared cases,
- * the brief step) lives in the query string, so each view is one route.
+ * the brief step) lives in the query string, so each view is one route. Paths match in
+ * their case (`caseSensitive`), like the server's page routes: `/About` is a 404 there
+ * (server/routes/pages.ts), so it is the not-found page here too.
  */
 const pages: RouteObject[] = [
   { index: true, element: <Home /> },
   // Explore, case and compare load on first use, which keeps the home page light.
-  { path: 'explore', lazy: async () => ({ Component: (await import('./pages/Explore')).Explore }) },
-  { path: 'briefs/:id', lazy: async () => ({ Component: (await import('./pages/Brief')).Brief }) },
-  { path: 'cases/:ntsbNo', lazy: async () => ({ Component: (await import('./pages/CasePage')).CasePage }) },
-  { path: 'compare', lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
-  { path: 'dashboard', lazy: async () => ({ Component: (await import('./pages/Dashboard')).Dashboard }) },
-  { path: 'account', lazy: async () => ({ Component: (await import('./pages/Account')).Account }) },
-  { path: 'privacy', element: <Privacy /> },
-  { path: 'about', element: <About /> },
+  { path: 'explore', caseSensitive: true, lazy: async () => ({ Component: (await import('./pages/Explore')).Explore }) },
+  { path: 'briefs/:id', caseSensitive: true, lazy: async () => ({ Component: (await import('./pages/Brief')).Brief }) },
+  { path: 'cases/:ntsbNo', caseSensitive: true, lazy: async () => ({ Component: (await import('./pages/CasePage')).CasePage }) },
+  { path: 'compare', caseSensitive: true, lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
+  { path: 'dashboard', caseSensitive: true, lazy: async () => ({ Component: (await import('./pages/Dashboard')).Dashboard }) },
+  { path: 'account', caseSensitive: true, lazy: async () => ({ Component: (await import('./pages/Account')).Account }) },
+  { path: 'privacy', caseSensitive: true, element: <Privacy /> },
+  { path: 'about', caseSensitive: true, element: <About /> },
 ];
 
 /** The living style guide; only in development builds (the branch is removed from production bundles). */

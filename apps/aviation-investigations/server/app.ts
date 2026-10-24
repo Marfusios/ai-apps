@@ -13,21 +13,25 @@
  *   a brief (`GET /api/briefs/:id`, about once a second while a step runs) has its own
  *   network-identity limit (`pollRateLimit`) so a running brief cannot use up the
  *   browsing limit; every other route shares `rateLimit`.
- * - The web client from `dist/web` with an SPA fallback: any other GET that accepts
- *   HTML gets the page (`index.html` with a per-response style nonce). Hashed assets
- *   are cached for a year; the page is revalidated.
+ * - The web client from `dist/web`: its pages, each with a head and a status built for its
+ *   route, robots.txt and the sitemaps (server/routes/pages.ts); any other path without a
+ *   file extension that takes HTML gets the 404 page (`index.html` with a per-response
+ *   style nonce). Hashed assets are cached for a year; pages are revalidated.
  * - Access is decided from the route the router matched (the decoded path), never from
  *   the raw request target, so `/%61pi/search` or an absolute-form `http://x/api/search`
  *   get exactly the checks of `/api/search`. Default deny: every matched route needs a
  *   network identity (server/http/network-identity.ts) and is rate limited, except
- *   - the web client's routes (`ASSET_ROUTES`: the page and the static files) and the
- *     not-found handler (the SPA page or a 404), which need no client address and are
- *     not limited, and
+ *   - the web client's routes (`ASSET_ROUTES`: the pages, robots.txt and the static files)
+ *     and the not-found handler (the 404 page or a plain 404), which need no client address
+ *     and are not limited; a case page (`/cases/:ntsbNo`) and the sitemaps read the database
+ *     and are limited like the API, and
  *   - `GET /api/health` from loopback (the container's own health check).
  *   In tunnel mode only the trusted connector may connect at all (403 otherwise).
  * - Every response carries the security headers (server/http/security-headers.ts),
  *   including the router's own errors for malformed URLs (`frameworkErrors`, which
  *   applies the tunnel peer check first) and the HTTP parser's (`clientErrorHandler`).
+ *   Outside live (`APP_ENV`) every response also says `X-Robots-Tag: noindex, nofollow`;
+ *   on live, API responses say `X-Robots-Tag: noindex`.
  * - `Cache-Control` of per-visitor routes (AI, briefs, auth, account) is forced to
  *   `private, no-store` from the matched route (server/http/cache-headers.ts).
  * - Closing (server/main.ts calls it at once on SIGTERM and exits by force at 10 s) runs
@@ -42,7 +46,6 @@
  *
  * Fastify runs with `trustProxy: false`; `request.ip` is never used.
  */
-import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Client } from '@elastic/elasticsearch';
@@ -61,7 +64,7 @@ import { isNoStoreRoute, PRIVATE_NO_STORE } from './http/cache-headers.js';
 import { makeClientErrorHandler } from './http/client-error.js';
 import { RateLimiter } from './http/rate-limit.js';
 import { sendError } from './http/reply.js';
-import { contentSecurityPolicy, isHttpsUrl, securityHeaders } from './http/security-headers.js';
+import { isHttpsUrl, securityHeaders } from './http/security-headers.js';
 import { SearchIncompleteError, SearchTimedOutError } from './search/timeout.js';
 import { accountRoutes } from './routes/account.js';
 import { aiStatusRoutes } from './routes/ai-status.js';
@@ -71,6 +74,7 @@ import { configRoutes } from './routes/config.js';
 import type { ApiContext } from './routes/context.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { healthRoutes } from './routes/health.js';
+import { PUBLIC_PAGE_ROUTES, ROBOTS_ROUTE, pageRoutes } from './routes/pages.js';
 import { searchRoutes } from './routes/search.js';
 
 declare module 'fastify' {
@@ -81,7 +85,8 @@ declare module 'fastify' {
 }
 
 export interface AppDeps {
-  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'>;
+  /** `appEnv` (default `dev`): only `live` lets search engines index the site. */
+  config: Pick<AppConfig, 'appUrl' | 'trustedProxyCidrs'> & Partial<Pick<AppConfig, 'appEnv'>>;
   /** The configured embedding model and dimensions: a published passages index must match them. */
   embedding?: { model: string; dims: number };
   /** PostgreSQL as `aviation_app`. */
@@ -115,6 +120,8 @@ export interface AppDeps {
   healthCacheMs?: number;
   /** The whole-request bound (default `REQUEST_TIMEOUT_MS`; tests shorten it). */
   requestTimeoutMs?: number;
+  /** URLs per case sitemap (default 10,000; tests lower it). */
+  sitemapUrlLimit?: number;
   now?: () => number;
 }
 
@@ -144,8 +151,12 @@ export const KEEP_ALIVE_TIMEOUT_MS = 95_000;
 export const REQUEST_TIMEOUT_MS = 60_000;
 export const CONNECTION_CHECK_MS = 5_000;
 
-/** Route patterns of the web client: the page and the static files (`@fastify/static`'s wildcard). */
-export const ASSET_ROUTES: ReadonlySet<string> = new Set(['/', '/index.html', '/*']);
+/**
+ * Route patterns of the web client that need no network identity and are not rate limited:
+ * the pages whose head needs no database read, robots.txt and the static files
+ * (`@fastify/static`'s wildcard). A case page and the sitemaps read the database: they are not here.
+ */
+export const ASSET_ROUTES: ReadonlySet<string> = new Set([...PUBLIC_PAGE_ROUTES, ROBOTS_ROUTE, '/*']);
 const HEALTH_ROUTE = '/api/health';
 /** Read by the brief page about once a second while a step runs. */
 export const POLL_ROUTES: ReadonlySet<string> = new Set(['/api/briefs/:id']);
@@ -260,12 +271,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const trusted = compileTrustedProxies(deps.config.trustedProxyCidrs);
   // The page loads Turnstile when anonymous AI is configured (`/api/config` sends the site key).
   const turnstile = Boolean(deps.ai?.gate);
-  const headers = securityHeaders({ hsts: isHttpsUrl(deps.config.appUrl), turnstile });
+  // Only live is indexed: elsewhere every response, the HTTP parser's refusals included, says so.
+  const live = deps.config.appEnv === 'live';
+  const headers: Readonly<Record<string, string>> = {
+    ...securityHeaders({ hsts: isHttpsUrl(deps.config.appUrl), turnstile }),
+    ...(live ? {} : { 'x-robots-tag': 'noindex, nofollow' }),
+  };
   const withHeaders = (reply: FastifyReply): FastifyReply => {
     for (const [name, value] of Object.entries(headers)) {
       // A page sets its own CSP (with its style nonce).
       if (!reply.hasHeader(name)) reply.header(name, value);
     }
+    // On live, API responses stay out of search results; pages carry their own robots meta.
+    if (live && isApiPath(routerPath(reply.request.url))) reply.header('x-robots-tag', 'noindex');
     return reply;
   };
 
@@ -456,26 +474,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   if (webRoot !== null && template === null) app.log.warn('no built web client found; serving the API only (run pnpm build:web)');
 
   /**
-   * The SPA page, with a fresh style nonce in its CSP and as the `nonce` attribute of
-   * `<meta property="csp-nonce">` (security-headers.ts). Browsers hide that attribute
-   * from the DOM; the client reads the element's `nonce` property (web/src/csp-nonce.ts).
+   * The pages, each with a head built for its route and a fresh style nonce in its CSP and as
+   * the `nonce` attribute of `<meta property="csp-nonce">` (security-headers.ts; browsers hide
+   * that attribute from the DOM, so the client reads the element's `nonce` property,
+   * web/src/csp-nonce.ts), plus robots.txt and the sitemaps.
    */
-  const sendPage = (reply: FastifyReply, page: string) => {
-    // Base64 of random bytes: no character that could leave the attribute value.
-    const nonce = randomBytes(18).toString('base64');
-    const html = page.replace('</head>', `<meta property="csp-nonce" nonce="${nonce}"></head>`);
-    return reply
-      .code(200)
-      .header('content-security-policy', contentSecurityPolicy({ styleNonce: nonce, turnstile }))
-      .header('cache-control', 'no-cache')
-      .type('text/html; charset=utf-8')
-      .send(html);
-  };
+  const pageNotFound = pageRoutes(app, ctx, {
+    origin: new URL(deps.config.appUrl).origin,
+    live,
+    template,
+    turnstile,
+    ...(deps.sitemapUrlLimit ? { sitemapUrlLimit: deps.sitemapUrlLimit } : {}),
+  });
 
   if (webRoot !== null && template !== null) {
-    const page = template;
-    app.get('/', async (_request, reply) => sendPage(reply, page));
-    app.get('/index.html', async (_request, reply) => sendPage(reply, page));
     void app.register(fastifyStatic, {
       root: webRoot,
       prefix: '/',
@@ -497,12 +509,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // Decide on the path the router saw: `/%61pi/nope` is an API 404, not the page.
     const path = routerPath(request.url);
     if (isApiPath(path)) return sendError(reply, 404, 'not_found');
-    const wantsPage =
-      (request.method === 'GET' || request.method === 'HEAD') &&
-      !/\.[A-Za-z0-9]{1,8}$/.test(path) &&
-      (request.headers.accept ?? '').includes('text/html');
-    if (template !== null && wantsPage) return sendPage(reply, template);
-    return reply.code(404).header('cache-control', 'no-store').type('text/plain; charset=utf-8').send('Not found');
+    return pageNotFound(request, reply, path);
   });
 
   return app;
