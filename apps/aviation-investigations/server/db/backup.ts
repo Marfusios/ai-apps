@@ -12,6 +12,7 @@
  *   `auth_deletion_confirmations`: sessions (a token that, with BETTER_AUTH_SECRET, signs a
  *   valid cookie), Better Auth's verification rows (unused: OAuth state lives in an
  *   encrypted cookie), the hashes of used OAuth states and deletion confirmations.
+ * - `evidence_searches`: private questions, interpretations and pinned results, held 24 hours.
  * - `briefs`, `brief_steps`: questions, answers, evidence and diagnostics, held 24 hours.
  * - `idempotency`: hashes of requests, deleted with an account.
  *
@@ -35,7 +36,7 @@ import { comparePrivileges, privilegeSnapshot, type PrivilegeDiff } from './priv
 import { AUTH_TABLES } from './schema/auth.js';
 
 /** Tables whose rows a backup never holds (their definitions it does). */
-export const BACKUP_EXCLUDED_DATA = [...AUTH_TABLES, 'brief_steps', 'briefs', 'idempotency'] as const;
+export const BACKUP_EXCLUDED_DATA = [...AUTH_TABLES, 'evidence_searches', 'brief_steps', 'briefs', 'idempotency'] as const;
 
 /** The `pg_dump` options that leave those rows out (RUNBOOK, "Backups"). */
 export function pgDumpExclusions(): string[] {
