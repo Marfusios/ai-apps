@@ -1866,7 +1866,10 @@ the shared servers and writes its connection files outside the repository.
 
 It needs Docker Compose 2.24 or later. `live` always runs behind the Cloudflare
 Tunnel with an explicit `APP_VERSION`, and only peers in its pinned edge subnet
-are trusted as proxies (`TRUSTED_PROXY_CIDRS`).
+are trusted as proxies (`TRUSTED_PROXY_CIDRS`). On `dev` every `app:up`, `app:migrate`
+and `ingest` rebuilds the image from the checkout; on `live` each release tag is built
+once and never rebuilt implicitly, so a rollback to an earlier tag starts the image it
+was built as (RUNBOOK, "Deploying an environment").
 
 Configuration comes from env files outside the repository, named in
 `AVIATION_ENV_FILES`; Compose uses them for interpolation only and each container
@@ -1876,7 +1879,7 @@ gets just the variables it needs. `compose.tunnel.yaml` removes the app port and
 ```sh
 export AVIATION_ENV_FILES=<connection files and app secrets, comma-separated>
 pnpm app:migrate          # schema migrations
-pnpm app:up               # build and start (tunnel mode when TUNNEL_TOKEN is set)
+pnpm app:up               # start, building the image as above (tunnel mode when TUNNEL_TOKEN is set)
 pnpm ingest generations   # any worker command, in a one-shot container
 pnpm app:ps               # this environment's containers
 pnpm app:backup           # dump the database into AVIATION_BACKUP_DIR (RUNBOOK, "Backups")

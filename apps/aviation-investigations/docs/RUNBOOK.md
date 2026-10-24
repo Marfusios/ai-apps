@@ -326,7 +326,7 @@ export AVIATION_ENV_FILES=...       # see Env files
 pnpm app:migrate               # schema migrations (aviation-migrate container)
 pnpm app:backup                # dump the database into AVIATION_BACKUP_DIR (Backups)
 pnpm app:restore <file>        # restore a backup into a freshly provisioned database (Backups)
-pnpm app:up                    # build the image, start app (and tunnel), wait until healthy
+pnpm app:up                    # start app (and tunnel), wait until healthy; builds the image (below)
 pnpm app:ps                    # this environment's containers, one-offs included
 pnpm ingest generations        # any worker command in a one-shot ingest container
 pnpm app:down                  # stop and remove this environment's containers
@@ -336,16 +336,16 @@ pnpm extract:image             # build ai-aviation/extract:mdbtools-1.0.0
 The same with plain Compose, from the app directory:
 
 ```sh
-docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --rm aviation-migrate
+docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --build --rm aviation-migrate
 docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile app up -d --build
-docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --rm aviation-ingest generations
+docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile tools run --build --rm aviation-ingest generations
 docker compose -p ai-aviation-dev --env-file "$ENV_FILE" --profile app --profile tools --profile tunnel down
 ```
 
 Pass one `--env-file` per file, lowest priority first. `compose.yaml` refuses to
 load without `APP_ENV`. Plain Compose does not apply the wrappers' checks: on
 `live` always add `-f compose.tunnel.yaml --profile tunnel`, or the app publishes
-its loopback port. Run `aviation-ingest` with
+its loopback port, and leave out `--build` (see below). Run `aviation-ingest` with
 `AVIATION_UID=$(id -u) AVIATION_GID=$(id -g)` and create `data/reports/<env>`
 first when not using the wrapper.
 
@@ -364,10 +364,25 @@ without `TRUSTED_PROXY_CIDRS`.
 4. Run the [AI preflight](#ai-preflight) with the environment's settings file.
 5. `pnpm app:up` (tunnel mode on `live`).
 
-To update: pull the code, set a new `APP_VERSION` on `live`, run
-`pnpm app:migrate` and the [AI preflight](#ai-preflight), then `pnpm app:up`. To roll
-back, set the previous `APP_VERSION` (its image is still local) and run `pnpm app:up`;
-migrations are not reversed.
+**Images.** On `dev`, `pnpm app:up`, `pnpm app:migrate` and `pnpm ingest` rebuild
+`ai-aviation/app:dev` from the checkout every time (seconds when nothing changed), so the
+migrations, the worker and the server always come from the same code. On `live` a release
+tag (`APP_VERSION`) is built once: the first command that needs it builds it from the
+checkout, and later commands start that image as built, even after the checkout moved on.
+Give every release its own `APP_VERSION` and tag its commit in git with the same name.
+`--rebuild` as the first argument (`pnpm app:up --rebuild`, `pnpm app:migrate --rebuild`,
+`pnpm ingest --rebuild ...`) rebuilds a tag on purpose, from the current checkout.
+
+To update `live`: check out the release's commit, set its new `APP_VERSION`, run
+`pnpm app:migrate` (which builds the image and applies its migrations) and the
+[AI preflight](#ai-preflight), then `pnpm app:up`. To roll back, set the previous
+`APP_VERSION` and run `pnpm app:up`: its image is still local and starts unchanged.
+Migrations are not reversed, so roll back only to a release that runs on the current
+schema (the migrations add, and every release so far reads the tables it knows); after a
+migration that changes what an earlier release relies on, roll forward instead. Each
+release image takes about 350 MB: keep the current and the previous two tags as rollback
+inventory and remove older ones (`docker image rm ai-aviation/app:<tag>`); `docker image
+prune` removes the untagged layers that `dev` rebuilds leave behind.
 
 ### AI preflight
 

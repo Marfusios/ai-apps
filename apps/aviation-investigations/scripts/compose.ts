@@ -1,7 +1,7 @@
 /**
  * Docker Compose wrapper for the deployment in compose.yaml (docs/RUNBOOK.md).
  *
- *   pnpm app:up               build and start the app (tunnel mode: always on live, on dev when TUNNEL_TOKEN is set)
+ *   pnpm app:up               start the app, building its image (tunnel mode: always on live, on dev when TUNNEL_TOKEN is set)
  *   pnpm app:down             stop and remove this environment's containers
  *   pnpm app:ps               list this environment's containers, one-offs included
  *   pnpm app:migrate          one-shot schema migrations (migrator role)
@@ -16,6 +16,12 @@
  * (dev or live) selects the project `ai-aviation-<APP_ENV>`. compose.tunnel.yaml is
  * added in tunnel mode, compose.tracing.yaml when AVIATION_TRACING_ENABLED is true.
  * Values are never printed. Needs Docker Compose 2.24 or later (`!reset`).
+ *
+ * Images: on dev, app:up, app:migrate and ingest rebuild `ai-aviation/app:dev` from the
+ * checkout every time, so all three run the same, current code. On live a release tag
+ * (APP_VERSION) is built once, from the checkout of its release, when it does not exist
+ * yet; it is never rebuilt implicitly, so rolling back to an earlier tag starts the image
+ * that tag was built as. `--rebuild` as the first argument rebuilds the tag on purpose.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -51,6 +57,11 @@ export const NAMES = [
 ] as const;
 export type Name = (typeof NAMES)[number];
 export type Values = Partial<Record<Name, string>>;
+
+/** Commands that run the application image (`ai-aviation/app:<APP_VERSION>`). */
+const IMAGE_COMMANDS: readonly Command[] = ['app-up', 'migrate', 'ingest'];
+/** Wrapper option, first argument only: rebuild the image even where it would not be. */
+export const REBUILD = '--rebuild';
 
 const REQUIRED: Record<Command, readonly Name[]> = {
   'app-up': [
@@ -136,7 +147,10 @@ export interface Plan {
  * `processEnv` and `fileEnvs` (one record per env file, highest priority first) hold the
  * allowlisted names only. Throws UsageError naming the problem, never a value.
  */
-export function planCompose(command: Command, args: string[], processEnv: Values, fileEnvs: Values[]): Plan {
+export function planCompose(command: Command, rawArgs: string[], processEnv: Values, fileEnvs: Values[]): Plan {
+  const rebuild = rawArgs[0] === REBUILD;
+  if (rebuild && !IMAGE_COMMANDS.includes(command)) throw new UsageError(`${REBUILD} applies to app:up, app:migrate and ingest only`);
+  const args = rebuild ? rawArgs.slice(1) : rawArgs;
   const values: Values = {};
   for (const f of [...fileEnvs].reverse()) Object.assign(values, f);
   for (const [k, v] of Object.entries(processEnv) as [Name, string][]) if (v) values[k] = v;
@@ -158,7 +172,7 @@ export function planCompose(command: Command, args: string[], processEnv: Values
     throw new UsageError('app:restore takes one backup file: the name of a .dump file in AVIATION_BACKUP_DIR');
   }
 
-  const usesImage = command === 'app-up' || command === 'ingest' || command === 'migrate';
+  const usesImage = IMAGE_COMMANDS.includes(command);
   if (appEnv === 'live' && usesImage) {
     const version = values.APP_VERSION;
     if (!version || version === 'dev') throw new UsageError('live needs an explicit APP_VERSION other than dev (a release tag)');
@@ -184,10 +198,12 @@ export function planCompose(command: Command, args: string[], processEnv: Values
   if (tunnel) files.push('compose.tunnel.yaml');
   if (tracing && (command === 'app-up' || command === 'ingest')) files.push('compose.tracing.yaml');
 
+  // dev: always the checkout's code. live: a tag is built once (Compose builds a missing one).
+  const build = appEnv === 'dev' || rebuild ? ['--build'] : [];
   let tail: string[];
   switch (command) {
     case 'app-up':
-      tail = ['--profile', 'app', ...(tunnel ? ['--profile', 'tunnel'] : []), 'up', '-d', '--build', '--wait', '--wait-timeout', '180', ...args];
+      tail = ['--profile', 'app', ...(tunnel ? ['--profile', 'tunnel'] : []), 'up', '-d', ...build, '--wait', '--wait-timeout', '180', ...args];
       break;
     case 'app-down':
       tail = ['--profile', 'app', '--profile', 'tools', '--profile', 'tunnel', 'down', ...args];
@@ -196,7 +212,7 @@ export function planCompose(command: Command, args: string[], processEnv: Values
       tail = ['ps', '-a', ...args];
       break;
     case 'migrate':
-      tail = ['--profile', 'tools', 'run', '--rm', 'aviation-migrate', ...args];
+      tail = ['--profile', 'tools', 'run', ...build, '--rm', 'aviation-migrate', ...args];
       break;
     case 'backup':
       tail = ['--profile', 'tools', 'run', '--rm', 'aviation-backup'];
@@ -205,7 +221,7 @@ export function planCompose(command: Command, args: string[], processEnv: Values
       tail = ['--profile', 'tools', 'run', '--rm', 'aviation-restore', ...args];
       break;
     case 'ingest':
-      tail = ['--profile', 'tools', 'run', '--rm', 'aviation-ingest', ...args];
+      tail = ['--profile', 'tools', 'run', ...build, '--rm', 'aviation-ingest', ...args];
       break;
     case 'extract-image':
       tail = ['build', 'extract-image', ...args];

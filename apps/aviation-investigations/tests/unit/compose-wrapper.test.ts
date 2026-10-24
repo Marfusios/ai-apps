@@ -74,7 +74,7 @@ describe('planCompose on dev', () => {
     const tracing = env('dev', { AVIATION_TRACING_ENABLED: 'true' });
     expect(planCompose('ingest', ['generations'], {}, [tracing])).toMatchObject({
       files: ['compose.yaml', 'compose.tracing.yaml'],
-      tail: ['--profile', 'tools', 'run', '--rm', 'aviation-ingest', 'generations'],
+      tail: ['--profile', 'tools', 'run', '--build', '--rm', 'aviation-ingest', 'generations'],
     });
     expect(planCompose('migrate', [], {}, [tracing]).files).toEqual(['compose.yaml']);
   });
@@ -116,6 +116,39 @@ describe('planCompose consistency checks', () => {
 
   it('builds the extraction image without any configuration', () => {
     expect(planCompose('extract-image', [], {}, [])).toMatchObject({ appEnv: 'dev', tail: ['build', 'extract-image'] });
+  });
+});
+
+describe('planCompose image builds', () => {
+  const live = env('live', { APP_VERSION: 'v1.2.0', TUNNEL_TOKEN: 'secret-token', EDGE_SUBNET: EDGE });
+
+  it('on dev rebuilds the image from the checkout for app:up, app:migrate and ingest', () => {
+    // A tag that already exists would otherwise run the previous code: new migrations unapplied.
+    expect(planCompose('app-up', [], {}, [env('dev')]).tail).toContain('--build');
+    expect(planCompose('migrate', [], {}, [env('dev')]).tail).toEqual(['--profile', 'tools', 'run', '--build', '--rm', 'aviation-migrate']);
+    expect(planCompose('ingest', ['verify', '--generation', '3'], {}, [env('dev')]).tail).toEqual([
+      '--profile', 'tools', 'run', '--build', '--rm', 'aviation-ingest', 'verify', '--generation', '3',
+    ]);
+  });
+
+  it('on live builds a release tag once: never again implicitly, so a rollback starts the image that tag was built as', () => {
+    for (const command of ['app-up', 'migrate', 'ingest'] as const) {
+      expect(planCompose(command, [], {}, [live]).tail, command).not.toContain('--build');
+    }
+    expect(planCompose('app-up', [], {}, [live]).tail).toEqual(['--profile', 'app', '--profile', 'tunnel', 'up', '-d', '--wait', '--wait-timeout', '180']);
+    expect(planCompose('migrate', [], {}, [live]).tail).toEqual(['--profile', 'tools', 'run', '--rm', 'aviation-migrate']);
+  });
+
+  it('rebuilds a tag only when asked with --rebuild, which is never passed on', () => {
+    expect(planCompose('app-up', ['--rebuild'], {}, [live]).tail).toEqual([
+      '--profile', 'app', '--profile', 'tunnel', 'up', '-d', '--build', '--wait', '--wait-timeout', '180',
+    ]);
+    expect(planCompose('migrate', ['--rebuild'], {}, [live]).tail).toEqual(['--profile', 'tools', 'run', '--build', '--rm', 'aviation-migrate']);
+    expect(planCompose('ingest', ['--rebuild', 'generations'], {}, [live]).tail).toEqual([
+      '--profile', 'tools', 'run', '--build', '--rm', 'aviation-ingest', 'generations',
+    ]);
+    expect(planCompose('ingest', ['--rebuild', 'generations'], {}, [env('dev')]).tail).not.toContain('--rebuild');
+    expect(error(() => planCompose('app-ps', ['--rebuild'], {}, [live]))).toMatch(/--rebuild/);
   });
 });
 
