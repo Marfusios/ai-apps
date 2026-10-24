@@ -167,6 +167,7 @@ Then run `pnpm app:migrate` for the environment. Langfuse projects
 | `aviation-app` | `app` | `app` | Fastify API and the built web client on one origin |
 | `aviation-ingest` | `tools` | `ingest` | Worker CLI, one-shot (`run --rm`) |
 | `aviation-migrate` | `tools` | `migrate` | Schema migrations, one-shot |
+| `aviation-backup`, `aviation-restore` | `tools` | `backup`, `restore` | `pg_dump` and `pg_restore` (PostgreSQL 16 client tools), one-shot ([Backups](#backups)) |
 | `extract-image` | `tools` | `extract` | Builds the extraction image; never runs a service |
 | `extract` (one-offs) | none | `extract` | Sandboxed `mdb-export` containers the host worker starts |
 | `tunnel` | `tunnel` | `tunnel` | Cloudflare Tunnel connector |
@@ -185,6 +186,7 @@ reach a container.
 | `aviation-app` | `DATABASE_URL` (as `aviation_app`) | `ELASTICSEARCH_READ_API_KEY` | Anthropic and OpenAI keys, `BETTER_AUTH_SECRET`, Google OAuth client, Turnstile keys, `IP_HMAC_SECRET`, `IDENTITY_HMAC_SECRET`; budgets and limits | CA file (read-only) |
 | `aviation-ingest` | `DATABASE_INGEST_URL` (as `aviation_ingest`) | `ELASTICSEARCH_WRITE_API_KEY` | OpenAI key and embedding settings; the total and ingestion budgets | `data/` read-only, `data/reports/<env>` writable, CA file (read-only) |
 | `aviation-migrate` | `DATABASE_MIGRATOR_URL` (as `aviation_migrator`) | none | none | none |
+| `aviation-backup`, `aviation-restore` | `DATABASE_MIGRATOR_URL` (as `aviation_migrator`) | none | none | `AVIATION_BACKUP_DIR` (read-only for the restore), the scripts in `docker/postgres` (read-only) |
 | `extract` | none | none | none | the MDB file read-only; no network |
 | `tunnel` | none | none | `TUNNEL_TOKEN` | none |
 
@@ -195,7 +197,8 @@ With tracing on (see [Tracing](#tracing)), `aviation-app` and `aviation-ingest` 
 
 - The application image runs as uid 1000 (`node`); `aviation-ingest` runs as the host user
   that owns `data/` (`pnpm ingest` sets `AVIATION_UID`/`AVIATION_GID`; the
-  extraction outputs are mode 0600). Extraction containers run as uid 65534.
+  extraction outputs are mode 0600), and the backup containers as the host user that owns
+  `AVIATION_BACKUP_DIR`. Extraction containers run as uid 65534.
 - Read-only root filesystem with a 64 MB `/tmp` tmpfs, all Linux capabilities
   dropped, `no-new-privileges`, and memory/CPU limits (app 1 GB, ingest 2 GB).
 - No Docker socket, no home-directory mounts. The only host paths mounted are
@@ -211,7 +214,7 @@ With tracing on (see [Tracing](#tracing)), `aviation-app` and `aviation-ingest` 
 | --- | --- | --- |
 | `edge` | `aviation-app`, `tunnel` | Per project. App ingress and the outbound route to Cloudflare and the model, embedding, OAuth and Turnstile APIs. Nothing else joins it. Pinned to `EDGE_SUBNET` in tunnel mode. |
 | `egress` | `aviation-ingest` | Per project. Outbound route for the embeddings API. |
-| `postgres` | `aviation-app`, `aviation-ingest`, `aviation-migrate` | External, `SHARED_POSTGRES_NETWORK`. |
+| `postgres` | `aviation-app`, `aviation-ingest`, `aviation-migrate`, `aviation-backup`, `aviation-restore` | External, `SHARED_POSTGRES_NETWORK`. |
 | `elasticsearch` | `aviation-app`, `aviation-ingest` | External, `SHARED_ELASTICSEARCH_NETWORK`. |
 | `observability` | `aviation-app`, `aviation-ingest` | External, `SHARED_OBSERVABILITY_NETWORK`; only with `compose.tracing.yaml`. |
 
@@ -238,8 +241,10 @@ refuses overlapping subnets. Changing it needs
 Compose reads env files for interpolation only. Pass them through
 `AVIATION_ENV_FILES`: comma-separated, highest priority first. Nonempty variables
 exported in the shell win over the files, as in Compose itself, so unset
-host-side values such as `DATABASE_URL` before running the wrappers. The variable
-names are documented in `.env.example`.
+host-side values such as `DATABASE_URL` before running the wrappers. (Compose lets a
+variable exported empty win too; the wrappers drop empty values of the names they check,
+so the containers get the values that were checked.) The variable names are documented
+in `.env.example`.
 
 An environment combines the generated connection files with the Langfuse
 connection file and a private file of application settings, all outside the
@@ -301,8 +306,11 @@ true. They never print values, and they refuse to run when:
   `APP_ENV` differs from the files';
 - a variable the command needs is missing;
 - the command's database URL (`DATABASE_URL` for `app:up`, `DATABASE_INGEST_URL`
-  for `ingest`, `DATABASE_MIGRATOR_URL` for `app:migrate`) does not name
-  `aviation_<APP_ENV>` or lacks the `options=-c role=<group>` switch;
+  for `ingest`, `DATABASE_MIGRATOR_URL` for `app:migrate`, `app:backup` and
+  `app:restore`) does not name `aviation_<APP_ENV>` or lacks the
+  `options=-c role=<group>` switch;
+- for `app:backup` and `app:restore`: `AVIATION_BACKUP_DIR` is missing, not a directory or
+  inside the repository, or the restore does not name one `.dump` file in it;
 - `ELASTICSEARCH_INDEX_PREFIX` is not `ai-aviation-<APP_ENV>`;
 - on `live`: `APP_VERSION` is missing or `dev` (for `app:up`, `ingest` and
   `app:migrate`), or `TUNNEL_TOKEN` is missing for `app:up`;
@@ -316,6 +324,8 @@ profile), so `live` never publishes a port. On `dev` it runs tunnel mode when
 export AVIATION_ENV_FILES=...       # see Env files
 
 pnpm app:migrate               # schema migrations (aviation-migrate container)
+pnpm app:backup                # dump the database into AVIATION_BACKUP_DIR (Backups)
+pnpm app:restore <file>        # restore a backup into a freshly provisioned database (Backups)
 pnpm app:up                    # build the image, start app (and tunnel), wait until healthy
 pnpm app:ps                    # this environment's containers, one-offs included
 pnpm ingest generations        # any worker command in a one-shot ingest container
@@ -650,37 +660,97 @@ run `index cases`, `index passages` (free while the cache is complete) and `publ
 Verification reports under `data/reports/` and the extraction directories are
 derived and need no backup; the source archive is kept wherever you keep it.
 
+### Taking a backup
+
 ```sh
-# One environment's database, as a role that can read everything in it, without the rows
-# a backup never holds. Run it on the host that can reach the database; keep the file off
-# the repository and encrypted.
-pg_dump --format=custom --no-owner \
-  --exclude-table-data=auth_deletion_confirmations --exclude-table-data=auth_sessions \
-  --exclude-table-data=auth_accounts --exclude-table-data=auth_verifications \
-  --exclude-table-data=auth_state_uses --exclude-table-data=auth_users \
-  --exclude-table-data=brief_steps --exclude-table-data=briefs --exclude-table-data=idempotency \
-  --file "<backup-dir>/aviation_<env>-$(date +%F).dump" \
-  "postgresql://<backup-role>@<db-host>:<port>/aviation_<env>"
+export AVIATION_ENV_FILES=...          # the environment's .docker.env files, as for pnpm app:migrate
+export AVIATION_BACKUP_DIR=<private directory outside the repository>
+pnpm app:backup                        # writes aviation_<env>-<UTC time>.dump, mode 0600
 ```
 
-Restore, with the app stopped (`pnpm app:down`):
+`app:backup` runs `pg_dump` (docker/postgres/backup.sh) in the one-shot `aviation-backup`
+container, with the PostgreSQL 16 client tools of the shared server's version, as the
+environment's migrator login (`DATABASE_MIGRATOR_URL`). That is the only login that can
+dump the database: `pg_dump` locks every table it dumps, those whose rows it leaves out
+too, and the app and ingest logins are refused (`permission denied for schema drizzle`).
+The file appears under its final name only once it is complete. The container runs as
+the host user that owns the directory (the wrapper sets `AVIATION_UID`/`AVIATION_GID`)
+and sees only that directory and the scripts. With plain Compose, set those three
+variables and run `docker compose -p ai-aviation-<env> --env-file ... --profile tools run
+--rm aviation-backup`.
+
+### Schedule, encryption, expiry and drills
+
+Nothing in this repository schedules backups or copies them off the host: that is the
+operator's duty, at least for `live`.
+
+1. **Daily**, a host timer (cron or a systemd timer) runs, as the user that owns the
+   backup directory, `cd <checkout>/apps/aviation-investigations && pnpm app:backup` with
+   the environment's `AVIATION_ENV_FILES` and `AVIATION_BACKUP_DIR`.
+2. **Encrypted, off the host** (DESIGN §11): encrypt each new file to a key that is not on
+   the host (for example `age -r <recipient> -o <file>.age <file>`, then remove the plain
+   file) and copy the encrypted file to a destination off the host. A backup holds the
+   ledger and the HMAC-keyed quota and abuse records; treat it like the database.
+3. **Expiry**: backups expire within 30 days. Delete local and off-host copies older than
+   that (`find <dir> -name 'aviation_<env>-*.dump*' -mtime +30 -delete`, and the off-host
+   store's own lifecycle rule).
+4. **Restore drill**, monthly and after any migration that adds tables or changes grants:
+   decrypt the newest backup into a private directory and run
+   `pnpm db:restore-drill <file>`. It needs Docker only: it restores the file with the same
+   script as `app:restore` into a throwaway PostgreSQL 16 server, applies the migrations,
+   runs the restore check, removes the server again, and ends with `drill passed`.
+
+### Restoring
+
+With the app stopped (`pnpm app:down`), and the backup decrypted into
+`AVIATION_BACKUP_DIR`:
 
 ```sh
-# 1. Into an empty database, then re-run the migrations to check the schema.
-pg_restore --no-owner --dbname "postgresql://<admin-role>@<db-host>:<port>/aviation_<env>" "<backup-dir>/<file>.dump"
+# 1. As the cluster administrator: drop the damaged database if it still exists, then
+#    provision the environment again (Provisioning). It creates an empty database with the
+#    roles, schemas and default privileges, and keeps the passwords of the connection files.
+psql "<administrator URL of the database server>" -c 'DROP DATABASE IF EXISTS aviation_<env> WITH (FORCE)'
+pnpm provision:shared --env <env> --out <dir> --pg-admin-env <file> ...
+# 2. Restore as the migrator login, in one transaction. It refuses a database that is not
+#    empty, and a restore that fails leaves the database empty: fix the cause, run it again.
+pnpm app:restore aviation_<env>-<time>.dump
+# 3. The migrations newer than the backup.
 pnpm app:migrate
-# 2. On a host with DATABASE_MIGRATOR_URL (as for pnpm worker migrate): the tables a backup
-#    never holds must be empty. It fails, naming them, when the dump held their rows (one
-#    made before these exclusions); only then empty them, which also checks again:
+# 4. On a host with the environment's host-side DATABASE_MIGRATOR_URL (as for pnpm worker
+#    migrate): holds paid operations (next section), then checks that every owner and grant
+#    is the one a freshly migrated database has and that the tables a backup never holds
+#    are empty, naming every difference. Only for a dump made before those exclusions:
+#    `pnpm worker restore-check --empty` empties those tables and checks again.
 pnpm worker restore-check
-#    pnpm worker restore-check --empty
-# 3. Only after it passed, open the service. Paid operations stay held (next section).
+# 5. Only after it passed, open the service. Paid operations stay held.
 pnpm app:up
-# 4. Charge the spend the restored ledger lacks, which releases them.
+# 6. Charge the spend the restored ledger lacks, which releases them (next section).
 pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source of the figures>"
 ```
 
-Roles and grants are part of provisioning, not of the dump (`pnpm provision:shared`).
+Why it is done this way (docker/postgres/restore.sh):
+
+- **The migrator restores.** Every object is created by `aviation_migrator` and so owned
+  by it, as the migrations expect, and the dump's grants are applied as they were.
+  Restoring as the administrator with `--no-owner`, as this runbook once said, makes the
+  administrator own every table and `SECURITY DEFINER` function: `app:migrate` then fails
+  with `permission denied for table __drizzle_migrations`, and functions such as
+  `prune_controls()` and `publish_manifest()` run as a superuser.
+- **Provisioning's default privileges are suspended during the restore.** They let the
+  runtime roles read every table the migrator creates, and `pg_dump`'s grants never revoke
+  them: restored with them in force, the sign-in tables and abuse records become readable
+  by `aviation_ingest`. The restore clears them in its transaction; the dump puts them back
+  at its end.
+- **One transaction.** `COMMIT` is sent only after `pg_restore` produced the whole dump, so
+  a truncated or corrupt file restores nothing. The schema `drizzle` (provisioning created
+  it) and the grants on schema `public` (provisioning sets them) are skipped.
+
+`restore-check` fails on any other owner, any grant too many or too few, and on an excluded
+table the migrator cannot read. Do not open a service whose database fails it: restore
+again into a freshly provisioned database. Roles, the database, its schemas and their
+grants come from provisioning (`pnpm provision:shared`); grants on tables, sequences and
+functions come from the dump and are checked against `server/db/privileges-expected.ts`
+(regenerate it with `pnpm db:privileges` after a migration that changes them).
 
 ### Paid operations after a restore
 

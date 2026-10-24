@@ -1859,7 +1859,8 @@ the shared servers and writes its connection files outside the repository.
   nothing.
 - `aviation-ingest` and `aviation-migrate` (profile `tools`): the same image running the worker CLI
   one-shot with the ingestion or migrator database role; `extract-image` builds
-  the extraction image.
+  the extraction image; `aviation-backup` and `aviation-restore` run the PostgreSQL 16
+  client tools one-shot as the migrator login (`pnpm app:backup`, `pnpm app:restore`).
 - `tunnel` (profile `tunnel`): the pinned Cloudflare Tunnel connector, sharing only
   the `edge` network with `aviation-app`.
 
@@ -1878,6 +1879,7 @@ pnpm app:migrate          # schema migrations
 pnpm app:up               # build and start (tunnel mode when TUNNEL_TOKEN is set)
 pnpm ingest generations   # any worker command, in a one-shot container
 pnpm app:ps               # this environment's containers
+pnpm app:backup           # dump the database into AVIATION_BACKUP_DIR (RUNBOOK, "Backups")
 pnpm app:down
 ```
 

@@ -1152,7 +1152,11 @@ Measure the actual index and allow a second index's disk space during rebuilds.
 
 Use bounded database/search timeouts and pools. Back up identity/consent/quota data
 encrypted to an off-host destination and test restore; search indices are
-rebuildable. Track freshness, latency, cost, rejects, errors, and saturation without
+rebuildable. As built (RUNBOOK, "Backups"): `pnpm app:backup` and `pnpm app:restore` dump
+and restore as the migrator login, `pnpm worker restore-check` verifies owners and grants
+and holds paid operations until `pnpm worker restore-reconcile`, and
+`pnpm db:restore-drill` tests a backup; scheduling, encryption, the off-host copy and the
+30-day expiry are the operator's host timer. Track freshness, latency, cost, rejects, errors, and saturation without
 default email/prompt logging. Document single-host downtime, rollback, and recovery.
 
 ## 12. Security review and evaluation gates

@@ -119,6 +119,48 @@ describe('planCompose consistency checks', () => {
   });
 });
 
+describe('planCompose for backups and restores', () => {
+  const backups = (appEnv: 'dev' | 'live', extra: Values = {}) => env(appEnv, { AVIATION_BACKUP_DIR: '/srv/aviation-backups', ...extra });
+
+  it('backs up and restores as the migrator login with the PostgreSQL tools, without the application image', () => {
+    for (const appEnv of ['dev', 'live'] as const) {
+      // No release tag on live: these containers run the PostgreSQL image, not the application's.
+      expect(planCompose('backup', [], {}, [backups(appEnv)])).toEqual({
+        appEnv,
+        tunnel: false,
+        files: ['compose.yaml'],
+        tail: ['--profile', 'tools', 'run', '--rm', 'aviation-backup'],
+      });
+      expect(planCompose('restore', [`aviation_${appEnv}-2026-10-24T031500Z.dump`], {}, [backups(appEnv)]).tail).toEqual([
+        '--profile',
+        'tools',
+        'run',
+        '--rm',
+        'aviation-restore',
+        `aviation_${appEnv}-2026-10-24T031500Z.dump`,
+      ]);
+    }
+  });
+
+  it('needs the backup directory and the environment’s migrator URL', () => {
+    expect(error(() => planCompose('backup', [], {}, [env('dev')]))).toMatch(/missing for backup: AVIATION_BACKUP_DIR/);
+    expect(error(() => planCompose('restore', ['a.dump'], {}, [env('dev')]))).toMatch(/missing for restore: AVIATION_BACKUP_DIR/);
+    expect(
+      error(() => planCompose('backup', [], {}, [backups('dev', { DATABASE_MIGRATOR_URL: url('live', 'aviation_live_migrator', 'aviation_migrator') })])),
+    ).toMatch(/DATABASE_MIGRATOR_URL must use database aviation_dev/);
+    expect(error(() => planCompose('restore', ['a.dump'], {}, [backups('dev', { DATABASE_MIGRATOR_URL: url('dev', 'u', 'aviation_app') })]))).toMatch(
+      /role%3Daviation_migrator/,
+    );
+  });
+
+  it('restores exactly one backup file named inside the backup directory, and backs up without arguments', () => {
+    for (const args of [[], ['a.dump', 'b.dump'], ['../a.dump'], ['dir/a.dump'], ['a.sql'], ['-x.dump']]) {
+      expect(error(() => planCompose('restore', args, {}, [backups('dev')]))).toMatch(/one backup file/);
+    }
+    expect(error(() => planCompose('backup', ['--format=plain'], {}, [backups('dev')]))).toMatch(/takes no arguments/);
+  });
+});
+
 describe('helpers', () => {
   it('accepts private, aligned edge subnets from /16 to /29', () => {
     expect(() => checkEdgeSubnet(EDGE)).not.toThrow();

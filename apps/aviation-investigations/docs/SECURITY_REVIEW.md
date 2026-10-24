@@ -246,8 +246,9 @@ re-reviewed. The implementation review must cover in particular:
   (database hooks clear them, CHECK constraints refuse them), the app role's grants on
   the auth tables (no UPDATE; no DELETE of an account link on its own), backups without
   the sign-in, brief and idempotency rows, and the restore check before a restored
-  service opens; a restored ledger holds every paid operation until the spend since the
-  backup is charged (`pnpm worker restore-reconcile`).
+  service opens (every owner and grant as in a freshly migrated database; the restore runs
+  as the migrator in one transaction); a restored ledger holds every paid operation until
+  the spend since the backup is charged (`pnpm worker restore-reconcile`).
 
 Accepted for the beta (owner to confirm): the session cookie lifetime of 7 days without a
 device binding; the HMAC of the Google identity under IDENTITY_HMAC_SECRET (shared with

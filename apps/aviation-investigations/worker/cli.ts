@@ -729,18 +729,41 @@ async function main(argv: string[]): Promise<number> {
     }
     const db = createDb(url, { max: 1, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {
+      let check = await restoreCheck(db);
+      const owned = check.privileges.missing.length + check.privileges.unexpected.length === 0;
       // A restored ledger lacks the spend after its backup: hold every paid operation until
-      // `restore-reconcile` has charged it (server/quota/hold.ts), whatever the checks below say.
-      await holdPaidOperations(db, 'restore check: paid operations held until pnpm worker restore-reconcile');
-      console.log('paid operations held until pnpm worker restore-reconcile (RUNBOOK, "Backups")');
-      if (values.empty) await emptyExcludedTables(db);
-      const found = await restoreCheck(db);
-      if (found.length === 0) {
+      // `restore-reconcile` has charged it (server/quota/hold.ts), whatever the checks say.
+      let held = true;
+      try {
+        await holdPaidOperations(db, 'restore check: paid operations held until pnpm worker restore-reconcile');
+        console.log('paid operations held until pnpm worker restore-reconcile (RUNBOOK, "Backups")');
+      } catch (e) {
+        // With the wrong owners the migrator may not write it; a backup restored into another
+        // database holds them anyway (its row names the source database).
+        held = false;
+        console.error(`could not hold paid operations: ${describeWorkerError(e)}`);
+      }
+      if (values.empty && owned && check.rows.length > 0) {
+        await emptyExcludedTables(db);
+        check = await restoreCheck(db);
+      }
+      if (check.ok && held) {
         console.log(`restore check passed: ${BACKUP_EXCLUDED_DATA.join(', ')} are empty`);
+        console.log('restore check passed: every owner and grant is the one a freshly migrated database has');
         return 0;
       }
-      for (const { table, rows } of found) console.error(`${table}: ${rows} rows (a backup must not hold them)`);
-      console.error('restore check FAILED: empty them with pnpm worker restore-check --empty before starting the app');
+      for (const { table, rows } of check.rows) console.error(`${table}: ${rows} rows (a backup must not hold them)`);
+      if (check.rows.length > 0) console.error('restore check FAILED: empty them with pnpm worker restore-check --empty before starting the app');
+      for (const table of check.unreadable) console.error(`${table}: aviation_migrator cannot read it (another role owns it)`);
+      // Object names, owners and grantees only: nothing secret.
+      for (const l of check.privileges.unexpected) console.error(`found:    ${l}`);
+      for (const l of check.privileges.missing) console.error(`expected: ${l}`);
+      if (check.unreadable.length + check.privileges.unexpected.length + check.privileges.missing.length > 0) {
+        console.error(
+          'restore check FAILED: owners or grants differ from a freshly migrated database; restore again with pnpm app:restore ' +
+            'into a freshly provisioned database (RUNBOOK, "Backups")',
+        );
+      }
       return 1;
     } finally {
       await closeDb(db);
