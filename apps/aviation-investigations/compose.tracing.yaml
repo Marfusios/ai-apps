@@ -11,6 +11,8 @@ x-tracing-env: &tracing-env
   LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:?set LANGFUSE_BASE_URL (reachable on the observability network)}
   LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set LANGFUSE_PUBLIC_KEY}
   LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set LANGFUSE_SECRET_KEY}
+  # The Langfuse host whose plain-http address on that network is trusted (empty: https only).
+  AVIATION_TRACING_HTTP_HOSTS: ${AVIATION_TRACING_HTTP_HOSTS:-}
 
 services:
   aviation-app:

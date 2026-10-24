@@ -117,7 +117,7 @@ describe('a failed connection never ends the process (gate 22 finding 3)', () =>
   });
 
   it('reports only a well-formed name and code', () => {
-    expect(connectionProblem(Object.assign(new Error('connect ECONNREFUSED 10.1.2.3:5432'), { code: 'ECONNREFUSED' }))).toEqual({ name: 'Error', code: 'ECONNREFUSED' });
+    expect(connectionProblem(Object.assign(new Error('connect ECONNREFUSED 192.0.2.10:5432'), { code: 'ECONNREFUSED' }))).toEqual({ name: 'Error', code: 'ECONNREFUSED' });
     expect(connectionProblem({ name: 'bad name with spaces', code: 'x'.repeat(80) })).toEqual({ name: 'Error' });
     expect(connectionProblem(null)).toEqual({ name: 'Error' });
   });

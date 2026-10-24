@@ -128,6 +128,9 @@ async function main(): Promise<void> {
 
   authLog = app.log;
   dbLog = app.log;
+  // Tracing that was asked for and is off says why (setting names only).
+  if (tracing.enabled) app.log.info({}, 'tracing on');
+  else if (config.tracing.enabled) app.log.warn({ problem: tracing.reason }, 'tracing off');
   if (signIn.problem) app.log.warn({ problem: signIn.problem }, 'Google sign-in off');
   if (evidence.problem) app.log.warn({ problem: evidence.problem }, 'AI feature off');
   else app.log.info({ retrievalVersion: config.retrieval.version }, 'AI retrieval configuration');
