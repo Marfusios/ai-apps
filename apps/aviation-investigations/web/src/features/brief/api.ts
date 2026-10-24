@@ -15,7 +15,7 @@ import {
   type RefinementRequest,
   type StartBriefResponse,
 } from '../../../../shared/contracts/briefs';
-import { ApiError, getJson, postJson, retry } from '../../api';
+import { ApiError, READ_TIMEOUT_MS, getJson, postJson, retry } from '../../api';
 import { privateRead } from '../auth/visitor';
 
 /** The checklist polls the running step once a second (UI_DESIGN §4.4). */
@@ -75,12 +75,20 @@ export function briefPollDelay(query: PollState): number | false {
   return backoff;
 }
 
-/** `GET /api/briefs/:id?step=n`; `step` null reads the latest step. Polls while the step runs. */
+/**
+ * `GET /api/briefs/:id?step=n`; `step` null reads the latest step. Polls while the step runs.
+ * A read that gets no answer gives up after `READ_TIMEOUT_MS` (a failed read: the schedule
+ * backs off and tries again), so a stalled connection never freezes the checklist.
+ */
 export const briefStepQuery = (id: string, step: number | null) =>
   queryOptions({
     queryKey: ['brief', id, step ?? 'latest'],
     queryFn: ({ signal }) =>
-      privateRead(() => getJson(`/api/briefs/${encodeURIComponent(id)}${step === null ? '' : `?step=${step}`}`, BriefStepResponseSchema, signal)),
+      privateRead(() =>
+        getJson(`/api/briefs/${encodeURIComponent(id)}${step === null ? '' : `?step=${step}`}`, BriefStepResponseSchema, signal, {
+          timeoutMs: READ_TIMEOUT_MS,
+        }),
+      ),
     refetchInterval: (query: Query<BriefStepResponse, Error, BriefStepResponse, readonly unknown[]>) => briefPollDelay(query),
     // A finished step never changes; a running one is always re-read.
     staleTime: (query) => (query.state.data && isFinished(query.state.data) ? Infinity : 0),

@@ -1,20 +1,29 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
-import { BriefIdSchema, MAX_BRIEF_STEPS, type BriefResult, type BriefStepResponse } from '../../../shared/contracts/briefs';
-import { ApiError, configQuery, isNotFound } from '../api';
+import {
+  BriefIdSchema,
+  MAX_BRIEF_STEPS,
+  type BriefFilters,
+  type BriefResult,
+  type BriefStepResponse,
+  type RefinementChange,
+} from '../../../shared/contracts/briefs';
+import { ApiError, ReadTimeoutError, configQuery, isNotFound } from '../api';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
 import { SearchBox } from '../components/SearchBox';
 import { AiNoticeBox, COPY } from '../features/ai/AiNoticeBox';
+import { busyLabel } from '../features/ai/AskAiButton';
+import { arrived, departed } from '../features/ai/unsettled';
 import { briefStepQuery, cancelBrief, isFinished } from '../features/brief/api';
 import { useAskAi } from '../features/ai/useAskAi';
 import { BriefChips } from '../features/brief/BriefChips';
-import { BriefingSheet } from '../features/brief/BriefingSheet';
+import { BriefingSheet, sheetOrder } from '../features/brief/BriefingSheet';
 import { Checklist } from '../features/brief/Checklist';
 import { exploreHref, filtersInWords } from '../features/brief/filters';
-import { rememberedAsk, rememberedQuestion } from '../features/brief/memory';
-import { RefineBox } from '../features/brief/RefineBox';
+import { rememberedAsk, rememberedChange, rememberedQuestion } from '../features/brief/memory';
+import { REFINEMENTS_USED, RefineBox } from '../features/brief/RefineBox';
 import { ScopeReply } from '../features/brief/ScopeReply';
 import { StepSwitcher } from '../features/brief/StepSwitcher';
 import { useRefine } from '../features/brief/useRefine';
@@ -28,6 +37,9 @@ export const EXPIRED_TEXT = 'We delete questions and answers after 24 hours.';
 export const NO_RESULTS_TITLE = 'No completed investigations match all of this.';
 export const CANCELLED_TITLE = 'You cancelled this AI search.';
 export const LOAD_FAILED = 'This AI search didn’t load.';
+/** Builder copy (Task 22 review W-5, W-12), for the owner's review. */
+export const CHANGE_NOT_KEPT = "The changed reading can't be tried again from here. Start a new search to keep going.";
+export const RETRY_FAILED = "Trying again didn't finish either.";
 
 const STEP_PARAM = 'step';
 
@@ -85,43 +97,88 @@ function Expired({ id }: { id: string }) {
 }
 
 /**
- * "The AI search didn't finish." with what it cost, and Try again (a new paid step). A
- * failed first step is asked again with the filters the reader set: the ones this page
- * asked with, or none if it asked without any, never the ones the scope stage inferred
- * (the new scope run infers its own). Only a brief this page did not ask (a reload, a
- * link) has no record of them, and then the filters its scope stage settled on stand in.
- * The page's live region announces the failure once, so this box is not a live region
- * itself.
+ * What Try again does after a failed step (Task 22 review W-5): the same request again,
+ * never a different one charged as a search.
+ * - A failed first step is asked again as a new brief, with the filters the reader set:
+ *   the ones this page asked with, or none if it asked without any, never the ones the
+ *   scope stage inferred (the new scope run infers its own). Only a brief this page did
+ *   not ask (a reload, a link) has no record of them, and then the filters its scope stage
+ *   settled on stand in.
+ * - A failed refinement is refined again with the same change: its text or filters from
+ *   the step, an edited or picked reading from this page's memory (the step names the
+ *   reading but not its value).
+ * - No Try again when that is not possible: an earlier answer with later ones in the
+ *   brief (`later`), no refinements left (`limit`), or a reading this page did not send
+ *   (`change`: a reload or a link). Asking the question again would drop the change.
+ */
+export type RetryPlan =
+  | { kind: 'ask'; filters: BriefFilters | undefined }
+  | { kind: 'refine'; change: RefinementChange }
+  | { kind: 'none'; why: 'later' | 'limit' | 'change' };
+
+export function retryPlan(step: BriefStepResponse): RetryPlan {
+  const origin = step.origin;
+  if (step.step !== step.steps) return { kind: 'none', why: 'later' };
+  if (origin.kind === 'question') {
+    const asked = rememberedAsk(step.briefId);
+    return { kind: 'ask', filters: asked ? asked.filters : step.checklist.interpretation?.filters };
+  }
+  if (step.refinementsLeft <= 0) return { kind: 'none', why: 'limit' };
+  if (origin.kind === 'text') return { kind: 'refine', change: { kind: 'text', text: origin.text } };
+  if (origin.kind === 'filters') return { kind: 'refine', change: { kind: 'filters', filters: origin.filters } };
+  const change = rememberedChange(step.briefId, step.step);
+  return change ? { kind: 'refine', change } : { kind: 'none', why: 'change' };
+}
+
+/**
+ * "The AI search didn't finish." with what it cost, and Try again (a new paid step, as
+ * `retryPlan` says). The page's live region announces the failure once, so this box is
+ * not a live region itself; a Try again that fails too is said in this box (one failure
+ * box, Task 22 review W-12), from a polite region of its own. Other notices about the
+ * retry (a check, a pause, a limit) show under it, without a second Try again.
  */
 function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsSearch: boolean }) {
   const ask = useAskAi();
   const refine = useRefine(step.briefId);
-  const origin = step.origin;
-  const retry = (): void => {
-    if (step.refinementsLeft > 0 && origin.kind === 'text') void refine.refine({ kind: 'text', text: origin.text });
-    else if (step.refinementsLeft > 0 && origin.kind === 'filters') void refine.refine({ kind: 'filters', filters: origin.filters });
-    else {
-      const asked = rememberedAsk(step.briefId);
-      void ask.ask(step.question, asked ? asked.filters : step.checklist.interpretation?.filters);
-    }
-  };
+  const plan = retryPlan(step);
+  const retry =
+    plan.kind === 'none'
+      ? null
+      : (): void => {
+          if (plan.kind === 'refine') void refine.refine(plan.change);
+          else void ask.ask(step.question, plan.filters);
+        };
   const notice = refine.notice ?? ask.notice;
+  const retryFailed = notice?.kind === 'failure' ? notice : null;
   return (
     <>
       <div className="card mt-4 px-4 py-3.5">
         <p className="font-serif text-[18px] leading-tight font-semibold">{COPY.failure[0]}</p>
         <p className="mt-1 text-ui">{COPY.failure[1]}</p>
         <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-          <Button variant="ai" counter={refine.phase === 'idle' && ask.phase === 'idle' ? 'uses 1' : undefined} onClick={retry}>
-            {refine.phase === 'checking' || ask.phase === 'checking' ? 'Checking…' : 'Try again'}
-          </Button>
+          {retry && (
+            <Button variant="ai" counter={refine.phase === 'idle' && ask.phase === 'idle' ? 'uses 1' : undefined} onClick={retry}>
+              {busyLabel(refine.phase) ?? busyLabel(ask.phase) ?? 'Try again'}
+            </Button>
+          )}
           <Link to={exploreHref({}, step.question)} className="text-ui text-blue hover:underline">
             {COPY.keyword}
           </Link>
         </div>
         <p className="mt-1.5 text-meta text-muted">{countedAsSearch ? COPY.spent : COPY.notSpent}</p>
+        {plan.kind === 'none' && plan.why !== 'later' && (
+          <p className="mt-1.5 text-meta text-muted" data-print="hide">
+            {plan.why === 'limit' ? REFINEMENTS_USED : CHANGE_NOT_KEPT}{' '}
+            <Link to="/" className="text-blue hover:underline">
+              New search
+            </Link>
+          </p>
+        )}
+        <p aria-live="polite" className={cx('text-meta text-muted', retryFailed && 'mt-1.5')}>
+          {retryFailed ? `${RETRY_FAILED} ${retryFailed.spent === 'no' ? COPY.notSpent : COPY.unknownSpent}` : ''}
+        </p>
       </div>
-      <AiNoticeBox notice={notice} keywordHref={exploreHref({}, step.question)} onRetry={retry} className="mt-2.5" />
+      <AiNoticeBox notice={retryFailed ? null : notice} keywordHref={exploreHref({}, step.question)} className="mt-2.5" />
     </>
   );
 }
@@ -201,6 +258,17 @@ export function Brief() {
     enabled: Boolean(step && !finished && step.step > 1 && !step.checklist.interpretation),
   });
 
+  // An AI request answered 2xx is settled once this page has taken over: a new brief as soon
+  // as the page is on screen for it, a refinement when the step it started is shown
+  // (web/src/features/ai/unsettled.ts `settleOnArrival`). A layout effect, so it runs as the
+  // page commits.
+  const shownStep = step?.briefId === id ? step.step : null;
+  useLayoutEffect(() => {
+    if (!valid) return;
+    arrived(id, shownStep);
+    return () => departed(id, shownStep);
+  }, [id, valid, shownStep]);
+
   // A finished step never changes: keep it under its number too, so the step switcher and
   // the next refinement's chips read it from memory.
   const readAsLatest = stepParam === null || stepMissing;
@@ -225,6 +293,15 @@ export function Brief() {
     if (document.activeElement === document.body || document.activeElement === null) resultHeading.current?.focus({ preventScroll: true });
   }, [step, finished]);
 
+  // Reads of the running step on screen fail (a network or server error; not a refusal such
+  // as a 404 or a 429, which stop or wait): the page keeps trying, and the checklist says so
+  // until a read gets through. Said once a read and its automatic retry have failed, so one
+  // transient error the retry repairs says nothing (re-review F-2); a read that gets no
+  // answer within READ_TIMEOUT_MS is said at once (re-review N-5).
+  const polling = stepMissing ? fallback : query;
+  const pollFailure = polling.error ?? (polling.failureReason instanceof ReadTimeoutError ? polling.failureReason : null);
+  const pollTrouble = step !== undefined && !finished && pollFailure !== null && !(pollFailure instanceof ApiError && pollFailure.status < 500);
+
   // A failed read that is not a 404. While `?step=n` past the last step falls back to the
   // latest step, only the fallback's own failure counts (the first 404 is expected).
   const loadError = stepMissing
@@ -235,13 +312,14 @@ export function Brief() {
       ? query.error
       : null;
   // One polite live region for the whole page, rendered first in every state, so whatever
-  // appears later (expiry, a load failure, the fallback note, a finished step) is announced.
+  // appears later (expiry, a load failure, the fallback note, a finished step) is announced;
+  // the fallback note keeps the latest step's own finish after it.
   const liveText = gone
     ? EXPIRED_TITLE
     : !step && loadError
       ? LOAD_FAILED
       : stepMissing && step
-        ? `There is no answer ${stepParam} in this brief; this is the latest.`
+        ? `There is no answer ${stepParam} in this brief; this is the latest.${announcement ? ` ${announcement}` : ''}`
         : announcement;
   const live = (
     <p aria-live="polite" className="sr-only">
@@ -293,7 +371,8 @@ export function Brief() {
   const latest = step.step === step.steps;
   const sheet = result && (result.kind === 'answer' || result.kind === 'withheld' || result.kind === 'no_match') ? result : null;
   const context = chipsContext(step, previous.data);
-  const cases = sheet?.cases.map((c) => c.case.ntsbNo) ?? [];
+  // The drawer's "‹ n of N ›" steps through the cards in the order the sheet shows them.
+  const cases = sheet ? sheetOrder(sheet) : [];
 
   // The drawer keeps the step in view (`step` stays as it is: absent means the latest).
   const caseTo = (ntsbNo: string) => {
@@ -374,6 +453,7 @@ export function Brief() {
             cohort={config?.coverage.defaultCohort ?? null}
             onCancel={() => void cancel()}
             cancelling={cancelling}
+            trouble={pollTrouble}
           />
         ) : (
           <section aria-labelledby="result-heading" className="mt-1">

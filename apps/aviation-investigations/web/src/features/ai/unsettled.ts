@@ -1,17 +1,27 @@
 /**
- * Idempotency keys of AI requests whose outcome is unknown (the answer never arrived), kept
- * for this tab so that the same request, sent again from any Ask AI or Refine control and
- * from any page, replays the key instead of paying a second time (DESIGN §8).
+ * Idempotency keys of AI requests whose outcome is not known yet (on their way) or never
+ * became known (the answer never arrived), kept for this tab so that the same request, sent
+ * again from any Ask AI or Refine control, from any page and after a reload, replays the
+ * key instead of paying a second time (DESIGN §8).
  *
+ * - **Write-ahead** (Task 22 review W-2): a key is remembered right before its request
+ *   leaves, not after it failed. The server answers a paid request only once its scope
+ *   stage is done (seconds), and a reload or Back in that window must not lose a key the
+ *   server may already have admitted. Closing the tab does lose it: the key lives in the
+ *   tab's session storage, which goes with the tab.
  * - **The same request** is the normalised request the server hashes for idempotency
  *   (server/briefs/intent.ts `createRequestHash` and `refineRequestHash`): a create's
  *   question and canonical filters, or a refinement's brief and change.
  * - **Storage** is `sessionStorage` (this tab only, gone when it closes), under a hash of
  *   that normalised request, so no question text is stored. Every access is wrapped:
  *   when storage is unavailable or refuses a write, the entry lives in memory instead.
- * - **Lifetime:** an entry is cleared by a 2xx or by the 409 swap (the earlier attempt never
- *   completed), and it expires with the server's idempotency record, 24 hours after it was
- *   first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or
+ * - **Lifetime:** an entry is cleared once the page has taken over from a 2xx
+ *   (`settleOnArrival`, `arrived`: for a new brief when the brief page, a lazy route that may
+ *   still be loading after the answer, is on screen for it; for a refinement when the page
+ *   shows the step it started; until then a reload or a second ask replays the key), by the
+ *   409 swap (the earlier attempt never completed) and by a known refusal of its first send
+ *   (nothing was admitted); it expires with the server's idempotency record, 24 hours after it
+ *   was first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or
  *   deleting the account clears them all (`forgetAllUnsettled`).
  */
 import type { BriefFilterFacet, BriefFilters, RefinementChange } from '../../../../shared/contracts/briefs';
@@ -177,16 +187,73 @@ export function unsettledKey(id: string, now: number = Date.now()): string | nul
   return e.key;
 }
 
-/** Remembers a key whose outcome is unknown. A key remembered again keeps its first time. */
+/**
+ * Remembers a key whose outcome is not known: right before its request is sent, and again
+ * when no answer came back. A key remembered again keeps its first time.
+ */
 export function rememberUnsettled(id: string, key: string, now: number = Date.now()): void {
   const earlier = read(id);
   write(id, { key, at: earlier && earlier.key === key ? earlier.at : now });
   prune(now);
 }
 
-/** Settled: a 2xx, or the 409 swap (the earlier attempt never completed). */
-export function forgetUnsettled(id: string): void {
+/**
+ * Settled: a 2xx, the 409 swap (the earlier attempt never completed), or a known refusal of
+ * a first send. With `key`, only that key's entry goes: another control may have sent the
+ * same request under its own key meanwhile, and its entry stays.
+ */
+export function forgetUnsettled(id: string, key?: string): void {
+  if (key !== undefined && read(id)?.key !== key) return;
   remove(id);
+}
+
+/**
+ * Keys whose request was answered with a 2xx, waiting for the page to take over, by brief
+ * (memory only: after a reload the entry stays in storage, and the next same request
+ * replays it). `step`: `'page'` for a new brief (the brief page, a lazy route that may still
+ * be loading after the answer, is on screen for it), or the step a refinement started (the
+ * page shows that step).
+ */
+const arriving = new Map<string, { id: string; key: string; step: number | 'page' }[]>();
+
+/** What the brief page shows now (`arrived`, `departed`): a 2xx for what is already on screen settles at once. */
+let onScreen: { briefId: string; step: number | null } | null = null;
+
+/**
+ * A 2xx answered a request for brief `briefId`: its key is settled when the page takes over
+ * (`arrived`), not before, so a second ask in that gap replays the key rather than start
+ * (and pay for) another. A 2xx for what the page already shows (a replay answered with the
+ * step on screen, after a lost response and a reload) settles at once: nothing more will
+ * arrive for it (re-review F-1).
+ */
+export function settleOnArrival(briefId: string, step: number | 'page', id: string, key: string): void {
+  if (onScreen?.briefId === briefId && (step === 'page' || onScreen.step === step)) {
+    forgetUnsettled(id, key);
+    return;
+  }
+  arriving.set(briefId, [...(arriving.get(briefId) ?? []), { id, key, step }]);
+}
+
+/** The brief page no longer shows step `step` of brief `briefId` (it moved on, or left). */
+export function departed(briefId: string, step: number | null): void {
+  if (onScreen?.briefId === briefId && onScreen.step === step) onScreen = null;
+}
+
+/**
+ * The brief page is on screen for brief `briefId`, showing step `step` once read: keys
+ * waiting for that are settled (each under its own key only).
+ */
+export function arrived(briefId: string, step: number | null): void {
+  onScreen = { briefId, step };
+  const waiting = arriving.get(briefId);
+  if (!waiting) return;
+  const rest = waiting.filter((w) => {
+    if (w.step !== 'page' && w.step !== step) return true;
+    forgetUnsettled(w.id, w.key);
+    return false;
+  });
+  if (rest.length > 0) arriving.set(briefId, rest);
+  else arriving.delete(briefId);
 }
 
 /** Test hook: forget every entry, in memory and in this tab's storage. */
@@ -194,9 +261,17 @@ export function resetUnsettledForTests(): void {
   forgetAllUnsettled();
 }
 
+/** Test hook: what a reload does here: memory goes (the fallback, the 2xx waiting for their step), this tab's storage stays. */
+export function forgetUnsettledMemoryForTests(): void {
+  memory.clear();
+  arriving.clear();
+  onScreen = null;
+}
+
 /** Forget every entry, in memory and in this tab's storage (the visitor changed: web/src/features/auth/visitor.ts). */
 export function forgetAllUnsettled(): void {
   memory.clear();
+  arriving.clear();
   try {
     const store = session();
     if (!store) return;

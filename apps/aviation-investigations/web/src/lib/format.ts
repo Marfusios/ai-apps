@@ -44,3 +44,30 @@ const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'e
 export function numberWord(n: number): string {
   return WORDS[n] ?? formatCount(n);
 }
+
+/**
+ * The dataset is refreshed from monthly full NTSB snapshots (DESIGN §4), so a snapshot more
+ * than this many days old is older than expected.
+ */
+export const SNAPSHOT_EXPECTED_DAYS = 45;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The real age of an ISO snapshot date once it is older than expected (UI_DESIGN §3: the
+ * footer shows it), counted in whole UTC days: "46 days old", then "2 months old" from two
+ * whole calendar months on. Null while the snapshot is as fresh as expected, or when the
+ * date cannot be read or lies ahead.
+ */
+export function snapshotAge(snapshotDate: string, now: Date = new Date()): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(snapshotDate);
+  if (!match) return null;
+  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const taken = Date.UTC(y, m - 1, d);
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  if (!Number.isFinite(taken)) return null;
+  const days = Math.round((today - taken) / DAY_MS);
+  if (days <= SNAPSHOT_EXPECTED_DAYS) return null;
+  const months = (now.getUTCFullYear() - y) * 12 + (now.getUTCMonth() + 1 - m) - (now.getUTCDate() < d ? 1 : 0);
+  return months < 2 ? `${days} days old` : `${months} months old`;
+}

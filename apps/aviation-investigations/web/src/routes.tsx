@@ -1,6 +1,7 @@
 import type { RouteObject } from 'react-router';
 import { AppShell } from './AppShell';
 import { About } from './pages/About';
+import { AppError, RouteError } from './pages/ErrorPage';
 import { Home } from './pages/Home';
 import { NotFound } from './pages/Placeholder';
 import { Privacy } from './pages/Privacy';
@@ -32,11 +33,23 @@ const devPages: RouteObject[] = import.meta.env.DEV
     ]
   : [];
 
+/**
+ * Unexpected errors never show the router's developer page (Task 22 review W-1): a page that
+ * fails shows the error inside the frame, header and footer kept (the pathless route's
+ * `errorElement`); if the frame itself fails, the root's `errorElement` shows a plain frame
+ * of its own.
+ */
 export const routes: RouteObject[] = [
   {
     element: <AppShell />,
+    errorElement: <AppError />,
     // Shown for the moment a lazily loaded page is fetched on first load.
     hydrateFallbackElement: <div className="min-h-dvh" />,
-    children: [...pages, ...devPages, { path: '*', element: <NotFound /> }],
+    children: [
+      {
+        errorElement: <RouteError />,
+        children: [...pages, ...devPages, { path: '*', element: <NotFound /> }],
+      },
+    ],
   },
 ];

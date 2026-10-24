@@ -29,6 +29,21 @@ export class ApiError extends Error {
 
 export const isNotFound = (err: unknown): boolean => err instanceof ApiError && err.status === 404;
 
+/** While the AI status cannot be read, it is read again this often (and when the tab gets focus). */
+export const AI_STATUS_RETRY_MS = 15_000;
+
+/** While the configuration cannot be read, it is read again after this pause, doubling each time up to `CONFIG_RETRY_MAX_MS`. */
+export const CONFIG_RETRY_MS = 5_000;
+export const CONFIG_RETRY_MAX_MS = 60_000;
+
+/** How long a read that repeats by itself (a brief poll, the AI status) waits for an answer. */
+export const READ_TIMEOUT_MS = 15_000;
+
+/** A read that got no answer in time: a failure like a network error (no ApiError). */
+export class ReadTimeoutError extends Error {
+  override readonly name = 'ReadTimeoutError';
+}
+
 /** Delay-seconds form of `Retry-After` (the server never sends the date form). */
 function retryAfterHeader(response: Response): number | null {
   const raw = response.headers.get('retry-after');
@@ -46,13 +61,44 @@ async function errorOf(response: Response): Promise<ApiError> {
   return new ApiError(response.status, body, body?.retryAfter ?? retryAfterHeader(response));
 }
 
-export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(new URL(path, window.location.origin), {
-    signal,
-    headers: { Accept: 'application/json' },
-  });
-  if (!response.ok) throw await errorOf(response);
-  return schema.parse(await response.json());
+export interface ReadOptions {
+  /**
+   * Give up when the whole answer (headers and body) has not arrived within this many
+   * milliseconds (`ReadTimeoutError`). For reads that repeat by themselves: a stalled
+   * connection would otherwise hold the next one back until the browser gives up. Never
+   * for a POST: an aborted paid request must stay an unknown outcome.
+   */
+  timeoutMs?: number;
+}
+
+export async function getJson<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal, { timeoutMs }: ReadOptions = {}): Promise<T> {
+  // The caller's signal (TanStack's cancel) still aborts the read; the timer adds its own.
+  const timer = timeoutMs === undefined ? null : new AbortController();
+  const follow = (): void => timer?.abort(signal?.reason);
+  let timedOut = false;
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  if (timer) {
+    if (signal?.aborted) follow();
+    else signal?.addEventListener('abort', follow, { once: true });
+    handle = setTimeout(() => {
+      timedOut = true;
+      timer.abort(new ReadTimeoutError(`no answer within ${timeoutMs} ms`));
+    }, timeoutMs);
+  }
+  try {
+    const response = await fetch(new URL(path, window.location.origin), {
+      signal: timer?.signal ?? signal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw await errorOf(response);
+    return schema.parse(await response.json());
+  } catch (err) {
+    if (timedOut) throw new ReadTimeoutError(`no answer within ${timeoutMs} ms`);
+    throw err;
+  } finally {
+    clearTimeout(handle);
+    signal?.removeEventListener('abort', follow);
+  }
 }
 
 /**
@@ -79,12 +125,27 @@ export function retry(failures: number, err: unknown): boolean {
   return failures < 1;
 }
 
+/** The pause before reading the configuration again after `failures` failed reads (it doubles, up to the maximum). */
+function configRetryDelay(failures: number): number {
+  return Math.min(CONFIG_RETRY_MAX_MS, CONFIG_RETRY_MS * 2 ** Math.max(0, failures - 1));
+}
+
+/**
+ * Public configuration: the snapshot, the coverage facts, the Turnstile site key and whether
+ * Google sign-in is offered. A read that gets no answer gives up after `READ_TIMEOUT_MS`.
+ * Until it has been read once, it is read again after a failure, with a growing pause, and
+ * when the tab gets focus (Task 22 re-review N-3); once read, a failed refresh keeps what was
+ * read.
+ */
 export const configQuery = () =>
   queryOptions({
     queryKey: ['config'],
-    queryFn: ({ signal }) => getJson('/api/config', ConfigResponseSchema, signal),
+    // A read that hangs ends like a failed one, so the re-read and the neutral note take over (re-review F-3).
+    queryFn: ({ signal }) => getJson('/api/config', ConfigResponseSchema, signal, { timeoutMs: READ_TIMEOUT_MS }),
     staleTime: 10 * 60_000,
     retry,
+    refetchInterval: (query) => (query.state.data === undefined && query.state.status === 'error' ? configRetryDelay(query.state.errorUpdateCount) : false),
+    refetchOnWindowFocus: (query) => query.state.data === undefined && query.state.status === 'error',
   });
 
 /** Canonical query string of a request: equal requests share a cache entry. */
@@ -121,12 +182,17 @@ export const dashboardQuery = (cohort: DashboardRequest['cohort']) =>
 /**
  * AI availability for this visitor (UI_DESIGN §5): the header counter and the Ask AI
  * label read it before anyone clicks. Per visitor and never cached by the server;
- * refetch it after an AI request. A private read (web/src/features/auth/visitor.ts).
+ * refetch it after an AI request. A private read (web/src/features/auth/visitor.ts). A
+ * read that gets no answer gives up after `READ_TIMEOUT_MS`. While it cannot be read the
+ * controls say "AI temporarily unavailable", so it is read again every
+ * `AI_STATUS_RETRY_MS` and when the tab gets focus, until it can (Task 22 review W-9).
  */
 export const aiStatusQuery = () =>
   queryOptions({
     queryKey: ['ai-status'],
-    queryFn: ({ signal }) => privateRead(() => getJson('/api/ai/status', AiStatusResponseSchema, signal)),
+    queryFn: ({ signal }) => privateRead(() => getJson('/api/ai/status', AiStatusResponseSchema, signal, { timeoutMs: READ_TIMEOUT_MS })),
     staleTime: 30_000,
     retry,
+    refetchInterval: (query) => (query.state.status === 'error' ? AI_STATUS_RETRY_MS : false),
+    refetchOnWindowFocus: (query) => query.state.status === 'error',
   });

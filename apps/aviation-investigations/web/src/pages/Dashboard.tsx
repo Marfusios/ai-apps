@@ -88,6 +88,7 @@ export function Dashboard() {
               id="q-phase"
               question="When in the flight did it happen?"
               sentence={phaseSentence(data.phase, data.total)}
+              note={overlapSentence(data.coverage.multiAircraft, data.total, 'phase')}
               open={openLink(cohort, topKnown(data.phase), topKnown(data.phase)?.label.toLowerCase() ?? '')}
             >
               <BarList bars={data.phase} total={data.total} cohort={cohort} label="Phase of the defining event" />

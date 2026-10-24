@@ -109,6 +109,8 @@ export function CaseDrawer({
         <Dialog.Content
           aria-describedby={undefined}
           aria-modal="true"
+          // Printing with the drawer open prints the page behind it, not the fixed sheet over it.
+          data-print="hide"
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             focusPending.current = true;

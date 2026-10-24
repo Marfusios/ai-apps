@@ -1,13 +1,10 @@
 import { COMPLETION_BADGE, type CompletionClass } from '../../../shared/completion.js';
 import { cx } from '../lib/cx';
 
-export type StatusKind = CompletionClass | 'not_completed';
+export type StatusKind = CompletionClass;
 
-/** Badge text. The four completion classes use the shared copy (UI_DESIGN §4.2). */
-export const STATUS_BADGE: Readonly<Record<StatusKind, string>> = {
-  ...COMPLETION_BADGE,
-  not_completed: 'NOT COMPLETED',
-};
+/** Badge text: the four completion classes, in the shared copy (UI_DESIGN §4.2). */
+export const STATUS_BADGE: Readonly<Record<StatusKind, string>> = COMPLETION_BADGE;
 
 export interface StatusBadgeProps {
   kind: StatusKind;

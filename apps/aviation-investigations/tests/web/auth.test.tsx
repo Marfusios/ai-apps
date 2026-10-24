@@ -147,14 +147,20 @@ describe('sign-in in the app', () => {
     expect(bodies).toMatchObject([{ callbackURL: '/explore?q=icing' }]);
   });
 
-  it('without Google sign-in nothing offers it: no header button, a plain counter, no Continue with Google', async () => {
+  it('without Google sign-in nothing offers it, and nothing tells the visitor to sign in (review W-10)', async () => {
     freshApi({ googleEnabled: false, aiStatus: AI_STATUS_SAMPLES.trialUsed });
     renderApp('/');
     const header = await screen.findByRole('banner');
-    expect(await within(header).findByText('Sign in to keep asking')).toBeTruthy();
-    expect(within(header).queryByRole('button', { name: 'Sign in to keep asking' })).toBeNull();
+    expect(await within(header).findByText('Free AI searches used')).toBeTruthy();
     expect(within(header).queryByRole('button', { name: 'Sign in' })).toBeNull();
+    // Ask AI is not "· sign in": it is off, with the counter's words, and a click explains.
+    const ask = await screen.findByRole('button', { name: /^Ask AI$/ });
+    expect(ask.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: 'Engine power loss' } });
+    fireEvent.click(ask);
+    expect(await screen.findByText('That was your third free AI search.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: CONTINUE_WITH_GOOGLE })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/sign in/i);
   });
 
   it('the counter’s sign-in pill opens the dialog', async () => {

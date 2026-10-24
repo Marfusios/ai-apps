@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { COMPARE_FULL_MESSAGE } from '../../web/src/features/explore/CompareTray';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
@@ -27,12 +27,45 @@ describe('Home', () => {
     expect(await screen.findByText(/completed US NTSB investigations · 2008 → 2026 · snapshot 16 OCT 2026/)).toBeTruthy();
   });
 
+  it('the footer gives the snapshot\'s real age once it is older than expected (review W-8)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // The mock snapshot is 16 Oct 2026; a month and a bit later the age is not shown yet.
+      vi.setSystemTime(new Date('2026-11-20T12:00:00Z'));
+      const fresh = renderApp('/');
+      const footer = await screen.findByRole('contentinfo');
+      await waitFor(() => expect(footer.textContent).toContain('snapshot 16 OCT 2026'));
+      expect(footer.textContent).not.toContain('old)');
+      fresh.unmount();
+      vi.setSystemTime(new Date('2027-12-20T12:00:00Z'));
+      renderApp('/');
+      const later = await screen.findByRole('contentinfo');
+      await waitFor(() => expect(later.textContent).toContain('Data: NTSB, snapshot 16 OCT 2026 (14 months old)'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('Ask AI shows the live AI counter, like the header', async () => {
     renderApp('/');
     // The status loads after the first paint; the name joins "Ask AI" and its counter.
     const ask = await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ });
     expect(ask.getAttribute('aria-disabled')).toBe('false');
     expect(within(screen.getByRole('banner')).getAllByText('3 of 3').length).toBeGreaterThan(0);
+  });
+});
+
+describe('Privacy', () => {
+  it('names Cloudflare Turnstile, which only an AI request loads, and the retry key kept while a search is on its way (review W-14, W-2)', async () => {
+    renderApp('/privacy');
+    await screen.findByRole('heading', { level: 1, name: 'Privacy' });
+    const text = document.querySelector('main')?.textContent ?? '';
+    expect(text).toContain('Cloudflare Turnstile');
+    expect(text).toContain('challenges.cloudflare.com');
+    expect(text).toContain('only when an AI request needs a check');
+    expect(text).toContain('Cloudflare may set its own cookies');
+    expect(text).toContain('While an AI search is on its way, and if it gets no reply');
+    expect(text).not.toContain('If an AI search gets no reply');
   });
 });
 
@@ -83,6 +116,31 @@ describe('Explore', () => {
     fireEvent.click(within(facets).getByRole('button', { name: /^clear\s*Aircraft$/ }));
     await waitFor(() => expect(currentUrl(router)).toBe('/explore'));
     expect(within(facets).getByRole('button', { name: /More filters|Fewer filters/ })).toBeTruthy();
+  });
+
+  it('states the multi-aircraft overlap for every aircraft facet: under Phase, and once above the aircraft ones in More filters (G0 #14, review W-7)', async () => {
+    renderApp('/explore');
+    await countLine();
+    const facets = screen.getByRole('complementary', { name: 'Filters' });
+    const phase = within(facets).getByRole('region', { name: 'Phase' });
+    expect(within(phase).getByText(/^\d+ investigations? here involved more than one aircraft, so phase counts can add up to more than \d[\d,]*\.$/)).toBeTruthy();
+    fireEvent.click(within(facets).getByRole('button', { name: /^More filters/ }));
+    const notes = within(facets).getAllByText(/involved more than one aircraft/);
+    expect(notes).toHaveLength(2);
+    const more = notes[1] as HTMLElement;
+    expect(more.textContent).toMatch(/so aircraft, engine, operation and purpose counts can add up to more than \d[\d,]*\.$/);
+    // Once, above the aircraft facets: Aircraft, Engine, Operation and Purpose follow it.
+    const aircraft = within(facets).getByRole('region', { name: 'Aircraft' });
+    expect(more.compareDocumentPosition(aircraft) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const name of ['Aircraft', 'Engine', 'Operation', 'Purpose']) {
+      expect(within(within(facets).getByRole('region', { name })).queryByText(/involved more than one aircraft/)).toBeNull();
+    }
+  });
+
+  it('printing with the drawer open prints the page, not the drawer over it (review W-15)', async () => {
+    renderApp('/explore?q=carburetor+icing&case=ERA25LA016');
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.getAttribute('data-print')).toBe('hide');
   });
 
   it(`a fifth compare tick shows "${COMPARE_FULL_MESSAGE}"`, async () => {

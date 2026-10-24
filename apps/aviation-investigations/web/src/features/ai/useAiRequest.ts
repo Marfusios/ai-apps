@@ -20,7 +20,8 @@ export type AiNotice =
   | { kind: 'free_paused'; loginRequired: boolean }
   /** The request's brief moved to the account that signed in from it: sign in to view it. */
   | { kind: 'moved' }
-  | { kind: 'rate'; seconds: number }
+  /** `at`: when the refusal arrived (ms since the epoch), so a long wait can name its end time. */
+  | { kind: 'rate'; seconds: number; at?: number }
   | { kind: 'failure'; spent: SpentKnowledge }
   /** `unknownBefore`: an earlier send of this request has an unknown outcome (it may have counted). */
   | { kind: 'check'; reason: Exclude<AiCheckFailure, 'cancelled'>; unknownBefore?: boolean }
@@ -89,7 +90,7 @@ export function noticeFor(err: unknown): AiNotice {
     case 'signed_out':
       return { kind: 'message', text: err.body?.message ?? '' };
     case 'rate_limited':
-      return { kind: 'rate', seconds: err.retryAfter ?? 30 };
+      return { kind: 'rate', seconds: err.retryAfter ?? 30, at: Date.now() };
     case 'challenge_required':
     case 'challenge_failed':
       return { kind: 'check', reason: 'failed' };
