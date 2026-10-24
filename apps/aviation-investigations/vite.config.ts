@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { msw } from 'msw/vite';
@@ -19,6 +20,12 @@ export default defineConfig(({ command }) => {
     root: 'web',
     // No .env files are read for the client; it has no build-time configuration.
     envDir: false,
+    resolve: {
+      // Zod runs without compiled parsers (the CSP has no 'unsafe-eval'): every `import 'zod'` of
+      // the client goes through the module that sets that first, wherever the bundler places
+      // the schemas. `^zod$` leaves `zod/v4`, which that module imports, alone. See web/src/zod-jitless.ts.
+      alias: [{ find: /^zod$/, replacement: fileURLToPath(new URL('./web/src/zod-jitless.ts', import.meta.url)) }],
+    },
     plugins: [
       react(),
       tailwindcss(),

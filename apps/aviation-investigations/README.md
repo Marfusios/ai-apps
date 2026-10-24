@@ -1391,8 +1391,15 @@ stalled connections are checked every 5 s.
   anonymous AI is configured (the page gets a Turnstile site key), `script-src` and a
   `frame-src` directive allow `https://challenges.cloudflare.com`, exactly what
   Cloudflare's Turnstile CSP reference lists for policies without script nonces;
-  otherwise neither appears. Zod runs without compiled parsers
-  (`web/src/zod-config.ts`), which would otherwise probe `new Function`. Also
+  otherwise neither appears. Zod runs without compiled parsers: Zod probes `new Function`
+  when it builds an object schema, and a browser reports that blocked probe as a CSP
+  violation even though Zod catches the error. The production build puts Zod and the
+  shared contracts in a chunk that the entry imports, and that chunk runs before the
+  entry's own code, so the client's `zod` imports are mapped (vite.config.ts) to
+  `web/src/zod-jitless.ts`, which sets `jitless` between Zod and every schema.
+  `tests/unit/web-bundle-eval.test.ts` builds the client and starts it in jsdom with
+  `Function` recording its callers, and the real-server end-to-end tests fail on any
+  CSP violation. Also
   `X-Content-Type-Options`, `Referrer-Policy: same-origin`, `Permissions-Policy`,
   `X-Frame-Options`, and HSTS when `APP_URL` is HTTPS.
 
