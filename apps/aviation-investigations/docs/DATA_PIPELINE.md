@@ -735,9 +735,10 @@ index changes.
   justification: its best retrieved passage and every probable-cause variant it has
   under the filters, including each distinct event-scoped variant. A case whose
   reservation does not fit is skipped, so the bundle holds fewer cases rather than
-  cases without the passage that ranked them. Extras up to 2 retrieved passages per
-  case are added, trimmed to the budgets lowest-ranked first, and free room is filled
-  in fused order.
+  cases without the passage that ranked them. Then each case gets at most one more
+  retrieved passage (two retrieved in all, the reserved one included:
+  `retrievedPerCase` 2), trimmed to the budgets lowest-ranked first, and free room is
+  filled in fused order, where a case can reach its third passage.
 - **Cost.** The query embedding's usage (tokens, USD, `reported` or `uncertain`) is
   handed to the caller as soon as the embedding returns, before any search, so a
   later failure cannot lose a paid stage. Retrieval reserves no money: the AI

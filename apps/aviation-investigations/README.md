@@ -312,10 +312,11 @@ pnpm worker index cleanup-builds --older-than <hours>
 - **Facets count events.** Aircraft facets aggregate inside `nested` and count with
   `reverse_nested`. An event whose aircraft differ counts once in each of their
   buckets, so aircraft buckets can sum to more than the total (405 US events have
-  several aircraft in the 2026-10-16 snapshot). The Phase facet uses
-  `defining_phase_groups`, every aircraft's defining phase group (140 US events have
-  several); with an aircraft filter active, filter the phase on
-  `aircraft.defining_phase_group` inside the same nested clause.
+  several aircraft in the 2026-10-16 snapshot). The Phase facet counts and filters on
+  each aircraft's defining phase group, the nested `aircraft.defining_phase_group`
+  (inside the same nested clause as any other aircraft filter), so its `blank` bucket
+  counts events with an aircraft that has no defining phase; the top-level
+  `defining_phase_groups` lists every aircraft's group (140 US events have several).
   `sequence_phase_groups` lists every phase in the sequence. Make, model and city use
   a normalizer (whitespace collapsed, ASCII-folded, upper case), so "Cessna" and
   "CESSNA" are one value.
@@ -429,7 +430,8 @@ Integration test files run one at a time: they share `aviation_test` and the
 
 `server/search/hybrid.ts` retrieves the evidence an AI brief is written from
 (DESIGN §5; amendments A2, A3, A11, A13; review gate G5). It reads the passages index
-the active manifest names and refuses (`RetrievalUnavailableError`) when there is
+the brief is pinned to (`EvidenceQuery.dataset`: the active manifest's for a new brief, the
+brief's own for a refinement) and refuses (`RetrievalUnavailableError`) when there is
 none or when the index breaks the passages contract
 (`server/search/passages-contract.ts`; the same check `worker publish` and the API's
 dataset loader use). The contract is checked before the query is embedded, within
@@ -478,7 +480,9 @@ case-level stage 1 follows them.
 - **Stage 1, case candidates.** The question is embedded once
   (`queryEmbeddingInput`, template `query-v1`: whitespace collapsed, no header, at
   most 1,000 tokens). BM25 (`multi_match` over `text`) and kNN (`num_candidates` =
-  4 × k) each return `perChannel` passages (50 live; the evaluation also runs 100).
+  4 × k) each return `perChannel` passages (50 under `retrieval.v1`, the rollback this
+  paragraph describes; the evaluation also runs 100; `retrieval.v2`, the default, runs
+  200 a channel, below).
   Reciprocal rank fusion in TypeScript (`sum 1/(60 + rank)`) and deduplication to
   cases at their best passage give the case ranking.
 - **Stage 1 under `retrieval.v2`** (`server/search/case-retrieval.ts`). Both index
