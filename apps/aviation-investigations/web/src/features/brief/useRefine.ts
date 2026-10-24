@@ -7,6 +7,7 @@ import { forgetUnsettled, rememberUnsettled, unsettledId, unsettledKey } from '.
 import { newIdempotencyKey, useAiRequest } from '../ai/useAiRequest';
 import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
 import { refineBrief } from './api';
+import { rememberChange } from './memory';
 
 /**
  * A paid step on a brief (UI_DESIGN §4.3 "What costs an AI search on a brief"): free-text
@@ -69,6 +70,8 @@ export function useRefine(briefId: string) {
         else if (!replayingEarlier) forgetUnsettled(id, idempotencyKey);
         return false;
       }
+      // Try again after this step fails sends the same change (an edited reading's value is not in the step).
+      rememberChange(briefId, result.value.step, change);
       await queryClient.invalidateQueries({ queryKey: ['brief', briefId] });
       // The visitor changed while the brief was read again: the page goes nowhere for them
       // (and forgetting them cleared the tab's keys).

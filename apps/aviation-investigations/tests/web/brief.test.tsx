@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiStatusResponse } from '../../shared/contracts/ai';
-import { BRIEF_FILTER_FACETS, BriefStepResponseSchema, CRITERIA, type CaseReading, type SummarySegment } from '../../shared/contracts/briefs';
+import { BRIEF_FILTER_FACETS, BriefStepResponseSchema, CRITERIA, type BriefStepResponse, type CaseReading, type SummarySegment } from '../../shared/contracts/briefs';
 import { CRITERION_LINE } from '../../server/briefs/context';
 import { NO_MATCH_LINES } from '../../server/briefs/static-replies';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
@@ -40,7 +40,8 @@ import {
 import { canonicalFilters as serverCanonicalFilters } from '../../server/briefs/intent';
 import { IDEMPOTENCY_TTL_MS } from '../../server/quota/policy';
 import { ApiError, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery } from '../../web/src/api';
-import { chipsContext } from '../../web/src/pages/Brief';
+import { CHANGE_NOT_KEPT, RETRY_FAILED, chipsContext } from '../../web/src/pages/Brief';
+import { REFINEMENTS_USED } from '../../web/src/features/brief/RefineBox';
 import { Checklist, CHECKLIST_NOTE, POLL_TROUBLE } from '../../web/src/features/brief/Checklist';
 import { WithheldNotice, withheldText } from '../../web/src/features/brief/WithheldNotice';
 import { PassageText, cleanSpans, paragraphRanges } from '../../web/src/features/case/BriefContext';
@@ -604,6 +605,122 @@ describe('Brief outcomes read from the server', { timeout: 15_000 }, () => {
     renderApp('/compare?cases=DFW08TA066,MIA08LA156&brief=00000000-0000-4000-8000-00000000dead&step=1');
     expect(await screen.findByText("The AI notes for these cases have expired or aren't yours.")).toBeTruthy();
     expect(screen.queryByText(/Since maint/i)).toBeNull();
+  });
+});
+
+describe('Try again after a failed step (review W-5, W-12)', { timeout: 20_000 }, () => {
+  const ID = '00000000-0000-4000-8000-00000000f001';
+  /** Step `n` of `steps`, failed before anything was spent, started by `origin`. */
+  const failed = (n: number, steps: number, origin: BriefStepResponse['origin'], refinementsLeft: number) =>
+    BriefStepResponseSchema.parse({
+      briefId: ID,
+      step: n,
+      steps,
+      refinementsLeft,
+      question: MOCK_SEED_QUESTION,
+      origin,
+      stage: 'failed',
+      checklist: {},
+      startedAt: '2026-10-22T10:00:00.000Z',
+      finishedAt: '2026-10-22T10:00:30.000Z',
+      expiresAt: '2026-10-23T10:00:00.000Z',
+      result: { kind: 'failed', countedAsSearch: false },
+    });
+
+  /** Records every brief POST (`create` or `refine`) with its body, then lets the mock answer. */
+  function recordBriefPosts(): { path: 'create' | 'refine'; body: Record<string, unknown> }[] {
+    const posts: { path: 'create' | 'refine'; body: Record<string, unknown> }[] = [];
+    server.use(
+      http.post('*/api/briefs', async ({ request }) => {
+        posts.push({ path: 'create', body: (await request.clone().json()) as Record<string, unknown> });
+        return undefined;
+      }),
+      http.post('*/api/briefs/:id/refine', async ({ request }) => {
+        posts.push({ path: 'refine', body: (await request.clone().json()) as Record<string, unknown> });
+        return undefined;
+      }),
+    );
+    return posts;
+  }
+
+  it('a failed edited reading is tried again as that reading, never as a new search with the question (W-5)', async () => {
+    freshApi();
+    installTurnstile();
+    const { router } = await askFromHome(MOCK_SEED_QUESTION);
+    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const id = currentUrl(router).split('/')[2] as string;
+    let failNext = false;
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) =>
+        failNext && new URL(request.url).searchParams.get('step') !== '1'
+          ? HttpResponse.json({ ...failed(2, 2, { kind: 'interpretation', label: 'Within 14 days or 5 flight hours' }, 2), briefId: id })
+          : undefined,
+      ),
+    );
+    const posts = recordBriefPosts();
+    fireEvent.click(screen.getByRole('button', { name: /Within 30 days or 10 flight hours.*edit/ }));
+    const editor = screen.getByRole('group', { name: "Change the AI's reading" });
+    fireEvent.change(within(editor).getByLabelText('Calendar days'), { target: { value: '14' } });
+    fireEvent.change(within(editor).getByLabelText('Flight hours'), { target: { value: '5' } });
+    failNext = true;
+    fireEvent.click(within(editor).getByRole('button', { name: /^Re-run AI\s*·\s*uses 1$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    await waitFor(() => expect(posts).toHaveLength(2), SLOW);
+    expect(posts.map((p) => p.path)).toEqual(['refine', 'refine']);
+    expect(posts[1]?.body).toMatchObject({ kind: 'interpretation', field: 'timing_window', value: { days: 14, flightHours: 5 } });
+  });
+
+  it('after a reload, a failed edited reading offers no Try again that would drop it (W-5)', async () => {
+    const posts = recordBriefPosts();
+    server.use(http.get('*/api/briefs/:id', () => HttpResponse.json(failed(2, 2, { kind: 'interpretation', label: 'Within 14 days or 5 flight hours' }, 2))));
+    renderApp(`/briefs/${ID}`);
+    const title = await screen.findByText("The AI search didn't finish.", {}, SLOW);
+    const card = title.parentElement as HTMLElement;
+    expect(within(card).queryByRole('button', { name: /Try again/ })).toBeNull();
+    expect(card.textContent).toContain(CHANGE_NOT_KEPT);
+    expect(within(card).getByRole('link', { name: 'New search' }).getAttribute('href')).toBe('/');
+    expect(posts).toHaveLength(0);
+  });
+
+  it('with no refinements left, a failed refinement offers no Try again that would start over with the question (W-5)', async () => {
+    server.use(http.get('*/api/briefs/:id', () => HttpResponse.json(failed(4, 4, { kind: 'text', text: 'only helicopters' }, 0))));
+    renderApp(`/briefs/${ID}`);
+    const title = await screen.findByText("The AI search didn't finish.", {}, SLOW);
+    const card = title.parentElement as HTMLElement;
+    expect(within(card).queryByRole('button', { name: /Try again/ })).toBeNull();
+    expect(card.textContent).toContain(REFINEMENTS_USED);
+    expect(within(card).getByRole('link', { name: 'New search' }).getAttribute('href')).toBe('/');
+  });
+
+  it('an earlier failed answer, with later ones in the brief, is not tried again from there (W-5)', async () => {
+    server.use(
+      http.get('*/api/briefs/:id', ({ request }) =>
+        new URL(request.url).searchParams.get('step') === '2' ? HttpResponse.json(failed(2, 3, { kind: 'text', text: 'only helicopters' }, 1)) : undefined,
+      ),
+    );
+    renderApp(`/briefs/${ID}?step=2`);
+    const title = await screen.findByText("The AI search didn't finish.", {}, SLOW);
+    expect(within(title.parentElement as HTMLElement).queryByRole('button', { name: /Try again/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Go to the latest answer' }).getAttribute('href')).toBe(`/briefs/${ID}`);
+  });
+
+  it('a Try again that fails too is said in the same card: one failure box, one Try again (W-12)', async () => {
+    freshApi();
+    installTurnstile();
+    server.use(
+      http.get('*/api/briefs/:id', () => HttpResponse.json(failed(2, 2, { kind: 'text', text: 'only helicopters' }, 2))),
+      // No answer comes back: whether it counted is unknown.
+      http.post('*/api/briefs/:id/refine', () => HttpResponse.error()),
+    );
+    renderApp(`/briefs/${ID}`);
+    fireEvent.click(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW));
+    expect(await screen.findByText(new RegExp(`^${RETRY_FAILED}`), {}, SLOW)).toBeTruthy();
+    expect(screen.getAllByText("The AI search didn't finish.")).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /Try again/ })).toHaveLength(1);
+    const line = screen.getByText(new RegExp(`^${RETRY_FAILED}`));
+    expect(line.textContent).toBe(`${RETRY_FAILED} If it went through, Try again opens it without using another search.`);
+    // Said politely, from a region that was there before it.
+    expect(line.getAttribute('aria-live')).toBe('polite');
   });
 });
 
