@@ -69,11 +69,32 @@ describe('worker maintenance commands', () => {
     }
   });
 
-  it('prune-controls expires leases and prunes as the app role', async () => {
-    const { stdout } = await worker('prune-controls');
-    expect(stdout).toMatch(/^leases expired: \d+ \(charged [\d.]+ USD\)$/m);
-    expect(stdout).toMatch(/^pruned trialIdentities: \d+$/m);
-    expect(stdout).toMatch(/^pruned costLedger: \d+$/m);
+  it('prune-controls runs the API server’s maintenance pass by hand, sign-in retention and orphaned steps included', async () => {
+    const migrator = testDb('migrator');
+    try {
+      await resetControls();
+      // An expired session and verification: the pass deletes them (pruneAuth), as the API's job does.
+      const user = await migrator.execute(sql`
+        INSERT INTO auth_users (name, email, email_verified, created_at, updated_at)
+        VALUES ('Expired', 'expired@example.com', true, now() - interval '30 days', now()) RETURNING id`);
+      const userId = (user.rows[0] as { id: string }).id;
+      await migrator.execute(sql`
+        INSERT INTO auth_sessions (token, user_id, expires_at, created_at, updated_at)
+        VALUES (${'t'.repeat(32)}, ${userId}::uuid, now() - interval '1 day', now() - interval '8 days', now() - interval '8 days')`);
+      await migrator.execute(sql`
+        INSERT INTO auth_verifications (identifier, value, expires_at, created_at, updated_at)
+        VALUES ('state', 'v', now() - interval '1 hour', now() - interval '2 hours', now() - interval '2 hours')`);
+      const { stdout } = await worker('prune-controls');
+      expect(stdout).toMatch(/^leases expired: \d+ \(charged [\d.]+ USD\)$/m);
+      expect(stdout).toMatch(/^pruned trialIdentities: \d+$/m);
+      expect(stdout).toMatch(/^pruned costLedger: \d+$/m);
+      expect(stdout).toMatch(/^brief steps failed because their process died: \d+$/m);
+      expect(stdout).toMatch(/^sign-in rows pruned: sessions 1, verifications 1, stateUses 0, confirmations 0$/m);
+      expect((await migrator.execute(sql`SELECT count(*)::int AS n FROM auth_sessions`)).rows).toEqual([{ n: 0 }]);
+    } finally {
+      await resetControls();
+      await closeDb(migrator);
+    }
   });
 
   it('restore-check holds paid operations, passes on empty sign-in, brief and idempotency tables, names any with rows, and --empty empties them', async () => {

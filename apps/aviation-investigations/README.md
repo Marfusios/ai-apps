@@ -1464,8 +1464,9 @@ retention are in migrations 0008 and 0009.
   they expire (24 hours), and ledger lines and closed reservations after 90 days. The API server runs `expireLeases`,
   `failOrphanedSteps` (brief steps whose process died) and `pruneControls` itself
   about every 10 minutes, under a PostgreSQL advisory lock
-  (`server/quota/maintenance.ts`; the app role already holds the grants);
-  `pnpm worker prune-controls` runs them once by hand.
+  (`server/quota/maintenance.ts`; the app role already holds the grants), and deletes
+  expired sign-in rows (`pruneAuth`); `pnpm worker prune-controls` runs the same pass once
+  by hand, under the same lock.
 
 The kill switch pauses interactive AI only. Its second flag is the login-required
 emergency mode (DESIGN §7): anonymous trials are refused (admission `login_required`,

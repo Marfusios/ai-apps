@@ -820,9 +820,11 @@ Nothing grows without bound, but two kinds of retention run differently:
   type only) and retried at the next pass, and never stops the server. This runs as
   `aviation_app`, which already holds `EXECUTE` on `prune_controls()` and the table
   privileges lease expiry needs (migration 0008), so no grant was added and no host
-  cron or systemd timer is needed. To run it by hand (a host with `DATABASE_URL`, the
-  `aviation_app` login, in `AVIATION_ENV_FILES` or `.env.local`; the ingest container does not hold
-  that credential): `pnpm worker prune-controls`.
+  cron or systemd timer is needed. The pass also marks brief steps whose process died as
+  failed and deletes expired sign-in rows. To run the same pass once by hand, under the
+  same lock (a host with `DATABASE_URL`, the `aviation_app` login, in `AVIATION_ENV_FILES`
+  or `.env.local`; the ingest container does not hold that credential):
+  `pnpm worker prune-controls`. It prints what each step did and exits 1 if one failed.
 - **Generations** are pruned only on request. Run it after publishing a new generation
   (and after a rollback has settled):
 

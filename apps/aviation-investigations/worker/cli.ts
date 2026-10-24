@@ -8,8 +8,7 @@ import { listGenerations, pruneGenerations } from '../server/db/generations.js';
 import { runMigrations } from '../server/db/migrate.js';
 import { holdPaidOperations, readPaidOperationsHold, reconcileRestore, ReconcileRefusedError } from '../server/quota/hold.js';
 import { QuotaInputError } from '../server/quota/policy.js';
-import { pruneControls } from '../server/quota/retention.js';
-import { expireLeases } from '../server/quota/settle.js';
+import { runControlMaintenance } from '../server/quota/maintenance.js';
 import { readAiSwitch, setAccountCheck, setAiSwitch, setAnonymousAi } from '../server/quota/switch.js';
 import { createEsClient } from '../server/search/es.js';
 import { formatPreflight, runAiPreflight } from './ai-preflight.js';
@@ -629,17 +628,37 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (command === 'prune-controls') {
-    // Retention of the control tables runs as aviation_app (DATABASE_URL): prune_controls() is granted to
-    // that role only, which is also the role the API's periodic job uses.
+    // The API server's maintenance pass, once, by hand (server/quota/maintenance.ts): lease expiry,
+    // retention (prune_controls(), granted to aviation_app only), brief steps whose process died and
+    // expired sign-in rows, as aviation_app (DATABASE_URL) under the same advisory lock as the API's job.
     parseArgs({ args: rest, options: {}, strict: true });
     const url = workerConfig().databaseUrl;
     if (!url) throw new Error('DATABASE_URL is not set (the aviation_app login); run pnpm services:setup');
     const db = createDb(url, { max: 2, applicationName: 'aviation-worker-controls', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {
-      const leases = await expireLeases(db);
-      const pruned = await pruneControls(db);
-      console.log(`leases expired: ${leases.expired} (charged ${leases.chargedUsd} USD)`);
-      for (const [k, v] of Object.entries(pruned)) console.log(`pruned ${k}: ${v}`);
+      const r = await runControlMaintenance(db, {
+        info: () => undefined,
+        warn: (obj, msg) => console.error(`${msg} (${(obj as { err?: { name?: string } }).err?.name ?? 'error'})`),
+      });
+      if (!r.ran) {
+        if (r.reason === 'lock_held') {
+          console.log('skipped: an API server is running the maintenance pass right now');
+          return 0;
+        }
+        console.error('the maintenance pass failed');
+        return 1;
+      }
+      if (r.expired) console.log(`leases expired: ${r.expired.expired} (charged ${r.expired.chargedUsd} USD)`);
+      for (const [k, v] of Object.entries(r.pruned ?? {})) console.log(`pruned ${k}: ${v}`);
+      if (r.orphanedSteps !== null) console.log(`brief steps failed because their process died: ${r.orphanedSteps}`);
+      if (r.authPruned) {
+        const a = r.authPruned;
+        console.log(`sign-in rows pruned: sessions ${a.sessions}, verifications ${a.verifications}, stateUses ${a.stateUses}, confirmations ${a.confirmations}`);
+      }
+      if (r.failed.length > 0) {
+        console.error(`failed: ${r.failed.join(', ')}`);
+        return 1;
+      }
     } finally {
       await closeDb(db);
     }
