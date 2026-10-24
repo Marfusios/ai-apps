@@ -1236,7 +1236,10 @@ counts) is a 503, logged as a warning, never a 404, partial data or an internal 
 get the same headers and a JSON 400, and the static files' refusals are 404 or 400.
 The log has one line per API request (method, route pattern, status, duration),
 without client addresses or query strings; an unmatched `/api` path is logged with
-the route `unmatched` and nothing of the request target. Per-visitor routes
+the route `unmatched` and nothing of the request target. A logged error carries its name,
+code and (Elasticsearch's) error type, never its message or stack, and any message string
+loses the query string of a path it quotes (Fastify's own warnings quote the request URL).
+The static files never include a dotfile or a dot directory (404). Per-visitor routes
 (`/api/ai`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
 prefix, so later routes are covered) answer `Cache-Control: private, no-store`; public
 data routes are cacheable and keyed by the dataset revision; errors are `no-store`.

@@ -1,8 +1,11 @@
 import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { connect, type AddressInfo, type Socket } from 'node:net';
 import type { Client } from '@elastic/elasticsearch';
 import { describe, expect, it } from 'vitest';
-import { REQUEST_TIMEOUT_MS, buildApp } from '../../server/app.js';
+import { REQUEST_TIMEOUT_MS, buildApp, serializeLoggedError, withoutQueries } from '../../server/app.js';
 import type { Db } from '../../server/db/client.js';
 import { PRIVATE_NO_STORE, isNoStoreRoute } from '../../server/http/cache-headers.js';
 import { clientErrorResponse, makeClientErrorHandler } from '../../server/http/client-error.js';
@@ -202,5 +205,71 @@ describe('a request that never finishes arriving is ended (platform review P1)',
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('static files (platform review P6)', () => {
+  it('never serves a dotfile or a dot directory from the web root', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'casebook-web-'));
+    try {
+      writeFileSync(join(root, 'index.html'), '<!doctype html><html><head></head><body></body></html>');
+      writeFileSync(join(root, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      writeFileSync(join(root, '.env'), 'SECRET=1');
+      mkdirSync(join(root, '.vite'));
+      writeFileSync(join(root, '.vite', 'manifest.json'), '{"secret":true}');
+      const app = buildApp({ config: { appUrl: 'https://casebook.example', trustedProxyCidrs: [] }, db: {} as Db, es: {} as Client, webRoot: root });
+      try {
+        const get = (url: string) => app.inject({ method: 'GET', url, remoteAddress: '203.0.113.7' });
+        expect((await get('/favicon.svg')).statusCode).toBe(200);
+        for (const url of ['/.env', '/.vite/manifest.json', '/%2Eenv']) {
+          const r = await get(url);
+          expect(r.statusCode, url).toBe(404);
+          expect(r.body, url).not.toContain('secret');
+          expect(r.body, url).not.toContain('SECRET');
+        }
+      } finally {
+        await app.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('logged errors carry their name and code, never their message (platform review P7)', () => {
+  it('Fastify’s own warning about a reply sent twice keeps the request URL out of the log', async () => {
+    const lines: string[] = [];
+    const app = buildApp({
+      config: { appUrl: 'https://casebook.example', trustedProxyCidrs: [] },
+      db: {} as Db,
+      es: {} as Client,
+      logger: { level: 'debug', stream: { write: (line: string) => void lines.push(line) } },
+    });
+    // A handler that answers twice (a latent bug Fastify reports with the URL in the error message).
+    app.get('/api/twice', async (_request, reply) => {
+      void reply.code(200).send('{}');
+      return reply.send('{}');
+    });
+    try {
+      const r = await app.inject({ method: 'GET', url: '/api/twice?q=engine%20failure%20secret-term', remoteAddress: '203.0.113.7' });
+      expect(r.statusCode).toBe(200);
+      const warned = lines.map((l) => JSON.parse(l) as { err?: Record<string, unknown> }).find((l) => l.err?.code === 'FST_ERR_REP_ALREADY_SENT');
+      expect(warned).toBeDefined();
+      expect(Object.keys(warned!.err!).sort()).toEqual(['code', 'name']);
+      for (const l of lines) expect(l).not.toContain('secret-term');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('a message string keeps paths but loses their query strings', () => {
+    expect(withoutQueries('Reply was already sent in the "/api/search?q=engine%20failure&page=2" (GET) route?')).toBe(
+      'Reply was already sent in the "/api/search?…" (GET) route?',
+    );
+    expect(withoutQueries('no path here')).toBe('no path here');
+    expect(withoutQueries('/api/cases/CEN24FA064')).toBe('/api/cases/CEN24FA064');
+    expect(serializeLoggedError(Object.assign(new Error('connect ECONNREFUSED 192.0.2.10:5432'), { code: 'ECONNREFUSED' }))).toEqual({ name: 'Error', code: 'ECONNREFUSED' });
+    expect(serializeLoggedError({ name: 'ResponseError', type: 'search_phase_execution_exception' })).toEqual({ name: 'ResponseError', type: 'search_phase_execution_exception' });
+    expect(serializeLoggedError({ name: 'has space', message: 'x' })).toEqual({});
   });
 });

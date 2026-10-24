@@ -195,6 +195,54 @@ export function isUnavailable(err: unknown): boolean {
   return ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03', '53300', '55P03', '40P01'].includes(code) || code.startsWith('08');
 }
 
+const logToken = (v: unknown): v is string => typeof v === 'string' && v.length <= 80 && /^[A-Za-z0-9_.:-]+$/.test(v);
+
+/**
+ * How an `err` is logged: its name, code and (an Elasticsearch error's) type, never its
+ * message or stack (platform review P7). A message can hold the request URL with its
+ * search text (Fastify's own warning about a reply sent twice), a query or an address.
+ * The app's own log lines already pass only these fields.
+ */
+export function serializeLoggedError(e: unknown): Record<string, string> {
+  const x = (e ?? {}) as { name?: unknown; code?: unknown; type?: unknown };
+  return {
+    ...(logToken(x.name) ? { name: x.name } : {}),
+    ...(logToken(x.code) ? { code: x.code } : {}),
+    ...(logToken(x.type) ? { type: x.type } : {}),
+  };
+}
+
+/** A log message without the query string of any path in it (`/api/search?q=…` → `/api/search?…`). */
+export function withoutQueries(message: string): string {
+  return message.replace(/(\/[^\s"'?]*)\?[^\s"']*/g, '$1?…');
+}
+
+/**
+ * The logger options with `serializeLoggedError` in force, and no request target in a
+ * message: pino makes an error's message the line's message when a call gives none
+ * (`log.warn({ err })`, `log.error(err)`), so such a call gets a fixed one; and a message
+ * string loses the query string of any path in it (Fastify's warning about a handler that
+ * answered twice quotes the request URL; platform review P7).
+ */
+function withErrorSerializer(logger: AppDeps['logger']): FastifyServerOptions['logger'] {
+  if (logger === undefined || logger === false) return false;
+  const base = (logger === true ? {} : logger) as { serializers?: Record<string, unknown> };
+  return {
+    ...base,
+    serializers: { ...base.serializers, err: serializeLoggedError },
+    hooks: {
+      logMethod(this: unknown, args: unknown[], method: (...a: unknown[]) => void) {
+        const [first, second, ...rest] = args;
+        if (typeof first === 'string') return method.apply(this, [withoutQueries(first), ...args.slice(1)]);
+        const message = typeof second === 'string' ? withoutQueries(second) : 'error logged';
+        if (first instanceof Error) return method.apply(this, [{ err: first }, message, ...rest]);
+        if (typeof first === 'object' && first !== null && ('err' in first || typeof second === 'string')) return method.apply(this, [first, message, ...rest]);
+        return method.apply(this, args);
+      },
+    },
+  } as unknown as FastifyServerOptions['logger'];
+}
+
 /** Fastify's own request errors (body too large, unsupported media type, ...). */
 const isRequestError = (err: unknown): boolean => {
   const e = err as { code?: string; statusCode?: number };
@@ -225,7 +273,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const requestTimeout = deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
 
   const app = Fastify({
-    logger: deps.logger ?? false,
+    logger: withErrorSerializer(deps.logger),
     trustProxy: false,
     // Request logs would hold client addresses and search text; responses are logged below without either.
     logController: new LogController({ disableRequestLogging: true }),
@@ -433,6 +481,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       prefix: '/',
       wildcard: true,
       index: false,
+      // Never a dotfile or a dot directory (a stray `.env` or a build manifest): 404 (platform review P6).
+      dotfiles: 'ignore',
       cacheControl: false,
       etag: true,
       lastModified: true,
