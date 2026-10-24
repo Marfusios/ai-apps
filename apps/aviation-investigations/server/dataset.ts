@@ -44,6 +44,7 @@ import { SERVABLE_CASES_VERSIONS, isServableCasesIndex } from '../worker/index/c
 import type { Db } from './db/client.js';
 import { getActiveManifest, type ActiveManifest } from './db/generations.js';
 import { IndexMetaError, readIndexMeta } from './search/index-meta.js';
+import { assertComplete } from './search/timeout.js';
 import {
   PassagesCheckTimeoutError,
   checkPassagesIndex,
@@ -56,6 +57,25 @@ export class DatasetUnavailableError extends Error {
     super(message);
     this.name = 'DatasetUnavailableError';
   }
+}
+
+/** The year axis every search, dashboard and config response carries (shared/contracts/search.ts, config.ts). */
+const FIRST_YEAR = 1900;
+const LAST_YEAR = 2100;
+const MAX_YEAR_BUCKETS = 200;
+
+/**
+ * The corpus year range of a cases index, if the contracts can carry it: whole years
+ * within 1900–2100, at most 200 of them (task 22 search review S-I1). Otherwise the
+ * dataset is unavailable, once, at load (503 with a log line), instead of every search,
+ * dashboard and config response failing its contract.
+ */
+export function servableYears(first: number | null | undefined, last: number | null | undefined): { from: number; to: number } {
+  if (typeof first !== 'number' || typeof last !== 'number') throw new DatasetUnavailableError('the active cases index is empty');
+  if (!Number.isInteger(first) || !Number.isInteger(last) || first < FIRST_YEAR || last > LAST_YEAR || last < first || last - first + 1 > MAX_YEAR_BUCKETS) {
+    throw new DatasetUnavailableError(`the active cases index has event years ${first} to ${last}, outside what the API serves (whole years within ${FIRST_YEAR} to ${LAST_YEAR}, at most ${MAX_YEAR_BUCKETS} of them)`);
+  }
+  return { from: first, to: last };
 }
 
 export interface PinnedDataset {
@@ -234,6 +254,7 @@ export class DatasetResolver {
     const stats = await this.es.search({
       index: manifest.casesIndex,
       size: 0,
+      allow_partial_search_results: false,
       track_total_hits: true,
       query: { term: { country: 'USA' } },
       aggs: {
@@ -242,15 +263,13 @@ export class DatasetResolver {
         last: { max: { field: 'ev_year' } },
       },
     });
+    assertComplete(stats, 'dataset statistics');
     const total = typeof stats.hits.total === 'number' ? stats.hits.total : (stats.hits.total?.value ?? 0);
     const aggs = stats.aggregations as
       | { cohort: { doc_count: number }; first: { value: number | null }; last: { value: number | null } }
       | undefined;
-    const from = aggs?.first.value;
-    const to = aggs?.last.value;
-    if (!aggs || total === 0 || typeof from !== 'number' || typeof to !== 'number') {
-      throw new DatasetUnavailableError('the active cases index is empty');
-    }
+    if (!aggs || total === 0) throw new DatasetUnavailableError('the active cases index is empty');
+    const { from, to } = servableYears(aggs.first.value, aggs.last.value);
     const indexVersion = meta.indexVersion;
     return {
       manifest,

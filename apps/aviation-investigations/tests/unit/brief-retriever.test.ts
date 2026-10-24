@@ -66,14 +66,30 @@ describe('retrievalFailureOf', () => {
     });
   }
 
-  it('an aborted stage is a timeout, whatever the error; the embedding billing is kept', () => {
+  it('an error the stage’s abort caused is a timeout; the embedding billing is kept', () => {
     const c = new AbortController();
     c.abort();
-    expect(retrievalFailureOf(new RetrievalUnavailableError('index_mismatch', SENTINEL), c.signal, 'uncertain')).toMatchObject({
-      kind: 'timeout',
-      reason: 'aborted',
-      embedding: 'uncertain',
-    });
+    const timedOut = AbortSignal.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+    for (const [what, err, signal] of [
+      ['the signal’s own reason', c.signal.reason, c.signal],
+      ['a timeout’s reason', timedOut.reason, timedOut],
+      ['an AbortError', new DOMException('aborted', 'AbortError'), c.signal],
+      ['the search client’s abort', new errors.RequestAbortedError('Request aborted'), c.signal],
+      ['an embedding the abort cut off', new QueryEmbeddingError(SENTINEL, { kind: 'aborted' }, 'uncertain'), c.signal],
+      ['an abort under a wrapper', Object.assign(new Error(SENTINEL), { cause: new DOMException('aborted', 'AbortError') }), c.signal],
+    ] as const) {
+      expect(retrievalFailureOf(err, signal, 'uncertain'), what).toMatchObject({ kind: 'timeout', reason: 'aborted', embedding: 'uncertain' });
+    }
+  });
+
+  it('a genuine failure that races with the abort keeps its own kind and reason (task 22 S-M9)', () => {
+    const c = new AbortController();
+    c.abort();
+    expect(retrievalFailureOf(new RetrievalUnavailableError('index_mismatch', SENTINEL), c.signal, 'none')).toMatchObject({ kind: 'unavailable', reason: 'index_mismatch' });
+    expect(retrievalFailureOf(new errors.ConnectionError(SENTINEL), c.signal, 'none')).toMatchObject({ kind: 'failed', reason: 'search' });
+    expect(retrievalFailureOf(new IncompleteSearchError('fetch', SENTINEL), c.signal, 'none')).toMatchObject({ kind: 'failed', reason: 'incomplete_search' });
+    // Without an abort, an abort-shaped error is not a timeout of this stage either.
+    expect(retrievalFailureOf(new DOMException('aborted', 'AbortError'), live(), 'none')).toMatchObject({ kind: 'failed', reason: 'other' });
   });
 
   it('passes a RetrievalFailure through', () => {

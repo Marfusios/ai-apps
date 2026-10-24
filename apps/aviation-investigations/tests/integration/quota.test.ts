@@ -10,6 +10,7 @@ import {
   createTrialIdentity,
   dailyAllowanceUsd,
   expireLeases,
+  forgetIdempotency,
   pruneControls,
   quotaPolicy,
   recordAttempt,
@@ -428,13 +429,17 @@ describe('settlement', () => {
     expect(await expireLeases(app, at(T0, 10 * MIN))).toEqual({ expired: 0, chargedUsd: 0 });
     expect(await ledger(a.reservationId)).toEqual([{ stage: 'uncertain', usd: '0.140000', uncertain: true }]);
 
-    // A lease that expires before settlement is charged in full and stays charged.
+    // A lease that expires before settlement is charged in full and stays charged. A charge in
+    // full that no named call accounts for is a server failure: it never counts toward the
+    // principal's daily bound of uncertain calls (task 22 re-review N1), so `p` is admitted.
     const b = admitted(await admit(p, { now: at(T0, MIN) }));
     expect(await expireLeases(app, b.leaseExpiresAt)).toEqual({ expired: 1, chargedUsd: RESERVATION });
     expect(await settle(app, b, 0.01, b.fencingToken, at(b.leaseExpiresAt, 1_000))).toEqual({
       ok: false,
       reason: 'not_open',
       status: 'expired_charged',
+      // What it was charged, so the caller's own record can say so (task 22 AI M8).
+      chargedUsd: RESERVATION,
     });
     expect(await ledger(b.reservationId)).toEqual([{ stage: 'lease_expired', usd: '0.140000', uncertain: true }]);
 
@@ -479,6 +484,106 @@ describe('settlement', () => {
     expect((tokens.rows[0] as { tokens: unknown }).tokens).toEqual({ input: 1300, output: 160, cacheWrite: 0, cacheRead: 0 });
   });
 
+  it('a call whose usage is not known is charged at its own worst case, never more than the reservation leaves (gate 22 AI I1)', async () => {
+    const reservationRow = async (id: number) =>
+      (await migrator.execute(sql`SELECT charged_usd::text AS charged, uncertain FROM reservations WHERE id = ${id}`)).rows[0];
+    const known = { usd: 0.0002, provider: 'anthropic', model: 'claude-haiku-5-5', stage: 'scope' };
+    const a = admitted(await admit(account('u')));
+    const r = await settle(
+      app,
+      a,
+      { lines: [known, { usd: 0.05, provider: 'anthropic', model: 'claude-opus-5-5', stage: 'compose', uncertain: true }] },
+      a.fencingToken,
+      at(T0, 30_000),
+    );
+    expect(r).toEqual({ ok: true, chargedUsd: 0.0502, uncertain: true });
+    expect(await ledger(a.reservationId)).toEqual([
+      { stage: 'scope', usd: '0.000200', uncertain: false },
+      { stage: 'compose', usd: '0.050000', uncertain: true },
+    ]);
+    // Not charged in full, so the reservation itself is not marked uncertain (migration 0009
+    // holds a reservation marked uncertain to at least its amount).
+    expect(await reservationRow(a.reservationId)).toEqual({ charged: '0.050200', uncertain: false });
+
+    // Uncertain lines never take the charge past the reservation: then it is charged in full.
+    const b = admitted(await admit(account('v'), { now: at(T0, MIN) }));
+    expect(
+      await settle(
+        app,
+        b,
+        { lines: [{ ...known, usd: 0.1 }, { usd: 0.03, stage: 'check', uncertain: true }, { usd: 0.03, stage: 'compose', uncertain: true }] },
+        b.fencingToken,
+        at(T0, MIN + 30_000),
+      ),
+    ).toEqual({ ok: true, chargedUsd: RESERVATION, uncertain: true });
+    expect(await ledger(b.reservationId)).toEqual([
+      { stage: 'scope', usd: '0.100000', uncertain: false },
+      { stage: 'check', usd: '0.030000', uncertain: true },
+      { stage: 'compose', usd: '0.010000', uncertain: true },
+    ]);
+    expect(await reservationRow(b.reservationId)).toEqual({ charged: '0.140000', uncertain: true });
+  });
+
+  it('a principal whose uncertain charges today reach one reservation is refused until UTC midnight (gate 22 AI I1)', async () => {
+    const uncertainCall = (usd: number) => ({ lines: [{ usd, stage: 'compose', uncertain: true }] });
+    const p = account('u');
+    const first = admitted(await admit(p));
+    await settle(app, first, uncertainCall(0.1), first.fencingToken, at(T0, 30_000));
+    // Below one reservation ($0.14): admitted.
+    const second = admitted(await admit(p, { now: at(T0, MIN) }));
+    await settle(app, second, uncertainCall(0.05), second.fencingToken, at(T0, MIN + 30_000));
+    // $0.15 of uncertain charges today: refused until midnight, as an exhausted daily quota.
+    const refused = await admit(p, { now: at(T0, 2 * MIN) });
+    expect(refused).toEqual({ ok: false, reason: 'uncertain_limit', retryAt: new Date('2026-11-02T00:00:00Z') });
+    if (refused.ok) throw new Error('admitted');
+    expect(rejectionStatus(refused)).toBe(429);
+    // A refusal counts the attempt but takes no search and reserves nothing.
+    expect((await migrator.execute(sql`SELECT count(*)::int AS n FROM reservations`)).rows).toEqual([{ n: 2 }]);
+    // Known charges do not count, nor do other principals.
+    const q = account('v');
+    const known = admitted(await admit(q, { now: at(T0, 3 * MIN) }));
+    await settle(app, known, { lines: [{ usd: 0.13, stage: 'compose' }] }, known.fencingToken, at(T0, 3 * MIN + 30_000));
+    const again = admitted(await admit(q, { now: at(T0, 4 * MIN) }));
+    await settle(app, again, 0, again.fencingToken, at(T0, 4 * MIN + 1_000));
+    // Lease expiry (a server failure, not the request's outcome) still costs the budget in full but does not count here.
+    const r = account('w');
+    const lost = admitted(await admit(r, { now: at(T0, 5 * MIN) }));
+    expect(await expireLeases(app, lost.leaseExpiresAt)).toMatchObject({ expired: 1 });
+    admitted(await admit(r, { now: at(lost.leaseExpiresAt, MIN) }));
+    // Trials too.
+    const trial = await newTrial(0, at(T0, 10 * MIN));
+    const t = admitted(await admit(trial, { now: at(T0, 10 * MIN), net: 'net-t' }));
+    await settle(app, t, uncertainCall(0.14), t.fencingToken, at(T0, 10 * MIN + 30_000));
+    expect(await admit(trial, { now: at(T0, 11 * MIN), net: 'net-t' })).toMatchObject({ ok: false, reason: 'uncertain_limit' });
+    // The next UTC day starts afresh.
+    admitted(await admit(p, { now: new Date('2026-11-02T00:00:01Z') }));
+  });
+
+  it('giving a search back and counting an attempt wait at most 2 s for a lock, then answer busy (task 22 AI M2)', async () => {
+    const p = account('u');
+    const a = admitted(await admit(p));
+    // Another transaction holds every bucket row (an admission stuck behind its precondition, a maintenance pass).
+    const holder = await wide.$client.connect();
+    const within = <T>(work: Promise<T>) =>
+      Promise.race([work, new Promise<'still waiting'>((resolve) => setTimeout(() => resolve('still waiting'), 5_000))]);
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM usage_buckets FOR UPDATE');
+      let started = performance.now();
+      expect(await within(releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(T0, 1_000) }))).toEqual({ released: false, reason: 'busy' });
+      expect(performance.now() - started).toBeLessThan(4_000);
+      started = performance.now();
+      expect(await within(recordAttempt(app, { policy: POLICY, principal: p, networkId: 'net-a', now: at(T0, 2_000) }))).toEqual({ ok: false, reason: 'busy' });
+      expect(performance.now() - started).toBeLessThan(4_000);
+    } finally {
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
+    // Nothing changed meanwhile: the search is still counted, and can be given back now.
+    expect(await releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(T0, 3_000) })).toEqual({ released: true });
+    expect(await recordAttempt(app, { policy: POLICY, principal: p, networkId: 'net-a', now: at(T0, 4_000) })).toEqual({ ok: true });
+  });
+
   it('stale fencing token cannot settle', async () => {
     const p = account('u');
     const key = newKey();
@@ -505,12 +610,33 @@ describe('settlement', () => {
       ok: false,
       reason: 'not_open',
       status: 'settled',
+      chargedUsd: 0.05,
     });
     expect(await ledger(a.reservationId)).toEqual([{ stage: 'request', usd: '0.050000', uncertain: false }]);
   });
 });
 
 describe('idempotency', () => {
+  it('an admission that made nothing can be forgotten, so the same request is admitted afresh; one with a result never is (task 22 AI M3)', async () => {
+    const p = account('u');
+    const key = newKey();
+    const a = admitted(await admit(p, { key }));
+    await releaseQuota(app, a, a.fencingToken, { policy: POLICY, now: at(T0, 500) });
+    await settle(app, a, 0, a.fencingToken, at(T0, 600));
+    // At the instant it was made (a frozen clock): it still expires, after its creation.
+    await forgetIdempotency(app, a, T0);
+    const again = admitted(await admit(p, { key, now: at(T0, 1_000) }));
+    expect(again.reservationId).not.toBe(a.reservationId);
+    await settle(app, again, 0, again.fencingToken, at(T0, 1_500));
+    // A record that points at a result stays: the same request replays it.
+    const other = newKey();
+    const b = admitted(await admit(p, { key: other, now: at(T0, MIN) }));
+    await setResultRef(app, b, 'brief-step:00000000-0000-4000-8000-000000000000');
+    await settle(app, b, 0.01, b.fencingToken, at(T0, MIN + 500));
+    await forgetIdempotency(app, b, at(T0, MIN + 600));
+    expect(await admit(p, { key: other, now: at(T0, MIN + 1_000) })).toMatchObject({ ok: true, replay: true, reservationId: b.reservationId });
+  });
+
   it('idempotent retry returns same admission, different body same key is 409', async () => {
     const trial = await newTrial();
     const key = newKey();

@@ -35,7 +35,7 @@ import {
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { SpanStatusCode } from '@opentelemetry/api';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace';
-import { createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
+import { DEFAULT_FAKE_MODELS, createFakeProvider, type FakeProvider, type FakeResult, type FakeScript } from '../../server/ai/fake.js';
 import { PRODUCTION_CHECK_PROMPT } from '../../server/ai/anthropic.js';
 import { startTracing } from '../../server/observability/tracing.js';
 import type { CheckInput, CheckOutput, CheckVerdict, ComposeInput, ScopeInput, ScopeOutput } from '../../server/ai/provider.js';
@@ -43,7 +43,8 @@ import { createAiRuntime, type AiRuntime, type AiRuntimeConfig } from '../../ser
 import { SHUTDOWN_GRACE_MS, buildApp } from '../../server/app.js';
 import { clarificationTemplateLabels } from '../../server/briefs/clarify.js';
 import { QueryEmbeddingError, createOpenAIQueryEmbedder, queryEmbeddingInput, type EmbedResult, type Embedder, type QueryEmbedder } from '../../server/ai/embeddings.js';
-import { CACHED_PREFIX_MAX, RESERVATIONS, STAGE_CAPS } from '../../server/ai/pricing.js';
+import { CACHED_PREFIX_MAX, RESERVATIONS, STAGE_CAPS, embeddingCostUsd, stageWorstCaseUsd } from '../../server/ai/pricing.js';
+import { microsToNumeric, toMicros } from '../../server/quota/pacing.js';
 import { countTokens } from '../../server/ai/tokens.js';
 import { createCaseCatalog } from '../../server/briefs/catalog.js';
 import { READING_NOT_SHOWN_LINE } from '../../server/briefs/context.js';
@@ -65,7 +66,7 @@ import { SPAN_ATTR_KEYS } from '../../server/observability/attributes.js';
 import { diagnoseBrief } from '../../worker/brief-diagnose.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { manifestCasesIndex, publishManifest } from '../../server/db/generations.js';
-import { admitPaidRequest, canonicalRequestHash, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
+import { admitPaidRequest, canonicalRequestHash, expireLeases, pruneControls, runControlMaintenance, setAiSwitch } from '../../server/quota/index.js';
 import { SPEND_LOCK_KEY } from '../../server/quota/policy.js';
 import { assertServablePassagesIndex } from '../../server/search/hybrid.js';
 import { FIXTURE_EMBEDDING, deleteIndices, fixtureEmbedder, publishFixtureDataset, type FixtureDataset } from '../support/api-dataset.js';
@@ -146,13 +147,18 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 // Harness
 
-function aiConfig(over: { trialRequests?: number } = {}): AiRuntimeConfig {
+function aiConfig(over: { trialRequests?: number; anonymousShare?: number } = {}): AiRuntimeConfig {
   const base = loadConfig({ env: {}, files: [] });
   return {
     nodeEnv: 'test',
     appEnv: 'dev',
     appUrl: `https://${HOST}`,
-    ai: { ...base.ai, llmProvider: 'fake', limits: { ...base.ai.limits, anonymousTrialRequests: over.trialRequests ?? 3 } },
+    ai: {
+      ...base.ai,
+      llmProvider: 'fake',
+      limits: { ...base.ai.limits, anonymousTrialRequests: over.trialRequests ?? 3 },
+      budgets: { ...base.ai.budgets, ...(over.anonymousShare !== undefined ? { anonymousShare: over.anonymousShare } : {}) },
+    },
     auth: { identityHmacSecret: IDENTITY_SECRET, ipHmacSecret: NETWORK_SECRET },
     turnstile: { secretKey: REAL_SECRET, siteKey: REAL_SITE_KEY },
   };
@@ -179,6 +185,8 @@ interface HarnessOptions {
   /** The display projection's mode (default: the services' default, `whole`). */
   displayMode?: 'claims' | 'whole';
   trialRequests?: number;
+  /** The anonymous share of the daily allowance (default: the configuration's, 0.25). */
+  anonymousShare?: number;
   /** Which evidence index a new brief pins (default: the dataset resolver's servable index). */
   aiEvidence?: () => Promise<{ generationId: number; passagesIndex: string } | null>;
   /** Wrap the PostgreSQL case catalog. */
@@ -195,12 +203,13 @@ const servedContract = async (d: EvidenceDataset) => (await assertServablePassag
 function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
   const sv = new FakeSiteverify(now, { hostname: HOST, action: TURNSTILE_ACTION });
   const llm = createFakeProvider(script);
-  const ai = createAiRuntime(aiConfig(opts.trialRequests === undefined ? {} : { trialRequests: opts.trialRequests }), {
-    db: appDb,
-    turnstile: { fetch: sv.fetch, retryDelayMs: 0, attemptTimeoutMs: 200 },
-    llm,
-    now,
-  });
+  const ai = createAiRuntime(
+    aiConfig({
+      ...(opts.trialRequests === undefined ? {} : { trialRequests: opts.trialRequests }),
+      ...(opts.anonymousShare === undefined ? {} : { anonymousShare: opts.anonymousShare }),
+    }),
+    { db: appDb, turnstile: { fetch: sv.fetch, retryDelayMs: 0, attemptTimeoutMs: 200 }, llm, now },
+  );
   const retriever = new FakeRetriever(appDb, { cases: SEEDS, served: servedContract, ...opts.retriever });
   const svc = createBriefServices(appDb, {
     retriever: opts.evidence ?? retriever,
@@ -544,6 +553,33 @@ async function ledgerOf(reservationId: number): Promise<{ stage: string; usd: st
   return rows(sql`SELECT stage, usd::text AS usd FROM cost_ledger WHERE reservation_id = ${reservationId} ORDER BY id`);
 }
 
+/** Every reservation's ledger lines in order, with their amounts and whether each is a worst-case charge. */
+async function ledgerLines(): Promise<{ stage: string; usd: string; uncertain: boolean }[][]> {
+  const lines = await rows<{ reservation_id: number; stage: string; usd: string; uncertain: boolean }>(
+    sql`SELECT reservation_id::int AS reservation_id, stage, usd::text AS usd, uncertain FROM cost_ledger ORDER BY reservation_id, id`,
+  );
+  const by = new Map<number, { stage: string; usd: string; uncertain: boolean }[]>();
+  for (const { reservation_id, ...l } of lines) by.set(reservation_id, [...(by.get(reservation_id) ?? []), l]);
+  return [...by.values()];
+}
+
+/** A USD amount as the ledger stores it (micro-dollars, rounded up). */
+const asLedger = (usd: number) => microsToNumeric(toMicros(usd));
+
+/**
+ * What a call whose usage is not known is charged (gate 22 AI I1): its own stage's worst
+ * case at its caps, for the fake provider's models, and the query embedding at its cap.
+ */
+const WORST = {
+  scope: asLedger(stageWorstCaseUsd(DEFAULT_FAKE_MODELS.scope, STAGE_CAPS.scope)),
+  compose: asLedger(stageWorstCaseUsd(DEFAULT_FAKE_MODELS.answer, STAGE_CAPS.answer)),
+  check: asLedger(stageWorstCaseUsd(DEFAULT_FAKE_MODELS.check, STAGE_CAPS.check)),
+  embed: asLedger(embeddingCostUsd(FIXTURE_EMBEDDING.model, STAGE_CAPS.embed.input)),
+} as const;
+
+/** The sum of a reservation's ledger lines. */
+const totalOf = (lines: readonly { usd: string }[]) => asLedger(lines.reduce((s, l) => s + Number(l.usd), 0));
+
 async function stepRow(briefId: string, n = 1) {
   return (
     await rows<{
@@ -792,18 +828,91 @@ describe('POST /api/briefs: the pipeline', () => {
     expect((await stepRow(briefId)).meta).toMatchObject({ failure: { stage: 'compose', category: 'refusal' } });
   });
 
-  it('timeout at compose → settled at reservation (uncertain)', async () => {
+  it('timeout at compose → the compose call is charged at its own worst case, not the whole reservation (gate 22 AI I1)', async () => {
     const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 300 } });
     const { briefId, step } = await askAndWait(h);
     expect(step.result).toMatchObject({ kind: 'withheld', reason: 'compose_failed' });
+    const [lines] = await ledgerLines();
+    expect(lines!.map((l) => [l.stage, l.uncertain])).toEqual([['scope', false], ['embed', false], ['compose', true]]);
+    expect(lines![2]!.usd).toBe(WORST.compose);
     const [res] = await reservations();
-    expect(res).toMatchObject({ status: 'settled', uncertain: true });
-    expect(res!.charged).toBe(res!.usd);
-    expect((await ledgerStages())[0]).toEqual(['scope', 'embed', 'uncertain']);
+    // Below the reservation, so not marked as charged in full.
+    expect(res).toMatchObject({ status: 'settled', uncertain: false, charged: totalOf(lines!) });
+    expect(Number(res!.charged)).toBeLessThan(Number(res!.usd));
     const row = await stepRow(briefId);
-    expect(row.cost_usd).toBe(res!.usd);
-    expect(row.meta).toMatchObject({ failure: { stage: 'compose', category: 'timeout' } });
+    expect(row.cost_usd).toBe(res!.charged);
+    expect(row.meta).toMatchObject({ failure: { stage: 'compose', category: 'timeout' }, settlement: { status: 'settled', uncertain: true } });
     expect(await trialUsed()).toEqual([1]);
+  });
+
+  it('timeout at check → the check is charged at its own worst case; what compose billed is kept (gate 22 AI I1)', async () => {
+    const h = harness(answering({ check: { hang: true } }), { timeouts: { check: 300 } });
+    const { step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'evidence_check' });
+    const [lines] = await ledgerLines();
+    expect(lines!.map((l) => [l.stage, l.uncertain])).toEqual([['scope', false], ['embed', false], ['compose', false], ['check', true]]);
+    expect(lines![3]!.usd).toBe(WORST.check);
+    expect((await reservations())[0]).toMatchObject({ uncertain: false, charged: totalOf(lines!) });
+  });
+
+  it('a provider error at the scope stage charges the scope call alone at its worst case (gate 22 AI I1)', async () => {
+    const h = harness(answering({ scope: { fail: 'provider_error' } }));
+    const { step } = await askAndWait(h);
+    expect(step.result).toEqual({ kind: 'failed', countedAsSearch: true });
+    expect(await ledgerLines()).toEqual([[{ stage: 'scope', usd: WORST.scope, uncertain: true }]]);
+    expect((await reservations())[0]).toMatchObject({ uncertain: false, charged: WORST.scope });
+  });
+
+  it('a compose call that ends in an error the adapter did not classify is charged at the compose worst case (gate 22 AI I1)', async () => {
+    const h = harness(
+      answering({
+        compose: () => {
+          throw new TypeError('SENTINEL: not a stage error');
+        },
+      }),
+    );
+    const { step } = await askAndWait(h);
+    expect(step.result).toMatchObject({ kind: 'withheld', reason: 'compose_failed' });
+    const [lines] = await ledgerLines();
+    expect(lines!.map((l) => [l.stage, l.usd, l.uncertain])).toEqual([
+      ['scope', lines![0]!.usd, false],
+      ['embed', lines![1]!.usd, false],
+      ['compose', WORST.compose, true],
+    ]);
+    expect(h.logs.join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('a retrieval failure whose embedding may have been billed charges the embedding at its cap (gate 22 AI I1)', async () => {
+    const failure = new RetrievalFailure('timeout', 'uncertain', 'retrieval failed: timeout (aborted)', 'aborted');
+    const h = harness(answering(), { retriever: { fail: { failure, afterEmbedding: false } } });
+    const { step } = await askAndWait(h);
+    expect(step.result).toEqual({ kind: 'failed', countedAsSearch: true });
+    const [lines] = await ledgerLines();
+    expect(lines!.map((l) => [l.stage, l.usd, l.uncertain])).toEqual([
+      ['scope', lines![0]!.usd, false],
+      ['embed', WORST.embed, true],
+    ]);
+    expect((await reservations())[0]).toMatchObject({ uncertain: false, charged: totalOf(lines!) });
+  });
+
+  it('once its uncertain charges today reach one reservation, a visitor is refused until UTC midnight (gate 22 AI I1)', async () => {
+    // The whole daily allowance open to visitors, so the anonymous share does not refuse first.
+    const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 300 }, anonymousShare: 1 });
+    const first = await askAndWait(h);
+    advance(MIN);
+    await askAndWait(h, 'Rough running after an oil change', { cookie: first.cookie });
+    // Two compose calls charged at their worst case: past one reservation.
+    const uncertain = (await ledgerLines()).flat().filter((l) => l.uncertain);
+    expect(uncertain.map((l) => l.usd)).toEqual([WORST.compose, WORST.compose]);
+    expect(2 * Number(WORST.compose)).toBeGreaterThanOrEqual(RESERVATIONS[DEFAULT_FAKE_MODELS.answer]!);
+    advance(MIN);
+    const refused = await ask(h, 'Loss of oil pressure after an engine overhaul', { cookie: first.cookie });
+    expect([refused.status, (refused.json as { error?: string }).error]).toEqual([429, 'quota_exhausted']);
+    const midnight = Date.parse('2026-11-02T00:00:00Z');
+    expect((refused.json as { retryAfter?: number }).retryAfter).toBe(Math.ceil((midnight - clock.getTime()) / 1000));
+    // The trial keeps its last search for another day; nothing was reserved for the refusal.
+    expect(await trialUsed()).toEqual([2]);
+    expect(await reservations()).toHaveLength(2);
   });
 
   it('an inconclusive check withholds the summary', async () => {
@@ -1412,10 +1521,11 @@ describe.each([RETRIEVAL_V1, RETRIEVAL_V2])('hybrid retrieval behind the port ($
     advance(MIN);
     const second = await askAndWait(unsure, SEED_QUESTION, { cookie: null });
     expect(second.step.result?.kind).toBe('answer');
-    const settled = (await reservations())[1]!;
-    expect(settled).toMatchObject({ status: 'settled', uncertain: true });
-    expect(settled.charged).toBe(settled.usd);
-    expect((await ledgerStages())[1]!.filter((s) => s === 'embed')).toHaveLength(1);
+    // No usable usage report: the embedding is charged at the query embedding's cap (gate 22 AI I1).
+    const lines = (await ledgerLines())[1]!;
+    expect(lines.filter((l) => l.stage === 'embed')).toEqual([{ stage: 'embed', usd: WORST.embed, uncertain: true }]);
+    expect(lines.filter((l) => l.uncertain)).toHaveLength(1);
+    expect((await reservations())[1]).toMatchObject({ status: 'settled', uncertain: false, charged: totalOf(lines) });
   });
 
   it('an embedding aborted mid-request is settled uncertain, with no usage callback', async () => {
@@ -1562,8 +1672,11 @@ describe('cancel and expiry', () => {
       const step = await read(h, started.json.briefId, cookie);
       expect(step.json).toMatchObject({ stage: 'failed', result: { kind: 'cancelled' } });
       expect(await trialUsed()).toEqual([1]);
-      // The aborted compose call may have been billed: settled in full.
-      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+      // The aborted compose call may have been billed: charged at its own worst case (gate 22 AI I1).
+      const [lines] = await ledgerLines();
+      expect(lines!.map((l) => [l.stage, l.uncertain])).toEqual([['scope', false], ['embed', false], ['compose', true]]);
+      expect(lines![2]!.usd).toBe(WORST.compose);
+      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: false, charged: totalOf(lines!) }]);
       // A reader's cancel has no failure category: not in the meta, the log line or the spans.
       const row = await stepRow(started.json.briefId);
       expect(row.status).toBe('cancelled');
@@ -1587,6 +1700,23 @@ describe('cancel and expiry', () => {
     }
   });
 
+  it('a step whose settlement finds its lease already swept records what the sweep charged (task 22 AI M8)', async () => {
+    const h = harness(answering({ compose: { hang: true } }), { timeouts: { compose: 20_000 } });
+    const started = await ask(h, 'Engine power loss shortly after maintenance');
+    const cookie = cookieOf(started.setCookie);
+    await until(() => h.llm.calls.some((c) => c.stage === 'compose'));
+    // The maintenance pass sweeps the lease first (as if the step had outlived it): charged in full.
+    expect(await expireLeases(appDb, new Date(clock.getTime() + 10 * MIN))).toMatchObject({ expired: 1 });
+    expect((await inject(h, 'POST', `/api/briefs/${started.json.briefId}/cancel`, { cookie })).status).toBe(204);
+    await h.svc.settled();
+    const [res] = await reservations();
+    expect(res).toMatchObject({ status: 'expired_charged', uncertain: true });
+    const row = await stepRow(started.json.briefId);
+    // The step's own record says what the ledger holds, and that the sweep came first.
+    expect(row.cost_usd).toBe(res!.charged);
+    expect(row.meta).toMatchObject({ settlement: { status: 'not_open' } });
+  });
+
   it('a cancel during the check is not a failure either', async () => {
     const h = harness(answering({ check: { hang: true } }), { timeouts: { check: 20_000 } });
     const started = await ask(h, 'Engine power loss shortly after maintenance');
@@ -1598,6 +1728,11 @@ describe('cancel and expiry', () => {
     const row = await stepRow(started.json.briefId);
     expect(row.status).toBe('cancelled');
     expect(row.meta).not.toHaveProperty('failure');
+    // The cancelled check is charged at its own worst case; the compose call billed what it reported.
+    const [lines] = await ledgerLines();
+    expect(lines!.map((l) => [l.stage, l.uncertain])).toEqual([['scope', false], ['embed', false], ['compose', false], ['check', true]]);
+    expect(lines![3]!.usd).toBe(WORST.check);
+    expect(row.cost_usd).toBe(totalOf(lines!));
   });
 
   it('an expired brief is gone for its owner too', async () => {
@@ -2176,6 +2311,58 @@ describe('gate G6: evidence semantics through the routes', () => {
     });
   });
 
+  /** A comparison step whose case lookup fails: the step breaks outside its stages (`runBriefStep`'s last resort). */
+  const failingLookup = (gate?: Promise<void>) => ({
+    scope: { output: scopeOut({ intent: 'case_comparison' as const, caseNumbers: ['DFW08TA066'], ambiguity: undefined }) },
+    catalog: (real: CaseCatalog): CaseCatalog => ({
+      ...real,
+      async summaries() {
+        await gate;
+        throw new Error('SENTINEL: the case lookup failed');
+      },
+    }),
+  });
+
+  it('a step that breaks outside its stages is charged in full, but never toward the daily cap of uncertain calls (task 22 re-review N1)', async () => {
+    const broken = failingLookup();
+    const h = harness({ ...answering(), scope: broken.scope }, { catalog: broken.catalog, anonymousShare: 1 });
+    const first = await ask(h, 'Compare DFW08TA066 with similar cases');
+    expect(first.status).toBeLessThan(300);
+    await h.svc.settled();
+    const step = await stepRow(first.json.briefId);
+    expect(step).toMatchObject({ status: 'failed', meta: { failure: { stage: 'pipeline', category: 'unexpected' } } });
+    // No call can be named: the whole reservation, on one line of its own.
+    const [res] = await reservations();
+    expect(res).toMatchObject({ status: 'settled', uncertain: true, charged: res!.usd });
+    expect(await ledgerLines()).toEqual([[{ stage: 'uncertain', usd: res!.usd, uncertain: true }]]);
+    expect(step.cost_usd).toBe(res!.usd);
+    // The server's failure is not the visitor's uncertain call: the next question is admitted.
+    advance(MIN);
+    const again = await ask(h, 'Engine power loss shortly after maintenance', { cookie: cookieOf(first.setCookie) });
+    expect(again.status, JSON.stringify(again.json)).toBe(202);
+    expect(h.logs.join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('a step that breaks outside its stages after the sweep closed its reservation records what the sweep charged (task 22 re-review N3)', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const broken = failingLookup(held);
+    const h = harness({ ...answering(), scope: broken.scope }, { catalog: broken.catalog });
+    // The request waits for the scope outcome, which waits for the held lookup.
+    const asked = ask(h, 'Compare DFW08TA066 with similar cases');
+    // The maintenance sweep closes the lease first (charged in full).
+    await until(() => h.llm.calls.some((c) => c.stage === 'scope'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await expireLeases(appDb, new Date(clock.getTime() + 10 * MIN))).toMatchObject({ expired: 1 });
+    release();
+    const first = await asked;
+    expect(first.status).toBeLessThan(300);
+    await h.svc.settled();
+    const [res] = await reservations();
+    expect(res).toMatchObject({ status: 'expired_charged', charged: res!.usd });
+    expect((await stepRow(first.json.briefId)).cost_usd).toBe(res!.charged);
+  });
+
   it('a result outside its contract fails the step cleanly and still settles', async () => {
     const h = harness(answering(), {
       catalog: (real) => ({
@@ -2750,8 +2937,9 @@ describe('orphaned and interrupted steps', () => {
       expect(h.svc.runs.size).toBe(0);
       const briefId = (JSON.parse(res.body) as { briefId: string }).briefId;
       expect(await stepRow(briefId)).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'shutdown' } } });
-      // The aborted scope call may have been billed: settled in full, the search kept.
-      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+      // The aborted scope call may have been billed: charged at its own worst case, the search kept.
+      expect(await ledgerLines()).toEqual([[{ stage: 'scope', usd: WORST.scope, uncertain: true }]]);
+      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: false, charged: WORST.scope }]);
     } finally {
       idle.destroy();
       busy.destroy();
@@ -2809,8 +2997,9 @@ describe('orphaned and interrupted steps', () => {
     const lock = await holdAdvisory(SPEND_LOCK_KEY);
     let t0: number;
     let asked: ReturnType<typeof ask>;
+    const idempotencyKey = key();
     try {
-      asked = ask(h, 'Engine power loss shortly after maintenance');
+      asked = ask(h, 'Engine power loss shortly after maintenance', { idempotencyKey });
       await untilAsync(async () => (await waitingOnAdvisory()) === 1);
       t0 = Date.now();
       const closing = h.app.close();
@@ -2828,6 +3017,15 @@ describe('orphaned and interrupted steps', () => {
     expect(await count('brief_steps')).toBe(0);
     expect(await trialUsed()).toEqual([0]);
     expect(h.llm.calls).toHaveLength(0);
+    // Nothing ran, so the same request sent again (same key and body) is admitted afresh, not
+    // pinned to a 409 "did not start" for the key's 24 hours (task 22 AI M3).
+    const restarted = harness(answering());
+    advance(MIN);
+    const again = await ask(restarted, 'Engine power loss shortly after maintenance', { idempotencyKey, cookie: cookieOf(r.setCookie) });
+    expect(again.status, JSON.stringify(again.json)).toBe(202);
+    expect(again.json).toMatchObject({ kind: 'started', step: 1 });
+    await restarted.svc.settled();
+    expect(await count('brief_steps')).toBe(1);
   });
 
   it('while closing, a new request gets 503 unavailable, and one still in the gate is refused before admission', async () => {
@@ -2894,8 +3092,11 @@ describe('orphaned and interrupted steps', () => {
       expect(h.svc.runs.size).toBe(0);
       const row = await stepRow(started.json.briefId);
       expect(row).toMatchObject({ status: 'failed', stage: 'failed', meta: { failure: { stage: 'pipeline', category: 'shutdown' } } });
-      // The aborted compose call may have been billed: settled in full, the search kept.
-      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: true }]);
+      // The aborted compose call may have been billed: charged at its own worst case, the search kept.
+      const [lines] = await ledgerLines();
+      expect(lines!.map((l) => [l.stage, l.uncertain])).toEqual([['scope', false], ['embed', false], ['compose', true]]);
+      expect(lines![2]!.usd).toBe(WORST.compose);
+      expect(await reservations()).toMatchObject([{ status: 'settled', uncertain: false, charged: totalOf(lines!) }]);
       expect(await trialUsed()).toEqual([1]);
       // The stopped stage span: `failure: shutdown` with `outcome: shutdown`, and no error status.
       await new Promise((r) => setTimeout(r, 100));

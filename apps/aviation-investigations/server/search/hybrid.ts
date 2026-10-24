@@ -547,11 +547,15 @@ export async function retrieveCandidates(es: Client, embedder: Embedder | QueryE
   const t1 = Date.now();
   const keywordBody = keywordChannelBody(index, keywordText, filter, params.perChannel);
   const vectorBody = vectorChannelBody(index, vector, filter, params.perChannel, numCandidates(params));
-  const opts = transport(params, q.signal);
-  const [kw, vec] = await Promise.all([
-    es.search<Record<string, unknown>>(keywordBody, opts),
-    es.search<Record<string, unknown>>(vectorBody, opts),
-  ]);
+  // Fail fast: the first channel that fails cancels the other (task 22 S-M10), as retrieval.v2 does.
+  const failFast = new AbortController();
+  const opts = transport(params, q.signal ? AbortSignal.any([q.signal, failFast.signal]) : failFast.signal);
+  const channel = (body: estypes.SearchRequest) =>
+    es.search<Record<string, unknown>>(body, opts).catch((err: unknown) => {
+      failFast.abort();
+      throw err;
+    });
+  const [kw, vec] = await Promise.all([channel(keywordBody), channel(vectorBody)]);
   assertCompleteResponse(kw, 'keyword');
   assertCompleteResponse(vec, 'vector');
   const keyword = hitsOf(kw);
@@ -635,7 +639,9 @@ export async function fetchAndPack(
   const res = await es.search<Record<string, unknown>>(body, transport(params, signal));
   assertCompleteResponse(res, 'fetch');
   const total = typeof res.hits.total === 'number' ? res.hits.total : (res.hits.total?.value ?? 0);
-  if (total > res.hits.hits.length) throw new Error(`the evidence fetch matched ${total} passages but returned ${res.hits.hits.length}`);
+  // More matched than fit the fetch (a case with more cause passages than the room): fail
+  // closed as an incomplete search (the step records `incomplete_search`), never pack a part.
+  if (total > res.hits.hits.length) throw new IncompleteSearchError('fetch', `matched ${total} passages but returned ${res.hits.hits.length}`);
 
   const texts = new Map<string, PassageWithText>();
   const causes = new Map<string, PassageWithText[]>();

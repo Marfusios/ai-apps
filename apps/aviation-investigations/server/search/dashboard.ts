@@ -48,6 +48,7 @@ export async function buildDashboard(deps: DashboardDeps, pinned: PinnedDataset,
     index: pinned.manifest.casesIndex,
     size: 0,
     timeout: SEARCH_TIMEOUT,
+    allow_partial_search_results: false,
     track_total_hits: true,
     query: { term: { country: 'USA' } },
     aggs: {
@@ -66,7 +67,7 @@ export async function buildDashboard(deps: DashboardDeps, pinned: PinnedDataset,
       },
     },
   });
-  assertComplete(res);
+  assertComplete(res, 'dashboard');
   const aggs = res.aggregations as unknown as Record<string, unknown> & {
     cohort: { doc_count: number; probable_cause: { doc_count: number }; coordinates: { doc_count: number }; multi_aircraft: { doc_count: number } };
     years: { buckets: { key: number; doc_count: number; completed: { doc_count: number } }[] };

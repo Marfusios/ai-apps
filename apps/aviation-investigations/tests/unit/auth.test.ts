@@ -5,6 +5,9 @@
  * Better Auth's own schema check against our Drizzle tables, and what `GET /api/config`
  * says about sign-in.
  */
+import { createHmac } from 'node:crypto';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, type AppConfig } from '../../shared/config.js';
@@ -27,7 +30,9 @@ import {
   authCookieNames,
   createAuthService,
   decodeJwtClaims,
+  pendingSignOutCookieName,
   sanitizeAuthLogMessage,
+  signedSessionToken,
   verifiedGoogleUser,
   type AuthService,
 } from '../../server/auth/better-auth.js';
@@ -281,16 +286,18 @@ describe('the service', () => {
   /** A database the schema check never touches (Drizzle's check reads the schema objects only). */
   const noDb = new Proxy({}, { get: () => { throw new Error('no database in unit tests'); } }) as unknown as Db;
 
-  function service(): AuthService {
+  const SECRET = 's'.repeat(40);
+
+  function service(db: Db = noDb, log: { warn: (o: object, m: string) => void } = { warn() {} }): AuthService {
     const config = loadConfig({ env: {}, files: [] });
     const cfg = {
       appEnv: 'dev' as const,
       appUrl: 'https://casebook.example',
-      auth: { ...config.auth, identityHmacSecret: 'i'.repeat(32), ipHmacSecret: 'p'.repeat(32), secret: 's'.repeat(40), googleClientId: CLIENT_ID, googleClientSecret: 'secret' },
+      auth: { ...config.auth, identityHmacSecret: 'i'.repeat(32), ipHmacSecret: 'p'.repeat(32), secret: SECRET, googleClientId: CLIENT_ID, googleClientSecret: 'secret' },
     };
     const policy = quotaPolicy({ ai: config.ai, auth: cfg.auth });
     const trials = new TrialIdentities({ db: noDb, policy, secure: true });
-    const made = createAuthService(cfg, { db: noDb, policy, trials, log: { info() {}, warn() {}, error() {} } });
+    const made = createAuthService(cfg, { db, policy, trials, log: { info() {}, warn: log.warn, error() {} } });
     if (!made.service) throw new Error(made.problem);
     return made.service;
   }
@@ -315,6 +322,75 @@ describe('the service', () => {
 
   it('accounts are keyed by Google’s issuer', () => {
     expect(GOOGLE_ISSUER).toBe('https://accounts.google.com');
+  });
+
+  /** A session cookie value as Better Auth sets it (better-call: token, dot, base64 HMAC-SHA256, URL-encoded). */
+  const sessionCookie = (token: string, secret = SECRET) =>
+    encodeURIComponent(`${token}.${createHmac('sha256', secret).update(token).digest('base64')}`);
+  const TOKEN = 'AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+
+  it('a sign-out names its session by Better Auth’s signed cookie alone, without the database', () => {
+    expect(signedSessionToken(sessionCookie(TOKEN), SECRET)).toBe(TOKEN);
+    expect(signedSessionToken(decodeURIComponent(sessionCookie(TOKEN)), SECRET)).toBe(TOKEN);
+    // Another secret, a changed token, no signature, a cut signature or a malformed encoding: none.
+    expect(signedSessionToken(sessionCookie(TOKEN, 'x'.repeat(40)), SECRET)).toBeNull();
+    expect(signedSessionToken(sessionCookie(TOKEN).replace('AbC', 'XbC'), SECRET)).toBeNull();
+    expect(signedSessionToken(TOKEN, SECRET)).toBeNull();
+    expect(signedSessionToken(`${TOKEN}.c2ln`, SECRET)).toBeNull();
+    expect(signedSessionToken('%E0%A4%A', SECRET)).toBeNull();
+    expect(signedSessionToken(`${'a'.repeat(600)}.${'b'.repeat(43)}=`, SECRET)).toBeNull();
+  });
+
+  it('a pending sign-out is sealed, sent only under /api, and finished without the session the browser holds now', async () => {
+    const deleted: string[][] = [];
+    let failing = false;
+    const dialect = new PgDialect();
+    const db = {
+      async execute(query: SQL) {
+        if (failing) throw Object.assign(new Error('Connection terminated unexpectedly'), { name: 'Error' });
+        const { sql: text, params } = dialect.sqlToQuery(query);
+        expect(text).toMatch(/^DELETE FROM auth_sessions WHERE token = ANY\(\$1::text\[\]\)$/);
+        deleted.push(params[0] as string[]);
+        return { rows: [] };
+      },
+    } as unknown as Db;
+    const warnings: object[] = [];
+    const s = service(db, { warn: (o) => void warnings.push(o) });
+    const name = pendingSignOutCookieName(true);
+    expect(name).toBe('__Secure-aviation_signout');
+    const session = `__Host-aviation_session=${sessionCookie(TOKEN)}`;
+    // The database fails: not finished, and logged without the token.
+    failing = true;
+    await expect(s.finishSignOut(session, { session: true })).resolves.toBe(false);
+    expect(JSON.stringify(warnings)).not.toContain(TOKEN);
+    expect(warnings).toEqual([{ signOut: 'unconfirmed', err: { name: 'Error' } }]);
+    const kept = s.pendingSignOutCookie(session);
+    expect(kept).toMatch(/^__Secure-aviation_signout=v1\.[A-Za-z0-9_-]+; Max-Age=604800; Path=\/api; HttpOnly; SameSite=Lax; Secure$/);
+    expect(kept).not.toContain(TOKEN);
+    const pending = kept.split(';', 1)[0]!;
+    expect(s.hasPendingSignOut(pending)).toBe(true);
+    expect(s.hasPendingSignOut(session)).toBe(false);
+    // Signed in again (another session): the account read ends only the pending one.
+    failing = false;
+    const OTHER = 'ZyXwVuTsRqPoNmLkJiHgFeDcBa987654';
+    await expect(s.finishSignOut(`__Host-aviation_session=${sessionCookie(OTHER)}; ${pending}`, { session: false })).resolves.toBe(true);
+    expect(deleted).toEqual([[TOKEN]]);
+    // A sign-out ends both.
+    await expect(s.finishSignOut(`__Host-aviation_session=${sessionCookie(OTHER)}; ${pending}`, { session: true })).resolves.toBe(true);
+    expect(deleted[1]!.sort()).toEqual([OTHER, TOKEN].sort());
+    // Only this server's seal opens: a forged or altered pending cookie names nothing.
+    deleted.length = 0;
+    const altered = pending.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'));
+    await expect(s.finishSignOut(altered, { session: false })).resolves.toBe(true);
+    await expect(s.finishSignOut(`${name}=${encodeURIComponent(JSON.stringify([sessionCookie(TOKEN)]))}`, { session: false })).resolves.toBe(true);
+    expect(deleted).toEqual([]);
+    // Pending sign-outs are never evicted (gate t22 finding 2): every one is kept and ended.
+    const tokens = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'].map((t) => t.padEnd(32, 'x'));
+    let jar = '';
+    for (const t of tokens) jar = s.pendingSignOutCookie(`__Host-aviation_session=${sessionCookie(t)}${jar ? `; ${jar}` : ''}`).split(';', 1)[0]!;
+    await expect(s.finishSignOut(jar, { session: false })).resolves.toBe(true);
+    expect(deleted).toEqual([tokens]);
+    expect(s.donePendingSignOutCookie()).toBe('__Secure-aviation_signout=; Max-Age=0; Path=/api; HttpOnly; SameSite=Lax; Secure');
   });
 });
 

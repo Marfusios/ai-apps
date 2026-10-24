@@ -4,9 +4,9 @@
  *
  * | Endpoint | Request | Response |
  * | --- | --- | --- |
- * | `POST /api/auth/sign-in/social` | `SignInRequest` | `SignInResponse`: the Google authorization URL to open |
+ * | `POST /api/auth/sign-in/social` | `SignInRequest` | `SignInResponse`: the Google authorization URL to open; 503 `sign_out_pending` while a sign-out this browser has pending cannot be finished |
  * | `GET /api/auth/callback/google` | Google's redirect (`code`, `state`) | 302 to the page sign-in started from |
- * | `POST /api/auth/sign-out` | `{}` | `{ success: true }`, the session cookie expired |
+ * | `POST /api/auth/sign-out` | `{}` | `SignOutResponse` `{ success: true }`, the session cookie expired and the session ended; 503 `sign_out_pending` when the database could not end it (the cookie expired all the same, the sign-out kept for a retry) |
  * | `GET /api/account` | — | `AccountResponse` |
  * | `POST /api/account/delete/start` | `{}` | `DeleteStartResponse`: confirmed for 5 minutes, or sign in with Google again first |
  * | `POST /api/account/delete` | `DeleteAccountRequest` | `DeleteAccountResponse`, the session cookie expired; 403 `reauth_required` without a confirmation |
@@ -88,6 +88,10 @@ export type SignInRequest = z.infer<typeof SignInRequestSchema>;
 
 /** Better Auth's answer: the provider URL to open. Extra fields are ignored. */
 export const SignInResponseSchema = z.looseObject({ url: z.string().max(4096), redirect: z.boolean() });
+
+/** A sign-out's success: the session is gone (any other answer leaves that unconfirmed). Extra fields are ignored. */
+export const SignOutResponseSchema = z.looseObject({ success: z.literal(true) });
+export type SignOutResponse = z.infer<typeof SignOutResponseSchema>;
 
 export const AccountUserSchema = z.strictObject({
   name: z.string().max(200),

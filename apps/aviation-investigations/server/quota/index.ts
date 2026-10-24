@@ -3,6 +3,7 @@ export {
   accountDailyLimit,
   admitPaidRequest,
   createTrialIdentity,
+  forgetIdempotency,
   recordAttempt,
   rejectionStatus,
   releaseQuota,

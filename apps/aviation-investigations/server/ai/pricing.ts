@@ -38,7 +38,10 @@ export type PriceRow = LlmPriceRow | EmbeddingPriceRow;
 
 /**
  * Anthropic first-party prices, checked on 2026-10-22 at standard global routing.
- * Requests never set `inference_geo` (US-only inference costs 1.1x) or fast mode.
+ * Requests never set `inference_geo` (US-only inference costs 1.1x) or fast mode. The
+ * Sonnet 5.5 cache-read price ($0.10/MTok, 0.05 times its input, the same ratio as Opus)
+ * was checked again on the official pricing page on 2026-10-23 (task 22): a bundled API
+ * reference listing $0.20 is stale.
  */
 export const PRICE_TABLE: Readonly<Record<string, PriceRow>> = {
   'claude-haiku-5-5': {
@@ -89,13 +92,13 @@ export type CapStage = 'scope' | 'answer' | 'check' | 'embed';
  * - scope input: fixed part (system prompt + structured-output schema) 3,204; worst
  *   refinement (prior question and refinement, every filter, readings, case numbers)
  *   5,074 → 6,500.
- * - answer input: fixed part 5,411 (`compose.v7`); a synthetic full bundle (12 passages at
- *   9,403 `cl100k` evidence tokens, 400-character headers, the longest question and
- *   refinement) 22,951; the 10,000-token evidence budget at 1.75 Claude tokens per
- *   `cl100k` token bounds it near 25,600 → 28,000: the measured stress cases fit without
- *   re-packing.
- * - check input: fixed part 4,649 (`check.v8`, the preflight on 2026-10-23); complete
- *   evidence of a full bundle with `MAX_CHECK_CLAIMS` 60 claims at their longest 26,934 →
+ * - answer input: fixed part 5,673 (`compose.v8`, the preflight on 2026-10-23); a synthetic
+ *   full bundle (12 passages at about 9,400 `cl100k` evidence tokens, 400-character headers,
+ *   the longest question and refinement) 23,213; the 10,000-token evidence budget at 1.75
+ *   Claude tokens per `cl100k` token bounds it near 25,600 → 28,000: the measured stress
+ *   cases fit without re-packing.
+ * - check input: fixed part 4,684 (`check.v9`, the preflight on 2026-10-23); complete
+ *   evidence of a full bundle with `MAX_CHECK_CLAIMS` 60 claims at their longest 26,969 →
  *   40,000 (gate G6 ruling 5: the evidence is never cut to fit).
  * - outputs, counted as text at their schema bounds: scope 445 → 600; a composition at
  *   every bound (six cases, each with four chronology facts naming their anchors) 8,000
@@ -118,7 +121,8 @@ export const STAGE_CAPS: Readonly<Record<CapStage, { readonly input: number; rea
 
 /**
  * Largest frozen prefix any stage caches (5-minute TTL): its system prompt with the
- * structured-output schema, measured at 5,287 tokens (`compose.v7`, the preflight).
+ * structured-output schema, measured at 5,673 tokens (`compose.v8`, the preflight on
+ * 2026-10-23).
  */
 export const CACHED_PREFIX_MAX = 6_500;
 
@@ -186,14 +190,25 @@ export function stageWorstCaseUsd(
   return (caps.input * rates.input + caps.output * rates.output + prefix * premium) / PER_MILLION;
 }
 
+/**
+ * Worst-case cost of the query embedding: its input cap (`STAGE_CAPS.embed`) at `model`'s
+ * price or, when the model is not known, at the highest embedding price in the table.
+ */
+export function embeddingWorstCaseUsd(model?: string): number {
+  const price =
+    model !== undefined
+      ? embeddingPrice(model).input
+      : Math.max(...Object.values(PRICE_TABLE).flatMap((r) => (r.kind === 'embedding' ? [r.input] : [])));
+  return (STAGE_CAPS.embed.input * price) / PER_MILLION;
+}
+
 /** Sum over all stages of one request at its hard caps (DESIGN §9). */
 export function worstCaseRequestUsd(models: RequestModels): number {
-  const embed = embeddingPrice(models.embed ?? DEFAULT_EMBEDDING_MODEL);
   return (
     stageWorstCaseUsd(models.scope, STAGE_CAPS.scope) +
     stageWorstCaseUsd(models.answer, STAGE_CAPS.answer) +
     stageWorstCaseUsd(models.check, STAGE_CAPS.check) +
-    (STAGE_CAPS.embed.input * embed.input) / PER_MILLION
+    embeddingWorstCaseUsd(models.embed ?? DEFAULT_EMBEDDING_MODEL)
   );
 }
 

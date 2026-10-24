@@ -116,6 +116,40 @@ export function compileTrustedProxies(cidrs: readonly string[]): TrustedProxies 
   };
 }
 
+/**
+ * Why `TRUSTED_PROXY_CIDRS` is not acceptable on live, or null (platform review P4). Each
+ * network must be private and narrow: IPv4 in an RFC 1918 range at /16 or narrower (the
+ * tunnel overlay sets it from `EDGE_SUBNET`, which the Compose wrapper holds to /16 to /29),
+ * IPv6 in fc00::/7 (unique local) at /64 or narrower. A wider or public network would make
+ * every peer in it a trusted proxy whose `CF-Connecting-IP` is believed, so any container
+ * on the host's Docker networks could mint identities (SECURITY_REVIEW F3). The reason
+ * names the setting only, never its value.
+ */
+export function trustedProxyProblem(cidrs: readonly string[]): string | null {
+  if (cidrs.length === 0) return 'TRUSTED_PROXY_CIDRS is empty: live runs in tunnel mode only';
+  for (const cidr of cidrs) {
+    const m = /^([^/]+)\/(\d{1,3})$/.exec(cidr.trim());
+    const family = m ? isIP(m[1] as string) : 0;
+    const bits = m ? Number(m[2]) : -1;
+    if (family === 4) {
+      const [a, b] = (m![1] as string).split('.').map(Number) as [number, number, number, number];
+      const rfc1918 = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+      if (!rfc1918 || bits < 16 || bits > 32) {
+        return 'TRUSTED_PROXY_CIDRS must list only private (RFC 1918) IPv4 networks of /16 or narrower, or unique-local IPv6 networks of /64 or narrower, on live';
+      }
+    } else if (family === 6) {
+      const g = ipv6Groups(m![1] as string);
+      const uniqueLocal = g !== null && (g[0]! & 0xfe00) === 0xfc00;
+      if (!uniqueLocal || bits < 64 || bits > 128) {
+        return 'TRUSTED_PROXY_CIDRS must list only private (RFC 1918) IPv4 networks of /16 or narrower, or unique-local IPv6 networks of /64 or narrower, on live';
+      }
+    } else {
+      return 'TRUSTED_PROXY_CIDRS holds an entry that is not a CIDR';
+    }
+  }
+  return null;
+}
+
 /** Loopback peers (the container's own health check). */
 export function isLoopback(raw: string | undefined): boolean {
   const peer = raw ? peerAddress(raw) : null;

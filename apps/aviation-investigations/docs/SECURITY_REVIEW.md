@@ -15,10 +15,10 @@ are still required. This review does not establish that the future app is secure
 
 | ID | Reviewer severity | Failure path | Design disposition |
 | --- | --- | --- | --- |
-| F1 | High | Timeouts or disconnects lose provider usage, allowing unjustified refunds or stuck reservations | Unknown usage settles at the reserved maximum; no automatic refund. Operator reconciles dedicated-project billing; no organization billing credential in the public app |
+| F1 | High | Timeouts or disconnects lose provider usage, allowing unjustified refunds or stuck reservations | Unknown usage settles at a maximum: since Task 22 each such call at its own stage's worst case (DESIGN §9 "Uncertain calls"), the whole reservation when no call can be named (lease expiry); no automatic refund. Operator reconciles dedicated-project billing; no organization billing credential in the public app |
 | F2 | Medium–high | Expired leases allow duplicate requests or late settlement by stale workers | Hard deadline shorter than lease TTL; fencing/ownership checks; idempotent retries never silently rerun; money remains reserved independently of slots |
 | F3 | High | Forged forwarding headers create unlimited network identities through another origin path | Explicit `trustProxy: false`, dedicated ingress network, actual connector peer checks, no published production port, denial when trusted client identity is missing, container-origin spoofing tests |
-| F4 | Medium | A few identities consume the public budget or hold all AI slots | Anonymous share capped at 25%, one anonymous slot, signed-in network limits, smaller new-account allowance, monthly pacing and emergency login-required mode; exhaustion remains a residual risk |
+| F4 | Medium | A few identities consume the public budget or hold all AI slots | Anonymous share capped at 25%, one anonymous slot, signed-in network limits, smaller new-account allowance, monthly pacing and emergency login-required mode; uncertain charges bounded per principal and day (one reservation, DESIGN §9; before Task 22 each cancel was charged the whole $0.36 and nine cancels from one account paused AI for everyone); exhaustion by many identities remains a residual risk |
 | F5 | Medium | Model/user terms interpreted as Lucene query syntax increase query power/cost | Fixed `match`/`multi_match` templates, field/filter allowlists, immutable completion/country clauses, bounded candidates/pages/timeouts |
 | F6 | Medium | Event-wide text is misattributed to a particular aircraft | Explicit event/aircraft passage scope; event text alone cannot establish aircraft-specific claims; ambiguity is preserved |
 | F7 | Medium | Free-text case numbers, biased verification, or arbitrary links bypass structured citation validation | Check free-text case references, render links from validated IDs/templates, verify bounded claim/span pairs without raw question/history |
@@ -94,7 +94,7 @@ The 2026-10-21 interface and provider decisions are also unreviewed:
 
 - Language models move to Anthropic behind a deployment-time provider interface,
   with OpenAI kept for embeddings. This means two provider keys, per-request
-  reservations of $0.31 (Opus answer model) instead of $0.03, and a $100 monthly
+  reservations of $0.36 (Opus answer model; $0.31 before gate 16c condition 6) instead of $0.03, and a $100 monthly
   ceiling instead of $25. (The reservation was $0.14 when this was written; it rose
   to $0.31 after the stage caps were measured with Anthropic's own token counter.
   The old caps were below the real request sizes, so every brief failed at scope; the

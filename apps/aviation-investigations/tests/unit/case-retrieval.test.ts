@@ -9,7 +9,7 @@ import type { estypes } from '@elastic/elasticsearch';
 import { describe, expect, it } from 'vitest';
 import { QueryEmbeddingError, queryEmbeddingInput, type Embedder, type EmbedResult } from '../../server/ai/embeddings.js';
 import { RetrievalFailure, type EmbeddingUsage, type EvidenceQuery } from '../../server/briefs/evidence.js';
-import { createHybridRetriever } from '../../server/briefs/retriever.js';
+import { createHybridRetriever, retrievalFailureOf } from '../../server/briefs/retriever.js';
 import { exactRrf, uniqueCases } from '../../server/search/case-fusion.js';
 import { MAX_EXACT_CANDIDATES, mapCasesToPassages } from '../../server/search/case-mapping.js';
 import { retrieveCandidatesWith, retrieveCaseCandidates, type CaseRetrievalQuery } from '../../server/search/case-retrieval.js';
@@ -208,6 +208,25 @@ describe('case-level stage 1: requests, fusion and mapping', () => {
     for (const c of smaller.cases) expect(c.passages.some((p) => p.reserved && p.fusedRank !== null)).toBe(true);
   });
 
+  it('an evidence fetch that matched more passages than it returned is an incomplete search (task 22 S-M2)', async () => {
+    const f = fake({
+      tamper: {
+        fetch: (res) => {
+          res.hits.total = { value: res.hits.hits.length + 5, relation: 'eq' };
+        },
+      },
+    });
+    const r = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
+    const err = await fetchAndPack(f.es, r.index, r.filter, r.cases, r.params).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(IncompleteSearchError);
+    expect(err).toMatchObject({ request: 'fetch' });
+    // The step records it as such, not as an unexplained failure.
+    expect(retrievalFailureOf(err, undefined, 'none')).toMatchObject({ kind: 'failed', reason: 'incomplete_search' });
+  });
+
   it('several case-only cases, long ones among them, compete for the six slots in fused order, each mapped by itself', async () => {
     const corpus = ['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T'].flatMap((c, i) => casePassages(`${c}00FA001`, i % 2 === 0 ? 60 + i : 2));
     const f = fake({ corpus: [...CORPUS, ...corpus], keyword: [`${n('A')}:analysis:1`], vector: [`${n('A')}:analysis:2`], cases: ['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T'].map((c) => `${c}00FA001`) });
@@ -278,16 +297,29 @@ describe('case-level stage 1: requests, fusion and mapping', () => {
     }
   });
 
+  it('a tie across the cut keeps the smallest passage ids and drops the largest, whatever the order of the answer (task 22 S-M8)', async () => {
+    // Four of D's passages tie for the best score and only three slots exist: the cut falls inside the tie.
+    const tied = (p: FakePassage) => (p.ntsb_no === n('D') ? (p.section_kind === 'probable_cause' ? 0 : 1) : 0);
+    expect(RETRIEVAL_V2.mapping?.passagesPerCase).toBe(3);
+    for (const order of ['as-is', 'reversed'] as const) {
+      const f = fake({ similarity: tied, tamper: order === 'reversed' ? { mapping: (res) => void res.hits.hits.reverse() } : {} });
+      const r = await retrieveCaseCandidates(f.es, createFakeEmbedder(DIMS, MODEL), RETRIEVAL_V2, query());
+      const kept = r.cases.find((c) => c.ntsbNo === n('D'))!.passages.map((p) => p.id);
+      expect(kept, order).toEqual([`${n('D')}:analysis:1`, `${n('D')}:analysis:2`, `${n('D')}:analysis:3`]);
+      expect(kept, order).not.toContain(`${n('D')}:factual:1`);
+    }
+  });
+
   it('bounds the mapping: the leading cases only, no case twice, and a documented mapping-size limit', async () => {
     const f = fake();
     const vector = Array.from(fakeVector('q', DIMS));
     const filter = compileFilters({}, { eventAircraftQualification: true }).bool.filter;
-    const opts = { passagesPerCase: 3, maxPassagesPerCase: MAX_MAPPED_PASSAGES, maxCases: 12 };
+    const opts = { passagesPerCase: 3, maxMappablePassages: MAX_MAPPED_PASSAGES, maxCases: 12 };
     await expect(mapCasesToPassages(f.es, PASSAGES, filter, vector, [n('D'), n('D')], { timeoutMs: 1000 }, opts)).rejects.toThrow(/twice/);
     await expect(
       mapCasesToPassages(f.es, PASSAGES, filter, vector, Array.from({ length: 13 }, (_, i) => `X${i}00FA001`), { timeoutMs: 1000 }, opts),
     ).rejects.toThrow(/at most 12/);
-    await expect(mapCasesToPassages(f.es, PASSAGES, filter, vector, [n('D')], { timeoutMs: 1000 }, { ...opts, maxPassagesPerCase: MAX_EXACT_CANDIDATES + 1 })).rejects.toThrow(/mapping-size limit/);
+    await expect(mapCasesToPassages(f.es, PASSAGES, filter, vector, [n('D')], { timeoutMs: 1000 }, { ...opts, maxMappablePassages: MAX_EXACT_CANDIDATES + 1 })).rejects.toThrow(/mapping-size limit/);
     // Over the limit: reported, no kNN sent, never packed; not an integrity failure.
     const huge = fake({ tamper: { count: (res) => void ((res.hits.total as { value: number }).value = MAX_MAPPED_PASSAGES + 1) } });
     const m = await mapCasesToPassages(huge.es, PASSAGES, filter, vector, [n('D')], { timeoutMs: 1000 }, opts);

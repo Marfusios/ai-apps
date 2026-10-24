@@ -63,6 +63,8 @@ const es = new Client({ node: 'http://localhost:9' }); // never used: these rout
 /** These tests read no index: AI evidence is taken as available (no step reaches retrieval). */
 const EVIDENCE = async () => ({ generationId: 1, passagesIndex: 'aviation-test-auth' });
 const harnesses: Harness[] = [];
+/** Pools of `faultyAuthDb`, closed after the file. */
+const faultyPools: Db[] = [];
 let google: MockGoogle;
 
 beforeAll(() => {
@@ -72,7 +74,7 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  await Promise.all([closeDb(appDb), closeDb(ingest), closeDb(migrator), es.close()]);
+  await Promise.all([closeDb(appDb), closeDb(ingest), closeDb(migrator), ...faultyPools.splice(0).map(closeDb), es.close()]);
 });
 
 beforeEach(async () => {
@@ -127,6 +129,8 @@ interface Harness {
 
 interface HarnessOptions {
   config?: ConfigOver;
+  /** The sign-in service's database (default: the shared app pool); `faultyAuthDb` makes its session deletions fail. */
+  authDb?: Db;
   rateLimits?: { signIn?: number; callback?: number; signOut?: number };
   /** The served passages contract the fake retriever asks for (it can hold retrieval). */
   served?: () => Promise<{ chunkerVersion: string }>;
@@ -139,7 +143,7 @@ function harness(script: FakeScript = {}, opts: HarnessOptions = {}): Harness {
   const ai = createAiRuntime(cfg, { db: appDb, turnstile: { fetch: sv.fetch, retryDelayMs: 0, attemptTimeoutMs: 200 }, llm, now });
   let log: AuthLog | null = null;
   const signIn = createAuthService(cfg, {
-    db: appDb,
+    db: opts.authDb ?? appDb,
     policy: ai.policy,
     trials: ai.trials,
     now,
@@ -201,7 +205,8 @@ async function send(
   url: string,
   opts: { jar?: CookieJar; body?: unknown; from?: string; headers?: Record<string, string> } = {},
 ): Promise<Sent> {
-  const cookie = opts.jar?.header();
+  // Google's redirect back is a cross-site top-level navigation: the browser leaves out SameSite=Strict cookies.
+  const cookie = opts.jar?.header({ crossSite: opts.headers?.['sec-fetch-site'] === 'cross-site' });
   const r = await h.app.inject({
     method,
     url,
@@ -371,6 +376,30 @@ const TRIAL = '__Host-aviation_trial';
 const SESSION = '__Host-aviation_session';
 /** The OAuth state: encrypted in this cookie (Better Auth's cookie strategy), never stored in the database. */
 const STATE = '__Host-aviation_oauth_state';
+/** A sign-out the database could not confirm, kept for a retry (sealed; sent only under /api). */
+const PENDING_SIGN_OUT = '__Secure-aviation_signout';
+
+/**
+ * A pool of the app role of its own for the sign-in service, whose session deletions fail
+ * while `state.failing` (the gate's sign-out probe: the database fails while the session
+ * is deleted, Better Auth logs it and answers success anyway).
+ */
+function faultyAuthDb(): { db: Db; state: { failing: boolean; refused: number } } {
+  const db = testDb('app');
+  faultyPools.push(db);
+  const state = { failing: false, refused: 0 };
+  const pool = db.$client as unknown as { query: (...args: unknown[]) => unknown };
+  const query = pool.query.bind(pool);
+  pool.query = (config: unknown, ...rest: unknown[]) => {
+    const text = typeof config === 'string' ? config : (config as { text?: unknown } | null)?.text;
+    if (state.failing && typeof text === 'string' && /delete\s+from\s+"?auth_sessions"?/i.test(text)) {
+      state.refused += 1;
+      return Promise.reject(new Error('Connection terminated unexpectedly'));
+    }
+    return query(config, ...rest);
+  };
+  return { db, state };
+}
 
 /** A browser holding only this browser's trial cookie (signed out, or another profile with the cookie copied). */
 function trialOnly(jar: CookieJar): CookieJar {
@@ -886,6 +915,195 @@ describe('sign-in protections', () => {
     expect(errorOf(await send(h, 'POST', '/api/account/delete', { jar, body: { confirm: true } }))).toEqual([404, 'not_found']);
     // A short BETTER_AUTH_SECRET keeps it off too.
     expect(harness({}, { config: { authSecret: 'short' } }).auth).toBeNull();
+  });
+});
+
+describe('signing out is confirmed (gate 22 finding 1)', () => {
+  /** Signed in, with a copy of the session cookie taken (a copied cookie, another device). */
+  async function signedInWithCopy(h: Harness) {
+    const jar = new CookieJar();
+    await signIn(h, jar, newUser());
+    return { jar, copy: jar.clone() };
+  }
+
+  it('a sign-out the database cannot confirm answers 503, still signs this browser out and keeps the sign-out for a retry', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar, copy } = await signedInWithCopy(h);
+    state.failing = true;
+    const out = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
+    // Better Auth swallowed the failed deletion; the route did not report success.
+    expect(state.refused).toBeGreaterThan(0);
+    expect(errorOf(out)).toEqual([503, 'sign_out_pending']);
+    expect(out.headers['retry-after']).toBe('5');
+    expect((out.json as { retryAfter?: number }).retryAfter).toBe(5);
+    expect(out.headers['cache-control']).toBe('private, no-store');
+    // This browser is signed out all the same...
+    expect(cookieNamed(out.setCookies, SESSION)).toMatch(/Max-Age=0/i);
+    expect(jar.get(SESSION)).toBeUndefined();
+    // ...and keeps the sign-out for a retry: sealed, only for /api, never readable by the page, and
+    // Lax so that Google's callback (a navigation from another site) carries it.
+    const pending = cookieNamed(out.setCookies, PENDING_SIGN_OUT);
+    expect(pending).toBeDefined();
+    for (const attr of [/;\s*Path=\/api(;|$)/i, /;\s*HttpOnly(;|$)/i, /;\s*Secure(;|$)/i, /;\s*SameSite=Lax(;|$)/i, /;\s*Max-Age=604800(;|$)/i]) {
+      expect(pending).toMatch(attr);
+    }
+    expect(pending).not.toMatch(/;\s*Domain=/i);
+    const token = decodeURIComponent(copy.get(SESSION)!).split('.')[0]!;
+    expect(token.length).toBeGreaterThan(16);
+    expect(pending).not.toContain(token);
+    // The session is not gone, so a copied cookie still works (which is why it was not reported done).
+    expect(await count('auth_sessions')).toBe(1);
+    expect(await account(h, copy)).toMatchObject({ signedIn: true });
+    // A pending sign-out is never a session.
+    const forged = new CookieJar();
+    forged.set(SESSION, jar.get(PENDING_SIGN_OUT)!);
+    expect(await account(h, forged)).toEqual({ signedIn: false });
+    // While the database still fails, this browser's account read leaves it pending.
+    const stillFailing = await send(h, 'GET', '/api/account', { jar });
+    expect(stillFailing.status).toBe(200);
+    expect(stillFailing.json).toEqual({ signedIn: false });
+    expect(cookieNamed(stillFailing.setCookies, PENDING_SIGN_OUT)).toBeUndefined();
+    expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
+    // Once it works again, the next account read of this browser finishes the sign-out.
+    state.failing = false;
+    const back = await send(h, 'GET', '/api/account', { jar });
+    expect(back.json).toEqual({ signedIn: false });
+    expect(cookieNamed(back.setCookies, PENDING_SIGN_OUT)).toMatch(/Max-Age=0/i);
+    expect(jar.get(PENDING_SIGN_OUT)).toBeUndefined();
+    expect(await count('auth_sessions')).toBe(0);
+    expect(await account(h, copy)).toEqual({ signedIn: false });
+    // Logged without the session or its token.
+    const lines = h.logs.filter((l) => l.includes('sign-out'));
+    expect(lines.some((l) => l.includes('"signOut":"unconfirmed"'))).toBe(true);
+    for (const l of h.logs) expect(l).not.toContain(token);
+  });
+
+  it('signing out again finishes a pending sign-out', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar, copy } = await signedInWithCopy(h);
+    state.failing = true;
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
+    // Still failing: 503 again, and the sign-out stays pending.
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
+    expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
+    state.failing = false;
+    const out = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
+    expect(out.status).toBe(200);
+    expect(out.json).toMatchObject({ success: true });
+    expect(cookieNamed(out.setCookies, PENDING_SIGN_OUT)).toMatch(/Max-Age=0/i);
+    expect(await count('auth_sessions')).toBe(0);
+    expect(await account(h, copy)).toEqual({ signedIn: false });
+  });
+
+  it('signing in again first finishes the pending sign-out; an account read never ends the session the browser holds', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar, copy } = await signedInWithCopy(h);
+    state.failing = true;
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
+    state.failing = false;
+    // Signing in again before any account read: the pending sign-out is finished first.
+    const start = await send(h, 'POST', '/api/auth/sign-in/social', { jar, body: signInBody('/') });
+    expect(start.status).toBe(200);
+    expect(cookieNamed(start.setCookies, PENDING_SIGN_OUT)).toMatch(/Max-Age=0/i);
+    expect(await count('auth_sessions')).toBe(0);
+    expect(await account(h, copy)).toEqual({ signedIn: false });
+    await callback(h, jar, google.authorize((start.json as { url: string }).url, newUser()));
+    expect(await count('auth_sessions')).toBe(1);
+    const read = await send(h, 'GET', '/api/account', { jar });
+    expect(read.json).toMatchObject({ signedIn: true });
+    expect(read.setCookies.some((c) => c.startsWith(`${PENDING_SIGN_OUT}=`))).toBe(false);
+    expect(await count('auth_sessions')).toBe(1);
+  });
+
+  it('no new session while a pending sign-out cannot be finished: four failed sign-outs between sign-ins leave no session usable (gate t22 finding 2)', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const jar = new CookieJar();
+    const copies: CookieJar[] = [];
+    for (let round = 0; round < 4; round++) {
+      // Signing in while the database works (it finishes the previous round's pending sign-out first).
+      state.failing = false;
+      await signIn(h, jar, newUser());
+      copies.push(jar.clone());
+      // A sign-out the database cannot confirm.
+      state.failing = true;
+      expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} })), `round ${round}`).toEqual([503, 'sign_out_pending']);
+      // While it cannot be finished, sign-in is refused at its start: no new session, nothing evicted.
+      const refused = await send(h, 'POST', '/api/auth/sign-in/social', { jar, body: signInBody('/') });
+      expect(errorOf(refused), `round ${round}`).toEqual([503, 'sign_out_pending']);
+      expect(refused.headers['retry-after']).toBe('5');
+      expect(jar.get(PENDING_SIGN_OUT), `round ${round}`).toBeDefined();
+      expect(await count('auth_sessions'), `round ${round}`).toBe(1);
+    }
+    state.failing = false;
+    // Every earlier round's session was revoked before the next one was issued; the last is still pending.
+    for (const copy of copies.slice(0, -1)) expect(await account(h, copy)).toEqual({ signedIn: false });
+    expect(await account(h, copies.at(-1)!)).toMatchObject({ signedIn: true });
+    // Success is reported only once every outstanding session is gone.
+    const out = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
+    expect(out.status).toBe(200);
+    for (const copy of copies) expect(await account(h, copy)).toEqual({ signedIn: false });
+    expect(await count('auth_sessions')).toBe(0);
+  });
+
+  it('Google’s callback issues no session while a pending sign-out cannot be finished', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar } = await signedInWithCopy(h);
+    // A sign-in started in this browser; then, before Google sends it back, a sign-out that cannot be confirmed.
+    const url = await startSignIn(h, jar);
+    state.failing = true;
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
+    const back = await callback(h, jar, google.authorize(url, newUser()));
+    expect(back.status).toBe(302);
+    expect(back.headers.location).toBe('/account?signin=failed&error=sign_out_pending');
+    expect(back.setCookies.some((c) => c.startsWith(`${SESSION}=`) && !/Max-Age=0/i.test(c))).toBe(false);
+    expect(await count('auth_sessions')).toBe(1);
+    expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
+  });
+
+  it('a sign-in answered after a sign-out that cannot be finished issues no session at Google’s callback, a cross-site navigation (gate t22 r2 finding 2)', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar, copy } = await signedInWithCopy(h);
+    // The page starts a sign-in; its answer (with the OAuth state cookie) is still on the way.
+    const start = await send(h, 'POST', '/api/auth/sign-in/social', { jar: jar.clone(), body: signInBody('/') });
+    expect(start.status).toBe(200);
+    // Meanwhile a sign-out the database cannot confirm.
+    state.failing = true;
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
+    expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
+    // The sign-in's answer arrives now and sets its OAuth state again.
+    jar.store(start.setCookies);
+    // Google sends the browser back: a top-level navigation from another site carries the pending sign-out.
+    expect(jar.header({ crossSite: true })).toContain(`${PENDING_SIGN_OUT}=`);
+    const back = await callback(h, jar, google.authorize((start.json as { url: string }).url, newUser()));
+    expect(back.status).toBe(302);
+    expect(back.headers.location).toBe('/account?signin=failed&error=sign_out_pending');
+    expect(back.setCookies.some((c) => c.startsWith(`${SESSION}=`) && !/Max-Age=0/i.test(c))).toBe(false);
+    expect(await count('auth_sessions')).toBe(1);
+    expect(await account(h, jar)).toEqual({ signedIn: false });
+    // Once the database works again, the next account read ends the old session.
+    state.failing = false;
+    expect(await account(h, jar)).toEqual({ signedIn: false });
+    expect(await count('auth_sessions')).toBe(0);
+    expect(await account(h, copy)).toEqual({ signedIn: false });
+  });
+
+  it('a sign-out that works is answered as before, and one without a session has nothing to wait for', async () => {
+    const { db } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar, copy } = await signedInWithCopy(h);
+    const out = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
+    expect(out.status).toBe(200);
+    expect(cookieNamed(out.setCookies, PENDING_SIGN_OUT)).toBeUndefined();
+    expect(await account(h, copy)).toEqual({ signedIn: false });
+    const again = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
+    expect(again.status).toBe(200);
+    expect(again.setCookies.some((c) => c.startsWith(`${PENDING_SIGN_OUT}=`))).toBe(false);
   });
 });
 

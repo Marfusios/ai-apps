@@ -61,6 +61,20 @@ export const DEFAULT_RATE_LIMITS = {
 export const PIPELINE_DEADLINE_MS = 100_000;
 /** Lease TTL, longer than the pipeline deadline. */
 export const LEASE_TTL_MS = 120_000;
+/**
+ * A principal is refused for the rest of the UTC day once its calls of unknown usage
+ * (cancelled or timed out mid-call, each charged at its own worst case) add up to this
+ * many reservations (DESIGN §9, "Uncertain calls"). With the Opus reservation ($0.36) and
+ * a compose call's worst case ($0.3385), that is at most two such compose calls a day.
+ */
+export const UNCERTAIN_DAILY_RESERVATIONS = 1;
+/**
+ * The calls that count toward that bound: the named provider calls of a step (scope, the
+ * answer's compose, check, the query embedding), each charged at its own worst case. A
+ * charge in full that follows a server failure is not the principal's uncertain call and
+ * never counts: lease expiry, and a step that broke outside its stages (task 22 re-review N1).
+ */
+export const UNCERTAIN_CALL_STAGES = ['scope', 'compose', 'check', 'embed'] as const;
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60_000;
 /** Quota buckets and the anti-abuse record outlive their window by 7 days. */
 export const WINDOW_RETENTION_MS = 7 * 24 * 60 * 60_000;

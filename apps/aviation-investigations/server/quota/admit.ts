@@ -15,15 +15,18 @@
  * 5. Under the spend lock: the monthly and paced daily budgets; then `concurrency` if
  *    the principal already has a request in flight (so a running request never shows
  *    as an exhausted quota); then the principal's quota (trial searches, account
- *    daily/monthly searches), the anonymous share, and the total and anonymous
+ *    daily/monthly searches), its uncertain charges today (`uncertain_limit`: calls of
+ *    unknown usage, each charged at its own worst case, add up to one reservation;
+ *    DESIGN §9, "Uncertain calls"), the anonymous share, and the total and anonymous
  *    in-flight limits (two in total, one anonymous).
  * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
- *    (90 s) with a fencing token. Commit before any provider call.
+ *    (`LEASE_TTL_MS`, 120 s) with a fencing token. Commit before any provider call.
  *
  * Lock order: the account's lock (step 0), the bucket rows in key order, the spend lock.
  * Nothing takes buckets or the spend lock and then an account's lock.
  *
- * Lock waits are bounded (2 s); a timeout rolls back and returns `busy`.
+ * Lock waits are bounded (2 s) here and in `releaseQuota` and `recordAttempt`; a timeout
+ * rolls back and returns `busy`.
  *
  * The quota unit is taken at admission so two concurrent requests can never both use
  * the last trial search. A reply that must not count (off-topic, operational, nothing
@@ -48,6 +51,8 @@ import {
   IDEMPOTENCY_TTL_MS,
   QuotaInputError,
   SPEND_LOCK_KEY,
+  UNCERTAIN_CALL_STAGES,
+  UNCERTAIN_DAILY_RESERVATIONS,
   UnknownPrincipalError,
   networkHash,
   principalHash,
@@ -71,7 +76,14 @@ export type RejectionReason =
   /** The caller's `precondition` failed (a signed-in account's session ended): nothing is kept (403). */
   | 'signed_out'
   /** A lock wait timed out; nothing was admitted (fail closed, 503). */
-  | 'busy';
+  | 'busy'
+  /**
+   * The principal's calls of unknown usage today (cancelled or timed out mid-call, each
+   * charged at its own worst case) add up to `UNCERTAIN_DAILY_RESERVATIONS` reservations:
+   * refused until UTC midnight (429, like an exhausted daily quota), so cancels cannot
+   * spend the shared daily allowance faster than finished briefs would.
+   */
+  | 'uncertain_limit';
 
 /** Why AI is paused for everyone. */
 export type PauseReason = 'daily_budget' | 'monthly_budget' | 'maintenance';
@@ -293,6 +305,21 @@ function accountQuota(
   return null;
 }
 
+/**
+ * µ$ of the principal's uncertain ledger lines on `day` from its named calls
+ * (`UNCERTAIN_CALL_STAGES`: each call of unknown usage at its own worst case). A charge in
+ * full that follows a server failure (lease expiry, a step that broke outside its stages)
+ * is left out: it is not a request's outcome (it still counts in full against the budgets).
+ */
+export async function uncertainChargedMicros(tx: DbOrTx, pHash: string, day: string): Promise<number> {
+  const res = await tx.execute(sql`
+    SELECT (coalesce(sum(l.usd), 0) * 1000000)::bigint AS micros
+    FROM reservations r JOIN cost_ledger l ON l.reservation_id = r.id
+    WHERE r.category = 'interactive' AND r.principal_hash = ${pHash} AND r.accounting_day = ${day}::date
+      AND r.status <> 'open' AND l.uncertain AND l.stage = ANY(${sql.param([...UNCERTAIN_CALL_STAGES])}::text[])`);
+  return Number((res.rows[0] as { micros: string }).micros);
+}
+
 async function inFlight(tx: DbOrTx, pHash: string, now: Date): Promise<{ mine: number; total: number; anonymous: number }> {
   const res = await tx.execute(sql`
     SELECT count(*) FILTER (WHERE principal_hash = ${pHash})::int AS mine, count(*)::int AS total,
@@ -361,6 +388,9 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
           ? await trialQuota(tx, policy, principal, now)
           : accountQuota(policy, principal, counts, account!, now);
       if (quota) return quota;
+      if ((await uncertainChargedMicros(tx, pHash, utcDay(now))) >= reservation * UNCERTAIN_DAILY_RESERVATIONS) {
+        return { ok: false, reason: 'uncertain_limit', retryAt: nextUtcMidnight(now) };
+      }
       if (anonymous && !budget.anonymousOk) {
         return { ok: false, reason: 'anonymous_share_exhausted', retryAt: nextUtcMidnight(now) };
       }
@@ -437,7 +467,8 @@ export interface AttemptInput {
   now?: Date;
 }
 
-export type AttemptResult = { ok: true } | { ok: false; reason: 'rate_limited'; retryAt: Date };
+/** `busy`: a lock wait timed out (2 s); nothing was counted (fail closed). */
+export type AttemptResult = { ok: true } | { ok: false; reason: 'rate_limited'; retryAt: Date } | { ok: false; reason: 'busy' };
 
 /**
  * Count one AI attempt that makes no paid call (for example a request refused before
@@ -447,26 +478,33 @@ export async function recordAttempt(db: Db, a: AttemptInput): Promise<AttemptRes
   const now = a.now ?? new Date();
   const pHash = a.principal ? principalHash(a.policy, a.principal) : null;
   const attempts = attemptBuckets(a.policy, a.principal, pHash, a.networkId, now);
-  return db.transaction(async (tx): Promise<AttemptResult> => {
-    const counts = await lockBuckets(
-      tx,
-      attempts.map((b) => b.ref),
-    );
-    const until = rateLimitedUntil(counts, attempts);
-    if (until) return { ok: false, reason: 'rate_limited', retryAt: until };
-    await addToBuckets(
-      tx,
-      attempts.map((b) => b.ref),
-      'attempts',
-      1,
-    );
-    return { ok: true };
-  });
+  try {
+    return await db.transaction(async (tx): Promise<AttemptResult> => {
+      await setLockTimeout(tx);
+      const counts = await lockBuckets(
+        tx,
+        attempts.map((b) => b.ref),
+      );
+      const until = rateLimitedUntil(counts, attempts);
+      if (until) return { ok: false, reason: 'rate_limited', retryAt: until };
+      await addToBuckets(
+        tx,
+        attempts.map((b) => b.ref),
+        'attempts',
+        1,
+      );
+      return { ok: true };
+    });
+  } catch (err) {
+    if (isLockTimeout(err)) return { ok: false, reason: 'busy' };
+    throw err;
+  }
 }
 
+/** `busy`: a lock wait timed out (2 s); nothing changed, the search stays counted (fail closed). */
 export type ReleaseResult =
   | { released: true }
-  | { released: false; reason: 'stale_token' | 'not_open' | 'already_released' | 'lease_expired' };
+  | { released: false; reason: 'stale_token' | 'not_open' | 'already_released' | 'lease_expired' | 'busy' };
 
 /**
  * Give back the quota unit an admission took, for a reply that must not count: an
@@ -484,7 +522,18 @@ export async function releaseQuota(
 ): Promise<ReleaseResult> {
   const now = opts.now ?? new Date();
   const pHash = principalHash(opts.policy, admission.principal);
+  try {
+    return await releaseInTransaction(db, admission, fencingToken, pHash, now);
+  } catch (err) {
+    if (isLockTimeout(err)) return { released: false, reason: 'busy' };
+    throw err;
+  }
+}
+
+function releaseInTransaction(db: Db, admission: Admission, fencingToken: string, pHash: string, now: Date): Promise<ReleaseResult> {
   return db.transaction(async (tx): Promise<ReleaseResult> => {
+    // Lock waits are bounded like the rest of the gate's (2 s; DESIGN §8).
+    await setLockTimeout(tx);
     const res = await tx.execute(sql`
       SELECT principal_kind, principal_hash, status, fencing_token::text AS fencing_token, quota_counted,
         (extract(epoch FROM lease_expires_at) * 1000)::bigint AS lease_expires_ms,
@@ -530,6 +579,19 @@ export async function releaseQuota(
     await tx.execute(sql`UPDATE reservations SET quota_counted = false WHERE id = ${admission.reservationId}`);
     return { released: true };
   });
+}
+
+/**
+ * Forget the idempotency record of an admission that made nothing (it was given back and
+ * settled at zero: a shutdown, a signed-out account, a conflicting refinement), so the
+ * same request sent again is admitted afresh instead of answering "did not start" for the
+ * key's 24 hours (task 22 AI M3). A record that points at a result is never touched.
+ */
+export async function forgetIdempotency(db: DbOrTx, admission: Admission, now: Date): Promise<void> {
+  // A record must expire after it was created (its CHECK), even within the same instant.
+  await db.execute(sql`
+    UPDATE idempotency SET expires_at = greatest(created_at + interval '1 millisecond', ${now})
+    WHERE principal_hash = ${admission.principalHash} AND reservation_id = ${admission.reservationId} AND result_ref IS NULL`);
 }
 
 /** Point the admission's idempotency record at its stored result (e.g. the brief step). */

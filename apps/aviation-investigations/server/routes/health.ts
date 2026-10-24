@@ -6,14 +6,20 @@
  * The probe result is shared for `HEALTH_CACHE_MS` (concurrent callers wait for one
  * probe), so the endpoint cannot be used to hammer PostgreSQL or Elasticsearch; callers
  * other than the container's loopback check are also rate limited (server/app.ts).
+ *
+ * The database check is one bounded read (`boundedRead`, 2 s): a check that runs out of
+ * time destroys its connection instead of leaving a stalled statement holding a pool slot,
+ * so repeated probes against a stalled database cannot use up the pool (gate 22 finding 2).
  */
 import type { FastifyInstance } from 'fastify';
-import { sql } from 'drizzle-orm';
+import { boundedRead } from '../db/bounded-read.js';
 import { JSON_TYPE } from '../http/reply.js';
 import { DatasetUnavailableError } from '../dataset.js';
 import type { ApiContext } from './context.js';
 
 export const HEALTH_CACHE_MS = 2_000;
+/** Bound of the database check (acquisition and statement together). */
+export const HEALTH_DB_TIMEOUT_MS = 2_000;
 
 type Check = 'ok' | 'error';
 
@@ -41,7 +47,7 @@ async function probe(ctx: ApiContext): Promise<Health> {
   let database: Check = 'ok';
   let search: Health['search'] = 'ok';
   try {
-    await within(2_000, ctx.db.execute(sql`select 1`));
+    await boundedRead(ctx.db.$client, 'select 1', [], { timeoutMs: HEALTH_DB_TIMEOUT_MS });
   } catch {
     database = 'error';
   }

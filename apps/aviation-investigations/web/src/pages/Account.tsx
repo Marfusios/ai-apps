@@ -5,7 +5,7 @@ import { DELETE_PARAM } from '../../../shared/contracts/account';
 import { ApiError, aiStatusQuery, configQuery } from '../api';
 import { Button } from '../components/Button';
 import { Placard } from '../components/Placard';
-import { accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
+import { DeletionUnconfirmedError, SignOutUnconfirmedError, accountQuery, confirmWithGoogle, deleteAccount, signOut, startDeletion } from '../features/auth/api';
 import { GoogleButton, useSignIn } from '../features/auth/SignInDialog';
 
 /**
@@ -20,6 +20,7 @@ export const ACCOUNT_COPY = {
   unavailable: 'Sign-in isn’t available yet.',
   searchesHeading: 'AI searches left',
   signOut: 'Sign out',
+  signOutUnconfirmed: 'This page has forgotten your account, but the server hasn’t confirmed the sign-out. If your account appears here, sign out again.',
   deleteHeading: 'Delete account',
   deleteNow:
     'Deleting your account signs you out everywhere and at once removes your name, your email, the link to your Google account and the AI searches your account holds.',
@@ -30,6 +31,7 @@ export const ACCOUNT_COPY = {
   deleteConfirm: 'Delete account',
   deleteKeep: 'Keep account',
   deleted: 'Your account is deleted.',
+  deleteUnconfirmed: 'This page has forgotten your account, but the server hasn’t confirmed the deletion. If your account appears here, delete it again.',
   failed: 'That didn’t work. Try again in a moment.',
   reauthText: 'To delete your account, first confirm with Google that it’s you.',
   reauthFailed: 'Google didn’t confirm it’s you, so nothing was deleted.',
@@ -117,7 +119,14 @@ export function Account() {
     try {
       await work();
     } catch (err) {
-      if (err instanceof ApiError && err.body?.error === 'reauth_required') {
+      if (err instanceof SignOutUnconfirmedError) {
+        // Forgotten all the same; the account read again shows whether the session is still there.
+        setNotice(ACCOUNT_COPY.signOutUnconfirmed);
+      } else if (err instanceof DeletionUnconfirmedError) {
+        // Forgotten all the same; the account read again shows whether it is still there.
+        setDeleting('idle');
+        setNotice(ACCOUNT_COPY.deleteUnconfirmed);
+      } else if (err instanceof ApiError && err.body?.error === 'reauth_required') {
         setDeleting('reauth');
         setNotice(ACCOUNT_COPY.reauthExpired);
       } else {

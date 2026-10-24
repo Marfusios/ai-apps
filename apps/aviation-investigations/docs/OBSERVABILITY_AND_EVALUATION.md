@@ -318,7 +318,12 @@ These additions postdate the initial Claude review; see the
 `<LANGFUSE_BASE_URL>/api/public/otel/v1/traces` with the project keys, using a bounded
 batch processor (256 queued spans, short export timeout). `startTracing` does nothing
 unless `AVIATION_TRACING_ENABLED=true` and the base URL and both keys are set, and never
-falls back to a hosted service. Export errors are swallowed into a counter.
+falls back to a hosted service. The address must be https, or plain http to a loopback
+host or to a host the operator lists in `AVIATION_TRACING_HTTP_HOSTS` (comma-separated
+host names: a private container network such as the shared observability one, where
+Langfuse's web service is reached by its service name over plain http; configured, never
+guessed). Otherwise nothing is exported and the server logs `tracing off` at startup with
+the reason, naming settings only, never their values. Export errors are swallowed into a counter.
 `stageSpan(name, attrs, fn)` accepts only the closed `AllowedAttrs` set; a runtime guard
 in `server/observability/attributes.ts` drops unknown keys, strings over 64 characters,
 anything containing whitespace or a path separator (`/`, `\`) and enum attributes

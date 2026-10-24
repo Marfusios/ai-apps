@@ -44,9 +44,13 @@ export const TEXT_FIELDS = [...SECTION_FIELDS, 'findings_text'] as const;
 /** At most this many quoted phrases become phrase clauses; the rest are plain words. */
 const MAX_PHRASES = 8;
 
-/** Highlight markers: private-use characters that never occur in NTSB text. */
-const MARK_START = '\uE000';
-const MARK_END = '\uE001';
+/**
+ * The highlighter's tags: sequences of private-use characters no NTSB text holds (a lone
+ * U+E000 or U+E001 in a section is read as text, task 22 S-M10). Turned into offsets
+ * (`unmark`); never sent to a client.
+ */
+export const MARK_START = '\uE000\uE002\uE000';
+export const MARK_END = '\uE001\uE002\uE001';
 
 /**
  * Analysis and factual sections can be tens of kilobytes: Elasticsearch returns one
@@ -91,35 +95,92 @@ export function textQuery(q: string, fields: readonly string[]): Query | null {
   return must.length === 1 ? (must[0] as Query) : { bool: { must } };
 }
 
-/** Text with the highlight markers removed, and the marked spans in it. */
+/** Text with the highlight markers removed, and the marked spans in it (UTF-16 offsets). */
 export function unmark(marked: string): { text: string; spans: Span[] } | null {
   let text = '';
   const spans: Span[] = [];
   let open = -1;
-  for (const ch of marked) {
-    if (ch === MARK_START) {
+  let i = 0;
+  while (i < marked.length) {
+    if (marked.startsWith(MARK_START, i)) {
       if (open !== -1) return null;
       open = text.length;
-    } else if (ch === MARK_END) {
+      i += MARK_START.length;
+    } else if (marked.startsWith(MARK_END, i)) {
       if (open === -1) return null;
       if (text.length > open) spans.push({ start: open, end: text.length });
       open = -1;
+      i += MARK_END.length;
     } else {
-      text += ch;
+      text += marked[i];
+      i += 1;
     }
   }
   return open === -1 ? { text, spans } : null;
 }
 
 /**
+ * How many characters of each end of a long section the search asks for (`script_fields`),
+ * to tell whether a highlighted passage begins or ends its section (task 22 S-M7): the
+ * highlighter does not report where a passage sits, and the sections themselves are not
+ * fetched (several kilobytes each).
+ */
+export const SECTION_EDGE = 120;
+
+/** Painless: for each value of the field, its first and last `edge` characters (a section's head and tail). */
+const EDGES_SCRIPT = [
+  "def v = params['_source'][params.field];",
+  'List out = new ArrayList();',
+  'if (v == null) { return out; }',
+  'List texts = v instanceof List ? v : [v];',
+  'int edge = (int) params.edge;',
+  'for (def t : texts) {',
+  '  if (t instanceof String) {',
+  '    String s = (String) t;',
+  '    int n = s.length();',
+  '    int head = n < edge ? n : edge;',
+  '    int from = n > edge ? n - edge : 0;',
+  '    out.add(s.substring(0, head));',
+  '    out.add(s.substring(from));',
+  '  }',
+  '}',
+  'return out;',
+].join(' ');
+
+/** What `EDGES_SCRIPT` returns for these section values: head and tail of each, in order. */
+export function sectionEdges(sections: readonly string[], edge = SECTION_EDGE): string[] {
+  return sections.flatMap((t) => [t.slice(0, Math.min(t.length, edge)), t.slice(Math.max(0, t.length - edge))]);
+}
+
+/** Whether `passage` begins and ends one of the sections whose edges are given (`sectionEdges`). */
+function passageAtEdges(passage: string, edges: readonly string[] | undefined): { start: boolean; end: boolean } {
+  let start = false;
+  let end = false;
+  if (!edges) return { start, end };
+  const p = passage.trim();
+  for (let i = 0; i + 1 < edges.length; i += 2) {
+    const head = (edges[i] as string).trimStart();
+    const tail = (edges[i + 1] as string).trimEnd();
+    // Only a section's ends are known: a longer passage must begin (end) with all of it.
+    if (p.length <= head.length ? head.startsWith(p) : p.startsWith(head)) start = true;
+    if (p.length <= tail.length ? tail.endsWith(p) : p.endsWith(tail)) end = true;
+  }
+  return { start, end };
+}
+
+/**
  * The row snippet from a hit's highlights: the probable cause when the words match
  * there (the whole value, windowed like the mock API), otherwise the analysis or
- * factual passage with the most marks (analysis first on a tie). A passage is part of
- * a longer section whose bounds the highlighter does not report, so it is marked as
- * truncated on both sides. Null when no narrative section matched (e.g. only a
+ * factual passage with the most marks (analysis first on a tie). A passage is part of a
+ * longer section whose bounds the highlighter does not report: it is marked truncated on
+ * a side unless the section's edges (`edges`, from the search's `script_fields`) show it
+ * reaches that end of its section. Null when no narrative section matched (e.g. only a
  * finding did).
  */
-export function snippetFromHighlights(highlight: Record<string, string[]> | undefined): Snippet | null {
+export function snippetFromHighlights(
+  highlight: Record<string, string[]> | undefined,
+  edges: Partial<Record<'analysis' | 'factual', readonly string[]>> = {},
+): Snippet | null {
   if (!highlight) return null;
   for (const value of highlight.probable_cause ?? []) {
     const parsed = unmark(value);
@@ -137,7 +198,9 @@ export function snippetFromHighlights(highlight: Record<string, string[]> | unde
     }
   }
   if (!best) return null;
-  return { ...excerptSnippet(best.kind, best.text, best.spans, true), truncatedStart: true, truncatedEnd: true };
+  const excerpt = excerptSnippet(best.kind, best.text, best.spans, true);
+  const at = passageAtEdges(best.text, edges[best.kind as 'analysis' | 'factual']);
+  return { ...excerpt, truncatedStart: excerpt.truncatedStart || !at.start, truncatedEnd: excerpt.truncatedEnd || !at.end };
 }
 
 function sortOf(sort: SearchRequest['sort']): estypes.SortCombinations[] {
@@ -199,11 +262,22 @@ export function buildSearchBody(index: string, request: SearchRequest): SearchBo
     from: (request.page - 1) * request.pageSize,
     size: request.pageSize,
     timeout: SEARCH_TIMEOUT,
+    allow_partial_search_results: false,
     track_total_hits: true,
     query,
     post_filter: bool(f.filters()),
     sort: sortOf(request.sort),
     _source: hasText ? false : ['probable_cause'],
+    ...(hasText && sections.length > 1
+      ? {
+          script_fields: Object.fromEntries(
+            (['analysis', 'factual'] as const).map((field) => [
+              `${field}_edges`,
+              { script: { lang: 'painless', source: EDGES_SCRIPT, params: { field, edge: SECTION_EDGE } } },
+            ]),
+          ),
+        }
+      : {}),
     aggs,
     ...(hasText
       ? {
@@ -257,8 +331,12 @@ export async function keywordSearch(deps: KeywordSearchDeps, pinned: PinnedDatas
   const rows: CaseRow[] = hits.map((hit) => {
     const base = rowsByNo.get(hit._id as string);
     if (!base) throw new Error(`case ${hit._id} of the cases index is missing from generation ${pinned.manifest.generationId}`);
+    const fields = hit.fields as Partial<Record<'analysis_edges' | 'factual_edges', string[]>> | undefined;
     const snippet = hasText
-      ? snippetFromHighlights(hit.highlight)
+      ? snippetFromHighlights(hit.highlight, {
+          ...(fields?.analysis_edges ? { analysis: fields.analysis_edges } : {}),
+          ...(fields?.factual_edges ? { factual: fields.factual_edges } : {}),
+        })
       : (() => {
           const cause = hit._source?.probable_cause?.[0];
           return cause ? previewSnippet(cause) : null;

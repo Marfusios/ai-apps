@@ -27,7 +27,9 @@ import {
   privateRead,
   visitorGeneration,
 } from '../../web/src/features/auth/visitor';
+import { DeletionUnconfirmedError, SignOutUnconfirmedError, deleteAccount, signOut } from '../../web/src/features/auth/api';
 import { rememberQuestion, rememberedQuestion } from '../../web/src/features/brief/memory';
+import { postJson } from '../../web/src/api';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
 import { EXPIRED_TITLE } from '../../web/src/pages/Brief';
@@ -113,6 +115,119 @@ async function otherTabRecordsChange({ event }: { event: boolean }, change: stri
   return change;
 }
 
+/**
+ * How a sign-out can end without the server's confirmation (gate t22 findings 1 and r2 1):
+ * - `pending`: 503 `sign_out_pending`, read in full (the server expired the session cookie
+ *   and keeps the sign-out for a retry);
+ * - `interrupted`: the same 503's headers arrive (the cookie is expired) and the connection
+ *   breaks in its body;
+ * - `network`: no answer at all; the request may never have reached the server, which
+ *   still holds the session.
+ */
+type SignOutFailure = 'pending' | 'interrupted' | 'network';
+const SIGN_OUT_FAILURES: SignOutFailure[] = ['pending', 'interrupted', 'network'];
+
+/**
+ * The next sign-out ends as `failure`. Where the server ended this browser's session, the
+ * account and the AI counts then read as the signed-out visitor's, as they would there.
+ */
+function signOutFails(failure: SignOutFailure): void {
+  let signedOut = false;
+  const headers = { 'retry-after': '5', 'cache-control': 'no-store', 'content-type': 'application/json' };
+  server.use(
+    http.post('*/api/auth/sign-out', () => {
+      if (failure === 'network') return HttpResponse.error();
+      signedOut = true;
+      if (failure === 'pending') return HttpResponse.json({ error: 'sign_out_pending', message: 'Signed out here; not confirmed yet.', retryAfter: 5 }, { status: 503, headers });
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"error":"sign_out_pen'));
+          controller.error(new TypeError('network error'));
+        },
+      });
+      return new HttpResponse(body, { status: 503, headers });
+    }),
+    http.get('*/api/account', () => (signedOut ? HttpResponse.json({ signedIn: false }, { headers: { 'cache-control': 'no-store' } }) : undefined)),
+    http.get('*/api/ai/status', () => (signedOut ? HttpResponse.json(AI_STATUS_SAMPLES.fresh, { headers: { 'cache-control': 'no-store' } }) : undefined)),
+  );
+}
+
+/**
+ * How a deletion can end without the server's confirmation:
+ * - `readable`: an error read in full (503 `unavailable`), the account not deleted;
+ * - `interrupted`: the success's headers arrive (the account deleted, the session cookie
+ *   expired) and the connection breaks in its body;
+ * - `network`: no answer at all; the request may never have reached the server.
+ */
+type DeletionFailure = 'readable' | 'interrupted' | 'network';
+const DELETION_FAILURES: DeletionFailure[] = ['readable', 'interrupted', 'network'];
+
+/** The next deletion ends as `failure`; where the account is gone, the account and AI counts read signed out. */
+function deletionFails(failure: DeletionFailure): void {
+  let deleted = false;
+  const headers = { 'cache-control': 'no-store', 'content-type': 'application/json' };
+  server.use(
+    http.post('*/api/account/delete', () => {
+      if (failure === 'network') return HttpResponse.error();
+      if (failure === 'readable') return HttpResponse.json({ error: 'unavailable', message: 'Try again shortly.', retryAfter: 5 }, { status: 503, headers });
+      deleted = true;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"dele'));
+          controller.error(new TypeError('network error'));
+        },
+      });
+      return new HttpResponse(body, { status: 200, headers });
+    }),
+    http.get('*/api/account', () => (deleted ? HttpResponse.json({ signedIn: false }, { headers }) : undefined)),
+    http.get('*/api/ai/status', () => (deleted ? HttpResponse.json(AI_STATUS_SAMPLES.fresh, { headers }) : undefined)),
+  );
+}
+
+/**
+ * `action` (a sign-out or a deletion the server does not confirm) forgets at once: a private
+ * answer still on its way is dropped, the held questions and retry keys go, an AI request of
+ * the previous visitor sends nothing more, and the other tabs are told.
+ */
+async function expectForgottenWhatever(action: (client: QueryClient) => Promise<void>, unconfirmed: new (...args: never[]) => Error): Promise<void> {
+  const client = new QueryClient();
+  let answer!: (value: { secret: string }) => void;
+  const late = privateRead(() => new Promise<{ secret: string }>((resolve) => (answer = resolve)));
+  const pending = client.fetchQuery({ queryKey: ['brief-case', 'b', 1, 'N1'], queryFn: () => late });
+  rememberQuestion('b1', 'A question of the previous visitor');
+  rememberUnsettled('id1', 'retry-key-0001');
+  const generation = visitorGeneration();
+  const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+  const otherTab = new BroadcastChannel(VISITOR_CHANNEL);
+  const heard: unknown[] = [];
+  otherTab.onmessage = (event: MessageEvent) => heard.push(event.data);
+  let briefPosts = 0;
+  server.events.on('request:start', ({ request }) => {
+    if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') briefPosts += 1;
+  });
+  try {
+    await expect(action(client)).rejects.toBeInstanceOf(unconfirmed);
+    expect(visitorGeneration()).toBeGreaterThan(generation);
+    // A private answer still on its way is dropped, never cached.
+    answer({ secret: 'the previous visitor’s case context' });
+    await expect(late).rejects.toBeInstanceOf(VisitorChangedError);
+    await expect(pending).rejects.toBeTruthy();
+    expect(client.getQueryData(['brief-case', 'b', 1, 'N1'])).toBeUndefined();
+    expect(rememberedQuestion('b1')).toBeNull();
+    expect(unsettledKey('id1')).toBeNull();
+    // An AI request of the previous visitor sends nothing more.
+    await expect(postJson('/api/briefs', { question: MOCK_SEED_QUESTION }, null, generation)).rejects.toBeInstanceOf(VisitorChangedError);
+    expect(briefPosts).toBe(0);
+    // The other tabs are told.
+    const change = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+    expect(change).not.toBe(marker);
+    await waitFor(() => expect(heard).toEqual([{ type: 'visitor-changed', change, recorded: true }]));
+  } finally {
+    otherTab.close();
+    server.events.removeAllListeners();
+  }
+}
+
 /** The other tab's sign-out on the server (the session ends there). */
 const signOutOnServer = () => fetch(new URL('/api/auth/sign-out', window.location.href), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 
@@ -158,6 +273,105 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
     expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
     expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
     expect(screen.queryByText('AI classified')).toBeNull();
+  }, 20_000);
+
+  it.each(['pending', 'interrupted'] as const)('a sign-out the server could not confirm (%s) forgets them all the same, in every tab, and says so (gate t22 finding 1, r2 finding 1)', async (failure) => {
+    signedInApi();
+    const app = await briefWithDrawer();
+    signOutFails(failure);
+    const generation = visitorGeneration();
+    const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+    const otherTab = new BroadcastChannel(VISITOR_CHANNEL);
+    const heard: unknown[] = [];
+    otherTab.onmessage = (event: MessageEvent) => heard.push(event.data);
+    try {
+      await act(() => app.router.navigate('/account'));
+      fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
+      expect(await screen.findByText(ACCOUNT_COPY.signOutUnconfirmed)).toBeTruthy();
+      await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
+      // The same forgetting as a confirmed sign-out: the generation moves on, private queries
+      // go, and the other tabs are told (the recorded change, and the channel).
+      expect(visitorGeneration()).toBeGreaterThan(generation);
+      await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
+      const change = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+      expect(change).not.toBe(marker);
+      await waitFor(() => expect(heard).toEqual([{ type: 'visitor-changed', change, recorded: true }]));
+      expect(screen.queryByText(ACCOUNT_COPY.failed)).toBeNull();
+    } finally {
+      otherTab.close();
+    }
+  }, 20_000);
+
+  it('a sign-out that got no answer forgets them all the same and shows the account the server still has, saying so (gate t22 r2 finding 1)', async () => {
+    signedInApi();
+    const app = await briefWithDrawer();
+    signOutFails('network');
+    const generation = visitorGeneration();
+    const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+    await act(() => app.router.navigate('/account'));
+    fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
+    expect(await screen.findByText(ACCOUNT_COPY.signOutUnconfirmed)).toBeTruthy();
+    // The account is read again: the server still holds the session, so it shows, to sign out again.
+    expect(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut })).toBeTruthy();
+    expect(visitorGeneration()).toBeGreaterThan(generation);
+    expect(window.localStorage.getItem(VISITOR_STORAGE_KEY)).not.toBe(marker);
+    const empty = (root: string) => app.client.getQueriesData({ queryKey: [root] }).every(([, data]) => data === undefined);
+    expect(empty('brief') && empty('brief-case')).toBe(true);
+  }, 20_000);
+
+  it.each(SIGN_OUT_FAILURES)('a sign-out ending %s forgets at once: late private answers, held questions, retry keys and AI sends of the previous visitor (gate t22 r2 finding 1)', async (failure) => {
+    signedInApi();
+    signOutFails(failure);
+    await expectForgottenWhatever(signOut, SignOutUnconfirmedError);
+  });
+
+  it.each(DELETION_FAILURES)('a deletion ending %s forgets at once as well: late private answers, held questions, retry keys and AI sends of the previous visitor', async (failure) => {
+    signedInApi();
+    deletionFails(failure);
+    await expectForgottenWhatever(deleteAccount, DeletionUnconfirmedError);
+  });
+
+  it('a deletion refused in full for a Google confirmation forgets nothing: nothing was deleted and the session stands', async () => {
+    signedInApi();
+    server.use(
+      http.post('*/api/account/delete', () =>
+        HttpResponse.json({ error: 'reauth_required', message: "Confirm with Google that it's you, then delete your account." }, { status: 403 }),
+      ),
+    );
+    rememberQuestion('b1', 'A question of this visitor');
+    rememberUnsettled('id1', 'retry-key-0001');
+    const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+    await expect(deleteAccount(new QueryClient())).rejects.toMatchObject({ status: 403, body: { error: 'reauth_required' } });
+    expect(rememberedQuestion('b1')).toBe('A question of this visitor');
+    expect(unsettledKey('id1')).toBe('retry-key-0001');
+    expect(window.localStorage.getItem(VISITOR_STORAGE_KEY)).toBe(marker);
+  });
+
+  it.each(DELETION_FAILURES)('the account page after a deletion ending %s: everything private forgotten, the account read again, and the server’s silence said', async (failure) => {
+    signedInApi();
+    const app = await briefWithDrawer();
+    deletionFails(failure);
+    const generation = visitorGeneration();
+    const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
+    await act(() => app.router.navigate('/account'));
+    fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    await screen.findByText(ACCOUNT_COPY.deleteAsk);
+    fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    expect(await screen.findByText(ACCOUNT_COPY.deleteUnconfirmed)).toBeTruthy();
+    if (failure === 'interrupted') {
+      // The account is gone: signed out.
+      await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
+    } else {
+      // Still there: it shows, to be deleted again.
+      expect(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut })).toBeTruthy();
+      expect(screen.queryByText(ACCOUNT_COPY.deleteAsk)).toBeNull();
+    }
+    expect(visitorGeneration()).toBeGreaterThan(generation);
+    expect(window.localStorage.getItem(VISITOR_STORAGE_KEY)).not.toBe(marker);
+    const empty = (root: string) => app.client.getQueriesData({ queryKey: [root] }).every(([, data]) => data === undefined);
+    expect(empty('brief') && empty('brief-case')).toBe(true);
+    expect(screen.queryByText(ACCOUNT_COPY.deleted)).toBeNull();
+    expect(screen.queryByText(ACCOUNT_COPY.failed)).toBeNull();
   }, 20_000);
 
   it('deleting the account forgets them too', async () => {
@@ -306,11 +520,113 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     return { ...app, held };
   }
 
-  async function signOutHere(app: ReturnType<typeof renderApp>): Promise<void> {
+  /** Sign out from the account page; `failure`: the sign-out ends that way, unconfirmed. */
+  async function signOutHere(app: ReturnType<typeof renderApp>, { failure }: { failure?: SignOutFailure } = {}): Promise<void> {
+    if (failure) signOutFails(failure);
     await act(() => app.router.navigate('/account'));
     fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
-    await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
+    if (failure) await screen.findByText(ACCOUNT_COPY.signOutUnconfirmed);
+    else await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
   }
+
+  it.each(SIGN_OUT_FAILURES)('a question answered after a sign-out ending %s opens nothing and keeps nothing (gate t22 finding 1, r2 finding 1)', async (failure) => {
+    signedInApi();
+    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    await signOutHere(app, { failure });
+    app.held.release();
+    await act(() => sleep(150));
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  });
+
+  it('a question answered while the sign-out is still on its way opens nothing and keeps nothing (gate t22 r2 finding 1)', async () => {
+    signedInApi();
+    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    // The server takes its time over the sign-out, and the question's answer comes first.
+    const signingOut = holdPost('*/api/auth/sign-out', () => HttpResponse.error());
+    await act(() => app.router.navigate('/account'));
+    fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
+    await waitFor(() => expect(signingOut.calls()).toBe(1));
+    app.held.release();
+    await act(() => sleep(150));
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
+    signingOut.release();
+    await screen.findByText(ACCOUNT_COPY.signOutUnconfirmed);
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  });
+
+  it('a question answered while the deletion is still on its way opens nothing and keeps nothing', async () => {
+    signedInApi();
+    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    // The server takes its time over the deletion, and the question's answer comes first.
+    const deleting = holdPost('*/api/account/delete', () => HttpResponse.error());
+    await act(() => app.router.navigate('/account'));
+    fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    await screen.findByText(ACCOUNT_COPY.deleteAsk);
+    fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
+    await waitFor(() => expect(deleting.calls()).toBe(1));
+    app.held.release();
+    await act(() => sleep(150));
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
+    deleting.release();
+    await screen.findByText(ACCOUNT_COPY.deleteUnconfirmed);
+    expect(currentUrl(app.router)).toBe('/account');
+    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  }, 20_000);
+
+  it.each(DELETION_FAILURES)('a check still open when a deletion ends %s is cancelled, and nothing is sent', async (failure) => {
+    signedInApi({ accountCheck: true });
+    const turnstile = installTurnstile({ hold: true });
+    let posts = 0;
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+    });
+    try {
+      const app = renderApp('/');
+      fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+      fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+      await waitFor(() => expect(turnstile.appearances).toHaveLength(1));
+      // The deletion, as the account page sends it, while the request waits for its check.
+      deletionFails(failure);
+      await act(() => expect(deleteAccount(app.client)).rejects.toBeInstanceOf(DeletionUnconfirmedError));
+      turnstile.release();
+      await act(() => sleep(150));
+      expect(posts).toBe(0);
+      expect(currentUrl(app.router)).toBe('/');
+      expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    } finally {
+      server.events.removeAllListeners();
+    }
+  });
+
+  it.each(['interrupted', 'network'] as const)('a check still open when a sign-out ends %s is cancelled, and nothing is sent (gate t22 r2 finding 1)', async (failure) => {
+    signedInApi({ accountCheck: true });
+    const turnstile = installTurnstile({ hold: true });
+    let posts = 0;
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+    });
+    try {
+      const app = renderApp('/');
+      fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
+      fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
+      await waitFor(() => expect(turnstile.appearances).toHaveLength(1));
+      // The sign-out, as the account page sends it, while the request waits for its check.
+      signOutFails(failure);
+      await act(() => expect(signOut(app.client)).rejects.toBeInstanceOf(SignOutUnconfirmedError));
+      turnstile.release();
+      await act(() => sleep(150));
+      expect(posts).toBe(0);
+      expect(currentUrl(app.router)).toBe('/');
+      expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    } finally {
+      server.events.removeAllListeners();
+    }
+  });
 
   it('a question answered after sign-out opens nothing and keeps neither the question nor a retry key', async () => {
     signedInApi();

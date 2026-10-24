@@ -142,7 +142,12 @@ Code: `worker/ingest/normalize.ts`, `worker/ingest/scalars.ts`,
 
 Value problems go to a quarantine list with an action (row excluded, value nulled or
 value kept) and are never coerced. Generation 1 has 25 entries, all coordinates of
-non-US events. 75 US events have no coordinates, so their location is null.
+non-US events. 75 US events have no coordinates, so their location is null. An event
+year outside 1900–2100 stops the load instead (`LoadValueError`, naming the case): the
+API's year axis carries only 1900–2100, so one such year would otherwise pass every
+check and make every search fail once published. The server also refuses a cases index
+whose years fall outside it, as unavailable. (A refusal, not a change to normalized
+output: field normalization stays `v1`.)
 
 **Scalars and codes.** A blank field becomes `null` before any numeric conversion.
 Flags are decoded from their real vocabularies (`defining_ev` `0`/`1`, `cm_inpc`
@@ -597,7 +602,8 @@ index, is the rollback. **The `dev` manifest for generation 1 serves `cases-v3` 
   facts, and answers 503 rather than serve a mismatch;
 - uses a dataset revision such as `g1-cases-v3-b65442be` in ETags;
 - runs search, facets and the dashboard on the cases index, with a 5 s timeout and
-  no partial results;
+  no partial results (each request sets `allow_partial_search_results: false`, and a
+  response that timed out or whose shards did not all succeed is a 503);
 - reads result rows and case pages from PostgreSQL for the same generation;
 - reads report links, which belong to no generation, from `report_links`;
 - checks the passages index against the same contract, bounded to 2 s, once per
@@ -730,9 +736,10 @@ index changes.
   justification: its best retrieved passage and every probable-cause variant it has
   under the filters, including each distinct event-scoped variant. A case whose
   reservation does not fit is skipped, so the bundle holds fewer cases rather than
-  cases without the passage that ranked them. Extras up to 2 retrieved passages per
-  case are added, trimmed to the budgets lowest-ranked first, and free room is filled
-  in fused order.
+  cases without the passage that ranked them. Then each case gets at most one more
+  retrieved passage (two retrieved in all, the reserved one included:
+  `retrievedPerCase` 2), trimmed to the budgets lowest-ranked first, and free room is
+  filled in fused order, where a case can reach its third passage.
 - **Cost.** The query embedding's usage (tokens, USD, `reported` or `uncertain`) is
   handed to the caller as soon as the embedding returns, before any search, so a
   later failure cannot lose a paid stage. Retrieval reserves no money: the AI

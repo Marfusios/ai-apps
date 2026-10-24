@@ -312,10 +312,11 @@ pnpm worker index cleanup-builds --older-than <hours>
 - **Facets count events.** Aircraft facets aggregate inside `nested` and count with
   `reverse_nested`. An event whose aircraft differ counts once in each of their
   buckets, so aircraft buckets can sum to more than the total (405 US events have
-  several aircraft in the 2026-10-16 snapshot). The Phase facet uses
-  `defining_phase_groups`, every aircraft's defining phase group (140 US events have
-  several); with an aircraft filter active, filter the phase on
-  `aircraft.defining_phase_group` inside the same nested clause.
+  several aircraft in the 2026-10-16 snapshot). The Phase facet counts and filters on
+  each aircraft's defining phase group, the nested `aircraft.defining_phase_group`
+  (inside the same nested clause as any other aircraft filter), so its `blank` bucket
+  counts events with an aircraft that has no defining phase; the top-level
+  `defining_phase_groups` lists every aircraft's group (140 US events have several).
   `sequence_phase_groups` lists every phase in the sequence. Make, model and city use
   a normalizer (whitespace collapsed, ASCII-folded, upper case), so "Cessna" and
   "CESSNA" are one value.
@@ -429,7 +430,8 @@ Integration test files run one at a time: they share `aviation_test` and the
 
 `server/search/hybrid.ts` retrieves the evidence an AI brief is written from
 (DESIGN §5; amendments A2, A3, A11, A13; review gate G5). It reads the passages index
-the active manifest names and refuses (`RetrievalUnavailableError`) when there is
+the brief is pinned to (`EvidenceQuery.dataset`: the active manifest's for a new brief, the
+brief's own for a refinement) and refuses (`RetrievalUnavailableError`) when there is
 none or when the index breaks the passages contract
 (`server/search/passages-contract.ts`; the same check `worker publish` and the API's
 dataset loader use). The contract is checked before the query is embedded, within
@@ -478,7 +480,9 @@ case-level stage 1 follows them.
 - **Stage 1, case candidates.** The question is embedded once
   (`queryEmbeddingInput`, template `query-v1`: whitespace collapsed, no header, at
   most 1,000 tokens). BM25 (`multi_match` over `text`) and kNN (`num_candidates` =
-  4 × k) each return `perChannel` passages (50 live; the evaluation also runs 100).
+  4 × k) each return `perChannel` passages (50 under `retrieval.v1`, the rollback this
+  paragraph describes; the evaluation also runs 100; `retrieval.v2`, the default, runs
+  200 a channel, below).
   Reciprocal rank fusion in TypeScript (`sum 1/(60 + rank)`) and deduplication to
   cases at their best passage give the case ranking.
 - **Stage 1 under `retrieval.v2`** (`server/search/case-retrieval.ts`). Both index
@@ -1165,7 +1169,7 @@ WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/moc
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
-pnpm test:e2e:real    # Playwright against the real API server and the fixture index
+pnpm test:e2e:real    # Playwright against the real API server: the fixture index, and signing in and out
 ```
 
 ### API contracts and the mock API
@@ -1236,7 +1240,10 @@ pnpm worker publish --generation <id> --cases-index <name> [--passages-index <na
 SPA fallback) on one origin. It reads configuration like the worker (`AVIATION_ENV_FILES`,
 otherwise `.env.local`), connects as `aviation_app` (`DATABASE_URL`) and reads
 Elasticsearch with `ELASTICSEARCH_READ_API_KEY` only. With `APP_ENV=live` it refuses to
-start unless `TRUSTED_PROXY_CIDRS` is set (tunnel mode). The API answers 503 until
+start unless `TRUSTED_PROXY_CIDRS` is set (tunnel mode) to private, narrow networks only:
+RFC 1918 IPv4 at /16 or narrower, unique-local IPv6 at /64 or narrower (the tunnel overlay
+sets it from `EDGE_SUBNET`); a wider or public network would let any peer in it forge the
+client address. The API answers 503 until
 a dataset is published: load, verify and index a generation, then `pnpm worker
 publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 
@@ -1256,20 +1263,39 @@ dataset revision plus a hash of the body, and a matching `If-None-Match` gets 30
 Search uses a short public cache rather than `no-store`: results change only when a
 new manifest is published, and the canonical query string makes equal searches share
 an entry. Errors are `ErrorResponse` bodies with fixed messages and `no-store`; a
-missing index, an unreachable database or search engine, or a search that ran out of
-its 5-second Elasticsearch `timeout` (`timed_out`, partial counts) is a 503, never a
-404, partial data or an internal message. The router's own refusals (a malformed URL)
+missing index, an unreachable or stalled database (no connection free within 5 s, a
+connection that broke, a statement the server ended at its timeout) or search engine,
+or a search that ran out of its 5-second Elasticsearch `timeout` (`timed_out`, partial
+counts) is a 503, logged as a warning, never a 404, partial data or an internal message. The router's own refusals (a malformed URL)
 get the same headers and a JSON 400, and the static files' refusals are 404 or 400.
 The log has one line per API request (method, route pattern, status, duration),
 without client addresses or query strings; an unmatched `/api` path is logged with
-the route `unmatched` and nothing of the request target. Per-visitor routes
+the route `unmatched` and nothing of the request target. A logged error carries its name,
+code and (Elasticsearch's) error type, never its message or stack, and any message string
+loses the query string of a path it quotes (Fastify's own warnings quote the request URL).
+The static files never include a dotfile or a dot directory (404). Per-visitor routes
 (`/api/ai`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
 prefix, so later routes are covered) answer `Cache-Control: private, no-store`; public
 data routes are cacheable and keyed by the dataset revision; errors are `no-store`.
 Requests the HTTP parser itself refuses (400, or 408 for a request timeout and 431 for
 oversized headers; 403 for a non-connector peer in tunnel mode) get the same security
-headers and a JSON body, and the connection is closed.
+headers and a JSON body, and the connection is closed. A request must arrive whole,
+headers and body, within 60 s (`REQUEST_TIMEOUT_MS`; every body here is at most 16 KB):
+one that stalls or trickles in is answered 408 and closed within about 65 s, since
+stalled connections are checked every 5 s.
 
+- **Database connections** (`server/db/client.ts`). The API's pool (8 connections, as
+  `aviation_app`) bounds every wait: opening a connection or waiting for a free one 5 s;
+  each statement 15 s on the server (`statement_timeout`; the maintenance pass raises its
+  own to 30 s), an idle transaction 30 s (`idle_in_transaction_session_timeout`), and the
+  connection itself 45 s: a connection on which nothing moves that long (a stalled server
+  or network) is destroyed and its statement fails, so its slot is free again and the pool
+  can still close. A connection that fails, idle or in use (a PostgreSQL restart), is
+  logged with its error's name and code only (`database connection failed`) and replaced;
+  it never ends the process. One that fails in use leaves the pool at once, even if its
+  holder never gives it back. The health probe's database check is a bounded read (2 s)
+  that destroys the connection it abandons. The worker's and tools' pools keep only the
+  connect timeout (their long statements are expected) and the same failure handling.
 - **Dataset pinning (A6).** Each request resolves the active `dataset_manifests` row
   (reused for 5 seconds) and reads only that generation and its cases index, never
   the alias. Before serving a manifest the server checks the index `_meta` (same
@@ -1320,8 +1346,11 @@ headers and a JSON body, and the connection is closed.
   highlights (private-use markers turned into offsets): the probable cause, which
   Elasticsearch returns whole, when the words match there; otherwise the analysis or
   factual passage (one best passage of about 300 characters, so long sections never
-  come back whole) with the most marks, shown as an excerpt with ellipses on both sides
-  (`shared/snippet.ts`, shared with the mock API).
+  come back whole) with the most marks, shown as an excerpt (`shared/snippet.ts`, shared
+  with the mock API), with an ellipsis on each side where its section goes on. The
+  highlighter does not say where a passage sits, so the search also asks for the first and
+  last 120 characters of each analysis and factual section (`script_fields`, never the
+  whole text) and compares them with the passage.
 - **Dashboard** (`server/search/dashboard.ts`). Bars are the facet counts of the
   cohort's empty search, from the same code, so a bar opened in Explore shows its
   count. METAR coverage and coordinates come from PostgreSQL for the same generation;
@@ -1364,7 +1393,12 @@ headers and a JSON body, and the connection is closed.
 (`fixtures/ntsb` and `fixtures/ntsb-ui`) published as the active dataset of
 `aviation_test`. `pnpm test:e2e:real` builds the web client and starts the real server
 on that dataset (`tests/e2e-real/server.ts`, port `E2E_REAL_PORT`, default 5181). Both
-reset `aviation_test`'s corpus, so do not run them at the same time.
+reset `aviation_test`'s corpus, so do not run them at the same time. It also starts a
+second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
+`E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
+(localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
+callback as it would with Google; that server empties `aviation_test`'s control and auth
+tables when it starts.
 
 ### Language-model provider
 
@@ -1396,7 +1430,7 @@ the stage with a `StageError` that says whether the call was billed.
 per-request reservations ($0.36 Opus, $0.19 Sonnet, $0.03 Haiku answer model, with the
 calibrated Haiku checker). The caps were measured with the provider's own counter
 (free) against real passages (DESIGN §9 "Hard caps"): scope 6,500 in / 600 out, answer
-28,000 / 11,000, check 40,000 / 21,500 (15,000 of it the checker's thinking allowance),
+28,000 / 11,000, check 40,000 / 24,500 (15,000 of it the checker's thinking allowance),
 in provider tokens, so the measured stress cases fit: a full
 12-passage bundle with the longest question and refinement without re-packing, and a
 check of a full bundle's complete evidence whole. `startupAiCheck(config)` enables AI only when the
@@ -1440,26 +1474,33 @@ retention are in migrations 0008 and 0009.
   whose previous request is still in flight gets `concurrency` (never a quota verdict
   that request may still change); otherwise its quota, the anonymous share and the
   total in-flight limits follow. An admitted request reserves
-  its maximum cost, takes one unit of quota and gets a 90-second lease with a fencing
+  its maximum cost, takes one unit of quota and gets a 120-second lease with a fencing
   token. Rejections: `trial_exhausted`, `daily_cap`, `monthly_cap`,
   `anonymous_share_exhausted`, `global_paused` (`daily_budget`, `monthly_budget`,
   `maintenance`), `rate_limited` (with `retryAt`), `concurrency`,
-  `idempotency_conflict`, and `busy`. Lock waits in admission, settlement and spend
-  reservation are bounded at 2 seconds; a timeout rolls back and returns `busy`
+  `idempotency_conflict`, `uncertain_limit` (DESIGN §9, "Uncertain calls") and `busy`.
+  Lock waits in admission, settlement, spend
+  reservation, giving a search back and counting an attempt are bounded at 2 seconds; a
+  timeout rolls back and returns `busy`
   (503, fail closed).
 - **Limits.** A trial has 3 searches and lasts 30 days. Signed-in users get 20 a day
   and 150 a month, 5 a day during their first 3 days. Attempts are limited to 2 a
   minute anonymously and 5 signed in, and per network identity and class to 10 an
   hour and 20 a day anonymously, 30 an hour and 100 a day signed in. One request per
-  principal, two in total and one anonymous request can be in flight.
+  principal, two in total and one anonymous request can be in flight. A principal whose
+  calls of unknown usage today (cancelled or timed out mid-call, each charged at its own
+  worst case) add up to one reservation is refused until 00:00 UTC (429
+  `quota_exhausted`; DESIGN §9, "Uncertain calls"). A full charge after a server failure
+  (lease expiry, a step that broke outside its stages) is not counted there.
 - **Quota units.** The unit is taken at admission, so concurrent requests can never
   both use the last trial search. `releaseQuota` gives it back for a reply that must
   not count (off-topic, operational, nothing spent); the attempt still counts.
   `recordAttempt` counts an attempt that makes no paid call.
 - **Settlement.** `settle` (interactive) and `settleSpend` (indexing, evaluation) need
   the reservation's fencing token and a live lease. They charge the reported usage,
-  optionally itemized by provider, model, stage and token counts, or the full
-  reservation when the usage is uncertain. A lease that runs out first is charged in
+  optionally itemized by provider, model, stage and token counts. A call whose usage is
+  not known is an uncertain line at its own worst case (never past the reservation);
+  usage uncertain as a whole is the full reservation. A lease that runs out first is charged in
   full and never refunded (`expireLeases` sweeps; a late settlement is refused). Expiry
   frees the concurrency slot, not the money.
 - **Budgets.** Spend is the append-only `cost_ledger` plus the full amount of every
@@ -1654,15 +1695,18 @@ the pipeline (`pipeline.ts`, `runBriefStep`):
    never in a response, trace or log; deleted with the brief by the maintenance pass after
    it expires) for `pnpm worker brief-diagnose` (docs/OBSERVABILITY_AND_EVALUATION.md).
 
-The step has a 90-second deadline. Every stage enforces its own input cap with the
+The step has a 100-second deadline (`PIPELINE_DEADLINE_MS`, inside the 120-second lease).
+Every stage enforces its own input cap with the
 provider's counter. Stage results are written as they complete (`brief_steps`), and
 until the end a read shows only stage status and counts, plus, once the scope stage has
 sent the step on to search, the readings and filters it settled on
 (`checklist.interpretation`: chips rendered from the stored intent with the server's
 templates, and the validated filters, the same as the finished result's; a cancelled or
 failed step keeps them, a static reply has none). Each stage's usage is settled
-as itemized ledger lines with one request id; a call without reliable usage (timeout,
-abort) settles the full reservation as uncertain. Scope replies (settled before they
+as itemized ledger lines with one request id; a call without reliable usage (a timeout,
+a cancel, a shutdown, a provider 5xx) is charged at its own stage's worst case, as an
+uncertain line (DESIGN §9, "Uncertain calls"); only a step that fails outside its stages
+settles the full reservation. Scope replies (settled before they
 are sent), empty results and failures before any spend give the free search back;
 withheld summaries, abstentions, cancellations and failures after spending keep it.
 A step still running 150 s after it started has lost its process: it reads as failed,
@@ -1670,7 +1714,8 @@ no longer blocks a refinement, and the maintenance pass marks it failed once its
 reservation is closed. Closing the server runs within one 9 s deadline (the process
 exits by force at 10 s): first, before the HTTP drain, running steps are aborted (they
 fail and settle), paid requests still in the gate, admission or step creation are
-refused with 503 `unavailable` (an admission is given back and settled at zero) or
+refused with 503 `unavailable` (an admission is given back, settled at zero and its
+idempotency record forgotten, so the same request can be sent again) or
 stop before any provider call, and closing waits for both; requests that arrive
 meanwhile get 503 `unavailable`. Then Node's `server.close()` closes idle keep-alive
 connections, responses sent while closing close their connection, and anything still
@@ -1710,8 +1755,8 @@ embedder):
   that fits) remains as a fallback.
 - The query embedding is settled exactly once, from retrieval's `onQueryEmbedding`
   callback, which runs before any search: an Elasticsearch, packing or provenance
-  failure afterwards keeps that one `embed` line, and `billing: uncertain` settles
-  the step at its full reservation. A failed embedding is settled by its
+  failure afterwards keeps that one `embed` line, and `billing: uncertain` charges the
+  embedding at its 1,000-token cap as an uncertain line. A failed embedding is settled by its
   `QueryEmbeddingError` billing (`none`, the billed `usage`, or `uncertain`); an
   embedding aborted mid-request (cancel or deadline) is `uncertain`. A usage callback
   arriving after `retrieve` returned or threw is ignored.
@@ -1776,7 +1821,19 @@ lock order in migration 0019.
   dialog again, saying so). A callback is accepted once: the first to get through the
   code exchange and the ID-token checks claims its state atomically, and a second one,
   even arriving at the same time, is refused before a user or session is made.
-  `POST /api/auth/sign-out` ends the session. No other Better Auth endpoint is served.
+  `POST /api/auth/sign-out` ends the session, and says so only once it is gone: when the
+  database cannot end it, the answer is 503 `sign_out_pending` (`Retry-After: 5`), the
+  browser is signed out all the same, and the sign-out is kept for a retry in a sealed,
+  HttpOnly `__Secure-aviation_signout` cookie under `/api` (never a session) that the
+  browser's next sign-out or account read finishes. It is `SameSite=Lax`, like the OAuth
+  state cookie, because Google's redirect back to the callback is a navigation from another
+  site, which carries no `Strict` cookie. No new session is issued while one is pending: a
+  sign-in finishes it first, at its start and at Google's callback, and is refused (503
+  `sign_out_pending`) while it cannot. The page forgets everything private it held, in every
+  tab, whatever the sign-out's answer: as soon as the sign-out starts, nothing started for
+  the visitor is kept or sent, and once the answer is in (or none can come), everything
+  private goes. Anything but the server's success, read in full, reads the account again and
+  says the server has not confirmed the sign-out. No other Better Auth endpoint is served.
 - **What is accepted and kept.** An ID token from Google's token endpoint (the only
   source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
   this client and no other audience, with finite `exp` (not passed) and `iat` (not in
@@ -1850,8 +1907,15 @@ lock order in migration 0019.
   one, for a tab that starts listening late and for a page restored from the
   back/forward cache, which forgets anyway when it cannot read local storage; such a tab
   then reads the account again); an AI request still under way is discarded without
-  restoring a question, a retry key or a navigation. A deletion's re-authentication is
-  counted per account (5 starts and 5 callbacks an hour), not per network.
+  restoring a question, a retry key or a navigation. As with signing out, the page forgets
+  whatever the deletion's answer: nothing started for the visitor is kept or sent from the
+  moment the deletion starts, and once the answer is in (or none can come) everything
+  private goes. Anything but the server's success, read in full, reads the account again
+  and says the server has not confirmed the deletion. The exception is a refusal read in
+  full that asks for the Google confirmation first (403 `reauth_required`): nothing was
+  deleted and the session stands, so the page goes on to that confirmation. A deletion's
+  re-authentication is counted per account (5 starts and 5 callbacks an hour), not per
+  network.
 - **Backups** never hold the rows of the sign-in tables, the briefs or the idempotency
   records (`server/db/backup.ts`; RUNBOOK, "Backups"), so a restore cannot bring back a
   deleted account, its content, a session or OAuth state; `pnpm worker restore-check`
