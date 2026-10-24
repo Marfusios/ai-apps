@@ -44,9 +44,14 @@ export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne =
   const signIn = useSignIn();
   const noteId = useId();
   const read = askAvailability(status.data, status.isError);
-  // Only signed-in AI is open and nobody can sign in here: off, with the counter's words (review W-10).
+  // Only signed-in AI is open and nobody can sign in here: off, with the counter's words (review
+  // W-10); until the configuration says whether sign-in is offered, the button waits.
   const availability: AskAvailability =
-    read.kind === 'sign_in' && !signIn.enabled ? { kind: 'paused', note: signedInOnlyNote(read.reason), status: null } : read;
+    read.kind !== 'sign_in' || signIn.enabled
+      ? read
+      : signIn.known
+        ? { kind: 'paused', note: signedInOnlyNote(read.reason), status: null }
+        : { kind: 'loading' };
   const describedBy = availability.kind === 'paused' ? noteId : undefined;
   const busy = phase !== 'idle';
   const disabled = availability.kind === 'loading' || availability.kind === 'paused' || busy;

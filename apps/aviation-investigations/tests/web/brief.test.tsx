@@ -158,6 +158,34 @@ describe('AI availability labels (UI_DESIGN §5)', () => {
     expect(container.textContent).not.toMatch(/sign in/i);
   });
 
+  it('until it is known whether sign-in is offered, a signed-in-only state says neither "sign in" nor the words for no sign-in', async () => {
+    let answer: (() => void) | null = null;
+    server.use(
+      http.get('*/api/config', async () => {
+        await new Promise<void>((resolve) => (answer = resolve));
+        return HttpResponse.json({ ...mockConfig, googleEnabled: true });
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['ai-status'], AI_STATUS_SAMPLES.trialUsed);
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <SignInProvider>
+            <AiCounter />
+            <AskAiButton onAsk={() => {}} />
+          </SignInProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(answer).not.toBeNull());
+    expect(container.textContent).not.toMatch(/sign in|Free AI searches/i);
+    expect(screen.getByRole('button', { name: /^Ask AI$/ }).getAttribute('aria-disabled')).toBe('true');
+    act(() => answer?.());
+    expect(await screen.findByRole('button', { name: 'Sign in to keep asking' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');
+  });
+
   it.each(['trialUsed', 'anonymousShare', 'loginRequired'] as const)('%s, with sign-in offered: "Ask AI · sign in"', (sample) => {
     withStatus(AI_STATUS_SAMPLES[sample], <AskAiButton onAsk={() => {}} />, { signIn: true });
     expect(screen.getByRole('button', { name: /^Ask AI\s*·\s*sign in$/ }).getAttribute('aria-disabled')).toBe('false');

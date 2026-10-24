@@ -20,6 +20,8 @@ export function AiCounter() {
   const r = status.remaining;
   if (status.state === 'paused') return <span className="text-muted">{pausedNote(status)}</span>;
   if (status.state === 'signed_in_only' && r?.kind !== 'account') {
+    // Whether sign-in is offered is read with the configuration: say nothing until then.
+    if (!signIn.known) return null;
     if (!signIn.enabled) return <span className="text-muted">{signedInOnlyNote(status.reason)}</span>;
     const text = status.reason === 'trial_used' ? 'Sign in to keep asking' : 'Sign in to ask the AI';
     return (

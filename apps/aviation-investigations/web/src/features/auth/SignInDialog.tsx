@@ -24,11 +24,14 @@ export const SIGN_IN_UNAVAILABLE = "Sign-in couldn't start. Try again in a momen
 interface SignInState {
   /** Google sign-in is configured (`GET /api/config` `googleEnabled`): otherwise nothing offers it. */
   enabled: boolean;
+  /** The configuration has been read, so `enabled` is known (false until then). */
+  known: boolean;
   /** Open the dialog; `failed` adds the line that the last sign-in did not complete. */
   open(options?: { failed?: boolean }): void;
 }
 
-const SignInContext = createContext<SignInState>({ enabled: false, open: () => {} });
+// Outside the provider nothing offers sign-in, and that is known.
+const SignInContext = createContext<SignInState>({ enabled: false, known: true, open: () => {} });
 
 /** The sign-in dialog of the page (any control that offers sign-in opens it). */
 export function useSignIn(): SignInState {
@@ -60,7 +63,8 @@ export function SignInProvider({ children }: { children: ReactNode }) {
   const open = useCallback((options?: { failed?: boolean }) => {
     setDialog({ open: true, failed: options?.failed === true });
   }, []);
-  const value = useMemo<SignInState>(() => ({ enabled, open }), [enabled, open]);
+  const known = config.data !== undefined;
+  const value = useMemo<SignInState>(() => ({ enabled, known, open }), [enabled, known, open]);
 
   return (
     <SignInContext.Provider value={value}>
