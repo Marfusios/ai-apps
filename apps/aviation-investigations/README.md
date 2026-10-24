@@ -1791,7 +1791,7 @@ log what keeps any part off (setting names only). The tables are in migration 00
 ### AI evidence view
 
 The backend contract is `evidence.v1` (`shared/contracts/evidence.ts`). This is an
-extractive search, not a generated answer. `scope.e1` produces editable, typed filters
+extractive search, not a generated answer. `scope.e2` produces editable, typed filters
 and search terms plus verbatim fragments of the question labelled as unchecked
 readings. Unsupported timing, causation, absence and ambiguity remain unapplied.
 There are no default timing windows. The UI must always display `EVIDENCE_NOTICE`,
@@ -1814,15 +1814,20 @@ incomplete retrieval or projection failure answers 503 with no private diagnosti
 
 `retrieval.v2` fuses the production three channels (passage BM25, passage similarity,
 and cases narrative BM25), 200 candidates per channel with its existing exact fusion
-and tie ordering. The editable terms feed both lexical queries and the one embedding.
-`evidence.v1` extends mapping to the first 100 cases. It stores that ranking, concrete
+and tie ordering. For a question, all three channels use the original question with the interpreted
+filters. Model terms only drive highlights and relevance counts and initialize the
+editable terms. For an edit, all three channels use the user's edited terms.
+`evidence.v1` extends mapping to the first 100 cases. Mapping uses at most eight concurrent requests within the shared retrieval deadline.
+It stores that ranking, concrete
 indices, canonical generation, retrieval seed spans, channels and result projection.
 It has 10 cases/page and at most 10 pages; `total` is the saved candidate count, not
 the number of relevant investigations in the corpus. Zero results is page 1 with
 `pages: 0`. Beyond the last page is 404. Pages never re-rank, embed or call a model.
 
 Every card has coded facts, every canonical probable-cause variant and up to three
-**whole-paragraph previews** (`paragraphs.v1`). Paragraphs are not shortened; UTF-16
+**whole-paragraph previews** (`paragraphs.v2`). The shared `ntsb-paragraphs.v1` rule
+uses single newlines, joins hard-wrapped sentences and attaches heading lines to the
+following paragraph. Paragraphs are not shortened; UTF-16
 spans are checked against canonical sections and the stored passage rows. Multi-aircraft
 narratives stay event-scoped. Literal and explicitly declared analyzer-synonym matches
 are distinguished; stemming or semantic similarity is never presented as a word match.
@@ -1837,16 +1842,22 @@ highlights, never HTML. Search creation/expiry timestamps are UTC instants endin
 
 Ownership is checked in the query reading private content. Unowned, missing and expired
 searches are indistinguishable 404s. The 24-hour lifetime never extends on read, retry or
-sign-in. Sign-in from `/ai/:id` or `/evidence/:id`, or a signed-in edit/retry from the
+sign-in. The canonical results page is `/ai/:id` (private, no-store, noindex/nofollow;
+head title “AI search · AirCase”). Sign-in from it, or a signed-in edit/retry from the
 owning trial browser, moves read ownership once; original charges stay on the original
 principal. Account deletion removes searches and their idempotent results. Maintenance
 deletes expired searches. Backup and restore checks exclude `evidence_searches` data.
+Page reads select only the requested ten cases; context membership is checked in SQL
+without loading the stored ranking. A search has an 8 MiB UTF-8 JSON budget, checked
+before storage and enforced by the database. Oversized results fail without truncation,
+returning the quota unit and settling actual spend.
 Generation and index cleanup honor the live-search references, including after republish.
 
 Each finished, replayable results search counts once; edits count again; paging and
 idempotent retries are free. Static scope replies and failures return the quota unit,
 while actual or uncertain provider spend remains charged. A lost HTTP response can be
-replayed with the original key. A new anonymous POST (including replay) needs a fresh
+replayed with the original key. Disconnecting does not cancel admitted work; only
+shutdown, account deletion or the 30-second server deadline stops it. A new anonymous POST (including replay) needs a fresh
 Turnstile token. Signed-in step-up, network limits, concurrency, restore hold and the
 existing $3/day / $80 interactive / $20 indexing+evaluation / $100 total monthly gates
 are retained. Daily limits reset at 00:00 UTC: 10/trial, 50/account, 20/account during
@@ -1859,13 +1870,22 @@ is $0.0011325 (scope input 6,500, output 600, full cache-write premium; embeddin
 1,000 tokens), rounded up to a **$0.0012 reservation**. Startup derives this from the
 configured models; it is not the generated-summary reservation. No generation retries
 run. Over-cap or truncated scope output fails closed without cropping. The free
-`ai-preflight` also measures `scope.e1`; provider measurement and scope/excerpt quality
+`ai-preflight` also measures `scope.e2`; provider measurement and scope/excerpt quality
 checks remain required before public AI launch. Offline tests are not model-quality
-clearance.
+clearance. The schema-bound output is larger than the existing 600-token cap; the
+preflight reports this explicitly. Caps and prices have not been raised. Resolve this
+with measured provider counts and a reviewed schema/cap choice before public launch.
+The flat scope output is versioned `scope.e2` (the module path stays `scope.e1.ts` for
+existing tooling); scope quality evaluation must use this new version.
+Anthropic receives a strict `{result: ...}` output envelope; the adapter unwraps it
+before returning the logical scope result. Token counting and output preflight use
+the same envelope. This transport encoding does not change prompt or filter rules.
 
 `AI_BRIEFS_ENABLED=false` is the default and must stay off while G6 for generated
 summaries is closed. It disables create/refine with 404 even with provider keys present;
-legacy reads and cancel still work until expiry. `AI_PARTIAL_DISPLAY` stays off too.
+legacy reads and cancel still work until expiry. Re-enabling briefs would inherit the
+same daily evidence-sized anonymous allowance, so quotas and costs must be reviewed
+together before doing so. `AI_PARTIAL_DISPLAY` stays off too.
 See [RUNBOOK](docs/RUNBOOK.md#enabling-the-evidence-view) for enabling evidence after review.
 
 ### AI briefs

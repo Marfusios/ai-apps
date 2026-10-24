@@ -71,11 +71,12 @@ const envSchema = z.object({
     .enum(['true', 'false', '1', '0'])
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
+  /** Generated-summary writes stay disabled until their separate G6 clearance. */
+  AI_BRIEFS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   /**
    * Claim-level display of AI briefs (Task 16d, server/briefs/display.ts): off until gate G6
    * clears it. Off, a brief's summary is shown only when the check confirmed every claim.
    */
-  AI_BRIEFS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   AI_PARTIAL_DISPLAY: z
     .enum(['true', 'false', '1', '0'])
     .default('false')

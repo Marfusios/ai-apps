@@ -2,7 +2,7 @@
  * The AI evidence view, contract `evidence.v1` (Task 23; owner decision of 2026-10-24; Astra's
  * conditions 1-7 for the narrower G6, recorded in the implementation ledger).
  *
- * A question becomes an editable search interpretation (scope stage `scope.e1`: validated
+ * A question becomes an editable search interpretation (scope stage `scope.e2`: validated
  * filters, search terms, and readings AirCase cannot check, which stay visible and are never
  * applied). Production retrieval (`retrieval.v2`) ranks completed investigations once, and the
  * ranked list is pinned and paged without further paid calls. Results are NTSB text and coded
@@ -68,7 +68,7 @@ export type UncheckedReading = z.infer<typeof UncheckedReadingSchema>;
 /** The editable search interpretation: filters Explore can apply, and the search terms. */
 export const EvidenceInterpretationSchema = z.strictObject({
   filters: BriefFiltersSchema,
-  /** Search terms for keyword and similarity retrieval: plain text, shown and editable. */
+  /** Plain editable terms: highlights initially; all retrieval channels after the user edits them. */
   terms: z.string().min(1).max(MAX_TERMS_CHARS).regex(/\S/, 'the search terms are empty'),
   /** Readings that were not applied, always shown beside the chips. */
   unchecked: z.array(UncheckedReadingSchema).max(8),

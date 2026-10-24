@@ -45,9 +45,9 @@ PostgreSQL for at most 24 hours, is excluded from backups and removed on account
 deletion. Langfuse remains optional; an exporter outage cannot change retrieval or
 settlement. Known embedding usage is captured before downstream failures.
 
-Evidence scope has its own version (`scope.e1`) and does not inherit `scope.v2`'s
+Evidence scope has its own version (`scope.e2`) and does not inherit `scope.v2`'s
 default timing reading. Offline schema/projection/lifecycle tests do not calibrate the
-model. Before paid evaluation, freeze prompts, models, caps, `paragraphs.v1`,
+model. Before paid evaluation, freeze prompts, models, caps, `paragraphs.v2`,
 `evidence.v1` delivery, labels, thresholds and the ledger allocation. Track C/N supplies
 regressions; fresh question families confirm filter precision (98% target), recall
 (95%), and critical unchecked-note coverage (100%). Context-dependent counterexamples

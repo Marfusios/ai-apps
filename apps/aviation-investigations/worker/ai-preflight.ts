@@ -24,9 +24,11 @@
  * `preflightRequests` is pure, so the offline unit test sizes the same requests with the
  * local tokenizer (tests/unit/ai-preflight.test.ts).
  */
+import { FACET_VALUES } from '../shared/contracts/search.js';
+import { BRIEF_FILTER_FACETS } from '../shared/contracts/briefs.js';
+import { stageWorstCaseUsd, embeddingWorstCaseUsd } from '../server/ai/pricing.js';
 import { UNCHECKED_KINDS } from '../shared/contracts/evidence.js';
 import { EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from '../server/ai/prompts/scope.e1.js';
-import { evidenceReservation } from '../server/evidence/pricing.js';
 import { createHash } from 'node:crypto';
 import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOutput } from '../shared/contracts/briefs.js';
 import { PHASE_GROUPS } from '../shared/codes.js';
@@ -398,20 +400,21 @@ export function preflightRequests(): PreflightRequests {
 }
 
 /** Evidence has no refinement history or case text in scope; extrema are questions only.
- * A broad multi-reading example exercises the output allowance. Legal outputs can be
- * longer: the adapter refuses max_tokens (never crops) and the request refunds its quota.
- * Provider measurement and fresh scope-quality evaluation remain deployment gates.
+ * The output uses every filter at its array limit, eight maximum-length quotations
+ * and maximum-length terms. The provider counter must expose an output-cap shortfall,
+ * not hide it behind a representative sample. No cap is silently raised here.
  */
 export function evidencePreflightRequests() {
-  const quote = 'loss of engine power shortly after maintenance';
+  const quote = exactly(300);
+  const filters = Object.fromEntries(BRIEF_FILTER_FACETS.map((f) => [f, [...FACET_VALUES[f]]]));
   return {
     fixed: { question: 'Find engine power loss investigations.' },
     worst: [
       { label: 'maximum Latin question', latin: true, input: { question: exactly(QUESTION_MAX_CHARS) } },
       { label: 'maximum dense question', latin: false, input: { question: denseUpTo(QUESTION_MAX_CHARS, QUESTION_MAX_CHARS) } },
     ],
-    output: JSON.stringify({ intent: 'case_search', filters: { phase: ['takeoff', 'approach'], category: ['AIR'], far_part: ['091'], purpose: ['PERS'], state: ['CA', 'TX'], yearFrom: 2010, yearTo: 2026 },
-      terms: quote, unchecked: UNCHECKED_KINDS.map((kind) => ({ kind, quote })) }),
+    output: JSON.stringify({ result: { intent: 'case_search', filters: { ...filters, yearFrom: 1900, yearTo: 2100 },
+      terms: quote, unchecked: Array.from({ length: 8 }, (_, i) => ({ kind: UNCHECKED_KINDS[i % UNCHECKED_KINDS.length], quote })) } }),
   };
 }
 
@@ -428,7 +431,12 @@ export interface PreflightRow {
 }
 
 /** Count every request and output against its cap. `countText` counts a plain user message. */
-export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels): Promise<PreflightRow[]> {
+export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels, evidence?: { embeddingModel: string; reservationUsd: number }): Promise<PreflightRow[]> {
+  if (provider.countEvidenceScopeTokens) {
+    if (!evidence) throw new Error('evidence preflight requires the configured embedding model and reservation');
+    const worst = stageWorstCaseUsd(models.scope, STAGE_CAPS.scope) + embeddingWorstCaseUsd(evidence.embeddingModel);
+    if (!Number.isFinite(evidence.reservationUsd) || evidence.reservationUsd < worst) throw new Error('evidence reservation too small');
+  }
   const r = preflightRequests();
   const rows: PreflightRow[] = [];
   const ctx = (stage: LlmStage) => stageCtx(stage, AbortSignal.timeout(30_000), 30_000);
@@ -448,9 +456,7 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
     for (const w of e.worst) {
       add('scope', `${EVIDENCE_SCOPE_VERSION}: ${w.label}`, await provider.countEvidenceScopeTokens(w.input, ctx('scope')), STAGE_CAPS.scope.input);
     }
-    add('scope', `${EVIDENCE_SCOPE_VERSION}: multi-reading output`, await output(models.scope, e.output), STAGE_CAPS.scope.output);
-    const cost = evidenceReservation(models.scope, 'text-embedding-3-small');
-    if (cost.reservationUsd < cost.worstCaseUsd) throw new Error('evidence reservation too small');
+    add('scope', `${EVIDENCE_SCOPE_VERSION}: output at its schema bounds`, await output(models.scope, e.output), STAGE_CAPS.scope.output);
   }
   const scopeFixed = await provider.countInputTokens('scope', r.fixed.scope, ctx('scope'));
   add('scope', 'fixed (system prompt + schema)', scopeFixed, STAGE_CAPS.scope.input);

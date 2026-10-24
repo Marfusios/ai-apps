@@ -78,8 +78,8 @@ export const PAGE_DESCRIPTIONS = {
   privacy: 'What AirCase keeps on your device and on its servers. No tracking or advertising cookies; searching, reading cases and comparing need no account.',
   compare: 'Compare up to four NTSB aviation investigations on one page, with their facts lined up and what is the same in all of them shown once.',
   account: 'Your AirCase account. Search, case pages, compare and the dashboard stay open without an account.',
+  evidence: 'A private evidence search. It opens only for the person who asked the question.',
   brief: 'A private brief. It opens only for the person who asked the question.',
-  evidence: 'A private AI search. It opens only for the person who asked the question.',
   missingCase: 'No investigation has that number.',
   notFound: 'There is no page here.',
 } as const;

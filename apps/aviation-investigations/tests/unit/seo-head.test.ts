@@ -141,7 +141,7 @@ describe('descriptions', () => {
       ],
       [{ kind: 'account' }, 'Your AirCase account. Search, case pages, compare and the dashboard stay open without an account.'],
       [{ kind: 'brief', id: 'x' }, 'A private brief. It opens only for the person who asked the question.'],
-      [{ kind: 'evidence', id: 'x' }, 'A private AI search. It opens only for the person who asked the question.'],
+      [{ kind: 'evidence', id: 'x' }, 'A private evidence search. It opens only for the person who asked the question.'],
       [{ kind: 'missing_case', requested: 'ZZZ99ZZ999' }, 'No investigation has that number.'],
       [{ kind: 'not_found' }, 'There is no page here.'],
     ];

@@ -12,7 +12,7 @@ import { releaseQuota, type Admission } from '../quota/admit.js';
 import { settle, type SpendLine } from '../quota/settle.js';
 import { stageSpan, startRequestSpan } from '../observability/tracing.js';
 import type { ApiContext } from '../routes/context.js';
-import { finishSearch, pageOf, type EvidenceRow, type SearchData } from './store.js';
+import { assertSearchDataBudget, finishSearch, pageOf, type EvidenceRow, type SearchData } from './store.js';
 
 /** Failures expose only a fixed category; no upstream error, scope output, text or keys. */
 export class EvidenceFailure extends Error {
@@ -64,15 +64,17 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
         active = 'retrieval';
         const retrieved = await stageSpan('evidence.retrieve', { stage: 'retrieve', retrievalVersion: 'retrieval.v2' }, async (stage) => {
           const result = await services.retriever.search(pinned, interpretation!, AbortSignal.any([signal, AbortSignal.timeout(8_000)]), (u) => {
-            if (embedRecorded) throw new EvidenceFailure('retrieval');
+            const duplicate = embedRecorded;
             embedRecorded = true;
             lines.push({ stage: 'embed', provider: 'openai', model: u.model, usd: u.billing === 'uncertain' ? embeddingWorstCaseUsd(u.model) : u.usd,
               tokens: { inputTokens: u.tokens }, ...(u.billing === 'uncertain' ? { uncertain: true } : {}) });
-          });
+            if (duplicate) throw new EvidenceFailure('retrieval');
+          }, row.data.edited ? interpretation!.terms : row.data.question);
           stage.setAttrs({ caseCount: result.cases.length });
           return result;
         });
         finalData = { ...finalData, interpretation, ranking: retrieved.ranking, cases: retrieved.cases };
+        assertSearchDataBudget(finalData);
         // Validate the exact public page before keeping its quota unit or storing success.
         pageOf({ ...row, status: 'results', data: finalData }, 1);
         outcome = 'results';
@@ -81,6 +83,7 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
     } catch (error) {
       failed = true;
       outcome = 'failed';
+      finalData = { ...row.data };
       if (error instanceof StageError && !scopeRecorded) {
         scopeRecorded = true;
         if (error.billing.kind === 'usage') lines.push({ stage: 'scope', provider: error.provider, model: error.model,

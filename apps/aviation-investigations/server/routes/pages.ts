@@ -4,8 +4,8 @@
  * (server/seo/head.ts), a fresh style nonce and the status its route has; the client renders
  * the page itself.
  *
- * - `/`, `/explore`, `/dashboard`, `/about`, `/privacy`, `/compare`, `/account`,
- *   `/briefs/:id` and `/ai/:id` (an AI evidence search) are 200. `/cases/:ntsbNo` is 200 for a case `GET /api/cases/:ntsbNo` serves
+ * - `/`, `/explore`, `/dashboard`, `/about`, `/privacy`, `/compare`, `/account` and
+ *   `/briefs/:id` are 200. `/cases/:ntsbNo` is 200 for a case `GET /api/cases/:ntsbNo` serves
  *   (the same lookup, `findCase`) and 404 otherwise, a number too long for the router included.
  *   Any other path without a file extension is the 404 page: the client router shows its
  *   not-found page.
@@ -48,8 +48,8 @@ const STATIC_PAGES: ReadonlyMap<string, (request: FastifyRequest) => PageRoute> 
   ['/privacy', () => ({ kind: 'privacy' })],
   ['/compare', (request) => ({ kind: 'compare', query: queryOf(request) })],
   ['/account', () => ({ kind: 'account' })],
-  ['/briefs/:id', (request) => ({ kind: 'brief', id: paramOf(request, 'id') })],
   ['/ai/:id', (request) => ({ kind: 'evidence', id: paramOf(request, 'id') })],
+  ['/briefs/:id', (request) => ({ kind: 'brief', id: paramOf(request, 'id') })],
 ]);
 
 /** Read from the database: rate limited like the API. */
@@ -60,7 +60,7 @@ export const ROBOTS_ROUTE = '/robots.txt';
 /** Pages anyone may load without a network identity or the rate limit (server/app.ts `ASSET_ROUTES`). */
 export const PUBLIC_PAGE_ROUTES: readonly string[] = [...STATIC_PAGES.keys(), INDEX_FILE_ROUTE];
 
-/** Page paths of one segment (`/about`), and the pages with one parameter (`/cases/X`, `/briefs/X`, `/ai/X`). */
+/** Page paths of one segment (`/about`), and the pages with one parameter (`/cases/X`, `/briefs/X`). */
 const ONE_SEGMENT_PAGES: ReadonlySet<string> = new Set(['explore', 'dashboard', 'about', 'privacy', 'compare', 'account']);
 const PARAMETER_PAGES: ReadonlySet<string> = new Set(['cases', 'briefs', 'ai']);
 
@@ -129,8 +129,7 @@ export function unmatchedPage(path: string): { redirect: string } | { route: Pag
   if (segments.length === 1 && ONE_SEGMENT_PAGES.has(page) && first !== page) return { redirect: `/${page}` };
   if (segments.length !== 2 || !PARAMETER_PAGES.has(page) || param === '') return null;
   if (first !== page) return { redirect: `/${page}/${encodeURIComponent(param)}` };
-  if (page === 'cases') return { route: { kind: 'missing_case', requested: param } };
-  return { route: page === 'ai' ? { kind: 'evidence', id: param } : { kind: 'brief', id: param } };
+  return { route: page === 'cases' ? { kind: 'missing_case', requested: param } : { kind: page === 'ai' ? 'evidence' : 'brief', id: param } };
 }
 
 /** The page a request's matched route serves (a case page without its record), or null. */
@@ -153,7 +152,7 @@ export function pageRoutes(app: FastifyInstance, ctx: ApiContext, opts: PageOpti
     return reply
       .code(pagePolicy(route, failure).status)
       .header('content-security-policy', contentSecurityPolicy({ styleNonce: nonce, turnstile: opts.turnstile }))
-      .header('cache-control', failure === undefined ? 'no-cache' : 'no-store')
+      .header('cache-control', route.kind === 'evidence' || route.kind === 'brief' ? 'private, no-store' : failure === undefined ? 'no-cache' : 'no-store')
       .type('text/html; charset=utf-8')
       .send(html);
   };

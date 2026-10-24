@@ -1,20 +1,24 @@
 /** Real canonical rows, production retrieval, fake embeddings/scope, no provider network. */
+import { request as httpRequest } from 'node:http';
+import * as quotaAdmission from '../../server/quota/admit.js';
+import { paragraphSpans } from '../../server/evidence/project.js';
+import { EVIDENCE_DATA_MAX_BYTES } from '../../server/evidence/store.js';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Client } from '@elastic/elasticsearch';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../server/app.js';
 import { createAiRuntime } from '../../server/ai/runtime.js';
 import { createFakeProvider, type FakeScript } from '../../server/ai/fake.js';
 import { createEvidenceRetriever, createEvidenceServices, type EvidenceRetriever } from '../../server/evidence/retrieve.js';
-import { pageOf, readOwnedSearch, takeOverSearch } from '../../server/evidence/store.js';
+import { pageOf, readOwnedSearch } from '../../server/evidence/store.js';
 import { evidenceSnapshot } from '../../server/evidence/snapshot.js';
 import { EvidencePageSchema, CreateEvidenceResponseSchema } from '../../shared/contracts/evidence.js';
 import { loadConfig } from '../../shared/config.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { authUsers, authSessions, evidenceSearches } from '../../server/db/schema/index.js';
 import { completeHandover, handoverCandidate } from '../../server/auth/handover.js';
-import { withLiveAccount } from '../../server/auth/lifecycle.js';
+import { accountLockKey } from '../../server/auth/lifecycle.js';
 import { type AuthService, type SignedIn } from '../../server/auth/better-auth.js';
 import { principalHash } from '../../server/quota/policy.js';
 import { deleteAccount, issueDeletionConfirmation } from '../../server/auth/deletion.js';
@@ -45,7 +49,7 @@ beforeAll(async () => {
   dataset = await publishFixtureDataset(ingest, writer, prefix, { passages: true });
 }, 180_000);
 beforeEach(async () => { clock = new Date(); await resetControls(); });
-afterEach(async () => { for (const h of harnesses.splice(0)) await h.app.close(); });
+afterEach(async () => { vi.restoreAllMocks(); for (const h of harnesses.splice(0)) await h.app.close(); });
 afterAll(async () => { await resetControls(); await deleteIndices(writer, prefix); await resetCorpus();
   await Promise.all([closeDb(db), closeDb(ingest), closeDb(migrator), es.close(), writer.close()]); });
 
@@ -97,6 +101,19 @@ const spent = async () => (await db.execute(sql`SELECT sum(usd)::float AS usd, c
 const usage = async () => (await db.execute(sql`SELECT quota_counted, status FROM reservations ORDER BY id DESC LIMIT 1`)).rows[0] as { quota_counted: boolean; status: string };
 
 describe('evidence search routes', () => {
+  it('measures the whole-paragraph ceiling on the local canonical fixture corpus', async () => {
+    const rows = await db.execute(sql`SELECT ntsb_no, section_key, text FROM case_sections WHERE generation_id = ${dataset.generationId}`);
+    let count = 0, maxChars = 0, maxBytes = 0, largest = '';
+    for (const row of rows.rows as { ntsb_no: string; section_key: string; text: string }[]) {
+      for (const p of paragraphSpans(row.text)) {
+        count++; const text = row.text.slice(p.start, p.end);
+        if (text.length > maxChars) { maxChars = text.length; largest = `${row.ntsb_no}:${row.section_key}`; }
+        maxBytes = Math.max(maxBytes, Buffer.byteLength(text, 'utf8'));
+      }
+    }
+    expect(count).toBeGreaterThan(0); expect(maxChars).toBeLessThanOrEqual(200_000);
+    console.info(JSON.stringify({ measurement: 'evidence-paragraphs.v2-local-fixtures', sections: rows.rows.length, paragraphs: count, maxChars, maxBytes, largest }));
+  });
   it('aborts a stalled canonical snapshot and frees its connection for the next read', async () => {
     const controller = new AbortController();
     let reached!: () => void;
@@ -141,7 +158,9 @@ describe('evidence search routes', () => {
     expect(JSON.stringify(page)).not.toMatch(/"(summary|classification|why|diagnostics)":/);
   });
   it('replays once, rejects a reused key with different content, and edits preserve unchecked readings without scope', async () => {
-    const h = harness(), key = randomUUID(), page = searchOf(await h.request({}, key));
+    const searches = vi.spyOn(es, 'search');
+    const observed: string[] = [];
+    const h = harness(undefined, (r) => ({ ...r, search(p, i, s, cb, q) { observed.push(q); return r.search(p, i, s, cb, q); } })), key = randomUUID(), page = searchOf(await h.request({}, key));
     nextMinute();
     expect(searchOf(await h.request({}, key))).toEqual(page);
     expect((await h.request({ question: 'Find carb icing' }, key)).statusCode).toBe(409);
@@ -154,9 +173,15 @@ describe('evidence search routes', () => {
     expect(edited.interpretation.filters).toEqual({});
     expect(h.llm.calls).toHaveLength(1);
     expect(h.embed).toHaveBeenCalledTimes(2);
+    expect(observed).toEqual(['Find engine power loss after maintenance', 'carb icing']);
+    const lexical = searches.mock.calls.map(([body]) => body?.query?.bool?.must).filter(Boolean);
+    expect(lexical).toHaveLength(4);
+    for (const query of lexical.slice(0, 2)) expect(JSON.stringify(query)).toContain('Find engine power loss after maintenance');
+    for (const query of lexical.slice(2)) expect(JSON.stringify(query)).toContain('carb icing');
+    expect(h.embed.mock.calls.map((c) => c[0])).toEqual([['Find engine power loss after maintenance'], ['carb icing']]);
   });
   it.each(['out_of_scope', 'operational_advice', 'corpus_statistics', 'case_comparison'] as const)('returns only the static %s reply and refunds quota', async (intent) => {
-    const h = harness({ evidenceScope: { output: { intent, filters: {} } } });
+    const h = harness({ evidenceScope: { output: { intent, filters: {}, terms: '', unchecked: [] } } });
     const res = await h.request();
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ kind: 'scope_reply', reply: { kind: intent } });
@@ -165,7 +190,7 @@ describe('evidence search routes', () => {
     expect(h.embed).not.toHaveBeenCalled();
   });
   it('refunds failures after embedding, settles its usage exactly once and leaks no diagnostic text', async () => {
-    const h = harness(undefined, (r) => ({ ...r, async search(p, i, s, cb) { await r.search(p, i, s, cb); throw new Error('SENTINEL_PRIVATE'); } }));
+    const h = harness(undefined, (r) => ({ ...r, async search(p, i, s, cb, q) { await r.search(p, i, s, cb, q); throw new Error('SENTINEL_PRIVATE'); } }));
     const res = await h.request();
     expect(res.statusCode).toBe(503);
     expect((await usage()).quota_counted).toBe(false);
@@ -220,6 +245,7 @@ describe('evidence search routes', () => {
     const deps = { db, policy: h.ai.policy!, trials: h.ai.trials!, now };
     const candidate = await handoverCandidate(deps, trialCookie, `/ai/${page.id}`);
     expect(candidate?.kind).toBe('evidence');
+    expect(await handoverCandidate(deps, trialCookie, `/evidence/${page.id}`)).toBeNull();
     expect(await completeHandover(deps, trialCookie, candidate!, account)).toBe('moved');
     expect((await h.get(page.id, 1, trialCookie)).statusCode).toBe(404);
     expect((await h.get(page.id)).statusCode).toBe(200);
@@ -320,5 +346,134 @@ describe('evidence search routes', () => {
     const h = harness(), page = searchOf(await h.request());
     await expect(ingest.execute(sql`SELECT * FROM evidence_searches`)).rejects.toThrow();
     await expect(db.update(evidenceSearches).set({ data: {} }).where(eq(evidenceSearches.id, page.id))).rejects.toThrow();
+  });
+});
+
+describe('evidence fix-round regressions', () => {
+  it('commits despite a real HTTP disconnect, then replays without another paid call or quota unit', async () => {
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>((r) => { entered = r; });
+    const held = new Promise<void>((r) => { release = r; });
+    let calls = 0;
+    const h = harness({ evidenceScope: async () => { if (++calls === 2) { entered(); await held; } return { output: success }; } });
+    searchOf(await h.request()); // establish the trial cookie before losing a response
+    nextMinute();
+    const key = randomUUID();
+    const address = await h.app.listen({ host: '127.0.0.1', port: 0 });
+    const payload = JSON.stringify({ kind: 'question', question: 'Find engine power loss after maintenance', idempotencyKey: key, turnstileToken: h.verify.issue() });
+    const request = httpRequest(`${address}/api/evidence`, { method: 'POST', headers: { origin: `https://${host}`, cookie: h.cookie(), 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } });
+    request.on('error', () => {}); request.end(payload);
+    await reached;
+    try {
+      request.destroy();
+      await new Promise((r) => setTimeout(r, 20));
+      expect([...h.svc.runs.values()].every((r) => !r.controller.signal.aborted)).toBe(true);
+    } finally { release(); }
+    await h.svc.settled();
+    const before = await spent();
+    const result = searchOf(await h.request({}, key));
+    expect(result.total).toBeGreaterThan(0);
+    expect(h.llm.calls).toHaveLength(2);
+    expect(h.embed).toHaveBeenCalledTimes(2);
+    expect(await spent()).toEqual(before);
+    expect((await h.app.inject({ url: '/api/ai/status', headers: { cookie: h.cookie() } })).json().remaining.left).toBe(8);
+  });
+
+  it('records both embedding callbacks before rejecting a duplicate callback', async () => {
+    const h = harness(undefined, (r) => ({ ...r, search(p, i, s, cb, q) { return r.search(p, i, s, (u) => { cb(u); cb(u); }, q); } }));
+    expect((await h.request()).statusCode).toBe(503);
+    const lines = await db.execute(sql`SELECT stage, usd::float AS usd FROM cost_ledger ORDER BY id`);
+    expect(lines.rows.map((l) => l.stage).sort()).toEqual(['embed', 'embed', 'scope']);
+    expect((await usage()).quota_counted).toBe(false);
+  });
+
+  it('reads only the selected page or header, and membership stays in the ownership query', async () => {
+    const h = harness(), page = searchOf(await h.request());
+    const [stored] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, page.id));
+    const readers = [{ kind: stored!.readOwnerKind as 'trial', hash: stored!.readOwner }];
+    const header = await readOwnedSearch(db, page.id, readers, now());
+    expect(header!.data).not.toHaveProperty('cases'); expect(header!.data).not.toHaveProperty('ranking');
+    const second = await readOwnedSearch(db, page.id, readers, now(), false, { page: 2 });
+    expect(second!.data.cases!.length).toBeLessThanOrEqual(10);
+    expect(second!.data).not.toHaveProperty('ranking');
+    expect(second!.resultTotal).toBe(page.total);
+    expect(pageOf(second!, 2)).toEqual((await h.get(page.id, 2)).json());
+    expect(await readOwnedSearch(db, page.id, readers, now(), false, { caseNo: 'ZZZ99LA999' })).toBeNull();
+    const context = await readOwnedSearch(db, page.id, readers, now(), false, { caseNo: page.cases[0]!.case.ntsbNo });
+    expect(context!.data).not.toHaveProperty('cases');
+    expect(await readOwnedSearch(db, page.id, [{ kind: 'trial', hash: 'different-owner' }], now(), false, { caseNo: page.cases[0]!.case.ntsbNo })).toBeNull();
+  });
+
+  it('the database byte bound also refuses a direct oversized JSON insert', async () => {
+    const h = harness(), page = searchOf(await h.request());
+    const error = await db.$client.query(`INSERT INTO evidence_searches
+      (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
+      SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
+        'running', jsonb_build_object('text', repeat('é', $2::int)), created_at, expires_at FROM evidence_searches WHERE id = $1::uuid`,
+      [page.id, EVIDENCE_DATA_MAX_BYTES / 2]).then(() => null, (e: unknown) => e);
+    expect(error).toMatchObject({ code: '23514', constraint: 'evidence_data_bytes_check' });
+  });
+
+  it('fails an oversized stored result without truncating, losing spend or keeping its quota', async () => {
+    const h = harness(undefined, (r) => ({ ...r, async search(p, i, s, cb, q) {
+      const result = await r.search(p, i, s, cb, q);
+      result.cases[0]!.probableCauses[0]!.text = 'x'.repeat(EVIDENCE_DATA_MAX_BYTES);
+      return result;
+    } }));
+    expect((await h.request()).statusCode).toBe(503);
+    expect((await usage())).toMatchObject({ quota_counted: false, status: 'settled' });
+    expect((await spent()).lines).toBe(2);
+    const [stored] = await db.select().from(evidenceSearches);
+    expect(stored!.status).toBe('failed'); expect(stored!.data).not.toHaveProperty('cases');
+  });
+
+  it('a vanished edited parent is 404; a busy refund retries before zero settlement', async () => {
+    let parent = '';
+    const h = harness(undefined, (r) => ({ ...r, async available(p) {
+      const yes = await r.available(p);
+      if (parent) await migrator.delete(evidenceSearches).where(eq(evidenceSearches.id, parent));
+      return yes;
+    } }));
+    parent = searchOf(await h.request()).id;
+    const before = await spent(); nextMinute();
+    const refund = vi.spyOn(quotaAdmission, 'releaseQuota');
+    refund.mockResolvedValueOnce({ released: false, reason: 'busy' });
+    const result = await h.request({ kind: 'edited', question: undefined, from: parent, filters: {}, terms: 'engine' });
+    expect(result.statusCode, result.body).toBe(404);
+    expect(refund).toHaveBeenCalledTimes(2);
+    expect((await usage()).quota_counted).toBe(false);
+    expect(await spent()).toEqual({ usd: before.usd, lines: before.lines + 1 });
+    expect(h.llm.calls).toHaveLength(1);
+    expect(h.embed).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletion consults the live run registry after waiting for the account lock', async () => {
+    let release!: () => void, entered!: () => void;
+    const reached = new Promise<void>((r) => { entered = r; });
+    const held = new Promise<void>((r) => { release = r; });
+    const h = harness({ evidenceScope: async () => { entered(); await held; return { output: success }; } });
+    const account = await h.account(); await issueDeletionConfirmation(db, account);
+    const request = h.request(); await reached;
+    const [id, run] = [...h.svc.runs.entries()][0]!;
+    h.svc.runs.delete(id);
+    const blocker = await migrator.$client.connect();
+    try {
+      await blocker.query('BEGIN');
+      const [a, b] = accountLockKey(account.hash);
+      await blocker.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [a, b]);
+      const pid = (await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      const deleting = h.app.inject({ method: 'POST', url: '/api/account/delete', headers: { origin: `https://${host}`, cookie: h.cookie() }, payload: { confirm: true } });
+      const response = deleting.then((r) => r);
+      await vi.waitFor(async () => {
+        const rows = await migrator.execute(sql`SELECT count(*)::int AS n FROM pg_stat_activity WHERE ${pid} = ANY(pg_blocking_pids(pid))`);
+        expect(Number(rows.rows[0]?.n)).toBeGreaterThan(0);
+      });
+      h.svc.runs.set(id, run);
+      await blocker.query('COMMIT');
+      expect((await response).statusCode).toBe(200);
+      expect(run.controller.signal.aborted).toBe(true);
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); release(); }
+    expect((await request).statusCode).toBe(503);
+    expect(h.embed).not.toHaveBeenCalled();
   });
 });

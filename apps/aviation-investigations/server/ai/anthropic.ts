@@ -5,7 +5,7 @@
  * it (adaptive for the check), a cached frozen system prompt, no retries, prefill, sampling
  * parameters, server tools or refusal fallbacks.
  */
-import { EvidenceScopeInputSchema, EvidenceScopeOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser, type EvidenceScopeInput, type EvidenceScopeOutput } from './prompts/scope.e1.js';
+import { EvidenceScopeInputSchema, EvidenceScopeWireOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from './prompts/scope.e1.js';
 import Anthropic, {
   APIConnectionError,
   APIConnectionTimeoutError,
@@ -408,7 +408,7 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
 
   const evidenceScope = stage({
     stage: 'scope', promptVersion: EVIDENCE_SCOPE_VERSION, system: EVIDENCE_SCOPE_SYSTEM,
-    input: EvidenceScopeInputSchema, output: EvidenceScopeOutputSchema, render: renderEvidenceScopeUser,
+    input: EvidenceScopeInputSchema, output: EvidenceScopeWireOutputSchema, render: renderEvidenceScopeUser,
   });
   const scope = stage({
     stage: 'scope',
@@ -446,7 +446,10 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     countInputTokens<S extends LlmStage>(name: S, input: StageInputs[S], ctx: StageCtx): Promise<number> {
       return (counters[name] as (i: StageInputs[S], c: StageCtx) => Promise<number>)(input, ctx);
     },
-    evidenceScope: evidenceScope.run,
+    evidenceScope: async (input, ctx) => {
+      const result = await evidenceScope.run(input, ctx);
+      return { ...result, output: result.output.result };
+    },
     countEvidenceScopeTokens: evidenceScope.countInputTokens,
     scope: scope.run,
     compose: compose.run,

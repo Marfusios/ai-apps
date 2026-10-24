@@ -22,6 +22,7 @@ export const evidenceSearches = pgTable('evidence_searches', {
   check('evidence_expiry_check', sql`${t.expiresAt} > ${t.createdAt} and ${t.expiresAt} <= ${t.createdAt} + interval '24 hours'`),
   check('evidence_status_check', sql`${t.status} in ('running','results','scope_reply','failed')`),
   check('evidence_data_check', sql`jsonb_typeof(${t.data}) = 'object'`),
+  check('evidence_data_bytes_check', sql`octet_length(${t.data}::text) <= 8388608`),
   check('evidence_indices_check', sql`${t.casesIndex} ~ '^[a-z0-9][a-z0-9._-]{0,254}$' and ${t.passagesIndex} ~ '^[a-z0-9][a-z0-9._-]{0,254}$'`),
   index('evidence_expires_idx').on(t.expiresAt),
   index('evidence_owner_idx').on(t.readOwner, t.readOwnerKind),

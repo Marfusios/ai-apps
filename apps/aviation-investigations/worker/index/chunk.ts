@@ -38,6 +38,7 @@
 import type { SectionKind } from '../../server/db/queries/case-records.js';
 import { GLUED_HEADING_PATTERN } from './analysis.js';
 import { countTokens } from './tokens.js';
+import { narrativeParagraphs as paragraphs, isNarrativeHeading as isHeading } from '../../shared/narrative-paragraphs.js';
 
 export const CHUNKER_VERSION = 'chunk-v2';
 
@@ -170,51 +171,6 @@ function sentences(text: string, ps: number, pe: number): [number, number][] {
 /** Sentences of one paragraph of text, as strings (exposed for tests). */
 export function splitSentences(paragraph: string): string[] {
   return sentences(paragraph, 0, paragraph.length).map(([a, b]) => paragraph.slice(a, b));
-}
-
-/** A line that ends a sentence or introduces what follows. */
-const ENDS_LINE = /[.!?:;…]["'’”)\]]*$/u;
-const STARTS_LOWER = /^\p{Ll}/u;
-
-/**
- * Paragraphs of `[from, to)`, trimmed, as `[start, end)` pairs: non-empty lines,
- * except that a single line break inside a sentence (the line ends without
- * punctuation and the next starts in lower case: hard-wrapped text) joins the lines.
- */
-function paragraphs(text: string, from: number, to: number): [number, number][] {
-  const out: [number, number][] = [];
-  const lines = /[^\r\n]+/gu;
-  lines.lastIndex = from;
-  for (let m = lines.exec(text); m !== null && m.index < to; m = lines.exec(text)) {
-    let s = m.index;
-    let e = Math.min(m.index + m[0].length, to);
-    while (s < e && isWs(text[s])) s += 1;
-    while (e > s && isWs(text[e - 1])) e -= 1;
-    if (e <= s) continue;
-    const prev = out[out.length - 1];
-    if (prev) {
-      const breaks = text.slice(prev[1], s).match(/\r\n|\r|\n/gu)?.length ?? 0;
-      if (breaks === 1 && !ENDS_LINE.test(text.slice(prev[0], prev[1])) && STARTS_LOWER.test(text.slice(s, s + 2))) {
-        prev[1] = e;
-        continue;
-      }
-    }
-    out.push([s, e]);
-  }
-  return out;
-}
-
-const HEADING_MAX_CHARS = 80;
-const HEADING_MAX_WORDS = 10;
-const ENDS_SENTENCE = /[.!?…]["'’”)\]]*$/u;
-
-function isHeading(line: string): boolean {
-  return (
-    line.length <= HEADING_MAX_CHARS &&
-    line.split(/\s+/u).length <= HEADING_MAX_WORDS &&
-    !ENDS_SENTENCE.test(line) &&
-    /\p{L}/u.test(line)
-  );
 }
 
 // ---------------------------------------------------------------------------
