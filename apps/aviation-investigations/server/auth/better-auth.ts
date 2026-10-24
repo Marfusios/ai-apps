@@ -62,13 +62,18 @@
  * answer is 503 `unavailable` with `Retry-After: 5`, and this browser is signed out all
  * the same: the session cookie is expired, and the sign-out is kept for a retry in
  * `__Secure-aviation_signout` (`aviation_signout` over plain http): the session cookie
- * values, at most the newest three, sealed with AES-256-GCM under a key derived from
+ * values, every one kept, sealed with AES-256-GCM under a key derived from
  * BETTER_AUTH_SECRET, so only this server can open it, the page cannot read a token out of
  * it and it never works as a session cookie; HttpOnly, SameSite=Strict, Path=/api, for
  * the 7 days a session can live. The browser's next sign-out, or its next account read
  * (`GET /api/account`, on every page load), ends those sessions and drops the cookie; an
  * account read never ends the session the browser holds now. Until then a copy of the old
- * cookie still works, which is why the sign-out was not reported done.
+ * cookie still works, which is why the sign-out was not reported done (503
+ * `sign_out_pending`; the page forgets everything private it held all the same). No new
+ * session is issued while a sign-out is pending: a sign-in finishes the pending ones first,
+ * at its start and again at Google's callback, and is refused (503 `sign_out_pending`, or the
+ * sign-in error page from the callback) while they cannot be finished, so the cookie never
+ * has to drop an unconfirmed revocation to make room (gate t22 finding 2).
  *
  * **Deleting the account needs a recent sign-in** (server/auth/deletion.ts). A sign-in
  * that returns to `DELETE_REAUTH_PATH` from a signed-in browser carries the deletion intent
@@ -157,8 +162,6 @@ export function pendingSignOutCookieName(secure: boolean): string {
   return `${secure ? '__Secure-' : ''}aviation_signout`;
 }
 const PENDING_SIGN_OUT_PATH = '/api';
-/** At most this many sign-outs wait in it (the newest). */
-const PENDING_SIGN_OUTS_MAX = 3;
 /** What a sign-out the database could not confirm asks the browser to wait before trying again. */
 export const SIGN_OUT_RETRY_SECONDS = 5;
 
@@ -350,9 +353,7 @@ function pendingSignOutSeal(secret: string) {
         decipher.setAuthTag(raw.subarray(raw.length - 16));
         const text = Buffer.concat([decipher.update(raw.subarray(12, raw.length - 16)), decipher.final()]).toString('utf8');
         const values = JSON.parse(text) as unknown;
-        return Array.isArray(values) && values.length <= PENDING_SIGN_OUTS_MAX && values.every((v) => typeof v === 'string' && v.length <= 512)
-          ? (values as string[])
-          : [];
+        return Array.isArray(values) && values.every((v) => typeof v === 'string' && v.length <= 512) ? (values as string[]) : [];
       } catch {
         return [];
       }
@@ -707,7 +708,10 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
     },
     hasPendingSignOut: (cookieHeader) => cookieValues(cookieHeader, pendingName).length > 0,
     pendingSignOutCookie(cookieHeader) {
-      const values = [...new Set([...pendingOf(cookieHeader), ...sessionCookieOf(cookieHeader)])].slice(-PENDING_SIGN_OUTS_MAX);
+      // Never evicts one (gate t22 finding 2): a sign-in finishes the pending ones before any
+      // new session (the route), so this holds the session being signed out and those this
+      // browser's own earlier failed sign-out left, a handful at most.
+      const values = [...new Set([...pendingOf(cookieHeader), ...sessionCookieOf(cookieHeader)])];
       return pendingCookie(sealer.seal(values), SESSION_TTL_SECONDS);
     },
     donePendingSignOutCookie: () => pendingCookie('', 0),

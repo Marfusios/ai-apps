@@ -90,6 +90,12 @@ export type Dataset = z.infer<typeof DatasetSchema>;
  *   deleted) before it could start. Nothing was kept or spent.
  * - `reauth_required`: deleting the account needs a recent Google sign-in first
  *   (`POST /api/account/delete/start`).
+ *
+ * And, 503 with `Retry-After`:
+ * - `sign_out_pending`: a sign-out ended this browser's session cookie but the server could
+ *   not confirm the session itself is gone; it finishes on this browser's next sign-out or
+ *   account read (server/auth/better-auth.ts, "Signing out"). Also a sign-in refused because
+ *   such a sign-out still cannot be finished.
  */
 export const ErrorResponseSchema = z.strictObject({
   error: z.enum([
@@ -112,6 +118,7 @@ export const ErrorResponseSchema = z.strictObject({
     'moved',
     'signed_out',
     'reauth_required',
+    'sign_out_pending',
   ]),
   message: z.string().max(500),
   /** For `bad_request`: which parameters failed. */

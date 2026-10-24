@@ -384,12 +384,12 @@ describe('the service', () => {
     await expect(s.finishSignOut(altered, { session: false })).resolves.toBe(true);
     await expect(s.finishSignOut(`${name}=${encodeURIComponent(JSON.stringify([sessionCookie(TOKEN)]))}`, { session: false })).resolves.toBe(true);
     expect(deleted).toEqual([]);
-    // Several pending sign-outs are kept together (the newest three).
-    const tokens = ['T1', 'T2', 'T3', 'T4'].map((t) => t.padEnd(32, 'x'));
+    // Pending sign-outs are never evicted (gate t22 finding 2): every one is kept and ended.
+    const tokens = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'].map((t) => t.padEnd(32, 'x'));
     let jar = '';
     for (const t of tokens) jar = s.pendingSignOutCookie(`__Host-aviation_session=${sessionCookie(t)}${jar ? `; ${jar}` : ''}`).split(';', 1)[0]!;
     await expect(s.finishSignOut(jar, { session: false })).resolves.toBe(true);
-    expect(deleted).toEqual([tokens.slice(1)]);
+    expect(deleted).toEqual([tokens]);
     expect(s.donePendingSignOutCookie()).toBe('__Secure-aviation_signout=; Max-Age=0; Path=/api; HttpOnly; SameSite=Strict; Secure');
   });
 });

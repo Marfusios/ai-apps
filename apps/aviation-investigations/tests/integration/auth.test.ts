@@ -933,7 +933,7 @@ describe('signing out is confirmed (gate 22 finding 1)', () => {
     const out = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
     // Better Auth swallowed the failed deletion; the route did not report success.
     expect(state.refused).toBeGreaterThan(0);
-    expect(errorOf(out)).toEqual([503, 'unavailable']);
+    expect(errorOf(out)).toEqual([503, 'sign_out_pending']);
     expect(out.headers['retry-after']).toBe('5');
     expect((out.json as { retryAfter?: number }).retryAfter).toBe(5);
     expect(out.headers['cache-control']).toBe('private, no-store');
@@ -982,9 +982,9 @@ describe('signing out is confirmed (gate 22 finding 1)', () => {
     const h = harness({}, { authDb: db });
     const { jar, copy } = await signedInWithCopy(h);
     state.failing = true;
-    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'unavailable']);
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
     // Still failing: 503 again, and the sign-out stays pending.
-    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'unavailable']);
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
     expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
     state.failing = false;
     const out = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
@@ -995,22 +995,72 @@ describe('signing out is confirmed (gate 22 finding 1)', () => {
     expect(await account(h, copy)).toEqual({ signedIn: false });
   });
 
-  it('an account read finishes only the pending sign-out, never the session the browser signed in with since', async () => {
+  it('signing in again first finishes the pending sign-out; an account read never ends the session the browser holds', async () => {
     const { db, state } = faultyAuthDb();
     const h = harness({}, { authDb: db });
     const { jar, copy } = await signedInWithCopy(h);
     state.failing = true;
-    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'unavailable']);
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
     state.failing = false;
-    // Signed in again before any account read: a second session.
-    await signIn(h, jar, newUser());
-    expect(await count('auth_sessions')).toBe(2);
+    // Signing in again before any account read: the pending sign-out is finished first.
+    const start = await send(h, 'POST', '/api/auth/sign-in/social', { jar, body: signInBody('/') });
+    expect(start.status).toBe(200);
+    expect(cookieNamed(start.setCookies, PENDING_SIGN_OUT)).toMatch(/Max-Age=0/i);
+    expect(await count('auth_sessions')).toBe(0);
+    expect(await account(h, copy)).toEqual({ signedIn: false });
+    await callback(h, jar, google.authorize((start.json as { url: string }).url, newUser()));
+    expect(await count('auth_sessions')).toBe(1);
     const read = await send(h, 'GET', '/api/account', { jar });
     expect(read.json).toMatchObject({ signedIn: true });
-    expect(cookieNamed(read.setCookies, PENDING_SIGN_OUT)).toMatch(/Max-Age=0/i);
+    expect(read.setCookies.some((c) => c.startsWith(`${PENDING_SIGN_OUT}=`))).toBe(false);
     expect(await count('auth_sessions')).toBe(1);
-    expect(await account(h, copy)).toEqual({ signedIn: false });
-    expect(await account(h, jar)).toMatchObject({ signedIn: true });
+  });
+
+  it('no new session while a pending sign-out cannot be finished: four failed sign-outs between sign-ins leave no session usable (gate t22 finding 2)', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const jar = new CookieJar();
+    const copies: CookieJar[] = [];
+    for (let round = 0; round < 4; round++) {
+      // Signing in while the database works (it finishes the previous round's pending sign-out first).
+      state.failing = false;
+      await signIn(h, jar, newUser());
+      copies.push(jar.clone());
+      // A sign-out the database cannot confirm.
+      state.failing = true;
+      expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} })), `round ${round}`).toEqual([503, 'sign_out_pending']);
+      // While it cannot be finished, sign-in is refused at its start: no new session, nothing evicted.
+      const refused = await send(h, 'POST', '/api/auth/sign-in/social', { jar, body: signInBody('/') });
+      expect(errorOf(refused), `round ${round}`).toEqual([503, 'sign_out_pending']);
+      expect(refused.headers['retry-after']).toBe('5');
+      expect(jar.get(PENDING_SIGN_OUT), `round ${round}`).toBeDefined();
+      expect(await count('auth_sessions'), `round ${round}`).toBe(1);
+    }
+    state.failing = false;
+    // Every earlier round's session was revoked before the next one was issued; the last is still pending.
+    for (const copy of copies.slice(0, -1)) expect(await account(h, copy)).toEqual({ signedIn: false });
+    expect(await account(h, copies.at(-1)!)).toMatchObject({ signedIn: true });
+    // Success is reported only once every outstanding session is gone.
+    const out = await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} });
+    expect(out.status).toBe(200);
+    for (const copy of copies) expect(await account(h, copy)).toEqual({ signedIn: false });
+    expect(await count('auth_sessions')).toBe(0);
+  });
+
+  it('Google’s callback issues no session while a pending sign-out cannot be finished', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar } = await signedInWithCopy(h);
+    // A sign-in started in this browser; then, before Google sends it back, a sign-out that cannot be confirmed.
+    const url = await startSignIn(h, jar);
+    state.failing = true;
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
+    const back = await callback(h, jar, google.authorize(url, newUser()));
+    expect(back.status).toBe(302);
+    expect(back.headers.location).toBe('/account?signin=failed&error=sign_out_pending');
+    expect(back.setCookies.some((c) => c.startsWith(`${SESSION}=`) && !/Max-Age=0/i.test(c))).toBe(false);
+    expect(await count('auth_sessions')).toBe(1);
+    expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
   });
 
   it('a sign-out that works is answered as before, and one without a session has nothing to wait for', async () => {

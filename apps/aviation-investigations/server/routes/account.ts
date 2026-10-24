@@ -27,8 +27,11 @@
  * Host, no forwarding headers, no client copy of that header. Its answer is passed back
  * as it is (status, headers, every `Set-Cookie`, body), except a sign-out's success: that
  * stands only once the session is gone (`finishSignOut`); otherwise the answer is 503
- * `unavailable` (`Retry-After: 5`) with this browser signed out all the same and the
- * sign-out kept for a retry (server/auth/better-auth.ts, "Signing out").
+ * `sign_out_pending` (`Retry-After: 5`) with this browser signed out all the same and the
+ * sign-out kept for a retry (server/auth/better-auth.ts, "Signing out"). A sign-in (its
+ * start and Google's callback) first finishes a sign-out this browser has pending, and is
+ * refused while it cannot (503 `sign_out_pending`; the callback goes to the sign-in error
+ * page).
  *
  * `GET /api/account` says who is signed in (and whether this session may delete the
  * account now). It first finishes a sign-out this browser has pending, if the database
@@ -99,6 +102,20 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
     const networkId = request.networkIdentity;
     // The access hook resolves it for every API route; a route without one is a wiring bug.
     if (!networkId) throw new Error('the auth route needs the request network identity');
+    // No new session while this browser has a sign-out pending: finish it first, at the
+    // sign-in's start and at Google's callback, and refuse while it cannot be finished, so a
+    // pending revocation never has to make room for another (gate t22 finding 2).
+    const issuesSession = path === '/api/auth/sign-in/social' || path === '/api/auth/callback/google';
+    let drained = false;
+    if (issuesSession && auth.hasPendingSignOut(request.headers.cookie)) {
+      if (!(await auth.finishSignOut(request.headers.cookie, { session: false }))) {
+        request.log.warn({ signIn: 'sign_out_pending' }, 'sign-in refused: a pending sign-out could not be finished');
+        if (path === '/api/auth/callback/google') return reply.redirect(`${AUTH_ERROR_PATH}&error=sign_out_pending`, 302);
+        reply.header('retry-after', String(SIGN_OUT_RETRY_SECONDS));
+        return sendError(reply, 503, 'sign_out_pending', { retryAfter: SIGN_OUT_RETRY_SECONDS });
+      }
+      drained = true;
+    }
     const headers = new Headers();
     for (const name of FORWARDED_HEADERS) {
       const value = request.headers[name];
@@ -133,6 +150,7 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
       }),
     );
     const cookies = response.headers.getSetCookie();
+    if (drained) cookies.push(auth.donePendingSignOutCookie());
     // The browser is back from Google: an unexpected failure (such as its account being deleted
     // while this sign-in completes) lands on the sign-in error page, as Better Auth's own
     // failures do, not on a bare 500.
@@ -149,7 +167,7 @@ export function accountRoutes(app: FastifyInstance, ctx: ApiContext, opts: { app
         // sign-out for a retry: its next sign-out or account read.
         reply.header('set-cookie', [...cookies, auth.pendingSignOutCookie(request.headers.cookie)]);
         reply.header('retry-after', String(SIGN_OUT_RETRY_SECONDS));
-        return sendError(reply, 503, 'unavailable', { retryAfter: SIGN_OUT_RETRY_SECONDS });
+        return sendError(reply, 503, 'sign_out_pending', { retryAfter: SIGN_OUT_RETRY_SECONDS });
       }
       if (auth.hasPendingSignOut(request.headers.cookie)) cookies.push(auth.donePendingSignOutCookie());
     }
