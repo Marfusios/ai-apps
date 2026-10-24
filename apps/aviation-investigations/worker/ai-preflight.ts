@@ -413,8 +413,8 @@ export function evidencePreflightRequests() {
       { label: 'maximum Latin question', latin: true, input: { question: exactly(QUESTION_MAX_CHARS) } },
       { label: 'maximum dense question', latin: false, input: { question: denseUpTo(QUESTION_MAX_CHARS, QUESTION_MAX_CHARS) } },
     ],
-    output: JSON.stringify({ intent: 'case_search', filters: { ...filters, yearFrom: 1900, yearTo: 2100 },
-      terms: quote, unchecked: Array.from({ length: 8 }, (_, i) => ({ kind: UNCHECKED_KINDS[i % UNCHECKED_KINDS.length], quote })) }),
+    output: JSON.stringify({ result: { intent: 'case_search', filters: { ...filters, yearFrom: 1900, yearTo: 2100 },
+      terms: quote, unchecked: Array.from({ length: 8 }, (_, i) => ({ kind: UNCHECKED_KINDS[i % UNCHECKED_KINDS.length], quote })) } }),
   };
 }
 

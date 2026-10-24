@@ -12,6 +12,8 @@ import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
 import { CHECK_SYSTEM } from '../../server/ai/prompts/check.v9.js';
 import { COMPOSE_SYSTEM, renderComposeUser } from '../../server/ai/prompts/compose.v8.js';
 import { SCOPE_SYSTEM } from '../../server/ai/prompts/scope.v2.js';
+import { EVIDENCE_SCOPE_SYSTEM, EvidenceScopeWireOutputSchema } from '../../server/ai/prompts/scope.e1.js';
+import { outputFormat } from '../../server/ai/anthropic.js';
 import {
   CheckOutputSchema,
   ComposeOutputSchema,
@@ -782,17 +784,45 @@ describe('fake provider', () => {
 describe('scope.e2 in the real adapter with offline transport', () => {
   const output = { intent: 'case_search', filters: { purpose: ['PERS'] }, terms: 'power loss maintenance', unchecked: [{ kind: 'timing', quote: 'shortly after maintenance' }] };
   it('uses the independent prompt/schema and same measured caps, with no history/defaults', async () => {
-    const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson(JSON.stringify(output))));
+    const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson(JSON.stringify({ result: output }))));
     const result = await p.evidenceScope!(scopeInput, ctx('scope'));
     expect(result.promptVersion).toBe('scope.e2');
     expect(result.output).toEqual(output);
+    expect(result.output).not.toHaveProperty('result');
+    expect(result).toMatchObject({ provider: 'anthropic', model: HAIKU, stopReason: 'end_turn', usage: { inputTokens: 900, outputTokens: 120, cacheWriteTokens: 1200, cacheReadTokens: 300 } });
     expect(bodies).toHaveLength(1); expect(countBodies).toHaveLength(1);
     expect(bodies[0]!.max_tokens).toBe(STAGE_CAPS.scope.output);
     expect(JSON.stringify(bodies[0]!.system)).toContain('Never default');
     expect(JSON.stringify(bodies[0]!.output_config)).not.toContain('needs_clarification');
+    expect(countBodies[0]!.output_config).toEqual(bodies[0]!.output_config);
+    expect(bodies[0]!.output_config).toMatchObject({ format: { schema: { type: 'object', required: ['result'], properties: { result: expect.any(Object) } } } });
+    expect((bodies[0]!.system as { text: string }[])[0]!.text).toBe(EVIDENCE_SCOPE_SYSTEM);
+  });
+  it('the standalone counter sends the same envelope without generating', async () => {
+    const { p, bodies, countBodies } = provider(jsonResponse(200, messageJson('{}')));
+    expect(await p.countEvidenceScopeTokens!(scopeInput, ctx('scope'))).toBe(1000);
+    expect(bodies).toHaveLength(0);
+    expect(countBodies[0]!.output_config).toMatchObject({ format: { schema: outputFormat(EvidenceScopeWireOutputSchema).schema } });
+  });
+  it.each(['out_of_scope', 'operational_advice', 'corpus_statistics', 'case_comparison'] as const)('unwraps the %s reply without changing its public fields', async (intent) => {
+    const expected = { intent, filters: {}, terms: '', unchecked: [] };
+    const { p } = provider(jsonResponse(200, messageJson(JSON.stringify({ result: expected }))));
+    expect((await p.evidenceScope!(scopeInput, ctx('scope'))).output).toEqual(expected);
+  });
+  it.each([
+    output,
+    { result: null },
+    { result: output, unexpected: 'SENTINEL_WIRE' },
+    { result: { ...output, filters: { yearFrom: 0 } } },
+  ])('fails invalid envelopes closed while retaining reported usage (%#)', async (wire) => {
+    const { p } = provider(jsonResponse(200, messageJson(JSON.stringify(wire))));
+    const error = await stageError(p.evidenceScope!(scopeInput, ctx('scope')));
+    expect(error.category).toBe('invalid_output');
+    expect(error.billing).toMatchObject({ kind: 'usage', usage: { outputTokens: 120 } });
+    expect(JSON.stringify(error)).not.toContain('SENTINEL_WIRE');
   });
   it('does not generate when evidence token counting exceeds the cap', async () => {
-    const { p, bodies } = provider(jsonResponse(200, messageJson(JSON.stringify(output))), DEFAULT_MODELS, STAGE_CAPS.scope.input + 1);
+    const { p, bodies } = provider(jsonResponse(200, messageJson(JSON.stringify({ result: output }))), DEFAULT_MODELS, STAGE_CAPS.scope.input + 1);
     const e = await stageError(p.evidenceScope!(scopeInput, ctx('scope')));
     expect(e.billing.kind).toBe('none'); expect(bodies).toHaveLength(0);
   });

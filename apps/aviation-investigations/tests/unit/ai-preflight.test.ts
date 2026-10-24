@@ -6,7 +6,7 @@
  * The requests are the same synthetic worst cases `pnpm worker ai-preflight` counts with
  * the provider. A prompt or schema that grows past its cap fails here before any paid run.
  */
-import { EvidenceScopeInputSchema, EvidenceScopeOutputSchema, EVIDENCE_SCOPE_SYSTEM, renderEvidenceScopeUser } from '../../server/ai/prompts/scope.e1.js';
+import { EvidenceScopeInputSchema, EvidenceScopeWireOutputSchema, EVIDENCE_SCOPE_SYSTEM, renderEvidenceScopeUser } from '../../server/ai/prompts/scope.e1.js';
 import { evidencePreflightRequests } from '../../worker/ai-preflight.js';
 import { describe, expect, it } from 'vitest';
 import { outputJsonSchema } from '../../server/ai/anthropic.js';
@@ -163,14 +163,14 @@ describe('runAiPreflight with a stub counter', () => {
 describe('evidence scope preflight (offline)', () => {
   it('sizes the actual prompt/schema, longest Latin question and every output field at its schema bound', () => {
     const e = evidencePreflightRequests();
-    const base = fixed(EVIDENCE_SCOPE_SYSTEM, EvidenceScopeOutputSchema);
+    const base = fixed(EVIDENCE_SCOPE_SYSTEM, EvidenceScopeWireOutputSchema);
     expect(base).toBeLessThanOrEqual(CACHED_PREFIX_MAX);
     for (const w of e.worst) {
       expect(EvidenceScopeInputSchema.safeParse(w.input).success).toBe(true);
       if (w.latin) expect(base + text(renderEvidenceScopeUser(w.input))).toBeLessThanOrEqual(STAGE_CAPS.scope.input);
     }
-    expect(EvidenceScopeOutputSchema.safeParse(JSON.parse(e.output)).success).toBe(true);
-    const out = JSON.parse(e.output);
+    expect(EvidenceScopeWireOutputSchema.safeParse(JSON.parse(e.output)).success).toBe(true);
+    const out = JSON.parse(e.output).result;
     expect(out.terms).toHaveLength(300); expect(out.unchecked).toHaveLength(8);
     expect(out.unchecked.every((r: { quote: string }) => r.quote.length === 300)).toBe(true);
     // The existing 600-token cap does not cover every legal output. Preflight must say so.

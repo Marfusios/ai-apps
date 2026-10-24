@@ -1826,6 +1826,9 @@ preflight reports this explicitly. Caps and prices have not been raised. Resolve
 with measured provider counts and a reviewed schema/cap choice before public launch.
 The flat scope output is versioned `scope.e2` (the module path stays `scope.e1.ts` for
 existing tooling); scope quality evaluation must use this new version.
+Anthropic receives a strict `{result: ...}` output envelope; the adapter unwraps it
+before returning the logical scope result. Token counting and output preflight use
+the same envelope. This transport encoding does not change prompt or filter rules.
 
 `AI_BRIEFS_ENABLED=false` is the default and must stay off while G6 for generated
 summaries is closed. It disables create/refine with 404 even with provider keys present;
