@@ -78,9 +78,14 @@ describe('backups never hold accounts, sign-in state or content', () => {
   });
 
   it('the drill fails unless the restore blocked every paid operation', () => {
-    const ok = { check: { ok: true }, held: true, spendRefused: true };
+    const ok = { check: { ok: true }, held: true, holdRecorded: true, spendRefused: true };
     expect(drillFailures(ok)).toEqual([]);
     expect(drillFailures({ ...ok, held: false })).toEqual(['paid operations are NOT held after the restore']);
+    // Held only because the drill's server gave the database another OID (re-check N7): the
+    // restore never set the hold, which a restore into a database with the same OID would miss.
+    expect(drillFailures({ ...ok, holdRecorded: false })).toEqual([
+      'the restore did NOT set the hold (held_at); only the database OID differs, which a new cluster can repeat',
+    ]);
     expect(drillFailures({ ...ok, spendRefused: false })).toEqual(['indexing spend was NOT refused after the restore']);
     expect(drillFailures({ ...ok, check: { ok: false } })).toHaveLength(1);
   });

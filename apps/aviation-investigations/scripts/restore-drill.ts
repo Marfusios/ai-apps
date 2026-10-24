@@ -46,6 +46,13 @@ export interface DrillFindings {
   check: Pick<RestoreCheckReport, 'ok'>;
   /** The app login sees paid operations held. */
   held: boolean;
+  /**
+   * The hold row's `held_at` is set: the restore set it (after-restore.sql), or migration
+   * 0020 for a backup taken before it. The drill's server gives the database another OID, so
+   * the row would read as held from that alone; a restore into a database with the same OID
+   * (a new cluster can repeat one) would not be (re-check N7).
+   */
+  holdRecorded: boolean;
   /** The ingest login's indexing spend was refused with `restore_hold`. */
   spendRefused: boolean;
 }
@@ -55,6 +62,7 @@ export function drillFailures(f: DrillFindings): string[] {
   const out: string[] = [];
   if (!f.check.ok) out.push('the restore check found differences');
   if (!f.held) out.push('paid operations are NOT held after the restore');
+  else if (!f.holdRecorded) out.push('the restore did NOT set the hold (held_at); only the database OID differs, which a new cluster can repeat');
   if (!f.spendRefused) out.push('indexing spend was NOT refused after the restore');
   return out;
 }
@@ -133,12 +141,15 @@ async function drill(file: string): Promise<number> {
         )
       ).rows[0]!;
       console.log(`drill: ${counts.generations} generations (active ${counts.active ?? 'none'}), ${counts.ledger} ledger lines, ${counts.usd} USD`);
-      console.log(`drill: paid operations ${held ? `held (${hold.reason})` : 'NOT held'}; indexing spend ${spendRefused ? 'refused' : 'NOT refused'}`);
+      console.log(
+        `drill: paid operations ${held ? `held (${hold.reason}${hold.heldAt === null ? ', held_at NOT set' : ''})` : 'NOT held'}; ` +
+          `indexing spend ${spendRefused ? 'refused' : 'NOT refused'}`,
+      );
       for (const { table, rows } of check.rows) console.error(`drill: ${table} holds ${rows} rows (a backup must not hold them)`);
       for (const table of check.unreadable) console.error(`drill: aviation_migrator cannot read ${table}`);
       for (const l of check.privileges.unexpected) console.error(`drill: found    ${l}`);
       for (const l of check.privileges.missing) console.error(`drill: expected ${l}`);
-      const failures = drillFailures({ check, held, spendRefused });
+      const failures = drillFailures({ check, held, holdRecorded: hold.heldAt !== null, spendRefused });
       for (const f of failures) console.error(`drill: ${f}`);
       console.log(
         failures.length === 0
