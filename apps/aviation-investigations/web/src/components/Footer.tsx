@@ -15,7 +15,7 @@ const Dot = () => <span aria-hidden="true"> · </span>;
 
 /**
  * "Not an NTSB service · Data: NTSB, snapshot {date} · Privacy · About", and under it the
- * owner's credit line (`CreditLine`: "Built by Mariusz Kotas · m@mkotas.cz", UI_DESIGN §3,
+ * owner's credit line (`CreditLine`: "Built by Mariusz Kotas · mkotas.cz", UI_DESIGN §3,
  * owner decision of 2026-10-24). Print shows "Not an NTSB service · Source: NTSB · printed
  * {date}" (§7) and the same credit line.
  */

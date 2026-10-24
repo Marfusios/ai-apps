@@ -12,9 +12,10 @@ test('the home page is AirCase: its tab title, the wordmark, and the credit in t
   await expect(page.getByRole('banner').getByRole('link', { name: 'AirCase' })).toHaveAttribute('href', '/');
   const footer = page.getByRole('contentinfo');
   await expect(footer).toContainText('Built by Mariusz Kotas');
-  // The address is a mailto link and, like the footer's other links, reachable with the keyboard.
-  const credit = footer.getByRole('link', { name: 'm@mkotas.cz' });
-  await expect(credit).toHaveAttribute('href', 'mailto:m@mkotas.cz');
+  // The website is a link that opens in a new tab and, like the footer's other links, is reachable with the keyboard.
+  const credit = footer.getByRole('link', { name: 'mkotas.cz', exact: true });
+  await expect(credit).toHaveAttribute('href', 'https://mkotas.cz');
+  await expect(credit).toHaveAttribute('target', '_blank');
   await credit.focus();
   await expect(credit).toBeFocused();
 });

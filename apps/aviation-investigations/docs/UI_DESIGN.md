@@ -312,8 +312,10 @@ Switching themes (Proposed):
 
 **Footer** (all pages): "Not an NTSB service · Data: NTSB, snapshot {date} ·
 Privacy · About", and under it a quieter line, "Built by Mariusz Kotas ·
-m@mkotas.cz", in the same style, with the address as a `mailto:` link (Owner,
-2026-10-24; it is public on purpose, not personal data to remove). It shows on
+mkotas.cz", in the same style, with the website as a link to https://mkotas.cz
+that opens in a new tab like the links to NTSB reports (Owner, 2026-10-24; it is
+public on purpose, not personal data to remove; the e-mail address is on the
+About page, §4.8). It shows on
 every page, on a phone, at night and in print (the plain fallback page of a
 failed app frame has the line too), and uses the footer's own tokens (muted
 text, the blue link), so contrast is that of those pairs (§2.2). The link is
@@ -876,8 +878,10 @@ then state the processed cohort (DESIGN §5).
   Compare for up to four cases, the dashboard; AI features are not available yet),
   where the data comes from (the NTSB database, with the snapshot and coverage), what
   it is not (not an NTSB service, no operational advice), and, under "Built by", that
-  it is built by Mariusz Kotas with the contact address m@mkotas.cz as a `mailto:`
-  link (Owner, 2026-10-24). The browser tab reads "About · AirCase".
+  it is built by Mariusz Kotas, with his website mkotas.cz (a link, in a new tab) and
+  the contact address m@mkotas.cz as a `mailto:` link: "AirCase is built by Mariusz
+  Kotas. Website: mkotas.cz. Contact: m@mkotas.cz." (Owner, 2026-10-24). The browser
+  tab reads "About · AirCase".
 
 ## 5. States and copy (Owner-approved)
 
@@ -1026,7 +1030,7 @@ browser with the same stylesheet. Print uses:
 - hatching kept for cautions
 - a header with the page title, case numbers, snapshot date and the page URL
 - the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
-  line "Built by Mariusz Kotas · m@mkotas.cz" (the address prints as text)
+  line "Built by Mariusz Kotas · mkotas.cz" (the website prints as text)
 - strips that never split across pages
 
 ## 8. Accessibility (Proposed)
@@ -1169,10 +1173,13 @@ counting rules.
   database and index names, Compose projects, environment variables and the stored
   `casebook-*` browser keys are not renamed. The working mockups in `docs/mockups/`
   carry the new name too; where they differ from this document, this document wins.
-- The footer says the app was built by **Mariusz Kotas**, with the contact e-mail
-  **m@mkotas.cz** as a `mailto:` link (§3), and the About page has a short "Built
-  by" section with the same name and address. This is intentional public
-  information requested by the owner, not personal data to scrub.
+- The footer says the app was built by **Mariusz Kotas** and links his website
+  **mkotas.cz** (§3); the About page has a short "Built by" section with his name,
+  the website and the contact e-mail **m@mkotas.cz** as a `mailto:` link (§4.8).
+  The footer first carried the e-mail address; the owner replaced it with the
+  website the same day and kept the address on the About page. This is
+  intentional public information requested by the owner, not personal data to
+  scrub.
 - The About page describes AirCase as it is: keyword search with filters, a page
   for each case, Compare (up to four cases) and the dashboard, with the NTSB data
   source and attribution; it says the AI features are not available yet, and

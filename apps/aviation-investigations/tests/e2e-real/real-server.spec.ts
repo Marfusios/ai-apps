@@ -52,11 +52,14 @@ test('the pages without data load under the CSP: AirCase in the title, the credi
   ] as const) {
     await page.goto(path);
     await expect(page, path).toHaveTitle(title);
-    await expect(page.getByRole('contentinfo').getByRole('link', { name: 'm@mkotas.cz' }), path).toHaveAttribute('href', 'mailto:m@mkotas.cz');
+    await expect(page.getByRole('contentinfo').getByRole('link', { name: 'mkotas.cz', exact: true }), path).toHaveAttribute('href', 'https://mkotas.cz');
   }
-  // The About page says who built it, with the same address.
+  // The About page says who built it, with his website and his e-mail address.
   await page.goto('/about');
-  await expect(page.getByRole('main').getByText('AirCase is built by Mariusz Kotas')).toBeVisible();
+  const main = page.getByRole('main');
+  await expect(main.getByText('AirCase is built by Mariusz Kotas')).toBeVisible();
+  await expect(main.getByRole('link', { name: 'mkotas.cz', exact: true })).toHaveAttribute('href', 'https://mkotas.cz');
+  await expect(main.getByRole('link', { name: 'm@mkotas.cz', exact: true })).toHaveAttribute('href', 'mailto:m@mkotas.cz');
   expect(problems).toEqual([]);
 });
 

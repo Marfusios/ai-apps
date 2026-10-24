@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { configQuery } from '../api';
-import { CREDIT_EMAIL, CREDIT_HREF, CREDIT_NAME, PRODUCT_NAME, documentTitle } from '../brand';
+import { CREDIT_EMAIL, CREDIT_EMAIL_HREF, CREDIT_NAME, CREDIT_SITE, CREDIT_SITE_HREF, PRODUCT_NAME, documentTitle } from '../brand';
 import { Placard } from '../components/Placard';
 import { formatChartDate, formatCount } from '../lib/format';
 
@@ -25,7 +25,8 @@ export function TextPage({ eyebrow, title, tabTitle = title, children }: { eyebr
 /**
  * About: what the casebook is and can do today (keyword search, case pages, Compare and the
  * dashboard; the AI features are not open yet, as the Privacy page also says), where its
- * data comes from, what it is not, and who built it (the owner's credit, 2026-10-24). The line
+ * data comes from, what it is not, and who built it (the owner's credit, 2026-10-24: his name,
+ * his website and his e-mail address; the footer carries only the name and the website). The line
  * "AI features are not available yet." is static: it changes in the release that opens AI,
  * with the Privacy text (RUNBOOK, "Google sign-in", step 0; tests/web/brand.test.tsx).
  */
@@ -72,8 +73,12 @@ export function About() {
       </p>
       <h2>Built by</h2>
       <p>
-        {PRODUCT_NAME} is built by {CREDIT_NAME}. Contact:{' '}
-        <a href={CREDIT_HREF} className="link">
+        {PRODUCT_NAME} is built by {CREDIT_NAME}. Website:{' '}
+        <a href={CREDIT_SITE_HREF} target="_blank" rel="noopener noreferrer" className="link">
+          {CREDIT_SITE}
+        </a>
+        . Contact:{' '}
+        <a href={CREDIT_EMAIL_HREF} className="link">
           {CREDIT_EMAIL}
         </a>
         .

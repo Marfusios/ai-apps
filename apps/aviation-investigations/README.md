@@ -1101,10 +1101,11 @@ briefs, the step (`step`) and the brief a case or compare page was opened from
 (`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
 compare bar. The footer gives the snapshot's real age once it is more than 45 days old
 (DESIGN §4: monthly full snapshots), and carries the owner's credit under it, "Built by
-Mariusz Kotas · m@mkotas.cz" with the address as a `mailto:` link, on every page and in
-print, the plain fallback page of a failed frame included (`CreditLine`; the name, address
-and product name are in `web/src/brand.ts`; the About page has a "Built by" section with
-the same credit). A page that fails unexpectedly (a render error, or
+Mariusz Kotas · mkotas.cz" with the website as a link (a new tab), on every page and in
+print, the plain fallback page of a failed frame included (`CreditLine`; the name,
+website, e-mail address and product name are in `web/src/brand.ts`; the About page has a
+"Built by" section with the name, the website and the e-mail address as a `mailto:`
+link). A page that fails unexpectedly (a render error, or
 code that could not load) shows "Something went wrong." with Try again (a reload) and
 Home inside the header and footer, never the router's developer page; if the frame
 itself fails, a plain frame with the wordmark does the same (`web/src/pages/ErrorPage.tsx`).

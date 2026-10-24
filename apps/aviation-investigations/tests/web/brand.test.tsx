@@ -17,7 +17,15 @@ import { renderApp, setupMockApi } from './render-app';
 setupMockApi();
 
 const CREDIT_LINE = 'Built by Mariusz Kotas';
+const SITE = 'mkotas.cz';
 const EMAIL = 'm@mkotas.cz';
+
+/** The website opens in a new tab, without a handle on this page, like the links to NTSB reports. */
+function expectSiteLink(link: HTMLElement): void {
+  expect(link.getAttribute('href')).toBe('https://mkotas.cz');
+  expect(link.getAttribute('target')).toBe('_blank');
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+}
 
 /** Every route of the app, including the account page and a page that does not exist. */
 const ROUTES = [
@@ -41,30 +49,33 @@ function renderFooter() {
   );
 }
 
-describe('the footer credit: built by Mariusz Kotas, with a mailto link (UI_DESIGN §3)', () => {
-  it('reads "Built by Mariusz Kotas · m@mkotas.cz" under the existing line, and the address is a mailto link', () => {
+describe('the footer credit: built by Mariusz Kotas, with a link to his website (UI_DESIGN §3)', () => {
+  it('reads "Built by Mariusz Kotas · mkotas.cz" under the existing line, the website is a link, and the e-mail address is not there', () => {
     const { container } = renderFooter();
     const [screenLine, printLine, credit] = container.querySelectorAll('footer p');
     // The existing footer is untouched.
     expect(screenLine?.textContent).toBe('Not an NTSB service · Data: NTSB, snapshot 01 OCT 2026 · Privacy · About');
     expect(printLine?.textContent).toBe('Not an NTSB service · Source: NTSB · printed 22 OCT 2026');
-    expect(credit?.textContent).toBe(`${CREDIT_LINE} · ${EMAIL}`);
-    const link = screen.getByRole('link', { name: EMAIL });
-    expect(link.getAttribute('href')).toBe(`mailto:${EMAIL}`);
+    expect(credit?.textContent).toBe(`${CREDIT_LINE} · ${SITE}`);
+    const link = screen.getByRole('link', { name: SITE });
+    expectSiteLink(link);
     expect(credit?.contains(link)).toBe(true);
+    // The e-mail address is on the About page only (owner, 2026-10-24).
+    expect(container.textContent).not.toContain(EMAIL);
+    expect(container.querySelector('a[href^="mailto:"]')).toBeNull();
   });
 
   it('is shown on screen and in print: it is neither a screen-only nor a print-only line', () => {
     const { container } = renderFooter();
     const credit = container.querySelectorAll('footer p')[2];
     expect(credit?.className).not.toMatch(/print:hidden|(^|\s)hidden(\s|$)/);
-    // Printed, it lines up with the print line before it (left-aligned) and the address stays readable text.
+    // Printed, it lines up with the print line before it (left-aligned) and the website stays readable text.
     expect(credit?.className).toContain('print:text-left');
   });
 
   it('is reachable by keyboard: a link with an address, in the tab order', () => {
     renderFooter();
-    const link = screen.getByRole('link', { name: EMAIL }) as HTMLAnchorElement;
+    const link = screen.getByRole('link', { name: SITE }) as HTMLAnchorElement;
     expect(link.tabIndex).toBe(0);
     link.focus();
     expect(document.activeElement).toBe(link);
@@ -74,7 +85,7 @@ describe('the footer credit: built by Mariusz Kotas, with a mailto link (UI_DESI
     const { container } = renderFooter();
     const credit = container.querySelectorAll('footer p')[2];
     expect(credit?.className).toContain('text-muted');
-    expect(screen.getByRole('link', { name: EMAIL }).className).toBe('link');
+    expect(screen.getByRole('link', { name: SITE }).className).toBe('link');
     expect(credit?.className).not.toMatch(/#[0-9a-f]{3,6}|rgb|text-\[/i);
   });
 
@@ -98,9 +109,9 @@ describe('the footer credit: built by Mariusz Kotas, with a mailto link (UI_DESI
     renderApp(path);
     const footer = await screen.findByRole('contentinfo');
     const line = within(footer).getByText(CREDIT_LINE).closest('p');
-    expect(line?.textContent).toBe(`${CREDIT_LINE} · ${EMAIL}`);
-    const link = within(footer).getByRole('link', { name: EMAIL });
-    expect(link.getAttribute('href')).toBe(`mailto:${EMAIL}`);
+    expect(line?.textContent).toBe(`${CREDIT_LINE} · ${SITE}`);
+    expectSiteLink(within(footer).getByRole('link', { name: SITE }));
+    expect(footer.querySelector('a[href^="mailto:"]')).toBeNull();
   });
 });
 
@@ -132,14 +143,15 @@ function contrast(a: Rgb, b: Rgb): number {
 }
 
 describe('the About page (UI_DESIGN §4.8)', () => {
-  it('is AirCase, and says who built it with a contact link', async () => {
+  it('is AirCase, and says who built it: his name, his website and his e-mail address', async () => {
     renderApp('/about');
     expect(await screen.findByRole('heading', { level: 1, name: 'About AirCase' })).toBeTruthy();
     const main = screen.getByRole('main');
     expect(within(main).getByRole('heading', { level: 2, name: 'Built by' })).toBeTruthy();
     const built = within(main).getByText(/AirCase is built by Mariusz Kotas/);
-    const link = within(built).getByRole('link', { name: EMAIL });
-    expect(link.getAttribute('href')).toBe(`mailto:${EMAIL}`);
+    expect(built.textContent).toBe(`AirCase is built by Mariusz Kotas. Website: ${SITE}. Contact: ${EMAIL}.`);
+    expectSiteLink(within(built).getByRole('link', { name: SITE }));
+    expect(within(built).getByRole('link', { name: EMAIL }).getAttribute('href')).toBe(`mailto:${EMAIL}`);
     expect(main.textContent).not.toMatch(/Aviation Casebook/);
   });
 

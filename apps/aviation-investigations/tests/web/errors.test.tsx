@@ -112,8 +112,8 @@ describe('both error pages carry the owner credit and the product name (owner de
   /** The credit line in the footer, as paragraph text and link. */
   function expectCredit(footer: HTMLElement): void {
     const line = within(footer).getByText('Built by Mariusz Kotas').closest('p');
-    expect(line?.textContent).toBe('Built by Mariusz Kotas · m@mkotas.cz');
-    expect(within(footer).getByRole('link', { name: 'm@mkotas.cz' }).getAttribute('href')).toBe('mailto:m@mkotas.cz');
+    expect(line?.textContent).toBe('Built by Mariusz Kotas · mkotas.cz');
+    expect(within(footer).getByRole('link', { name: 'mkotas.cz' }).getAttribute('href')).toBe('https://mkotas.cz');
   }
 
   it('a page that fails keeps the app footer, with the credit', async () => {
