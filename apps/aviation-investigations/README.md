@@ -1139,7 +1139,7 @@ WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/moc
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
-pnpm test:e2e:real    # Playwright against the real API server and the fixture index
+pnpm test:e2e:real    # Playwright against the real API server: the fixture index, and signing in and out
 ```
 
 ### API contracts and the mock API
@@ -1363,7 +1363,12 @@ stalled connections are checked every 5 s.
 (`fixtures/ntsb` and `fixtures/ntsb-ui`) published as the active dataset of
 `aviation_test`. `pnpm test:e2e:real` builds the web client and starts the real server
 on that dataset (`tests/e2e-real/server.ts`, port `E2E_REAL_PORT`, default 5181). Both
-reset `aviation_test`'s corpus, so do not run them at the same time.
+reset `aviation_test`'s corpus, so do not run them at the same time. It also starts a
+second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
+`E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
+(localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
+callback as it would with Google; that server empties `aviation_test`'s control and auth
+tables when it starts.
 
 ### Language-model provider
 
@@ -1788,12 +1793,17 @@ lock order in migration 0019.
   even arriving at the same time, is refused before a user or session is made.
   `POST /api/auth/sign-out` ends the session, and says so only once it is gone: when the
   database cannot end it, the answer is 503 `sign_out_pending` (`Retry-After: 5`), the
-  browser is signed out all the same (the page forgets everything private it held, in every
-  tab, and says the server has not confirmed it yet), and the sign-out is kept for a retry in
-  a sealed, HttpOnly `__Secure-aviation_signout` cookie under `/api` (never a session) that
-  the browser's next sign-out or account read finishes. No new session is issued while one is
-  pending: a sign-in finishes it first, at its start and at Google's callback, and is refused
-  (503 `sign_out_pending`) while it cannot. No other Better Auth endpoint is served.
+  browser is signed out all the same, and the sign-out is kept for a retry in a sealed,
+  HttpOnly `__Secure-aviation_signout` cookie under `/api` (never a session) that the
+  browser's next sign-out or account read finishes. It is `SameSite=Lax`, like the OAuth
+  state cookie, because Google's redirect back to the callback is a navigation from another
+  site, which carries no `Strict` cookie. No new session is issued while one is pending: a
+  sign-in finishes it first, at its start and at Google's callback, and is refused (503
+  `sign_out_pending`) while it cannot. The page forgets everything private it held, in every
+  tab, whatever the sign-out's answer: as soon as the sign-out starts, nothing started for
+  the visitor is kept or sent, and once the answer is in (or none can come), everything
+  private goes. Anything but the server's success, read in full, reads the account again and
+  says the server has not confirmed the sign-out. No other Better Auth endpoint is served.
 - **What is accepted and kept.** An ID token from Google's token endpoint (the only
   source: ID-token sign-in is off) whose header says RS256 and carries a signature, for
   this client and no other audience, with finite `exp` (not passed) and `iat` (not in

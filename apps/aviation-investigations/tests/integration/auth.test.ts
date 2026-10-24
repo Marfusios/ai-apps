@@ -205,7 +205,8 @@ async function send(
   url: string,
   opts: { jar?: CookieJar; body?: unknown; from?: string; headers?: Record<string, string> } = {},
 ): Promise<Sent> {
-  const cookie = opts.jar?.header();
+  // Google's redirect back is a cross-site top-level navigation: the browser leaves out SameSite=Strict cookies.
+  const cookie = opts.jar?.header({ crossSite: opts.headers?.['sec-fetch-site'] === 'cross-site' });
   const r = await h.app.inject({
     method,
     url,
@@ -940,10 +941,11 @@ describe('signing out is confirmed (gate 22 finding 1)', () => {
     // This browser is signed out all the same...
     expect(cookieNamed(out.setCookies, SESSION)).toMatch(/Max-Age=0/i);
     expect(jar.get(SESSION)).toBeUndefined();
-    // ...and keeps the sign-out for a retry: sealed, only for /api, never readable by the page.
+    // ...and keeps the sign-out for a retry: sealed, only for /api, never readable by the page, and
+    // Lax so that Google's callback (a navigation from another site) carries it.
     const pending = cookieNamed(out.setCookies, PENDING_SIGN_OUT);
     expect(pending).toBeDefined();
-    for (const attr of [/;\s*Path=\/api(;|$)/i, /;\s*HttpOnly(;|$)/i, /;\s*Secure(;|$)/i, /;\s*SameSite=Strict(;|$)/i, /;\s*Max-Age=604800(;|$)/i]) {
+    for (const attr of [/;\s*Path=\/api(;|$)/i, /;\s*HttpOnly(;|$)/i, /;\s*Secure(;|$)/i, /;\s*SameSite=Lax(;|$)/i, /;\s*Max-Age=604800(;|$)/i]) {
       expect(pending).toMatch(attr);
     }
     expect(pending).not.toMatch(/;\s*Domain=/i);
@@ -1061,6 +1063,34 @@ describe('signing out is confirmed (gate 22 finding 1)', () => {
     expect(back.setCookies.some((c) => c.startsWith(`${SESSION}=`) && !/Max-Age=0/i.test(c))).toBe(false);
     expect(await count('auth_sessions')).toBe(1);
     expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
+  });
+
+  it('a sign-in answered after a sign-out that cannot be finished issues no session at Google’s callback, a cross-site navigation (gate t22 r2 finding 2)', async () => {
+    const { db, state } = faultyAuthDb();
+    const h = harness({}, { authDb: db });
+    const { jar, copy } = await signedInWithCopy(h);
+    // The page starts a sign-in; its answer (with the OAuth state cookie) is still on the way.
+    const start = await send(h, 'POST', '/api/auth/sign-in/social', { jar: jar.clone(), body: signInBody('/') });
+    expect(start.status).toBe(200);
+    // Meanwhile a sign-out the database cannot confirm.
+    state.failing = true;
+    expect(errorOf(await send(h, 'POST', '/api/auth/sign-out', { jar, body: {} }))).toEqual([503, 'sign_out_pending']);
+    expect(jar.get(PENDING_SIGN_OUT)).toBeDefined();
+    // The sign-in's answer arrives now and sets its OAuth state again.
+    jar.store(start.setCookies);
+    // Google sends the browser back: a top-level navigation from another site carries the pending sign-out.
+    expect(jar.header({ crossSite: true })).toContain(`${PENDING_SIGN_OUT}=`);
+    const back = await callback(h, jar, google.authorize((start.json as { url: string }).url, newUser()));
+    expect(back.status).toBe(302);
+    expect(back.headers.location).toBe('/account?signin=failed&error=sign_out_pending');
+    expect(back.setCookies.some((c) => c.startsWith(`${SESSION}=`) && !/Max-Age=0/i.test(c))).toBe(false);
+    expect(await count('auth_sessions')).toBe(1);
+    expect(await account(h, jar)).toEqual({ signedIn: false });
+    // Once the database works again, the next account read ends the old session.
+    state.failing = false;
+    expect(await account(h, jar)).toEqual({ signedIn: false });
+    expect(await count('auth_sessions')).toBe(0);
+    expect(await account(h, copy)).toEqual({ signedIn: false });
   });
 
   it('a sign-out that works is answered as before, and one without a session has nothing to wait for', async () => {

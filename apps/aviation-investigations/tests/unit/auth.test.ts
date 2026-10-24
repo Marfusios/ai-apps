@@ -365,7 +365,7 @@ describe('the service', () => {
     expect(JSON.stringify(warnings)).not.toContain(TOKEN);
     expect(warnings).toEqual([{ signOut: 'unconfirmed', err: { name: 'Error' } }]);
     const kept = s.pendingSignOutCookie(session);
-    expect(kept).toMatch(/^__Secure-aviation_signout=v1\.[A-Za-z0-9_-]+; Max-Age=604800; Path=\/api; HttpOnly; SameSite=Strict; Secure$/);
+    expect(kept).toMatch(/^__Secure-aviation_signout=v1\.[A-Za-z0-9_-]+; Max-Age=604800; Path=\/api; HttpOnly; SameSite=Lax; Secure$/);
     expect(kept).not.toContain(TOKEN);
     const pending = kept.split(';', 1)[0]!;
     expect(s.hasPendingSignOut(pending)).toBe(true);
@@ -390,7 +390,7 @@ describe('the service', () => {
     for (const t of tokens) jar = s.pendingSignOutCookie(`__Host-aviation_session=${sessionCookie(t)}${jar ? `; ${jar}` : ''}`).split(';', 1)[0]!;
     await expect(s.finishSignOut(jar, { session: false })).resolves.toBe(true);
     expect(deleted).toEqual([tokens]);
-    expect(s.donePendingSignOutCookie()).toBe('__Secure-aviation_signout=; Max-Age=0; Path=/api; HttpOnly; SameSite=Strict; Secure');
+    expect(s.donePendingSignOutCookie()).toBe('__Secure-aviation_signout=; Max-Age=0; Path=/api; HttpOnly; SameSite=Lax; Secure');
   });
 });
 

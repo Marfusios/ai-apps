@@ -59,13 +59,17 @@
  * so after it the route ends the session itself (`finishSignOut`: one `DELETE` by the
  * token of the signed session cookie, checked against BETTER_AUTH_SECRET without the
  * database) and answers success only when that statement succeeds. When it fails, the
- * answer is 503 `unavailable` with `Retry-After: 5`, and this browser is signed out all
- * the same: the session cookie is expired, and the sign-out is kept for a retry in
+ * answer is 503 `sign_out_pending` with `Retry-After: 5`, and this browser is signed out
+ * all the same: the session cookie is expired, and the sign-out is kept for a retry in
  * `__Secure-aviation_signout` (`aviation_signout` over plain http): the session cookie
  * values, every one kept, sealed with AES-256-GCM under a key derived from
  * BETTER_AUTH_SECRET, so only this server can open it, the page cannot read a token out of
- * it and it never works as a session cookie; HttpOnly, SameSite=Strict, Path=/api, for
- * the 7 days a session can live. The browser's next sign-out, or its next account read
+ * it and it never works as a session cookie; HttpOnly, Path=/api, for the 7 days a session
+ * can live, and SameSite=Lax like the OAuth state cookie: Google's redirect back to the
+ * callback is a top-level navigation from another site, which carries no Strict cookie, and
+ * the callback must see a pending sign-out (gate t22 r2 finding 2). Lax adds only top-level
+ * GET navigations from other sites, and there the cookie can do no more than finish this
+ * browser's own sign-out or hold up its sign-in. The browser's next sign-out, or its next account read
  * (`GET /api/account`, on every page load), ends those sessions and drops the cookie; an
  * account read never ends the session the browser holds now. Until then a copy of the old
  * cookie still works, which is why the sign-out was not reported done (503
@@ -156,7 +160,7 @@ const CLOCK_SKEW_MS = 60_000;
 /**
  * A sign-out the database could not confirm is kept in this cookie for a retry (see the
  * module comment, "Signing out"): `__Secure-aviation_signout` over https, sent only under
- * `/api` (the sign-out request and the account read).
+ * `/api` (the sign-out request, the account read, a sign-in's start and Google's callback).
  */
 export function pendingSignOutCookieName(secure: boolean): string {
   return `${secure ? '__Secure-' : ''}aviation_signout`;
@@ -644,7 +648,8 @@ function buildAuthService(config: AuthServiceConfig, deps: AuthServiceDeps & { p
   const pendingName = pendingSignOutCookieName(secure);
   const sealer = pendingSignOutSeal(secret);
   const pendingCookie = (value: string, maxAge: number) =>
-    `${pendingName}=${value}; Max-Age=${maxAge}; Path=${PENDING_SIGN_OUT_PATH}; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`;
+    // Lax, not Strict: Google's callback, a navigation from another site, must carry it (module comment).
+    `${pendingName}=${value}; Max-Age=${maxAge}; Path=${PENDING_SIGN_OUT_PATH}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
   /** The session cookie values (as sent) of this browser's pending sign-outs. */
   const pendingOf = (cookieHeader: string | undefined): string[] => cookieValues(cookieHeader, pendingName).flatMap((v) => sealer.open(v));
   const sessionCookieOf = (cookieHeader: string | undefined): string[] => cookieValues(cookieHeader, names.session_token).slice(0, 1);

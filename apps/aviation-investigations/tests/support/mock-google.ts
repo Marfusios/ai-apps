@@ -238,13 +238,19 @@ export class MockGoogle {
   }
 }
 
+/** A cookie's `SameSite`; browsers take a cookie without one as `Lax`. */
+export type SameSite = 'strict' | 'lax' | 'none';
+
 /**
  * One browser's cookies: what the server set (`Set-Cookie`, Max-Age=0 removes), sent back
- * as a `Cookie` header. Paths and domains are not modelled: every cookie here is Path=/,
- * host-only.
+ * as a `Cookie` header. `SameSite` is modelled as browsers apply it: a cross-site
+ * top-level navigation (Google's redirect back to the callback, `header({ crossSite: true })`)
+ * carries `Lax` and `None` cookies but never a `Strict` one. Paths and domains are not
+ * modelled: the requests here are all under `/api`, which every cookie's path covers, and
+ * every cookie is host-only.
  */
 export class CookieJar {
-  private readonly cookies = new Map<string, string>();
+  private readonly cookies = new Map<string, { value: string; sameSite: SameSite }>();
 
   store(setCookie: string | string[] | undefined): void {
     for (const line of setCookie === undefined ? [] : Array.isArray(setCookie) ? setCookie : [setCookie]) {
@@ -253,17 +259,23 @@ export class CookieJar {
       const name = pair!.slice(0, eq).trim();
       const value = pair!.slice(eq + 1).trim();
       const maxAge = /;\s*max-age=(-?\d+)/i.exec(line)?.[1];
+      const sameSite = (/;\s*samesite=(strict|lax|none)\s*(?:;|$)/i.exec(line)?.[1]?.toLowerCase() ?? 'lax') as SameSite;
       if (maxAge !== undefined && Number(maxAge) <= 0) this.cookies.delete(name);
-      else this.cookies.set(name, value);
+      else this.cookies.set(name, { value, sameSite });
     }
   }
 
-  set(name: string, value: string): void {
-    this.cookies.set(name, value);
+  set(name: string, value: string, sameSite: SameSite = 'lax'): void {
+    this.cookies.set(name, { value, sameSite });
   }
 
   get(name: string): string | undefined {
-    return this.cookies.get(name);
+    return this.cookies.get(name)?.value;
+  }
+
+  /** The `SameSite` the cookie was stored with. */
+  sameSiteOf(name: string): SameSite | undefined {
+    return this.cookies.get(name)?.sameSite;
   }
 
   delete(name: string): void {
@@ -273,11 +285,13 @@ export class CookieJar {
   /** A copy (another tab shares the cookies; another browser starts from a copy). */
   clone(): CookieJar {
     const copy = new CookieJar();
-    for (const [k, v] of this.cookies) copy.set(k, v);
+    for (const [k, v] of this.cookies) copy.set(k, v.value, v.sameSite);
     return copy;
   }
 
-  header(): string | undefined {
-    return this.cookies.size === 0 ? undefined : [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
+  /** The `Cookie` header of a request; `crossSite`: a top-level navigation from another site, without `Strict` cookies. */
+  header({ crossSite = false }: { crossSite?: boolean } = {}): string | undefined {
+    const sent = [...this.cookies].filter(([, c]) => !(crossSite && c.sameSite === 'strict'));
+    return sent.length === 0 ? undefined : sent.map(([k, c]) => `${k}=${c.value}`).join('; ');
   }
 }
