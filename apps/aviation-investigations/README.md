@@ -1133,8 +1133,9 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   expired view never polls) or another refusal, waits for `Retry-After` on a 429, and
   backs off exponentially (up to 30 s) after other failures; a read that gets no answer
   within 15 s (headers and body) is such a failure (POSTs never time out: an aborted paid
-  request stays an unknown outcome). While reads of a running step fail, the checklist
-  says "Still checking… connection trouble." until one gets through. The chips stay on top
+  request stays an unknown outcome). As soon as a read of a running step fails or gets no
+  answer within those 15 s (before its one retry), the checklist says "Still checking…
+  connection trouble." until a read gets through. The chips stay on top
   while a step runs: the scope stage's `checklist.interpretation` once it is sent,
   else, for a refinement, the previous step's. Then the briefing sheet:
   the AI summary with case citations, evidence groups, case cards with WHY IT

@@ -1055,6 +1055,26 @@ describe('Polling (stops, honours Retry-After, backs off)', () => {
     await waitFor(() => expect(line.textContent).toBe(''), { timeout: 10_000 });
   });
 
+  it('a stalled poll is said as soon as the read gives up after READ_TIMEOUT_MS, not after its retry gives up too (re-review N-5)', { timeout: 20_000 }, async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let stall = false;
+    server.use(
+      http.get('*/api/briefs/:id', () =>
+        stall ? new Promise<Response>(() => {}) : HttpResponse.json({ ...running, startedAt: new Date().toISOString() }),
+      ),
+    );
+    renderApp(`/briefs/${running.briefId}`);
+    const checklist = await screen.findByRole('region', { name: /answer checklist/i }, SLOW);
+    const line = checklist.querySelector('[data-poll-trouble]') as HTMLElement;
+    stall = true;
+    // The next poll (within a second) gets no answer: nothing is said before it gives up ...
+    await act(() => vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1_000));
+    expect(line.textContent).toBe('');
+    // ... and the line appears once it has, while its one retry is still waiting.
+    await act(() => vi.advanceTimersByTimeAsync(2_500));
+    await waitFor(() => expect(line.textContent).toBe(POLL_TROUBLE), SLOW);
+  });
+
   it('an expired brief is read once, then left alone', { timeout: 10_000 }, async () => {
     let reads = 0;
     server.use(

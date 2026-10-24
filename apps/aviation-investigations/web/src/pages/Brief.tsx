@@ -290,11 +290,13 @@ export function Brief() {
     if (document.activeElement === document.body || document.activeElement === null) resultHeading.current?.focus({ preventScroll: true });
   }, [step, finished]);
 
-  // Reads of the running step on screen keep failing (a network or server error, a read
-  // that timed out; not a refusal such as a 404 or a 429, which stop or wait): the page
-  // keeps trying, and the checklist says so until a read gets through.
-  const pollError = stepMissing ? fallback.error : query.error;
-  const pollTrouble = step !== undefined && !finished && pollError !== null && !(pollError instanceof ApiError && pollError.status < 500);
+  // A read of the running step on screen failed (a network or server error, or no answer
+  // within READ_TIMEOUT_MS; not a refusal such as a 404 or a 429, which stop or wait): the
+  // page keeps trying, and the checklist says so from that first failed attempt (its one
+  // retry still to come, re-review N-5) until a read gets through.
+  const polling = stepMissing ? fallback : query;
+  const pollFailure = polling.error ?? polling.failureReason;
+  const pollTrouble = step !== undefined && !finished && pollFailure !== null && !(pollFailure instanceof ApiError && pollFailure.status < 500);
 
   // A failed read that is not a 404. While `?step=n` past the last step falls back to the
   // latest step, only the fallback's own failure counts (the first 404 is expected).

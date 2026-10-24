@@ -654,7 +654,8 @@ checklist card like a cockpit checklist:
   gate asked, from the measured stages, scope 2–4 s, retrieve 1–2 s, compose
   19–23 s and check 20–38 s at p50–p95, within the 100 s pipeline deadline.)
 - **While reads of the step fail** (Task 22, Proposed): a muted line under the
-  note, "Still checking… connection trouble.", until a read gets through.
+  note, "Still checking… connection trouble.", from the first read that fails or
+  gets no answer within 15 seconds, until a read gets through.
 
 The four rows map to the pipeline's scope, retrieve, compose and validate stages.
 Admission (Turnstile and quota) happens before the checklist appears, and
