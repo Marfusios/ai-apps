@@ -39,7 +39,7 @@ import {
 } from '../../web/src/features/ai/unsettled';
 import { canonicalFilters as serverCanonicalFilters } from '../../server/briefs/intent';
 import { IDEMPOTENCY_TTL_MS } from '../../server/quota/policy';
-import { ApiError, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery } from '../../web/src/api';
+import { AI_STATUS_RETRY_MS, ApiError, READ_TIMEOUT_MS, ReadTimeoutError, aiStatusQuery } from '../../web/src/api';
 import { CHANGE_NOT_KEPT, RETRY_FAILED, chipsContext } from '../../web/src/pages/Brief';
 import { REFINEMENTS_USED } from '../../web/src/features/brief/RefineBox';
 import { Checklist, CHECKLIST_NOTE, POLL_TROUBLE } from '../../web/src/features/brief/Checklist';
@@ -175,6 +175,36 @@ describe('AI availability labels (UI_DESIGN §5)', () => {
   ] as const)('header counter: %s reads "%s"', (sample, text) => {
     const { container } = withStatus(AI_STATUS_SAMPLES[sample], <AiCounter />);
     expect(container.textContent).toContain(text);
+  });
+});
+
+describe('A failed AI status read is read again (review W-9)', { timeout: 20_000 }, () => {
+  it('the status query re-reads on a timer while it is in error, and when the tab gets focus', () => {
+    const options = aiStatusQuery();
+    const at = (status: 'error' | 'success') => ({ state: { status } }) as never;
+    const interval = options.refetchInterval as (q: never) => number | false;
+    const onFocus = options.refetchOnWindowFocus as (q: never) => boolean;
+    expect(interval(at('error'))).toBe(AI_STATUS_RETRY_MS);
+    expect(interval(at('success'))).toBe(false);
+    expect(onFocus(at('error'))).toBe(true);
+    expect(onFocus(at('success'))).toBe(false);
+  });
+
+  it('after a failed read, the Ask AI button comes back by itself once the status can be read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let failures = 2;
+    server.use(
+      http.get('*/api/ai/status', () => (failures-- > 0 ? HttpResponse.json({ error: 'internal', message: 'Oops.' }, { status: 500 }) : undefined)),
+    );
+    renderApp('/');
+    // The first read and its one retry fail: nothing is promised and nothing runs ...
+    expect(await screen.findByText('AI temporarily unavailable', {}, SLOW)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Ask AI$/ }).getAttribute('aria-disabled')).toBe('true');
+    // ... until the status is read again, without a reload.
+    await act(() => vi.advanceTimersByTimeAsync(AI_STATUS_RETRY_MS));
+    const ask = await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ }, SLOW);
+    expect(ask.getAttribute('aria-disabled')).toBe('false');
+    expect(screen.queryByText('AI temporarily unavailable')).toBeNull();
   });
 });
 

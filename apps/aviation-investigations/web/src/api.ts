@@ -29,6 +29,9 @@ export class ApiError extends Error {
 
 export const isNotFound = (err: unknown): boolean => err instanceof ApiError && err.status === 404;
 
+/** While the AI status cannot be read, it is read again this often (and when the tab gets focus). */
+export const AI_STATUS_RETRY_MS = 15_000;
+
 /** How long a read that repeats by itself (a brief poll, the AI status) waits for an answer. */
 export const READ_TIMEOUT_MS = 15_000;
 
@@ -161,7 +164,9 @@ export const dashboardQuery = (cohort: DashboardRequest['cohort']) =>
  * AI availability for this visitor (UI_DESIGN §5): the header counter and the Ask AI
  * label read it before anyone clicks. Per visitor and never cached by the server;
  * refetch it after an AI request. A private read (web/src/features/auth/visitor.ts). A
- * read that gets no answer gives up after `READ_TIMEOUT_MS`.
+ * read that gets no answer gives up after `READ_TIMEOUT_MS`. While it cannot be read the
+ * controls say "AI temporarily unavailable", so it is read again every
+ * `AI_STATUS_RETRY_MS` and when the tab gets focus, until it can (Task 22 review W-9).
  */
 export const aiStatusQuery = () =>
   queryOptions({
@@ -169,4 +174,6 @@ export const aiStatusQuery = () =>
     queryFn: ({ signal }) => privateRead(() => getJson('/api/ai/status', AiStatusResponseSchema, signal, { timeoutMs: READ_TIMEOUT_MS })),
     staleTime: 30_000,
     retry,
+    refetchInterval: (query) => (query.state.status === 'error' ? AI_STATUS_RETRY_MS : false),
+    refetchOnWindowFocus: (query) => query.state.status === 'error',
   });
