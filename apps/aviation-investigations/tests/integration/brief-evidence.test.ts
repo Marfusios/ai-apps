@@ -9,16 +9,20 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { Client } from '@elastic/elasticsearch';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHybridRetriever } from '../../server/briefs/retriever.js';
 import { insertBrief } from '../../server/briefs/store.js';
 import { closeDb, type Db } from '../../server/db/client.js';
-import { manifestCasesIndex } from '../../server/db/generations.js';
+import { BRIEF_REFERENCES_LOCK_KEY, claimBriefEvidence, getActiveManifest, manifestCasesIndex } from '../../server/db/generations.js';
 import { RETRIEVAL_V2 } from '../../server/search/retrieval-config.js';
 import { passagesAlias } from '../../worker/index/passages-index.js';
 import { deleteUnusedIndices } from '../../worker/index/publications.js';
+import * as schema from '../../server/db/schema/index.js';
 import { publishGeneration } from '../../worker/index/publish.js';
 import { FIXTURE_EMBEDDING, buildFixturePassagesIndex, deleteIndices, fixtureEmbedder, publishFixtureDataset } from '../support/api-dataset.js';
+import { count } from './corpus-helpers.js';
 import { TEST_INDEX_PREFIX, resetControls, resetCorpus, testDb, testEs, testEsReader } from './helpers.js';
 
 const PREFIX = `${TEST_INDEX_PREFIX}evid${randomBytes(4).toString('hex')}`;
@@ -26,6 +30,7 @@ const DAY = 24 * 3_600_000;
 
 let appDb: Db;
 let ingest: Db;
+let migrator: Db;
 let reader: Client;
 let writer: Client;
 let generationId: number;
@@ -35,6 +40,7 @@ let firstPassages: string;
 beforeAll(async () => {
   appDb = testDb('app');
   ingest = testDb('ingest');
+  migrator = testDb('migrator');
   reader = testEsReader();
   writer = testEs();
   await resetControls();
@@ -48,7 +54,7 @@ afterAll(async () => {
   await deleteIndices(writer, PREFIX);
   await resetControls();
   await resetCorpus();
-  await Promise.all([closeDb(appDb), closeDb(ingest), reader.close(), writer.close()]);
+  await Promise.all([closeDb(appDb), closeDb(ingest), closeDb(migrator), reader.close(), writer.close()]);
 });
 
 beforeEach(async () => {
@@ -100,5 +106,42 @@ describe('a live brief across a republish of its generation', () => {
     const retired = await deleteUnusedIndices(writer, ingest, { olderThanHours: 0, yes: true, aliases: [passagesAlias(PREFIX)] });
     expect(retired.deleted).toContain(firstPassages);
     expect(retired.refused.map((r) => r.indexName)).toContain(secondPassages);
+  }, 180_000);
+
+  it('index cleanup waits for a brief being created, then keeps the index the new brief cites (gate finding 4)', async () => {
+    const current = (await getActiveManifest(appDb))!;
+    const pinned = { generationId, passagesIndex: current.passagesIndex! };
+    // The creating transaction: evidence claimed and the brief inserted, not yet committed.
+    const creator = await appDb.$client.connect();
+    let committed = false;
+    try {
+      await creator.query('BEGIN');
+      expect(await claimBriefEvidence(drizzle({ client: creator, schema }), pinned)).toBe(true);
+      await drizzle({ client: creator }).execute(sql`
+        insert into briefs (read_owner, read_owner_kind, generation_id, passages_index, created_at, expires_at)
+        values (${'d'.repeat(64)}, 'trial', ${generationId}, ${pinned.passagesIndex}, now(), now() + interval '1 hour')`);
+      // Meanwhile the generation is published with another passages index: the pinned one is in no manifest.
+      const next = await buildFixturePassagesIndex(writer, generationId, PREFIX);
+      await publishGeneration(writer, ingest, { generationId, casesIndex, passagesIndex: next, embedding: FIXTURE_EMBEDDING });
+      let finished = false;
+      const cleanup = deleteUnusedIndices(writer, ingest, { olderThanHours: 0, yes: true, aliases: [passagesAlias(PREFIX)] }).finally(() => (finished = true));
+      const high = Math.floor(BRIEF_REFERENCES_LOCK_KEY / 2 ** 32);
+      const low = BRIEF_REFERENCES_LOCK_KEY % 2 ** 32;
+      for (let i = 0; ; i++) {
+        const waiting = await count(migrator, sql`select count(*) from pg_locks where locktype = 'advisory' and classid = ${high} and objid = ${low} and not granted`);
+        if (waiting > 0) break;
+        if (i > 400) throw new Error('index cleanup never waited for the brief being created');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(finished).toBe(false);
+      await creator.query('COMMIT');
+      committed = true;
+      const report = await cleanup;
+      expect(report.refused).toContainEqual({ indexName: pinned.passagesIndex, reason: 'used by an unexpired AI brief' });
+      expect(await writer.indices.exists({ index: pinned.passagesIndex })).toBe(true);
+    } finally {
+      if (!committed) await creator.query('ROLLBACK').catch(() => undefined);
+      creator.release();
+    }
   }, 180_000);
 });

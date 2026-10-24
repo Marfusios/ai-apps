@@ -125,6 +125,7 @@ import { setLockTimeout } from '../quota/locks.js';
 import { principalHash, UnknownPrincipalError, type Principal, type QuotaPolicy } from '../quota/policy.js';
 import { settle } from '../quota/settle.js';
 import { sql } from 'drizzle-orm';
+import { claimBriefEvidence } from '../db/generations.js';
 import type { ApiContext } from './context.js';
 
 const NOT_FOUND = 'No AI search with that link is available. AI searches expire after 24 hours.';
@@ -222,6 +223,9 @@ function sendRejection(reply: FastifyReply, r: Rejection, now: Date): FastifyRep
 }
 
 const RESULT_REF = /^brief-step:([0-9a-f-]{36})$/;
+
+/** A new brief's evidence went away while the request was admitted (server/db/generations.ts, `claimBriefEvidence`). */
+const EVIDENCE_GONE = Symbol('evidence gone');
 
 /** The response for a step: its static reply when it ended with one, otherwise its stage. */
 function startResponse(briefId: string, step: Pick<StepRow, 'n' | 'stage' | 'result'>): StartBriefResponse {
@@ -568,9 +572,12 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
       return sendError(reply, 503, 'unavailable');
     }
 
-    let created: { briefId: string; step: StepRow } | typeof ACCOUNT_GONE;
+    let created: { briefId: string; step: StepRow } | typeof ACCOUNT_GONE | typeof EVIDENCE_GONE;
     try {
       created = await stepTransaction(ctx, payer, async (tx) => {
+        // The evidence was resolved before admission: it must still exist, checked under the
+        // lock that pruning and index cleanup wait for (server/db/generations.ts).
+        if (!(await claimBriefEvidence(tx, r.evidence))) return EVIDENCE_GONE;
         const now = r.ai.now();
         // The asker reads the brief and pays for its first step: the account, or the trial.
         const brief = await insertBrief(tx, {
@@ -602,6 +609,11 @@ export function briefRoutes(app: FastifyInstance, ctx: ApiContext, opts: { appUr
       // Signed out or deleted since admission: nothing was spent.
       await abandon(ctx, r, admission);
       return sendError(reply, 403, 'signed_out');
+    }
+    if (created === EVIDENCE_GONE) {
+      // Its generation or index went away meanwhile: nothing was spent; asking again uses the current one.
+      await abandon(ctx, r, admission);
+      return sendError(reply, 503, 'unavailable');
     }
     return sendStart(reply, await start(ctx, r, created.briefId, created.step, admission, requestId));
   }

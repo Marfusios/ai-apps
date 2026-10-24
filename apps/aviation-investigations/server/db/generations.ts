@@ -22,6 +22,50 @@ import {
 export const LIFECYCLE_LOCK_KEY = 7_311_905_022;
 
 /**
+ * Advisory lock between creating a brief and deleting what briefs cite (Task 22 fix round 2,
+ * gate finding 4). A brief is inserted holding it shared (`claimBriefEvidence`), so briefs
+ * are created concurrently; pruning and index cleanup take it exclusively for an instant
+ * (`waitForBriefInserts`), while they hold the lifecycle lock, before they read which
+ * generations and indices unexpired briefs use. A brief therefore either commits before that
+ * read, and is seen, or claims afterwards, and sees what the deletion removed.
+ */
+export const BRIEF_REFERENCES_LOCK_KEY = 7_311_905_025;
+
+export interface BriefEvidence {
+  generationId: number;
+  passagesIndex: string;
+}
+
+/**
+ * In the transaction that inserts a brief, before the insert: take the brief-references lock
+ * shared (it lasts until the transaction ends) and confirm the evidence still exists. The
+ * evidence was resolved before admission, and a request can pause across publications and
+ * pruning: false when the generation has no manifest row any more (pruned), or when its
+ * passages index, or the cases index that pair was published with, was deleted (recorded in
+ * `index_builds`). Then the caller creates no brief.
+ */
+export async function claimBriefEvidence(tx: DbOrTx | NodePgDatabase<Schema>, evidence: BriefEvidence): Promise<boolean> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock_shared(${BRIEF_REFERENCES_LOCK_KEY})`);
+  const res = await tx.execute(sql`
+    SELECT EXISTS (SELECT 1 FROM dataset_manifests WHERE generation_id = ${evidence.generationId})
+      AND NOT EXISTS (SELECT 1 FROM index_builds WHERE index_name = ${evidence.passagesIndex} AND deleted_at IS NOT NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM manifest_pairings p JOIN index_builds b ON b.index_name = p.cases_index AND b.deleted_at IS NOT NULL
+        WHERE p.generation_id = ${evidence.generationId} AND p.passages_index = ${evidence.passagesIndex}) AS ok`);
+  return (res.rows[0] as { ok: boolean } | undefined)?.ok === true;
+}
+
+/**
+ * Wait until every brief insert in progress has committed or rolled back (an exclusive
+ * acquisition of the brief-references lock, released again at once). Call it holding the
+ * lifecycle lock, right before reading which generations or indices unexpired briefs use.
+ */
+export async function waitForBriefInserts(q: DbOrTx | NodePgDatabase<Schema>): Promise<void> {
+  await q.execute(sql`SELECT pg_advisory_lock(${BRIEF_REFERENCES_LOCK_KEY})`);
+  await q.execute(sql`SELECT pg_advisory_unlock(${BRIEF_REFERENCES_LOCK_KEY})`);
+}
+
+/**
  * Version of the generation verifier (`worker/ingest/verify.ts`). Bump it whenever its
  * checks change: publication requires a successful verification by this version.
  */
@@ -222,6 +266,8 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
   if (!Number.isInteger(keep) || keep < 1) throw new Error('keep must be a positive integer');
   if (!(graceHours >= 0)) throw new Error('graceHours must be zero or positive');
   return withLifecycleLock(db, async (q) => {
+    // Briefs being created now finish first, so the planning below sees them (gate finding 4).
+    await waitForBriefInserts(q);
     const generations = await call(
       q,
       sql`select g.id::int as id, g.status, m.published_at is not null as was_published, coalesce(m.active, false) as active,

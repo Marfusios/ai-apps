@@ -26,7 +26,7 @@
 import type { Client } from '@elastic/elasticsearch';
 import type pg from 'pg';
 import type { Db } from '../../server/db/client.js';
-import { LIFECYCLE_LOCK_KEY } from '../../server/db/generations.js';
+import { BRIEF_REFERENCES_LOCK_KEY, LIFECYCLE_LOCK_KEY } from '../../server/db/generations.js';
 import { aliasTargets, withAliasLock, type AliasLockOptions } from './aliases.js';
 
 /** First key of the two-key advisory locks held by running builds. */
@@ -273,6 +273,9 @@ export async function deleteUnusedIndices(es: Client, db: Db, opts: DeleteUnused
       withAliasLock(db, c.alias, async (client) => {
         await client.query('select pg_advisory_lock($1)', [LIFECYCLE_LOCK_KEY]);
         try {
+          // Briefs being created now finish first, so the check below sees them (gate finding 4).
+          await client.query('select pg_advisory_lock($1)', [BRIEF_REFERENCES_LOCK_KEY]);
+          await client.query('select pg_advisory_unlock($1)', [BRIEF_REFERENCES_LOCK_KEY]);
           const why = await refusal(es, client, c.build_id, seconds);
           if (why === 'missing') {
             report.missing.push(c.index_name);

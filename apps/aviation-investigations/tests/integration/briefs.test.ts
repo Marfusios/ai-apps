@@ -3239,3 +3239,19 @@ describe('content security policy with anonymous AI', () => {
     }
   });
 });
+
+describe('a new brief and the generation it cites (Task 22 fix round 2, gate finding 4)', () => {
+  it('a request whose evidence was resolved before its generation went away creates no brief and spends nothing', async () => {
+    // As if the request paused between resolving its evidence and inserting the brief while
+    // publications and a prune removed that generation: nothing publishes it any more.
+    const h = harness(answering(), { aiEvidence: async () => ({ generationId: generationId + 1_000, passagesIndex: dataset.passagesIndex }) });
+    const r = await ask(h, 'Engine power loss shortly after maintenance');
+    expect([r.status, (r.json as unknown as { error: string }).error]).toEqual([503, 'unavailable']);
+    expect(await count('briefs')).toBe(0);
+    expect(await count('brief_steps')).toBe(0);
+    // The admission was abandoned: its reservation settled at zero, its quota unit given back.
+    const spent = await migrator.execute(sql`SELECT coalesce(sum(usd), 0)::float8 AS usd FROM cost_ledger`);
+    expect(spent.rows).toEqual([{ usd: 0 }]);
+    expect(h.llm.calls).toHaveLength(0);
+  });
+});

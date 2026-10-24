@@ -576,8 +576,8 @@ so they create and switch only `ai-aviation-<env>-*` indices. A build deletes on
 its own index, and only when it failed before any alias request; every other index
 stays until an explicit `index delete-unused --older-than <hours> --yes`, which deletes
 indices that are older than the threshold, no alias target, in no manifest (active or
-retained) and used by no unexpired AI brief, and refuses any with a switch request still
-pending or unknown. Run it
+retained) and used by no unexpired AI brief (it waits for briefs being created first),
+and refuses any with a switch request still pending or unknown. Run it
 without `--yes` first: it lists what it would delete. A deleted index cannot be
 published again, so pick a threshold above the age of any index you may roll back to.
 
