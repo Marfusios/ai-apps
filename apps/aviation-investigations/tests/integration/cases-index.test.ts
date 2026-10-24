@@ -963,19 +963,21 @@ describe('alias', () => {
     const next = await rebuildCasesIndex(es, ingest, { generationId, prefix });
     expect(next.previousIndices).toEqual([before.index]);
 
-    // Dry run by default; deletes only with yes, and only the rejected-only index.
+    // Dry run by default; deletes only with yes: the rejected-only index and the one the alias
+    // moved away from, never the current target.
     const dry = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, aliases: [alias] });
-    expect(dry).toMatchObject({ dryRun: true, deleted: [], wouldDelete: [index] });
+    expect(dry).toMatchObject({ dryRun: true, deleted: [] });
+    expect(dry.wouldDelete.sort()).toEqual([before.index, index].sort());
     expect(await es.indices.exists({ index })).toBe(true);
     const done = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
-    expect(done.deleted).toEqual([index]);
-    expect(done.refused.map((k) => k.indexName).sort()).toEqual([before.index, next.index].sort());
+    expect(done.deleted.sort()).toEqual([before.index, index].sort());
+    expect(done.refused).toEqual([{ indexName: next.index, reason: `is a target of ${alias}` }]);
     expect(await es.indices.exists({ index })).toBe(false);
     expect(await recordedDeleted(index)).toBe(true);
     expect(await aliasTargets(es, alias)).toEqual([next.index]);
   });
 
-  it('a rejected rollback to an older committed index leaves that index non-deletable', async () => {
+  it('a rejected rollback to an older committed index changes nothing: the alias stays, the older index is unused', async () => {
     const prefix = `${PREFIX}-rollback`;
     const alias = casesAlias(prefix);
     const older = await rebuildCasesIndex(es, ingest, { generationId, prefix });
@@ -987,16 +989,12 @@ describe('alias', () => {
     }));
     const err = await switchAlias(faulty, ingest, alias, older.index).catch((e: unknown) => e);
     expect((err as AliasSwitchError).outcome).toBe('rejected');
-    // Committed is sticky: a later rejected attempt does not make the index disposable.
+    // The rejected request was never applied: the alias still targets the newer index, and the
+    // older one, committed once but no target and in no manifest, is unused (a dry run says so).
     expect(await outcomes(older.index)).toEqual(['committed', 'rejected']);
-    const del = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
-    expect(del.deleted).toEqual([]);
-    expect(del.refused).toEqual(
-      expect.arrayContaining([
-        { indexName: older.index, reason: 'has a switch attempt that is committed' },
-        { indexName: newer.index, reason: 'has a switch attempt that is committed' },
-      ]),
-    );
+    const del = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, aliases: [alias] });
+    expect(del.wouldDelete).toEqual([older.index]);
+    expect(del.refused).toEqual(expect.arrayContaining([{ indexName: newer.index, reason: `is a target of ${alias}` }]));
     expect(await es.indices.exists({ index: older.index })).toBe(true);
     expect(await aliasTargets(es, alias)).toEqual([newer.index]);
     // The database refuses rewriting the committed attempt itself.
@@ -1155,11 +1153,33 @@ describe('explicit cleanup', () => {
       },
     });
     expect(selected).toContain(index);
-    expect(report.deleted).toEqual([]);
-    expect(report.refused).toEqual(expect.arrayContaining([{ indexName: index, reason: 'has a switch attempt that is committed' }]));
+    // The index the build switched the alias to in between is kept; the one it replaced is no
+    // longer used and goes.
+    expect(report.refused).toEqual(expect.arrayContaining([{ indexName: index, reason: `is a target of ${alias}` }]));
+    expect(report.deleted).toEqual([before.index]);
     expect(await es.indices.exists({ index })).toBe(true);
     expect(await aliasTargets(es, alias)).toEqual([index]);
-    expect(await es.indices.exists({ index: before.index })).toBe(true);
+    expect(await es.indices.exists({ index: before.index })).toBe(false);
+  });
+
+  it('delete-unused deletes a committed index once the alias has moved away from it, and keeps the current target', async () => {
+    const prefix = `${PREFIX}-retired`;
+    const alias = casesAlias(prefix);
+    const first = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    const second = await rebuildCasesIndex(es, ingest, { generationId, prefix });
+    expect(await outcomes(first.index)).toEqual(['committed']);
+    expect(await aliasTargets(es, alias)).toEqual([second.index]);
+    // Younger than the threshold: not even a candidate.
+    expect((await deleteUnusedIndices(es, ingest, { olderThanHours: 1, aliases: [alias] })).wouldDelete).toEqual([]);
+    const dry = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, aliases: [alias] });
+    expect(dry.wouldDelete).toEqual([first.index]);
+    expect(dry.refused).toEqual([{ indexName: second.index, reason: `is a target of ${alias}` }]);
+    const done = await deleteUnusedIndices(es, ingest, { olderThanHours: 0, yes: true, aliases: [alias] });
+    expect(done.deleted).toEqual([first.index]);
+    expect(await recordedDeleted(first.index)).toBe(true);
+    expect(await es.indices.exists({ index: first.index })).toBe(false);
+    expect(await es.indices.exists({ index: second.index })).toBe(true);
+    expect(await aliasTargets(es, alias)).toEqual([second.index]);
   });
 
   it('delete-unused refuses indices referenced by a dataset manifest, active or retained', async () => {

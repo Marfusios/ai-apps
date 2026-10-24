@@ -17,8 +17,9 @@
  *   reason, which only unblocks switching and deletes nothing.
  * - `deleteUnusedIndices` (dry run unless told otherwise) deletes old indices of
  *   stopped builds that are no alias target, appear in no dataset manifest and have
- *   no committed, pending or unknown switch attempt, rechecking all of it under the
- *   build, alias and lifecycle locks just before deleting.
+ *   no pending or unknown switch attempt, rechecking all of it under the build, alias
+ *   and lifecycle locks just before deleting. A committed attempt does not keep an
+ *   index: once the alias read-back no longer shows it, a later switch replaced it.
  * - `cleanupStalePins` removes the pins of stopped builds, and nothing else.
  */
 import type { Client } from '@elastic/elasticsearch';
@@ -220,8 +221,10 @@ async function refusal(es: Client, q: pg.PoolClient, buildId: string, seconds: n
   if (!b) return 'no build record';
   if (b.deleted) return 'already deleted';
   if (!b.old) return 'younger than the threshold';
+  // A pending or unknown request may still land and make the index a target; a committed one
+  // made it a target once, which the alias read-back below settles, and a rejected one never did.
   const attempts = await q.query<{ outcome: string }>(
-    `select outcome from index_switch_attempts where index_name = $1 and outcome <> 'rejected' order by id limit 1`,
+    `select outcome from index_switch_attempts where index_name = $1 and outcome in ('pending', 'unknown') order by id limit 1`,
     [b.index_name],
   );
   if (attempts.rows[0]) return `has a switch attempt that is ${attempts.rows[0].outcome}`;
@@ -243,8 +246,9 @@ async function refusal(es: Client, q: pg.PoolClient, buildId: string, seconds: n
  * Candidates are chosen first, then each is rechecked after taking its build lock (it
  * must be free), its alias lock and the lifecycle lock (so no switch, manifest
  * publication or pruning interleaves): still recorded and not deleted, older than the
- * threshold, no committed, pending or unknown switch attempt, in no dataset manifest,
- * and no alias target.
+ * threshold, no pending or unknown switch attempt, in no dataset manifest (active or
+ * retained), and no alias target. The API reads only manifest indices, so an index the
+ * alias moved away from and no manifest names serves nothing.
  */
 export async function deleteUnusedIndices(es: Client, db: Db, opts: DeleteUnusedOptions): Promise<DeleteUnusedReport> {
   if (!(opts.olderThanHours >= 0)) throw new Error('olderThanHours must be zero or positive');

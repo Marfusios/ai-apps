@@ -299,7 +299,8 @@ pnpm worker index cleanup-builds --older-than <hours>
 - **Cleanup is explicit.** `worker index delete-unused --older-than <hours>` lists
   (and with `--yes` deletes) indices of stopped builds that are older than the
   threshold, are no alias target, appear in no `dataset_manifests` row (active or
-  retained), and have no committed, pending or unknown switch attempt. Every
+  retained), and have no pending or unknown switch attempt (a committed one does not
+  keep an index the alias has since moved away from). Every
   candidate is rechecked just before deletion while holding its build lock (free),
   its alias lock and the lifecycle lock. `worker index cleanup-builds --older-than
   <hours>` removes the pins of builds that are no longer running and nothing else.

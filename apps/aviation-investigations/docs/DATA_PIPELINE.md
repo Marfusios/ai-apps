@@ -563,12 +563,19 @@ to this.
 alias request. Everything else waits for `index delete-unused --yes`, which
 revalidates under locks and refuses:
 
-- alias targets, and indices named in any manifest;
-- indices with any committed, pending or unknown attempt, including an unknown one
-  declared abandoned;
+- alias targets (read back from Elasticsearch under the alias lock), and indices named
+  in any manifest, active or retained;
+- indices with a pending or unknown attempt, including an unknown one declared
+  abandoned: the request may still land;
 - running or recent builds.
 
-It is therefore no way to retire a previously committed index routinely.
+A committed attempt does not keep an index: once a later switch has moved the alias
+away from it and no manifest names it, nothing reads it (the API reads only manifest
+indices). This is how superseded indices are retired: after `prune-generations` has
+removed a generation's manifest row, or after a rebuild replaced an index, run
+`index delete-unused --older-than <hours>` (a dry run) and then with `--yes`. An index
+that is gone cannot be published again, so keep a rollback target's age above the
+threshold until the rollback is no longer needed.
 
 ### 2.11 Publishing, and what the API reads
 
@@ -952,8 +959,8 @@ the id inside Elasticsearch; fix round 1 makes those changes and goes back to it
 
 - Archive download is manual; the planned host allowlist is not implemented.
 - Only `avall.zip` (2008 onward) is ingested: no weekly updates or pre-2008 archives.
-- Old indices are deleted by hand, and `delete-unused` never removes an index that
-  was ever committed to an alias. `dev` still keeps `cases-v2`.
+- Old indices are deleted only on request (`index delete-unused`), never automatically.
+  `dev` still keeps `cases-v2`.
 - Embedding inputs still contain glued headings. Fixing that needs a new input
   template and a paid re-embedding.
 - Multi-aircraft narratives (2,197 passages) can never ground an aircraft-specific

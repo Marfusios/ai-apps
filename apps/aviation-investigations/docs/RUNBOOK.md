@@ -535,7 +535,11 @@ within seconds; public responses may stay cached for up to five minutes.
 The `index` commands (README, "Cases index") use the environment's write API key,
 so they create and switch only `ai-aviation-<env>-*` indices. A build deletes only
 its own index, and only when it failed before any alias request; every other index
-stays until an explicit `index delete-unused --older-than <hours> --yes`.
+stays until an explicit `index delete-unused --older-than <hours> --yes`, which deletes
+indices that are older than the threshold, no alias target and in no manifest (active
+or retained), and refuses any with a switch request still pending or unknown. Run it
+without `--yes` first: it lists what it would delete. A deleted index cannot be
+published again, so pick a threshold above the age of any index you may roll back to.
 
 Paths are relative to the app directory, which the container sees at the same
 relative location (`data/` is mounted at `/app/data`).
@@ -834,9 +838,10 @@ Nothing grows without bound, but two kinds of retention run differently:
   pnpm ingest prune-generations --grace-hours 48   # never-published generations are kept this long (default 24)
   ```
 
-  Pruned generations take their case rows with them, so run the dry run first, and
-  delete the indices that belonged to them afterwards with
-  `index delete-unused --older-than <hours>` (above).
+  Pruned generations take their case rows and manifest rows with them, so run the dry
+  run first. Their indices then belong to no manifest; delete them afterwards with
+  `pnpm ingest index delete-unused --older-than <hours>`, first without `--yes`
+  ([Ingestion](#ingestion)).
 
 ## Google sign-in
 
