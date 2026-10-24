@@ -856,9 +856,17 @@ not release the hold (`pnpm worker ai-switch` shows it). Only the reconciliation
 pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source>" --dry-run
 pnpm worker restore-reconcile --interactive-usd <n> --ingestion-usd <n> --note "<source>"
 # Without those figures: charge everything the budgets still allow this month. Paid
-# operations then stay at zero until the next UTC month.
+# operations then stay at zero until the next UTC month. Preview it with --dry-run too.
 pnpm worker restore-reconcile --charge-remaining --note "<why>"
 ```
+
+`--charge-remaining` computes what is left from the budgets the app runs with, so it
+refuses unless `AI_MONTHLY_BUDGET_USD`, `AI_INTERACTIVE_MONTHLY_BUDGET_USD` and
+`AI_INGESTION_MONTHLY_BUDGET_USD` are set (normally by the app's settings file in
+`AVIATION_ENV_FILES`); it never falls back to the defaults, which would leave larger real
+budgets spendable. For an app that runs on the defaults, set the three to them explicitly.
+It prints the budgets it used (`budgets used: ...`); check them against the app's before
+the real run.
 
 In one transaction under the spend lock it charges every reservation the backup left open
 at its full amount (the outcome of those requests is unknown), then the given amounts

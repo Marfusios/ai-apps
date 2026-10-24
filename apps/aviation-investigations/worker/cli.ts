@@ -13,7 +13,7 @@ import { readAiSwitch, setAccountCheck, setAiSwitch, setAnonymousAi } from '../s
 import { createEsClient } from '../server/search/es.js';
 import { formatPreflight, runAiPreflight } from './ai-preflight.js';
 import { diagnoseBrief, validDiagnoseArgs } from './brief-diagnose.js';
-import { APP_DIR, workerConfig } from './config.js';
+import { APP_DIR, workerConfig, workerConfiguredNames } from './config.js';
 import { rebuildCasesIndex, type IndexReport } from './index/cases-index.js';
 import { cacheOnlyEmbedder, createOpenAIEmbedder, embeddingUsdPerMillion } from './index/embed.js';
 import { MAX_INPUT_TOKENS } from './index/passages.js';
@@ -824,6 +824,23 @@ async function main(argv: string[]): Promise<number> {
     if (!url) {
       console.error('DATABASE_MIGRATOR_URL is not set');
       return 2;
+    }
+    if (chargeRemaining) {
+      // What the budgets still allow is computed from the app's own budgets, never from the
+      // defaults: charging what smaller default budgets leave would let the real ones be spent
+      // again (re-review N4). They come from the app's settings file in AVIATION_ENV_FILES.
+      const names = ['AI_MONTHLY_BUDGET_USD', 'AI_INTERACTIVE_MONTHLY_BUDGET_USD', 'AI_INGESTION_MONTHLY_BUDGET_USD'];
+      const configured = workerConfiguredNames(names);
+      const missing = names.filter((n) => !configured.has(n));
+      if (missing.length > 0) {
+        console.error(
+          'restore-reconcile --charge-remaining needs the budgets the app runs with (its settings file in AVIATION_ENV_FILES, ' +
+            `or the values set explicitly when it runs on the defaults); not set: ${missing.join(', ')}`,
+        );
+        return 2;
+      }
+      const b = config.ai.budgets;
+      console.log(`budgets used: ${b.monthlyUsd} USD a month in total, ${b.interactiveMonthlyUsd} interactive, ${b.ingestionMonthlyUsd} indexing and evaluation`);
     }
     const db = createDb(url, { max: 1, applicationName: 'aviation-worker', connectTimeoutMs: WORKER_DB_CONNECT_TIMEOUT_MS });
     try {

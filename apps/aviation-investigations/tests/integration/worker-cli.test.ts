@@ -3,7 +3,9 @@
  * database only; the restore commands against a throwaway environment on the local services.
  */
 import { execFile } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
@@ -25,6 +27,14 @@ afterAll(async () => {
 });
 
 async function workerIn(urls: { app: string; ingest: string; migrator: string }, ...args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return workerWith(urls, {}, ...args);
+}
+
+async function workerWith(
+  urls: { app: string; ingest: string; migrator: string },
+  extra: Record<string, string>,
+  ...args: string[]
+): Promise<{ stdout: string; stderr: string }> {
   return run(resolve(APP_DIR, 'node_modules/.bin/tsx'), ['worker/cli.ts', ...args], {
     cwd: APP_DIR,
     env: {
@@ -33,9 +43,13 @@ async function workerIn(urls: { app: string; ingest: string; migrator: string },
       DATABASE_URL: urls.app,
       DATABASE_INGEST_URL: urls.ingest,
       DATABASE_MIGRATOR_URL: urls.migrator,
+      ...extra,
     },
   });
 }
+
+/** The app's budgets, as its settings file would set them. */
+const BUDGET_SETTINGS = { AI_MONTHLY_BUDGET_USD: '200', AI_INTERACTIVE_MONTHLY_BUDGET_USD: '150', AI_INGESTION_MONTHLY_BUDGET_USD: '50' };
 
 /** The worker against aviation_test. */
 function worker(...args: string[]): Promise<{ stdout: string; stderr: string }> {
@@ -130,7 +144,7 @@ describe('worker maintenance commands', () => {
         ]) {
           await expect(workerIn(urls, 'restore-reconcile', ...args)).rejects.toMatchObject({ code: 2 });
         }
-        await expect(workerIn(urls, 'restore-reconcile', '--charge-remaining', '--note', 'nothing held')).rejects.toMatchObject({
+        await expect(workerWith(urls, BUDGET_SETTINGS, 'restore-reconcile', '--charge-remaining', '--note', 'nothing held')).rejects.toMatchObject({
           code: 1,
           stderr: expect.stringContaining('not held'),
         });
@@ -146,6 +160,46 @@ describe('worker maintenance commands', () => {
         await closeDb(migrator);
       }
     });
+  });
+
+  it('restore-reconcile --charge-remaining uses the app’s budget settings, never defaults (re-review N4)', async () => {
+    // Settings files as AVIATION_ENV_FILES names them (it replaces .env.local): one without the budgets, the app's with them.
+    const dir = mkdtempSync(join(tmpdir(), 'aviation-reconcile-settings-'));
+    const withoutBudgets = join(dir, 'other.env');
+    writeFileSync(withoutBudgets, 'AI_INTERACTIVE_DAILY_BUDGET_USD=5\n');
+    const appSettings = join(dir, 'app.env');
+    writeFileSync(appSettings, Object.entries(BUDGET_SETTINGS).map(([k, v]) => `${k}=${v}\n`).join(''));
+    try {
+      await withScratchEnvironment(localAdminUrl(), 'clirestore', async (urls) => {
+        const migrator = createDb(urls.migrator, { max: 1 });
+        try {
+          await workerIn(urls, 'restore-check');
+          // Charging what the default budgets leave would let larger real budgets be spent again: refused, nothing changed.
+          await expect(workerWith(urls, { AVIATION_ENV_FILES: withoutBudgets }, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown')).rejects.toMatchObject({
+            code: 2,
+            stderr: expect.stringMatching(/not set: AI_MONTHLY_BUDGET_USD, AI_INTERACTIVE_MONTHLY_BUDGET_USD, AI_INGESTION_MONTHLY_BUDGET_USD$/m),
+          });
+          await expect(
+            workerWith(urls, { AVIATION_ENV_FILES: withoutBudgets, AI_MONTHLY_BUDGET_USD: '200' }, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown'),
+          ).rejects.toMatchObject({ code: 2, stderr: expect.stringMatching(/not set: AI_INTERACTIVE_MONTHLY_BUDGET_USD, AI_INGESTION_MONTHLY_BUDGET_USD$/m) });
+          expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: true });
+
+          const env = { AVIATION_ENV_FILES: appSettings };
+          const preview = await workerWith(urls, env, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown', '--dry-run');
+          expect(preview.stdout).toMatch(/^budgets used: 200 USD a month in total, 150 interactive, 50 indexing and evaluation$/m);
+          expect(preview.stdout).toMatch(/^would charge \(dry run, nothing changed\): interactive 150\.000000 USD, indexing and evaluation 50\.000000 USD$/m);
+          const done = await workerWith(urls, env, 'restore-reconcile', '--charge-remaining', '--note', 'figures unknown');
+          expect(done.stdout).toMatch(/^budgets used: 200 USD a month in total, 150 interactive, 50 indexing and evaluation$/m);
+          expect(done.stdout).toMatch(/^charged: interactive 150\.000000 USD, indexing and evaluation 50\.000000 USD$/m);
+          expect(done.stdout).toMatch(/^paid operations released$/m);
+          expect(await readPaidOperationsHold(migrator)).toMatchObject({ held: false, note: 'figures unknown' });
+        } finally {
+          await closeDb(migrator);
+        }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('ai-switch --account-check sets when signed-in AI requests take a Turnstile check', async () => {

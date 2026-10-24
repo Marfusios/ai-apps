@@ -197,15 +197,34 @@ function nonEmpty(env: NodeJS.ProcessEnv): Record<string, string> {
   return out;
 }
 
-export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
-  const env = opts.env ?? process.env;
-  const files =
+/** The dotenv files `loadConfig` reads, highest priority first. */
+function configFiles(opts: LoadConfigOptions): string[] {
+  return (
     opts.files ??
-    (env.AVIATION_ENV_FILES ?? '')
+    ((opts.env ?? process.env).AVIATION_ENV_FILES ?? '')
       .split(',')
       .map((f) => f.trim())
       .filter(Boolean)
-      .map((f) => resolve(f));
+      .map((f) => resolve(f))
+  );
+}
+
+/**
+ * Which of `names` the configuration sets itself, as a nonempty process value or a value in
+ * one of its files, rather than leaving them to the defaults. Reads the same sources as
+ * `loadConfig`; never returns a value.
+ */
+export function configuredNames(names: readonly string[], opts: LoadConfigOptions = {}): Set<string> {
+  const env = opts.env ?? process.env;
+  const set = new Set<string>();
+  for (const f of configFiles(opts)) for (const name of Object.keys(readDotenvAllowlisted(f, names))) set.add(name);
+  for (const name of names) if ((env[name] ?? '') !== '') set.add(name);
+  return set;
+}
+
+export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
+  const env = opts.env ?? process.env;
+  const files = configFiles(opts);
 
   const merged: Record<string, string> = {};
   for (const f of [...files].reverse()) {
