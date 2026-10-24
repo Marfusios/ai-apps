@@ -9,16 +9,17 @@ import { newIdempotencyKey, useAiRequest } from './useAiRequest';
 /**
  * Ask AI from a question box: starts a brief and opens `/briefs/:id` (UI_DESIGN §4.3).
  * The request's idempotency key is kept for the tab (web/src/features/ai/unsettled.ts)
- * right before the request leaves (write-ahead), so a reload, Back or a closed tab while it
- * is on its way loses nothing. Asking the same question with the same filters again while
- * its outcome is unknown, from this or any other control in the tab, reuses that key, so a
- * request the server already admitted is replayed instead of paid for twice; if that replay
- * answers 409 `conflict` (the earlier attempt did not complete), it is sent once more under
- * a new key. The key is kept until a 2xx or that 409 settles it: a refusal before sending
- * (a failed or cancelled check, a paused or used-up status) or a known refusal of the
- * replay says nothing about the earlier send. A first send refused with a known outcome (a
- * 4xx, or a 503 `unavailable` or `ai_paused`, which release the admission) spent nothing:
- * its key is taken back, so the next ask uses a new one.
+ * right before the request leaves (write-ahead), so a reload or Back while it is on its way
+ * loses nothing (closing the tab does: the key is in the tab's session storage). Asking the
+ * same question with the same filters again while its outcome is unknown, from this or any
+ * other control in the tab, reuses that key, so a request the server already admitted is
+ * replayed instead of paid for twice; if that replay answers 409 `conflict` (the earlier
+ * attempt did not complete), it is sent once more under a new key. The key is kept until a
+ * 2xx or that 409 settles it: a refusal before sending (a failed or cancelled check, a
+ * paused or used-up status) or a known refusal of the replay says nothing about the earlier
+ * send. A first send refused with a known outcome (a 4xx, or a 503 `unavailable` or
+ * `ai_paused`, which release the admission) spent nothing: its key is taken back, so the
+ * next ask uses a new one.
  *
  * An ask belongs to the visitor it started under: if that visitor signs out or deletes the
  * account (here or in another tab) before it ends, nothing more of it is sent (the check

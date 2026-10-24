@@ -6,8 +6,9 @@
  *
  * - **Write-ahead** (Task 22 review W-2): a key is remembered right before its request
  *   leaves, not after it failed. The server answers a paid request only once its scope
- *   stage is done (seconds), and a reload, Back or a closed tab in that window must not
- *   lose a key the server may already have admitted.
+ *   stage is done (seconds), and a reload or Back in that window must not lose a key the
+ *   server may already have admitted. Closing the tab does lose it: the key lives in the
+ *   tab's session storage, which goes with the tab.
  * - **The same request** is the normalised request the server hashes for idempotency
  *   (server/briefs/intent.ts `createRequestHash` and `refineRequestHash`): a create's
  *   question and canonical filters, or a refinement's brief and change.

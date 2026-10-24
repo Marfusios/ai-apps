@@ -1106,9 +1106,9 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   once the scope stage is done). Each request's idempotency key is kept for the tab
   right before the request leaves (write-ahead, `web/src/features/ai/unsettled.ts`:
   `sessionStorage`, or memory when storage is unavailable) under a hash of the normalised
-  request (question and canonical filters, or brief and change), so a reload, Back or a
-  closed tab while it is in flight loses nothing, and the same request from any page or
-  control replays the key. When no answer comes back (a network or server error), the
+  request (question and canonical filters, or brief and change), so a reload or Back while
+  it is in flight loses nothing and the same request from any page or control replays the
+  key. Closing the tab loses it, with the tab's session storage. When no answer comes back (a network or server error), the
   notice does not claim the search was free, and Try again replays the same request under
   the same key; if that replay is a 409 `conflict` (the earlier attempt never completed),
   it is sent once more under a new key. The key is kept until a 2xx or that 409 settles
