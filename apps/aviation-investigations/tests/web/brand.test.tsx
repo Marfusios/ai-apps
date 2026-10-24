@@ -85,8 +85,8 @@ describe('the footer credit: built by Mariusz Kotas, with a mailto link (UI_DESI
     const tokens = cssBlock(tokensCss, selector);
     const paper = hex(cssVar(tokens, 'paper'));
     // By day the page carries the graticule: its lines are a little darker than the paper.
-    const grid = /rgba\(([\d, ]+),\s*([.\d]+)\)/.exec(cssVar(tokens, 'grid') ?? '');
-    const backgrounds = grid ? [paper, blend(grid[1]!.split(',').map(Number) as Rgb, paper, Number(grid[2]))] : [paper];
+    const grid = /rgba\((\d+),\s*(\d+),\s*(\d+),\s*([.\d]+)\)/.exec(cssVar(tokens, 'grid') ?? '');
+    const backgrounds: Rgb[] = grid ? [paper, blend([Number(grid[1]), Number(grid[2]), Number(grid[3])], paper, Number(grid[4]))] : [paper];
     for (const background of backgrounds) {
       for (const token of ['muted', 'blue']) {
         expect(contrast(hex(cssVar(tokens, token)), background), `${token} on ${background}`).toBeGreaterThanOrEqual(4.5);
@@ -114,21 +114,21 @@ function hex(value: string | undefined): Rgb {
 }
 
 /** `top` laid over `under` at `alpha`. */
-function blend(top: readonly number[], under: Rgb, alpha: number): Rgb {
-  return [0, 1, 2].map((i) => Math.round(top[i]! * alpha + under[i]! * (1 - alpha))) as unknown as Rgb;
+function blend(top: Rgb, under: Rgb, alpha: number): Rgb {
+  const mix = (i: 0 | 1 | 2) => Math.round(top[i] * alpha + under[i] * (1 - alpha));
+  return [mix(0), mix(1), mix(2)];
 }
 
 /** WCAG 2.x contrast ratio of two opaque colours. */
 function contrast(a: Rgb, b: Rgb): number {
-  const luminance = (c: Rgb) => {
-    const [r, g, bl] = c.map((v) => {
-      const s = v / 255;
-      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-    }) as [number, number, number];
-    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  const linear = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   };
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
-  return (hi + 0.05) / (lo + 0.05);
+  const luminance = (c: Rgb) => 0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2]);
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
 describe('the About page (UI_DESIGN §4.8)', () => {
