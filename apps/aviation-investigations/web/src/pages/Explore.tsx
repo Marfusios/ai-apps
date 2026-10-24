@@ -20,10 +20,9 @@ import { Chip } from '../components/Chip';
 import { SearchBox } from '../components/SearchBox';
 import { cx } from '../lib/cx';
 import { formatCount, plural } from '../lib/format';
-import { AiNoticeBox } from '../features/ai/AiNoticeBox';
 import { AskAiButton } from '../features/ai/AskAiButton';
-import { useAskAi } from '../features/ai/useAskAi';
-import { briefFiltersOf } from '../features/brief/filters';
+import { AskOutcome } from '../features/evidence/AskOutcome';
+import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { CaseDrawer, type DrawerPosition } from '../features/case/CaseDrawer';
 import { COMPARE_FULL_MESSAGE, CompareTray } from '../features/explore/CompareTray';
 import { Facets, activeFilterCount } from '../features/explore/Facets';
@@ -37,6 +36,14 @@ import {
   withSearchRequest,
   type ToggleResult,
 } from '../features/explore/url-state';
+
+/**
+ * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23; Builder copy for the owner's
+ * review): what an AI search does, never a promise to explain or group the results. Its filters
+ * come from its own reading of the question, so the nudge says when the ones set here stay behind.
+ */
+export const AI_NUDGE = 'Ask in plain English: AI reads your question into search words and filters you can check and edit.';
+export const AI_NUDGE_FILTERS = 'It reads only the question, not the filters set here.';
 
 interface ExploreLocationState {
   /** The drawer was opened from this list, so closing it can go back one entry. */
@@ -212,11 +219,12 @@ export function Explore() {
   const [drawerNotice, setDrawerNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
   const state = (location.state ?? {}) as ExploreLocationState;
-  const ai = useAskAi();
+  const ai = useEvidenceSearch();
   const [askedFrom, setAskedFrom] = useState<'box' | 'nudge'>('box');
+  // An AI search reads the question alone (contract evidence.v1): its own reading sets its filters.
   const askAi = (question: string, from: 'box' | 'nudge'): void => {
     setAskedFrom(from);
-    void ai.ask(question, briefFiltersOf(request));
+    void ai.ask(question);
   };
 
   useEffect(() => setDraft(request.q), [request.q]);
@@ -339,7 +347,13 @@ export function Explore() {
             onAsk={(value) => askAi(value, 'box')}
             askPhase={askedFrom === 'box' ? ai.phase : 'idle'}
           />
-          <AiNoticeBox notice={askedFrom === 'box' ? ai.notice : null} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'box')} className="mt-3" />
+          <AskOutcome
+            notice={askedFrom === 'box' ? ai.notice : null}
+            reply={askedFrom === 'box' ? ai.reply : null}
+            keywordHref={listHrefFor(draft)}
+            onRetry={() => askAi(draft, 'box')}
+            className="mt-3"
+          />
 
           <div className="-mx-4 mt-0.5 flex items-center gap-1.5 overflow-x-auto px-4 py-3 lg:hidden">
             <FiltersSheet
@@ -412,10 +426,19 @@ export function Explore() {
               </ol>
               <Pager response={response} onPage={(page) => update({ page })} />
               <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-card border border-magenta-soft bg-magenta-wash px-3 py-2 text-ui">
-                <span>Want these grouped and explained? Ask the AI with these filters.</span>
+                <span className="min-w-0 flex-1 basis-64">
+                  {AI_NUDGE}
+                  {filters > 0 && ` ${AI_NUDGE_FILTERS}`}
+                </span>
                 <AskAiButton size="sm" className="ml-auto" onAsk={() => askAi(draft, 'nudge')} phase={askedFrom === 'nudge' ? ai.phase : 'idle'} />
               </div>
-              <AiNoticeBox notice={askedFrom === 'nudge' ? ai.notice : null} keywordHref={listHrefFor(draft)} onRetry={() => askAi(draft, 'nudge')} className="mt-3" />
+              <AskOutcome
+                notice={askedFrom === 'nudge' ? ai.notice : null}
+                reply={askedFrom === 'nudge' ? ai.reply : null}
+                keywordHref={listHrefFor(draft)}
+                onRetry={() => askAi(draft, 'nudge')}
+                className="mt-3"
+              />
             </>
           )}
         </div>

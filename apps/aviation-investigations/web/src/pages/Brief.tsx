@@ -20,6 +20,8 @@ import { busyLabel } from '../features/ai/AskAiButton';
 import { arrived, departed } from '../features/ai/unsettled';
 import { briefStepQuery, cancelBrief, isFinished } from '../features/brief/api';
 import { useAskAi } from '../features/ai/useAskAi';
+import { AskOutcome } from '../features/evidence/AskOutcome';
+import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { BriefChips } from '../features/brief/BriefChips';
 import { BriefingSheet, sheetOrder } from '../features/brief/BriefingSheet';
 import { Checklist } from '../features/brief/Checklist';
@@ -41,6 +43,8 @@ export const CANCELLED_TITLE = 'You cancelled this AI search.';
 export const LOAD_FAILED = 'This AI search didn’t load.';
 /** Builder copy (Task 22 review W-5, W-12), for the owner's review. */
 export const CHANGE_NOT_KEPT = "The changed reading can't be tried again from here. Start a new search to keep going.";
+/** While briefs are off (`aiLimits.briefsEnabled`, Task 23): a brief that exists is read-only (Builder copy). */
+export const BRIEFS_CLOSED = 'AirCase no longer refines or reruns briefs. Start a new AI search to keep going.';
 export const RETRY_FAILED = "Trying again didn't finish either.";
 
 const STEP_PARAM = 'step';
@@ -55,13 +59,14 @@ function readStep(params: URLSearchParams): number | null {
 /**
  * Brief expired (UI_DESIGN §5): the server keeps nothing to restore. If this page still
  * holds the question in memory, [Ask again] refills the box; the question is never in
- * browser storage.
+ * browser storage. Asking here starts an AI evidence search (Task 23: the interface no
+ * longer starts briefs).
  */
 function Expired({ id }: { id: string }) {
   const remembered = rememberedQuestion(id);
   const [value, setValue] = useState('');
   const navigate = useNavigate();
-  const ai = useAskAi();
+  const ai = useEvidenceSearch();
   const input = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
   return (
     <div className="mx-auto w-full max-w-reading px-4 pt-8 pb-12 sm:pt-12">
@@ -93,7 +98,7 @@ function Expired({ id }: { id: string }) {
         askPhase={ai.phase}
         className="mt-4"
       />
-      <AiNoticeBox notice={ai.notice} keywordHref={exploreHref({}, value)} onRetry={() => void ai.ask(value)} className="mt-3" />
+      <AskOutcome notice={ai.notice} reply={ai.reply} keywordHref={exploreHref({}, value)} onRetry={() => void ai.ask(value)} className="mt-3" />
     </div>
   );
 }
@@ -116,11 +121,13 @@ function Expired({ id }: { id: string }) {
 export type RetryPlan =
   | { kind: 'ask'; filters: BriefFilters | undefined }
   | { kind: 'refine'; change: RefinementChange }
-  | { kind: 'none'; why: 'later' | 'limit' | 'change' };
+  | { kind: 'none'; why: 'later' | 'limit' | 'change' | 'closed' };
 
-export function retryPlan(step: BriefStepResponse): RetryPlan {
+/** `briefsOn`: the server still runs briefs (`aiLimits.briefsEnabled`; true when it does not say). */
+export function retryPlan(step: BriefStepResponse, briefsOn = true): RetryPlan {
   const origin = step.origin;
   if (step.step !== step.steps) return { kind: 'none', why: 'later' };
+  if (!briefsOn) return { kind: 'none', why: 'closed' };
   if (origin.kind === 'question') {
     const asked = rememberedAsk(step.briefId);
     return { kind: 'ask', filters: asked ? asked.filters : step.checklist.interpretation?.filters };
@@ -139,10 +146,10 @@ export function retryPlan(step: BriefStepResponse): RetryPlan {
  * box, Task 22 review W-12), from a polite region of its own. Other notices about the
  * retry (a check, a pause, a limit) show under it, without a second Try again.
  */
-function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsSearch: boolean }) {
+function Failed({ step, countedAsSearch, briefsOn }: { step: BriefStepResponse; countedAsSearch: boolean; briefsOn: boolean }) {
   const ask = useAskAi();
   const refine = useRefine(step.briefId);
-  const plan = retryPlan(step);
+  const plan = retryPlan(step, briefsOn);
   const retry =
     plan.kind === 'none'
       ? null
@@ -170,7 +177,7 @@ function Failed({ step, countedAsSearch }: { step: BriefStepResponse; countedAsS
         <p className="mt-1.5 text-meta text-muted">{countedAsSearch ? COPY.spent : COPY.notSpent}</p>
         {plan.kind === 'none' && plan.why !== 'later' && (
           <p className="mt-1.5 text-meta text-muted" data-print="hide">
-            {plan.why === 'limit' ? REFINEMENTS_USED : CHANGE_NOT_KEPT}{' '}
+            {plan.why === 'limit' ? REFINEMENTS_USED : plan.why === 'closed' ? BRIEFS_CLOSED : CHANGE_NOT_KEPT}{' '}
             <Link to="/" className="text-blue hover:underline">
               New search
             </Link>
@@ -432,7 +439,9 @@ export function Brief() {
     await queryClient.invalidateQueries({ queryKey: ['brief', id] });
   };
   const here = `${location.pathname}${location.search}`;
-  const canRefine = finished && latest && result !== undefined && result.kind !== 'scope_reply' && result.kind !== 'failed';
+  // Briefs are read-only while the server has them off (Task 23: the interface starts none).
+  const briefsOn = config?.aiLimits?.briefsEnabled !== false;
+  const canRefine = briefsOn && finished && latest && result !== undefined && result.kind !== 'scope_reply' && result.kind !== 'failed';
 
   return (
     <>
@@ -463,7 +472,9 @@ export function Brief() {
               {step.steps > 1 ? `Answer ${step.step}` : 'Answer'}
             </h2>
             {sheet && <BriefingSheet result={sheet} caseTo={caseTo} inCompare={(n) => compare.selected.includes(n)} onToggleCompare={toggle} />}
-            {result?.kind === 'scope_reply' && <ScopeReply briefId={id} question={step.question} reply={result.reply} refinementsLeft={latest ? step.refinementsLeft : 0} />}
+            {result?.kind === 'scope_reply' && (
+              <ScopeReply briefId={id} question={step.question} reply={result.reply} refinementsLeft={latest ? step.refinementsLeft : 0} closed={!briefsOn} />
+            )}
             {result?.kind === 'no_results' && (
               <div className="card mt-4 px-4 py-3.5">
                 <p className="font-serif text-[18px] leading-tight font-semibold">{NO_RESULTS_TITLE}</p>
@@ -473,7 +484,7 @@ export function Brief() {
                 </Link>
               </div>
             )}
-            {result?.kind === 'failed' && <Failed step={step} countedAsSearch={result.countedAsSearch} />}
+            {result?.kind === 'failed' && <Failed step={step} countedAsSearch={result.countedAsSearch} briefsOn={briefsOn} />}
             {result?.kind === 'cancelled' && (
               <div className="card mt-4 px-4 py-3.5">
                 <p className="font-serif text-[18px] leading-tight font-semibold">{CANCELLED_TITLE}</p>
@@ -484,6 +495,14 @@ export function Brief() {
         )}
 
         {canRefine && <RefineBox briefId={id} refinementsLeft={step.refinementsLeft} question={step.question} />}
+        {!briefsOn && finished && latest && result !== undefined && result.kind !== 'failed' && (
+          <p className="mt-5 border-t border-dashed border-hairline pt-2.5 text-ui text-muted" data-print="hide">
+            {BRIEFS_CLOSED}{' '}
+            <Link to="/" className="text-blue hover:underline">
+              New search
+            </Link>
+          </p>
+        )}
         {finished && !latest && (
           <p className="mt-5 border-t border-dashed border-hairline pt-2.5 text-ui text-muted" data-print="hide">
             You are reading answer {step.step} of {step.steps}.{' '}

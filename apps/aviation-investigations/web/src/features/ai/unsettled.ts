@@ -11,14 +11,17 @@
  *   tab's session storage, which goes with the tab.
  * - **The same request** is the normalised request the server hashes for idempotency
  *   (server/briefs/intent.ts `createRequestHash` and `refineRequestHash`): a create's
- *   question and canonical filters, or a refinement's brief and change.
+ *   question and canonical filters, or a refinement's brief and change; for an evidence
+ *   search (Task 23), its question, or the search it edits with the canonical filters and
+ *   the words.
  * - **Storage** is `sessionStorage` (this tab only, gone when it closes), under a hash of
  *   that normalised request, so no question text is stored. Every access is wrapped:
  *   when storage is unavailable or refuses a write, the entry lives in memory instead.
  * - **Lifetime:** an entry is cleared once the page has taken over from a 2xx
- *   (`settleOnArrival`, `arrived`: for a new brief when the brief page, a lazy route that may
- *   still be loading after the answer, is on screen for it; for a refinement when the page
- *   shows the step it started; until then a reload or a second ask replays the key), by the
+ *   (`settleOnArrival`, `arrived`: for a new brief or evidence search when its page, a lazy
+ *   route that may still be loading after the answer, is on screen for it; for a refinement
+ *   when the page shows the step it started; until then a reload or a second ask replays the
+ *   key; a static scope reply, which has no page, at once), by the
  *   409 swap (the earlier attempt never completed) and by a known refusal of its first send
  *   (nothing was admitted); it expires with the server's idempotency record, 24 hours after it
  *   was first remembered (server/quota/policy.ts `IDEMPOTENCY_TTL_MS`). Signing out or
@@ -41,7 +44,11 @@ const KEY_SHAPE = /^[A-Za-z0-9_-]{8,128}$/;
 
 export type AiRequestShape =
   | { kind: 'create'; question: string; filters?: BriefFilters | undefined }
-  | { kind: 'refine'; briefId: string; change: RefinementChange };
+  | { kind: 'refine'; briefId: string; change: RefinementChange }
+  /** An evidence search for a question (`POST /api/evidence`, `kind: 'question'`). */
+  | { kind: 'evidence'; question: string }
+  /** An edited evidence search: the search it changes, its filters and words (`kind: 'edited'`). */
+  | { kind: 'evidence-edited'; from: string; filters: BriefFilters; terms: string };
 
 /**
  * Filters as the server hashes them (server/briefs/intent.ts `canonicalFilters`): facets in
@@ -62,6 +69,8 @@ export function canonicalFilters(f: BriefFilters): BriefFilters {
 /** What makes two requests the same for the server's idempotency check. */
 export function normalisedRequest(r: AiRequestShape): unknown {
   if (r.kind === 'create') return { op: 'brief.create', question: r.question, filters: canonicalFilters(r.filters ?? {}) };
+  if (r.kind === 'evidence') return { op: 'evidence.question', question: r.question };
+  if (r.kind === 'evidence-edited') return { op: 'evidence.edited', from: r.from, filters: canonicalFilters(r.filters), terms: r.terms };
   const change = r.change.kind === 'filters' ? { ...r.change, filters: canonicalFilters(r.change.filters) } : r.change;
   return { op: 'brief.refine', briefId: r.briefId, change };
 }
@@ -208,11 +217,11 @@ export function forgetUnsettled(id: string, key?: string): void {
 }
 
 /**
- * Keys whose request was answered with a 2xx, waiting for the page to take over, by brief
- * (memory only: after a reload the entry stays in storage, and the next same request
- * replays it). `step`: `'page'` for a new brief (the brief page, a lazy route that may still
- * be loading after the answer, is on screen for it), or the step a refinement started (the
- * page shows that step).
+ * Keys whose request was answered with a 2xx, waiting for the page to take over, by brief or
+ * evidence search (memory only: after a reload the entry stays in storage, and the next same
+ * request replays it). `step`: `'page'` for a new brief or search (its page, a lazy route that
+ * may still be loading after the answer, is on screen for it), or the step a refinement
+ * started (the page shows that step). Brief and search ids are both random UUIDs.
  */
 const arriving = new Map<string, { id: string; key: string; step: number | 'page' }[]>();
 

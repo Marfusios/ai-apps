@@ -2,10 +2,17 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { pageTitle } from '../../../shared/page-titles';
-import { configQuery } from '../api';
+import { aiStatusQuery, configQuery } from '../api';
 import { CREDIT_EMAIL, CREDIT_EMAIL_HREF, CREDIT_NAME, CREDIT_SITE, CREDIT_SITE_HREF, PRODUCT_NAME } from '../brand';
 import { Placard } from '../components/Placard';
+import { aiFeatureOn } from '../features/ai/status';
 import { formatChartDate, formatCount } from '../lib/format';
+
+/** The About page's line on AI while it is off (UI_DESIGN §4.8, owner decision of 2026-10-24). */
+export const AI_OFF_LINE = 'AI features are not available yet.';
+/** …and once AI searches are offered (Task 23): what the evidence view does, in plain words. */
+export const AI_ON_LINE =
+  'Ask in plain English: AI turns your question into search filters and terms you can edit, and AirCase shows the investigations it retrieved, in their own words.';
 
 /** `tabTitle` is the browser tab's whole title, the route's shared one (shared/page-titles.ts). */
 export function TextPage({ eyebrow, title, tabTitle, children }: { eyebrow: string; title: string; tabTitle: string; children: ReactNode }) {
@@ -25,15 +32,19 @@ export function TextPage({ eyebrow, title, tabTitle, children }: { eyebrow: stri
 
 /**
  * About: what the casebook is and can do today (keyword search, case pages, Compare and the
- * dashboard; the AI features are not open yet, as the Privacy page also says), where its
- * data comes from, what it is not, and who built it (the owner's credit, 2026-10-24: his name,
- * his website and his e-mail address; the footer carries only the name and the website). The line
- * "AI features are not available yet." is static: it changes in the release that opens AI,
- * with the Privacy text (RUNBOOK, "Google sign-in", step 0; tests/web/brand.test.tsx).
+ * dashboard, and AI searches once they are offered), where its data comes from, what it is
+ * not, and who built it (the owner's credit, 2026-10-24: his name, his website and his e-mail
+ * address; the footer carries only the name and the website). The AI line follows
+ * `GET /api/ai/status` (`aiFeatureOn`): "AI features are not available yet." while AI is off
+ * (not configured, a missing dependency, or the kill switch), a plain description of the AI
+ * search once it is offered (Task 23), and nothing while the status is unknown, so the page
+ * never claims either while it cannot tell (RUNBOOK, "Google sign-in", step 0).
  */
 export function About() {
   const config = useQuery(configQuery());
+  const status = useQuery(aiStatusQuery());
   const coverage = config.data?.coverage;
+  const aiLine = status.data ? (aiFeatureOn(status.data) ? AI_ON_LINE : AI_OFF_LINE) : null;
   return (
     <TextPage eyebrow="About" title={`About ${PRODUCT_NAME}`} tabTitle={pageTitle({ kind: 'about' })}>
       <p>
@@ -44,8 +55,8 @@ export function About() {
       <h2>What you can do here</h2>
       <p>
         Search the record by keyword and narrow the results with filters. Open any investigation on its own page,
-        compare up to four of them on one page, and see how the whole record breaks down on the dashboard. AI features
-        are not available yet.
+        compare up to four of them on one page, and see how the whole record breaks down on the dashboard.
+        {aiLine && ` ${aiLine}`}
       </p>
       <h2>The data</h2>
       <p>

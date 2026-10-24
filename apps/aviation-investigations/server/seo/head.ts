@@ -27,6 +27,8 @@ export type PageRoute =
   /** `query`: the page's query string (Explore's title and robots, Compare's title). */
   | { kind: 'explore' | 'compare'; query: URLSearchParams }
   | { kind: 'brief'; id: string }
+  /** An AI evidence search (`/ai/:id`, Task 23): private, so the head says nothing of it. */
+  | { kind: 'evidence'; id: string }
   /** A case that `GET /api/cases/:ntsbNo` serves. */
   | { kind: 'case'; detail: CaseDetail }
   /**
@@ -65,6 +67,8 @@ export function pagePolicy(route: PageRoute, failure?: PageFailure): PagePolicy 
       return { status: 200, robots: 'noindex, nofollow', canonicalPath: `/${route.kind}` };
     case 'brief':
       return { status: 200, robots: 'noindex, nofollow', canonicalPath: `/briefs/${encodeURIComponent(route.id)}` };
+    case 'evidence':
+      return { status: 200, robots: 'noindex, nofollow', canonicalPath: `/ai/${encodeURIComponent(route.id)}` };
     case 'case':
       return { status: 200, robots: INDEX, canonicalPath: `/cases/${route.detail.ntsbNo}` };
     case 'missing_case':

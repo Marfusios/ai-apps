@@ -4,17 +4,22 @@
  * (`WEB_MOCK_API=1`), the component tests and the end-to-end tests. Never part of
  * a production bundle.
  *
- * AI briefs (`/api/briefs*`) are answered by an in-memory `MockBriefs` per handler set
- * (web/mock/briefs.ts): request bodies are validated with the real contracts, and a
- * running step moves one checklist row per poll. The AI status is kept per handler set
- * too, like the server's gate: an anonymous request needs a Turnstile token, a started
- * search uses one of the visitor's searches, and the trial is `started` after the first
- * accepted request. `/api/config` offers Cloudflare's documented test site key.
+ * AI evidence searches (`/api/evidence*`) are answered by an in-memory `MockEvidence` per
+ * handler set (web/mock/evidence.ts), and AI briefs (`/api/briefs*`), which the interface
+ * no longer starts but still shows, by a `MockBriefs` (web/mock/briefs.ts): request bodies
+ * are validated with the real contracts, and a running brief step moves one checklist row
+ * per poll. The AI status is kept per handler set too, like the server's gate: an anonymous
+ * request needs a Turnstile token, a search that returns results (or a started brief) uses
+ * one of the visitor's searches, a static scope reply uses none, and the trial is `started`
+ * after the first accepted request. `/api/config` offers Cloudflare's documented test site
+ * key and the AI limits (`MOCK_AI_LIMITS`).
  */
 import { delay, http, HttpResponse } from 'msw';
 import type { AiStatusResponse } from '../../../shared/contracts/ai';
 import type { CaseDetail } from '../../../shared/contracts/cases';
 import { CreateBriefRequestSchema, RefinementRequestSchema } from '../../../shared/contracts/briefs';
+import type { ConfigResponse } from '../../../shared/contracts/config';
+import { CreateEvidenceRequestSchema } from '../../../shared/contracts/evidence';
 import {
   DELETE_REAUTH_PATH,
   DeleteAccountRequestSchema,
@@ -30,8 +35,9 @@ import config from '../../mock/config.json';
 import dashboardAll from '../../mock/dashboard-all.json';
 import dashboardDefault from '../../mock/dashboard-default.json';
 import index from '../../mock/search-index.json';
-import { AI_STATUS_SAMPLES } from '../../mock/ai-status';
-import { MockBriefs, type MockReply } from '../../mock/briefs';
+import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../mock/ai-status';
+import { MockBriefs, type MockReader, type MockReply } from '../../mock/briefs';
+import { MockEvidence } from '../../mock/evidence';
 import { searchCorpus, type MockCorpus } from '../../mock/engine';
 
 export const mockCorpus: MockCorpus = {
@@ -55,6 +61,8 @@ export interface HandlerOptions {
   turnstileSiteKey?: string | null;
   /** Offer Google sign-in (default false, as the fixture config says). */
   googleEnabled?: boolean;
+  /** The AI limits `/api/config` reports (default `MOCK_AI_LIMITS`); null: a server that does not report them. */
+  aiLimits?: ConfigResponse['aiLimits'] | null;
   /**
    * Deleting the account asks to confirm with Google first, as for a session older than 5
    * minutes (default false: as right after signing in, it asks only once more).
@@ -140,6 +148,7 @@ export function createHandlers({
   briefPolls,
   turnstileSiteKey = TURNSTILE_TEST_SITE_KEY,
   googleEnabled = false,
+  aiLimits = MOCK_AI_LIMITS,
   deletionNeedsReauth = deletionReauthFlag(),
   accountCheck = false,
 }: HandlerOptions = {}) {
@@ -155,7 +164,10 @@ export function createHandlers({
     return confirmedUntil;
   };
   // Briefs are read by their owner: the account while signed in, else this browser's trial.
-  const briefs = new MockBriefs({ ...(briefPolls === undefined ? {} : { pollsToFinish: briefPolls }), visitor: () => (signIn.signedIn ? 'account' : 'trial') });
+  const reader = (): MockReader => (signIn.signedIn ? 'account' : 'trial');
+  const briefs = new MockBriefs({ ...(briefPolls === undefined ? {} : { pollsToFinish: briefPolls }), visitor: reader });
+  // Evidence searches are read by their owner, like briefs.
+  const evidence = new MockEvidence({ visitor: reader });
   const accountStatus = (): AiStatusResponse => (accountCheck ? AI_STATUS_SAMPLES.checkedAccount : AI_STATUS_SAMPLES.newAccount);
   let status: AiStatusResponse = signIn.signedIn ? accountStatus() : aiStatus;
   const notFound = () => HttpResponse.json({ error: 'not_found', message: 'Not found.' } satisfies ErrorResponse, { status: 404, headers: NO_STORE });
@@ -190,7 +202,8 @@ export function createHandlers({
     }
   };
   const admit = <T,>(reply: MockReply<T>): Response => {
-    if (reply.status < 300 && !reply.replayed) admitted(reply.status === 202);
+    // A started brief (202) or a search with results (201) uses one; a static reply (200) does not.
+    if (reply.status < 300 && !reply.replayed) admitted(reply.status === 202 || reply.status === 201);
     // The server may have acted, but the answer never arrives.
     if (reply.lost) return HttpResponse.error();
     return briefReply(reply);
@@ -198,7 +211,7 @@ export function createHandlers({
   return [
     http.get('*/api/config', async () => {
       await wait();
-      return HttpResponse.json({ ...config, turnstileSiteKey, googleEnabled });
+      return HttpResponse.json({ ...config, turnstileSiteKey, googleEnabled, ...(aiLimits ? { aiLimits } : {}) });
     }),
     http.get('*/api/account', async () => {
       await wait();
@@ -217,10 +230,12 @@ export function createHandlers({
         return HttpResponse.json({ url: parsed.data.callbackURL, redirect: false }, { headers: NO_STORE });
       }
       // As if Google sent the browser straight back: a new account gets the welcome, and a
-      // sign-in from a brief takes that brief over.
+      // sign-in from a brief or an evidence search takes it over.
       const url = signIn.registered ? parsed.data.callbackURL : parsed.data.newUserCallbackURL;
       const fromBrief = /^\/briefs\/([0-9a-f-]{36})(?:\?|$)/.exec(parsed.data.callbackURL)?.[1];
       if (fromBrief) briefs.handOver(fromBrief);
+      const fromSearch = /^\/ai\/([0-9a-f-]{36})(?:\?|$)/.exec(parsed.data.callbackURL)?.[1];
+      if (fromSearch) evidence.handOver(fromSearch);
       setSignIn({ signedIn: true, registered: true });
       status = accountStatus();
       return HttpResponse.json({ url, redirect: false }, { headers: NO_STORE });
@@ -252,6 +267,7 @@ export function createHandlers({
         return HttpResponse.json({ error: 'reauth_required', message: "Confirm with Google that it's you, then delete your account." } satisfies ErrorResponse, { status: 403, headers: NO_STORE });
       }
       briefs.dropAccountBriefs();
+      evidence.dropAccountSearches();
       confirmedUntil = null;
       setSignIn({ signedIn: false, registered: false, confirmedUntil: null });
       status = aiStatus;
@@ -285,14 +301,32 @@ export function createHandlers({
       await wait();
       return HttpResponse.json(status, { headers: { 'cache-control': 'no-store' } });
     }),
+    http.post('*/api/evidence', async ({ request }) => {
+      await wait();
+      const parsed = CreateEvidenceRequestSchema.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return badRequest(parsed.error.issues);
+      return refuse(parsed.data.turnstileToken) ?? admit(evidence.create(parsed.data));
+    }),
+    http.get('*/api/evidence/:id/cases/:ntsbNo', async ({ params }) => {
+      await wait();
+      return briefReply(evidence.caseOf(String(params.id), String(params.ntsbNo)));
+    }),
+    http.get('*/api/evidence/:id', async ({ request, params }) => {
+      await wait();
+      const page = new URL(request.url).searchParams.get('page');
+      return briefReply(evidence.read(String(params.id), page === null ? 1 : Number(page)));
+    }),
     http.post('*/api/briefs', async ({ request }) => {
       await wait();
+      // Briefs off (the server's AI_BRIEFS_ENABLED): creating or refining one is a 404; reading one still works.
+      if (aiLimits?.briefsEnabled === false) return notFound();
       const parsed = CreateBriefRequestSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return badRequest(parsed.error.issues);
       return refuse(parsed.data.turnstileToken) ?? admit(briefs.create(parsed.data));
     }),
     http.post('*/api/briefs/:id/refine', async ({ request, params }) => {
       await wait();
+      if (aiLimits?.briefsEnabled === false) return notFound();
       const parsed = RefinementRequestSchema.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return badRequest(parsed.error.issues);
       return refuse(parsed.data.turnstileToken) ?? admit(briefs.refine(String(params.id), parsed.data));

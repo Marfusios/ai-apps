@@ -168,6 +168,16 @@
     padding: 0 1px;
   }
 
+  /* A synonym the search also matched (UI_DESIGN §4.9): no wash and a dotted underline, so it
+     differs from a literal match by its line and fill as well as by its words in the legend.
+     Both lines print, so the difference survives black and white. */
+  .hit-synonym {
+    background-color: transparent;
+    color: var(--ink);
+    border-bottom: 1.5px dotted var(--blue);
+    padding: 0 1px;
+  }
+
   /* Compare checkboxes: blue outline square; checked is filled blue with an inset ring (§2.6). */
   .check {
     appearance: none;

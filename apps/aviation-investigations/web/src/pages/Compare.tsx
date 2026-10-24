@@ -2,8 +2,9 @@ import { useQueries, useQuery, type UseQueryResult } from '@tanstack/react-query
 import { X } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
-import type { CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
+import type { BriefFilters, CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
 import type { CaseDetail } from '../../../shared/contracts/cases';
+import { EVIDENCE_CANDIDATE_CEILING, EVIDENCE_PAGE_SIZE, EvidenceSearchIdSchema, type EvidenceCase } from '../../../shared/contracts/evidence';
 import { compareHeading, pageTitle } from '../../../shared/page-titles';
 import { caseQuery, configQuery, isNotFound } from '../api';
 import { Button } from '../components/Button';
@@ -29,6 +30,13 @@ import {
 import { briefStepQuery, caseContextQuery } from '../features/brief/api';
 import { UnconfirmedTag } from '../features/brief/CaseCard';
 import { evidenceAttribution } from '../features/brief/display';
+import { evidencePageQuery } from '../features/evidence/api';
+import { EVIDENCE_HEADING } from '../features/evidence/display';
+import { RelevanceLine } from '../features/evidence/EvidenceCard';
+import { Excerpt } from '../features/evidence/Excerpt';
+import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
+import { EvidenceNotice } from '../features/evidence/Notice';
+import { Placard } from '../components/Placard';
 import { COMPARE_LIMIT, CASES_PARAM, readCompare, withCompare } from '../features/explore/url-state';
 import { PrintHeader, readBriefRef } from './CasePage';
 
@@ -41,6 +49,53 @@ const GRID_AI = 'sm:grid-cols-[30px_1.05fr_1fr_1.1fr_0.85fr_0.9fr_0.95fr_1.2fr]'
 const PC_PREVIEW = 300;
 
 export const AI_NOTES_GONE_PLURAL = "The AI notes for these cases have expired or aren't yours.";
+/** Compare opened from an evidence search that is gone (Builder copy, Task 23). */
+export const EVIDENCE_GONE_PLURAL = 'The AI search these cases came from is no longer available, so its excerpts are not shown.';
+export const EVIDENCE_FAILED_PLURAL = 'The AI search these cases came from didn’t load.';
+/** A compared case that is not among the search's investigations read so far. */
+export const NOT_IN_SEARCH = 'Not among the investigations shown for your search.';
+
+/**
+ * `evidence` and `pages` of a compare link opened from an evidence search (UI_DESIGN §4.9),
+ * or null; a malformed reference reads as a search that is gone (`invalid`).
+ */
+export function readEvidenceRef(params: URLSearchParams): { id: string; pages: number } | 'invalid' | null {
+  const id = params.get('evidence');
+  if (id === null) return null;
+  const raw = params.get(PAGES_PARAM) ?? '1';
+  const pages = /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
+  if (!EvidenceSearchIdSchema.safeParse(id).success || !(pages >= 1 && pages <= EVIDENCE_CANDIDATE_CEILING / EVIDENCE_PAGE_SIZE)) return 'invalid';
+  return { id, pages };
+}
+
+/**
+ * The evidence row of a strip (UI_DESIGN §4.9): how the search found the case and its best
+ * excerpt, a whole paragraph with the matches marked, under the page's heading and notice.
+ */
+function StripEvidence({ searchId, item, filters }: { searchId: string; item: EvidenceCase | undefined; filters: BriefFilters }) {
+  return (
+    <div className="border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1]" data-strip-evidence="">
+      <p className="text-micro tracking-caps text-muted uppercase">Retrieved for your search</p>
+      {item ? (
+        <>
+          <RelevanceLine item={item} filters={filters} />
+          {item.excerpts[0] && (
+            <div className="mt-1.5">
+              <Excerpt searchId={searchId} ntsbNo={item.case.ntsbNo} aircraft={item.case.aircraft} excerpt={item.excerpts[0]} />
+            </div>
+          )}
+          {item.excerpts.length > 1 && (
+            <p className="mt-1 text-meta text-muted">
+              {item.excerpts.length - 1 === 1 ? 'One more excerpt' : `${item.excerpts.length - 1} more excerpts`} on the search’s page.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-meta text-muted">{NOT_IN_SEARCH}</p>
+      )}
+    </div>
+  );
+}
 export const AI_NOTES_FAILED_PLURAL = "The AI notes for these cases didn't load.";
 export const AI_READING_FAILED = "The AI reading didn't load.";
 /** A case of the brief whose AI reading the evidence check removed (Task 16e, partial display). */
@@ -160,7 +215,20 @@ interface StripAi {
   retry: () => void;
 }
 
-function Strip({ detail, order, onRemove, ai }: { detail: CaseDetail; order: number; onRemove: () => void; ai: StripAi | null }) {
+function Strip({
+  detail,
+  order,
+  onRemove,
+  ai,
+  evidence = null,
+}: {
+  detail: CaseDetail;
+  order: number;
+  onRemove: () => void;
+  ai: StripAi | null;
+  /** Opened from an evidence search: the case as that search shows it (`item` undefined: not among its investigations read). */
+  evidence?: { searchId: string; item: EvidenceCase | undefined; filters: BriefFilters } | null;
+}) {
   const multi = detail.aircraft.length > 1;
   const injury = injuryShort(detail.highestInjury);
   const causes = detail.sections.filter((s) => s.kind === 'probable_cause');
@@ -254,6 +322,7 @@ function Strip({ detail, order, onRemove, ai }: { detail: CaseDetail; order: num
         </p>
         <span className="flex-none text-meta whitespace-nowrap">{sourceLink(detail)}</span>
       </div>
+      {evidence && <StripEvidence searchId={evidence.searchId} item={evidence.item} filters={evidence.filters} />}
     </article>
   );
 }
@@ -348,6 +417,22 @@ export function Compare() {
       retry: () => void read?.refetch(),
     };
   };
+  // Opened from an evidence search (`evidence`, `pages`): its pages as read there (cached, free).
+  const eref = readEvidenceRef(params);
+  const evidenceRef = eref !== null && eref !== 'invalid' ? eref : null;
+  const firstEvidence = useQuery({ ...evidencePageQuery(evidenceRef?.id ?? '', 1), enabled: evidenceRef !== null });
+  const evidencePages = firstEvidence.data ? Math.max(1, Math.min(evidenceRef?.pages ?? 1, firstEvidence.data.pages)) : 1;
+  const laterEvidence = useQueries({
+    queries: Array.from({ length: evidencePages - 1 }, (_, i) => ({ ...evidencePageQuery(evidenceRef?.id ?? '', i + 2), enabled: evidenceRef !== null })),
+  });
+  const evidenceSearch = firstEvidence.data;
+  const evidenceCases = new Map(
+    [evidenceSearch, ...laterEvidence.map((q) => q.data)].flatMap((p) => p?.cases ?? []).map((c) => [c.case.ntsbNo, c] as const),
+  );
+  const evidenceGone = eref === 'invalid' || (evidenceRef !== null && isNotFound(firstEvidence.error));
+  const evidenceFailed = evidenceRef !== null && firstEvidence.isError && !isNotFound(firstEvidence.error);
+  const evidenceFor = (ntsbNo: string) =>
+    evidenceSearch ? { searchId: evidenceSearch.id, item: evidenceCases.get(ntsbNo), filters: evidenceSearch.interpretation.filters } : null;
   const [sort, setSort] = useState<SortKey>('added');
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const from = (location.state as { from?: string } | null)?.from;
@@ -389,7 +474,7 @@ export function Compare() {
   const loaded = strips.map((s) => s.query.data).filter((d): d is CaseDetail => d !== undefined);
   const same = loaded.length === list.length ? sameInAll(loaded) : [];
   const title = compareHeading(list.length);
-  const back = from ?? `/explore${list.length ? `?${CASES_PARAM}=${list.join(',')}` : ''}`;
+  const back = from ?? (evidenceRef ? `${evidencePath(evidenceRef.id)}?${PAGES_PARAM}=${evidenceRef.pages}` : `/explore${list.length ? `?${CASES_PARAM}=${list.join(',')}` : ''}`);
 
   return (
     <div className="mx-auto w-full max-w-page px-4 pt-5 pb-12 sm:px-[26px] sm:pt-[22px]">
@@ -437,9 +522,29 @@ export function Compare() {
           From your search <span className="font-serif text-ink">“{briefStep.data.question}”</span>
         </p>
       )}
+      {evidenceSearch && (
+        <section aria-label={EVIDENCE_HEADING} className="-mt-2 mb-4" data-compare-evidence="">
+          <p className="text-ui text-muted">
+            From your search <span className="font-serif text-ink">“{evidenceSearch.question}”</span>
+          </p>
+          <Placard tone="ink" as="h2" className="mt-2.5">
+            {EVIDENCE_HEADING}
+          </Placard>
+          <EvidenceNotice className="mt-1.5" />
+        </section>
+      )}
       {/* Rendered before any note, so a gone or failed brief read is announced when it appears. */}
       <div aria-live="polite">
         {aiGone && <p className="-mt-2 mb-4 text-meta text-muted">{AI_NOTES_GONE_PLURAL}</p>}
+        {evidenceGone && <p className="-mt-2 mb-4 text-meta text-muted">{EVIDENCE_GONE_PLURAL}</p>}
+        {evidenceFailed && (
+          <p className="-mt-2 mb-4 text-meta text-muted">
+            {EVIDENCE_FAILED_PLURAL}{' '}
+            <button type="button" onClick={() => void firstEvidence.refetch()} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+              Try again
+            </button>
+          </p>
+        )}
         {aiFailed && (
           <p className="-mt-2 mb-4 text-meta text-muted">
             {AI_NOTES_FAILED_PLURAL}{' '}
@@ -483,7 +588,7 @@ export function Compare() {
           <div>
             {strips.map((s) =>
               s.query.data ? (
-                <Strip key={s.ntsbNo} detail={s.query.data} order={s.order} onRemove={() => remove(s.ntsbNo)} ai={aiFor(s.ntsbNo)} />
+                <Strip key={s.ntsbNo} detail={s.query.data} order={s.order} onRemove={() => remove(s.ntsbNo)} ai={aiFor(s.ntsbNo)} evidence={evidenceFor(s.ntsbNo)} />
               ) : (
                 <PendingStrip key={s.ntsbNo} ntsbNo={s.ntsbNo} order={s.order} query={s.query} onRemove={() => remove(s.ntsbNo)} ai={aiOn} />
               ),
@@ -511,6 +616,8 @@ export function Compare() {
               <>
                 <span className="text-magenta">Magenta columns are the AI’s reading from your brief</span>; check the cited passages in each case.
               </>
+            ) : evidenceSearch ? (
+              'The last row of each strip is from your AI search: how it found the case and its best excerpt, in NTSB words.'
             ) : (
               'NTSB data only.'
             )}

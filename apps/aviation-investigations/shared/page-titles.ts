@@ -8,7 +8,7 @@ import type { CaseDetail } from './contracts/cases.js';
 import { PRODUCT_LONG_NAME, documentTitle } from './brand.js';
 
 export type TitledPage =
-  | { kind: 'home' | 'dashboard' | 'account' | 'about' | 'privacy' | 'brief' | 'not_found' }
+  | { kind: 'home' | 'dashboard' | 'account' | 'about' | 'privacy' | 'brief' | 'evidence' | 'not_found' }
   /** `q`: the search request's query, as the page reads it from the URL (shared/page-params.ts). */
   | { kind: 'explore'; q: string }
   /** `count`: the compared cases (`readCompare`). */
@@ -52,6 +52,8 @@ export function pageTitle(page: TitledPage): string {
       return documentTitle('Privacy');
     case 'brief':
       return documentTitle('AI brief');
+    case 'evidence':
+      return documentTitle('AI search');
     case 'not_found':
       return documentTitle('Page not found');
   }

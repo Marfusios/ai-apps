@@ -10,6 +10,8 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { SITE_DESCRIPTION } from '../../shared/brand';
 import { pageTitle, type TitledPage } from '../../shared/page-titles';
+import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
+import { createHandlers } from '../../web/src/mocks/handlers';
 import indexHtml from '../../web/index.html?raw';
 import { Footer } from '../../web/src/components/Footer';
 import { SignInDialog } from '../../web/src/features/auth/SignInDialog';
@@ -169,11 +171,50 @@ describe('the About page (UI_DESIGN §4.8)', () => {
     expect(text).toContain('compare up to four of them on one page');
     expect(text).not.toContain('side by side');
     expect(text).toContain('dashboard');
-    expect(text).toContain('AI features are not available yet.');
+    // The AI line follows the AI status (Task 23): the mock's visitor has AI searches.
+    await waitFor(() =>
+      expect(screen.getByRole('main').textContent).toContain(
+        'Ask in plain English: AI turns your question into search filters and terms you can edit, and AirCase shows the investigations it retrieved, in their own words.',
+      ),
+    );
+    expect(screen.getByRole('main').textContent).not.toContain('AI features are not available yet.');
     // The data source and its attribution stay.
     expect(text).toContain('NTSB aviation investigation database (avall.mdb)');
     expect(text).toContain('It is not an NTSB service');
     expect(text).not.toMatch(/coming soon|will soon|we plan|roadmap/i);
+  });
+});
+
+describe('the About page says whether AI searches are offered, as the AI status does (Task 23)', () => {
+  it.each([
+    // Off: not configured, a missing dependency, or the kill switch.
+    ['unavailable', false],
+    ['pausedDaily', true],
+    ['trialUsed', true],
+    ['signedIn', true],
+  ] as const)('%s', async (sample, on) => {
+    server.use(...createHandlers({ aiStatus: AI_STATUS_SAMPLES[sample] }));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    const line = on ? 'Ask in plain English: AI turns your question into search filters' : 'AI features are not available yet.';
+    await waitFor(() => expect(main.textContent).toContain(line));
+    expect(main.textContent).not.toContain(on ? 'AI features are not available yet.' : 'Ask in plain English');
+  });
+
+  it('says neither while the status is unknown', async () => {
+    let answer: () => void = () => {};
+    server.use(
+      http.get('*/api/ai/status', async () => {
+        await new Promise<void>((resolve) => (answer = resolve));
+        return undefined;
+      }),
+    );
+    renderApp('/about');
+    await screen.findByRole('heading', { level: 1, name: 'About AirCase' });
+    const text = screen.getByRole('main').textContent ?? '';
+    expect(text).not.toContain('AI features are not available yet.');
+    expect(text).not.toContain('Ask in plain English');
+    answer();
   });
 });
 

@@ -11,6 +11,7 @@ import { SectionHead } from '../../components/SectionHead';
 import { StatusBadge } from '../../components/StatusBadge';
 import { cx } from '../../lib/cx';
 import { formatDate } from '../../lib/format';
+import { EvidenceSection, type DrawerEvidence } from '../evidence/EvidenceSection';
 import { BriefSections, BriefVerdict, citedTarget, passageAnchor, type AiCaseContext } from './BriefContext';
 import {
   aircraftName,
@@ -39,6 +40,8 @@ export interface CaseStoryProps {
   ai?: AiCaseContext;
   /** Scroll to the cited passage once the AI context arrives (the drawer opened from a citation). */
   openAtCited?: boolean;
+  /** The case as the viewer's evidence search shows it (the drawer over that search), else none. */
+  evidence?: DrawerEvidence | null;
 }
 
 function lowerFirst(text: string): string {
@@ -417,9 +420,11 @@ function useOpenAtCited(ai: AiCaseContext | undefined, ntsbNo: string, enabled: 
  * flight, then what investigators established, and provenance. NTSB data only,
  * unless it is opened from the viewer's own live brief (`ai`): then the verdict pill,
  * "why it's in your results" and the cited passages come from the brief's private
- * context. The full page adds the aircraft and the factual and analysis narratives.
+ * context. Opened from the viewer's evidence search (`evidence`), it adds that search's
+ * projection of the case after what investigators established (UI_DESIGN §4.9). The full page
+ * adds the aircraft and the factual and analysis narratives.
  */
-export function CaseStory({ detail, mode, headingRef, headingId, matched, actions, ai, openAtCited = false }: CaseStoryProps) {
+export function CaseStory({ detail, mode, headingRef, headingId, matched, actions, ai, openAtCited = false, evidence = null }: CaseStoryProps) {
   const Heading = mode === 'page' ? 'h1' : 'h2';
   const completed = detail.completion.class === 'completed';
   useOpenAtCited(ai, detail.ntsbNo, openAtCited);
@@ -462,6 +467,7 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
         </>
       )}
       {ai && <BriefSections ai={ai} ntsbNo={detail.ntsbNo} aircraft={detail.aircraft} mode={mode} />}
+      {evidence && <EvidenceSection searchId={evidence.searchId} item={evidence.item} filters={evidence.filters} />}
       <Provenance detail={detail} />
     </article>
   );

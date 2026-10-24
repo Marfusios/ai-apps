@@ -50,9 +50,9 @@ describe('Home', () => {
   it('Ask AI shows the live AI counter, like the header', async () => {
     renderApp('/');
     // The status loads after the first paint; the name joins "Ask AI" and its counter.
-    const ask = await screen.findByRole('button', { name: /^Ask AI\s*·\s*3 free$/ });
+    const ask = await screen.findByRole('button', { name: /^Ask AI\s*·\s*10 free$/ });
     expect(ask.getAttribute('aria-disabled')).toBe('false');
-    expect(within(screen.getByRole('banner')).getAllByText('3 of 3').length).toBeGreaterThan(0);
+    expect(within(screen.getByRole('banner')).getAllByText('10 of 10').length).toBeGreaterThan(0);
   });
 });
 
