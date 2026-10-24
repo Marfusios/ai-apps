@@ -287,14 +287,15 @@ run it after publishing a new generation. It:
 A request resolves its evidence before admission, and can pause across publications
 and pruning. So a brief is inserted only after re-checking, in the inserting transaction
 and holding the brief-references lock shared, that its generation still has a manifest
-row and that neither its passages index nor the cases index of that pair was deleted
-(`claimBriefEvidence`, server/db/generations.ts); otherwise the request gets 503 and
-nothing is spent. Pruning and `index delete-unused` hold the same lock exclusively, under
-the lifecycle lock and in one transaction per generation or index, from their last check
-of what unexpired briefs use until the deletion is committed (for an index: until
-`index_builds` records it). A brief being inserted is therefore either committed first and
-seen by that check, or claims afterwards and finds the generation or index gone. The
-claim waits up to 2 s for the lock; a request that waits longer gets 503 too.
+row and that the deletion of neither its passages index nor the cases index of that pair
+was requested (`claimBriefEvidence`, server/db/generations.ts); otherwise the request gets
+503 and nothing is spent. Pruning and `index delete-unused` hold the same lock exclusively,
+under the lifecycle lock and in one transaction per generation or index, from their last
+check of what unexpired briefs use until the deletion is committed (for an index: until
+`index_builds` records it as requested, which happens before Elasticsearch is asked; see
+2.10). A brief being inserted is therefore either committed first and seen by that check,
+or claims afterwards and finds the generation or index gone. The claim waits up to 2 s for
+the lock; a request that waits longer gets 503 too.
 
 Control data (usage buckets, leases, Turnstile redemptions and expired briefs) is
 pruned by a periodic job in the API server, serialized by an advisory lock.
@@ -601,6 +602,23 @@ removed a generation's manifest row, or after a rebuild replaced an index, run
 `index delete-unused --older-than <hours>` (a dry run) and then with `--yes`. An index
 that is gone cannot be published again, so keep a rollback target's age above the
 threshold until the rollback is no longer needed.
+
+**A deletion is requested before it is sent.** A PostgreSQL rollback cannot undo a
+deletion in Elasticsearch, and a response can be lost after Elasticsearch applied the
+request. So `index delete-unused`, and a build deleting its own index, first record the
+deletion as requested (`index_builds.deletion_requested_at`, migration 0021) and commit
+it, then send the delete, then record it as done (`deleted_at`) once Elasticsearch
+confirmed it or reports the index missing. Both times are set once and never cleared.
+From the request on, the index is unavailable whatever became of the request: a new brief
+refuses it, publication refuses it (in code and in `publish_manifest`), and so does an
+alias switch. The next `index delete-unused --yes` completes every requested deletion, at
+any age, after the same checks; a dry run lists them apart.
+
+**Publication holds the lifecycle lock.** `publish` checks the indices (their metadata and
+document counts, and that no deletion was requested) and writes the manifest on one
+connection holding the lifecycle lock throughout; `index delete-unused` holds it from its
+decision to the deletion it records. A cleanup that starts while a publication is checking
+an index waits, and then finds the index in the manifest.
 
 ### 2.11 Publishing, and what the API reads
 

@@ -37,9 +37,10 @@ export interface BriefEvidence {
 }
 
 /**
- * `ok`: the brief may be inserted. `gone`: its generation was pruned, or its passages index or
- * the cases index of its pair was deleted. `busy`: a pruning or cleanup step held the lock
- * longer than the claim waits. Only `ok` lets the caller create the brief.
+ * `ok`: the brief may be inserted. `gone`: its generation was pruned, or the deletion of its
+ * passages index or of the cases index of its pair was requested or done. `busy`: a pruning
+ * or cleanup step held the lock longer than the claim waits. Only `ok` lets the caller create
+ * the brief.
  */
 export type BriefClaim = 'ok' | 'gone' | 'busy';
 
@@ -48,8 +49,9 @@ export type BriefClaim = 'ok' | 'gone' | 'busy';
  * shared (it lasts until the transaction ends) and confirm the evidence still exists. The
  * evidence was resolved before admission, and a request can pause across publications and
  * pruning. The lock is tried for up to `waitMs` (default 2 s, the transaction's lock bound),
- * so a long deletion makes the request `busy` rather than failing its transaction; a deleted
- * index is the one `index_builds` records as deleted.
+ * so a long deletion makes the request `busy` rather than failing its transaction. An index is
+ * gone from the moment `index_builds` records its deletion as requested, which cleanup commits
+ * before it asks Elasticsearch (migration 0021), whatever became of the request.
  */
 export async function claimBriefEvidence(
   tx: DbOrTx | NodePgDatabase<Schema>,
@@ -65,11 +67,28 @@ export async function claimBriefEvidence(
   }
   const res = await tx.execute(sql`
     SELECT EXISTS (SELECT 1 FROM dataset_manifests WHERE generation_id = ${evidence.generationId})
-      AND NOT EXISTS (SELECT 1 FROM index_builds WHERE index_name = ${evidence.passagesIndex} AND deleted_at IS NOT NULL)
       AND NOT EXISTS (
-        SELECT 1 FROM manifest_pairings p JOIN index_builds b ON b.index_name = p.cases_index AND b.deleted_at IS NOT NULL
+        SELECT 1 FROM index_builds
+        WHERE index_name = ${evidence.passagesIndex} AND (deletion_requested_at IS NOT NULL OR deleted_at IS NOT NULL))
+      AND NOT EXISTS (
+        SELECT 1 FROM manifest_pairings p
+          JOIN index_builds b ON b.index_name = p.cases_index AND (b.deletion_requested_at IS NOT NULL OR b.deleted_at IS NOT NULL)
         WHERE p.generation_id = ${evidence.generationId} AND p.passages_index = ${evidence.passagesIndex}) AS ok`);
   return (res.rows[0] as { ok: boolean } | undefined)?.ok === true ? 'ok' : 'gone';
+}
+
+/**
+ * Of `names`, the indices whose deletion was requested or done (`index_builds`, migration
+ * 0021). None of them is published, claimed by a new brief or made an alias target again.
+ */
+export async function deletedOrDeleting(db: DbOrTx | NodePgDatabase<Schema>, names: readonly string[]): Promise<string[]> {
+  if (names.length === 0) return [];
+  const res = await db.execute(sql`
+    SELECT index_name FROM index_builds
+    WHERE index_name IN (${sql.join(names.map((n) => sql`${n}`), sql`, `)})
+      AND (deletion_requested_at IS NOT NULL OR deleted_at IS NOT NULL)
+    ORDER BY index_name`);
+  return (res.rows as { index_name: string }[]).map((r) => r.index_name);
 }
 
 /**
@@ -132,6 +151,9 @@ export async function withLifecycleLock<T>(
   const discard = (e: unknown): void => {
     broken = e instanceof Error ? e : new Error(String(e));
   };
+  // A session that ends meanwhile (the server releases the lock with it) fails the statement
+  // that was running; without a listener its `error` event would also end the process.
+  client.on('error', discard);
   try {
     await client.query(`SET statement_timeout = ${timeoutMs}`);
     await client.query('SELECT pg_advisory_lock($1)', [LIFECYCLE_LOCK_KEY]);
@@ -140,6 +162,7 @@ export async function withLifecycleLock<T>(
   } finally {
     if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LIFECYCLE_LOCK_KEY]).catch(discard);
     if (!broken) await client.query('RESET statement_timeout').catch(discard);
+    client.off('error', discard);
     client.release(broken);
   }
 }
@@ -159,7 +182,7 @@ export interface ActiveManifest {
 }
 
 /** The active manifest with its generation's versions, or null before the first publish. */
-export async function getActiveManifest(db: DbOrTx): Promise<ActiveManifest | null> {
+export async function getActiveManifest(db: DbOrTx | NodePgDatabase<Schema>): Promise<ActiveManifest | null> {
   const [row] = await db
     .select({
       generationId: datasetManifests.generationId,
@@ -218,7 +241,7 @@ const INDEX_NAME = /^[a-z0-9][a-z0-9._-]{0,254}$/;
  * (rollback). `passagesIndex` null publishes a keyword-only manifest.
  */
 export async function publishManifest(
-  db: Db,
+  db: DbOrTx | NodePgDatabase<Schema>,
   generationId: number,
   casesIndex: string,
   passagesIndex: string | null,
@@ -261,7 +284,7 @@ export interface PruneReport {
  * generation. Never-published generations are deleted when `failed`, or when sealed
  * and unverified/verified for longer than the grace period (counted from the seal,
  * i.e. the load's commit, the latest verification or the latest index build whose index
- * still exists), so a slow load committing late or a generation awaiting publication
+ * still exists and is not being deleted), so a slow load committing late or a generation awaiting publication
  * of its (possibly paid) indices is kept. `loading`, active and pinned
  * generations are never deleted, and neither is a generation an unexpired AI brief cites
  * (`generations_cited_by_live_briefs()`, migration 0021; amendment A6): briefs are made
@@ -282,7 +305,8 @@ export async function pruneGenerations(db: Db, opts: PruneOptions = {}): Promise
               and (p.pinned_until is null or p.pinned_until > now())) as pinned,
             g.id in (select b from generations_cited_by_live_briefs() as b) as cited,
             greatest(g.sealed_at, g.verified_at,
-              (select max(b.created_at) from index_builds b where b.generation_id = g.id and b.deleted_at is null))
+              (select max(b.created_at) from index_builds b
+                where b.generation_id = g.id and b.deleted_at is null and b.deletion_requested_at is null))
               < now() - make_interval(secs => ${graceHours * 3600}) as past_grace
           from dataset_generations g left join dataset_manifests m on m.generation_id = g.id
           order by m.active desc nulls last, m.published_at desc nulls last, g.id`,

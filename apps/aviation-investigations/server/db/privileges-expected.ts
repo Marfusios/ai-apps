@@ -77,6 +77,7 @@ export const EXPECTED_PRIVILEGES: readonly string[] = [
   "column public.cases.wx_int_precip | acl=aviation_app:SELECT",
   "column public.cases.wx_temp | acl=aviation_app:SELECT",
   "column public.index_builds.deleted_at | acl=aviation_ingest:UPDATE",
+  "column public.index_builds.deletion_requested_at | acl=aviation_ingest:UPDATE",
   "column public.index_switch_attempts.declared_abandoned_at | acl=aviation_ingest:UPDATE",
   "column public.index_switch_attempts.declared_reason | acl=aviation_ingest:UPDATE",
   "column public.index_switch_attempts.outcome | acl=aviation_ingest:UPDATE",

@@ -470,6 +470,7 @@ async function main(argv: string[]): Promise<number> {
         );
         if (r.dryRun) console.log(`would delete (dry run; pass --yes): ${r.wouldDelete.join(', ') || 'none'}`);
         else console.log(`deleted: ${r.deleted.join(', ') || 'none'}`);
+        if (r.pending.length > 0) console.log(`deletion requested by an earlier run, not yet confirmed (pass --yes): ${r.pending.join(', ')}`);
         if (r.missing.length > 0) console.log(`already missing: ${r.missing.join(', ')}`);
         for (const k of r.refused) console.log(`kept ${k.indexName}: ${k.reason}`);
       } finally {

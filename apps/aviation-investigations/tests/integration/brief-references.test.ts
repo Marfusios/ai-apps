@@ -138,13 +138,13 @@ describe('a brief being created while its generation is pruned', () => {
     });
   });
 
-  it('a request whose passages index, or its pair’s cases index, was deleted creates no brief', async () => {
+  it('a request whose passages index, or its pair’s cases index, was deleted or is being deleted creates no brief', async () => {
     const g = await verified();
     await publish(g);
-    const record = (buildId: string, name: string, deleted: boolean) =>
+    const record = (buildId: string, name: string, deleted: boolean, requested = deleted) =>
       migrator.execute(sql`
-        insert into index_builds (build_id, index_name, alias, generation_id, deleted_at)
-        values (${buildId}, ${name}, 'aviation-test-refs', ${g}, ${deleted ? sql`now()` : sql`null`})`);
+        insert into index_builds (build_id, index_name, alias, generation_id, deletion_requested_at, deleted_at)
+        values (${buildId}, ${name}, 'aviation-test-refs', ${g}, ${requested ? sql`now()` : sql`null`}, ${deleted ? sql`now()` : sql`null`})`);
     await record('refkept', passages(g), false);
     await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: passages(g) })).toBe('ok'));
     // An index cleanup deleted (recorded as deleted): the pair's cases index ...
@@ -153,5 +153,8 @@ describe('a brief being created while its generation is pruned', () => {
     // ... or another passages index of the generation.
     await record('refold', `aviation-test-refs-old-${g}`, true);
     await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: `aviation-test-refs-old-${g}` })).toBe('gone'));
+    // Requested only (cleanup commits the request before it asks Elasticsearch, which may never answer).
+    await record('refreq', `aviation-test-refs-req-${g}`, false, true);
+    await app.transaction(async (tx) => expect(await claimBriefEvidence(tx, { generationId: g, passagesIndex: `aviation-test-refs-req-${g}` })).toBe('gone'));
   });
 });

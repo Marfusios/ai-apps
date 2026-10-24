@@ -575,18 +575,29 @@ environment has a v3 index, `cases-v2`), and a document count that differs from 
 generation's US events, and changes nothing then. Without `--passages-index` the manifest is
 keyword-only: search, case pages and the dashboard work and AI stays off. Publishing
 an earlier generation again is the rollback. The running API picks up a new manifest
-within seconds; public responses may stay cached for up to five minutes.
+within seconds; public responses may stay cached for up to five minutes. It also refuses
+an index whose deletion `index delete-unused` requested, even one Elasticsearch still has,
+and it holds the lifecycle lock from its first check to the manifest it writes, so a
+cleanup running meanwhile waits and then keeps the index the manifest names.
 
 The `index` commands (README, "Cases index") use the environment's write API key,
 so they create and switch only `ai-aviation-<env>-*` indices. A build deletes only
 its own index, and only when it failed before any alias request; every other index
 stays until an explicit `index delete-unused --older-than <hours> --yes`, which deletes
 indices that are older than the threshold, no alias target, in no manifest (active or
-retained) and used by no unexpired AI brief (briefs being created wait while it deletes;
-one that would cite the deleted index is refused), and refuses any with a switch request
+retained) and used by no unexpired AI brief (briefs being created wait while it decides;
+one that would cite the index is refused), and refuses any with a switch request
 still pending or unknown. Run it
 without `--yes` first: it lists what it would delete. A deleted index cannot be
 published again, so pick a threshold above the age of any index you may roll back to.
+
+Each deletion is recorded as requested before Elasticsearch is asked, and as done once
+Elasticsearch confirmed it (or reports the index missing). From the request on, the index
+is gone for the app: no new brief, publication or alias switch takes it, whatever became
+of the request. If the command fails or stops meanwhile (a lost response, a database
+error, the process killed), run it again with `--yes`: it completes every requested
+deletion, at any age. A dry run lists them apart (`deletion requested by an earlier run,
+not yet confirmed`).
 
 Paths are relative to the app directory, which the container sees at the same
 relative location (`data/` is mounted at `/app/data`).

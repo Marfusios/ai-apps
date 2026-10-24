@@ -302,7 +302,10 @@ pnpm worker index cleanup-builds --older-than <hours>
   retained), are used by no unexpired AI brief, and have no pending or unknown switch
   attempt (a committed one does not keep an index the alias has since moved away from). Every
   candidate is rechecked just before deletion while holding its build lock (free),
-  its alias lock and the lifecycle lock. `worker index cleanup-builds --older-than
+  its alias lock and the lifecycle lock. A deletion is recorded as requested before
+  Elasticsearch is asked; from then on no brief, publication or alias switch takes the
+  index, and a later `--yes` run completes a deletion an earlier one could not confirm
+  (docs/DATA_PIPELINE.md, 2.10). `worker index cleanup-builds --older-than
   <hours>` removes the pins of builds that are no longer running and nothing else.
 - **Documents.** One per US event, keyed by case number (`ev_id` is never indexed).
   Event fields are keywords (`country` is `ev_country` as published, always `USA`),

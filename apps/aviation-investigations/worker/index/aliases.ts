@@ -74,6 +74,12 @@ export async function withAliasLock<T>(
   const client = await db.$client.connect();
   let locked = false;
   let broken: Error | undefined;
+  // A session that ends meanwhile fails the statement that was running; without a listener its
+  // `error` event would also end the process.
+  const discard = (e: unknown): void => {
+    broken = e instanceof Error ? e : new Error(String(e));
+  };
+  client.on('error', discard);
   try {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -85,12 +91,9 @@ export async function withAliasLock<T>(
     locked = true;
     return await fn(client);
   } finally {
-    if (locked) {
-      await client.query('select pg_advisory_unlock($1, hashtext($2))', [ALIAS_LOCK_NAMESPACE, alias]).catch((e: unknown) => {
-        // Discard the connection: closing the session releases the lock.
-        broken = e instanceof Error ? e : new Error(String(e));
-      });
-    }
+    // On failure, discard the connection: closing the session releases the lock.
+    if (locked) await client.query('select pg_advisory_unlock($1, hashtext($2))', [ALIAS_LOCK_NAMESPACE, alias]).catch(discard);
+    client.off('error', discard);
     client.release(broken);
   }
 }
@@ -197,6 +200,12 @@ export async function switchAlias(
       async (client) => {
         const blocking = await blockingAttempts(client, alias);
         if (blocking.length > 0) throw new Error(blockedMessage(alias, blocking));
+        // An index whose deletion was requested (index delete-unused, migration 0021) is never a target again.
+        const gone = await client.query(
+          'select 1 from index_builds where index_name = $1 and (deletion_requested_at is not null or deleted_at is not null)',
+          [index],
+        );
+        if ((gone.rowCount ?? 0) > 0) throw new Error(`the deletion of ${index} was requested; it is never switched to again`);
         await opts.beforeSwitch?.(client);
         const previous = await aliasTargets(es, alias);
         if (previous.length === 0 && (await es.indices.exists({ index: alias }))) {

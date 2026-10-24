@@ -94,3 +94,84 @@ $$;
 REVOKE ALL ON FUNCTION indices_cited_by_live_briefs() FROM PUBLIC;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION indices_cited_by_live_briefs() TO aviation_ingest;
+--> statement-breakpoint
+-- An index deletion is recorded before Elasticsearch is asked (Task 22 fix round 3: the gate's
+-- finding 2 of round 2). `index delete-unused` and a failed build's cleanup set
+-- deletion_requested_at, and commit it, before they send the delete; deleted_at follows once
+-- Elasticsearch confirmed it (or reports the index missing). Neither is ever cleared: from
+-- the request on, the index is unavailable whatever became of the request (a lost response, a
+-- failed write afterwards, the process killed). A new brief refuses it (claimBriefEvidence),
+-- publication refuses it (in code and in publish_manifest below), an alias switch refuses it,
+-- and the next `index delete-unused --yes` completes or confirms the deletion.
+ALTER TABLE "index_builds" ADD COLUMN IF NOT EXISTS "deletion_requested_at" timestamp with time zone;
+--> statement-breakpoint
+-- As in migration 0010, and the request time is set once too.
+CREATE OR REPLACE FUNCTION index_builds_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'index builds are never deleted' USING ERRCODE = '55000';
+  END IF;
+  IF (NEW.build_id, NEW.index_name, NEW.alias, NEW.generation_id, NEW.created_at)
+     IS DISTINCT FROM (OLD.build_id, OLD.index_name, OLD.alias, OLD.generation_id, OLD.created_at)
+     OR (OLD.deletion_requested_at IS NOT NULL AND NEW.deletion_requested_at IS DISTINCT FROM OLD.deletion_requested_at)
+     OR (OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS DISTINCT FROM OLD.deleted_at) THEN
+    RAISE EXCEPTION 'index build % is immutable except for its deletion request and deletion times, each set once', OLD.build_id
+      USING ERRCODE = '55000';
+  END IF;
+  RETURN NEW;
+END $$;
+--> statement-breakpoint
+GRANT UPDATE ("deletion_requested_at") ON TABLE "index_builds" TO aviation_ingest;
+--> statement-breakpoint
+-- As in migration 0011, and an index whose deletion was requested or done is refused: the
+-- manifest would name an index that is gone, or about to be (the gate's finding 1 of round 2).
+-- `pnpm worker publish` checks it as well, holding the lifecycle lock from its checks of the
+-- indices to this call, so index cleanup cannot request a deletion in between.
+CREATE OR REPLACE FUNCTION publish_manifest(p_generation bigint, p_cases_index text, p_passages_index text,
+  p_verifier_version text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  g dataset_generations%ROWTYPE;
+  previous bigint;
+  gone text;
+BEGIN
+  PERFORM pg_advisory_xact_lock(7311905022);
+  IF p_cases_index IS NULL OR p_cases_index !~ '^[a-z0-9][a-z0-9._-]{0,254}$'
+     OR (p_passages_index IS NOT NULL AND p_passages_index !~ '^[a-z0-9][a-z0-9._-]{0,254}$') THEN
+    RAISE EXCEPTION 'invalid index name' USING ERRCODE = '22023';
+  END IF;
+  SELECT b.index_name INTO gone FROM index_builds b
+    WHERE b.index_name IN (p_cases_index, p_passages_index)
+      AND (b.deletion_requested_at IS NOT NULL OR b.deleted_at IS NOT NULL)
+    ORDER BY b.index_name LIMIT 1;
+  IF gone IS NOT NULL THEN
+    RAISE EXCEPTION 'index % is deleted or being deleted', gone USING ERRCODE = '55000';
+  END IF;
+  SELECT * INTO g FROM dataset_generations WHERE id = p_generation FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'generation % does not exist', p_generation USING ERRCODE = 'P0002';
+  END IF;
+  IF g.status NOT IN ('verified', 'published', 'retired') THEN
+    RAISE EXCEPTION 'generation % is %; only a verified generation can be published', p_generation, g.status
+      USING ERRCODE = '55000';
+  END IF;
+  IF g.verification_status IS DISTINCT FROM 'ok' OR g.verifier_version IS DISTINCT FROM p_verifier_version THEN
+    RAISE EXCEPTION 'generation % has no current successful verification (latest %, verifier %)',
+      p_generation, coalesce(g.verification_status, 'none'), coalesce(g.verifier_version, 'none')
+      USING ERRCODE = '55000';
+  END IF;
+  FOR previous IN
+    UPDATE dataset_manifests SET active = false WHERE active AND generation_id <> p_generation RETURNING generation_id
+  LOOP
+    UPDATE dataset_generations SET status = 'retired' WHERE id = previous AND status = 'published';
+  END LOOP;
+  INSERT INTO dataset_manifests (generation_id, cases_index, passages_index, published_at, active)
+    VALUES (p_generation, p_cases_index, p_passages_index, clock_timestamp(), true)
+    ON CONFLICT (generation_id) DO UPDATE
+      SET cases_index = EXCLUDED.cases_index, passages_index = EXCLUDED.passages_index,
+          published_at = EXCLUDED.published_at, active = true;
+  IF g.status <> 'published' THEN
+    UPDATE dataset_generations SET status = 'published' WHERE id = p_generation;
+  END IF;
+END $$;
