@@ -215,7 +215,9 @@ sections: 1,318 event-scoped and 11 converted from HTML.
 ### 2.4 Generations in PostgreSQL
 
 Code: `server/db/schema/corpus.ts`, `worker/ingest/load.ts`,
-`worker/ingest/verify.ts`, `server/db/generations.ts`, migrations `0000`–`0004`.
+`worker/ingest/verify.ts`, `server/db/generations.ts`, migrations `0000`–`0004`, `0011`
+(`publish_manifest` with an optional passages index), `0012` (the passages triggers) and
+`0021` (generations that live briefs cite).
 
 **Load.** One transaction inserts the generation as `loading`, batch-inserts every
 row, records the run as `succeeded`, seals the generation and commits. A failure
@@ -224,9 +226,12 @@ composite, so rows reference only their own generation. The loader rejects an
 extraction whose manifest disagrees with its files or row counts. Generation 1 loaded
 in about 38 s.
 
-**Sealing.** Statement triggers reject every insert, update or delete on a
-generation that is not `loading`, for every role including the owner. The one
-exception is a guarded deletion: `prune_generation` removes a whole generation.
+**Sealing.** Statement triggers reject every insert or update on a generation that is
+not `loading`, for every role including the owner, and every delete except one: a
+session that has set `aviation.pruning_generation` to the generation, as
+`prune_generation` does in its transaction to remove a whole generation. That is a plain
+custom setting any session may set, so the owner (`aviation_migrator`) could delete a
+sealed generation's rows by hand; the runtime roles hold no DELETE on the corpus.
 
 - Status changes go only through migrator-owned `SECURITY DEFINER` functions.
   `seal_generation` runs inside the load transaction. `record_verification`,
@@ -966,6 +971,10 @@ the id inside Elasticsearch; fix round 1 makes those changes and goes back to it
 - Archive download is manual; the planned host allowlist is not implemented.
 - Only `avall.zip` (2008 onward) is ingested: no weekly updates or pre-2008 archives.
 - Old indices are deleted only on request (`index delete-unused`), never automatically.
+- HTML detection (citation text v1) also counts `<p` or `<div` followed by whitespace
+  without a closing `>` as a tag; such a text is only trimmed and marked as converted.
+  None of the snapshot's 74,413 narrative fields is affected (337 count as HTML, all for
+  other reasons). Requiring the `>` is a rule change for the next citation text version.
   `dev` still keeps `cases-v2`.
 - Embedding inputs still contain glued headings. Fixing that needs a new input
   template and a paid re-embedding.

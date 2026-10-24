@@ -160,6 +160,38 @@ Passwords and keys are reused from these files on the next run, so keep them.
 Then run `pnpm app:migrate` for the environment. Langfuse projects
 (`aviation-dev`, `aviation-live`) and their keys are created in Langfuse itself.
 
+### Rotating credentials
+
+`--rotate` replaces the three login passwords at once (`ALTER ROLE ... PASSWORD`) and
+invalidates both Elasticsearch API keys before minting new ones. There is no overlap
+period: from that moment the running app's new database connections fail
+(`28P01`) and its searches answer 401, and a running `pnpm ingest`, backup or
+evaluation fails. Rotate in a quiet moment:
+
+1. Make sure no ingestion, index build, evaluation or backup is running.
+2. `pnpm provision:shared ... --rotate` (both admin files for both sides, or one side
+   alone). It writes the new values into the connection files.
+3. At once, `pnpm app:up`: Compose recreates the app container because its environment
+   changed (on `live` from the same image; nothing is rebuilt). Expect errors and a
+   failing health check for the seconds in between.
+4. Check `GET /api/health` and one search; the next ingestion and backup read the new
+   files.
+
+The application secrets live in the settings file; change one there, then
+`pnpm app:up`:
+
+- `BETTER_AUTH_SECRET`: signs everyone out and fails sign-ins in flight
+  ([Google sign-in](#google-sign-in)).
+- `IDENTITY_HMAC_SECRET`: ends every trial cookie and detaches every account from its
+  usage counts and anti-abuse record (they are keyed by it); only after a leak.
+- `IP_HMAC_SECRET`: network identities start over, so per-network rate limits reset.
+- `TUNNEL_TOKEN`: rotate it in Cloudflare Zero Trust first; the connector restarts with
+  the new token ([Tunnel mode](#tunnel-mode)).
+- Provider keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), the Google OAuth client secret
+  and the Turnstile secret: create the new one at the provider, deploy it, then revoke
+  the old one, so nothing fails in between.
+- Langfuse keys: in Langfuse, then in the Langfuse connection file.
+
 ## Containers
 
 | Service | Profile | Label `ai-apps.component` | Purpose |
@@ -192,6 +224,11 @@ reach a container.
 
 With tracing on (see [Tracing](#tracing)), `aviation-app` and `aviation-ingest` also get
 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`.
+
+The CA file (`ELASTICSEARCH_CA_FILE`, a host path) is mounted read-only into containers
+that run as uid 1000 (`aviation-app`) and as the host user (`aviation-ingest`), not as
+its owner: make it world-readable (`chmod 644`; it is a public certificate). A root-only
+file makes them fail at start with `EACCES`.
 
 ### Hardening
 
@@ -917,11 +954,17 @@ pnpm worker ai-switch --account-check suspicious
 
    ```sh
    docker compose -p ai-aviation-live --env-file "$ENV_FILE" \
-     -f compose.yaml -f compose.tunnel.yaml --profile app --profile tunnel up -d --build
+     -f compose.yaml -f compose.tunnel.yaml --profile app --profile tunnel up -d
    ```
 
 4. Check that nothing is published: `APP_ENV=live pnpm app:ps` shows no ports
    for `aviation-app`.
+5. Check the connector: the `tunnel` service has no health check (its image has no
+   shell or HTTP client), so `pnpm app:up --wait` succeeds even with a wrong
+   `TUNNEL_TOKEN` while `cloudflared` keeps restarting. Read
+   `docker compose -p ai-aviation-live logs tunnel` for a registered connection and
+   check that the tunnel shows as healthy in Cloudflare Zero Trust, then open the public
+   hostname.
 
 In tunnel mode the app serves only peers inside `TRUSTED_PROXY_CIDRS` (anything else
 gets 403, except its own loopback health check) and takes the client address from
@@ -990,20 +1033,11 @@ name) with `SHARED_POSTGRES_NETWORK=ai-aviation-local_default`,
 `.env.local` with host `postgres:5432`, `ELASTICSEARCH_URL=http://elasticsearch:9200`
 and the API keys from `.env.local`.
 
-Earlier checkouts ran these services as project `ai-aviation`, with login-capable
-group roles and databases `aviation` and `aviation_test`. Stop that project once
-with `docker compose -p ai-aviation down` (its volumes are kept) before
-`pnpm services:up`; `ai-aviation-local` starts with empty volumes, so run
-`services:setup` and `db:migrate` again and reload data. Running the new
-`services:setup` against an old server instead converts its group roles to
-`NOLOGIN`, which locks out checkouts still using the old URLs.
-
-The local PostgreSQL ran 17.6 before it was pinned to 16.2, the shared server's
-version. A data directory cannot be reused across major versions, and the 16.2
-image refuses to start on one made by 17. A checkout whose `ai-aviation-local`
-PostgreSQL volume was made by 17.6 removes that volume once and provisions again
-(this deletes the local `aviation_dev` and `aviation_test` databases, which hold
-only disposable data; the Elasticsearch volume is not touched):
+The local PostgreSQL is pinned to 16.2, the shared server's version. A data directory
+cannot be reused across major versions, and the 16.2 image refuses to start on one
+another major version made. If that happens, remove the volume once and provision again
+(this deletes the local `aviation_dev` and `aviation_test` databases, which hold only
+disposable data; the Elasticsearch volume is not touched):
 
 ```sh
 pnpm services:down
@@ -1015,9 +1049,8 @@ pnpm db:migrate
 
 ## PostgreSQL 16 compatibility
 
-The shared server and the local services both run PostgreSQL 16.2 (the local
-services ran 17.6 until they were pinned to the shared server's version, so that
-the integration tests exercise the version the deployments use). The `MAINTAIN`
+The shared server and the local services both run PostgreSQL 16.2, so that the
+integration tests exercise the version the deployments use. The `MAINTAIN`
 privilege exists only from 17, so every `MAINTAIN` grant or revoke in the
 migrations runs inside a `DO` block guarded by `server_version_num >= 170000`; the
 guards keep the migrations valid on a later server.
@@ -1029,11 +1062,8 @@ guards; no new migration was needed. Later migrations follow the same pattern
 0012, `passages` and `embedding_cache`, uses `REVOKE ALL`, which covers `MAINTAIN`
 on 17 and is valid on 16; 0011 changes no privileges). The integration suite
 migrates `aviation_test` through every migration, so `pnpm test:integration` checks
-them and the suite on 16.2. `pnpm test:pg16` keeps its name from the time a
-throwaway `postgres16` service (profile `pg16`, data in tmpfs) provided 16.2 next to
-a 17.6 stack; that service no longer exists. The command checks that the test
-database's server is PostgreSQL 16 and then runs the same integration suite, so
-existing instructions keep working.
+them and the suite on 16.2. `pnpm test:pg16` checks that the test database's server is PostgreSQL 16 and then
+runs the same integration suite.
 
 ## Application image
 
@@ -1047,4 +1077,12 @@ licences), plus the SQL migrations, verification profiles and the report-link
 seed; no TypeScript sources or development dependencies. `.dockerignore` keeps
 the `.gitignore` secret patterns (`.env*` except `.env.example`, keys,
 certificates, `credentials/`, `secrets/`) at any depth, every `data/` and
-`node_modules/`, build and test outputs, tests and docs out of the build context.
+`node_modules/`, build and test outputs, tests, docs and evaluations out of the build
+context. pnpm itself is pinned by version and sha512 (`packageManager`), which corepack
+checks when the image is built.
+
+Before each release, check advisories: `pnpm audit --prod` for the runtime dependencies,
+and an image scanner (for example `docker scout cves ai-aviation/app:<tag>`) for the
+release image and the pinned base images (node, `postgres:16.2`, `cloudflared`, and the
+extraction image's Debian). Fix or record each finding before deploying; update a pin's
+tag and digest together.

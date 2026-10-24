@@ -264,7 +264,7 @@ without reaching the prompt service. Do not silently fetch an unreviewed latest
 prompt. [Prompt management](https://langfuse.com/docs/prompt-management/get-started).
 
 Plan one reusable Langfuse deployment with separate projects for applications.
-Use Compose project `ai-observability` to group its services; avoid fixed global
+Use one Compose project of its own (for example `observability`) to group its services; avoid fixed global
 container names. The aviation app connects through configuration and remains
 runnable with tracing disabled. Its README will document a portable local
 observability option when implementation begins; no private host is required.

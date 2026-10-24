@@ -1117,7 +1117,8 @@ PostgreSQL/Elasticsearch for contributors and offline tests. See the
 [runbook](RUNBOOK.md).
 
 Run Langfuse as separate reusable infrastructure under Compose project
-`ai-observability`, with isolated projects/credentials and its own resource budget.
+an observability project of its own (for example `observability`), with isolated
+projects/credentials and its own resource budget.
 The experiment runner invokes the same application functions and cost gate; its
 provider calls remain metered. Tracing exports are asynchronous and best-effort.
 The [hosting plan](OBSERVABILITY_AND_EVALUATION.md#prompt-management-and-hosting)
