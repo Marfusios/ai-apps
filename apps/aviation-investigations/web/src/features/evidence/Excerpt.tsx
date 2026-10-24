@@ -194,7 +194,7 @@ export function Excerpt({ searchId, ntsbNo, aircraft, excerpt, numbered = false 
     toggle.current?.scrollIntoView?.({ block: 'nearest' });
   }, [full]);
   return (
-    <figure className="m-0" data-excerpt={excerpt.sectionKey}>
+    <figure data-excerpt={excerpt.sectionKey}>
       <figcaption className="mb-[3px] text-[10px] tracking-[.12em] text-muted">{excerptLabel(ntsbNo, aircraft, excerpt, numbered)}</figcaption>
       {full ? (
         <FullSection searchId={searchId} ntsbNo={ntsbNo} excerpt={excerpt} id={regionId} />

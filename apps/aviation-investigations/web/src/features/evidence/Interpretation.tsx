@@ -346,9 +346,7 @@ export function Interpretation({ search }: InterpretationProps) {
             <ul className="space-y-1" data-unchecked="">
               {original.unchecked.map((u, i) => (
                 <li key={`${u.kind}-${i}`} className="text-ui leading-snug">
-                  <span className="font-bold">{UNCHECKED_LABEL[u.kind]}</span>
-                  <span aria-hidden="true">: </span>
-                  <span className="sr-only">: </span>
+                  <span className="font-bold">{UNCHECKED_LABEL[u.kind]}</span>:{' '}
                   <span className="font-serif text-[14px] italic">“{u.quote}”</span>
                 </li>
               ))}

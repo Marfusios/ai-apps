@@ -39,10 +39,11 @@ export function AiCounter() {
   }
   if (r?.kind === 'trial') {
     const left = <b className="font-bold text-magenta">{`${r.left} of ${r.limit}`}</b>;
+    // The long form from 700px: with two-digit counts (ten a day) it no longer fits a 640px header.
     return (
       <span>
-        <span className="sm:hidden">AI left {left}</span>
-        <span className="hidden sm:inline">AI searches left: {left}</span>
+        <span className="min-[700px]:hidden">AI left {left}</span>
+        <span className="hidden min-[700px]:inline">AI searches left: {left}</span>
       </span>
     );
   }

@@ -196,7 +196,10 @@ export function createHandlers({
     const r = status.remaining;
     if (r?.kind === 'trial') {
       const remaining = { ...r, left: started ? Math.max(0, r.left - 1) : r.left, started: true };
-      status = remaining.left === 0 ? { state: 'signed_in_only', reason: 'trial_used', remaining } : { state: 'available', remaining };
+      // Today's free searches used: they return at the next 00:00 UTC, as the server says.
+      const now = new Date();
+      const retryAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+      status = remaining.left === 0 ? { state: 'signed_in_only', reason: 'trial_used', retryAt, remaining } : { state: 'available', remaining };
     } else if (r?.kind === 'account' && started) {
       status = { state: 'available', remaining: { ...r, leftToday: Math.max(0, r.leftToday - 1), leftThisMonth: Math.max(0, r.leftThisMonth - 1) } };
     }

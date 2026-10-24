@@ -551,6 +551,8 @@ describe('the results page', { timeout: 20_000 }, () => {
     expect(box.textContent).toContain('Only two investigations were retrieved.');
     expect(box.textContent).toContain('Filters: Aircraft: Helicopter · Location: Texas');
     expect(within(box).getByRole('link', { name: /without filters/ }).getAttribute('href')).toBe('/explore?q=power+loss');
+    // The box says how many; no paging line repeats it.
+    expect(screen.queryByRole('navigation', { name: 'More investigations' })).toBeNull();
   });
 
   it('a gone or unknown search says so plainly and offers to ask again; “Ask again” only from this page’s memory', async () => {

@@ -25,7 +25,7 @@ export function EvidenceSection({ searchId, item, filters }: DrawerEvidence) {
   const numbered = numberedKinds(item.excerpts);
   return (
     <section className="mt-6" aria-label={EVIDENCE_HEADING} data-evidence-section="">
-      <SectionHead tag="NTSB text">{EVIDENCE_HEADING}</SectionHead>
+      <SectionHead tag={<span className="whitespace-nowrap">NTSB text</span>}>{EVIDENCE_HEADING}</SectionHead>
       <EvidenceNotice />
       <RelevanceLine item={item} filters={filters} className="mt-2" />
       {item.excerpts.some((e) => e.highlights.length > 0) && <MatchLegend className="mt-1" />}

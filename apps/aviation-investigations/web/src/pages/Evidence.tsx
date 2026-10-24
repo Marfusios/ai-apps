@@ -305,9 +305,11 @@ export function Evidence() {
             {EVIDENCE_HEADING}
           </h2>
           <EvidenceNotice className="mt-2" />
-          <p className="mt-2.5 text-meta text-muted" data-count-line="">
-            {countLine(search.total)}
-          </p>
+          {search.total > 0 && (
+            <p className="mt-2.5 text-meta text-muted" data-count-line="">
+              {countLine(search.total)}
+            </p>
+          )}
           {search.total > 0 && <MatchLegend className="mt-0.5 mb-2" />}
           {search.total === 0 ? (
             <FewResults search={search} />
@@ -327,7 +329,7 @@ export function Evidence() {
               ))}
             </ol>
           )}
-          {search.total > 0 && (
+          {search.total >= TINY_RESULTS && (
             <nav aria-label="More investigations" className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hairline pt-2.5 text-meta text-muted" data-print="hide">
               {!allShown && <span>{showingLine(shown, search.total)}</span>}
               {!allShown && (

@@ -85,9 +85,9 @@ export function showMoreLabel(shown: number, total: number, pageSize: number): s
   return `Show ${formatCount(Math.min(pageSize, total - shown))} more`;
 }
 
-/** "That’s all 21 retrieved." */
+/** "That’s all 21 retrieved." (a tiny result says how many in its own box instead) */
 export function allShownLine(total: number): string {
-  return total === 1 ? 'That’s the one retrieved.' : `That’s all ${formatCount(total)} retrieved.`;
+  return `That’s all ${formatCount(total)} retrieved.`;
 }
 
 /** "Only you can open this search. AirCase deletes it on 25 Oct 2026 at 22:00 UTC." (the contract's times are UTC) */
