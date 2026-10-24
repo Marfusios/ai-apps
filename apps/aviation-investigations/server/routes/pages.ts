@@ -107,12 +107,22 @@ const wantsPage = (request: FastifyRequest): boolean =>
 const hasTrailingSlash = (path: string): boolean => path.length > 1 && path.endsWith('/');
 
 /**
+ * `path` without its trailing slashes, in linear time: a regex such as `/\/+$/` backtracks
+ * quadratically over a long run of slashes followed by another character.
+ */
+function withoutTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path.charCodeAt(end - 1) === 0x2f) end--;
+  return path.slice(0, end);
+}
+
+/**
  * What a page path the router did not match is (`path` as the router sees it): a page path in
  * the wrong letter case redirects to its own; a case or brief whose parameter is too long for
  * the router is that page (a case with such a number is not served); null for anything else.
  */
 export function unmatchedPage(path: string): { redirect: string } | { route: PageRoute } | null {
-  const segments = path.replace(/\/+$/, '').split('/').slice(1);
+  const segments = withoutTrailingSlashes(path).split('/').slice(1);
   const [first = '', param = ''] = segments;
   const page = first.toLowerCase();
   if (segments.length === 1 && ONE_SEGMENT_PAGES.has(page) && first !== page) return { redirect: `/${page}` };

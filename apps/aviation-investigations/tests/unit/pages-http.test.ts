@@ -12,6 +12,7 @@ import type { Client } from '@elastic/elasticsearch';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, type AppDeps } from '../../server/app.js';
+import { unmatchedPage } from '../../server/routes/pages.js';
 import type { Db } from '../../server/db/client.js';
 import { ErrorResponseSchema } from '../../shared/contracts/common.js';
 import { parseHtml } from '../support/markup.js';
@@ -178,5 +179,19 @@ describe('a page request that is refused or fails gets the page with that status
     expect(ErrorResponseSchema.parse(api.json()).retryAfter).toBe(Number(api.headers['retry-after']));
     // Pages without a database read are not limited.
     expect((await page(app, '/explore')).statusCode).toBe(200);
+  });
+});
+
+describe('unmatchedPage reads a path in linear time (re-review of fix round 1)', () => {
+  it('classifies a long run of slashes followed by another character in milliseconds', () => {
+    const path = `/x${'/'.repeat(50_000)}y`;
+    const start = performance.now();
+    expect(unmatchedPage(path)).toBeNull();
+    expect(performance.now() - start).toBeLessThan(50);
+  });
+
+  it('still ignores trailing slashes', () => {
+    expect(unmatchedPage('/About///')).toEqual({ redirect: '/about' });
+    expect(unmatchedPage('///')).toBeNull();
   });
 });
