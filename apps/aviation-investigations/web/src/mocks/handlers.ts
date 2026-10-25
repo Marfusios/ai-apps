@@ -16,7 +16,8 @@
  * after the first accepted request. An evidence search's one free undo uses none either, and is
  * let through when the visitor's own searches are used up (a trial's, or an account's day or
  * month), as a replay is; every other pause still refuses it. `/api/config` offers Cloudflare's
- * documented test site key and the AI limits (`MOCK_AI_LIMITS`).
+ * documented test site key, the AI limits (`MOCK_AI_LIMITS`) and the fields the evidence policy
+ * applies on its own (`aiAutomaticFilters`: `['state']` when the mock applies states, else none).
  */
 import { delay, http, HttpResponse } from 'msw';
 import type { AiStatusResponse } from '../../../shared/contracts/ai';
@@ -79,6 +80,11 @@ export interface HandlerOptions {
    * (default: the one this tab's session storage names, else the live baseline).
    */
   evidence?: MockEvidenceConfig;
+  /**
+   * What `/api/config` reports as `aiAutomaticFilters` (default: as the evidence policy says,
+   * `['state']` with `state-explicit.v1.1`, else none).
+   */
+  aiAutomaticFilters?: ConfigResponse['aiAutomaticFilters'];
 }
 
 /** The mock's Google account: synthetic. */
@@ -170,6 +176,7 @@ export function createHandlers({
   deletionNeedsReauth = deletionReauthFlag(),
   accountCheck = false,
   evidence: evidenceConfig = evidenceConfigFlag(),
+  aiAutomaticFilters = evidenceConfig.autoFilters === 'state-explicit.v1.1' ? ['state'] : [],
 }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);
@@ -248,7 +255,7 @@ export function createHandlers({
   return [
     http.get('*/api/config', async () => {
       await wait();
-      return HttpResponse.json({ ...config, turnstileSiteKey, googleEnabled, ...(aiLimits ? { aiLimits } : {}) });
+      return HttpResponse.json({ ...config, turnstileSiteKey, googleEnabled, aiAutomaticFilters, ...(aiLimits ? { aiLimits } : {}) });
     }),
     http.get('*/api/account', async () => {
       await wait();

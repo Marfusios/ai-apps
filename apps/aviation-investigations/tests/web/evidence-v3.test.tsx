@@ -55,6 +55,7 @@ import {
 import { foldProbableCauses } from '../../web/src/features/evidence/fold';
 import { LONG_TEXT_CHARS } from '../../web/src/features/evidence/Excerpt';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
+import { AI_NUDGE, AI_NUDGE_FILTERS, AI_NUDGE_STATE, aiNudge } from '../../web/src/pages/Explore';
 import { aircraftName, aircraftSummary, letterOf, phaseEventShort, placeShort, rowMonoParts } from '../../web/src/features/case/display';
 import { formatDate } from '../../web/src/lib/format';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
@@ -599,5 +600,34 @@ describe('a v3 result surface still shows NTSB text, coded data, fixed copy and 
     const results = screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING }).closest('section') as HTMLElement;
     const strays = texts(results).filter((t) => !corpus.includes(t) && !t.startsWith('Only you can open this search.'));
     expect(strays).toEqual([]);
+  });
+});
+
+describe('the AI nudge on Explore follows the server’s automatic-filter policy (`aiAutomaticFilters`)', { timeout: 20_000 }, () => {
+  /** The nudge under Explore's results, once they are there. */
+  async function nudgeWith(text: string): Promise<HTMLElement> {
+    renderApp('/explore?q=carburetor+icing&phase=approach');
+    return (await screen.findByText(text, { exact: false }, SLOW)).closest('div') as HTMLElement;
+  }
+
+  it('none applied on their own: the AI only suggests filters', async () => {
+    freshApi();
+    const nudge = await nudgeWith(AI_NUDGE);
+    expect(nudge.textContent).toContain(`${AI_NUDGE} ${AI_NUDGE_FILTERS}`);
+    expect(document.body.textContent).not.toContain(AI_NUDGE_STATE);
+  });
+
+  it('states applied: a US state the question names explicitly is applied and can be removed; the rest stays a suggestion', async () => {
+    freshApi({ evidence: STATE_TERMS_AI });
+    const nudge = await nudgeWith(AI_NUDGE_STATE);
+    expect(nudge.textContent).toContain(`${AI_NUDGE_STATE} ${AI_NUDGE_FILTERS}`);
+    expect(document.body.textContent).not.toContain(AI_NUDGE);
+  });
+
+  it('the configuration decides, and while it is unknown the nudge claims nothing applied', async () => {
+    freshApi({ evidence: STATE_TERMS_AI, aiAutomaticFilters: [] });
+    await nudgeWith(AI_NUDGE);
+    expect(document.body.textContent).not.toContain(AI_NUDGE_STATE);
+    expect([aiNudge(undefined), aiNudge([]), aiNudge(['state'])]).toEqual([AI_NUDGE, AI_NUDGE, AI_NUDGE_STATE]);
   });
 });

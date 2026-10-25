@@ -14,8 +14,9 @@ import {
   type SearchRequest,
   type SearchResponse,
 } from '../../../shared/contracts/search';
+import type { ConfigResponse } from '../../../shared/contracts/config';
 import { pageTitle } from '../../../shared/page-titles';
-import { searchQuery } from '../api';
+import { configQuery, searchQuery } from '../api';
 import { Chip } from '../components/Chip';
 import { SearchBox } from '../components/SearchBox';
 import { cx } from '../lib/cx';
@@ -40,13 +41,21 @@ import {
 /**
  * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23, Task 24; Builder copy for the
  * owner's review): what an AI search does, never a promise to explain or group the results. It
- * searches with the question alone (contract `evidence.v3`), applying a US state the question names
- * explicitly (removable) and only suggesting the rest, so the nudge also says when the filters set
- * here stay behind.
+ * searches with the question alone (contract `evidence.v3`), so the nudge also says when the
+ * filters set here stay behind. What the AI does with filters follows the server's evidence policy
+ * (`/api/config` `aiAutomaticFilters`): it only suggests them (`AI_NUDGE`, also while the
+ * configuration is unknown), or it applies a US state the question names explicitly, which can be
+ * removed, and suggests the rest (`AI_NUDGE_STATE`).
  */
-export const AI_NUDGE =
+export const AI_NUDGE = 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.';
+export const AI_NUDGE_STATE =
   'Ask in plain English: AirCase searches with your question. A US state it names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
 export const AI_NUDGE_FILTERS = 'It searches the question alone, not the filters set here.';
+
+/** The nudge's sentence for the fields the evidence policy applies on its own. */
+export function aiNudge(automatic: ConfigResponse['aiAutomaticFilters'] | undefined): string {
+  return automatic?.includes('state') ? AI_NUDGE_STATE : AI_NUDGE;
+}
 
 interface ExploreLocationState {
   /** The drawer was opened from this list, so closing it can go back one entry. */
@@ -214,6 +223,7 @@ export function Explore() {
   const queryClient = useQueryClient();
   const search = useQuery(searchQuery(request));
   const response = search.data;
+  const automaticFilters = useQuery(configQuery()).data?.aiAutomaticFilters;
   const openCase = readOpenCase(params);
   const compare = useCompareSelection();
   const [draft, setDraft] = useState(request.q);
@@ -429,7 +439,7 @@ export function Explore() {
               <Pager response={response} onPage={(page) => update({ page })} />
               <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-card border border-magenta-soft bg-magenta-wash px-3 py-2 text-ui">
                 <span className="min-w-0 flex-1 basis-64">
-                  {AI_NUDGE}
+                  {aiNudge(automaticFilters)}
                   {filters > 0 && ` ${AI_NUDGE_FILTERS}`}
                 </span>
                 <AskAiButton size="sm" className="ml-auto" onAsk={() => askAi(draft, 'nudge')} phase={askedFrom === 'nudge' ? ai.phase : 'idle'} />

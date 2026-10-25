@@ -189,3 +189,14 @@ test('with no searches left the free undo still runs, through the usual check; c
   await expect(yours(page, true).getByRole('button', { name: /^Search again/ })).toHaveAttribute('aria-disabled', 'true');
   expect(problems).toEqual([]);
 });
+
+test('the configuration says the server applies states, and Explore’s AI nudge says so', async ({ page }) => {
+  const problems = await watchPage(page);
+  await prepare(page, { width: 390 });
+  expect(await (await page.request.get('/api/config')).json()).toMatchObject({ aiAutomaticFilters: ['state'] });
+  await page.goto('/explore?q=carburetor+icing');
+  await expect(
+    page.getByText('Ask in plain English: AirCase searches with your question. A US state it names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.'),
+  ).toBeVisible();
+  expect(problems).toEqual([]);
+});

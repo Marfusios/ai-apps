@@ -433,3 +433,22 @@ test('a free undo the server counted says it used one, on the search it made and
   await expect(page.locator('[data-evidence-live]')).toHaveText(/^\d+ investigations retrieved\. This search used one of your AI searches\.\s*$/);
   await shot(page, 'v3-undo-charged-1280-night');
 });
+
+for (const [policy, config, sentence] of [
+  ['none', null, 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.'],
+  [
+    'state',
+    STATE_TERMS_AI,
+    'Ask in plain English: AirCase searches with your question. A US state it names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
+  ],
+] as const) {
+  test(`the AI nudge on Explore follows the server’s automatic-filter policy (${policy})`, async ({ page }) => {
+    if (config) await configure(page, config);
+    await open(page, { width: 390, theme: 'day' });
+    await page.goto('/explore?q=carburetor+icing&phase=approach');
+    const nudge = page.getByText(sentence, { exact: false });
+    await expect(nudge).toBeVisible();
+    await expect(nudge).toContainText('It searches the question alone, not the filters set here.');
+    await fitsTheWidth(page);
+  });
+}
