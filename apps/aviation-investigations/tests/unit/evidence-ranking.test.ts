@@ -18,12 +18,12 @@ import { runRerankPreflight, rerankPreflightRequests } from '../../worker/rerank
 import type { EvidenceRetriever, EvidenceRetrievalResult } from '../../server/evidence/retrieve.js';
 import type { PinnedDataset } from '../../server/dataset.js';
 import type { Admission } from '../../server/quota/admit.js';
-import { evidenceCases } from '../../web/mock/evidence.js';
+import { syntheticEvidenceCases } from '../support/evidence-cases.js';
 
 const question = 'Find engine  failures\n after maintenance';
 const scope = { intent: 'case_search' as const, terms: 'mechanical failure', filters: { state: ['CA'] } };
 function result(n = 3): EvidenceRetrievalResult {
-  const base = evidenceCases({}, 'engine')[0]!;
+  const base = syntheticEvidenceCases(1)[0]!;
   const cases = Array.from({ length: n }, (_, i) => ({ ...structuredClone(base), rank: i + 1, case: { ...base.case, ntsbNo: `CEN19LA${String(i).padStart(3, '0')}` } }));
   return { cases, ranking: cases.map(c => ({ ntsbNo: c.case.ntsbNo, seeds: [], channels: ['keyword'] })) };
 }

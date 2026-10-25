@@ -2,15 +2,10 @@
  * Does not extract new filters, geocode cities, or modify the input. Uncertainty abstains.
  * Version is frozen by the Task 24 field study before provider calls.
  */
-import { US_STATE } from './vocab.js';
+import { US_STATE, US_STATE_CODES } from './vocab.js';
 
 export const STATE_GUARD_VERSION = 'state-explicit.v1.1';
-export const AUTOMATIC_STATE_CODES = Object.freeze([
-  'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN',
-  'KS', 'KY', 'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ',
-  'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA',
-  'WI', 'WV', 'WY',
-] as const);
+export const AUTOMATIC_STATE_CODES = US_STATE_CODES;
 const allowed = new Set<string>(AUTOMATIC_STATE_CODES);
 const ambiguous = new Set(['GA', 'NY', 'WA']);
 const names = [...AUTOMATIC_STATE_CODES].sort((a, b) => US_STATE[b]!.length - US_STATE[a]!.length);

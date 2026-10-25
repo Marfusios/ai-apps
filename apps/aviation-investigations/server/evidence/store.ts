@@ -16,6 +16,9 @@ import type { evidenceRankingIdentity, HighlightPolicy } from './ranking-config.
 export interface SearchData {
   /** Private execution facts. Absent only on pre-ranking-config saved searches. */
   executed?: ExecutedTexts;
+  addedTerms?: string | null;
+  /** Failed attempts retain what ran, separately from immutable public admission facts. */
+  diagnostics?: { automaticFilters: EvidenceAutomaticFilters | null; appliedFilters: BriefFilters };
   autoFilterPolicy?: ReturnType<typeof autoFilterIdentity>;
   autoFilterReason?: AutoFilterReason;
   automaticFilters?: EvidenceAutomaticFilters | null;
@@ -75,7 +78,8 @@ export async function readOwnedSearch(db: DbOrTx, id: string, readers: readonly 
     'automaticFilters', ${source}->'automaticFilters', 'freeUndo', ${source}->'freeUndo', 'marks', ${source}->'marks',
     'rankingConfig', ${source}->'rankingConfig', 'scopeOutcome', ${source}->'scopeOutcome', 'rerankOutcome', ${source}->'rerankOutcome',
     'context', ${source}->'context', 'version', ${source}->'version', 'query', ${source}->'query',
-    'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'note', ${source}->'note')`;
+    'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'note', ${source}->'note') || CASE WHEN ${source} ? 'addedTerms'
+      THEN jsonb_build_object('addedTerms', ${source}->'addedTerms') ELSE '{}'::jsonb END`;
   const data = page === undefined ? sql<SearchData>`${header}` : sql<SearchData>`${header} || jsonb_build_object('cases',
     jsonb_path_query_array(${source}, ${`$.cases[${(page - 1) * EVIDENCE_PAGE_SIZE} to ${page * EVIDENCE_PAGE_SIZE - 1}]`}::jsonpath))`;
   // No query returns the ranking or all pages to Node. The DB checks case membership too.

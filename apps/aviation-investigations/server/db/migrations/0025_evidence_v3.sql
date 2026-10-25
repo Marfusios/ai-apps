@@ -1,4 +1,4 @@
-ALTER TABLE "evidence_searches" ADD COLUMN "free_undo_reservation_id" bigint;--> statement-breakpoint
+ALTER TABLE "evidence_searches" ADD COLUMN IF NOT EXISTS "free_undo_reservation_id" bigint;--> statement-breakpoint
 -- Finished results remain immutable; the separate undo claim is write-once.
 GRANT UPDATE (free_undo_reservation_id) ON evidence_searches TO aviation_app;
 --> statement-breakpoint
@@ -17,14 +17,19 @@ BEGIN
   IF NEW.free_undo_reservation_id IS DISTINCT FROM OLD.free_undo_reservation_id THEN
     IF OLD.free_undo_reservation_id IS NOT NULL OR NEW.free_undo_reservation_id IS NULL
        OR OLD.status <> 'results' OR OLD.data->>'edited' IS DISTINCT FROM 'false'
-       OR NOT EXISTS (SELECT 1 FROM reservations WHERE id = NEW.free_undo_reservation_id
-         AND category = 'interactive' AND status = 'open' AND quota_counted = false) THEN
+       OR OLD.expires_at <= clock_timestamp()
+       OR NOT EXISTS (SELECT 1 FROM reservations claim
+         JOIN reservations paid ON paid.id = OLD.reservation_id
+         WHERE claim.id = NEW.free_undo_reservation_id
+         AND claim.category = 'interactive' AND claim.status = 'open' AND claim.quota_counted = false
+         AND claim.principal_hash = OLD.read_owner AND claim.principal_kind = OLD.read_owner_kind
+         AND paid.principal_hash = OLD.billing_principal AND paid.principal_kind = OLD.billing_kind) THEN
       RAISE EXCEPTION 'evidence undo claim is immutable' USING ERRCODE = '55000';
     END IF;
   END IF;
   IF (NEW.data->'query', NEW.data->'appliedFilters', NEW.data->'automaticFilters') IS DISTINCT FROM
      (OLD.data->'query', OLD.data->'appliedFilters', OLD.data->'automaticFilters') THEN
-    IF OLD.status <> 'running' OR NEW.status <> 'results' OR OLD.data->>'version' <> 'evidence.v3'
+    IF OLD.status <> 'running' OR NEW.status <> 'results' OR OLD.data->>'version' IS DISTINCT FROM 'evidence.v3'
        OR OLD.data->>'edited' IS DISTINCT FROM 'false'
        OR NEW.data->'query'->>'source' IS DISTINCT FROM 'question'
        OR OLD.data->'query'->>'source' IS DISTINCT FROM 'question' THEN

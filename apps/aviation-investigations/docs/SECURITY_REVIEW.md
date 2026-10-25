@@ -328,6 +328,10 @@ failed child searches and descendants cannot multiply the exemption. The child h
 no automatic additions and is explicitly marked as edited. Removing a state-OR member
 is a paid narrowing; undo removes the entire automatic state facet. A claim is not
 restored after an admitted search fails, preventing repeated free paid attempts.
+Pre-run abandonment also consumes the claim: its idempotency slot expires, so a same-key
+retry requires an ordinary quota-counted admission. The trigger checks actual expiry,
+current owner and original payer, in addition to the open, quota-free reservation.
+A cross-principal handover race and direct SQL violations cover the boundary.
 
 An eligible undo can pass exhausted visitor quota, but never bypasses Turnstile,
 principal/network rate limits, concurrency, emergency modes, restore hold, budgets,

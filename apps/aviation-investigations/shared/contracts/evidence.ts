@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { BRIEF_FILTER_FACETS, BriefFiltersSchema, IdempotencyKeySchema, QuestionSchema, TurnstileTokenSchema } from './briefs.js';
-import { AUTOMATIC_STATE_CODES } from '../state-eligibility.js';
+import { US_STATE_CODES } from '../vocab.js';
 import { ReportLinkSchema } from './cases.js';
 import { NtsbNoSchema, Sha256Schema } from './common.js';
 import { CaseRowSchema, SectionKindSchema, SpanSchema } from './search.js';
@@ -55,7 +55,7 @@ export const EvidenceTermsSchema = z.string().min(1).max(MAX_TERMS_CHARS).regex(
 export const EvidenceScopeSuggestionSchema = z.strictObject({ filters: BriefFiltersSchema, terms: EvidenceTermsSchema });
 export type EvidenceScopeSuggestion = z.infer<typeof EvidenceScopeSuggestionSchema>;
 export const EvidenceSuggestionSchema = z.strictObject({ filters: BriefFiltersSchema, terms: EvidenceTermsSchema.nullable() });
-export const EvidenceAutomaticFiltersSchema = z.strictObject({ state: z.array(z.enum(AUTOMATIC_STATE_CODES)).min(1).max(AUTOMATIC_STATE_CODES.length) });
+export const EvidenceAutomaticFiltersSchema = z.strictObject({ state: z.array(z.enum(US_STATE_CODES)).min(1).max(US_STATE_CODES.length) });
 export type EvidenceAutomaticFilters = z.infer<typeof EvidenceAutomaticFiltersSchema>;
 export const EvidenceKeywordsSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('question') }),
