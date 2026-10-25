@@ -7,7 +7,8 @@
  *
  * - **Configuration**: like the server, one mock stands in for one ranking configuration
  *   (`AVIATION_EVIDENCE_RANKING`) and one automatic-filter policy (`AVIATION_EVIDENCE_AUTO_FILTERS`),
- *   the live defaults (`er-q-v1`, `none`) unless `MockEvidenceOptions.config` names others. The
+ *   the server's defaults (`er-q-v1`, `none`) unless `MockEvidenceOptions.config` names others
+ *   (live runs `er-q-v1` with the state policy, `MOCK_EVIDENCE_RELEASE`). The
  *   configuration decides what keyword search reads (the question, the suggested terms, or both:
  *   `query.keywords`), whether AI puts the leading results in order (`order`), whose words are
  *   marked (`marks`), and whether a state the question names is applied (`automaticFilters`).
@@ -52,7 +53,10 @@
  * - "expire": the search is created, then reads of it answer 404 (it expired);
  * - "unavailable", "lost before start", "lost response" (the first time a question is asked):
  *   a 503 that releases the admission, a response lost before the search started, and a
- *   response lost after it started (a replay of its key returns it without spending again).
+ *   response lost after it started (a replay of its key returns it without spending again);
+ * - "undo fails": the search's first free undo is admitted, takes the one-use claim and then fails
+ *   (a 503, which a replay of its key answers again): the server keeps the claim, so the search's
+ *   undo is used and trying again uses one of the visitor's searches.
  */
 import {
   EVIDENCE_CANDIDATE_CEILING,
@@ -123,6 +127,11 @@ export const MOCK_EVIDENCE_QUESTIONS = {
    * keyword search, "carb icing" is searched too and is no longer suggested.
    */
   stateTerms: 'Carb icing on approach in Texas',
+  /**
+   * The same in a state whose cases hold the suggested terms: with the question alone in keyword
+   * search (what live runs), Missouri is applied and the excerpts mark "carb icing".
+   */
+  stateMarked: 'Carb icing on approach in Missouri',
   /** Two states the question names together: applied as one filter, either state. */
   twoStates: 'Engine power loss in California or Nevada',
 } as const;
@@ -138,8 +147,14 @@ export interface MockEvidenceConfig {
   autoFilters: EvidenceAutoFilterVersion;
 }
 
-/** The live defaults: the question alone, in match order, nothing applied automatically. */
+/** The server's defaults: the question alone, in match order, nothing applied automatically. */
 export const MOCK_EVIDENCE_BASELINE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: DEFAULT_EVIDENCE_AUTO_FILTERS };
+
+/**
+ * What live runs (Task 24's release): the question alone, in match order, the suggested terms
+ * marked, and a state the question names applied by the guarded policy.
+ */
+export const MOCK_EVIDENCE_RELEASE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: 'state-explicit.v1.2' };
 
 /**
  * Session storage (dev mock mode and end-to-end tests): the configuration the mock API stands in
@@ -603,7 +618,7 @@ export interface MockEvidenceOptions {
   now?: () => Date;
   /** Who is asking now (default: the trial): a search is read only by its owner, like the server. */
   visitor?: () => MockReader;
-  /** The ranking configuration and automatic-filter policy the mock stands in for (default: the live baseline). */
+  /** The ranking configuration and automatic-filter policy the mock stands in for (default: the server's defaults). */
   config?: MockEvidenceConfig;
 }
 
@@ -613,6 +628,8 @@ export class MockEvidence {
   private readonly keys = new Map<string, { request: string; id: string }>();
   /** Keys the server took that made no search (a released admission, a start that failed): a retry is a 409. */
   private readonly unfinished = new Set<string>();
+  /** Keys of free undos that failed after admission ("undo fails"): a replay answers the same 503. */
+  private readonly failed = new Set<string>();
   private readonly played = new Set<string>();
   private seq = 0;
   private readonly now: () => Date;
@@ -774,7 +791,7 @@ export class MockEvidence {
    * one free undo. Turnstile and every other check still apply.
    */
   quotaExempt(body: CreateEvidenceRequest): boolean {
-    if (this.keys.has(body.idempotencyKey)) return true;
+    if (this.keys.has(body.idempotencyKey) || this.failed.has(body.idempotencyKey)) return true;
     if (body.kind !== 'edited') return false;
     const from = this.own(body.from);
     return from !== undefined && this.undoable(from, body);
@@ -784,6 +801,7 @@ export class MockEvidence {
   create(body: CreateEvidenceRequest): MockEvidenceReply {
     const request = body.kind === 'question' ? `q:${body.question}` : `e:${body.from}:${JSON.stringify(body.filters)}:${body.terms ?? ''}:${body.keywords ?? ''}`;
     if (this.unfinished.has(body.idempotencyKey)) return error(409, 'conflict', 'This request was accepted earlier but did not start. Ask again.');
+    if (this.failed.has(body.idempotencyKey)) return error(503, 'unavailable', 'AI search is temporarily unavailable.');
     const earlier = this.keys.get(body.idempotencyKey);
     if (earlier) {
       if (earlier.request !== request) return error(409, 'conflict', 'This request key was used for another search.');
@@ -795,6 +813,12 @@ export class MockEvidence {
       const from = this.own(body.from);
       if (!from) return NOT_FOUND();
       const free = this.undoable(from, body);
+      if (free && /\bundo fails\b/i.test(from.question) && this.once('undo-fails', from.id)) {
+        // Admitted as the free undo, its claim taken, then failed: the server keeps the claim.
+        from.undoClaimed = true;
+        this.failed.add(body.idempotencyKey);
+        return error(503, 'unavailable', 'AI search is temporarily unavailable.');
+      }
       // Exactly the filters sent; the user's words when sent, the question's own when restored,
       // else the earlier search's query and words. No scope stage, so no suggestion and nothing
       // applied automatically. One search per edit.

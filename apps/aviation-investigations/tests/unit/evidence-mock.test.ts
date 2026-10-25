@@ -16,6 +16,7 @@ import casesJson from '../../web/mock/cases.json' with { type: 'json' };
 import {
   MOCK_EVIDENCE_BASELINE,
   MOCK_EVIDENCE_QUESTIONS,
+  MOCK_EVIDENCE_RELEASE,
   MockEvidence,
   aiOrder,
   evidenceCases,
@@ -78,9 +79,10 @@ function undo(server: MockEvidence, from: EvidencePage, filters: BriefFilters, r
   return undoReply(server, from, filters, restore, n).search;
 }
 
-/** The configurations the tests use: the live baseline, and the ones the evaluation may pick. */
+/** The configurations the tests use: the server's defaults, what live runs, and the others the evaluation may pick. */
 const CONFIGS: Record<string, MockEvidenceConfig> = {
   baseline: MOCK_EVIDENCE_BASELINE,
+  release: MOCK_EVIDENCE_RELEASE,
   questionTermsAiOrderState: { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.2' },
   termsState: { ranking: 'er-t-v1', autoFilters: 'state-explicit.v1.2' },
   questionAiOrder: { ranking: 'er-q-h100-v1', autoFilters: 'none' },
@@ -394,6 +396,42 @@ describe('every configuration says what it applied on its own (evidence.v3)', ()
     expect(parseMockEvidenceConfig(null)).toEqual(MOCK_EVIDENCE_BASELINE);
     expect(parseMockEvidenceConfig('{"ranking":"er-x","autoFilters":"state-explicit.v1"}')).toEqual(MOCK_EVIDENCE_BASELINE);
     expect(parseMockEvidenceConfig('not json')).toEqual(MOCK_EVIDENCE_BASELINE);
+  });
+});
+
+describe('what live runs: the question alone, in match order, the suggested terms marked, a named state applied', () => {
+  it('discloses the state only; the suggestion keeps the rest and its terms', () => {
+    const server = new MockEvidence({ config: MOCK_EVIDENCE_RELEASE });
+    const page = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms);
+    expect([page.automaticFilters, page.appliedFilters, page.query]).toEqual([{ state: ['TX'] }, { state: ['TX'] }, { source: 'question', keywords: { kind: 'question' } }]);
+    expect([page.order, page.marks, page.freeUndo, page.undo]).toEqual(['match', 'suggested_terms', false, 'available']);
+    expect(page.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'carb icing' });
+    // The suggested terms are marked where the excerpts hold them.
+    const marked = results(server, MOCK_EVIDENCE_QUESTIONS.stateMarked, 3);
+    expect([marked.automaticFilters, marked.marks]).toEqual([{ state: ['MO'] }, 'suggested_terms']);
+    expect(marked.cases.length).toBeGreaterThan(0);
+    expect(marked.cases.every((c) => c.relevance.terms.some((t) => t.term === 'carb' || t.term === 'icing'))).toBe(true);
+    // The state-only undo: free, once.
+    const undone = undoReply(server, page, {}, false, 2);
+    expect([undone.exempt, undone.reply.quotaExempt, undone.search.freeUndo, undone.search.query]).toEqual([true, true, true, page.query]);
+    expect((server.read(page.id, 1).body as EvidencePage).undo).toBe('used');
+  });
+
+  it('“undo fails”: the free undo is admitted, takes the claim and fails; a replay fails the same; trying again uses one', () => {
+    const server = new MockEvidence({ config: MOCK_EVIDENCE_RELEASE });
+    const page = results(server, `${MOCK_EVIDENCE_QUESTIONS.stateTerms}, undo fails`);
+    expect(page.undo).toBe('available');
+    const body = { kind: 'edited', from: page.id, filters: {}, idempotencyKey: KEY(2), turnstileToken: 'token' } as const;
+    expect(server.quotaExempt(body)).toBe(true);
+    const failed = server.create(body);
+    expect([failed.status, (failed.body as { error: string }).error]).toEqual([503, 'unavailable']);
+    // The server keeps the claim: the search's undo is used.
+    expect((server.read(page.id, 1).body as EvidencePage).undo).toBe('used');
+    expect(server.create(body).status).toBe(503);
+    const again = { ...body, idempotencyKey: KEY(3) };
+    expect(server.quotaExempt(again)).toBe(false);
+    const charged = server.create(again);
+    expect([charged.status, charged.quotaExempt, CreateEvidenceResponseSchema.parse(charged.body).search.freeUndo]).toEqual([201, false, false]);
   });
 });
 
