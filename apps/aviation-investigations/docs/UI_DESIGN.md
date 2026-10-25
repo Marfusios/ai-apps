@@ -485,10 +485,10 @@ Facet order:
 - A quiet magenta-bordered nudge at the end, with its own Ask AI button. Task 23, worded in Task 24
   for the server's evidence policy (`/api/config` `aiAutomaticFilters`; Builder copy): "Ask in plain
   English: AirCase searches with your question, and AI suggests filters you can choose to apply."
-  while the policy applies nothing on its own (and while the configuration is unknown), or "Ask in
-  plain English: AirCase searches with your question. A US state it names explicitly is applied
-  automatically, and you can remove it; everything else AI suggests stays a suggestion." when it
-  applies states; and, while filters are set, "It searches the question alone, not the filters set
+  while the policy applies nothing on its own (and while the configuration, or that field of it, is
+  unknown), or "Ask in plain English: AirCase searches with your question. A US state it names
+  explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a
+  suggestion." when it applies states (the guard may still decline one); and, while filters are set, "It searches the question alone, not the filters set
   here." (an AI search reads the question alone; it never groups or explains results). It replaced
   "Want these grouped and explained? Ask the AI with these filters."
 
@@ -954,9 +954,10 @@ then state the processed cohort (DESIGN §5).
   shows the investigations it retrieved for your question, in their own words, and AI suggests
   filters you can choose to apply.", or, when the server's evidence policy applies states
   (`aiAutomaticFilters`, Task 24), "Ask in plain English: AirCase shows the investigations it
-  retrieved for your question, in their own words. A US state your question names explicitly is
-  applied automatically, and you can remove it; everything else AI suggests stays a suggestion.";
-  while the status or the configuration is unknown, neither),
+  retrieved for your question, in their own words. A US state your question names explicitly can be
+  applied automatically, and you can remove it; everything else AI suggests stays a suggestion."
+  (the first line when the configuration lacks the field; while the status or the configuration is
+  unknown, neither),
   where the data comes from (the NTSB database, with the snapshot and coverage), what
   it is not (not an NTSB service, no operational advice), and, under "Built by", that
   it is built by Mariusz Kotas, with his website mkotas.cz (a link, in a new tab) and
@@ -975,8 +976,11 @@ terms beside the results. Contract `evidence.v3` (Task 24) lets the server, unde
 evaluation selects and the live allowlist clears, do three things on its own, each said where the
 reader looks and the first two free to undo: apply a state the question explicitly names (the guard
 `state-explicit.v1.2`), add the AI's terms to keyword search (beside the question or instead of it),
-and put the leading results in order with an AI reranker. The live defaults do none of them; the
-interface shows whatever the page says. Briefs (§4.3–§4.6) stay readable while they live,
+and put the leading results in order with an AI reranker. The server's defaults do none of them.
+Live runs the state policy alone (`state-explicit.v1.2` with ranking `er-q-v1`: the question alone
+in keyword search, in match order), so there a state the question names is the one thing AirCase may
+apply on its own, and the excerpts mark the suggested terms. The interface shows whatever the page
+says. Briefs (§4.3–§4.6) stay readable while they live,
 but the interface starts none; while the server has briefs off (`aiLimits.briefsEnabled`), a brief
 shows no Refine, reading or Try again (Builder copy: "AirCase no longer refines or reruns briefs.
 Start a new AI search to keep going.").
@@ -991,8 +995,8 @@ sign-in started from the page moves the search to the account, like a brief.
 handling; results open the page with page 1 already read. Explore's filters do not carry over (the
 contract's question request has none): the nudge under the results says so — "Ask in plain English:
 AirCase searches with your question, and AI suggests filters you can choose to apply." (or, when the
-server's evidence policy applies states, `aiAutomaticFilters`: "… A US state it names explicitly is
-applied automatically, and you can remove it; everything else AI suggests stays a suggestion.", §4.2)
+server's evidence policy applies states, `aiAutomaticFilters`: "… A US state it names explicitly can
+be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.", §4.2)
 and, with filters set, "It searches the question alone, not the filters set here." Nothing blocks a search
 (gate answer 2 of 2026-10-25): every question opens its results and uses one AI search. A question
 about something else, or asking for operational advice, gets its results with a fixed capability
@@ -1012,8 +1016,9 @@ note above them; counting and comparison questions get results with a hint.
    (from `appliedFilters`, never from the suggestion), "+ Filter". A state AirCase applied because the
    question names it (`automaticFilters`) is a normal applied chip with a small muted caps tag "from
    your question" (said "added automatically from your question"). After an edit the box is labelled
-   "Your edited search" (an edit that kept the question and has no filter left reads as the
-   question's own search: the page cannot tell them apart).
+   "Your edited search" (an edit that kept the question and has no filter left, such as removing the
+   state again once its undo is used, reads as the question's own search: the page cannot tell them
+   apart).
 3. **Editing.** Typing words (Enter keeps, Escape cancels, empty is refused: "Type at least one search
    word."), removing chips (the added terms' and an automatic state's like any other) and "+ Filter" (a
    facet value, or a year range checked against the coverage years) change a draft for free. A chip or
@@ -1031,9 +1036,16 @@ note above them; counting and comparison questions get results with a hint.
    removed (removing one of several states narrows the search and uses one) and/or the added terms
    removed, at least one removal. Once a free undo is made, the search's pages say "used". It runs
    while the visitor's own searches are used up (the trial's, or an account's day or month), through
-   the usual check; anything charged stays off then. The server decides at admission (the hint is a
-   snapshot another tab can overtake): when the page it makes says `freeUndo: false`, that page says
-   "This search used one of your AI searches." and its arrival says so too. Undo restores everything, the automatic chips and the added terms
+   the usual check; anything charged stays off then. Right before sending a free undo the interface
+   reads the page again (the button says "Checking…"): when the undo is no longer there, it sends
+   nothing and says "This search's free undo has already been used, so searching again uses one of
+   your AI searches.", and the button reads "· uses 1". The server still decides at admission (the
+   hint is a snapshot another tab can overtake): when the page it makes says `freeUndo: false`, that
+   page says "This search used one of your AI searches." and its arrival says so too. A free undo
+   that fails once admitted may have used the undo (the server keeps its claim), so its notice says
+   "The free undo may be used up now, so trying again can use one of your AI searches." instead of
+   "It didn't use one of your searches.", and after any failure but a gone search the page is read
+   again: until that read says the undo is still there, Try again and Search again say "· uses 1". Undo restores everything, the automatic chips and the added terms
    included, and gives focus back to the words when the words or the added terms changed, else to "+
    Filter"; removing a chip moves focus to "+ Filter", removing the added terms to the words. "Show
    keyword results" (free) opens Explore with the draft's words (or the question) and filters at any
@@ -1082,7 +1094,9 @@ note above them; counting and comparison questions get results with a hint.
    anything the reranker wrote. Then the key to the marks, from the server's `marks`: "Marked in the
    excerpts: the suggested terms · their synonyms" (`suggested_terms`), "your words" (`search_words`
    for the question alone or the reader's own words) or "the words searched" (`search_words` when
-   AirCase added terms). The cards' relevance lines, the drawer, Compare and print say the same.
+   AirCase added terms). A state applied on its own changes no marks: with the state policy alone, as
+   live runs, the key says "the suggested terms". The cards' relevance lines, the drawer, Compare and
+   print say the same.
 8. **Cards**, in rank order:
    - the case facts exactly as Explore's rows show them (case number, date, aircraft, place,
      status, Compare; the mono line, or one line per aircraft in a multi-aircraft event), the case
@@ -1151,12 +1165,13 @@ is a coded value, and AI's order is said in fixed words, never with its grades.
 | No suggestion | The results, the "Your search" box and no suggestion block (the scope stage failed, the search is an edit, or everything it suggested was used: an applied state and terms keyword search read); the marks follow `marks` and the keywords: the reader's words, or "the words searched" when AirCase added terms |
 | Gone or unknown | "This AI search is no longer available." / "AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it." with an empty box (Search, Ask AI) and [Ask again] from this page's memory only; tab "AI search expired · AirCase" |
 | Load failure | "This AI search didn't load." with Try again; a page that fails "The next investigations didn't load." |
-| Not finished | A search the server could not finish (503 `unavailable`, before or after it was admitted; no search is used either way): "AirCase couldn't finish this AI search." / "It didn't use one of your searches. Try again in a moment." with [Try again · uses 1] and the keyword way out |
+| Not finished | A search the server could not finish (503 `unavailable`, before or after it was admitted; no search is used either way): "AirCase couldn't finish this AI search." / "It didn't use one of your searches. Try again in a moment." with [Try again · uses 1] and the keyword way out; for a free undo, whose claim the server keeps once admitted, the second line is "The free undo may be used up now, so trying again can use one of your AI searches." |
 | Capability note | The results as always, with the fixed note above them (a question about something else, or asking for operational advice); a search with a note has no suggestion |
-| What AirCase added | An automatic state as an applied chip tagged "from your question", the added terms under ALSO SEARCHED or KEYWORDS SEARCHED with the "AI" tag, the suggestion's other note and only what is left of it, and the marks said as "the words searched"; an empty or tiny result sums it up the same way ("Filters: Location: Texas (from your question) · Your question, as asked · Also searched (added by AI): “carb icing”"), on screen and on paper |
+| What AirCase added | An automatic state as an applied chip tagged "from your question", the added terms under ALSO SEARCHED or KEYWORDS SEARCHED with the "AI" tag, the suggestion's other note and only what is left of it (its terms too while keyword search did not read them), and the marks said as "the words searched" when terms were added ("the suggested terms" with a state alone, as live runs); an empty or tiny result sums it up the same way ("Filters: Location: Texas (from your question) · Your question, as asked · Also searched (added by AI): “carb icing”"), on screen and on paper |
 | AI order | The count line says "leading results ordered by AI for relevance" instead of "highest-ranked first" |
-| Free undo | The page says `undo: 'available'` and the draft only removes what AirCase added: "Search again · free" (also with no searches left); after a failure, "Try again · free". The search it makes is an edit with none of it (`undo: 'none'`); the visitor's count does not change, and the search it came from now says `used` |
-| Free undo counted | The server made it a normal edit (another tab used the undo after this page was read): "This search used one of your AI searches." on the new page, said on arrival; the search it came from, read again, no longer offers it |
+| Free undo | The page says `undo: 'available'` and the draft only removes what AirCase added: "Search again · free" (also with no searches left). The page is read again right before sending; after a failure it is read again too, and Try again and Search again say "· uses 1" until that read says the undo is still there ("· free" then). The search it makes is an edit with none of it (`undo: 'none'`); the visitor's count does not change, and the search it came from now says `used` |
+| Free undo used elsewhere | The read right before sending says `used`: nothing is sent; "This search's free undo has already been used, so searching again uses one of your AI searches." with "Search again · uses 1" |
+| Free undo counted | The server made it a normal edit (another tab used the undo between that read and the admission): "This search used one of your AI searches." on the new page, said on arrival; the search it came from, read again, no longer offers it |
 
 **Drawer, Compare and print.** The drawer opened from a card adds, after what investigators
 established, a section under the same heading with the notice, the relevance facts, the key to the

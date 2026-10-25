@@ -1263,7 +1263,7 @@ WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/moc
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
-pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes (and, on E2E_REAL_V3_PORT, the evidence.v3 policies), signing in and out
+pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes (and, on E2E_REAL_V3_PORT, the evidence configuration live runs), signing in and out
 ```
 
 ### API contracts and the mock API
@@ -1303,7 +1303,9 @@ replays the started brief).
 The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v3`), standing in for one
 ranking configuration and automatic-filter policy, like a server (`createHandlers({ evidence })`;
 in the dev mock mode and the end-to-end tests, session storage `casebook-mock-evidence` as JSON
-`{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.2"}`; the live defaults otherwise):
+`{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.2"}`; the server's defaults,
+`er-q-v1` and `none`, otherwise; `MOCK_EVIDENCE_RELEASE` is what live runs, `er-q-v1` with
+`state-explicit.v1.2`):
 retrieval over the fixture index from the question's own words, plus or instead of the suggested
 terms as the configuration says, with a state the question names applied through the server's own
 guard and the leading cases put in order by a fixed stand-in for a reranker's grades (an edit:
@@ -1321,16 +1323,19 @@ ownership handed over on sign-in, and idempotency keys (a replay answers the sam
 body under the same key is a 409). `MOCK_EVIDENCE_QUESTIONS` names the questions the tests ask:
 21 results, suggested filters that leave 2 and none once applied, a midair, multi-byte text, a
 failed scope stage ("scope failure"), the hints and both notes; a question with "nothing"
-retrieves none, one with "expire" makes a search that is gone at once, and the brief's failure
-keywords work here too; "Carb icing on approach in Texas" and "Engine power loss in California or
-Nevada" name states. Every answer, in each configuration, is checked against the contract in
+retrieves none, one with "expire" makes a search that is gone at once, one with "undo fails" makes
+a search whose first free undo is admitted, takes the undo's one-use claim and then fails (a 503,
+the claim kept, as the server keeps it), and the brief's failure keywords work here too; "Carb icing
+on approach in Texas", "Carb icing on approach in Missouri" (whose cases hold the suggested terms)
+and "Engine power loss in California or Nevada" name states. Every answer, in each configuration, is checked against the contract in
 `tests/unit/evidence-mock.test.ts`, which also checks that an unapplied suggestion changes no
 ranking, filter or excerpt, what each configuration discloses, and the free-undo rule.
 `/api/config` reports `aiLimits` (`MOCK_AI_LIMITS` in `web/mock/ai-status.ts`: 10 a day
 anonymous, 50 per account, 20 in an account's first 3 days, 600 a month; briefs on, so the
 brief pages stay testable; `createHandlers({ aiLimits })` changes them) and `aiAutomaticFilters`
 (`["state"]` when the mock's evidence policy applies states, else `[]`; `createHandlers({
-aiAutomaticFilters })` sets it), which words Explore's AI nudge and the About page's AI line.
+aiAutomaticFilters })` sets it, and `null` leaves it out as a server without the field would), which
+words Explore's AI nudge and the About page's AI line (a missing field reads as nothing applied).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
@@ -1579,7 +1584,10 @@ tables when it starts and raises only the per-minute, per-network and in-flight 
 since every browser of the run is 127.0.0.1. `tests/e2e-real/evidence.spec.ts` drives the
 evidence view through it, with the mock suite's Turnstile stand-in in the browser, and
 replays the known context-loss examples (`tests/support/context-loss.ts`) on the initial
-card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. It also starts a
+card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. The same process
+serves the evidence configuration live runs (`er-q-v1` with `state-explicit.v1.2`) as a second app
+on `E2E_REAL_V3_PORT` (default `E2E_REAL_PORT` + 3), sharing the database, for
+`tests/e2e-real/evidence-v3.spec.ts`. It also starts a
 second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
 `E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
 (localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
