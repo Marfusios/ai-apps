@@ -1,7 +1,9 @@
+/** Real canonical rows, production retrieval, fake embeddings/scope, no provider network. */
+import type { EvidenceRankingVersion } from '../../shared/evidence-ranking.js';
+import { evidenceRankingIdentity } from '../../server/evidence/ranking-config.js';
 import scopeReplays from '../support/evidence-scope-replays.json' with { type: 'json' };
 import { evidenceReservation } from '../../server/evidence/pricing.js';
 import { stageWorstCaseUsd, EVIDENCE_SCOPE_CAPS } from '../../server/ai/pricing.js';
-/** Real canonical rows, production retrieval, fake embeddings/scope, no provider network. */
 import { request as httpRequest } from 'node:http';
 import * as quotaAdmission from '../../server/quota/admit.js';
 import { paragraphSpans } from '../../server/evidence/project.js';
@@ -57,8 +59,9 @@ afterEach(async () => { vi.restoreAllMocks(); for (const h of harnesses.splice(0
 afterAll(async () => { await resetControls(); await deleteIndices(writer, prefix); await resetCorpus();
   await Promise.all([closeDb(db), closeDb(ingest), closeDb(migrator), es.close(), writer.close()]); });
 
-function harness(script: FakeScript = { evidenceScope: { output: success } }, wrap?: (r: EvidenceRetriever) => EvidenceRetriever) {
+function harness(script: FakeScript = { evidenceScope: { output: success } }, wrap?: (r: EvidenceRetriever) => EvidenceRetriever, ranking?: EvidenceRankingVersion) {
   const config = configs();
+  if (ranking) config.ai.evidenceRanking = ranking;
   const verify = new FakeSiteverify(now, { hostname: host, action: 'ask-ai' });
   const llm = createFakeProvider(script);
   const ai = createAiRuntime(config, { db, llm, now, turnstile: { fetch: verify.fetch, retryDelayMs: 0 } });
@@ -222,6 +225,7 @@ describe('evidence search routes', () => {
     expect((await usage()).quota_counted).toBe(false);
     expect((await spent()).lines).toBe(2);
     expect(res.body + h.logs.join('')).not.toContain('SENTINEL_PRIVATE');
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence search did not finish')).toMatchObject({ stage: 'retrieval', outcome: 'failed' });
     expect(h.llm.calls).toHaveLength(1);
   });
   it.each(['timeout', 'invalid_output', 'truncated', 'cap_exceeded', 'network', 'count_failed'] as const)('a %s scope still retrieves, accounts for spend and keeps a successful search', async (fail) => {
@@ -229,6 +233,9 @@ describe('evidence search routes', () => {
     const page = searchOf(await h.request());
     expect(page.suggestion).toBeNull(); expect(page.note).toBeNull(); expect(page.appliedFilters).toEqual({});
     expect(page.total).toBeGreaterThan(0); expect(h.embed).toHaveBeenCalledTimes(1);
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence suggestion unavailable')).toMatchObject({
+      stage: 'scope', outcome: 'no_suggestion', failure: ['cap_exceeded', 'network'].includes(fail) ? 'provider_error' : fail,
+    });
     expect((await usage()).quota_counted).toBe(true);
     if (fail === 'timeout' || fail === 'network') {
       const result = await db.execute(sql`SELECT usd::float AS usd FROM cost_ledger WHERE stage = 'scope'`);
@@ -602,7 +609,7 @@ describe('advisory isolation', () => {
     }
     expect(verifiedTermWords).toBeGreaterThan(0);
     expect(new Set(charges).size).toBe(1);
-    expect(plans).toEqual(outputs.map(() => ({ text: 'Find engine power loss after maintenance', filters: {} })));
+    expect(plans).toEqual(outputs.map(() => ({ text: 'Find engine power loss after maintenance', keywordText: 'Find engine power loss after maintenance', filters: {} })));
     expect(h.embed.mock.calls.every(c => c[0][0] === 'Find engine power loss after maintenance')).toBe(true);
     expect(h.logs.join('')).not.toContain('CONFIRMED_FAILURE');
   });
@@ -635,8 +642,8 @@ describe('advisory isolation', () => {
       const b = EvidencePageSchema.parse((await h.get(replay.id, n)).json());
       expect(b.cases).toEqual(a.cases); expect(b.note).toBe(saved.note);
     }
-    expect(plans).toEqual([{ text: saved.question, filters: {} }, { text: saved.question, filters: {} }]);
     const normalizedQuestion = saved.question.replace(/\s+/gu, ' ').trim();
+    expect(plans).toEqual([1, 2].map(() => ({ text: normalizedQuestion, keywordText: normalizedQuestion, filters: {} })));
     expect(h.embed.mock.calls.map(c => c[0])).toEqual([[normalizedQuestion], [normalizedQuestion]]);
     expect((await spent()).usd).toBeCloseTo(2 * before.usd, 8); expect((await spent()).lines).toBe(4);
     expect((await usage()).quota_counted).toBe(true); expect(h.llm.calls).toHaveLength(2);
@@ -713,8 +720,8 @@ describe('advisory isolation', () => {
     const inherited = searchOf(await h.request({ kind: 'edited', question: undefined, from: accepted.id, filters: {} }));
     expect(inherited.query).toEqual({ source: 'edited', terms: 'carb icing' });
     expect(plans).toEqual([
-      { text: first.question, filters: {} }, { text: first.question, filters: { state: ['CA'] } },
-      { text: first.question, filters: {} }, { text: 'carb icing', filters: {} }, { text: 'carb icing', filters: {} },
+      { text: first.question, keywordText: first.question, filters: {} }, { text: first.question, keywordText: first.question, filters: { state: ['CA'] } },
+      { text: first.question, keywordText: first.question, filters: {} }, { text: 'carb icing', keywordText: 'carb icing', filters: {} }, { text: 'carb icing', keywordText: 'carb icing', filters: {} },
     ]);
     expect(h.llm.calls).toHaveLength(1);
   });
@@ -725,5 +732,103 @@ describe('advisory isolation', () => {
     const h = harness({ evidenceScope: { output: { intent: 'case_comparison', filters: {} } } });
     const page = searchOf(await h.request({ question }));
     expect(page.hint).toBeNull(); expect(page.query).toEqual({ source: 'question' });
+  });
+});
+
+describe('evidence ranking selection and persistence', () => {
+  it.each(['question', 'edited'] as const)('edits a legacy v2 %s parent without executed metadata using its historical query', async kind => {
+    const plans: { text: string; keywordText?: string }[] = [];
+    const h = harness({ evidenceScope: { output: success },
+      rerank: input => ({ output: { grades: input.cases.map(c => ({ id: c.id, grade: 2 })) } }),
+    }, actual => ({ ...actual, search: async (...args) => { plans.push(args[1]); return actual.search(...args); } }), 'er-t-h50-v1');
+    const page = searchOf(await h.request({ question: 'Find  engine\n failures' }));
+    const query = kind === 'question' ? { source: 'question' } : { source: 'edited', terms: 'carb  icing' };
+    // Completed searches cannot be edited in place. This represents a real historical v2 row.
+    const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
+      (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
+      SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
+        status, (data - 'executed' - 'lexicalSource' - 'rankingConfig' - 'scopeOutcome' - 'rerankOutcome') ||
+          jsonb_build_object('query', ${JSON.stringify(query)}::jsonb, 'edited', ${kind === 'edited'}::boolean), created_at, expires_at
+      FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
+    nextMinute();
+    const edited = searchOf(await h.request({ kind: 'edited', from: String(legacy.rows[0]!.id), filters: {}, question: undefined }));
+    const expected = kind === 'question' ? 'Find engine failures' : 'carb icing';
+    expect(plans[1]).toMatchObject({ text: expected, keywordText: expected });
+    const [stored] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, edited.id));
+    expect(stored!.data).toMatchObject({ executed: { lexical: expected, vector: expected }, lexicalSource: kind === 'question' ? 'question' : 'terms' });
+    expect(edited.query).toEqual(query); expect(edited.suggestion).toBeNull(); expect(edited.note).toBeNull();
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope', 'rerank', 'rerank']);
+  });
+  it.each(['trial', 'account'] as const)('the %s uncertain allowance skips scope and rerank for questions and edits', async kind => {
+    const h = harness({ evidenceScope: { output: success }, rerank: { fail: 'timeout' } }, undefined, 'er-q-h50-v1');
+    if (kind === 'account') await h.account();
+    for (let i = 0; i < 2; i++) { searchOf(await h.request()); nextMinute(); }
+    const before = await spent(), calls = h.llm.calls.length;
+    const page = searchOf(await h.request()); nextMinute();
+    const edited = searchOf(await h.request({ kind: 'edited', from: page.id, filters: {}, question: undefined }));
+    for (const p of [page, edited]) {
+      const [row] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, p.id));
+      expect(row!.data).toMatchObject({ scopeOutcome: 'skipped', rerankOutcome: 'skipped_uncertain_allowance' });
+      expect(p.suggestion).toBeNull(); expect(p.note).toBeNull(); expect(p.total).toBeGreaterThan(0);
+      const ledger = await db.execute(sql`SELECT stage, uncertain FROM cost_ledger WHERE reservation_id = ${row!.reservationId}`);
+      expect(ledger.rows).toEqual([{ stage: 'embed', uncertain: false }]);
+    }
+    expect(h.llm.calls).toHaveLength(calls); expect(h.embed).toHaveBeenCalledTimes(4);
+    expect((await spent()).lines).toBe(before.lines + 2); expect((await usage()).quota_counted).toBe(true);
+  });
+  it('uses terms in both lexical channels, inherits different executed texts on edits and pages without paid work', async () => {
+    const plans: { text: string; keywordText?: string }[] = [];
+    const h = harness({
+      evidenceScope: { output: { intent: 'case_search', terms: 'engine', filters: { state: ['CA'] } } },
+      rerank: input => ({ output: { grades: input.cases.map((c, i) => ({ id: c.id, grade: i % 4 })) } }),
+    }, actual => ({ ...actual, search: async (...args) => { plans.push(args[1]); return actual.search(...args); } }), 'er-t-h50-v1');
+    const first = searchOf(await h.request());
+    expect(first.appliedFilters).toEqual({});
+    expect(plans[0]).toMatchObject({ text: 'Find engine power loss after maintenance', keywordText: 'engine' });
+    const [stored] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, first.id));
+    const data = stored!.data as Record<string, any>;
+    expect(data.executed).toEqual({ lexical: 'engine', vector: 'Find engine power loss after maintenance' });
+    expect(data.lexicalSource).toBe('terms'); expect(data.rerankOutcome).toBe('applied');
+    expect(data.rankingConfig).toEqual(evidenceRankingIdentity(h.ai.evidenceRanking));
+    expect(first).not.toHaveProperty('rankingConfig'); expect(first).not.toHaveProperty('executed');
+    const beforeCalls = h.llm.calls.length, beforeSpent = await spent();
+    expect((await h.get(first.id)).statusCode).toBe(200);
+    expect(h.llm.calls).toHaveLength(beforeCalls); expect(await spent()).toEqual(beforeSpent);
+    nextMinute();
+    const edited = searchOf(await h.request({ kind: 'edited', from: first.id, filters: {}, question: undefined }));
+    expect(plans[1]).toEqual(plans[0]); expect(edited.suggestion).toBeNull(); expect(edited.note).toBeNull();
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope', 'rerank', 'rerank']);
+    nextMinute();
+    searchOf(await h.request({ kind: 'edited', from: edited.id, filters: {}, terms: 'carb icing', question: undefined }));
+    expect(plans[2]).toMatchObject({ text: 'carb icing', keywordText: 'carb icing' });
+    expect(h.llm.calls.filter(c => c.stage === 'scope')).toHaveLength(1);
+    const accounts = (await db.execute(sql`SELECT stage, uncertain FROM cost_ledger ORDER BY id`)).rows as { stage: string; uncertain: boolean }[];
+    expect(accounts.filter(l => l.stage === 'rerank')).toHaveLength(3);
+    expect(accounts.every(l => !l.uncertain)).toBe(true);
+  });
+  it('settles a failed rerank at its own cap, keeps results and consumes one search only', async () => {
+    const h = harness({ evidenceScope: { output: success }, rerank: { fail: 'timeout' } }, undefined, 'er-q-h50-v1');
+    const page = searchOf(await h.request());
+    const [row] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, page.id));
+    expect((row!.data as { rerankOutcome: string }).rerankOutcome).toBe('timeout');
+    const c = h.ai.evidenceRanking.rerank!;
+    const lines = (await db.execute(sql`SELECT stage, usd::float AS usd, uncertain FROM cost_ledger ORDER BY id`)).rows as { stage: string; usd: number; uncertain: boolean }[];
+    const rerank = lines.find(l => l.stage === 'rerank')!;
+    expect(rerank.uncertain).toBe(true);
+    expect(rerank.usd).toBeCloseTo(stageWorstCaseUsd(c.model, c.caps, c.cachePrefixTokens), 5);
+    expect((await usage()).quota_counted).toBe(true);
+    expect(h.llm.calls.filter(c => c.stage === 'rerank')).toHaveLength(1);
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence rerank unavailable')).toMatchObject({ stage: 'rerank', outcome: 'timeout' });
+  });
+  it('a failed retrieval records not_run for rerank and a content-free retrieval stage', async () => {
+    const h = harness({ evidenceScope: { output: success } }, actual => ({ ...actual,
+      search: async (...args) => { await actual.search(...args); throw new Error('SENTINEL_UPSTREAM'); },
+    }), 'er-t-h50-v1');
+    expect((await h.request()).statusCode).toBe(503);
+    const [row] = await db.select().from(evidenceSearches);
+    expect(row!.data).toMatchObject({ rerankOutcome: 'not_run' });
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence search did not finish')).toMatchObject({ stage: 'retrieval', outcome: 'failed' });
+    expect(h.logs.join('')).not.toContain('SENTINEL_UPSTREAM');
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope']);
   });
 });

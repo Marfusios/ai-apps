@@ -47,7 +47,7 @@ settlement. Known embedding usage is captured before downstream failures.
 
 Evidence scope is `scope.e3`: revision1's suggestion generator with no specific unchecked
 readings, a strict wire envelope and a single-value enum discriminator. Suggestions
-are unapplied text; scope failure emits only the fixed `no_suggestion` category and
+are unapplied text; scope failure carries only a fixed failure category and
 retrieval continues with no suggestion or note. Known or uncertain scope spend still
 settles. A validated `out_of_scope` or `operational_advice` intent selects only a fixed
 capability note (`scope` or `operational_advice`); other intents select none. Edits and
@@ -55,7 +55,7 @@ scope skipped by admission's daily uncertain-charge rule have no note. Notes nev
 block search or affect retrieval, pagination, admission or accounting; they are stored
 with the private page, not exported as question-derived trace attributes. Server-only
 `evidence-hints.v3` supplies filter-free statistics and captured-ID comparison hints.
-Counts are literal/synonym occurrences of suggested terms (or executed query words), never evidence of question satisfaction.
+Counts are literal/synonym occurrences of executed lexical words, never evidence of question satisfaction.
 
 Before paid evaluation, freeze prompts, models, separate evidence caps, routing guards,
 `paragraphs.v2`, `evidence.v2`, labels, thresholds and the ledger allocation. Require
@@ -516,3 +516,34 @@ question, so it is treated as user data.
   deletes it with its steps. Until that pass the expired row still exists;
   `brief-diagnose` refuses an expired brief unless given `--include-expired`. A finished
   step's diagnostics are immutable, like the rest of its row.
+
+
+### Evidence ranking experiments (Task 24)
+
+The shared `rankEvidence` path adds a content-free `evidence.rerank` span when an
+enabled reranker is attempted: model, depth, prompt version, usage, USD, duration and
+fixed outcome. It never exports case text, questions, grades or suggestions. The
+configuration version/sha256, executed lexical/vector texts, lexical source and
+outcomes are private saved-search facts with the normal ownership and 24-hour expiry.
+Only the baseline is permitted on live. In dev alternatives, scope terms may change
+lexical ranking; they never apply suggested filters. Baseline isolation tests remain.
+The baseline retains Task 23 suggestion highlights; alternatives use executed lexical
+words. Both policies and the rendered rerank-input identity are covered by the hash.
+
+Scope and rerank share a content-free failure mapping. Unbilled failures have distinct
+`count_failed`, `rate_limited`, `overloaded`, and `unbilled_provider_error` outcomes.
+The provider-count cap and local input bound yield `input_too_large`. `stopped` means
+no dispatch after a lifecycle/abort guard; an in-flight cancellation is `aborted`.
+Billed/uncertain failures use `timeout`, `refusal`, `truncated`, `invalid_output`, or
+`provider_error`. `skipped_uncertain_allowance` means an enabled reranker was bypassed
+along with scope: only embedding may be charged. Other rerank outcomes are `not_run`
+(an earlier stage failed), `disabled`, `empty`, and `applied`. The scope-failure warning
+uses `stage: scope`, `outcome: no_suggestion`, and its fixed failure category; rerank
+fallbacks and fatal failures also retain their actual stage, without provider content.
+
+Evaluation calls this same pipeline with injected providers and the production spend
+gate, without HTTP or quotas. Keep the experiment's allocation wrapper and recovery
+log around the gate. Cache identity includes the ranking hash, exact inputs and pinned
+dataset/index identity. Free `ai-preflight` checks rerank depths 50/100 and Sonnet/50
+as well as scope. Generation quality/latency and the planned public disclosure require
+separate evaluation and gate review; sizing is not an approval to spend or deploy.

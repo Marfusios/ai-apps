@@ -1,4 +1,6 @@
 /** Private evidence search creation and free pagination. Matched routes enforce network limits. */
+import { evidenceRankingConfig, evidenceRankingIdentity } from '../evidence/ranking-config.js';
+import { rankingTexts, vectorText } from '../evidence/pipeline.js';
 import { evidenceJson } from '../evidence/routing.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gt, sql } from 'drizzle-orm';
@@ -98,7 +100,8 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     who = billed.who;
     if (svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const payer = billed.payer;
-    const { reservationUsd } = evidenceReservation(ai.llm.models.scope, ai.startup.models.embed);
+    const ranking = ai.evidenceRanking ?? evidenceRankingConfig();
+    const { reservationUsd } = evidenceReservation(ai.llm.models.scope, ai.startup.models.embed, ranking);
     let admitted;
     try {
       admitted = await admitPaidRequest(ctx.db, { policy: ai.policy, principal: payer.principal, networkId: payer.networkId,
@@ -147,11 +150,19 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
           source = await readOwnedSearch(tx, body.from, readersOf(who), ai.now(), true);
           if (!source?.data.query || source.status !== 'results') return 'source_gone';
         }
+        const question = body.kind === 'question' ? body.question : source!.data.question;
+        const legacyQuery = source?.data.query.source === 'edited' ? source.data.query.terms : question;
+        const inherited = source?.data.executed ?? rankingTexts(legacyQuery, null, evidenceRankingConfig()).executed;
+        const executed = body.kind === 'question' ? rankingTexts(question, null, ranking).executed :
+          body.terms === undefined ? inherited : { lexical: vectorText(body.terms), vector: vectorText(body.terms) };
+        const lexicalSource = body.kind === 'question' ? rankingTexts(question, null, ranking).lexicalSource :
+          body.terms === undefined ? source!.data.lexicalSource ?? (source!.data.query.source === 'question' ? 'question' : 'terms') : 'terms';
         const inserted = await insertSearch(tx, {
           readOwner: principalHash(ai.policy!, payer.principal), readOwnerKind: payer.principal.kind,
           billingPrincipal: admission.principalHash, billingKind: payer.principal.kind, reservationId: admission.reservationId,
           generationId: pinned.manifest.generationId, casesIndex: pinned.manifest.casesIndex, passagesIndex: pinned.manifest.passagesIndex!, now: ai.now(),
-          data: { question: body.kind === 'question' ? body.question : source!.data.question, edited: body.kind === 'edited',
+          data: { executed, lexicalSource, rankingConfig: evidenceRankingIdentity(ranking),
+            scopeOutcome: 'skipped', rerankOutcome: ranking.rerank ? 'not_run' : 'disabled', question, edited: body.kind === 'edited',
             version: EVIDENCE_CONTRACT_VERSION,
             query: body.kind === 'question' ? { source: 'question' } : body.terms === undefined ? source!.data.query : { source: 'edited', terms: body.terms },
             appliedFilters: body.kind === 'edited' ? body.filters : {}, suggestion: null, hint: null, note: null,
@@ -170,7 +181,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     // only deletion, shutdown or the server deadline may stop paid work.
     svc.runs.set(row.id, { controller });
     try {
-      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(30_000)]));
+      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(ranking.deadlineMs)]));
       const current = await visitor(ctx, request);
       // A newly issued trial cookie is on the response, not yet on this request.
       // Sessions are re-read; only the trial just proved/issued by billing can be carried forward.

@@ -44,7 +44,7 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    paced daily allowance for anonymous users. Limits are 10/trial/day, 50/account/day,
    20/day in an account's first 3 days, 600/account/month. Daily resets are 00:00 UTC.
    The old name `AI_ANONYMOUS_TRIAL_REQUESTS` now denotes the daily allowance.
-5. Run `pnpm worker ai-preflight` (free counts only, no generation), including `scope.e3`.
+5. Run `pnpm worker ai-preflight` (free counts only, no generation), including `scope.e3` and every rerank model/depth.
    Require no OVER rows. Evidence has separate 10,000/2,500 input/output caps; measured
    5,701 fixed / 5,674 cached input, 6,192 Latin / 7,190 dense input and 1,118 output.
    Check the derived reservation: $0.0024325 worst case → $0.0025 reserved.
@@ -56,11 +56,12 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    validated out_of_scope/operational_advice select the fixed scope/operational_advice
    notes. All other outputs, failures, edits and skipped scope have no note. Render
    EVIDENCE_NOTE_TEXT, keep the research boundary and EVIDENCE_NOTICE unconditional,
-   and never treat no note as assurance. Suggestions remain unapplied; filter-only edits
-   retain the parent query. Server-owned statistics hints carry no filters; comparison
+   and never treat no note as assurance. In the live/default baseline suggestions remain unapplied; filter-only edits
+   retain both executed parent query texts. Server-owned statistics hints carry no filters; comparison
    hints name only the matched IDs. All successful searches return 201 results.
-   At the daily uncertain-charge limit, evidence searches skip scope while retaining
-   the full reservation, embedding accounting and other limits; they are not refused
+   At the daily uncertain-charge limit, evidence searches skip scope and any reranker
+   (`skipped_uncertain_allowance`) while retaining the full reservation, embedding
+   accounting and other limits; they are not refused
    solely for that limit. Generated summaries keep their old refusal rule.
    Restart with the new environment settings, then use `pnpm worker ai-switch --on`
    only after clearance. A restore hold still blocks payment until reconciliation.
@@ -528,6 +529,54 @@ and the cached prefix (against `CACHED_PREFIX_MAX`), and prints each against its
 is fixed. A cap below a stage's fixed request refuses every brief at that stage, free
 but useless (the first paid end-to-end test stopped this way at scope).
 
+### Evidence ranking
+
+`AVIATION_EVIDENCE_RANKING` selects evidence-view behaviour independently of
+`AVIATION_RETRIEVAL_VERSION` (generated briefs). Empty means `er-q-v1`.
+Unknown values fail configuration. Today live permits **only `er-q-v1`**; a
+different value fails startup rather than silently reverting.
+
+| Versions | Lexical text | Reranker |
+| --- | --- | --- |
+| `er-q-v1`, `er-t-v1`, `er-qt-v1` | question / scope terms / question + terms | none |
+| `er-q-h50-v1`, `er-t-h50-v1`, `er-qt-h50-v1` | same choices | Haiku 5.5, 50 cases |
+| `er-q-h100-v1`, `er-t-h100-v1`, `er-qt-h100-v1` | same choices | Haiku 5.5, 100 cases |
+| `er-t-s50-v1`, `er-qt-s50-v1` | terms / question + terms | Sonnet 5.5, 50 cases; evaluation |
+
+To evaluate on dev, select a version in that environment's settings, run the free
+`pnpm worker ai-preflight` and require no OVER row, then recreate the app container.
+The Compose service passes the setting through. Scope/embedding models are fixed
+by the evidence ranking object; incompatible model overrides fail its price check.
+Only the baseline retains suggestion-based highlights (executed words if absent);
+every alternative highlights executed lexical words. This policy is part of the hash.
+The conservative reservations are $0.0025 without rerank, $0.0090 for Haiku/50,
+$0.0140 for Haiku/100 and $0.1332 for Sonnet/50. Confirm budget capacity before
+authorizing any paid test; preflight does not generate.
+
+For a non-HTTP evaluation use `rankEvidence(config, input, providers, spendGate)`
+from `server/evidence/pipeline.ts`, `evidenceRankingConfig(version)`, and
+`ledgerRankingSpendGate(db, budgets, runId)` from `server/evidence/spend.ts`.
+An allocation runner can instead wrap production gates through
+`evaluationRankingSpendGate(gateFor, runId)`. Preserve that runner's allocation
+admission, accounting and recovery rules. Do not replace the production gate with
+an unmetered fake outside offline tests. Cache keys/reports include the returned
+configuration identity, exact question/edited texts, filters and pinned dataset/index
+identity. The hash also covers the rerank user-turn template and rendered input
+fixture. Direct adapter callers pass the complete registered ranking config.
+Errors expose fixed categories; spend lines survive downstream failures. An evaluator
+can set `skipScope` without disabling reranking; `uncertainAllowanceReached` skips
+both optional stages, matching HTTP admission.
+
+To roll back, set `AVIATION_EVIDENCE_RANKING=er-q-v1`, run preflight and recreate
+the app. New searches use the baseline; saved pages retain their order and old
+configuration. New edits inherit the parent's executed lexical/vector texts unless
+the visitor supplies replacement terms, then use the selected ranking version.
+No reindex or data migration is needed.
+
+Non-baseline live deployment additionally requires a reviewed code allowlist change,
+evaluation/gate approval and the controller's `evidence.v3` disclosure. This server
+work changes no public response contract and grants none of those clearances.
+
 ### Retrieval version
 
 AI evidence is retrieved under one frozen configuration, chosen by
@@ -772,7 +821,7 @@ and each needs an explicit flag or key:
 | `pnpm eval:retrieval:narrative judge --set relevance --confirm-cost --allocation <name>` (stage 2) | the rest of the pools (about 2,110 pairs; 2,627 in the built pools) | about $6.01 expected before the pools were built ($14.47 at the bound); the cache keeps stage 1, so it is not paid again. Measured on 2026-10-23: $4.10, nearly all of it both judges on the 2,627 pairs; the allocation's cap stopped the escalations after one. The 455 left cost about $9.70 in a later month, from the cache, under a fresh allocation; run it with `--concurrency 3` or lower until the ledger's connection pressure is fixed (at 6, a ledger connection timed out) |
 | `pnpm eval:checker retrieve [--questions 16d\|16e] --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9; 17 with `16d`; 16 with `16e`) | about $0.000005 |
 | `pnpm eval:checker run --candidate <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input of a split (Task 16e: 179 development or 105 held-out calls) | $0.46 a development pass at effort `low`, $0.62 at `medium`, $0.39 the held-out pilot at `medium`; `inventory` (free) prints the expected and worst-case cost first; charged to the allocation `checker-16e-2026-10` and stopped before a call that would take it over $2.50 or the ledger's evaluation allowance below the $12 protected for another track |
-| Evidence search | advisory scope.e3 and one query embedding; edits skip scope | at most $0.0024325, reserving $0.0025; same global budgets |
+| Evidence search | advisory scope.e3 and one query embedding; edits skip scope | baseline at most $0.0024325, reserving $0.0025; dev rerank versions: see Evidence ranking; same global budgets |
 | AI briefs (disabled) | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
 | `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |

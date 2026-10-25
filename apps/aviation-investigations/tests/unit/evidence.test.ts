@@ -6,7 +6,8 @@ import { evidenceJson, evidenceRoute } from '../../server/evidence/routing.js';
 import { createFakeProvider } from '../../server/ai/fake.js';
 import { stageCtx } from '../../server/ai/provider.js';
 import { evidenceReservation, evidenceStartupCheck } from '../../server/evidence/pricing.js';
-import { highlighted, paragraphSpans, projectCase, satisfiedFilters, termPlan } from '../../server/evidence/project.js';
+import { evidenceRankingConfig } from '../../server/evidence/ranking-config.js';
+import { highlighted, paragraphSpans, projectCase, satisfiedFilters, suggestedHighlights, termPlan } from '../../server/evidence/project.js';
 import { loadConfig } from '../../shared/config.js';
 import { EVIDENCE_RETRIEVAL } from '../../server/evidence/retrieve.js';
 import { RETRIEVAL_V2 } from '../../server/search/retrieval-config.js';
@@ -204,10 +205,21 @@ it('optional suggestions cannot push an otherwise valid result over its byte bud
   expect(decorated).toBe(data); expect(decorated.suggestion).toBeNull();
   expect(decorated.cases).toBe(data.cases);
   const normal = { ...data, cases: [result] };
-  const marked = withSuggestion(normal, { filters: { state: ['CA'] }, terms: 'engine' });
+  const marked = withSuggestion(normal, { filters: { state: ['CA'] }, terms: 'engine' }, evidenceRankingConfig().query.highlights);
   expect(marked.suggestion?.terms).toBe('engine');
+  expect(marked.cases![0]).toEqual(suggestedHighlights(result, 'engine')); // Preserve the live Task 23 projection.
   expect(marked.cases![0]!.relevance.terms).toContainEqual({ term: 'engine', literal: 2, synonym: 0 });
   expect(marked.cases![0]!.excerpts.map(({ highlights: _marks, ...e }) => e)).toEqual(result.excerpts.map(({ highlights: _marks, ...e }) => e));
+});
+
+it('non-baseline highlights keep the executed lexical words even when a suggestion exists', () => {
+  const result = projectCase(record, row, SEARCH_FALLBACK_LINK, ranked, 1, {}, 'pilot');
+  const data = { suggestion: null, note: null, cases: [result] } as SearchData;
+  const marked = withSuggestion(data, { filters: { state: ['CA'] }, terms: 'engine' }, evidenceRankingConfig('er-q-h50-v1').query.highlights);
+  expect(marked.suggestion?.terms).toBe('engine');
+  expect(marked.cases).toBe(data.cases);
+  expect(marked.cases![0]!.relevance.terms).toContainEqual({ term: 'pilot', literal: 1, synonym: 0 });
+  expect(withSuggestion(data, null, evidenceRankingConfig().query.highlights)).toBe(data);
 });
 
 it('note selection cannot change the budget decision at the byte limit', () => {

@@ -128,8 +128,8 @@ describe('runAiPreflight with a stub counter', () => {
     const evidenceProvider = { ...provider, countEvidenceScopeTokens: async () => 100 };
     await expect(runAiPreflight(evidenceProvider, countText, models)).rejects.toThrow('configured embedding');
     await expect(runAiPreflight(evidenceProvider, countText, models, { embeddingModel: 'text-embedding-3-small', reservationUsd: 0 })).rejects.toThrow('reservation too small');
-    // A configured model without an approved price row cannot silently use the small price.
-    await expect(runAiPreflight(evidenceProvider, countText, models, { embeddingModel: 'text-embedding-3-large', reservationUsd: 0.0025 })).rejects.toThrow('has no price row');
+    // The frozen evidence configuration requires its exact embedding model.
+    await expect(runAiPreflight(evidenceProvider, countText, models, { embeddingModel: 'text-embedding-3-large', reservationUsd: 0.0025 })).rejects.toThrow('evidence model does not match ranking configuration');
     const rows = await runAiPreflight(evidenceProvider, async (_m, t) => text(t), models,
       { embeddingModel: 'text-embedding-3-small', reservationUsd: 0.0025 });
     expect(rows.find((r) => r.request === 'scope.e3: output at its schema bounds')).toMatchObject({ ok: true, limit: EVIDENCE_SCOPE_CAPS.output });

@@ -24,9 +24,11 @@
  * `preflightRequests` is pure, so the offline unit test sizes the same requests with the
  * local tokenizer (tests/unit/ai-preflight.test.ts).
  */
+import { runRerankPreflight } from './rerank-preflight.js';
+import { evidenceReservation } from '../server/evidence/pricing.js';
+import type { EvidenceRankingConfig } from '../server/evidence/ranking-config.js';
 import { FACET_VALUES } from '../shared/contracts/search.js';
 import { BRIEF_FILTER_FACETS } from '../shared/contracts/briefs.js';
-import { stageWorstCaseUsd, embeddingWorstCaseUsd } from '../server/ai/pricing.js';
 import { EVIDENCE_SCOPE_CAPS } from '../server/ai/pricing.js';
 import { evidenceScopeCtx } from '../server/ai/provider.js';
 import { EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from '../server/ai/prompts/scope.e1.js';
@@ -422,7 +424,7 @@ export function evidencePreflightRequests() {
 export type TextCounter = (model: string, text: string) => Promise<number>;
 
 export interface PreflightRow {
-  stage: 'scope' | 'answer' | 'check';
+  stage: 'scope' | 'answer' | 'check' | 'rerank';
   model: string;
   request: string;
   tokens: number;
@@ -431,16 +433,16 @@ export interface PreflightRow {
 }
 
 /** Count every request and output against its cap. `countText` counts a plain user message. */
-export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels, evidence?: { embeddingModel: string; reservationUsd: number }): Promise<PreflightRow[]> {
+export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels, evidence?: { embeddingModel: string; reservationUsd: number; ranking?: EvidenceRankingConfig }): Promise<PreflightRow[]> {
   if (provider.countEvidenceScopeTokens) {
     if (!evidence) throw new Error('evidence preflight requires the configured embedding model and reservation');
-    const worst = stageWorstCaseUsd(models.scope, EVIDENCE_SCOPE_CAPS) + embeddingWorstCaseUsd(evidence.embeddingModel);
+    const worst = evidenceReservation(models.scope, evidence.embeddingModel, evidence.ranking).worstCaseUsd;
     if (!Number.isFinite(evidence.reservationUsd) || evidence.reservationUsd < worst) throw new Error('evidence reservation too small');
   }
   const r = preflightRequests();
   const rows: PreflightRow[] = [];
   const ctx = (stage: LlmStage) => stageCtx(stage, AbortSignal.timeout(30_000), 30_000);
-  const add = (stage: PreflightRow['stage'], request: string, tokens: number, limit: number) =>
+  const add = (stage: Exclude<PreflightRow['stage'], 'rerank'>, request: string, tokens: number, limit: number) =>
     rows.push({ stage, model: models[stage], request, tokens, limit, ok: tokens <= limit });
   const output = async (model: string, text: string) => (await countText(model, text)) - (await countText(model, '.')) + 1;
 
@@ -478,6 +480,7 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
   add('check', 'cached prefix (system prompt + schema)', await prefix(models.check, checkFixed, renderCheckUser(r.fixed.check)), CACHED_PREFIX_MAX);
   add('check', `full bundle, ${r.facts.claims} claims`, await provider.countInputTokens('check', r.worst.check, ctx('check')), STAGE_CAPS.check.input);
   add('check', `output at its schema bounds (+${CHECK_THINKING_ALLOWANCE} thinking)`, (await output(models.check, r.outputs.check)) + CHECK_THINKING_ALLOWANCE, STAGE_CAPS.check.output);
+  if (provider.countRerankTokens) rows.push(...await runRerankPreflight(provider, countText));
   return rows;
 }
 

@@ -276,3 +276,34 @@ Block launch on unresolved critical/high findings or failed auth, origin,
 budget, and evidence-integrity tests. Use synthetic secrets and public fixtures.
 Record actual test results; a successful model review is not a certification or
 a promise of zero vulnerabilities.
+
+
+## Evidence ranking experiments (Task 24, pending review)
+
+The new dev-only `rankEvidence` pipeline optionally uses validated scope terms in
+fixed BM25 query bodies and adds `rerank.r1`. No suggested filters are applied.
+The live allowlist contains only the baseline, with original-question retrieval and
+no reranker. Public `evidence.v2` is unchanged; experiment metadata stays private.
+A future live alternative requires evaluation, a gate and the new UI disclosure.
+
+Question, aircraft labels, phases, probable causes and excerpts are untrusted quoted
+data. The fixed prompt refuses embedded instructions; there are no tools or arbitrary
+output text. Request-local labels and strict exact-coverage integer grades can only
+reorder the supplied prefix. Injection can still bias ordering: schema validation
+does not prove relevance, and evaluation must include adversarial cases. It cannot
+add cases, facts, filters, links or prose, or modify canonical displayed excerpts.
+Bounds retain complete sentences, preserve cause-variant slots and mark truncation.
+Unknown/missing/duplicate IDs, non-integer grades, extra fields, refusals, token limits,
+timeouts and provider failures all keep the fused order without retry.
+
+Stage reservation includes full input/output caps and cache-write premiums; actual
+usage settles per call and uncertain usage costs that stage's worst case. HTTP keeps
+settlement and saved-result publication atomic; evaluation uses the production spend
+gate and its allocation wrapper. The daily uncertain-charge allowance skips both
+scope and rerank (zero charge for either), with normal embedding settlement.
+Deletion/shutdown guards run before each stage; a guard refusal is `stopped`.
+The adapter asserts the full registered configuration before counts or generation.
+Paging and idempotent replays never run a provider. Tracing carries only operational
+metadata (including rerank depth and outcome). Questions, case texts and grades
+are not exported to traces. Saved execution metadata inherits the search's ownership,
+backup exclusion and 24-hour expiry.

@@ -8,7 +8,16 @@ import { evidenceSearches } from '../db/schema/evidence.js';
 import type { ProjectionContext } from '../projection/cases.js';
 import { suggestedHighlights, type RankedEvidenceCase } from './project.js';
 
+import type { ExecutedTexts, LexicalSource, ScopeOutcome, RerankOutcome } from './pipeline.js';
+import type { evidenceRankingIdentity, HighlightPolicy } from './ranking-config.js';
+
 export interface SearchData {
+  /** Private execution facts. Absent only on pre-ranking-config saved searches. */
+  executed?: ExecutedTexts;
+  lexicalSource?: LexicalSource;
+  rankingConfig?: ReturnType<typeof evidenceRankingIdentity>;
+  scopeOutcome?: ScopeOutcome;
+  rerankOutcome?: RerankOutcome;
   question: string;
   edited: boolean;
   context: ProjectionContext;
@@ -31,13 +40,14 @@ export function assertSearchDataBudget(data: SearchData): void {
   if (Buffer.byteLength(JSON.stringify({ ...data, note: 'operational_advice' }, null, 1), 'utf8') > EVIDENCE_DATA_MAX_BYTES) throw new Error('evidence storage budget exceeded');
 }
 /** Validate the ordinary result first. Optional model metadata cannot make it unstoreable.
- * If annotations exceed the byte budget, keep the original-query marks and no suggestion.
+ * If annotations exceed the byte budget, keep the executed-query marks and no suggestion.
  * Canonical paragraphs and cause variants are never truncated to make room for metadata. */
-export function withSuggestion(data: SearchData, suggestion: EvidenceSuggestion | null): SearchData {
+export function withSuggestion(data: SearchData, suggestion: EvidenceSuggestion | null, highlights: HighlightPolicy = 'suggested-or-executed'): SearchData {
   assertSearchDataBudget(data);
   if (!suggestion) return data;
   try {
-    const decorated = { ...data, suggestion, cases: data.cases?.map(c => suggestedHighlights(c, suggestion.terms)) };
+    const decorated = { ...data, suggestion,
+      ...(highlights === 'suggested-or-executed' ? { cases: data.cases?.map(c => suggestedHighlights(c, suggestion.terms)) } : {}) };
     assertSearchDataBudget(decorated);
     return decorated;
   } catch { return data; }
@@ -52,6 +62,8 @@ export async function readOwnedSearch(db: DbOrTx, id: string, readers: readonly 
   if (page !== undefined && (!Number.isSafeInteger(page) || page < 1 || page > 10)) return null;
   const source = evidenceSearches.data;
   const header = sql`jsonb_build_object('question', ${source}->'question', 'edited', ${source}->'edited',
+    'executed', ${source}->'executed', 'lexicalSource', ${source}->'lexicalSource',
+    'rankingConfig', ${source}->'rankingConfig', 'scopeOutcome', ${source}->'scopeOutcome', 'rerankOutcome', ${source}->'rerankOutcome',
     'context', ${source}->'context', 'version', ${source}->'version', 'query', ${source}->'query',
     'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'note', ${source}->'note')`;
   const data = page === undefined ? sql<SearchData>`${header}` : sql<SearchData>`${header} || jsonb_build_object('cases',

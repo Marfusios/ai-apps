@@ -1,16 +1,14 @@
 /** One admitted evidence search. No path here can call compose or check. */
-import type { EvidenceSuggestion } from '../../shared/contracts/evidence.js';
 import { and, eq, inArray } from 'drizzle-orm';
-import { StageError, evidenceScopeCtx } from '../ai/provider.js';
-import { validateEvidenceScope, EVIDENCE_SCOPE_VERSION } from '../ai/prompts/scope.e1.js';
-import { STAGE_CAPS, EVIDENCE_SCOPE_CAPS, stageCostUsd, stageWorstCaseUsd, embeddingWorstCaseUsd, embeddingCostUsd } from '../ai/pricing.js';
-import { QueryEmbeddingError } from '../ai/embeddings.js';
+import { rankEvidence, RankingFailure, vectorText, type LexicalSource, type RankingPhase } from './pipeline.js';
+import { evidenceRankingConfig } from './ranking-config.js';
+import { admittedRankingSpendGate } from './spend.js';
 import { cases, evidenceSearches } from '../db/schema/index.js';
 import type { PinnedDataset } from '../dataset.js';
 import { evidenceRoute } from './routing.js';
 import { releaseQuota, type Admission } from '../quota/admit.js';
-import { settle, type SpendLine } from '../quota/settle.js';
-import { stageSpan, startRequestSpan } from '../observability/tracing.js';
+import { settle } from '../quota/settle.js';
+import { startRequestSpan } from '../observability/tracing.js';
 import type { ApiContext } from '../routes/context.js';
 import { withSuggestion, finishSearch, pageOf, type EvidenceRow, type SearchData } from './store.js';
 
@@ -23,94 +21,62 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
   signal: AbortSignal): Promise<void> {
   const ai = ctx.ai!, services = ctx.evidence!;
   const llm = ai.llm!, policy = ai.policy!;
-  const lines: SpendLine[] = [];
-  let active: 'scope' | 'retrieval' | 'storage' = 'scope';
-  let scopeStarted = false, scopeRecorded = false, embedRecorded = false;
-  function recordScopeFailure(error: unknown): void {
-    if (!scopeStarted || scopeRecorded) return;
-    scopeRecorded = true;
-    if (error instanceof StageError) {
-      if (error.billing.kind === 'usage') lines.push({ stage: 'scope', provider: error.provider, model: error.model,
-        usd: stageCostUsd(error.model, error.billing.usage), tokens: { ...error.billing.usage } });
-      if (error.billing.kind === 'none') return;
-      if (error.billing.kind === 'usage') return;
-    }
-    lines.push({ stage: 'scope', provider: llm.name, model: llm.models.scope,
-      usd: stageWorstCaseUsd(llm.models.scope, EVIDENCE_SCOPE_CAPS), uncertain: true });
-  }
-  let suggestion: EvidenceSuggestion | null = null;
-  let finalData: SearchData = { ...row.data, note: null };
+  const config = ai.evidenceRanking ?? evidenceRankingConfig();
+  const meter = admittedRankingSpendGate(admission);
+  let active: RankingPhase | 'storage' = 'scope';
+  let finalData: SearchData = { ...row.data, note: null, rerankOutcome: config.rerank ? 'not_run' : 'disabled' };
+  let execution: Partial<SearchData> = {};
   let outcome: 'results' | 'failed' = 'failed';
   let failed = false;
   await startRequestSpan('evidence.request', { datasetGeneration: String(row.generationId) }, async (span) => {
     try {
       signal.throwIfAborted();
       const route = row.data.edited ? { kind: 'search' as const } : evidenceRoute(row.data.question);
-      if (!row.data.edited && !admission.skipScope) {
-        try {
-          const planned = await stageSpan('evidence.scope', { stage: 'scope', provider: llm.name, model: llm.models.scope, promptVersion: EVIDENCE_SCOPE_VERSION }, async (stage) => {
-            scopeStarted = true;
-            const result = await llm.evidenceScope!({ question: row.data.question }, evidenceScopeCtx(AbortSignal.any([signal, AbortSignal.timeout(10_000)]), 10_000));
-            const usd = stageCostUsd(result.model, result.usage);
-            lines.push({ stage: 'scope', provider: result.provider, model: result.model, usd, tokens: { ...result.usage } });
-            scopeRecorded = true;
-            stage.setAttrs({ ...result.usage, usd });
-            return validateEvidenceScope(result.output, row.data.question);
-          });
-          if (planned.intent === 'case_search') suggestion = { filters: planned.filters, terms: planned.terms };
-          // A validated policy intent selects a fixed capability note only. It has
-          // no authority over hints, retrieval, ranking, filters or accounting.
-          finalData.note = planned.intent === 'out_of_scope' ? 'scope' : planned.intent === 'operational_advice' ? 'operational_advice' : null;
-        } catch (error) {
-          recordScopeFailure(error);
-          suggestion = null;
-          ctx.log.warn({ stage: 'scope', outcome: 'no_suggestion' }, 'evidence suggestion unavailable');
-          signal.throwIfAborted(); // Deletion/shutdown still stop all subsequent paid work.
-        }
-      }
       if (route.kind === 'corpus_statistics') finalData.hint = { kind: 'corpus_statistics' };
       if (route.kind === 'case_comparison') {
         const existing = await ctx.db.select({ ntsbNo: cases.ntsbNo }).from(cases).where(and(eq(cases.generationId, row.generationId), inArray(cases.ntsbNo, route.numbers)));
         const found = new Set(existing.map(c => c.ntsbNo));
         finalData.hint = { kind: 'case_comparison', found: route.numbers.filter(n => found.has(n)), notFound: route.numbers.filter(n => !found.has(n)) };
       }
-      signal.throwIfAborted();
-      // Account deletion may have happened while scope ran: no second provider call then.
-      const still = await ctx.db.select({ id: evidenceSearches.id }).from(evidenceSearches).where(and(eq(evidenceSearches.id, row.id), eq(evidenceSearches.status, 'running')));
-      if (!still.length) throw new EvidenceFailure('stopped');
-      active = 'retrieval';
-      const retrieved = await stageSpan('evidence.retrieve', { stage: 'retrieve', retrievalVersion: 'retrieval.v2' }, async (stage) => {
-        const result = await services.retriever.search(pinned, { text: row.data.query.source === 'question' ? row.data.question : row.data.query.terms, filters: row.data.appliedFilters }, AbortSignal.any([signal, AbortSignal.timeout(8_000)]), (u) => {
-          const duplicate = embedRecorded;
-          embedRecorded = true;
-          lines.push({ stage: 'embed', provider: 'openai', model: u.model, usd: u.billing === 'uncertain' ? embeddingWorstCaseUsd(u.model) : u.usd,
-            tokens: { inputTokens: u.tokens }, ...(u.billing === 'uncertain' ? { uncertain: true } : {}) });
-          if (duplicate) throw new EvidenceFailure('retrieval');
-        }, row.data.query.source === 'question' ? row.data.question : row.data.query.terms);
-        stage.setAttrs({ caseCount: result.cases.length });
-        return result;
+      const legacyText = row.data.query.source === 'question' ? row.data.question : row.data.query.terms;
+      const result = await rankEvidence(config, {
+        question: row.data.question, filters: row.data.appliedFilters, dataset: pinned, signal, uncertainAllowanceReached: admission.skipScope,
+        ...(row.data.edited ? { edited: {
+          executed: row.data.executed ?? { lexical: legacyText.replace(/\s+/gu, ' ').trim(), vector: vectorText(legacyText) },
+          lexicalSource: row.data.lexicalSource ?? (row.data.query.source === 'question' ? 'question' : 'terms') as LexicalSource,
+        } } : {}),
+      }, { llm, retriever: services.retriever, embeddingModel: ai.startup.models!.embed }, meter.gate, async () => {
+        signal.throwIfAborted();
+        // The same guard immediately precedes scope, embedding and rerank admission.
+        const still = await ctx.db.select({ id: evidenceSearches.id }).from(evidenceSearches)
+          .where(and(eq(evidenceSearches.id, row.id), eq(evidenceSearches.status, 'running')));
+        if (!still.length) throw new EvidenceFailure('stopped');
+        signal.throwIfAborted();
+      }, {
+        onStage: stage => { active = stage; },
+        onFallback: ({ stage, outcome }) => {
+          if (stage === 'scope') ctx.log.warn({ stage, outcome: 'no_suggestion', failure: outcome }, 'evidence suggestion unavailable');
+          else ctx.log.warn({ stage, outcome }, 'evidence rerank unavailable');
+        },
       });
-      finalData = { ...finalData, ranking: retrieved.ranking, cases: retrieved.cases };
-      finalData = withSuggestion(finalData, suggestion);
+      execution = { executed: result.executed, lexicalSource: result.lexicalSource, rankingConfig: result.configuration,
+        scopeOutcome: result.scopeOutcome, rerankOutcome: result.rerankOutcome };
+      active = 'storage';
+      finalData = withSuggestion({ ...finalData, ...execution, ranking: result.ranking, cases: result.cases, note: result.note }, result.suggestion, config.query.highlights);
       // Validate the exact public page before keeping its quota unit or storing success.
       pageOf({ ...row, status: 'results', data: finalData }, 1);
-      outcome = 'results';
-      signal.throwIfAborted();
+      outcome = 'results'; // A rerank abort preserves the already retrieved order.
     } catch (error) {
+      if (error instanceof RankingFailure && error.stage !== 'spend') active = error.stage === 'retrieve' ? 'retrieval' : error.stage;
       failed = true;
       outcome = 'failed';
-      finalData = { ...row.data };
-      recordScopeFailure(error);
-      if (error instanceof QueryEmbeddingError && !embedRecorded) {
-        const model = ai.startup.models!.embed;
-        if (error.billing === 'usage') lines.push({ stage: 'embed', provider: 'openai', model, usd: embeddingCostUsd(model, error.billedTokens ?? STAGE_CAPS.embed.input) });
-        if (error.billing === 'uncertain') lines.push({ stage: 'embed', provider: 'openai', model, usd: embeddingWorstCaseUsd(model), uncertain: true });
-      }
+      finalData = { ...row.data, rerankOutcome: config.rerank ? 'not_run' : 'disabled', ...execution };
       ctx.log.warn({ stage: active, outcome: signal.aborted ? 'stopped' : 'failed' }, 'evidence search did not finish');
     }
     // Finishing the row, refunding unsuccessful searches, and settlement commit together.
     // If deletion removed it, refund; never recreate deleted private data.
     active = 'storage';
+    const lines = meter.lines();
     const finish = () => ctx.db.transaction(async (tx) => {
       const [stored] = await tx.select({ status: evidenceSearches.status }).from(evidenceSearches)
         .where(eq(evidenceSearches.id, row.id)).for('no key update');
