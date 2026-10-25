@@ -8,7 +8,8 @@
  * their case numbers, section ids, revision ids, aircraft and probable-cause statements. Each
  * case goes through the server's own projection (`projectCase`) with its retrieval seed
  * narrowed to exactly the old unsafe quotation, as that test does; the page is one
- * `evidence.v2` page of the three, validated with the contract and serialized as the routes
+ * `evidence.v3` page of the three (the question alone, in match order, its words marked, nothing
+ * applied automatically, so no undo), validated with the contract and serialized as the routes
  * serialize it (`evidenceJson`).
  *
  * The fixture corpus does not have these cases, so their case pages (`contextLossDetail`, for
@@ -237,8 +238,13 @@ export function contextLossPage(now = new Date('2026-10-25T08:00:00Z')): Evidenc
     version: EVIDENCE_CONTRACT_VERSION,
     id: CONTEXT_LOSS_SEARCH_ID,
     question: CONTEXT_LOSS_QUESTION,
-    query: { source: 'question' },
+    query: { source: 'question', keywords: { kind: 'question' } },
     appliedFilters: {},
+    automaticFilters: null,
+    order: 'match',
+    marks: 'search_words',
+    freeUndo: false,
+    undo: 'none',
     suggestion: null,
     hint: null,
     note: null,

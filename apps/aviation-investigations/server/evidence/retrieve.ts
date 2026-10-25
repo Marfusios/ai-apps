@@ -26,7 +26,7 @@ export const EVIDENCE_RETRIEVAL = Object.freeze({ ...RETRIEVAL_V2,
 });
 export interface EvidenceRetrievalResult { ranking: RankedEvidenceCase[]; cases: EvidenceCase[] }
 /** Only server-owned question/user edits may populate this plan. */
-export interface EvidenceSearchPlan { text: string; filters: BriefFilters }
+export interface EvidenceSearchPlan { text: string; keywordText?: string; filters: BriefFilters }
 export interface EvidenceRetriever {
   available(pinned: PinnedDataset): Promise<boolean>;
   search(pinned: PinnedDataset, plan: EvidenceSearchPlan, signal: AbortSignal,
@@ -69,7 +69,7 @@ export function createEvidenceRetriever(db: Db, es: Client, embedder: QueryEmbed
       };
       const result = await retrieveCaseCandidates(es, safeEmbedder, EVIDENCE_RETRIEVAL, {
         dataset: { generationId: generation, passagesIndex: pinned.manifest.passagesIndex }, casesIndex: pinned.manifest.casesIndex,
-        text: fitQueryText(plan.text), keywordText: plan.text, filters: plan.filters, signal, onQueryEmbedding: onEmbedding,
+        text: fitQueryText(plan.text), keywordText: plan.keywordText ?? plan.text, filters: plan.filters, signal, onQueryEmbedding: onEmbedding,
       });
       signal.throwIfAborted();
       const ranking: RankedEvidenceCase[] = result.cases.slice(0, EVIDENCE_CANDIDATE_CEILING).map((c) => ({

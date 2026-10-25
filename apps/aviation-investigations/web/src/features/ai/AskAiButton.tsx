@@ -4,7 +4,7 @@ import { aiStatusQuery } from '../../api';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
 import { useSignIn } from '../auth/SignInDialog';
-import { askAvailability, askCounter, signedInOnlyNote, type AskAvailability } from './status';
+import { askAvailability, askCounter, signedInOnlyNote, undoAvailability, type AskAvailability } from './status';
 import type { AiPhase } from './useAiRequest';
 
 export interface AskAiButtonProps {
@@ -15,6 +15,11 @@ export interface AskAiButtonProps {
   label?: string;
   /** Controls on a brief show "· uses 1" before the click instead of the counter (UI_DESIGN §4.3). */
   usesOne?: boolean;
+  /**
+   * The request uses none of the visitor's searches (an evidence search's one free undo): "· free",
+   * and it can run while the visitor's own searches are used up (`undoAvailability`).
+   */
+  free?: boolean;
   size?: 'sm' | 'md';
   /** `chip`: a magenta interpretation chip (AI suggested readings) instead of the filled pill. */
   look?: 'pill' | 'chip';
@@ -36,16 +41,17 @@ export function busyLabel(phase: AiPhase): string | null {
  * The magenta Ask AI button with its live availability (UI_DESIGN §2.6, §5):
  * "Ask AI · 3 free", "Ask AI · 18 left today", "Ask AI · sign in" (only while sign-in is
  * offered: otherwise disabled with the counter's words), or disabled with
- * "AI back tomorrow" / "AI back on {date}" / "AI temporarily unavailable". It shows
+ * "AI back tomorrow" / "AI back on {date}" / "AI temporarily unavailable"; an evidence
+ * search's free undo says "· free" and stays on while the visitor's own searches are used up. It shows
  * "Checking…" while the Turnstile check runs and "Starting…" while the request is on its
  * way. A disabled button stays focusable (aria-disabled) so its note is read; a click then
  * explains instead of asking.
  */
-export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, size = 'md', look = 'pill', disabled: off = false, className }: AskAiButtonProps) {
+export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne = false, free = false, size = 'md', look = 'pill', disabled: off = false, className }: AskAiButtonProps) {
   const status = useQuery(aiStatusQuery());
   const signIn = useSignIn();
   const noteId = useId();
-  const read = askAvailability(status.data, status.isError);
+  const read = (free ? undoAvailability : askAvailability)(status.data, status.isError);
   // Only signed-in AI is open and nobody can sign in here: off, with the counter's words (review
   // W-10); while the first configuration read is on its way, the button waits.
   const availability: AskAvailability =
@@ -57,7 +63,7 @@ export function AskAiButton({ onAsk, phase = 'idle', label = 'Ask AI', usesOne =
   const describedBy = availability.kind === 'paused' ? noteId : undefined;
   const busy = phase !== 'idle';
   const disabled = availability.kind === 'loading' || availability.kind === 'paused' || busy || off;
-  const counter = busy ? undefined : availability.kind === 'available' && usesOne ? 'uses 1' : askCounter(availability);
+  const counter = busy ? undefined : availability.kind === 'available' && free ? 'free' : availability.kind === 'available' && usesOne ? 'uses 1' : askCounter(availability);
   const click = (): void => {
     if (busy || off || availability.kind === 'loading') return;
     onAsk();

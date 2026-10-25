@@ -1,19 +1,38 @@
 /** Ownership and content are read by one statement; publication never changes saved rankings. */
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { and, eq, getTableColumns, gt, or, sql } from 'drizzle-orm';
-import { EVIDENCE_CONTRACT_VERSION, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceNote, type EvidenceQuery, type EvidenceSuggestion, type EvidenceHint, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
+import { EVIDENCE_CONTRACT_VERSION, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceAutomaticFilters, type EvidenceNote, type EvidenceQuery, type EvidenceSuggestion, type EvidenceHint, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
 import type { BriefReader } from '../briefs/store.js';
 import type { DbOrTx } from '../db/client.js';
 import { evidenceSearches } from '../db/schema/evidence.js';
 import type { ProjectionContext } from '../projection/cases.js';
 import { suggestedHighlights, type RankedEvidenceCase } from './project.js';
 
+import { disclosedQuery, remainingSuggestion } from './disclosure.js';
+import type { autoFilterIdentity, AutoFilterReason } from './auto-filters.js';
+import type { ExecutedTexts, LexicalSource, ScopeOutcome, RerankOutcome } from './pipeline.js';
+import type { evidenceRankingIdentity, HighlightPolicy } from './ranking-config.js';
+
 export interface SearchData {
+  /** Private execution facts. Absent only on pre-ranking-config saved searches. */
+  executed?: ExecutedTexts;
+  addedTerms?: string | null;
+  /** Failed attempts retain what ran, separately from immutable public admission facts. */
+  diagnostics?: { automaticFilters: EvidenceAutomaticFilters | null; appliedFilters: BriefFilters };
+  autoFilterPolicy?: ReturnType<typeof autoFilterIdentity>;
+  autoFilterReason?: AutoFilterReason;
+  automaticFilters?: EvidenceAutomaticFilters | null;
+  freeUndo?: boolean;
+  marks?: 'suggested_terms' | 'search_words';
+  lexicalSource?: LexicalSource;
+  rankingConfig?: ReturnType<typeof evidenceRankingIdentity>;
+  scopeOutcome?: ScopeOutcome;
+  rerankOutcome?: RerankOutcome;
   question: string;
   edited: boolean;
   context: ProjectionContext;
-  version: typeof EVIDENCE_CONTRACT_VERSION;
-  query: EvidenceQuery;
+  version: typeof EVIDENCE_CONTRACT_VERSION | 'evidence.v2';
+  query: EvidenceQuery | { source: 'question' };
   appliedFilters: BriefFilters;
   suggestion: EvidenceSuggestion | null;
   hint: EvidenceHint | null;
@@ -31,13 +50,15 @@ export function assertSearchDataBudget(data: SearchData): void {
   if (Buffer.byteLength(JSON.stringify({ ...data, note: 'operational_advice' }, null, 1), 'utf8') > EVIDENCE_DATA_MAX_BYTES) throw new Error('evidence storage budget exceeded');
 }
 /** Validate the ordinary result first. Optional model metadata cannot make it unstoreable.
- * If annotations exceed the byte budget, keep the original-query marks and no suggestion.
+ * If annotations exceed the byte budget, keep the executed-query marks and no suggestion.
  * Canonical paragraphs and cause variants are never truncated to make room for metadata. */
-export function withSuggestion(data: SearchData, suggestion: EvidenceSuggestion | null): SearchData {
+export function withSuggestion(data: SearchData, suggestion: EvidenceSuggestion | null, highlights: HighlightPolicy): SearchData {
   assertSearchDataBudget(data);
   if (!suggestion) return data;
   try {
-    const decorated = { ...data, suggestion, cases: data.cases?.map(c => suggestedHighlights(c, suggestion.terms)) };
+    const suggested = highlights === 'suggested-or-executed' && suggestion.terms !== null;
+    const decorated = { ...data, suggestion, marks: suggested ? 'suggested_terms' as const : 'search_words' as const,
+      ...(suggested ? { cases: data.cases?.map(c => suggestedHighlights(c, suggestion.terms!)) } : {}) };
     assertSearchDataBudget(decorated);
     return decorated;
   } catch { return data; }
@@ -52,15 +73,20 @@ export async function readOwnedSearch(db: DbOrTx, id: string, readers: readonly 
   if (page !== undefined && (!Number.isSafeInteger(page) || page < 1 || page > 10)) return null;
   const source = evidenceSearches.data;
   const header = sql`jsonb_build_object('question', ${source}->'question', 'edited', ${source}->'edited',
+    'executed', ${source}->'executed', 'lexicalSource', ${source}->'lexicalSource',
+    'autoFilterPolicy', ${source}->'autoFilterPolicy', 'autoFilterReason', ${source}->'autoFilterReason',
+    'automaticFilters', ${source}->'automaticFilters', 'freeUndo', ${source}->'freeUndo', 'marks', ${source}->'marks',
+    'rankingConfig', ${source}->'rankingConfig', 'scopeOutcome', ${source}->'scopeOutcome', 'rerankOutcome', ${source}->'rerankOutcome',
     'context', ${source}->'context', 'version', ${source}->'version', 'query', ${source}->'query',
-    'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'note', ${source}->'note')`;
+    'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'note', ${source}->'note') || CASE WHEN ${source} ? 'addedTerms'
+      THEN jsonb_build_object('addedTerms', ${source}->'addedTerms') ELSE '{}'::jsonb END`;
   const data = page === undefined ? sql<SearchData>`${header}` : sql<SearchData>`${header} || jsonb_build_object('cases',
     jsonb_path_query_array(${source}, ${`$.cases[${(page - 1) * EVIDENCE_PAGE_SIZE} to ${page * EVIDENCE_PAGE_SIZE - 1}]`}::jsonpath))`;
   // No query returns the ranking or all pages to Node. The DB checks case membership too.
   const query = db.select({ ...getTableColumns(evidenceSearches), data,
     resultTotal: sql<number>`coalesce(jsonb_array_length(${source}->'cases'), 0)`,
   }).from(evidenceSearches).where(and(eq(evidenceSearches.id, id), gt(evidenceSearches.expiresAt, now), readersWhere(readers),
-    sql`${source}->>'version' = ${EVIDENCE_CONTRACT_VERSION}`,
+    sql`${source}->>'version' IN ('evidence.v2', ${EVIDENCE_CONTRACT_VERSION})`,
     ...(selection.caseNo ? [sql`${source}->'ranking' @> ${JSON.stringify([{ ntsbNo: selection.caseNo }])}::jsonb`] : [])));
   const [row] = await (lock ? query.for('no key update') : query);
   return row ? { ...row, ...(page === undefined ? {} : { resultPage: page }) } : null;
@@ -76,13 +102,23 @@ export async function finishSearch(db: DbOrTx, id: string, status: 'results' | '
   const rows = await db.update(evidenceSearches).set({ status, data }).where(and(eq(evidenceSearches.id, id), eq(evidenceSearches.status, 'running'))).returning({ id: evidenceSearches.id });
   return rows.length === 1;
 }
-export function pageOf(row: EvidenceRow, page: number): EvidencePage | null {
-  if (row.status !== 'results' || row.data.version !== EVIDENCE_CONTRACT_VERSION || !row.data.query || !row.data.cases) return null;
+export function pageOf(row: EvidenceRow, page: number, now: Date): EvidencePage | null {
+  if (row.expiresAt <= now || row.status !== 'results' || !['evidence.v2', EVIDENCE_CONTRACT_VERSION].includes(row.data.version) || !row.data.query || !row.data.cases) return null;
   const total = row.resultTotal ?? row.data.cases.length, pages = Math.ceil(total / EVIDENCE_PAGE_SIZE);
   if (page < 1 || page > Math.max(1, pages)) return null;
   if (row.resultPage !== undefined && row.resultPage !== page) return null;
+  const query = disclosedQuery(row.data);
+  // Read the claim column, never a saved result field: another tab or a handover
+  // may have consumed the undo since this result was stored. Admission still
+  // rechecks the claim under its lock; this is only a snapshot for the client.
+  const undo = row.data.version !== EVIDENCE_CONTRACT_VERSION || row.data.edited || query.source !== 'question' ||
+    (!row.data.automaticFilters?.state.length && query.keywords.kind === 'question')
+    ? 'none' : row.freeUndoReservationId == null ? 'available' : 'used';
+  const marks = row.data.marks ?? (row.data.suggestion?.terms && (!row.data.rankingConfig || row.data.rankingConfig.version === 'er-q-v1') ? 'suggested_terms' : 'search_words');
   return EvidencePageSchema.parse({ version: EVIDENCE_CONTRACT_VERSION, id: row.id, question: row.data.question,
-    query: row.data.query, appliedFilters: row.data.appliedFilters, suggestion: row.data.suggestion,
+    query, appliedFilters: row.data.appliedFilters, suggestion: remainingSuggestion(query, row.data.suggestion),
+    automaticFilters: row.data.automaticFilters ?? null, freeUndo: row.data.freeUndo ?? false, undo, marks,
+    order: row.data.rerankOutcome === 'applied' ? 'ai_relevance' : 'match',
     // Earlier v2 results have no note and may have stored filters on a statistics
     // hint. Retain their actual query/results; never manufacture a retrospective note.
     note: row.data.note ?? null, hint: row.data.hint?.kind === 'corpus_statistics' ? { kind: 'corpus_statistics' } : row.data.hint,

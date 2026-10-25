@@ -696,9 +696,11 @@ async function main(argv: string[]): Promise<number> {
     const countText = async (model: string, text: string) =>
       (await client.messages.countTokens({ model, messages: [{ role: 'user', content: text }] })).input_tokens;
     const { evidenceReservation } = await import('../server/evidence/pricing.js');
+    const { evidenceRankingConfig } = await import('../server/evidence/ranking-config.js');
+    const ranking = evidenceRankingConfig(config.ai.evidenceRanking);
     const embeddingModel = config.ai.openai.embeddingModel;
     const rows = await runAiPreflight(provider, countText, models, {
-      embeddingModel, reservationUsd: evidenceReservation(models.scope, embeddingModel).reservationUsd,
+      embeddingModel, ranking, reservationUsd: evidenceReservation(models.scope, embeddingModel, ranking).reservationUsd,
     });
     console.log(formatPreflight(rows));
     const over = rows.filter((r) => !r.ok);

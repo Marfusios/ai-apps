@@ -276,3 +276,100 @@ Block launch on unresolved critical/high findings or failed auth, origin,
 budget, and evidence-integrity tests. Use synthetic secrets and public fixtures.
 Record actual test results; a successful model review is not a certification or
 a promise of zero vulnerabilities.
+
+
+## Evidence ranking (Task 24)
+
+The HTTP `rankEvidence` pipeline optionally uses validated scope terms in
+fixed BM25 query bodies and adds `rerank.r1`. Its separate automatic-state policy
+defaults to `none`; any accepted automatic state is disclosed by evidence.v3.
+The live allowlist contains only the baseline, with original-question retrieval and
+no reranker. Public `evidence.v3` discloses executed keywords, automatic filters,
+ordering, marks and undo availability; experiment metadata stays private.
+A future live alternative requires evaluation, a gate and the new UI disclosure.
+
+Question, aircraft labels, phases, probable causes and excerpts are untrusted quoted
+data. The fixed prompt refuses embedded instructions; there are no tools or arbitrary
+output text. Request-local labels and strict exact-coverage integer grades can only
+reorder the supplied prefix. Injection can still bias ordering: schema validation
+does not prove relevance, and evaluation must include adversarial cases. It cannot
+add cases, facts, filters, links or prose, or modify canonical displayed excerpts.
+Bounds retain complete sentences, preserve cause-variant slots and mark truncation.
+Unknown/missing/duplicate IDs, non-integer grades, extra fields, refusals, token limits,
+timeouts and provider failures all keep the fused order without retry.
+
+Stage reservation includes full input/output caps and cache-write premiums; actual
+usage settles per call and uncertain usage costs that stage's worst case. HTTP keeps
+settlement and saved-result publication atomic; evaluation uses the production spend
+gate and its allocation wrapper. The daily uncertain-charge allowance skips both
+scope and rerank (zero charge for either), with normal embedding settlement.
+Deletion/shutdown guards run before each stage; a guard refusal is `stopped`.
+The adapter asserts the full registered configuration before counts or generation.
+Paging and idempotent replays never run a provider. Tracing carries only operational
+metadata (including rerank depth and outcome). Questions, case texts and grades
+are not exported to traces. Saved execution metadata inherits the search's ownership,
+backup exclusion and 24-hour expiry.
+
+
+## Evidence.v3 automatic-state and free-undo boundary
+
+The automatic-state policy is frozen/hashed separately from the evaluated rankings.
+Live allows `none` (the default and rollback) and `state-explicit.v1.3`; v1.1 and
+v1.2 were never deployed and are no longer accepted. The guard requires the complete
+explicit model-emitted state set. v1.3 is built on v1.1 with five rejection rules
+after NFKC: bounded other-event wording, references before the first state mention,
+title/text language, destinations/departures/attributes at each mention, and a definite
+singular event before a mention (DESIGN). Qualified postal forms use the city's start
+for attribution. The v1.2 `like` alternative is replaced so "I'd like to see accidents
+in Alaska" stays eligible. v1.3 is a strict subset of v1.1, so it introduces no
+application where v1.1 abstained. The 1,040-answer offline C replay gives
+365 TP / 0 FP / 35 FN for the guard (two applications lost from v1.1), and
+363 TP / 0 FP / 37 FN after the pipeline's separate case-search intent requirement.
+This finite rule set and recorded replay do not prove semantic attribution or future
+recall. No other scope filter is applied automatically; live ranking remains
+`er-q-v1` only. Old v1/v1.1 regressions remain intact; 499 versioned probes include
+the 31 abstentions, 11 positives and three deliberate abstentions from review, and
+witnesses for every new regex alternative. Actual-source mutation tests isolate
+overlapping rules to test each alternative, alongside a frozen-v1.1 subset check.
+Scope's evaluated schema remains non-nullable and unchanged despite nullable terms
+in the public remaining suggestion. Private policy/reason/ledger metadata is never
+spread into the strict public page.
+
+An unexpired v2 idempotency record replays only when its hash exactly matches the
+legacy hash of the same compatible request body. New `keywords` instructions cannot
+be discarded to match it; a different body still conflicts. Replays retain the
+normal owner, handover and fresh anonymous Turnstile checks and never call a provider
+or take another quota unit, including running and failed results.
+
+The quota exemption is server-owned and bounded to **one admission per original
+question search**. Eligibility requires a v3 parent, current ownership, an unexpired results row,
+no explicit terms, removal of at least one automatic addition and no other change.
+Its parent is locked before bucket/spend locks; a write-once parent reservation claim
+commits with the exempt reservation. Concurrent keys, replays, sign-in/handover,
+failed child searches and descendants cannot multiply the exemption. The child has
+no automatic additions and is explicitly marked as edited. Removing a state-OR member
+is a paid narrowing; undo removes the entire automatic state facet. A claim is not
+restored after an admitted search fails, preventing repeated free paid attempts.
+Pre-run abandonment also consumes the claim: its idempotency slot expires, so a same-key
+retry requires an ordinary quota-counted admission. The trigger checks actual expiry,
+current owner and original payer, in addition to the open, quota-free reservation.
+A two-principal race proves that at most one admission claims the exemption; it does
+not require the account to win. A separate deterministic trial → sign-in → undo test
+proves that the claim-time handover succeeds with the account as current owner and
+the trial as original payer. Direct SQL violations test the owner/payer bindings.
+If the database clock finds the parent expired while the app clock still considers
+it eligible, the expiry-specific refusal returns the same 404 as an expired parent;
+the admission transaction rolls back its reservation, claim and quota changes.
+
+An eligible undo can pass exhausted visitor quota, but never bypasses Turnstile,
+principal/network rate limits, concurrency, emergency modes, restore hold, budgets,
+reservation fencing or settlement. The anonymous availability shortcut ignores only
+its advisory `trial_used` outcome for a checked candidate; transactional admission
+rechecks and claims eligibility. Every money gate remains authoritative. The request
+schema refuses a client-supplied freeUndo or automaticFilters field. Account deletion
+and retention remove parent claims with their already excluded private evidence rows.
+The new claim column is private, non-resettable and included in restore privilege checks.
+
+The scope guard is a conservative permission rule, not a proof of semantic safety for
+all language. Relevance and incident interpretation remain research tasks; all public
+filters, lexical changes, AI ordering and mark sources are disclosed and undoable.

@@ -199,7 +199,7 @@ export function retrievalConfig(version: RetrievalVersion): RetrievalConfig {
 }
 
 /** Canonical JSON (sorted keys) of a configuration: equal exactly when the behaviour is. */
-export function canonicalRetrievalConfig(c: RetrievalConfig): string {
+export function canonicalConfig(c: unknown): string {
   const sort = (v: unknown): unknown =>
     Array.isArray(v)
       ? v.map(sort)
@@ -208,6 +208,8 @@ export function canonicalRetrievalConfig(c: RetrievalConfig): string {
         : v;
   return JSON.stringify(sort(c));
 }
+
+export const canonicalRetrievalConfig = (c: RetrievalConfig): string => canonicalConfig(c);
 
 /** sha256 of the canonical configuration: the identity evaluation reports and caches record with the version. */
 export const retrievalConfigSha256 = (c: RetrievalConfig): string => createHash('sha256').update(canonicalRetrievalConfig(c)).digest('hex');

@@ -206,6 +206,8 @@ test('Ask AI from Explore, then the free surfaces: more pages, the full section 
   await prepare(page, { theme: 'night' });
   await page.goto('/explore?q=engine+power+loss');
   await expect(page.getByRole('list', { name: 'Results' })).toBeVisible();
+  // This server applies nothing on its own (`aiAutomaticFilters: []`): the nudge says the AI only suggests filters.
+  await expect(page.getByText('Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.')).toBeVisible();
   // The search box's Ask AI (the nudge under the results has one too).
   await page.getByRole('button', { name: /^Ask AI · 10 free$/ }).first().click();
   await expect(page).toHaveURL(SEARCH_PATH);

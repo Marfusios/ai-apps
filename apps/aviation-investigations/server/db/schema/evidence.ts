@@ -10,6 +10,8 @@ export const evidenceSearches = pgTable('evidence_searches', {
   billingPrincipal: text('billing_principal').notNull(),
   billingKind: text('billing_kind').notNull(),
   reservationId: bigint('reservation_id', { mode: 'number' }).notNull(),
+  /** Write-once quota exemption claim, retained with its parent through expiry. */
+  freeUndoReservationId: bigint('free_undo_reservation_id', { mode: 'number' }),
   generationId: bigint('generation_id', { mode: 'number' }).notNull(),
   casesIndex: text('cases_index').notNull(),
   passagesIndex: text('passages_index').notNull(),

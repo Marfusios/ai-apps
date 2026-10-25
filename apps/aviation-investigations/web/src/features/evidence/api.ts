@@ -1,5 +1,5 @@
 /**
- * Client for the AI evidence view's endpoints (shared/contracts/evidence.ts, `evidence.v2`).
+ * Client for the AI evidence view's endpoints (shared/contracts/evidence.ts, `evidence.v3`).
  * A stored search is private to its owner: every read is `no-store` on the server, goes
  * through `privateRead` (dropped if the visitor changes while it is on its way) and lives in
  * the private `evidence` query namespace (web/src/features/auth/visitor.ts). Kept out of the

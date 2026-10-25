@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { pageTitle } from '../../../shared/page-titles';
-import { aiStatusQuery, configQuery } from '../api';
+import { aiStatusQuery, configQuery, type ClientConfig } from '../api';
 import { CREDIT_EMAIL, CREDIT_EMAIL_HREF, CREDIT_NAME, CREDIT_SITE, CREDIT_SITE_HREF, PRODUCT_NAME } from '../brand';
 import { Placard } from '../components/Placard';
 import { aiFeatureOn } from '../features/ai/status';
@@ -10,9 +10,22 @@ import { formatChartDate, formatCount } from '../lib/format';
 
 /** The About page's line on AI while it is off (UI_DESIGN §4.8, owner decision of 2026-10-24). */
 export const AI_OFF_LINE = 'AI features are not available yet.';
-/** …and once AI searches are offered (Task 23): what the evidence view does, in plain words (the advisory-only design). */
+/**
+ * …and once AI searches are offered (Task 23; the advisory-only design): what the evidence view
+ * does, in plain words. What the AI does with filters follows the server's evidence policy
+ * (`/api/config` `aiAutomaticFilters`): it only suggests them (`AI_ON_LINE`, also when the field
+ * is missing), or (Task 24) a US state the question names explicitly can be applied (the guard may
+ * abstain), which can be removed, and the rest is suggested (`AI_ON_LINE_STATE`).
+ */
 export const AI_ON_LINE =
   'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.';
+export const AI_ON_LINE_STATE =
+  'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state your question names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
+
+/** The About page's AI line for the fields the evidence policy applies on its own (unknown: the cautious one). */
+export function aiOnLine(automatic: ClientConfig['aiAutomaticFilters']): string {
+  return automatic?.includes('state') ? AI_ON_LINE_STATE : AI_ON_LINE;
+}
 
 /** `tabTitle` is the browser tab's whole title, the route's shared one (shared/page-titles.ts). */
 export function TextPage({ eyebrow, title, tabTitle, children }: { eyebrow: string; title: string; tabTitle: string; children: ReactNode }) {
@@ -37,14 +50,16 @@ export function TextPage({ eyebrow, title, tabTitle, children }: { eyebrow: stri
  * address; the footer carries only the name and the website). The AI line follows
  * `GET /api/ai/status` (`aiFeatureOn`): "AI features are not available yet." while AI is off
  * (not configured, a missing dependency, or the kill switch), a plain description of the AI
- * search once it is offered (Task 23), and nothing while the status is unknown, so the page
- * never claims either while it cannot tell (RUNBOOK, "Google sign-in", step 0).
+ * search once it is offered (Task 23), worded for the filters the server's evidence policy applies
+ * on its own (`aiAutomaticFilters`, Task 24; a configuration without the field reads the cautious
+ * way), and nothing while the status or, for that wording, the configuration is unknown, so the
+ * page never claims either while it cannot tell (RUNBOOK, "Google sign-in", step 0).
  */
 export function About() {
   const config = useQuery(configQuery());
   const status = useQuery(aiStatusQuery());
   const coverage = config.data?.coverage;
-  const aiLine = status.data ? (aiFeatureOn(status.data) ? AI_ON_LINE : AI_OFF_LINE) : null;
+  const aiLine = status.data ? (aiFeatureOn(status.data) ? (config.data ? aiOnLine(config.data.aiAutomaticFilters) : null) : AI_OFF_LINE) : null;
   return (
     <TextPage eyebrow="About" title={`About ${PRODUCT_NAME}`} tabTitle={pageTitle({ kind: 'about' })}>
       <p>

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiStatusResponse } from '../../../../shared/contracts/ai';
 import { ApiError, aiStatusQuery } from '../../api';
 import { VisitorChangedError, forgetVisitor, visitorGeneration } from '../auth/visitor';
-import { askAvailability } from './status';
+import { askAvailability, undoAvailability } from './status';
 import { AiCheckError, useAiCheck, type AiCheckFailure } from './TurnstileGate';
 
 /**
@@ -27,8 +27,12 @@ export type AiNotice =
   | { kind: 'check'; reason: Exclude<AiCheckFailure, 'cancelled'>; unknownBefore?: boolean }
   | { kind: 'empty' }
   | { kind: 'message'; text: string }
-  /** An AI evidence search the server could not finish (503 `unavailable`): it used none of the visitor's searches. */
-  | { kind: 'unfinished' };
+  /**
+   * An AI evidence search the server could not finish (503 `unavailable`): it used none of the
+   * visitor's searches. `undo`: it was sent as the search's free undo, whose one-use claim the
+   * server may have taken before it failed.
+   */
+  | { kind: 'unfinished'; undo?: true };
 
 export type AiPhase = 'idle' | 'checking' | 'sending';
 
@@ -56,6 +60,12 @@ export interface RunOptions {
    * under, read before any of its asynchronous work; default: when `run` is called.
    */
   visitor?: number;
+  /**
+   * The request uses none of the visitor's own searches (an evidence search's one free undo,
+   * web/src/features/evidence/undo.ts): it is sent while they are used up, with the usual check
+   * (`undoAvailability`). The server decides, and refuses what is not.
+   */
+  quotaExempt?: boolean;
 }
 
 /** A fresh idempotency key for one logical AI request (kept across its retries). */
@@ -159,7 +169,7 @@ export function useAiRequest() {
       if (changed()) return finish(discarded);
       const current = status.data ?? (await queryClient.fetchQuery(aiStatusQuery()).catch(() => undefined));
       if (changed()) return finish(discarded);
-      const availability = askAvailability(current, current === undefined);
+      const availability = options.quotaExempt ? undoAvailability(current, current === undefined) : askAvailability(current, current === undefined);
       const refused = { ok: false, outcomeUnknown: false } as const;
       if (availability.kind === 'paused') return finish(refused, { kind: 'paused', status: availability.status });
       if (availability.kind === 'sign_in') {

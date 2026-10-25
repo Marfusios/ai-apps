@@ -1,4 +1,8 @@
 /** Private evidence search creation and free pagination. Matched routes enforce network limits. */
+import { autoFilterPolicy, autoFilterIdentity } from '../evidence/auto-filters.js';
+import { canUndo, isExpiredUndoClaim } from '../evidence/undo.js';
+import { initialExecution } from '../evidence/execution.js';
+import { evidenceRankingConfig, evidenceRankingIdentity } from '../evidence/ranking-config.js';
 import { evidenceJson } from '../evidence/routing.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gt, sql } from 'drizzle-orm';
@@ -12,12 +16,13 @@ import { evidenceSearches } from '../db/schema/evidence.js';
 import { caseSections } from '../db/schema/corpus.js';
 import { readCaseDetail } from '../db/queries/case-views.js';
 import { evidenceReservation } from '../evidence/pricing.js';
+import { evidenceRequestHashes } from '../evidence/idempotency.js';
 import { runEvidence } from '../evidence/run.js';
 import { insertSearch, pageOf, readOwnedSearch, takeOverSearch, type EvidenceRow } from '../evidence/store.js';
 import { crossSite } from '../http/origin.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { admitPaidRequest, forgetIdempotency, releaseQuota, setResultRef, type Admission } from '../quota/admit.js';
-import { canonicalRequestHash, principalHash, UnknownPrincipalError } from '../quota/policy.js';
+import { principalHash, UnknownPrincipalError } from '../quota/policy.js';
 import { settle } from '../quota/settle.js';
 import { setLockTimeout } from '../quota/locks.js';
 import { billing, checkAnonymousRetry, readersOf, sendRejection, visitor } from './briefs.js';
@@ -25,8 +30,8 @@ import type { ApiContext } from './context.js';
 
 const NOT_FOUND = 'No AI search with that link is available. AI searches expire after 24 hours.';
 const notFound = (reply: FastifyReply) => sendError(reply, 404, 'not_found', { message: NOT_FOUND });
-const send = (reply: FastifyReply, row: EvidenceRow): FastifyReply => {
-  const search = pageOf(row, 1);
+const send = (reply: FastifyReply, row: EvidenceRow, now: Date): FastifyReply => {
+  const search = pageOf(row, 1, now);
   // Legacy policy replies have no results to replay. Do not relabel them or dispatch again.
   if (!search) return notFound(reply);
   const valid = CreateEvidenceResponseSchema.parse({ kind: 'results', search });
@@ -57,7 +62,7 @@ async function replay(ctx: ApiContext, request: FastifyRequest, reply: FastifyRe
   }
   if (row.status === 'running') return sendError(reply, 429, 'in_flight');
   if (row.status === 'failed') return sendError(reply, 503, 'unavailable');
-  return send(reply, row);
+  return send(reply, row, ai.now());
 }
 
 export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: string): void {
@@ -74,8 +79,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const ai = ctx.ai, svc = ctx.evidence;
     if (!ai?.startup.enabled || !ai.policy || !ai.trials || !ai.llm?.evidenceScope || !ai.startup.models || !svc || svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const runtime = { ai: { ...ai, policy: ai.policy, llm: ai.llm, trials: ai.trials } };
-    const { turnstileToken: _token, idempotencyKey: _key, ...content } = body;
-    const requestHash = canonicalRequestHash({ version: EVIDENCE_CONTRACT_VERSION, ...content });
+    const { current: requestHash, legacyV2 } = evidenceRequestHashes(body);
     let who = await visitor(ctx, request);
     // Replay before availability/budget checks, with a fresh anonymous Turnstile token.
     for (const reader of readersOf(who)) {
@@ -83,7 +87,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
         WHERE principal_hash = ${reader.hash} AND idempotency_key = ${body.idempotencyKey} AND expires_at > ${ai.now()}`);
       const prior = earlier.rows[0] as { request_hash: string; result_ref: string | null } | undefined;
       if (prior) {
-        if (prior.request_hash !== requestHash) return sendError(reply, 409, 'conflict');
+        if (prior.request_hash !== requestHash && prior.request_hash !== legacyV2) return sendError(reply, 409, 'conflict');
         const id = /^evidence:([0-9a-f-]{36})$/.exec(prior.result_ref ?? '')?.[1];
         return id ? replay(ctx, request, reply, id, body) : sendError(reply, 429, 'in_flight');
       }
@@ -93,19 +97,38 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const pinned = await ctx.datasets.current().catch(() => null);
     if (!pinned?.passages?.servable || !pinned.manifest.passagesIndex || !(await svc.retriever.available(pinned))) return sendError(reply, 503, 'unavailable');
     if (svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
-    const billed = await billing(ctx, runtime, request, reply, who, body.turnstileToken);
+    const undoCandidate = body.kind === 'edited' && parent !== null && canUndo(parent, body, ai.now());
+    const billed = await billing(ctx, runtime, request, reply, who, body.turnstileToken, undoCandidate);
     if (!billed.ok) return billed.reply;
     who = billed.who;
     if (svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const payer = billed.payer;
-    const { reservationUsd } = evidenceReservation(ai.llm.models.scope, ai.startup.models.embed);
+    const ranking = ai.evidenceRanking ?? evidenceRankingConfig();
+    const { reservationUsd } = evidenceReservation(ai.llm.models.scope, ai.startup.models.embed, ranking);
     let admitted;
     try {
       admitted = await admitPaidRequest(ctx.db, { policy: ai.policy, principal: payer.principal, networkId: payer.networkId,
         idempotencyKey: body.idempotencyKey, requestHash, reservationUsd, uncertainAction: 'skip_scope', requestId: `evidence:${randomUUID()}`, now: ai.now(),
-        ...(payer.account ? { precondition: (tx) => lockLiveAccount(tx, payer.account!) } : {}) });
+        ...(payer.account ? { precondition: (tx) => lockLiveAccount(tx, payer.account!) } : {}),
+        ...(body.kind === 'edited' && undoCandidate ? { quotaExemption: {
+          eligible: async (tx) => {
+            const source = await readOwnedSearch(tx, body.from, readersOf(who), ai.now(), true);
+            return source !== null && canUndo(source, body, ai.now());
+          },
+          claim: async (tx, reservationId) => {
+            // The claiming reservation belongs to the current owner. Move a still-owned
+            // trial source under the account lifecycle lock before binding that claim.
+            if (payer.account && who.trial) await takeOverSearch(tx, body.from, who.trial.hash, payer.account.hash);
+            const claimed = await tx.update(evidenceSearches).set({ freeUndoReservationId: reservationId })
+              .where(and(eq(evidenceSearches.id, body.from), sql`${evidenceSearches.freeUndoReservationId} IS NULL`)).returning({ id: evidenceSearches.id });
+            if (claimed.length !== 1) throw new Error('evidence undo claim conflict');
+          },
+        } } : {}), });
     } catch (err) {
       if (err instanceof UnknownPrincipalError) return sendError(reply, 403, 'challenge_required');
+      // Admission has rolled back its reservation and claim. A lagging app clock
+      // must not turn the database's expiry refusal into an internal server error.
+      if (undoCandidate && isExpiredUndoClaim(err)) return notFound(reply);
       throw err;
     }
     if (!admitted.ok) return sendRejection(reply, admitted, ai.now());
@@ -147,13 +170,17 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
           source = await readOwnedSearch(tx, body.from, readersOf(who), ai.now(), true);
           if (!source?.data.query || source.status !== 'results') return 'source_gone';
         }
+        const question = body.kind === 'question' ? body.question : source!.data.question;
+        const execution = initialExecution(body, question, source?.data, ranking);
         const inserted = await insertSearch(tx, {
           readOwner: principalHash(ai.policy!, payer.principal), readOwnerKind: payer.principal.kind,
           billingPrincipal: admission.principalHash, billingKind: payer.principal.kind, reservationId: admission.reservationId,
           generationId: pinned.manifest.generationId, casesIndex: pinned.manifest.casesIndex, passagesIndex: pinned.manifest.passagesIndex!, now: ai.now(),
-          data: { question: body.kind === 'question' ? body.question : source!.data.question, edited: body.kind === 'edited',
+          data: { automaticFilters: null, marks: 'search_words', freeUndo: admission.quotaExempt === true,
+            autoFilterPolicy: autoFilterIdentity(ai.evidenceAutoFilters ?? autoFilterPolicy()), autoFilterReason: body.kind === 'edited' ? 'edited' : 'scope_unavailable',
+            ...execution, rankingConfig: evidenceRankingIdentity(ranking),
+            scopeOutcome: 'skipped', rerankOutcome: ranking.rerank ? 'not_run' : 'disabled', question, edited: body.kind === 'edited',
             version: EVIDENCE_CONTRACT_VERSION,
-            query: body.kind === 'question' ? { source: 'question' } : body.terms === undefined ? source!.data.query : { source: 'edited', terms: body.terms },
             appliedFilters: body.kind === 'edited' ? body.filters : {}, suggestion: null, hint: null, note: null,
             context: { dataset: pinned.dataset, citationTextVersion: pinned.manifest.citationTextVersion,
               fieldNormalizationVersion: pinned.fieldNormalizationVersion, mappingVerified: pinned.manifest.mappingVerified } },
@@ -170,12 +197,12 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     // only deletion, shutdown or the server deadline may stop paid work.
     svc.runs.set(row.id, { controller });
     try {
-      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(30_000)]));
+      await runEvidence(ctx, row, pinned, admission, AbortSignal.any([controller.signal, svc.shutdown, AbortSignal.timeout(ranking.deadlineMs)]));
       const current = await visitor(ctx, request);
       // A newly issued trial cookie is on the response, not yet on this request.
       // Sessions are re-read; only the trial just proved/issued by billing can be carried forward.
       const completed = await readOwnedSearch(ctx.db, row.id, readersOf({ ...current, trial: current.trial ?? who.trial }), ai.now(), false, { page: 1 });
-      return completed ? send(reply, completed) : notFound(reply);
+      return completed ? send(reply, completed, ai.now()) : notFound(reply);
     } catch {
       // Only fixed categories leave this route, including storage failures containing private query values.
       request.log.warn({ outcome: 'failed' }, 'evidence request unavailable');
@@ -190,7 +217,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     if (!id.success || !ctx.ai) return notFound(reply);
     if (!query.success) return sendError(reply, 400, 'bad_request');
     const row = await readOwnedSearch(ctx.db, id.data, readersOf(await visitor(ctx, request)), ctx.ai.now(), false, { page: query.data.page });
-    const page = row ? pageOf(row, query.data.page) : null;
+    const page = row ? pageOf(row, query.data.page, ctx.ai.now()) : null;
     return page ? reply.type(JSON_TYPE).send(evidenceJson(page)) : notFound(reply);
   });
   /** Authoritative full sections at the search's generation (no current-manifest lookup). */

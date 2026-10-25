@@ -145,6 +145,7 @@ describe('mock responses satisfy the contracts', () => {
   const read = (name: string): unknown => JSON.parse(readFileSync(join(appDir, 'web/mock', name), 'utf8'));
 
   it('config, dashboards and every case detail', () => {
+    // Older cached configs may omit automatic-filter capability.
     expect(() => ConfigResponseSchema.parse(read('config.json'))).not.toThrow();
     expect(() => DashboardResponseSchema.parse(read('dashboard-default.json'))).not.toThrow();
     expect(() => DashboardResponseSchema.parse(read('dashboard-all.json'))).not.toThrow();

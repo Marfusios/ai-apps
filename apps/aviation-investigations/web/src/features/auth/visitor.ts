@@ -20,8 +20,9 @@
  *   POST checks it right before the network call, after every wait), and their answer,
  *   success or failure, is discarded without restoring a question, a retry key or a
  *   navigation. A Turnstile check still open for them is cancelled (`onVisitorChange`).
- * - **Memory and this tab's storage:** the questions this page asked (for "Ask again") and
- *   the retry keys of AI requests whose answer never came are forgotten too.
+ * - **Memory and this tab's storage:** the questions this page asked (for "Ask again"), the
+ *   retry keys of AI requests whose answer never came and what this tab knows of evidence
+ *   searches' free undos (web/src/features/evidence/undo.ts) are forgotten too.
  * - **Other tabs.** Each change gets a random name, recorded in local storage
  *   (`VISITOR_STORAGE_KEY`: nothing about the visitor) and announced on a
  *   `BroadcastChannel` (`VISITOR_CHANNEL`). Every other tab of the site that listens
@@ -42,6 +43,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { AccountResponse } from '../../../../shared/contracts/account';
 import { forgetAllUnsettled } from '../ai/unsettled';
 import { forgetQuestions } from '../brief/memory';
+import { forgetUndos } from '../evidence/undo';
 
 /** Query namespaces that hold one visitor's data. */
 export const PRIVATE_QUERY_ROOTS = ['account', 'ai-status', 'brief', 'brief-case', 'evidence', 'evidence-case'] as const;
@@ -150,6 +152,7 @@ export async function forgetVisitor(queryClient: QueryClient, opts: ForgetOption
   generation += 1;
   forgetQuestions();
   forgetAllUnsettled();
+  forgetUndos();
   for (const listener of [...listeners]) {
     try {
       listener();

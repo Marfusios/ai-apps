@@ -1,7 +1,7 @@
 /** Evidence planning only. No timing defaults, classifications or factual prose. */
 import { z } from 'zod';
 import { BRIEF_FILTER_FACETS, BriefFiltersSchema, QuestionSchema } from '../../../shared/contracts/briefs.js';
-import { EvidenceSuggestionSchema } from '../../../shared/contracts/evidence.js';
+import { EvidenceScopeSuggestionSchema } from '../../../shared/contracts/evidence.js';
 import { FACET_VALUES, facetValueLabel } from '../../../shared/contracts/search.js';
 import { untrusted } from './untrusted.js';
 
@@ -9,7 +9,7 @@ export const EVIDENCE_SCOPE_VERSION = 'scope.e3';
 export const EvidenceScopeInputSchema = z.strictObject({ question: QuestionSchema });
 export type EvidenceScopeInput = z.infer<typeof EvidenceScopeInputSchema>;
 export const EvidenceScopeOutputSchema = z.discriminatedUnion('intent', [
-  EvidenceSuggestionSchema.extend({ intent: z.enum(['case_search']) }),
+  EvidenceScopeSuggestionSchema.extend({ intent: z.enum(['case_search']) }),
   z.strictObject({ intent: z.enum(['out_of_scope', 'operational_advice', 'corpus_statistics', 'case_comparison']), filters: BriefFiltersSchema }),
 ]);
 export type EvidenceScopeOutput = z.infer<typeof EvidenceScopeOutputSchema>;

@@ -64,13 +64,14 @@ export function MatchedText({ text, highlights }: { text: string; highlights: re
 
 /**
  * The key to the marks: "Marked in the excerpts: the suggested terms · their synonyms" (or "your
- * words"), the synonyms dotted. The suggestion's terms when the search has one (contract
- * `evidence.v2`), never said as the reader's.
+ * words", or "the words searched" when AirCase added terms to keyword search), the synonyms
+ * dotted. Whose words they are comes from the server's `marks` (contract `evidence.v3`): the
+ * suggested terms are never said as the reader's, nor the AI's added terms.
  */
 export function MatchLegend({ marked, className }: { marked: MarkedWords; className?: string }) {
   return (
     <p className={cx('text-meta text-muted', className)} data-legend={marked}>
-      Marked in the excerpts: <mark className="hit">{marked === 'suggested' ? LEGEND.suggested : LEGEND.yours}</mark>
+      Marked in the excerpts: <mark className="hit">{LEGEND[marked]}</mark>
       <span aria-hidden="true"> · </span>
       <span className="sr-only">; dotted: </span>
       <mark className="hit-synonym">{LEGEND.synonym}</mark>

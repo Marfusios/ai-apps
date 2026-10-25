@@ -1,23 +1,42 @@
 /**
- * Mock AI evidence searches (shared/contracts/evidence.ts, `evidence.v2`: the advisory-only
- * design) for the MSW handlers, the component tests and the end-to-end tests of the evidence
- * view. Everything a page shows is NTSB text from the fixture cases in `cases.json` and coded
- * data from `search-index.json`; offsets are computed from those texts here, never typed by
- * hand, so every excerpt is a verbatim slice of its section at its paragraph span.
+ * Mock AI evidence searches (shared/contracts/evidence.ts, `evidence.v3`) for the MSW handlers,
+ * the component tests and the end-to-end tests of the evidence view. Everything a page shows is
+ * NTSB text from the fixture cases in `cases.json` and coded data from `search-index.json`;
+ * offsets are computed from those texts here, never typed by hand, so every excerpt is a verbatim
+ * slice of its section at its paragraph span.
  *
- * - **Retrieval** never reads the scope stage: a question search ranks every default-cohort
- *   fixture case by how often the question's own words occur (probable cause counted three
- *   times), then newest first. An edited search applies exactly the filters sent (the mock
- *   search engine's own filter rules) and ranks by the user's words when it has them, else by
- *   the earlier search's query. Paging is free and reads the pinned list.
+ * - **Configuration**: like the server, one mock stands in for one ranking configuration
+ *   (`AVIATION_EVIDENCE_RANKING`) and one automatic-filter policy (`AVIATION_EVIDENCE_AUTO_FILTERS`),
+ *   the server's defaults (`er-q-v1`, `none`) unless `MockEvidenceOptions.config` names others
+ *   (live runs `er-q-v1` with the state policy, `MOCK_EVIDENCE_RELEASE`). The
+ *   configuration decides what keyword search reads (the question, the suggested terms, or both:
+ *   `query.keywords`), whether AI puts the leading results in order (`order`), whose words are
+ *   marked (`marks`), and whether a state the question names is applied (`automaticFilters`).
+ * - **Retrieval**: a question search ranks every default-cohort fixture case that passes its
+ *   filters (none, or the state applied automatically) by how often the words keyword search read
+ *   occur (probable cause counted three times), then newest first. An edited search applies
+ *   exactly the filters sent (the mock search engine's own filter rules) and ranks by the user's
+ *   words when it has them, by the question's own words when it restores them (`keywords:
+ *   'question'`), else by the earlier search's words. With a reranking configuration the leading
+ *   50 or 100 cases are put in order by a fixed stand-in for the AI's grades (the searched words
+ *   each case's probable cause holds), edits included. Paging is free and reads the pinned list.
  * - **The suggestion** (a stand-in for the scope stage): a few fixed rules turn words into
  *   Explore filters ("helicopter", "on approach", "IMC", "fatal", "at night", "agricultural", a
- *   US state, "since 2015") and the rest into search words. It is never applied; when there is
- *   one, the excerpts mark its words, else the query's own. The server, not the scope stage, reads
- *   an explicit counting request (the dashboard hint) or comparison request with case numbers (the
- *   compare hint) from the question; both still get results. Nothing blocks a search: a question
- *   about something else, or asking for operational advice, gets its results with one of the
- *   contract's fixed capability notes (`EVIDENCE_NOTE_TEXT`) and no suggestion.
+ *   US state, "since 2015") and the rest into search words. Only the guarded state may be applied
+ *   (the server's own guard, shared/state-eligibility.ts); terms keyword search read and an
+ *   applied state are not suggested again, and a suggestion with nothing left is null. With the
+ *   baseline ranking the excerpts mark the suggested terms when there are any, else the words
+ *   searched. The server, not the scope stage, reads an explicit counting request (the dashboard
+ *   hint) or comparison request with case numbers (the compare hint) from the question; both still
+ *   get results. Nothing blocks a search: a question about something else, or asking for
+ *   operational advice, gets its results with one of the contract's fixed capability notes
+ *   (`EVIDENCE_NOTE_TEXT`) and no suggestion.
+ * - **The one free undo**, by the server's rule (server/evidence/undo.ts): an edit of an original
+ *   question search the visitor owns, sending no words, that only removes what AirCase added (the
+ *   whole automatic state, the added terms, or both) is made without using one of the visitor's
+ *   searches (`freeUndo`), once per search; every other edit uses one (`quotaExempt` on the reply).
+ *   Every page read says whether it is still there, as the server computes it from its claim
+ *   (`undo`: `available`, `used` once claimed, `none` for an edit or a search with nothing added).
  * - **Projection**: the probable-cause statements in section order; up to three whole
  *   paragraphs (cut as the server cuts them: hard wraps joined, a heading kept with the paragraph
  *   under it) of the factual and analysis sections with
@@ -34,7 +53,10 @@
  * - "expire": the search is created, then reads of it answer 404 (it expired);
  * - "unavailable", "lost before start", "lost response" (the first time a question is asked):
  *   a 503 that releases the admission, a response lost before the search started, and a
- *   response lost after it started (a replay of its key returns it without spending again).
+ *   response lost after it started (a replay of its key returns it without spending again);
+ * - "undo fails": the search's first free undo is admitted, takes the one-use claim and then fails
+ *   (a 503, which a replay of its key answers again): the server keeps the claim, so the search's
+ *   undo is used and trying again uses one of the visitor's searches.
  */
 import {
   EVIDENCE_CANDIDATE_CEILING,
@@ -45,6 +67,7 @@ import {
   MAX_TERMS_CHARS,
   type CreateEvidenceRequest,
   type CreateEvidenceResponse,
+  type EvidenceAutomaticFilters,
   type EvidenceCase,
   type EvidenceExcerpt,
   type EvidenceNote,
@@ -54,7 +77,10 @@ import {
 import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail, Section } from '../../shared/contracts/cases.js';
 import type { ErrorResponse } from '../../shared/contracts/common.js';
-import { SECTION_LABEL, defaultSearchRequest, type CaseRow, type SearchRequest } from '../../shared/contracts/search.js';
+import { FACET_VALUES, SECTION_LABEL, defaultSearchRequest, type CaseRow, type SearchRequest } from '../../shared/contracts/search.js';
+import { DEFAULT_EVIDENCE_AUTO_FILTERS, EVIDENCE_AUTO_FILTER_VERSIONS, type EvidenceAutoFilterVersion } from '../../shared/evidence-auto-filters.js';
+import { DEFAULT_EVIDENCE_RANKING, EVIDENCE_RANKING_VERSIONS, type EvidenceRankingVersion } from '../../shared/evidence-ranking.js';
+import { eligibleEmittedStates } from '../../shared/state-eligibility.js';
 import { US_STATE } from '../../shared/vocab.js';
 import { AVIATION_SYNONYMS } from '../../shared/aviation-analysis.js';
 import { isNarrativeHeading, wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
@@ -95,7 +121,68 @@ export const MOCK_EVIDENCE_QUESTIONS = {
   comparison: 'Compare DFW08TA066 and NYC08LA106 with ZZZ99ZZ999',
   /** One case number without a comparison request: results only. */
   single: 'What happened in DFW08TA066',
+  /**
+   * A state the question names, a suggested phase and terms: with the guarded automatic state
+   * (`state-explicit.v1.3`), Texas is applied and the phase stays a suggestion; with terms in
+   * keyword search, "carb icing" is searched too and is no longer suggested.
+   */
+  stateTerms: 'Carb icing on approach in Texas',
+  /**
+   * The same in a state whose cases hold the suggested terms: with the question alone in keyword
+   * search (what live runs), Missouri is applied and the excerpts mark "carb icing".
+   */
+  stateMarked: 'Carb icing on approach in Missouri',
+  /** Two states the question names together: applied as one filter, either state. */
+  twoStates: 'Engine power loss in California or Nevada',
 } as const;
+
+// ---------------------------------------------------------------------------
+// The configuration the mock stands in for (server `AVIATION_EVIDENCE_RANKING` and
+// `AVIATION_EVIDENCE_AUTO_FILTERS`, DESIGN "Evidence.v3")
+
+export interface MockEvidenceConfig {
+  /** What keyword search reads, and whether AI puts the leading results in order. */
+  ranking: EvidenceRankingVersion;
+  /** Whether a state the question names is applied (`state-explicit.v1.3`) or only suggested (`none`). */
+  autoFilters: EvidenceAutoFilterVersion;
+}
+
+/** The server's defaults: the question alone, in match order, nothing applied automatically. */
+export const MOCK_EVIDENCE_BASELINE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: DEFAULT_EVIDENCE_AUTO_FILTERS };
+
+/**
+ * What live runs (Task 24's release): the question alone, in match order, the suggested terms
+ * marked, and a state the question names applied by the guarded policy.
+ */
+export const MOCK_EVIDENCE_RELEASE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: 'state-explicit.v1.3' };
+
+/**
+ * Session storage (dev mock mode and end-to-end tests): the configuration the mock API stands in
+ * for, as JSON `{"ranking": …, "autoFilters": …}`; anything else is the baseline.
+ */
+export const MOCK_EVIDENCE_CONFIG_KEY = 'casebook-mock-evidence';
+
+/** A configuration as session storage holds it, or the baseline. */
+export function parseMockEvidenceConfig(raw: string | null): MockEvidenceConfig {
+  try {
+    const v = JSON.parse(raw ?? 'null') as Partial<Record<keyof MockEvidenceConfig, unknown>> | null;
+    const ranking = EVIDENCE_RANKING_VERSIONS.find((r) => r === v?.ranking) ?? MOCK_EVIDENCE_BASELINE.ranking;
+    const autoFilters = EVIDENCE_AUTO_FILTER_VERSIONS.find((a) => a === v?.autoFilters) ?? MOCK_EVIDENCE_BASELINE.autoFilters;
+    return { ranking, autoFilters };
+  } catch {
+    return MOCK_EVIDENCE_BASELINE;
+  }
+}
+
+/** What keyword search reads under a ranking configuration (server/evidence/ranking-config.ts). */
+function lexicalText(ranking: EvidenceRankingVersion): 'question' | 'terms' | 'question+terms' {
+  return ranking.startsWith('er-qt-') ? 'question+terms' : ranking.startsWith('er-t-') ? 'terms' : 'question';
+}
+
+/** How many leading results the configuration's reranker orders, or null without one. */
+function rerankDepth(ranking: EvidenceRankingVersion): number | null {
+  return ranking.includes('-h100-') ? 100 : ranking.includes('-h50-') || ranking.includes('-s50-') ? 50 : null;
+}
 
 // ---------------------------------------------------------------------------
 // Reading the question (a stand-in for the scope stage)
@@ -144,11 +231,13 @@ const STATES = Object.entries(US_STATE) as [string, string][];
 
 /** The scope stage's suggestion for a case-search question: filters and words, never applied. */
 type Suggestion = NonNullable<EvidencePage['suggestion']>;
+type ScopeSuggestion = { filters: BriefFilters; terms: string };
 type Query = EvidencePage['query'];
+type Keywords = Extract<Query, { source: 'question' }>['keywords'];
 type Hint = NonNullable<EvidencePage['hint']>;
 
 /** Filters and search words suggested for a question (a stand-in for the scope stage). */
-export function suggestFor(question: string): Suggestion {
+export function suggestFor(question: string): ScopeSuggestion {
   const filters: Record<string, string[] | number> = {};
   const consumed: [number, number][] = [];
   const addValues = (facet: BriefFilterFacet, values: readonly string[]): void => {
@@ -443,6 +532,45 @@ export function evidenceCases(filters: BriefFilters, words: string, marked: stri
   });
 }
 
+/**
+ * The leading `depth` cases put in order as a reranker's grades would (a fixed stand-in: how many
+ * of the searched words, up to three, each case's probable cause holds), the match order breaking
+ * ties; the cases after them keep their places. Ranks are numbered again.
+ */
+export function aiOrder(cases: readonly EvidenceCase[], words: string, depth: number): EvidenceCase[] {
+  const terms = termsOf(words);
+  const grade = (c: EvidenceCase): number => Math.min(3, terms.filter((t) => c.probableCauses.some((p) => hitsIn(p.text, [t]).length > 0)).length);
+  const head = cases
+    .slice(0, depth)
+    .map((c, i) => ({ c, i, g: grade(c) }))
+    .sort((a, b) => b.g - a.g || a.i - b.i)
+    .map((x) => x.c);
+  return [...head, ...cases.slice(depth)].map((c, i) => ({ ...c, rank: i + 1 }));
+}
+
+/** Filters as the server compares them: facets as sets in vocabulary order, empty facets left out, years kept. */
+function sameFilters(a: BriefFilters, b: BriefFilters): boolean {
+  const canonical = (f: BriefFilters): string => {
+    const out: Record<string, unknown> = {};
+    for (const facet of BRIEF_FILTER_FACETS) {
+      const values = (f as Partial<Record<BriefFilterFacet, string[]>>)[facet] ?? [];
+      if (values.length > 0) out[facet] = (FACET_VALUES[facet] as readonly string[]).filter((v) => values.includes(v));
+    }
+    if (f.yearFrom !== undefined) out.yearFrom = f.yearFrom;
+    if (f.yearTo !== undefined) out.yearTo = f.yearTo;
+    return JSON.stringify(out);
+  };
+  return canonical(a) === canonical(b);
+}
+
+/** What is left of a suggestion once keyword search read its terms: nothing left is no suggestion (server/evidence/disclosure.ts). */
+function remainingSuggestion(keywords: Keywords, suggestion: ScopeSuggestion | null): Suggestion | null {
+  if (!suggestion) return null;
+  const terms = keywords.kind === 'question' ? suggestion.terms : null;
+  const hasFilters = Object.values(suggestion.filters).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined));
+  return terms === null && !hasFilters ? null : { filters: suggestion.filters, terms };
+}
+
 // ---------------------------------------------------------------------------
 // The in-memory server
 
@@ -454,9 +582,20 @@ interface MockSearch {
   question: string;
   query: Query;
   appliedFilters: BriefFilters;
+  automaticFilters: EvidenceAutomaticFilters | null;
   suggestion: Suggestion | null;
   hint: Hint | null;
   note: EvidenceNote | null;
+  order: EvidencePage['order'];
+  marks: EvidencePage['marks'];
+  /** Made as the one free undo of the search it edits. */
+  freeUndo: boolean;
+  /** The words keyword search read; an edit that sends no words reads them again. */
+  lexical: string;
+  /** Made by an edit: never the parent of a free undo. */
+  edited: boolean;
+  /** Its one free undo is used. */
+  undoClaimed: boolean;
   cases: EvidenceCase[];
   createdAt: Date;
   owner: MockReader;
@@ -470,10 +609,17 @@ const stamp = (d: Date): string => d.toISOString();
 const error = (status: number, code: ErrorResponse['error'], message: string): MockReply<never> => ({ status, body: { error: code, message } });
 const NOT_FOUND = (): MockReply<never> => error(404, 'not_found', 'No AI search with that link is available. AI searches expire after 24 hours.');
 
+/** A reply to `POST /api/evidence`; `quotaExempt`: the search is the one free undo, so it uses none of the visitor's searches. */
+export type MockEvidenceReply = MockReply<CreateEvidenceResponse> & { quotaExempt?: boolean };
+
+type EditRequest = Extract<CreateEvidenceRequest, { kind: 'edited' }>;
+
 export interface MockEvidenceOptions {
   now?: () => Date;
   /** Who is asking now (default: the trial): a search is read only by its owner, like the server. */
   visitor?: () => MockReader;
+  /** The ranking configuration and automatic-filter policy the mock stands in for (default: the server's defaults). */
+  config?: MockEvidenceConfig;
 }
 
 export class MockEvidence {
@@ -482,14 +628,18 @@ export class MockEvidence {
   private readonly keys = new Map<string, { request: string; id: string }>();
   /** Keys the server took that made no search (a released admission, a start that failed): a retry is a 409. */
   private readonly unfinished = new Set<string>();
+  /** Keys of free undos that failed after admission ("undo fails"): a replay answers the same 503. */
+  private readonly failed = new Set<string>();
   private readonly played = new Set<string>();
   private seq = 0;
   private readonly now: () => Date;
   private readonly visitor: () => MockReader;
+  readonly config: MockEvidenceConfig;
 
   constructor(opts: MockEvidenceOptions = {}) {
     this.now = opts.now ?? (() => new Date());
     this.visitor = opts.visitor ?? (() => 'trial');
+    this.config = opts.config ?? MOCK_EVIDENCE_BASELINE;
   }
 
   /** True the first time `what` happens to `question`. */
@@ -513,6 +663,32 @@ export class MockEvidence {
     return search;
   }
 
+  /**
+   * Test hook: a search of the given shape, owned by the visitor now asking, as if asked or edited
+   * earlier (no cases, so its page reads empty), with its undo claimed when `undoClaimed`, gone when
+   * `expired`. Returns its id.
+   */
+  seedForTests(fields: Pick<MockSearch, 'question' | 'query' | 'appliedFilters' | 'automaticFilters' | 'edited'> & Partial<Pick<MockSearch, 'undoClaimed' | 'freeUndo' | 'expired'>>): string {
+    const search: MockSearch = {
+      id: this.newId(),
+      suggestion: null,
+      hint: null,
+      note: null,
+      order: 'match',
+      marks: 'search_words',
+      freeUndo: false,
+      lexical: fields.question,
+      undoClaimed: false,
+      cases: [],
+      createdAt: this.now(),
+      owner: this.visitor(),
+      expired: false,
+      ...fields,
+    };
+    this.searches.set(search.id, search);
+    return search.id;
+  }
+
   /** Signing in from a search's page moves it from the trial to the account (the handover). */
   handOver(id: string): void {
     const search = this.searches.get(id);
@@ -524,6 +700,17 @@ export class MockEvidence {
     for (const [id, search] of this.searches) if (search.owner === 'account') this.searches.delete(id);
   }
 
+  /**
+   * The search's undo hint at this read (server/evidence/store.ts `pageOf`): an original question
+   * search with an automatic state or added terms has its one free undo until it is claimed; an
+   * edit, or a search with nothing added, has none.
+   */
+  private undoHint(search: MockSearch): EvidencePage['undo'] {
+    if (search.edited || search.query.source !== 'question') return 'none';
+    if (!search.automaticFilters?.state.length && search.query.keywords.kind === 'question') return 'none';
+    return search.undoClaimed ? 'used' : 'available';
+  }
+
   private page(search: MockSearch, n: number): EvidencePage {
     const total = search.cases.length;
     const first = (n - 1) * EVIDENCE_PAGE_SIZE;
@@ -533,6 +720,11 @@ export class MockEvidence {
       question: search.question,
       query: search.query,
       appliedFilters: search.appliedFilters,
+      automaticFilters: search.automaticFilters,
+      order: search.order,
+      marks: search.marks,
+      freeUndo: search.freeUndo,
+      undo: this.undoHint(search),
       suggestion: search.suggestion,
       hint: search.hint,
       note: search.note,
@@ -546,14 +738,24 @@ export class MockEvidence {
     };
   }
 
-  private start(fields: Pick<MockSearch, 'question' | 'query' | 'appliedFilters' | 'suggestion' | 'hint' | 'note'>, edited: boolean): MockSearch {
-    // Retrieval reads the question's own words, or the user's; the suggestion only marks the excerpts.
-    const words = fields.query.source === 'edited' ? fields.query.terms : questionWords(fields.question);
-    const cases = /\bnothing\b/i.test(fields.question) && !edited ? [] : evidenceCases(fields.appliedFilters, words, fields.suggestion?.terms ?? words);
+  /**
+   * Retrieval and projection: the cases that pass the applied filters, ranked by the words keyword
+   * search reads (`lexical`), marking `marked`; with a reranker, the leading ones in AI order.
+   */
+  private start(
+    fields: Omit<MockSearch, 'id' | 'cases' | 'order' | 'createdAt' | 'owner' | 'expired' | 'undoClaimed'>,
+    marked: string,
+  ): MockSearch {
+    const ranked = /\bnothing\b/i.test(fields.question) && !fields.edited ? [] : evidenceCases(fields.appliedFilters, fields.lexical, marked);
+    const depth = rerankDepth(this.config.ranking);
+    // The server reorders only when the reranker's grades were applied; with no case to grade it keeps the match order.
+    const ai = depth !== null && ranked.length > 0;
     const search: MockSearch = {
       id: this.newId(),
       ...fields,
-      cases,
+      cases: ai ? aiOrder(ranked, fields.lexical, depth) : ranked,
+      order: ai ? 'ai_relevance' : 'match',
+      undoClaimed: false,
       createdAt: this.now(),
       owner: this.visitor(),
       expired: false,
@@ -562,10 +764,44 @@ export class MockEvidence {
     return search;
   }
 
+  /**
+   * The one free undo (server/evidence/undo.ts `canUndo`): `parent` is an original question
+   * search whose undo is not used yet; the edit sends no words, and it removes the parent's whole
+   * automatic state, its added terms (`keywords: 'question'`), or both, and changes nothing else.
+   * Removing one state of several narrows the search, so it is an ordinary edit.
+   */
+  private undoable(parent: MockSearch, edit: EditRequest): boolean {
+    if (parent.edited || parent.undoClaimed || edit.terms !== undefined || parent.query.source !== 'question') return false;
+    const removedTerms = edit.keywords === 'question' && parent.query.keywords.kind !== 'question';
+    if (edit.keywords !== undefined && !removedTerms) return false;
+    let removedState = false;
+    if (!sameFilters(edit.filters, parent.appliedFilters)) {
+      const automatic = parent.automaticFilters;
+      if (!automatic?.state.length || !sameFilters({ state: automatic.state }, { state: parent.appliedFilters.state ?? [] })) return false;
+      const { state: _state, ...rest } = parent.appliedFilters;
+      if (!sameFilters(edit.filters, rest)) return false;
+      removedState = true;
+    }
+    return removedState || removedTerms;
+  }
+
+  /**
+   * Whether a request is exempt from the visitor's own search quota before admission (the
+   * server's gate and admission): a replay of a known key, or an edit that would be its search's
+   * one free undo. Turnstile and every other check still apply.
+   */
+  quotaExempt(body: CreateEvidenceRequest): boolean {
+    if (this.keys.has(body.idempotencyKey) || this.failed.has(body.idempotencyKey)) return true;
+    if (body.kind !== 'edited') return false;
+    const from = this.own(body.from);
+    return from !== undefined && this.undoable(from, body);
+  }
+
   /** `POST /api/evidence`: 201 with page 1 of a new search (nothing blocks a search). */
-  create(body: CreateEvidenceRequest): MockReply<CreateEvidenceResponse> {
-    const request = body.kind === 'question' ? `q:${body.question}` : `e:${body.from}:${JSON.stringify(body.filters)}:${body.terms ?? ''}`;
+  create(body: CreateEvidenceRequest): MockEvidenceReply {
+    const request = body.kind === 'question' ? `q:${body.question}` : `e:${body.from}:${JSON.stringify(body.filters)}:${body.terms ?? ''}:${body.keywords ?? ''}`;
     if (this.unfinished.has(body.idempotencyKey)) return error(409, 'conflict', 'This request was accepted earlier but did not start. Ask again.');
+    if (this.failed.has(body.idempotencyKey)) return error(503, 'unavailable', 'AI search is temporarily unavailable.');
     const earlier = this.keys.get(body.idempotencyKey);
     if (earlier) {
       if (earlier.request !== request) return error(409, 'conflict', 'This request key was used for another search.');
@@ -576,11 +812,38 @@ export class MockEvidence {
     if (body.kind === 'edited') {
       const from = this.own(body.from);
       if (!from) return NOT_FOUND();
-      // Exactly the filters sent; the user's words when sent, else the earlier search's query. No scope stage.
-      const query: Query = body.terms !== undefined ? { source: 'edited', terms: body.terms } : from.query;
-      const search = this.start({ question: from.question, query, appliedFilters: body.filters, suggestion: null, hint: null, note: null }, true);
+      const free = this.undoable(from, body);
+      if (free && /\bundo fails\b/i.test(from.question) && this.once('undo-fails', from.id)) {
+        // Admitted as the free undo, its claim taken, then failed: the server keeps the claim.
+        from.undoClaimed = true;
+        this.failed.add(body.idempotencyKey);
+        return error(503, 'unavailable', 'AI search is temporarily unavailable.');
+      }
+      // Exactly the filters sent; the user's words when sent, the question's own when restored,
+      // else the earlier search's query and words. No scope stage, so no suggestion and nothing
+      // applied automatically. One search per edit.
+      const query: Query = body.terms !== undefined ? { source: 'edited', terms: body.terms } : body.keywords === 'question' ? { source: 'question', keywords: { kind: 'question' } } : from.query;
+      const lexical = body.terms ?? (body.keywords === 'question' ? questionWords(from.question) : from.lexical);
+      const search = this.start(
+        {
+          question: from.question,
+          query,
+          appliedFilters: body.filters,
+          automaticFilters: null,
+          suggestion: null,
+          hint: null,
+          note: null,
+          marks: 'search_words',
+          freeUndo: free,
+          lexical,
+          edited: true,
+        },
+        lexical,
+      );
+      // The parent's one free undo is used by this search, whatever happens next.
+      if (free) from.undoClaimed = true;
       this.keys.set(body.idempotencyKey, { request, id: search.id });
-      return { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
+      return { status: 201, body: { kind: 'results', search: this.page(search, 1) }, quotaExempt: free };
     }
     const q = body.question.toLowerCase();
     if (/\bunavailable\b/.test(q) && this.once('unavailable', q)) {
@@ -594,11 +857,45 @@ export class MockEvidence {
     // Nothing blocks a search: a policy intent only selects a note (and suggests nothing); a failed
     // scope stage costs only the suggestion. The hint is the server's own reading of the question.
     const note = noteFor(body.question);
-    const suggestion = note !== null || /\bscope failure\b/.test(q) ? null : suggestFor(body.question);
+    const scope = note !== null || /\bscope failure\b/.test(q) ? null : suggestFor(body.question);
     const hint = hintFor(body.question);
-    const search = this.start({ question: body.question, query: { source: 'question' }, appliedFilters: {}, suggestion, hint, note }, false);
+    // What keyword search reads: the question's own words, and the suggested terms when the configuration searches them.
+    const words = questionWords(body.question);
+    const mode = lexicalText(this.config.ranking);
+    const keywords: Keywords = scope && mode !== 'question' ? { kind: mode, terms: scope.terms } : { kind: 'question' };
+    const lexical = keywords.kind === 'terms' ? keywords.terms : keywords.kind === 'question+terms' ? `${words} ${keywords.terms}` : words;
+    // A state the question names, applied only by the guarded policy and the server's own guard.
+    let suggested = scope;
+    let automaticFilters: EvidenceAutomaticFilters | null = null;
+    if (scope && this.config.autoFilters === 'state-explicit.v1.3' && (scope.filters.state ?? []).length > 0) {
+      const { states } = eligibleEmittedStates(body.question, scope.filters.state ?? []);
+      if (states.length > 0) {
+        automaticFilters = { state: states as EvidenceAutomaticFilters['state'] };
+        const { state: _applied, ...rest } = scope.filters;
+        suggested = { ...scope, filters: rest };
+      }
+    }
+    const suggestion = remainingSuggestion(keywords, suggested);
+    // The baseline marks the suggested terms while it suggests some; every other configuration marks the words searched.
+    const marks: EvidencePage['marks'] = this.config.ranking === DEFAULT_EVIDENCE_RANKING && suggestion?.terms ? 'suggested_terms' : 'search_words';
+    const search = this.start(
+      {
+        question: body.question,
+        query: { source: 'question', keywords },
+        appliedFilters: automaticFilters ? { state: [...automaticFilters.state] } : {},
+        automaticFilters,
+        suggestion,
+        hint,
+        note,
+        marks,
+        freeUndo: false,
+        lexical,
+        edited: false,
+      },
+      marks === 'suggested_terms' && suggestion?.terms ? suggestion.terms : lexical,
+    );
     this.keys.set(body.idempotencyKey, { request, id: search.id });
-    const created: MockReply<CreateEvidenceResponse> = { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
+    const created: MockEvidenceReply = { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
     if (/\bexpire/.test(q)) search.expired = true;
     return /\blost response\b/.test(q) && this.once('lost-response', q) ? { ...created, lost: true } : created;
   }

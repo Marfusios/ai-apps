@@ -383,14 +383,16 @@ copy of source evidence or the store for users/quotas.
 
 ## 5. Hybrid retrieval and bounded RAG
 
-### Evidence-view MVP (`evidence.v2`)
+### Evidence-view MVP (v2 baseline; v3 disclosures below)
 
 This is the initial AI product; the composed-answer pipeline below is disabled.
 `POST /api/evidence` tries the advisory `scope.e3` stage then embeds the original
 question; edits skip scope. Scope is revision1 with unchecked readings removed,
 advisory wording and a strict `{result: ...}` envelope around its discriminated union.
-Suggestions are labelled **not applied**, escaped/rendered as text, and never control
-routing or retrieval. The result carries the executed `query`, `appliedFilters`,
+In the live/default baseline, suggestions are labelled **not applied**, escaped/rendered
+as text, and never control routing or retrieval. Dev-only ranking experiments below
+may use validated terms in lexical search; the separate v3 policy may apply guarded
+state filters. All remaining suggestions are unapplied. The result carries the executed `query`, `appliedFilters`,
 nullable `suggestion`, nullable `hint` and nullable `note`; no specific unchecked readings
 are shown. The research-only boundary and fixed `EVIDENCE_NOTICE` remain mandatory on
 every surface. A validated `out_of_scope` intent selects the fixed `scope` capability
@@ -398,8 +400,8 @@ note; `operational_advice` selects the fixed operational-advice note. All other 
 provider errors, timeouts, invalid/missing or over-cap scope output, and skipped scope
 select no note. Edits always have no note. Render only `EVIDENCE_NOTE_TEXT[note]`: no
 model-written policy text or judgment about the particular question. Absence of a note
-assures nothing. Nothing in scope blocks retrieval, changes its inputs, or alters
-admission, quota counting or accounting. Every successful search returns results.
+assures nothing. Nothing in scope blocks retrieval or alters admission, quota counting or accounting.
+In the live/default baseline it also cannot change retrieval inputs. Every successful search returns results.
 
 The server's `evidence-hints.v3` grammar supplies only optional navigation hints:
 statistics without filters, and comparisons naming exactly the matched IDs. An ID alone
@@ -410,11 +412,12 @@ valid astral characters remain supported. Normal security, quota and budget gate
 The three-channel `retrieval.v2` ranking stays unchanged (200/channel, exact case RRF,
 deterministic lexical cutoffs; kNN remains approximate). Delivery is separately versioned:
 100 candidates, ten/page, mapping over those first 100 with the same query vector
-and at most eight concurrent Elasticsearch requests. All three channels use the
-original question with no suggested filters. Explicit edits apply exactly the submitted
-filters. Omitted terms inherit the parent's executed query, never the suggestion;
-supplied terms explicitly replace it. Highlights/counts use suggested terms when present,
-otherwise the executed query words, and describe occurrences, not question satisfaction. A
+and at most eight concurrent Elasticsearch requests. In the live/default baseline all
+three channels use the original question with no suggested filters. Explicit edits apply exactly the submitted
+filters. Omitted terms inherit both of the parent's executed query texts byte for byte;
+supplied terms explicitly replace both. The baseline keeps suggestion-based highlights
+when it retains a suggestion, otherwise executed words. Other configurations highlight
+executed lexical words only. Counts and declared synonyms describe occurrences, not question satisfaction. A
 search stores its ranking and projection, generation, both concrete indices and seeds.
 A new edited search uses the current publication. An existing search's free pages never
 change or call a provider. Prune/cleanup preserve its references until the 24-hour expiry.
@@ -440,7 +443,8 @@ omit them. Provider calls settle with result storage in one transaction. A faile
 returns its quota unit but retains real spend; a result with any note counts once.
 Crash recovery closes abandoned searches and returns their units while charging the reservation conservatively. A
 client disconnect leaves admitted work running and replayable; shutdown, deletion
-and the 30-second server deadline can stop it.
+and the configured server deadline can stop it (30 seconds for the baseline, 50 or
+60 seconds with a reranker).
 
 Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
 context-loss counterexamples through the actual UI, including required context on the
@@ -451,9 +455,10 @@ fixed capability notes instead of blocking policy replies. This does not retroac
 pass the earlier scope quality evaluation or clear public launch. No new paid suggestion
 threshold is required; final server, excerpt/UI, security, budget and lifecycle checks
 remain required. Track C/N supplies regressions only. Metamorphic tests vary every model
-output while holding all three retrieval channels, default cohort, ranking, excerpt selection and pagination fixed.
-The ordinary result is projected and byte-checked before suggested highlights are added.
-If optional suggestion metadata would exceed the storage budget, it is omitted and the
+output while holding all three retrieval channels, default cohort, ranking, excerpt selection and pagination fixed in the baseline.
+The ordinary result is projected and byte-checked before the optional suggestion is added;
+the baseline then marks suggested terms, while other versions keep executed-word marks.
+If optional suggestion metadata and its baseline highlights would exceed the storage budget, they are omitted and the
 original query's highlights remain. Canonical text and selection never change to make room.
 
 Provider token-count preflight is separate from model-quality confirmation. The old
@@ -900,10 +905,166 @@ initially; ambiguous retries must not multiply unaccounted charges.
 
 ## 9. Model providers, choices and cost envelope
 
+### Evidence ranking experiments
+
+`AVIATION_EVIDENCE_RANKING` selects a frozen configuration in
+`server/evidence/ranking-config.ts`. The default, `er-q-v1`, keeps question-only
+retrieval and no reranker. Only that version is allowed with `APP_ENV=live`.
+The dev grid is the three lexical choices (`q`: question, `t`: validated scope
+terms, `qt`: question plus newline plus terms), each without reranking or with
+Haiku 5.5 at depth 50 or 100 (`h50`/`h100`). Terms and joined-text versions also
+offer Sonnet 5.5 at depth 50 (`s50`) for evaluation. Missing, empty, invalid,
+failed, skipped or non-search scope results fall back to question text. Both
+BM25 channels use the selected lexical text; kNN always uses the question.
+Explicit edited terms replace both texts; a filter-only edit inherits both.
+All edits skip scope, including when a reranker is selected. If no complete appended
+term survives the joined-text bound, the lexical source is `fallback_question`; the
+question-only baseline retains its original unbounded lexical question. The hashed
+highlight policy is `suggested-or-executed` only for `er-q-v1`, and `executed-lexical`
+for every alternative. The baseline therefore preserves Task 23 display behavior.
+
+One `rankEvidence` function serves HTTP and evaluation. Its injected spend gate is
+the HTTP admission adapter or `ledgerRankingSpendGate` (the production evaluation
+ledger, restore hold and allowance). Callers must keep any experiment allocation
+wrapper around that gate. It returns configuration version/sha256, executed lexical
+and vector texts, lexical source, stage outcomes/usage, and ranked cases.
+The full execution record stays private; evidence.v3 exposes the bounded facts below.
+Evaluation caches must include this identity, dataset/indices and the exact inputs.
+Every configuration includes the rerank user-turn template and `rerank-input.v1`
+identity, including the hash of a fixed synthetic input rendered through production
+masking, truncation and escaping. The adapter validates the entire registered config.
+
+After retrieval, `rerank.r1` sends at most 50 or 100 unique cases using request-local
+labels. The event year, first aircraft category/make/model plus additional-aircraft
+count, phase labels, every probable-cause variant and the displayed excerpts are
+the only case fields. Case-number tokens inside those fields are masked in this
+model input only. The frozen bounds are 500 `cl100k_base` tokens per serialized
+case, depth × 500 + 1,500 for the serialized user turn, 60 for aircraft, 50 for
+phases, 220 shared across cause variants and 260 shared across excerpts. Field
+shares keep complete sentences from the beginning; excess sentences are removed
+from the end (last excerpts, last causes, phases, aircraft). Every variant retains
+a slot even if empty; every cut is marked. Canonical displayed text is unchanged.
+
+Thinking is disabled, effort low, retries zero, fixed system caching at five minutes.
+The output is only `{grades:[{id,grade}]}` with integer grades 0–3, every label once
+and no extra fields. The selected prefix is sorted by grade descending with fused
+rank as tie-breaker; the tail is unchanged. Timeout, abort, refusal, truncation,
+invalid output or provider failure returns the fused order. No retry or model switch
+is possible. Deletion/shutdown checks precede each paid stage. A successful search
+counts once, independent of order or fallback; saved pages never call a provider.
+The `evidence.rerank` span contains only model, depth, usage, cost, duration and outcome.
+
+Public use of any non-baseline configuration needs evaluation, gate clearance, and
+the controller's `evidence.v3` UI disclosure for added terms and AI ordering.
+Changing the environment setting cannot bypass the live allowlist.
+The evaluated scope.e3 prompt/schema/settings are unchanged.
+
+### Evidence.v3: applied state, disclosures and undo
+
+The public response is `evidence.v3`. The ranking configurations and their hashes
+remain those evaluated for Task 24; automatic filters are an independent, frozen
+policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
+identity includes the outputs of a fixed, versioned guard-probe set; a changed response
+to any probe changes the hash even without a guard version bump. Live accepts
+`none` and the reviewed `state-explicit.v1.3`; the default stays `none` and an operator
+must explicitly enable state in the environment settings. The independent live
+ranking allowlist remains `er-q-v1` only. `state-explicit.v1.3` uses
+only a valid scope.e3 case-search result's state set, on original question searches.
+It requires agreement with the complete explicitly named state set. Its finite
+rules reject recognized ambiguous places, negation, unsafe wording and attribution
+patterns; they cannot establish event attribution for arbitrary natural language.
+After NFKC, a full state name followed by city/county/river or another guarded place
+suffix abstains. v1.3 preserves every v1.1 rule and adds five case-insensitive rejections:
+
+- Another/other/previous/prior/earlier/later/similar/same/second/related followed by
+  an event noun, with up to two intervening word or hyphenated-word tokens, or
+  `titles`/`headline(s)` anywhere (`other_event`).
+- Reference or comparison wording before the first state mention, including
+  cite/discuss/mention, before/after, and `like` followed by a demonstrative or
+  article (`referenced_event`). A qualified postal mention starts at its city.
+- Title, heading, caption, word/phrase/text or naming language anywhere (`title_text`).
+- Destination, departure, maintenance, credential or other listed attribute wording
+  immediately before any state mention, with up to five intervening words
+  (`attributed_elsewhere`).
+- The/that/this followed by a singular event noun, with up to two intervening words,
+  immediately before a location qualifier and state mention (`referenced_event`).
+
+The exact patterns are versioned in `shared/state-eligibility.ts`. For example,
+"I'd like to see accidents in Alaska" and "accidents in Alaska related to icing"
+remain eligible. "Accidents after takeoff in Alaska", "accidents like this in Alaska"
+and "Show me related accidents in Alaska" deliberately remain suggestions.
+v1.3 is a strict subset of v1.1, which is a subset of v1; it is not based on v1.2's
+overbroad `like` alternative. The offline replay of 1,040 recorded C answers gives
+365 TP / 0 FP / 35 FN for the guard, two fewer applications than v1.1. The pipeline's
+separate `case_search` intent requirement gives 363 TP / 0 FP / 37 FN. These are
+retrospective results on recorded answers, not semantic safety or future recall
+guarantees. v1.1 and v1.2 were never deployed and are no longer accepted settings.
+Other fields stay advisory.
+Edits never apply automatic filters. Accepted state values become retrieval filters
+before all three channels run and are removed from the remaining suggestion.
+
+The page reports server-derived facts:
+
+- Question `query.keywords` is `question`, `terms` or `question+terms`; the latter
+  two include only the recorded added terms (300 characters maximum), captured when the
+  lexical query is fitted. Disclosure reads that record, never re-normalizes the question
+  or hides terms when execution records disagree. Fallbacks
+  report `question`. Edited queries still carry explicit terms; filter-only edits
+  retain their parent's query and both executed texts.
+- `automaticFilters` contains the applied state set, or null. It is always null
+  on edits. `order` is `ai_relevance` only when valid rerank grades were applied;
+  every other outcome is `match`.
+- `marks` is `suggested_terms` only when the baseline actually retained suggestion
+  marks; otherwise `search_words`. Suggestion terms are null if those terms were
+  already searched; no remaining terms or filters means the suggestion is null.
+- An edit may send `keywords: 'question'` to restore the original question in both
+  lexical and vector channels. It cannot also send explicit `terms`.
+- `freeUndo` confirms whether this search consumed no visitor quota unit.
+- `undo` is the current `available | used | none` hint, computed from the parent's
+  claim on each read. It is never stored in the immutable result. Edits, legacy v2
+  rows and questions without automatic additions report `none`; admission remains
+  authoritative if another tab consumes the claim.
+
+A quota-free undo requires an owned, unexpired, completed original v3 question search,
+no explicit edited terms, and no changes except removal of automatic additions.
+Filters must equal the parent's filters or remove its entire automatic state field;
+removing one member of a multi-state OR is a narrowing edit and costs a unit. Setting
+`keywords: 'question'` is an undo only if the parent used added terms. At least one
+addition must be removed. All other edits cost one unit.
+
+One atomic, write-once claim on the **parent** binds the exemption to its admission's
+reservation. The claim survives failure of the later search and handover. Once a search
+row exists, an idempotent retry replays that result or failure. If admission is abandoned
+before a search row exists (shutdown, failed dataset/index claim, write error or missing
+source), cleanup expires its idempotency slot but keeps the undo claim consumed. Even a
+same-key retry is then an ordinary quota-counted admission, if all gates permit it.
+A different key cannot get another free undo, and an
+edited child cannot be an undo source. A refusal before reservation consumes no claim.
+The exemption remains available at the visitor's daily/monthly quota limit. Turnstile,
+network/principal attempt limits, concurrency, restore hold, kill switches, all budgets,
+the full reservation and actual/uncertain settlement still apply. No quota increment
+or later decrement occurs for this admission (`quota_counted=false`). Thus each paid
+question can allow at most one additional quota-free attempt, still money-gated.
+
+Migration 0025 adds the parent's private claim and permits an original v3 question's
+final storage to record actual keywords and only its automatic state change. Questions,
+explicit edits, policy identity, accounting facts and completed results remain immutable.
+The claim trigger independently requires an unexpired parent, a quota-free open
+reservation belonging to its current read owner, and an original reservation matching
+its immutable billing principal/kind. A signed-in undo of a still-owned trial parent
+hands it over in the same claim transaction before binding the account reservation.
+Failed rows retain the actual attempted automatic state/filters in private diagnostics,
+separate from their immutable public admission facts.
+Parent ownership is rechecked under its row lock in admission, after the account lifecycle
+lock and before shared bucket/spend locks; the child write rechecks it again. Old v2 rows
+are read as v3 using their actual recorded metadata, with no invented automatic state or
+free undo. Existing expiry, authorization and backup exclusions remain unchanged.
+
 ### Evidence pricing (initial AI feature)
 
 `server/evidence/pricing.ts` derives the reservation from the configured scope and
-embedding models and their hard caps. With Haiku 5.5 and `text-embedding-3-small`,
+embedding models and their hard caps, plus the selected reranker, with one final
+rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
 10,000 scope input tokens, a cache-write premium on up to 6,500 prefix tokens,
 2,500 output tokens and 1,000 embedding tokens cost at most **$0.0024325**. Round up
 to **$0.0025** per admitted search. These scope caps are independent of `scope.v2` for
@@ -912,12 +1073,36 @@ releases the unused amount. One attempt per stage, no model or generated-summary
 A failed scope is charged for known usage or its own worst case when uncertain;
 retrieval continues with no suggestion or note. Only a search without results refunds its unit.
 If a principal has used its daily uncertain-charge allowance, admission skips evidence
-scope instead of refusing the search. Its suggestion and note are null; the full $0.0025
-reservation, normal embedding settlement and all remaining limits stay in force.
-The allowance resets at UTC midnight. This exception is confined to evidence search;
+scope and any configured reranker instead of refusing the search. Its suggestion and
+note are null; an enabled reranker records `skipped_uncertain_allowance` and neither
+optional stage makes a call or charge. The configured full reservation, embedding
+settlement and all remaining limits stay in force. Named uncertain rerank calls also
+count toward this allowance. The allowance resets at UTC midnight. This exception is confined to evidence search;
 the disabled generated-summary pipeline still refuses at that allowance.
 
-Startup derives and validates the evidence reservation. Free `ai-preflight` counts the
+Rerank input/output caps are 55,000/2,000 at depth 50 and 95,000/4,000 at depth 100;
+the cached-prefix premium reserves 1,500 tokens. Deadlines are 20 and 30 seconds.
+Free preflight measured the maximum-variant inputs at 43,348 and 85,498 provider
+tokens, and full-depth outputs at 658 and 1,308. Runtime also counts each actual
+request before generation, including unusual text. The 100-case cap stays below
+Haiku's higher-price context tier.
+
+| Configuration class | Worst total USD/search | Rounded reservation |
+| --- | ---: | ---: |
+| Baseline, or terms without rerank | 0.0024325 | 0.0025 |
+| Haiku, depth 50 | 0.0089700 | 0.0090 |
+| Haiku, depth 100 | 0.0139700 | 0.0140 |
+| Sonnet, depth 50 | 0.1331825 | 0.1332 |
+
+These include scope, one embedding and the rerank worst case. Edits release unused
+scope money. Every actual call settles its own usage; an unknown rerank bill keeps
+its own worst case, never the whole search's reservation. Evaluation reserves each
+stage through the production spend gate before dispatch. A failed reservation or
+settlement stops further spending. Free sizing is not a measured generation latency
+or quality result.
+
+Startup derives and validates the evidence reservation. Free `ai-preflight` counts all
+three rerank model/depth combinations as well as the
 actual `scope.e3` prompt/schema, questions, cache prefix and bounded output: measured
 5,701 fixed / 5,674 cached, 6,192 Latin / 7,190 dense input, 1,118 output, all within caps.
 Repeat against the deployment's frozen settings. No provider calls run in offline tests.
