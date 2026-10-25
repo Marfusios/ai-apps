@@ -52,7 +52,7 @@ test.afterEach(async ({ page }) => {
 
 const DUMMY_TOKEN = 'XXXX.DUMMY.TOKEN.XXXX';
 const SEARCH_PATH = /\/ai\/([0-9a-f-]{36})(?:\?.*)?$/;
-const COUNT_LINE = /^\d+ retrieved · best match first · not every matching investigation$/;
+const COUNT_LINE = /^\d+ retrieved · highest-ranked first · not every matching investigation$/;
 
 type Theme = 'day' | 'night';
 
@@ -149,13 +149,11 @@ test('Ask AI from Home: the results under the notice, the suggestion unapplied; 
   // A card that marks the suggested terms counts them as occurrences, said as suggested.
   const marked = page.locator('article[data-card]').filter({ has: page.locator('mark.hit') }).first();
   await expect(marked.locator('[data-relevance]')).toHaveText(/^How it was found:\s*Suggested terms in these excerpts: .+ · found by .+ search$/);
-  // A probable-cause statement is a passage too (the mock never quoted one): a paragraph of it can be an
-  // excerpt, under its own label, beside the statement the card shows verbatim.
-  const causeCard = page.locator('article[data-card]').filter({ has: page.locator('figure[data-excerpt^="probable_cause/"]') }).first();
-  const causeExcerpt = causeCard.locator('figure[data-excerpt^="probable_cause/"]').first();
-  await expect(causeExcerpt.locator('figcaption')).toHaveText(/^NTSB · PROBABLE CAUSE/);
-  const statement = normalized(await causeCard.locator('[data-probable-cause]').first().innerText());
-  expect(statement).toContain(normalized(await causeExcerpt.locator('blockquote').innerText()));
+  // A probable-cause statement is a passage too: a paragraph of it can be an excerpt. It is marked in the
+  // statement the card shows verbatim, never repeated as an excerpt of its own (UI_DESIGN §4.9).
+  await expect(page.locator('figure[data-excerpt^="probable_cause/"]')).toHaveCount(0);
+  const causeCard = page.locator('article[data-card]').filter({ has: page.locator('[data-probable-cause][data-marked] mark') }).first();
+  await expect(causeCard.locator('[data-probable-cause][data-marked] mark').first()).toBeVisible();
   await fitsTheWidth(page);
   await shot(page, 'home-results-1280-day');
   await shot(page, 'home-results-full-1280-day', { fullPage: true });
@@ -235,7 +233,7 @@ test('Ask AI from Explore, then the free surfaces: more pages, the full section 
   const ntsbNo = (await card.getAttribute('data-card')) as string;
   const rank = (await card.getAttribute('data-rank')) as string;
   const context = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/evidence/${id}/cases/${ntsbNo}`);
-  await card.getByRole('button', { name: /^Show the full .+ section$/ }).first().click();
+  await card.getByRole('button', { name: /^Show the full .+ section\b/ }).first().click();
   const contextResponse = await context;
   expect(contextResponse.status()).toBe(200);
   expect(contextResponse.headers()['cache-control']).toBe('private, no-store');
@@ -328,7 +326,7 @@ test('an explicit counting or comparison request gets its results with the serve
   await prepare(page);
   await askFromHome(page, 'How many helicopter accidents involved an engine failure?');
   const statistics = page.locator('[data-hint="corpus_statistics"]');
-  await expect(statistics).toContainText('For counts and trends, the dashboard counts every investigation in the snapshot.');
+  await expect(statistics).toContainText('For counts and trends, the dashboard charts the investigations in this snapshot by year, phase and more.');
   await expect(statistics.getByRole('link', { name: 'Open the dashboard' })).toHaveAttribute('href', '/dashboard');
   await expect(page.locator('article[data-card]').first()).toBeVisible();
 

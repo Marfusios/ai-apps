@@ -34,8 +34,11 @@ async function useUpTrial(page: Page): Promise<void> {
     await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(`${SEED_QUESTION} ${left}`);
     await page.getByRole('button', { name: `Ask AI · ${left} free` }).click();
     await expect(page).toHaveURL(/\/ai\/[0-9a-f-]{36}$/);
+    // The search's page is on screen before going home (the URL changes before React shows it).
+    await expect(page.getByRole('heading', { level: 2, name: 'Investigations retrieved for your search' })).toBeVisible();
     await page.getByRole('link', { name: 'AirCase' }).click();
     await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Learn from the record.' })).toBeVisible();
   }
 }
 
