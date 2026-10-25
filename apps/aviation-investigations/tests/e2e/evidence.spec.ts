@@ -63,6 +63,10 @@ for (const [width, theme] of [
     expect(renders).toEqual([{ sitekey: TEST_SITE_KEY, action: 'ask-ai', appearance: 'always', theme: theme === 'night' ? 'dark' : 'light' }]);
     await expect(page.getByRole('banner').getByText(width < 640 ? 'AI left 9 of 10' : 'AI searches left: 9 of 10')).toBeVisible();
 
+    // On arrival the results are announced, and the heading holds focus (the Ask AI button went with Home).
+    await expect(page.getByRole('heading', { level: 2, name: HEADING })).toBeFocused();
+    await expect(page.locator('[data-evidence-live]')).toHaveText('21 investigations retrieved.');
+
     // The question as asked is what was searched; the AI's suggestion stands beside it, not applied.
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(CARB);
     const yours = page.getByRole('region', { name: 'Your search', exact: true });
@@ -75,7 +79,7 @@ for (const [width, theme] of [
     // The heading, the notice, the count that never claims every match: the question's results, unfiltered.
     await expect(page.getByRole('heading', { level: 2, name: HEADING })).toBeVisible();
     await expect(page.getByRole('note').first()).toHaveText(NOTICE);
-    await expect(page.locator('[data-count-line]')).toHaveText('21 retrieved · best match first · not every matching investigation');
+    await expect(page.locator('[data-count-line]')).toHaveText('21 retrieved · highest-ranked first · not every matching investigation');
     // (its text holds the screen-reader words "; dotted:" between the two marks)
     await expect(page.locator('[data-legend]')).toHaveText(/^Marked in the excerpts: the suggested terms · .*their synonyms$/);
     await fitsTheWidth(page);
@@ -100,7 +104,7 @@ for (const [width, theme] of [
     await expect(card.locator('[data-relevance]')).toHaveText(/^How it was found:\s*Suggested terms in these excerpts: .+ · found by .+ search$/);
 
     // The full section, at the excerpt's paragraph, marked and in view.
-    await card.getByRole('button', { name: 'Show the full analysis section' }).click();
+    await card.getByRole('button', { name: /^Show the full analysis section\b/ }).first().click();
     const marked = card.locator('[data-excerpt-paragraph]');
     await expect(marked).toBeFocused();
     await expect(marked).toBeInViewport();
@@ -205,7 +209,7 @@ test('a counting request gets its results with the dashboard hint above them', a
   await open(page, { width: 1280, theme: 'night' });
   await ask(page, 'How many helicopter accidents happened in Texas');
   const hint = page.locator('[data-hint="corpus_statistics"]');
-  await expect(hint).toContainText('For counts and trends, the dashboard counts every investigation in the snapshot.');
+  await expect(hint).toContainText('For counts and trends, the dashboard charts the investigations in this snapshot by year, phase and more.');
   await expect(hint.getByRole('link', { name: 'Open the dashboard' })).toHaveAttribute('href', '/dashboard');
   await expect(page.locator('article[data-card]').first()).toBeVisible();
 });
