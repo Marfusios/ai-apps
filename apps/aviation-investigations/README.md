@@ -1172,9 +1172,10 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   a script and frame source whenever anonymous AI is configured (see "Security headers"
   under API server).
 - **The evidence view** (`/ai/:id`, UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only
-  design): Ask AI on Home or Explore sends `POST /api/evidence` (`kind: "question"`). A policy
-  reply (out of scope, operational advice) shows under the box and uses no search; results open
-  the search's page, seeded from the answer. Results always come from the question as asked, or
+  design): Ask AI on Home or Explore sends `POST /api/evidence` (`kind: "question"`). Nothing
+  blocks a search: the answer is always results, which open the search's page, seeded from the
+  answer; a question about something else, or asking for operational advice, gets the contract's
+  fixed capability note (`EVIDENCE_NOTE_TEXT`) calmly above its results. Results always come from the question as asked, or
   from the reader's own words and filters. The page shows the question, then "Your search" (the
   question as asked or the reader's words, and the applied filters from `appliedFilters`, each a
   removable chip), then the AI's suggestion, magenta and dashed under the contract's label
@@ -1287,13 +1288,14 @@ The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v2`): retr
 fixture index from the question's own words alone (an edit: exactly the filters sent, with the
 real filter rules, and the reader's words when sent, else the earlier query), a stand-in scope
 stage that only suggests filters and terms (rules for a few words, phases and states), hints for
-explicit counting and comparison requests, the server's policy replies, whole paragraphs located
+explicit counting and comparison requests, capability notes for questions about something else or
+asking for operational advice (results still come), whole paragraphs located
 in the fixture texts and chosen by the query, with literal and declared-synonym highlights of the
 suggested terms (else the query's words), saved pages of 10 (past the last, a 404), 24-hour
 ownership handed over on sign-in, and idempotency keys (a replay answers the same search, another
 body under the same key is a 409). `MOCK_EVIDENCE_QUESTIONS` names the questions the tests ask:
 21 results, suggested filters that leave 2 and none once applied, a midair, multi-byte text, a
-failed scope stage ("scope failure"), the hints and the policy replies; a question with "nothing"
+failed scope stage ("scope failure"), the hints and both notes; a question with "nothing"
 retrieves none, one with "expire" makes a search that is gone at once, and the brief's failure
 keywords work here too. Every answer is checked against the contract in
 `tests/unit/evidence-mock.test.ts`, which also checks that the suggestion changes no ranking,

@@ -974,9 +974,10 @@ sign-in started from the page moves the search to the account, like a brief.
 handling; results open the page with page 1 already read. Explore's filters do not carry over (the
 contract's question request has none): the nudge under the results says so — "Ask in plain English:
 AirCase searches with your question, and AI suggests filters you can choose to apply." and, with
-filters set, "It searches the question alone, not the filters set here." A policy reply (out of
-scope, operational advice) has no page: it shows under the box, in the brief's form (§4.3 "Scope
-outcomes"), and uses no search. Counting and comparison questions get results, with a hint.
+filters set, "It searches the question alone, not the filters set here." Nothing blocks a search
+(gate answer 2 of 2026-10-25): every question opens its results and uses one AI search. A question
+about something else, or asking for operational advice, gets its results with a fixed capability
+note above them; counting and comparison questions get results with a hint.
 
 **Layout**, one reading column (640px), top to bottom:
 
@@ -1004,10 +1005,17 @@ outcomes"), and uses no search. Counting and comparison questions get results, w
    suggestion; an edited search never has one.
 5. **A hint** (only for an explicit counting or comparison request, read by the server from the
    question; non-blocking, above the results): "For counts and trends, the dashboard counts every
-   investigation in the snapshot." with [Open the dashboard] (and "Explore with these filters: …" when
-   the search applied filters); or "Comparing named investigations is free; it doesn't need the AI."
-   with [Compare A, B →], each case number found as a link, and "Not found: …" ("None of those case
-   numbers is in this snapshot." when none is).
+   investigation in the snapshot." with [Open the dashboard]; or "Comparing named investigations is
+   free; it doesn't need the AI." with [Compare A, B →], each case number found as a link, and "Not
+   found: …" ("None of those case numbers is in this snapshot." when none is).
+   **A capability note** (`note`, when the validated scope intent selects one): the contract's fixed
+   text `EVIDENCE_NOTE_TEXT`, calm and non-blocking (ink text in a hairline box with a muted ⓘ, no
+   alert, no warning colour), right above the results: "AirCase searches published NTSB aviation
+   investigations only. The investigations below were retrieved for your words." (`scope`), or "AirCase
+   is a research tool, not a source of operational flight or maintenance advice. For a flight in
+   progress, contact ATC; for airworthiness, use your aircraft's approved data and a certificated
+   mechanic." (`operational_advice`). A general reminder of what AirCase is, never a statement about
+   the question, never model text; it prints, and it never replaces the notice.
 6. **"Investigations retrieved for your search"** (`EVIDENCE_HEADING`) and under it, always,
    `EVIDENCE_NOTICE` in an ink-ruled note: "AirCase matched your words and filters. It has not checked
    timing, causes or things that did not happen: read the excerpts."
@@ -1064,7 +1072,7 @@ as the labelled counts and marks above.
 | No suggestion | The results, the "Your search" box and no suggestion block (the scope stage failed, or the search is an edit); the marks are the reader's words |
 | Gone or unknown | "This AI search is no longer available." / "AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it." with an empty box (Search, Ask AI) and [Ask again] from this page's memory only; tab "AI search expired · AirCase" |
 | Load failure | "This AI search didn't load." with Try again; a page that fails "The next investigations didn't load." |
-| Policy reply | Under the box where it was asked, as §4.3 shows them (out of scope, operational advice) |
+| Capability note | The results as always, with the fixed note above them (a question about something else, or asking for operational advice); a search with a note has no suggestion |
 
 **Drawer, Compare and print.** The drawer opened from a card adds, after what investigators
 established, a section under the same heading with the notice, the relevance facts, the key to the
@@ -1074,8 +1082,8 @@ shows "From your search “…”", the heading as a placard, the notice and the
 last row per strip, "RETRIEVED FOR YOUR SEARCH": the relevance facts and the best excerpt, with "2 more
 excerpts on the search's page."; a case the search did not show says "Not among the investigations
 shown for your search."; a search that is gone says "The AI search these cases came from is no longer
-available, so its excerpts are not shown." Print (§7) keeps the heading, the notice, "Your search"
-and the cards (collapsed paragraphs print whole, open sections print open); the suggestion, the hint,
+available, so its excerpts are not shown." Print (§7) keeps the heading, the notice, the capability note, "Your
+search" and the cards (collapsed paragraphs print whole, open sections print open); the suggestion, the hint,
 the editing, paging and section controls do not print; a print-only header names the page, the case
 numbers and the snapshot.
 
@@ -1243,8 +1251,9 @@ browser with the same stylesheet. Print uses:
 - the footer "Not an NTSB service · Source: NTSB · printed {date}", then the credit
   line "Built by Mariusz Kotas · mkotas.cz" (the website prints as text)
 - strips that never split across pages
-- the AI evidence view (§4.9) with its heading, notice, what was searched ("Your search") and its
-  cards whole (long paragraphs print open); the suggestion, the hint and the controls do not print
+- the AI evidence view (§4.9) with its heading, notice, capability note, what was searched ("Your
+  search") and its cards whole (long paragraphs print open); the suggestion, the hint and the controls
+  do not print
 
 ## 8. Accessibility (Proposed)
 
@@ -1443,8 +1452,11 @@ counting rules.
   only by an explicit choice ("Apply filters and terms") or typed by the reader. Each edit says it uses
   one AI search. Term counts are occurrences of the marked terms, said as the suggested terms or the
   reader's words, never a sign the question is answered. No unchecked readings in this beta; the
-  notice stays on every surface. Counting and comparison questions get results with a hint above them;
-  only out-of-scope and operational-advice questions get a policy reply instead.
+  notice stays on every surface. Counting and comparison questions get results with a hint above them.
+- **Nothing blocks a search** (gate answer 2, 2026-10-25). A question about something else, or asking
+  for operational advice, still gets its results; the scope intent may only select one of two fixed,
+  generally true capability notes (`EVIDENCE_NOTE_TEXT`) shown calmly above them. The evidence view has
+  no policy-reply screen (briefs keep theirs).
 - **Limits** (owner decision of 2026-10-24): anonymous visitors 10 AI searches a day, accounts 50 a
   day, new accounts 20 a day for their first 3 days, 600 a month, all reset at 00:00 UTC. The interface
   states only numbers the API reports (`/api/config` `aiLimits`, `/api/ai/status`).
