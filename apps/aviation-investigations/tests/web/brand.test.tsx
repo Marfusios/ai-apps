@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SITE_DESCRIPTION } from '../../shared/brand';
 import { pageTitle, type TitledPage } from '../../shared/page-titles';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
+import { MOCK_EVIDENCE_RELEASE } from '../../web/mock/evidence';
 import { createHandlers } from '../../web/src/mocks/handlers';
 import indexHtml from '../../web/index.html?raw';
 import { Footer } from '../../web/src/components/Footer';
@@ -193,10 +194,23 @@ describe('the About page words its AI line for what the evidence policy applies 
     const main = await screen.findByRole('main');
     await waitFor(() =>
       expect(main.textContent).toContain(
-        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state your question names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state your question names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
       ),
     );
     expect(main.textContent).not.toContain('AI suggests filters you can choose to apply');
+  });
+
+  it('a server that does not report the policy: the configuration still reads, and the line claims nothing applied', async () => {
+    server.use(...createHandlers({ evidence: MOCK_EVIDENCE_RELEASE, aiAutomaticFilters: null }));
+    renderApp('/about');
+    const main = await screen.findByRole('main');
+    // The line waits for the configuration, so it shows only once the configuration has been read.
+    await waitFor(() =>
+      expect(main.textContent).toContain(
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.',
+      ),
+    );
+    expect(main.textContent).not.toContain('can be applied automatically');
   });
 
   it('nothing about AI searches while the configuration is unknown, though the status is known', async () => {

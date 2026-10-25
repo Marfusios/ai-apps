@@ -14,9 +14,8 @@ import {
   type SearchRequest,
   type SearchResponse,
 } from '../../../shared/contracts/search';
-import type { ConfigResponse } from '../../../shared/contracts/config';
 import { pageTitle } from '../../../shared/page-titles';
-import { configQuery, searchQuery } from '../api';
+import { configQuery, searchQuery, type ClientConfig } from '../api';
 import { Chip } from '../components/Chip';
 import { SearchBox } from '../components/SearchBox';
 import { cx } from '../lib/cx';
@@ -44,16 +43,16 @@ import {
  * searches with the question alone (contract `evidence.v3`), so the nudge also says when the
  * filters set here stay behind. What the AI does with filters follows the server's evidence policy
  * (`/api/config` `aiAutomaticFilters`): it only suggests them (`AI_NUDGE`, also while the
- * configuration is unknown), or it applies a US state the question names explicitly, which can be
- * removed, and suggests the rest (`AI_NUDGE_STATE`).
+ * configuration or the field is unknown), or a US state the question names explicitly can be
+ * applied (the guard may abstain), which can be removed, and the rest is suggested (`AI_NUDGE_STATE`).
  */
 export const AI_NUDGE = 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.';
 export const AI_NUDGE_STATE =
-  'Ask in plain English: AirCase searches with your question. A US state it names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
+  'Ask in plain English: AirCase searches with your question. A US state it names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
 export const AI_NUDGE_FILTERS = 'It searches the question alone, not the filters set here.';
 
-/** The nudge's sentence for the fields the evidence policy applies on its own. */
-export function aiNudge(automatic: ConfigResponse['aiAutomaticFilters'] | undefined): string {
+/** The nudge's sentence for the fields the evidence policy applies on its own (unknown: the cautious one). */
+export function aiNudge(automatic: ClientConfig['aiAutomaticFilters']): string {
   return automatic?.includes('state') ? AI_NUDGE_STATE : AI_NUDGE;
 }
 

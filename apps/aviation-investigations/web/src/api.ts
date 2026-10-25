@@ -131,8 +131,16 @@ function configRetryDelay(failures: number): number {
 }
 
 /**
- * Public configuration: the snapshot, the coverage facts, the Turnstile site key and whether
- * Google sign-in is offered. A read that gets no answer gives up after `READ_TIMEOUT_MS`.
+ * `/api/config` as the client reads it: `aiAutomaticFilters` may be missing (a configuration
+ * cached before the server reported it), which reads as unknown, never as a failed read.
+ */
+export const ClientConfigSchema = ConfigResponseSchema.extend({ aiAutomaticFilters: ConfigResponseSchema.shape.aiAutomaticFilters.optional() });
+export type ClientConfig = z.infer<typeof ClientConfigSchema>;
+
+/**
+ * Public configuration: the snapshot, the coverage facts, the Turnstile site key, whether
+ * Google sign-in is offered and what the evidence policy applies on its own (`aiAutomaticFilters`,
+ * unknown when missing). A read that gets no answer gives up after `READ_TIMEOUT_MS`.
  * Until it has been read once, it is read again after a failure, with a growing pause, and
  * when the tab gets focus (Task 22 re-review N-3); once read, a failed refresh keeps what was
  * read.
@@ -141,7 +149,7 @@ export const configQuery = () =>
   queryOptions({
     queryKey: ['config'],
     // A read that hangs ends like a failed one, so the re-read and the neutral note take over (re-review F-3).
-    queryFn: ({ signal }) => getJson('/api/config', ConfigResponseSchema, signal, { timeoutMs: READ_TIMEOUT_MS }),
+    queryFn: ({ signal }) => getJson('/api/config', ClientConfigSchema, signal, { timeoutMs: READ_TIMEOUT_MS }),
     staleTime: 10 * 60_000,
     retry,
     refetchInterval: (query) => (query.state.data === undefined && query.state.status === 'error' ? configRetryDelay(query.state.errorUpdateCount) : false),

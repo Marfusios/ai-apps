@@ -7,7 +7,7 @@
  * AI evidence searches (`/api/evidence*`) are answered by an in-memory `MockEvidence` per
  * handler set (web/mock/evidence.ts), standing in for one ranking configuration and
  * automatic-filter policy (`evidence`; by default the one this tab's session storage names
- * under `MOCK_EVIDENCE_CONFIG_KEY`, else the live baseline), and AI briefs (`/api/briefs*`),
+ * under `MOCK_EVIDENCE_CONFIG_KEY`, else the server's defaults), and AI briefs (`/api/briefs*`),
  * which the interface no longer starts but still shows, by a `MockBriefs` (web/mock/briefs.ts):
  * request bodies are validated with the real contracts, and a running brief step moves one
  * checklist row per poll. The AI status is kept per handler set too, like the server's gate: an
@@ -77,14 +77,15 @@ export interface HandlerOptions {
   accountCheck?: boolean;
   /**
    * The evidence ranking configuration and automatic-filter policy the mock stands in for
-   * (default: the one this tab's session storage names, else the live baseline).
+   * (default: the one this tab's session storage names, else the server's defaults).
    */
   evidence?: MockEvidenceConfig;
   /**
    * What `/api/config` reports as `aiAutomaticFilters` (default: as the evidence policy says,
-   * `['state']` with `state-explicit.v1.2`, else none).
+   * `['state']` with `state-explicit.v1.2`, else none); `null` leaves the field out, as a server
+   * that does not report it.
    */
-  aiAutomaticFilters?: ConfigResponse['aiAutomaticFilters'];
+  aiAutomaticFilters?: ConfigResponse['aiAutomaticFilters'] | null;
 }
 
 /** The mock's Google account: synthetic. */
@@ -255,7 +256,8 @@ export function createHandlers({
   return [
     http.get('*/api/config', async () => {
       await wait();
-      return HttpResponse.json({ ...config, turnstileSiteKey, googleEnabled, aiAutomaticFilters, ...(aiLimits ? { aiLimits } : {}) });
+      const { aiAutomaticFilters: _generated, ...generated } = config;
+      return HttpResponse.json({ ...generated, turnstileSiteKey, googleEnabled, ...(aiAutomaticFilters ? { aiAutomaticFilters } : {}), ...(aiLimits ? { aiLimits } : {}) });
     }),
     http.get('*/api/account', async () => {
       await wait();
