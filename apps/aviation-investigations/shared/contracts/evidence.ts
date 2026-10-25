@@ -198,6 +198,8 @@ export const EvidencePageSchema = z.strictObject({
   order: z.enum(['ai_relevance', 'match']),
   marks: z.enum(['suggested_terms', 'search_words']),
   freeUndo: z.boolean(),
+  /** Current one-use undo hint, recomputed on read; admission remains authoritative. */
+  undo: z.enum(['available', 'used', 'none']),
   suggestion: EvidenceSuggestionSchema.nullable(),
   hint: EvidenceHintSchema.nullable(),
   /** A fixed capability reminder selected by the validated scope intent, or null (also for edits). */

@@ -474,7 +474,7 @@ describe('evidence fix-round regressions', () => {
     expect(second!.data.cases!.length).toBeLessThanOrEqual(10);
     expect(second!.data).not.toHaveProperty('ranking');
     expect(second!.resultTotal).toBe(page.total);
-    expect(pageOf(second!, 2)).toEqual((await h.get(page.id, 2)).json());
+    expect(pageOf(second!, 2, now())).toEqual((await h.get(page.id, 2)).json());
     expect(await readOwnedSearch(db, page.id, readers, now(), false, { caseNo: 'ZZZ99LA999' })).toBeNull();
     const context = await readOwnedSearch(db, page.id, readers, now(), false, { caseNo: page.cases[0]!.case.ntsbNo });
     expect(context!.data).not.toHaveProperty('cases');
@@ -845,6 +845,55 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   const undoBody = (id: string, changes: Record<string, unknown> = {}) => ({ kind: 'edited', question: undefined, from: id, filters: {}, ...changes });
   const stored = async (id: string) => (await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, id)))[0]!;
 
+  it('refreshes undo on creation, pagination, replay and handover without changing stored results or spending', async () => {
+    const h = harness(undefined, undefined, 'er-qt-v1'), key = randomUUID();
+    const parent = searchOf(await h.request({}, key)), trialCookie = h.cookie();
+    const original = await stored(parent.id);
+    expect(parent.undo).toBe('available'); expect(parent.automaticFilters).toBeNull();
+    expect(parent.query).toMatchObject({ source: 'question', keywords: { kind: 'question+terms' } });
+    expect(parent.pages).toBeGreaterThan(1);
+    expect((await h.get(parent.id)).json().undo).toBe('available');
+    expect(searchOf(await h.request({}, key)).undo).toBe('available');
+    nextMinute();
+    const undoKey = randomUUID(), body = undoBody(parent.id, { keywords: 'question' });
+    const child = searchOf(await h.request(body, undoKey));
+    expect(child).toMatchObject({ freeUndo: true, undo: 'none' });
+    const afterUndo = await spent();
+    expect((await h.get(child.id)).json().undo).toBe('none');
+    expect(searchOf(await h.request(body, undoKey)).undo).toBe('none');
+    for (const n of [1, 2]) expect((await h.get(parent.id, n)).json().undo).toBe('used');
+    expect(searchOf(await h.request({}, key))).toEqual({ ...parent, undo: 'used' });
+    const claimed = await stored(parent.id);
+    expect(claimed.data).toEqual(original.data); expect(claimed.data).not.toHaveProperty('undo');
+    expect((await stored(child.id)).data).not.toHaveProperty('undo');
+    expect(claimed.freeUndoReservationId).toBe((await stored(child.id)).reservationId);
+    // An account replay moves the read owner but keeps the same used claim and payer.
+    await h.account();
+    expect(searchOf(await h.request({}, key))).toEqual({ ...parent, undo: 'used' });
+    expect((await h.get(parent.id)).json().undo).toBe('used');
+    expect((await h.get(parent.id, 1, trialCookie)).statusCode).toBe(404);
+    expect(await stored(parent.id)).toMatchObject({ readOwnerKind: 'account', billingPrincipal: original.billingPrincipal,
+      freeUndoReservationId: claimed.freeUndoReservationId, data: original.data });
+    expect(await spent()).toEqual(afterUndo);
+    expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(2);
+  });
+  it('returns none for a question without applied additions, even with an unapplied suggestion', async () => {
+    const h = harness(), parent = searchOf(await h.request());
+    expect(parent.suggestion).not.toBeNull();
+    expect(parent).toMatchObject({ undo: 'none', automaticFilters: null, query: { source: 'question', keywords: { kind: 'question' } } });
+    expect((await h.get(parent.id)).json().undo).toBe('none');
+  });
+  it('does not expose an available undo after the parent expires', async () => {
+    const h = withState(), parent = searchOf(await h.request({ question: stateQuestion }));
+    clock = new Date(new Date(parent.expiresAt).getTime() - 1);
+    expect((await h.get(parent.id)).json().undo).toBe('available');
+    clock = new Date(parent.expiresAt);
+    const before = await spent();
+    expect((await h.get(parent.id)).statusCode).toBe(404);
+    expect((await h.request(undoBody(parent.id))).statusCode).toBe(404);
+    expect(await spent()).toEqual(before);
+  });
+
   it('applies only guarded state before retrieval, removes it from suggestions and persists both identities', async () => {
     const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
     const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: ['CA'], yearFrom: 2019 } } } },
@@ -886,12 +935,13 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     const body = undoBody(page.id, { filters: removal === 'terms' ? page.appliedFilters : {}, ...(removal === 'state' ? {} : { keywords: 'question' }) });
     const key = randomUUID(), before = await spent();
     const child = searchOf(await h.request(body, key));
-    expect(child.freeUndo).toBe(true); expect(child.automaticFilters).toBeNull(); expect(child.suggestion).toBeNull();
+    expect(child.freeUndo).toBe(true); expect(child.undo).toBe('none'); expect(child.automaticFilters).toBeNull(); expect(child.suggestion).toBeNull();
     expect(child.query).toEqual(removal === 'state' ? page.query : { source: 'question', keywords: { kind: 'question' } });
     expect(child.appliedFilters).toEqual(removal === 'terms' ? { state: ['CA'] } : {});
     expect((await usage())).toMatchObject({ quota_counted: false, status: 'settled' });
     const childRow = await stored(child.id), parent = await stored(page.id);
     expect(parent.freeUndoReservationId).toBe(childRow.reservationId);
+    expect(page.undo).toBe('available'); expect((await h.get(page.id)).json().undo).toBe('used');
     const lines = await db.execute(sql`SELECT stage FROM cost_ledger WHERE reservation_id = ${childRow.reservationId}`);
     expect(lines.rows).toEqual([{ stage: 'embed' }]); expect((await spent()).lines).toBe(before.lines + 1);
     const after = await spent(); nextMinute();
@@ -1141,7 +1191,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
       FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
     const before = await spent();
     const read = EvidencePageSchema.parse((await h.get(String(legacy.rows[0]!.id))).json());
-    expect(read).toMatchObject({ version: 'evidence.v3', automaticFilters: null, freeUndo: false, order: 'match', marks: 'suggested_terms', query: page.query });
+    expect(read).toMatchObject({ version: 'evidence.v3', automaticFilters: null, freeUndo: false, undo: 'none', order: 'match', marks: 'suggested_terms', query: page.query });
     expect(read.cases).toEqual(page.cases); expect(await spent()).toEqual(before);
   });
 });

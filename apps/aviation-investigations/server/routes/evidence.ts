@@ -29,8 +29,8 @@ import type { ApiContext } from './context.js';
 
 const NOT_FOUND = 'No AI search with that link is available. AI searches expire after 24 hours.';
 const notFound = (reply: FastifyReply) => sendError(reply, 404, 'not_found', { message: NOT_FOUND });
-const send = (reply: FastifyReply, row: EvidenceRow): FastifyReply => {
-  const search = pageOf(row, 1);
+const send = (reply: FastifyReply, row: EvidenceRow, now: Date): FastifyReply => {
+  const search = pageOf(row, 1, now);
   // Legacy policy replies have no results to replay. Do not relabel them or dispatch again.
   if (!search) return notFound(reply);
   const valid = CreateEvidenceResponseSchema.parse({ kind: 'results', search });
@@ -61,7 +61,7 @@ async function replay(ctx: ApiContext, request: FastifyRequest, reply: FastifyRe
   }
   if (row.status === 'running') return sendError(reply, 429, 'in_flight');
   if (row.status === 'failed') return sendError(reply, 503, 'unavailable');
-  return send(reply, row);
+  return send(reply, row, ai.now());
 }
 
 export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: string): void {
@@ -199,7 +199,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
       // A newly issued trial cookie is on the response, not yet on this request.
       // Sessions are re-read; only the trial just proved/issued by billing can be carried forward.
       const completed = await readOwnedSearch(ctx.db, row.id, readersOf({ ...current, trial: current.trial ?? who.trial }), ai.now(), false, { page: 1 });
-      return completed ? send(reply, completed) : notFound(reply);
+      return completed ? send(reply, completed, ai.now()) : notFound(reply);
     } catch {
       // Only fixed categories leave this route, including storage failures containing private query values.
       request.log.warn({ outcome: 'failed' }, 'evidence request unavailable');
@@ -214,7 +214,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     if (!id.success || !ctx.ai) return notFound(reply);
     if (!query.success) return sendError(reply, 400, 'bad_request');
     const row = await readOwnedSearch(ctx.db, id.data, readersOf(await visitor(ctx, request)), ctx.ai.now(), false, { page: query.data.page });
-    const page = row ? pageOf(row, query.data.page) : null;
+    const page = row ? pageOf(row, query.data.page, ctx.ai.now()) : null;
     return page ? reply.type(JSON_TYPE).send(evidenceJson(page)) : notFound(reply);
   });
   /** Authoritative full sections at the search's generation (no current-manifest lookup). */

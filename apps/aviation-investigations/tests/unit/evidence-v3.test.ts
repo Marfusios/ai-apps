@@ -93,7 +93,7 @@ describe('v3 execution facts', () => {
     saved.data = { ...saved.data, ...out, query: questionQuery(out.lexicalSource, out.addedTerms),
       rankingConfig: out.configuration, marks: 'search_words' };
     saved.data = withSuggestion(saved.data, remainingSuggestion(disclosedQuery(saved.data), out.suggestion), config.query.highlights);
-    const page = pageOf(saved, 1)!;
+    const page = pageOf(saved, 1, now)!;
     expect(page.query).toEqual({ source: 'question', keywords: config.lexicalText === 'question' ? { kind: 'question' } : { kind: config.lexicalText, terms: 'power loss' } });
     expect(page.automaticFilters).toEqual({ state: ['CA'] }); expect(page.appliedFilters).toEqual({ state: ['CA'] });
     expect(page.order).toBe(config.rerank ? 'ai_relevance' : 'match');
@@ -110,15 +110,15 @@ describe('v3 execution facts', () => {
       { llm: createFakeProvider(script), retriever: { available: async () => true, search: async () => ({ cases, ranking: cases.map(c => ({ ntsbNo: c.case.ntsbNo, seeds: [], channels: [] })) }) }, embeddingModel: 'text-embedding-3-small' },
       evaluationRankingSpendGate(() => createMemorySpendGate(1), 'fallback'));
     const saved = row(); saved.data = { ...saved.data, ...out, query: questionQuery(out.lexicalSource, out.addedTerms), marks: 'search_words' };
-    expect(pageOf(saved, 1)?.order).toBe('match');
+    expect(pageOf(saved, 1, now)?.order).toBe('match');
   });
   it('discloses legacy v2 keywords from executed text and does not invent automatic filters', () => {
     const saved = row(); saved.data.version = 'evidence.v2'; saved.data.query = { source: 'question' };
     delete saved.data.automaticFilters; delete saved.data.freeUndo; delete saved.data.marks;
     saved.data.lexicalSource = 'question+terms'; saved.data.executed = { lexical: question + ' power loss', vector: question };
     saved.data.rankingConfig = evidenceRankingIdentity(evidenceRankingConfig('er-qt-v1'));
-    const page = pageOf(saved, 1)!;
-    expect(page).toMatchObject({ version: 'evidence.v3', automaticFilters: null, order: 'match', marks: 'search_words', freeUndo: false,
+    const page = pageOf(saved, 1, now)!;
+    expect(page).toMatchObject({ version: 'evidence.v3', automaticFilters: null, order: 'match', marks: 'search_words', freeUndo: false, undo: 'none',
       query: { source: 'question', keywords: { kind: 'question+terms', terms: 'power loss' } } });
     expect(EvidencePageSchema.safeParse(page).success).toBe(true);
   });
@@ -132,7 +132,7 @@ describe('v3 execution facts', () => {
     saved.data.question = 'Different whitespace and question';
     saved.data.executed = { lexical: 'something inconsistent', vector: 'different again' };
     saved.data.query = { source: 'question', keywords: { kind: 'question' } };
-    expect(pageOf(saved, 1)?.query).toEqual({ source: 'question', keywords: { kind: source, terms: 'power loss' } });
+    expect(pageOf(saved, 1, now)?.query).toEqual({ source: 'question', keywords: { kind: source, terms: 'power loss' } });
   });
   it('records the fitted added suffix at query construction, including partially fitted terms', () => {
     const full = rankingTexts(question, ' power  loss ', evidenceRankingConfig('er-qt-v1'));
@@ -151,6 +151,30 @@ describe('v3 execution facts', () => {
     expect(texts.lexicalSource).toBe('fallback_question');
     expect(texts.executed.lexical).toBe(texts.executed.vector);
     expect(questionQuery(texts.lexicalSource, texts.addedTerms)).toEqual({ source: 'question', keywords: { kind: 'question' } });
+  });
+});
+
+describe('read-time undo availability', () => {
+  it.each(['state', 'terms', 'question+terms', 'neither'] as const)('reports the current claim for %s additions', addition => {
+    const saved = row();
+    saved.data.automaticFilters = addition === 'state' ? { state: ['CA'] } : null;
+    saved.data.query = { source: 'question', keywords: addition === 'terms' || addition === 'question+terms'
+      ? { kind: addition, terms: 'power loss' } : { kind: 'question' } };
+    const immutable = structuredClone(saved.data);
+    expect(pageOf(saved, 1, now)?.undo).toBe(addition === 'neither' ? 'none' : 'available');
+    saved.freeUndoReservationId = 2;
+    expect(pageOf(saved, 1, now)?.undo).toBe(addition === 'neither' ? 'none' : 'used');
+    expect(saved.data).toEqual(immutable); expect(saved.data).not.toHaveProperty('undo');
+  });
+  it('an edited child has no further undo even when it inherits the question and added terms', () => {
+    const saved = row(); saved.data.edited = true; saved.data.freeUndo = true; saved.data.automaticFilters = null;
+    expect(pageOf(saved, 1, now)).toMatchObject({ freeUndo: true, undo: 'none' });
+  });
+  it('an expired parent has no page, including exactly at its expiry', () => {
+    const saved = row();
+    expect(pageOf(saved, 1, new Date(saved.expiresAt.getTime() - 1))?.undo).toBe('available');
+    expect(pageOf(saved, 1, saved.expiresAt)).toBeNull();
+    expect(pageOf(saved, 1, new Date(saved.expiresAt.getTime() + 1))).toBeNull();
   });
 });
 
