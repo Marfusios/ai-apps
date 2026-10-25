@@ -105,8 +105,16 @@ export function EvidenceCard({ searchId, item, context, caseTo, inCompare, onTog
       </div>
       {item.excerpts.length > 0 ? (
         <div className="mt-3.5 space-y-4">
-          {item.excerpts.map((e) => (
-            <Excerpt key={`${e.sectionKey}:${e.paragraph.start}`} searchId={searchId} ntsbNo={row.ntsbNo} aircraft={row.aircraft} excerpt={e} numbered={numbered.has(e.section)} />
+          {item.excerpts.map((e, i) => (
+            <Excerpt
+              key={`${row.ntsbNo}:${e.sectionKey}:${e.paragraph.start}`}
+              searchId={searchId}
+              ntsbNo={row.ntsbNo}
+              aircraft={row.aircraft}
+              excerpt={e}
+              numbered={numbered.has(e.section)}
+              position={{ index: i, count: item.excerpts.length }}
+            />
           ))}
         </div>
       ) : (

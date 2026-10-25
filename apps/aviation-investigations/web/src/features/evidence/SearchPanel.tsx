@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router';
 import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '../../../../shared/contracts/briefs';
 import { MAX_TERMS_CHARS, type EvidencePage } from '../../../../shared/contracts/evidence';
@@ -15,11 +15,13 @@ import { exploreHref, withFilter } from '../brief/filters';
 import {
   APPLY_BOTH,
   APPLY_FILTERS,
+  DRAFT_PENDING_NOTE,
   EDIT_HINT,
   EDITED_LABEL,
   EMPTY_WORDS,
   FILTERS_LABEL,
   KEYWORD_SEARCH,
+  NOT_SEARCHED_YET,
   OWN_WORDS,
   QUESTION_AS_ASKED,
   SEARCH_AGAIN,
@@ -33,6 +35,7 @@ import {
   WORDS_LABEL,
   YOUR_SEARCH_LABEL,
   sameSearch,
+  suggestionInWords,
   yearsInWords,
   type SearchDraft,
 } from './display';
@@ -175,13 +178,24 @@ function AddFilter({ onAdd, onClose, yearBounds }: { onAdd: (change: (f: BriefFi
  * reader's words as a chip with ✎; either opens the field that edits them (Enter keeps, Escape
  * cancels). The draft is free until Search again.
  */
-function Words({ words, onChange }: { words: string | null; onChange: (words: string) => void }) {
+function Words({
+  words,
+  pending,
+  opener,
+  onChange,
+}: {
+  words: string | null;
+  /** Typed, not searched yet: dashed, and said so. */
+  pending: boolean;
+  /** The control that opens the field ("Use your own words" or the chip), for focus from outside. */
+  opener: RefObject<HTMLButtonElement | null>;
+  onChange: (words: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(words ?? '');
   const [error, setError] = useState<string | null>(null);
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
-  const opener = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef(false);
   useEffect(() => {
     if (editing) input.current?.focus();
@@ -231,12 +245,12 @@ function Words({ words, onChange }: { words: string | null; onChange: (words: st
   }
   if (!editing) {
     return (
-      <button ref={opener} type="button" onClick={open} className={cx(chipButton, 'max-w-full border-blue text-blue hover:bg-blue-wash')}>
+      <button ref={opener} type="button" onClick={open} className={cx(chipButton, 'max-w-full border-blue text-blue hover:bg-blue-wash', pending && 'border-dashed')} data-pending={pending || undefined}>
         <span className="font-serif text-[13.5px] break-words">{words}</span>
         <span aria-hidden="true" className="ml-1">
           ✎
         </span>
-        <span className="sr-only">, edit the search words</span>
+        <span className="sr-only">{pending ? `, ${NOT_SEARCHED_YET}` : ''}, edit the search words</span>
       </button>
     );
   }
@@ -307,10 +321,22 @@ export function SearchPanel({ search }: SearchPanelProps) {
   const evidence = useEvidenceSearch();
   const config = useQuery(configQuery()).data;
   const addButton = useRef<HTMLButtonElement>(null);
+  const wordsOpener = useRef<HTMLButtonElement>(null);
+  // After Undo changes (whose button goes with the changes), focus goes back to what changed.
+  const refocus = useRef<'words' | 'filters' | null>(null);
+  useEffect(() => {
+    const target = refocus.current;
+    refocus.current = null;
+    if (target === 'words') wordsOpener.current?.focus();
+    else if (target === 'filters') addButton.current?.focus();
+  }, [draft]);
   const labelId = useId();
   const suggestionId = useId();
   const changed = !sameSearch(draft, current);
   const chips = filterChips(draft.filters);
+  // A chip the reader added and has not searched yet looks (and is said) different from an applied one.
+  const applied = new Set(filterChips(current.filters).map((c) => `${c.key}=${c.label}`));
+  const pending = (chip: { key: string; label: string }): boolean => !applied.has(`${chip.key}=${chip.label}`);
   const suggestion = search.suggestion;
   const suggested = suggestion ? filterChips(suggestion.filters) : [];
   const yearBounds: [number, number] = [config?.coverage.yearFrom ?? 1900, config?.coverage.yearTo ?? 2100];
@@ -328,6 +354,11 @@ export function SearchPanel({ search }: SearchPanelProps) {
     }
   };
   const control = (action: Action) => ({ phase: acting === action ? evidence.phase : 'idle', disabled: busy && acting !== action, onAsk: () => act(action) }) as const;
+  // The suggestion is applied to the search as it is, never over changes the reader has not searched yet.
+  const suggestionControl = (action: Action) => {
+    const c = control(action);
+    return { ...c, disabled: c.disabled || changed, onAsk: changed ? () => undefined : c.onAsk } as const;
+  };
 
   return (
     <>
@@ -337,7 +368,7 @@ export function SearchPanel({ search }: SearchPanelProps) {
         </Placard>
         <dl className="mt-2 space-y-2 text-ui">
           <Row label={SEARCHED_LABEL}>
-            <Words words={draft.terms} onChange={(terms) => setDraft((d) => ({ ...d, terms }))} />
+            <Words words={draft.terms} pending={draft.terms !== current.terms} opener={wordsOpener} onChange={(terms) => setDraft((d) => ({ ...d, terms }))} />
           </Row>
           <Row label={FILTERS_LABEL}>
             <ul className="flex flex-wrap items-center gap-1.5" aria-label={FILTERS_LABEL}>
@@ -353,11 +384,12 @@ export function SearchPanel({ search }: SearchPanelProps) {
                       setDraft((d) => ({ ...d, filters: chip.without }));
                       addButton.current?.focus();
                     }}
-                    className={cx(chipButton, 'border-blue whitespace-nowrap text-blue hover:bg-blue-wash')}
+                    className={cx(chipButton, 'border-blue whitespace-nowrap text-blue hover:bg-blue-wash', pending(chip) && 'border-dashed')}
+                    data-pending={pending(chip) || undefined}
                   >
                     {chip.label}
                     <X size={11} strokeWidth={1.5} aria-hidden="true" />
-                    <span className="sr-only">, remove</span>
+                    <span className="sr-only">{pending(chip) ? `, ${NOT_SEARCHED_YET}` : ''}, remove</span>
                   </button>
                 </li>
               ))}
@@ -397,6 +429,7 @@ export function SearchPanel({ search }: SearchPanelProps) {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
+                  refocus.current = draft.terms !== current.terms ? 'words' : 'filters';
                   setDraft(current);
                   setAdding(false);
                 }}
@@ -446,17 +479,28 @@ export function SearchPanel({ search }: SearchPanelProps) {
               <span className="font-serif text-[14.5px] break-words text-ink">“{suggestion.terms}”</span>
             </Row>
           </dl>
+          {changed && (
+            <p className="mt-2 text-meta text-ink" data-draft-pending="">
+              {DRAFT_PENDING_NOTE}
+            </p>
+          )}
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             {suggested.length > 0 ? (
               <>
-                <AskAiButton look="chip" label={APPLY_FILTERS} usesOne {...control('filters')} />
-                <AskAiButton look="chip" label={APPLY_BOTH} usesOne {...control('both')} />
+                <AskAiButton look="chip" label={APPLY_FILTERS} usesOne {...suggestionControl('filters')} />
+                <AskAiButton look="chip" label={APPLY_BOTH} usesOne {...suggestionControl('both')} />
               </>
             ) : (
-              <AskAiButton look="chip" label={SEARCH_SUGGESTED_TERMS} usesOne {...control('words')} />
+              <AskAiButton look="chip" label={SEARCH_SUGGESTED_TERMS} usesOne {...suggestionControl('words')} />
             )}
           </div>
         </section>
+      )}
+      {suggestion && (
+        // Print keeps the suggestion as one line under its label, so "Suggested terms in these excerpts" reads on paper too.
+        <p data-print="only" className="mt-2 text-meta text-ink" data-suggestion-print="">
+          {suggestionInWords(suggestion)}
+        </p>
       )}
       <AiNoticeBox notice={evidence.notice} keywordHref={keyword} onRetry={acting ? () => act(acting) : undefined} className="mt-2.5" />
     </>

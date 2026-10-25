@@ -47,7 +47,8 @@ export function MatchedText({ text, highlights }: { text: string; highlights: re
       h.match === 'synonym' ? (
         <mark key={`m${i}`} className="hit-synonym" data-match="synonym">
           {text.slice(h.start, h.end)}
-          <span className="sr-only"> (synonym)</span>
+          {/* Heard, never copied with a selection of the text. */}
+          <span className="sr-only select-none"> (synonym)</span>
         </mark>
       ) : (
         <mark key={`m${i}`} className="hit" data-match="literal">

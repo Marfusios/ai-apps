@@ -80,7 +80,7 @@ export function CaseFacts({ row, caseTo, inCompare, onToggleCompare, headingId }
             <span className="text-meta text-muted">Probable-cause text unavailable</span>
           </span>
         )}
-        <label className="touch-target ml-auto flex cursor-pointer items-center gap-[5px] text-meta text-blue" data-print="hide">
+        <label className="touch-target ml-auto flex cursor-pointer items-center gap-[5px] text-meta text-blue">
           <input type="checkbox" className="check" checked={inCompare} onChange={onToggleCompare} />
           Compare<span className="sr-only"> {row.ntsbNo}</span>
         </label>

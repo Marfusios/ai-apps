@@ -32,6 +32,11 @@ function anonymousLimit(limits: AiLimits | undefined, status: AiStatusResponse |
 
 const NEVER_NEED = 'Search, cases and comparisons never need this.';
 
+/** "search" or "searches". */
+const searches = (n: number): string => (n === 1 ? 'search' : 'searches');
+/** "one day", "three days". */
+const days = (n: number): string => `${numberWord(n)} ${n === 1 ? 'day' : 'days'}`;
+
 /** The first anonymous check's panel (UI_DESIGN §5): "Up to ten free AI searches a day, subject to daily availability. …" */
 export function firstCheckText(limits: AiLimits | undefined, status: AiStatusResponse | undefined): string {
   const a = anonymousLimit(limits, status);
@@ -49,7 +54,7 @@ export function trialUsedTitle(limits: AiLimits | undefined, status: AiStatusRes
 /** "Sign in with Google to keep asking. New accounts start with 20 AI searches a day, rising to 50 after three days." */
 export function trialUsedSignIn(limits: AiLimits | undefined): string {
   if (!limits) return 'Sign in with Google to keep asking.';
-  return `Sign in with Google to keep asking. New accounts start with ${limits.newAccountDaily} AI searches a day, rising to ${limits.accountDaily} after ${numberWord(limits.newAccountDays)} days.`;
+  return `Sign in with Google to keep asking. New accounts start with ${limits.newAccountDaily} AI ${searches(limits.newAccountDaily)} a day, rising to ${limits.accountDaily} after ${days(limits.newAccountDays)}.`;
 }
 
 /**
@@ -67,9 +72,9 @@ export function trialReturns(status: AiStatusResponse | undefined): string | nul
 /** The first sign-in's welcome (UI_DESIGN §4.8): "You have 20 AI searches a day for your first three days, then 50." */
 export function welcomeText(limits: AiLimits | undefined, status: AiStatusResponse | undefined): string {
   if (limits) {
-    return `You have ${limits.newAccountDaily} AI searches a day for your first ${numberWord(limits.newAccountDays)} days, then ${limits.accountDaily}.`;
+    return `You have ${limits.newAccountDaily} AI ${searches(limits.newAccountDaily)} a day for your first ${limits.newAccountDays === 1 ? 'day' : days(limits.newAccountDays)}, then ${limits.accountDaily}.`;
   }
   const r = status?.remaining;
-  if (r?.kind === 'account') return `You have ${r.limitToday} AI searches today.`;
+  if (r?.kind === 'account') return `You have ${r.limitToday} AI ${searches(r.limitToday)} today.`;
   return 'Your account is ready.';
 }

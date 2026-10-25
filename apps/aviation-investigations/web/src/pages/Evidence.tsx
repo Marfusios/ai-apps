@@ -23,6 +23,7 @@ import {
   TINY_RESULTS,
   QUESTION_AS_ASKED,
   allShownLine,
+  arrivalLine,
   countLine,
   expiryLine,
   filtersInWords,
@@ -36,6 +37,7 @@ import {
 import { EvidenceCard } from '../features/evidence/EvidenceCard';
 import { EvidenceHint } from '../features/evidence/Hint';
 import { SearchPanel } from '../features/evidence/SearchPanel';
+import { takeArrival } from '../features/evidence/arrival';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
 import { MatchLegend } from '../features/evidence/MatchedText';
 import { CapabilityNote, EvidenceNotice } from '../features/evidence/Notice';
@@ -155,6 +157,13 @@ export function Evidence() {
   const [announcement, setAnnouncement] = useState('');
   // The first card a "Show more" brought, to give it focus once it is on screen.
   const focusRank = useRef<number | null>(null);
+  const resultsHeading = useRef<HTMLHeadingElement>(null);
+  // Alternates a trailing space, so the same words said twice in a row are announced twice.
+  const said = useRef(false);
+  const announce = (text: string): void => {
+    said.current = !said.current;
+    setAnnouncement(said.current ? text : `${text}\u00a0`);
+  };
 
   // An AI search answered 2xx is settled once this page is on screen for it (web/src/features/ai/unsettled.ts).
   useLayoutEffect(() => {
@@ -181,12 +190,20 @@ export function Evidence() {
     if (rank === null || !cases.some((c) => c.rank === rank)) return;
     focusRank.current = null;
     document.querySelector<HTMLElement>(`article[data-rank="${rank}"] [data-case-trigger]`)?.focus();
-    setAnnouncement(`${showingLine(cases.length, search?.total ?? cases.length)}.`);
+    announce(`${showingLine(cases.length, search?.total ?? cases.length)}.`);
   }, [cases, search?.total]);
+
+  // A search this tab just asked for (Ask AI, Search again, Apply) is announced on arrival, and
+  // takes focus to its results heading if focus was lost on the way (as a brief's finished step).
+  useEffect(() => {
+    if (!search || !takeArrival(search.id)) return;
+    announce(arrivalLine(search.total));
+    if (document.activeElement === document.body || document.activeElement === null) resultsHeading.current?.focus({ preventScroll: true });
+  }, [search]);
 
   const liveText = gone ? EXPIRED_TITLE : !search && first.isError ? LOAD_FAILED : announcement;
   const live = (
-    <p aria-live="polite" className="sr-only">
+    <p aria-live="polite" className="sr-only" data-evidence-live="">
       {liveText}
     </p>
   );
@@ -310,7 +327,7 @@ export function Evidence() {
         <CapabilityNote note={search.note} className="mt-3" />
 
         <section aria-labelledby="evidence-heading" className="mt-5">
-          <h2 id="evidence-heading" className="font-serif text-[19px] leading-tight font-semibold tracking-headline sm:text-[21px]">
+          <h2 ref={resultsHeading} tabIndex={-1} id="evidence-heading" className="font-serif text-[19px] leading-tight font-semibold tracking-headline outline-none sm:text-[21px]">
             {EVIDENCE_HEADING}
           </h2>
           <EvidenceNotice className="mt-2" />
