@@ -559,16 +559,29 @@ configuration. Saved searches record `autoFilterPolicy` (version/sha256),
 `automaticFilters` and `autoFilterReason`; only the applied state set is public.
 The fitted `addedTerms` suffix is saved once and drives disclosure. Failed attempts
 retain actual automatic state/filters in private diagnostics, never logs or traces.
-The automatic policy binds `state-probes.v4` outputs as well as the guard version.
+The automatic policy binds `state-probes.v5` outputs as well as the guard version.
 Cache identities for an automatic-filter experiment must include both policy identities,
 the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
-`none` remains the default and rollback. The reviewed `state-explicit.v1.2` is also
+`none` remains the default and rollback. The reviewed `state-explicit.v1.3` is also
 allowed on live; the operator enables it explicitly. The live ranking allowlist
-remains `er-q-v1` only, and ranking hashes are unchanged. v1.2 adds only the
-other-event/title rejection; its new guard/probe identity replaces v1.1, which was
-never deployed and is no longer an accepted setting. The controller's retrospective
-replay of 1,040 recorded C answers retained 367 TP / 0 FP / 33 FN with no applications
-lost; do not treat that replay as fresh confirmation on unseen wording.
+remains `er-q-v1` only, and ranking hashes are unchanged. v1.3 is v1.1 plus five
+rejection rules (DESIGN), including reference position and attribution at every
+location mention. v1.1/v1.2 were never deployed and are no longer accepted settings.
+The offline fixture of 1,040 recorded C answers reproduces the controller's
+365 TP / 0 FP / 35 FN for the guard, two fewer applications than v1.1. After the
+pipeline's separate case-search intent requirement it gives 363 TP / 0 FP / 37 FN.
+Do not present either retrospective replay as fresh confirmation on unseen wording.
+The 499 probes in `state-probes.v5` include the review's 31 abstentions and 11
+positives, deliberate abstentions and witnesses for every new regex alternative.
+Mutation tests isolate overlapping rejection rules; a frozen v1.1 fixture checks
+that v1.3 only removes applications.
+
+After enabling state, monitor private `autoFilterReason` counts and free-undo claims
+relative to state-applied original searches. Removals provide a precision signal,
+not a labelled precision estimate: a claim can remove keywords too, or precede a
+failed search. Keep questions, state sets and those private diagnostics out of logs
+and traces. Missing `aiAutomaticFilters` on a cached config means unknown capability;
+the client uses cautious suggestion wording until it refreshes.
 
 A page discloses actual lexical keywords, `order` (AI grades applied versus match order),
 `marks`, automatic state and `freeUndo`. These are server-derived facts, never scope prose.

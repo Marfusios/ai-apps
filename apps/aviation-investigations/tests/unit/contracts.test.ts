@@ -145,9 +145,8 @@ describe('mock responses satisfy the contracts', () => {
   const read = (name: string): unknown => JSON.parse(readFileSync(join(appDir, 'web/mock', name), 'utf8'));
 
   it('config, dashboards and every case detail', () => {
-    // The controller owns the older web fixture; supply the new server field here
-    // until that branch regenerates it. Public-config tests check the required field.
-    expect(() => ConfigResponseSchema.parse({ aiAutomaticFilters: [], ...read('config.json') as Record<string, unknown> })).not.toThrow();
+    // Older cached configs may omit automatic-filter capability.
+    expect(() => ConfigResponseSchema.parse(read('config.json'))).not.toThrow();
     expect(() => DashboardResponseSchema.parse(read('dashboard-default.json'))).not.toThrow();
     expect(() => DashboardResponseSchema.parse(read('dashboard-all.json'))).not.toThrow();
     for (const [ntsbNo, detail] of Object.entries(cases)) {

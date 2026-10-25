@@ -5,9 +5,11 @@ import { createHash } from 'node:crypto';
 import { US_STATE, US_STATE_CODES } from '../../shared/vocab.js';
 import { eligibleEmittedStates } from '../../shared/state-eligibility.js';
 import { canonicalConfig } from '../search/retrieval-config.js';
+import { STATE_V13_ABSTAIN, STATE_V13_APPLY, STATE_V13_DELIBERATE, STATE_V13_RULE_PROBES } from './state-attribution-probes.js';
 
-export const STATE_PROBE_VERSION = 'state-probes.v4';
+export const STATE_PROBE_VERSION = 'state-probes.v5';
 const probes: readonly (readonly [string, readonly string[]])[] = [
+  ...STATE_V13_ABSTAIN, ...STATE_V13_APPLY, ...STATE_V13_DELIBERATE, ...STATE_V13_RULE_PROBES,
   ...US_STATE_CODES.map(code => [`Find events in the state of ${US_STATE[code]}.`, [code]] as const),
   ...['city', 'county', 'river', 'bay', 'lake', 'sound', 'valley', 'canyon', 'island', 'islands',
     'panhandle', 'keys', 'gulf', 'strait', 'peninsula', 'range', 'mountain', 'mountains']

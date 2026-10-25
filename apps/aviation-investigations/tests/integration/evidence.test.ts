@@ -6,6 +6,7 @@ import type { EvidenceRankingVersion } from '../../shared/evidence-ranking.js';
 import { evidenceRankingIdentity } from '../../server/evidence/ranking-config.js';
 import scopeReplays from '../support/evidence-scope-replays.json' with { type: 'json' };
 import { evidenceReservation } from '../../server/evidence/pricing.js';
+import { canonicalRequestHash } from '../../server/quota/policy.js';
 import { stageWorstCaseUsd, EVIDENCE_SCOPE_CAPS } from '../../server/ai/pricing.js';
 import { request as httpRequest } from 'node:http';
 import * as generationClaims from '../../server/db/generations.js';
@@ -23,7 +24,7 @@ import { EvidenceScopeOutputSchema, validateEvidenceScope } from '../../server/a
 import { createEvidenceRetriever, createEvidenceServices, type EvidenceRetriever } from '../../server/evidence/retrieve.js';
 import { pageOf, readOwnedSearch } from '../../server/evidence/store.js';
 import { evidenceSnapshot } from '../../server/evidence/snapshot.js';
-import { EvidencePageSchema, CreateEvidenceResponseSchema } from '../../shared/contracts/evidence.js';
+import { EvidencePageSchema, CreateEvidenceResponseSchema, CreateEvidenceRequestSchema } from '../../shared/contracts/evidence.js';
 import { ConfigResponseSchema } from '../../shared/contracts/config.js';
 import { loadConfig } from '../../shared/config.js';
 import { closeDb, type Db } from '../../server/db/client.js';
@@ -842,11 +843,11 @@ describe('evidence ranking selection and persistence', () => {
 describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   const stateScope = { intent: 'case_search' as const, filters: { state: ['CA'] }, terms: 'engine' };
   const stateQuestion = 'Find engine power loss in California';
-  const withState = (env: Record<string, string> = {}) => harness({ evidenceScope: { output: stateScope } }, undefined, 'er-t-v1', { autoFilters: 'state-explicit.v1.2', env });
+  const withState = (env: Record<string, string> = {}) => harness({ evidenceScope: { output: stateScope } }, undefined, 'er-t-v1', { autoFilters: 'state-explicit.v1.3', env });
   const undoBody = (id: string, changes: Record<string, unknown> = {}) => ({ kind: 'edited', question: undefined, from: id, filters: {}, ...changes });
   const stored = async (id: string) => (await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, id)))[0]!;
 
-  it.each(['none', 'state-explicit.v1.2'] as const)('publishes automatic fields from the configured %s policy without paid work', async policy => {
+  it.each(['none', 'state-explicit.v1.3'] as const)('publishes automatic fields from the configured %s policy without paid work', async policy => {
     const h = harness(undefined, undefined, undefined, { env: { AVIATION_EVIDENCE_AUTO_FILTERS: policy } });
     const response = await h.app.inject('/api/config');
     expect(response.statusCode).toBe(200);
@@ -962,7 +963,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   it('applies only guarded state before retrieval, removes it from suggestions and persists both identities', async () => {
     const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
     const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: ['CA'], yearFrom: 2019 } } } },
-      r => ({ ...r, search: async (...args) => { plans.push(args[1]); return r.search(...args); } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.2' });
+      r => ({ ...r, search: async (...args) => { plans.push(args[1]); return r.search(...args); } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.3' });
     const page = searchOf(await h.request({ question: stateQuestion }));
     expect(plans[0]).toMatchObject({ filters: { state: ['CA'] }, keywordText: 'engine', text: stateQuestion });
     expect(page).toMatchObject({ version: 'evidence.v3', appliedFilters: { state: ['CA'] }, automaticFilters: { state: ['CA'] },
@@ -979,28 +980,38 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   });
   it.each(['Kansas City', 'Michigan City', 'the Mississippi River', 'Iowa City'])('abstains on %s and retains its state as an unapplied suggestion', async location => {
     const states: Record<string, string> = { 'Kansas City': 'KS', 'Michigan City': 'MI', 'the Mississippi River': 'MS', 'Iowa City': 'IA' };
-    const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: [states[location]!] } } } }, undefined, undefined, { autoFilters: 'state-explicit.v1.2' });
+    const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: [states[location]!] } } } }, undefined, undefined, { autoFilters: 'state-explicit.v1.3' });
     const page = searchOf(await h.request({ question: `Find cases in ${location}` }));
     expect(page.automaticFilters).toBeNull(); expect(page.appliedFilters).toEqual({});
     expect(page.suggestion?.filters.state).toEqual([states[location]]);
     expect((await stored(page.id)).data).toMatchObject({ autoFilterReason: 'ambiguous_context' });
   });
   it.each([
-    ['Find investigations that discuss another accident in Alaska.', 'AK', false],
-    ['Find investigations whose titles include accidents in Alaska.', 'AK', false],
-    ['Find accidents in Alaska related to icing.', 'AK', true],
-    ['Find cases in Texas involving other aircraft.', 'TX', true],
-  ] as const)('v1.2 applies only the requested event state: %s', async (question, state, applies) => {
+    ['Find investigations that discuss another accident in Alaska.', 'AK', 'other_event'],
+    ['Find investigations whose titles include accidents in Alaska.', 'AK', 'other_event'],
+    ['Find investigations citing accidents in Alaska.', 'AK', 'referenced_event'],
+    ['Find cases with headings about accidents in Alaska.', 'AK', 'title_text'],
+    ['Find accidents involving flights bound for an airport in Texas.', 'TX', 'attributed_elsewhere'],
+    ['Find accidents involving flights that took off in Alaska.', 'AK', 'attributed_elsewhere'],
+    ['Find accidents involving aircraft maintained near Anchorage, AK.', 'AK', 'attributed_elsewhere'],
+    ['Find investigations about the recent crash in Alaska.', 'AK', 'referenced_event'],
+    ['Accidents after takeoff in Alaska', 'AK', 'referenced_event'],
+    ['accidents like this in Alaska', 'AK', 'referenced_event'],
+    ['Find accidents in Alaska related to icing.', 'AK', 'applied'],
+    ['Find cases in Texas involving other aircraft.', 'TX', 'applied'],
+    ["I'd like to see accidents in Alaska", 'AK', 'applied'],
+  ] as const)('v1.3 filters, suggestions and private reason follow the guard: %s', async (question, state, reason) => {
+    const applies = reason === 'applied';
     const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
     const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: [state] } } } },
       r => ({ ...r, search: async (...args) => { plans.push(args[1]); return r.search(...args); } }), undefined,
-      { autoFilters: 'state-explicit.v1.2' });
+      { autoFilters: 'state-explicit.v1.3' });
     const page = searchOf(await h.request({ question }));
     expect(page.automaticFilters).toEqual(applies ? { state: [state] } : null);
     expect(page.appliedFilters).toEqual(applies ? { state: [state] } : {});
     expect(plans[0]?.filters).toEqual(page.appliedFilters);
     expect(page.suggestion?.filters.state).toEqual(applies ? undefined : [state]);
-    expect((await stored(page.id)).data).toMatchObject({ autoFilterReason: applies ? 'applied' : 'other_event' });
+    expect((await stored(page.id)).data).toMatchObject({ autoFilterReason: reason });
     expect(page).not.toHaveProperty('autoFilterReason');
   });
   it.each(['er-q-v1', 'er-q-h50-v1'] as const)('wires %s highlights through runEvidence, not merely a helper', async ranking => {
@@ -1108,7 +1119,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
       const found = await r.search(...args);
       if (fail) throw new Error('synthetic downstream failure');
       return found;
-    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.2', env: { AI_ANONYMOUS_TRIAL_REQUESTS: '1' } });
+    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.3', env: { AI_ANONYMOUS_TRIAL_REQUESTS: '1' } });
     const page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
     fail = true;
     const key = randomUUID(), body = undoBody(page.id), before = await spent();
@@ -1136,7 +1147,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
       expect(args[1].filters).toEqual({ state: ['CA'] });
       result.cases[0]!.probableCauses[0]!.text = 'x'.repeat(EVIDENCE_DATA_MAX_BYTES);
       return result;
-    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.2' });
+    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.3' });
     expect((await h.request({ question: stateQuestion })).statusCode).toBe(503);
     expect(await usage()).toMatchObject({ quota_counted: false, status: 'settled' });
     expect((await spent()).lines).toBe(2);
@@ -1151,7 +1162,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
     const h = harness({ evidenceScope: { output: stateScope } }, r => ({ ...r, search: async (...args) => {
       plans.push(args[1]); return r.search(...args);
-    } }), 'er-qt-v1', { autoFilters: 'state-explicit.v1.2' });
+    } }), 'er-qt-v1', { autoFilters: 'state-explicit.v1.3' });
     const page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
     expect((await stored(page.id)).data).toMatchObject({ lexicalSource: 'question+terms', addedTerms: 'engine',
       executed: { lexical: stateQuestion + ' engine', vector: stateQuestion } });
@@ -1217,7 +1228,7 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   it('keeps automatic state diagnostics even when retrieval fails before producing a result', async () => {
     const h = harness({ evidenceScope: { output: stateScope } }, r => ({ ...r, search: async (...args) => {
       await r.search(...args); throw new Error('synthetic retrieval failure');
-    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.2' });
+    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.3' });
     expect((await h.request({ question: stateQuestion })).statusCode).toBe(503);
     const [failed] = await db.select().from(evidenceSearches);
     expect(failed!.status).toBe('failed');
@@ -1298,5 +1309,80 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     expect((await stored(id)).freeUndoReservationId).toBeNull();
     expect((await db.execute(sql`SELECT requests_used FROM trial_identities`)).rows).toEqual([{ requests_used: 2 }]);
     expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('v2 evidence retries across the v3 upgrade', () => {
+  async function legacy(h: ReturnType<typeof harness>, kind: 'question' | 'edited', status: 'results' | 'running' | 'failed') {
+    const key = randomUUID();
+    const question = 'Find engine power loss after maintenance';
+    const parent = kind === 'edited' ? searchOf(await h.request()) : null;
+    if (parent) nextMinute();
+    const body = parent ? { kind: 'edited' as const, question: undefined, from: parent.id, filters: {}, terms: 'engine' }
+      : { kind: 'question' as const, question };
+    const source = searchOf(await h.request(body, key));
+    const saved = await migrator.execute(sql`INSERT INTO evidence_searches
+      (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
+      SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
+        ${status}, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'freeUndo') ||
+          jsonb_build_object('version', 'evidence.v2', 'query', CASE WHEN data->'query'->>'source' = 'question'
+            THEN jsonb_build_object('source', 'question') ELSE data->'query' END), created_at, expires_at
+      FROM evidence_searches WHERE id = ${source.id} RETURNING id`);
+    const id = String(saved.rows[0]!.id);
+    const { idempotencyKey: _key, turnstileToken: _token, ...content } = CreateEvidenceRequestSchema.parse(JSON.parse(JSON.stringify({ ...body, idempotencyKey: key })));
+    const hash = canonicalRequestHash({ version: 'evidence.v2', ...content });
+    await migrator.execute(sql`UPDATE idempotency SET request_hash = ${hash}, result_ref = ${`evidence:${id}`} WHERE idempotency_key = ${key}`);
+    return { id, key, body, hash };
+  }
+  const counts = async () => (await db.execute(sql`SELECT
+    (SELECT count(*)::int FROM reservations) AS reservations,
+    (SELECT count(*)::int FROM evidence_searches) AS searches,
+    (SELECT sum(requests_used)::int FROM trial_identities) AS quota`)).rows;
+
+  it.each((['question', 'edited'] as const).flatMap(kind => (['results', 'running', 'failed'] as const).map(status => ({ kind, status }))))(
+    'replays the stored $status response of a legacy $kind at its quota limit', async ({ kind, status }) => {
+      const h = harness(undefined, undefined, undefined, { env: { AI_ANONYMOUS_TRIAL_REQUESTS: kind === 'question' ? '1' : '2' } });
+      const old = await legacy(h, kind, status), before = await spent(), previousCounts = await counts();
+      const calls = h.llm.calls.length, embeddings = h.embed.mock.calls.length;
+      nextMinute();
+      const response = await h.request(old.body, old.key);
+      if (status === 'results') {
+        expect(searchOf(response)).toEqual(EvidencePageSchema.parse((await h.get(old.id)).json()));
+        expect(searchOf(response)).toMatchObject({ id: old.id, version: 'evidence.v3', undo: 'none' });
+      } else expect(response.json()).toMatchObject({ error: status === 'running' ? 'in_flight' : 'unavailable' });
+      expect(response.statusCode).toBe(status === 'results' ? 201 : status === 'running' ? 429 : 503);
+      const different = kind === 'question' ? { ...old.body, question: 'Find icing accidents' } : { ...old.body, terms: 'icing' };
+      expect((await h.request(different, old.key)).statusCode).toBe(409);
+      expect(await spent()).toEqual(before); expect(await counts()).toEqual(previousCounts);
+      expect(h.llm.calls).toHaveLength(calls); expect(h.embed).toHaveBeenCalledTimes(embeddings);
+      expect((await db.execute(sql`SELECT request_hash FROM idempotency WHERE idempotency_key = ${old.key}`)).rows).toEqual([{ request_hash: old.hash }]);
+    });
+  it('never discards v3 keywords to replay an otherwise identical v2 edit', async () => {
+    const h = harness(), old = await legacy(h, 'edited', 'results');
+    // Make the historical edit a filter-only edit; keywords is a new instruction,
+    // even when it would select the same question text on this baseline parent.
+    const body = { ...old.body, terms: undefined };
+    const { idempotencyKey: _key, turnstileToken: _token, ...content } = CreateEvidenceRequestSchema.parse(JSON.parse(JSON.stringify({ ...body, idempotencyKey: old.key })));
+    const hash = canonicalRequestHash({ version: 'evidence.v2', ...content });
+    await migrator.execute(sql`UPDATE idempotency SET request_hash = ${hash} WHERE idempotency_key = ${old.key}`);
+    const before = await spent(), previousCounts = await counts();
+    nextMinute();
+    expect((await h.request({ ...body, keywords: 'question' }, old.key)).statusCode).toBe(409);
+    expect(await spent()).toEqual(before); expect(await counts()).toEqual(previousCounts);
+  });
+  it('retains fresh Turnstile checks, ownership and handover on a legacy replay', async () => {
+    const h = harness(), old = await legacy(h, 'question', 'results'), trialCookie = h.cookie();
+    const before = await spent(), previousCounts = await counts();
+    nextMinute();
+    expect((await h.request({ ...old.body, turnstileToken: 'not-a-valid-token' }, old.key)).statusCode).toBe(403);
+    await h.account();
+    expect(searchOf(await h.request(old.body, old.key)).id).toBe(old.id);
+    const moved = await h.app.inject({ method: 'POST', url: '/api/evidence', remoteAddress: '127.0.0.1',
+      headers: { origin: `https://${host}`, cookie: trialCookie },
+      payload: { ...old.body, idempotencyKey: old.key, turnstileToken: h.verify.issue() } });
+    expect(moved.statusCode).toBe(403); expect(moved.json().error).toBe('moved');
+    expect((await h.get(old.id, 1, '')).statusCode).toBe(404);
+    expect(await spent()).toEqual(before); expect(await counts()).toEqual(previousCounts);
+    expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(1);
   });
 });

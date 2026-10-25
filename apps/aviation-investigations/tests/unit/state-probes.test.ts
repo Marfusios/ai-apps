@@ -65,6 +65,24 @@ function alternativesAtEveryDepth(pattern: string) {
   });
 }
 const otherMutations = alternativesAtEveryDepth(otherDeclaration[1]!);
+const attributionNames = ['referencedEvent', 'titleText', 'movementLocation', 'departureLocation', 'attributeLocation', 'definiteEvent'] as const;
+const attributionDeclarations = attributionNames.map(name => {
+  const declaration = new RegExp(`^const ${name} = /(.+)/i;$`, 'm').exec(source);
+  if (!declaration) throw new Error(`state guard ${name} declaration changed; update mutation tests`);
+  return { name, declaration };
+});
+const attributionMutations = attributionDeclarations.flatMap(rule => alternativesAtEveryDepth(rule.declaration[1]!).map(mutation => ({ ...rule, ...mutation })));
+
+// Old and new guards intentionally overlap (e.g. "named"). Isolate the regex
+// under test so a second rejection cannot mask a missing alternative. State
+// extraction, completeness, normalization and the guard's actual call site stay.
+function isolateAttributionRule(name: string): string {
+  let isolated = source;
+  for (const other of ['unsafe', 'otherEvent', ...attributionNames]) {
+    if (other !== name) isolated = isolated.replace(new RegExp(`^const ${other} = /(.+)/i;$`, 'm'), () => `const ${other} = /a^/i;`);
+  }
+  return isolated;
+}
 
 // Only trusted repository code is evaluated, offline in Node; nothing from a question
 // or a provider becomes code. Keep production's guard, imports and exports untouched.
@@ -88,9 +106,20 @@ describe('state-probes unsafe-context coverage', () => {
   });
 });
 
-describe('v1.2 other-event probe coverage and subset', () => {
+describe('v1.3 attribution regex alternatives', () => {
+  it.each(attributionDeclarations)('$name has independent alternatives to challenge', rule => {
+    expect(attributionMutations.filter(m => m.name === rule.name).length).toBeGreaterThan(5);
+  });
+  it.each(attributionMutations)('$name: removing $alternative changes isolated guard outputs', mutation => {
+    const isolated = isolateAttributionRule(mutation.name);
+    const mutated = isolated.replace(mutation.declaration[0], () => `const ${mutation.name} = /${mutation.pattern}/i;`);
+    expect(stateGuardFingerprint(loadGuard(mutated))).not.toBe(stateGuardFingerprint(loadGuard(isolated)));
+  });
+});
+
+describe('bounded other-event probe coverage and v1.1 subset', () => {
   it('covers both branches, every reference, every event noun and both title alternatives', () => {
-    expect(otherMutations).toHaveLength(23); // 2 root + 11 references + 8 nouns + 2 title alternatives
+    expect(otherMutations).toHaveLength(22); // 2 root + 10 references + 8 nouns + 2 title alternatives
   });
   it.each(otherMutations)('removing $alternative changes the fingerprint', mutation => {
     const mutated = source.replace(otherDeclaration[0], () => `const otherEvent = /${mutation.pattern}/i;`);

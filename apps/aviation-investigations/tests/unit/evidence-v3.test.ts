@@ -39,34 +39,34 @@ describe('independent automatic state policy', () => {
   it.each(['dev', 'live'] as const)('%s defaults to none, accepts both cleared policies and rejects unknown values', APP_ENV => {
     expect(loadConfig({ files: [], env: { APP_ENV } }).ai.evidenceAutoFilters).toBe('none');
     expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: '' } }).ai.evidenceAutoFilters).toBe('none');
-    for (const policy of ['none', 'state-explicit.v1.2']) {
+    for (const policy of ['none', 'state-explicit.v1.3']) {
       expect(loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } }).ai.evidenceAutoFilters).toBe(policy);
     }
-    for (const policy of ['state-explicit.v1', 'state-explicit.v1.1', 'unknown']) {
+    for (const policy of ['state-explicit.v1', 'state-explicit.v1.1', 'state-explicit.v1.2', 'unknown']) {
       expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } })).toThrow('AVIATION_EVIDENCE_AUTO_FILTERS');
     }
   });
   it('enabling automatic state on live still permits only the baseline ranking', () => {
     for (const version of EVIDENCE_RANKING_VERSIONS) {
       const live = () => loadConfig({ files: [], env: { APP_ENV: 'live',
-        AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.2', AVIATION_EVIDENCE_RANKING: version } });
+        AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.3', AVIATION_EVIDENCE_RANKING: version } });
       if (version === 'er-q-v1') expect(live().ai.evidenceRanking).toBe(version);
       else expect(live).toThrow('AVIATION_EVIDENCE_RANKING is not cleared for live');
     }
   });
   it('has distinct immutable identities and rejects altered policies', () => {
-    expect(Object.isFrozen(autoFilterPolicy('state-explicit.v1.2'))).toBe(true);
+    expect(Object.isFrozen(autoFilterPolicy('state-explicit.v1.3'))).toBe(true);
     expect(autoFilterIdentity(autoFilterPolicy()).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
-    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.2')).sha256).toBe('1d39528180f30696b60d254b7275c97704d8dc6e03ba6122256670f1c6bb8531');
-    expect(() => automaticState({ ...autoFilterPolicy('state-explicit.v1.2'), field: null } as never, question, rawSuggestion.filters, false, false)).toThrow('unregistered');
+    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.3')).sha256).toBe('8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de');
+    expect(() => automaticState({ ...autoFilterPolicy('state-explicit.v1.3'), field: null } as never, question, rawSuggestion.filters, false, false)).toThrow('unregistered');
   });
   it('fingerprints the guard behaviour, including a regex change without a version bump', () => {
-    const policy = autoFilterPolicy('state-explicit.v1.2');
+    const policy = autoFilterPolicy('state-explicit.v1.3');
     const changed = stateGuardFingerprint((q, emitted) => q === 'Find events in Kansas City.'
       ? { states: [...emitted], reason: 'applied' } : eligibleEmittedStates(q, emitted));
     expect(policy.behaviour?.sha256).toBe(stateGuardFingerprint());
     expect(changed).not.toBe(stateGuardFingerprint());
-    expect(autoFilterIdentity({ ...policy, behaviour: { version: 'state-probes.v4', sha256: changed } } as never).sha256)
+    expect(autoFilterIdentity({ ...policy, behaviour: { version: 'state-probes.v5', sha256: changed } } as never).sha256)
       .not.toBe(autoFilterIdentity(policy).sha256);
   });
   it('rejects an altered automatic policy before any scope call or spend reservation', async () => {
@@ -79,7 +79,7 @@ describe('independent automatic state policy', () => {
     expect(llm.calls).toHaveLength(0); expect(memory.records).toHaveLength(0); expect(search).not.toHaveBeenCalled();
   });
   it('applies only a cleared complete state set from a valid question search', () => {
-    const p = autoFilterPolicy('state-explicit.v1.2');
+    const p = autoFilterPolicy('state-explicit.v1.3');
     expect(automaticState(p, question, rawSuggestion.filters, false, false)).toEqual({ filters: { state: ['CA'] }, reason: 'applied' });
     expect(automaticState(p, question, rawSuggestion.filters, true, false)).toEqual({ filters: null, reason: 'edited' });
     expect(automaticState(p, question, null, false, false).reason).toBe('scope_unavailable');
@@ -96,7 +96,7 @@ describe('v3 execution facts', () => {
     });
     const search: EvidenceRetriever['search'] = vi.fn(async () => ({ cases, ranking: cases.map(c => ({ ntsbNo: c.case.ntsbNo, seeds: [], channels: [] })) }));
     const out = await rankEvidence(config, { question, filters: {}, dataset: {} as PinnedDataset, signal: new AbortController().signal,
-      autoFilters: autoFilterPolicy('state-explicit.v1.2'),
+      autoFilters: autoFilterPolicy('state-explicit.v1.3'),
     }, { llm, retriever: { available: async () => true, search }, embeddingModel: 'text-embedding-3-small' }, evaluationRankingSpendGate(() => createMemorySpendGate(1), 'v3'));
     expect(search).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ filters: { state: ['CA'] } }), expect.anything(), expect.anything(), expect.anything());
     expect(out.suggestion?.filters).toEqual({ yearFrom: 2019 });

@@ -20,14 +20,14 @@ async function config(policy: EvidenceAutoFilterVersion | null, etag?: string) {
 
 describe('public automatic-filter policy', () => {
   it.each([
-    [null, []], ['none', []], ['state-explicit.v1.2', ['state']],
+    [null, []], ['none', []], ['state-explicit.v1.3', ['state']],
   ] as const)('reports the fields of the active %s policy', async (policy, expected) => {
     const response = await config(policy);
     expect(response.statusCode).toBe(200);
     expect(ConfigResponseSchema.parse(response.json()).aiAutomaticFilters).toEqual(expected);
   });
   it('changes the ETag when the policy rolls back on an unchanged dataset', async () => {
-    const active = await config('state-explicit.v1.2');
+    const active = await config('state-explicit.v1.3');
     const rollback = await config('none', String(active.headers.etag));
     expect(rollback.statusCode).toBe(200);
     expect(rollback.json().datasetRevision).toBe(active.json().datasetRevision);
@@ -36,9 +36,11 @@ describe('public automatic-filter policy', () => {
     expect(rollback.headers['cache-control']).toBe('public, max-age=300');
     expect((await config('none', String(rollback.headers.etag))).statusCode).toBe(304);
   });
-  it('requires an array of enabled fields, with no unknown or duplicate fields', async () => {
+  it('accepts an older cached config with unknown capability but validates any supplied fields', async () => {
     const body = (await config('none')).json();
-    for (const aiAutomaticFilters of [undefined, null, 'state', ['none'], ['country'], ['state', 'state']]) {
+    const { aiAutomaticFilters: _fields, ...cached } = body;
+    expect(ConfigResponseSchema.parse(cached).aiAutomaticFilters).toBeUndefined();
+    for (const aiAutomaticFilters of [null, 'state', ['none'], ['country'], ['state', 'state']]) {
       expect(ConfigResponseSchema.safeParse({ ...body, aiAutomaticFilters }).success).toBe(false);
     }
   });

@@ -278,9 +278,9 @@ Record actual test results; a successful model review is not a certification or
 a promise of zero vulnerabilities.
 
 
-## Evidence ranking experiments (Task 24, pending review)
+## Evidence ranking (Task 24)
 
-The new dev-only `rankEvidence` pipeline optionally uses validated scope terms in
+The HTTP `rankEvidence` pipeline optionally uses validated scope terms in
 fixed BM25 query bodies and adds `rerank.r1`. Its separate automatic-state policy
 defaults to `none`; any accepted automatic state is disclosed by evidence.v3.
 The live allowlist contains only the baseline, with original-question retrieval and
@@ -311,27 +311,35 @@ are not exported to traces. Saved execution metadata inherits the search's owner
 backup exclusion and 24-hour expiry.
 
 
-## Evidence.v3 automatic-state and free-undo boundary (pending review)
+## Evidence.v3 automatic-state and free-undo boundary
 
 The automatic-state policy is frozen/hashed separately from the evaluated rankings.
-Live allows `none` (the default and rollback) and `state-explicit.v1.2`; v1.1 was
-never deployed and is no longer accepted. The guard accepts only a complete explicit
-model-emitted event-state set. State-named-place rejection reduces v1's applied set;
-v1.2 adds a further `other_event` rejection after NFKC for other-event references or
-title/headline wording. The case-insensitive rule allows at most two intervening
-word or hyphenated-word tokens between its reference word and event noun (DESIGN).
-It rejects "discuss another accident in Alaska" and "titles include accidents in
-Alaska", while retaining "cases in Texas involving other aircraft". The rule is
-a strict subset of v1.1, so it cannot introduce a new automatic application.
-The controller replayed all 1,040 recorded C field answers: v1.1 and v1.2 both
-produced 367 TP / 0 FP / 33 FN, with no applications lost. This is retrospective
-evidence limited to those answers, not proof of complete semantic safety or future
+Live allows `none` (the default and rollback) and `state-explicit.v1.3`; v1.1 and
+v1.2 were never deployed and are no longer accepted. The guard requires the complete
+explicit model-emitted state set. v1.3 is built on v1.1 with five rejection rules
+after NFKC: bounded other-event wording, references before the first state mention,
+title/text language, destinations/departures/attributes at each mention, and a definite
+singular event before a mention (DESIGN). Qualified postal forms use the city's start
+for attribution. The v1.2 `like` alternative is replaced so "I'd like to see accidents
+in Alaska" stays eligible. v1.3 is a strict subset of v1.1, so it introduces no
+application where v1.1 abstained. The 1,040-answer offline C replay gives
+365 TP / 0 FP / 35 FN for the guard (two applications lost from v1.1), and
+363 TP / 0 FP / 37 FN after the pipeline's separate case-search intent requirement.
+This finite rule set and recorded replay do not prove semantic attribution or future
 recall. No other scope filter is applied automatically; live ranking remains
-`er-q-v1` only. The old v1/v1.1 guard regressions remain intact, alongside independent
-new-rule probes, actual-source mutation tests and a frozen-v1.1 subset sanity test.
+`er-q-v1` only. Old v1/v1.1 regressions remain intact; 499 versioned probes include
+the 31 abstentions, 11 positives and three deliberate abstentions from review, and
+witnesses for every new regex alternative. Actual-source mutation tests isolate
+overlapping rules to test each alternative, alongside a frozen-v1.1 subset check.
 Scope's evaluated schema remains non-nullable and unchanged despite nullable terms
 in the public remaining suggestion. Private policy/reason/ledger metadata is never
 spread into the strict public page.
+
+An unexpired v2 idempotency record replays only when its hash exactly matches the
+legacy hash of the same compatible request body. New `keywords` instructions cannot
+be discarded to match it; a different body still conflicts. Replays retain the
+normal owner, handover and fresh anonymous Turnstile checks and never call a provider
+or take another quota unit, including running and failed results.
 
 The quota exemption is server-owned and bounded to **one admission per original
 question search**. Eligibility requires a v3 parent, current ownership, an unexpired results row,

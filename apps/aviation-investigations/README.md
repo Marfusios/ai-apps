@@ -2381,8 +2381,9 @@ state, ordering, mark source and a one-use quota-free undo. The page's `undo` is
 `available` for an unexpired original v3 question with automatic additions and no
 claim, `used` after its claim is consumed, and `none` for edits, v2 rows or questions
 without additions; expired searches return 404. Automatic filtering is
-independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default and only
-live-allowed policy; the guarded state option is available on dev. See
+independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default;
+`state-explicit.v1.3` is an explicit opt-in on dev or live. No other scope field
+is applied automatically. See
 [the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migration
 0025, the matching client, rollback and accounting. Existing v2 records upgrade on
 read; the original scope.e3 wire schema and all evaluated ranking hashes are unchanged.
