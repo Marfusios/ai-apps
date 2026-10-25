@@ -19,6 +19,20 @@ const mutations = [...pattern.matchAll(/\(\?:([^()]*)\)/g)].flatMap(group => {
       pattern.slice(group.index! + group[0].length),
   }));
 });
+const quotes = /\/(\[[^\]]+\])(\|[^\n]+)\/u\.test\(text\)/.exec(source);
+const controls = /\/(\[[^\]]+\])\/u\.test\(question\)/.exec(source);
+if (!quotes || !controls) throw new Error('state guard inline checks changed; update the mutation test');
+const controlAtoms = controls[1]!.slice(1, -1).match(/\\u[0-9a-f]{4}(?:-\\u[0-9a-f]{4})?/gi)!;
+const inlineMutations = [
+  ...[...quotes[1]!.slice(1, -1)].map(character => ({
+    name: `quote U+${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    source: source.replace(quotes[0], () => `/${quotes[1]!.replace(character, '')}${quotes[2]}/u.test(text)`),
+  })),
+  { name: 'apostrophe-quoted form', source: source.replace(quotes[0], () => `/${quotes[1]}/u.test(text)`) },
+  ...controlAtoms.map(range => ({ name: `control/bidi ${range}`,
+    source: source.replace(controls[0], () => `/${controls[1]!.replace(range, '')}/u.test(question)`),
+  })),
+];
 
 // Only trusted repository code is evaluated, offline in Node; nothing from a question
 // or a provider becomes code. Keep production's guard, imports and exports untouched.
@@ -36,5 +50,8 @@ describe('state-probes unsafe-context coverage', () => {
   it.each(mutations)('removing $alternative changes the fingerprint', mutation => {
     const mutated = source.replace(declaration[0], `const unsafe = /${mutation.pattern}/i;`);
     expect(stateGuardFingerprint(loadGuard(mutated))).not.toBe(baseline);
+  });
+  it.each(inlineMutations)('removing $name changes the fingerprint', mutation => {
+    expect(stateGuardFingerprint(loadGuard(mutation.source))).not.toBe(baseline);
   });
 });

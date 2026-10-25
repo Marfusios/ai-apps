@@ -24,6 +24,7 @@ import { createEvidenceRetriever, createEvidenceServices, type EvidenceRetriever
 import { pageOf, readOwnedSearch } from '../../server/evidence/store.js';
 import { evidenceSnapshot } from '../../server/evidence/snapshot.js';
 import { EvidencePageSchema, CreateEvidenceResponseSchema } from '../../shared/contracts/evidence.js';
+import { ConfigResponseSchema } from '../../shared/contracts/config.js';
 import { loadConfig } from '../../shared/config.js';
 import { closeDb, type Db } from '../../server/db/client.js';
 import { authUsers, authSessions, evidenceSearches } from '../../server/db/schema/index.js';
@@ -845,6 +846,14 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   const undoBody = (id: string, changes: Record<string, unknown> = {}) => ({ kind: 'edited', question: undefined, from: id, filters: {}, ...changes });
   const stored = async (id: string) => (await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, id)))[0]!;
 
+  it.each(['none', 'state-explicit.v1.1'] as const)('publishes automatic fields from the configured %s policy without paid work', async policy => {
+    const h = harness(undefined, undefined, undefined, { env: { AVIATION_EVIDENCE_AUTO_FILTERS: policy } });
+    const response = await h.app.inject('/api/config');
+    expect(response.statusCode).toBe(200);
+    expect(ConfigResponseSchema.parse(response.json()).aiAutomaticFilters).toEqual(policy === 'none' ? [] : ['state']);
+    expect(h.llm.calls).toHaveLength(0); expect(h.embed).not.toHaveBeenCalled();
+  });
+
   it('refreshes undo on creation, pagination, replay and handover without changing stored results or spending', async () => {
     const h = harness(undefined, undefined, 'er-qt-v1'), key = randomUUID();
     const parent = searchOf(await h.request({}, key)), trialCookie = h.cookie();
@@ -1251,5 +1260,25 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     const read = EvidencePageSchema.parse((await h.get(String(legacy.rows[0]!.id))).json());
     expect(read).toMatchObject({ version: 'evidence.v3', automaticFilters: null, freeUndo: false, undo: 'none', order: 'match', marks: 'suggested_terms', query: page.query });
     expect(read.cases).toEqual(page.cases); expect(await spent()).toEqual(before);
+  });
+  it.each(['er-t-v1', 'er-qt-v1'] as const)('charges a keyword reset of a legacy v2 %s parent instead of exempting it', async ranking => {
+    const h = harness(undefined, undefined, ranking), page = searchOf(await h.request());
+    const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
+      (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
+      SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
+        status, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'freeUndo') ||
+          jsonb_build_object('version', 'evidence.v2', 'query', jsonb_build_object('source', 'question')), created_at, expires_at
+      FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
+    const id = String(legacy.rows[0]!.id);
+    const parent = EvidencePageSchema.parse((await h.get(id)).json());
+    expect(parent.undo).toBe('none'); expect(parent.query).toEqual(page.query);
+    expect(parent.query).toMatchObject({ keywords: { kind: ranking === 'er-t-v1' ? 'terms' : 'question+terms' } });
+    nextMinute();
+    const child = searchOf(await h.request(undoBody(id, { keywords: 'question' })));
+    expect(child).toMatchObject({ freeUndo: false, undo: 'none', query: { source: 'question', keywords: { kind: 'question' } } });
+    expect(await usage()).toMatchObject({ quota_counted: true, status: 'settled' });
+    expect((await stored(id)).freeUndoReservationId).toBeNull();
+    expect((await db.execute(sql`SELECT requests_used FROM trial_identities`)).rows).toEqual([{ requests_used: 2 }]);
+    expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(2);
   });
 });

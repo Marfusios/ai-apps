@@ -281,9 +281,11 @@ a promise of zero vulnerabilities.
 ## Evidence ranking experiments (Task 24, pending review)
 
 The new dev-only `rankEvidence` pipeline optionally uses validated scope terms in
-fixed BM25 query bodies and adds `rerank.r1`. No suggested filters are applied.
+fixed BM25 query bodies and adds `rerank.r1`. Its separate automatic-state policy
+defaults to `none`; any accepted automatic state is disclosed by evidence.v3.
 The live allowlist contains only the baseline, with original-question retrieval and
-no reranker. Public `evidence.v2` is unchanged; experiment metadata stays private.
+no reranker. Public `evidence.v3` discloses executed keywords, automatic filters,
+ordering, marks and undo availability; experiment metadata stays private.
 A future live alternative requires evaluation, a gate and the new UI disclosure.
 
 Question, aircraft labels, phases, probable causes and excerpts are untrusted quoted
@@ -320,7 +322,7 @@ in the public remaining suggestion. Private policy/reason/ledger metadata is nev
 spread into the strict public page.
 
 The quota exemption is server-owned and bounded to **one admission per original
-question search**. Eligibility requires current ownership, an unexpired results row,
+question search**. Eligibility requires a v3 parent, current ownership, an unexpired results row,
 no explicit terms, removal of at least one automatic addition and no other change.
 Its parent is locked before bucket/spend locks; a write-once parent reservation claim
 commits with the exempt reservation. Concurrent keys, replays, sign-in/handover,

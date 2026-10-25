@@ -111,6 +111,7 @@ export function toConfig(result: NormalizeResult, dataset: Dataset): ConfigRespo
   return {
     turnstileSiteKey: null,
     googleEnabled: false,
+    aiAutomaticFilters: [],
     snapshotDate: dataset.snapshotDate,
     datasetRevision: dataset.revision,
     coverage: {

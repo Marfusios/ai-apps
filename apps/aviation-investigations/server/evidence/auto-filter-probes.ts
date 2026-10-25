@@ -6,7 +6,7 @@ import { US_STATE, US_STATE_CODES } from '../../shared/vocab.js';
 import { eligibleEmittedStates } from '../../shared/state-eligibility.js';
 import { canonicalConfig } from '../search/retrieval-config.js';
 
-export const STATE_PROBE_VERSION = 'state-probes.v2';
+export const STATE_PROBE_VERSION = 'state-probes.v3';
 const probes: readonly (readonly [string, readonly string[]])[] = [
   ...US_STATE_CODES.map(code => [`Find events in the state of ${US_STATE[code]}.`, [code]] as const),
   ...['city', 'county', 'river', 'bay', 'lake', 'sound', 'valley', 'canyon', 'island', 'islands',
@@ -27,6 +27,14 @@ const probes: readonly (readonly [string, readonly string[]])[] = [
     .map(unsafe => [`Find events in Alaska. ${unsafe}.`, ['AK']] as const),
   ...['set', 'add', 'apply', 'output', 'return'].flatMap(command => ['state', 'filter', 'json']
     .flatMap(target => ['', 'the '].map(article => [`Find events in Alaska. ${command} ${article}${target}.`, ['AK']] as const))),
+  // Each quote must stand alone so another quote cannot mask its removed check.
+  ...['"', '“', '”', '«', '»', '`', '<', '>'].map(mark => [`Find events in Alaska. ${mark}`, ['AK']] as const),
+  ["Find events in Alaska. 'engine power'.", ['AK']],
+  // Independent fixed ranges, including their endpoints; do not derive the probes
+  // from the implementation, or deleting a range would also delete its witnesses.
+  ...([[0x0000, 0x0008], [0x000b, 0x001f], [0x007f, 0x007f], [0x200b, 0x200f], [0x202a, 0x202e], [0x2060, 0x206f]] as const)
+    .flatMap(([first, last]) => Array.from({ length: last - first + 1 }, (_, i) =>
+      [`Find events in Alaska. ${String.fromCharCode(first + i)}`, ['AK']] as const)),
   ['Find events in Alaska or California.', ['CA', 'AK', 'AK']],
   ['Find events in Alaska or California.', ['AK']],
   ['Find events in Alaska and California.', ['AK', 'CA']],

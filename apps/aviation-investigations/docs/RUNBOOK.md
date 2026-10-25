@@ -584,12 +584,16 @@ work supplies the v3 contract below but grants none of those release clearances.
 fail startup. This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
 it does not change any evaluated ranking hash. The Docker service passes it through.
 Each saved search records both configuration identities. No reindex is needed.
-The automatic-policy identity includes `state-probes.v2` outputs. Current hashes:
+`GET /api/config` reports `aiAutomaticFilters: []` for `none` and `['state']` for
+the state policy. Client copy follows this field, not a fixed claim about states.
+A policy change changes the response ETag even on the same dataset; the existing
+public cache lifetime is five minutes.
+The automatic-policy identity includes `state-probes.v3` outputs. Current hashes:
 
 | Policy | SHA-256 |
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
-| `state-explicit.v1.1` | `cb570aa5fde7eb03ef5dbc8198cd1e773d4ece79a0b50d2de50305454aa9a631` |
+| `state-explicit.v1.1` | `b63a7a979a1188b700143640a64e6c061efd3893ab4b475c4d53c929945e4e33` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs; `none`
 records no active guard. Do not relabel older cached results with these identities.
