@@ -687,6 +687,28 @@ frozen configuration, `retrieval.v2` by default and `retrieval.v1` (the earlier
 behaviour, every value in `RETRIEVAL_DEFAULTS`) to roll back; each brief step records
 the version it used.
 
+**Evidence-view ranking (Task 24).** The deployed evidence baseline is
+`AVIATION_EVIDENCE_RANKING=er-q-v1`: question text in both BM25 channels, its
+embedding in kNN, 100 delivered candidates, no reranker. This setting is independent
+of the generated-brief retrieval setting above. Dev-only frozen alternatives use
+validated scope.e3 terms, or bounded question-plus-terms, in both lexical channels;
+failure/no terms falls back to the question. No suggested filters apply.
+Explicit edited terms drive all channels; omitted terms preserve both saved executed
+texts. Deterministic highlights/counts use the executed lexical words.
+
+The same `server/evidence/pipeline.ts:rankEvidence` serves HTTP and evaluations.
+Optional `rerank.r1` grades only its supplied leading 50/100 cases. Bounded case
+metadata, every cause variant and the displayed excerpts are model input; opaque
+labels, strict coverage and integer-grade validation restrict output to a permutation
+of that prefix, with fused-rank ties and unchanged tail. Whole-sentence input cuts
+are marked and never change displayed evidence. Every failure returns fused order.
+Model, prompt/schema hashes, caps, deadlines, input policy, query policy and retrieval
+configuration belong to one canonical hashed object; version/hash, actual texts,
+lexical source and outcomes stay private with the saved search. Paging is free and
+never re-ranks. Only the baseline is allowed on live until evaluation, the gate and
+the planned public disclosure contract clear an alternative.
+See DESIGN “Evidence ranking experiments” and RUNBOOK “Evidence ranking”.
+
 **How the cases index takes part in AI answers (`retrieval.v2`), in plain words.**
 The cases index, built for keyword search with one document per accident, now also
 helps choose which accidents an AI brief looks at. Three searches run for each

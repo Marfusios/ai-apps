@@ -112,6 +112,7 @@ services:
       OPENAI_CHECK_MODEL: ${OPENAI_CHECK_MODEL:-}
       # Empty: the default retrieval version; retrieval.v1 rolls retrieval back (RUNBOOK).
       AVIATION_RETRIEVAL_VERSION: ${AVIATION_RETRIEVAL_VERSION:-}
+      AVIATION_EVIDENCE_RANKING: ${AVIATION_EVIDENCE_RANKING:-}
       AVIATION_TRACING_ENABLED: "false"
       # Peers whose proxy headers are trusted; compose.tunnel.yaml sets EDGE_SUBNET.
       TRUSTED_PROXY_CIDRS: ""

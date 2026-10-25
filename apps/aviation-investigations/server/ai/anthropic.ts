@@ -1,3 +1,5 @@
+import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser } from './prompts/rerank.r1.js';
+import type { RerankConfig } from '../evidence/ranking-config.js';
 /**
  * Anthropic adapter for the language-model stages (DESIGN §6 and §9 "Anthropic call
  * settings"): structured outputs through `messages.parse`, each stage's effort
@@ -133,7 +135,8 @@ export interface AnthropicProviderConfig {
 
 interface StageSpec<I, O> {
   caps?: { readonly input: number; readonly output: number };
-  stage: LlmStage;
+  stage: LlmStage | 'rerank';
+  model?: string;
   promptVersion: string;
   system: string;
   input: z.ZodType<I>;
@@ -320,10 +323,9 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
 
   function stage<I, O>(spec: StageSpec<I, O>) {
     const format = outputFormat(spec.output);
-    const role = STAGE_ROLE[spec.stage];
-    const model = cfg.models[role];
-    const thinking = thinkingParam(model, cfg.thinking?.[spec.stage] ?? STAGE_THINKING[spec.stage]);
-    const effort = cfg.effort?.[spec.stage] ?? STAGE_EFFORT[spec.stage];
+    const model = spec.stage === 'rerank' ? spec.model! : cfg.models[STAGE_ROLE[spec.stage]];
+    const thinking = thinkingParam(model, spec.stage === 'rerank' ? 'off' : cfg.thinking?.[spec.stage] ?? STAGE_THINKING[spec.stage]);
+    const effort = spec.stage === 'rerank' ? 'low' : cfg.effort?.[spec.stage] ?? STAGE_EFFORT[spec.stage];
     const meta: Meta = { stage: spec.stage, provider: 'anthropic', model, promptVersion: spec.promptVersion };
     const fail = (category: StageError['category'], billing: StageErrorInfo['billing'], extra?: Partial<Meta>) =>
       new StageError(category, { ...meta, ...extra, billing });
@@ -408,6 +410,13 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     return { run, countInputTokens: async (rawInput: I, ctx: StageCtx) => count(prepare(rawInput, ctx)) };
   }
 
+  const reranker = (config: RerankConfig) => {
+    if (!['claude-haiku-5-5', 'claude-sonnet-5-5'].includes(config.model) || ![50, 100].includes(config.depth) ||
+        config.caps.input > 95_000 || config.caps.output > 4000 || config.prompt.version !== RERANK_VERSION) throw new Error('invalid rerank configuration');
+    return stage({ stage: 'rerank', model: config.model, caps: config.caps,
+      promptVersion: RERANK_VERSION, system: RERANK_SYSTEM, input: RerankInputSchema, output: RerankOutputSchema, render: renderRerankUser });
+  };
+
   const evidenceScope = stage({
     caps: EVIDENCE_SCOPE_CAPS,
     stage: 'scope', promptVersion: EVIDENCE_SCOPE_VERSION, system: EVIDENCE_SCOPE_SYSTEM,
@@ -449,6 +458,8 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     countInputTokens<S extends LlmStage>(name: S, input: StageInputs[S], ctx: StageCtx): Promise<number> {
       return (counters[name] as (i: StageInputs[S], c: StageCtx) => Promise<number>)(input, ctx);
     },
+    rerank: (input, ctx, config) => reranker(config).run(input, ctx),
+    countRerankTokens: (input, ctx, config) => reranker(config).countInputTokens(input, ctx),
     evidenceScope: async (input, ctx) => {
       const result = await evidenceScope.run(input, ctx);
       return { ...result, output: result.output.result };

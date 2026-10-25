@@ -1,3 +1,5 @@
+import type { RerankInput, RerankOutput } from './prompts/rerank.r1.js';
+import type { RerankConfig } from '../evidence/ranking-config.js';
 /**
  * The app-owned language-model interface (DESIGN §9). Each pipeline stage takes a
  * bounded, typed input and returns a Zod-validated object with normalized usage,
@@ -103,7 +105,7 @@ export function evidenceScopeCtx(signal: AbortSignal, timeoutMs: number): StageC
 }
 
 /** True when caps are positive integers within the stage maximum and the timeout is positive. */
-export function isValidStageCtx(stage: LlmStage, ctx: StageCtx, caps = STAGE_CAPS[STAGE_ROLE[stage]]): boolean {
+export function isValidStageCtx(stage: LlmStage | 'rerank', ctx: StageCtx, caps = stage === 'rerank' ? { input: 0, output: 0 } : STAGE_CAPS[STAGE_ROLE[stage]]): boolean {
   const within = (n: number, max: number) => Number.isInteger(n) && n > 0 && n <= max;
   return (
     within(ctx.maxOutputTokens, caps.output) &&
@@ -454,6 +456,8 @@ export interface LlmProvider {
   /** Separate evidence contract; legacy scope.v2 is unchanged. */
   evidenceScope?(input: EvidenceScopeInput, ctx: StageCtx): Promise<StageResult<EvidenceScopeOutput>>;
   countEvidenceScopeTokens?(input: EvidenceScopeInput, ctx: StageCtx): Promise<number>;
+  rerank?(input: RerankInput, ctx: StageCtx, config: RerankConfig): Promise<StageResult<RerankOutput>>;
+  countRerankTokens?(input: RerankInput, ctx: StageCtx, config: RerankConfig): Promise<number>;
   scope(input: ScopeInput, ctx: StageCtx): Promise<StageResult<ScopeOutput>>;
   compose(input: ComposeInput, ctx: StageCtx): Promise<StageResult<ComposeOutput>>;
   check(input: CheckInput, ctx: StageCtx): Promise<StageResult<CheckOutput>>;
@@ -489,7 +493,7 @@ export type StageErrorCategory =
 export type StageBilling = { kind: 'usage'; usage: StageUsage } | { kind: 'none' } | { kind: 'uncertain' };
 
 export interface StageErrorInfo {
-  stage: LlmStage;
+  stage: LlmStage | 'rerank';
   provider: LlmProviderName;
   model: string;
   promptVersion: string;
@@ -509,7 +513,7 @@ export interface StageErrorInfo {
 /** A failed stage. Messages name the stage and category only, never model or user text. */
 export class StageError extends Error {
   override readonly name = 'StageError';
-  readonly stage: LlmStage;
+  readonly stage: LlmStage | 'rerank';
   readonly provider: LlmProviderName;
   readonly model: string;
   readonly promptVersion: string;

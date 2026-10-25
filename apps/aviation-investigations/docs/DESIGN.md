@@ -389,8 +389,9 @@ This is the initial AI product; the composed-answer pipeline below is disabled.
 `POST /api/evidence` tries the advisory `scope.e3` stage then embeds the original
 question; edits skip scope. Scope is revision1 with unchecked readings removed,
 advisory wording and a strict `{result: ...}` envelope around its discriminated union.
-Suggestions are labelled **not applied**, escaped/rendered as text, and never control
-routing or retrieval. The result carries the executed `query`, `appliedFilters`,
+In the live/default baseline, suggestions are labelled **not applied**, escaped/rendered
+as text, and never control routing or retrieval. Dev-only ranking experiments below
+may use the validated terms in lexical search; suggested filters remain unapplied. The result carries the executed `query`, `appliedFilters`,
 nullable `suggestion`, nullable `hint` and nullable `note`; no specific unchecked readings
 are shown. The research-only boundary and fixed `EVIDENCE_NOTICE` remain mandatory on
 every surface. A validated `out_of_scope` intent selects the fixed `scope` capability
@@ -398,8 +399,8 @@ note; `operational_advice` selects the fixed operational-advice note. All other 
 provider errors, timeouts, invalid/missing or over-cap scope output, and skipped scope
 select no note. Edits always have no note. Render only `EVIDENCE_NOTE_TEXT[note]`: no
 model-written policy text or judgment about the particular question. Absence of a note
-assures nothing. Nothing in scope blocks retrieval, changes its inputs, or alters
-admission, quota counting or accounting. Every successful search returns results.
+assures nothing. Nothing in scope blocks retrieval or alters admission, quota counting or accounting.
+In the live/default baseline it also cannot change retrieval inputs. Every successful search returns results.
 
 The server's `evidence-hints.v3` grammar supplies only optional navigation hints:
 statistics without filters, and comparisons naming exactly the matched IDs. An ID alone
@@ -410,11 +411,11 @@ valid astral characters remain supported. Normal security, quota and budget gate
 The three-channel `retrieval.v2` ranking stays unchanged (200/channel, exact case RRF,
 deterministic lexical cutoffs; kNN remains approximate). Delivery is separately versioned:
 100 candidates, ten/page, mapping over those first 100 with the same query vector
-and at most eight concurrent Elasticsearch requests. All three channels use the
-original question with no suggested filters. Explicit edits apply exactly the submitted
-filters. Omitted terms inherit the parent's executed query, never the suggestion;
-supplied terms explicitly replace it. Highlights/counts use suggested terms when present,
-otherwise the executed query words, and describe occurrences, not question satisfaction. A
+and at most eight concurrent Elasticsearch requests. In the live/default baseline all
+three channels use the original question with no suggested filters. Explicit edits apply exactly the submitted
+filters. Omitted terms inherit both of the parent's executed query texts byte for byte;
+supplied terms explicitly replace both. Highlights/counts always use the executed
+lexical words and declared synonyms, and describe occurrences, not question satisfaction. A
 search stores its ranking and projection, generation, both concrete indices and seeds.
 A new edited search uses the current publication. An existing search's free pages never
 change or call a provider. Prune/cleanup preserve its references until the 24-hour expiry.
@@ -440,7 +441,8 @@ omit them. Provider calls settle with result storage in one transaction. A faile
 returns its quota unit but retains real spend; a result with any note counts once.
 Crash recovery closes abandoned searches and returns their units while charging the reservation conservatively. A
 client disconnect leaves admitted work running and replayable; shutdown, deletion
-and the 30-second server deadline can stop it.
+and the configured server deadline can stop it (30 seconds for the baseline, 50 or
+60 seconds with a reranker).
 
 Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
 context-loss counterexamples through the actual UI, including required context on the
@@ -451,8 +453,9 @@ fixed capability notes instead of blocking policy replies. This does not retroac
 pass the earlier scope quality evaluation or clear public launch. No new paid suggestion
 threshold is required; final server, excerpt/UI, security, budget and lifecycle checks
 remain required. Track C/N supplies regressions only. Metamorphic tests vary every model
-output while holding all three retrieval channels, default cohort, ranking, excerpt selection and pagination fixed.
-The ordinary result is projected and byte-checked before suggested highlights are added.
+output while holding all three retrieval channels, default cohort, ranking, excerpt selection and pagination fixed in the baseline.
+The ordinary result is projected and byte-checked before the optional suggestion is added;
+suggestions never replace the executed-query highlights.
 If optional suggestion metadata would exceed the storage budget, it is omitted and the
 original query's highlights remain. Canonical text and selection never change to make room.
 
@@ -900,10 +903,58 @@ initially; ambiguous retries must not multiply unaccounted charges.
 
 ## 9. Model providers, choices and cost envelope
 
+### Evidence ranking experiments
+
+`AVIATION_EVIDENCE_RANKING` selects a frozen configuration in
+`server/evidence/ranking-config.ts`. The default, `er-q-v1`, keeps question-only
+retrieval and no reranker. Only that version is allowed with `APP_ENV=live`.
+The dev grid is the three lexical choices (`q`: question, `t`: validated scope
+terms, `qt`: question plus newline plus terms), each without reranking or with
+Haiku 5.5 at depth 50 or 100 (`h50`/`h100`). Terms and joined-text versions also
+offer Sonnet 5.5 at depth 50 (`s50`) for evaluation. Missing, empty, invalid,
+failed, skipped or non-search scope results fall back to question text. Both
+BM25 channels use the selected lexical text; kNN always uses the question.
+Explicit edited terms replace both texts; a filter-only edit inherits both.
+All edits skip scope, including when a reranker is selected.
+
+One `rankEvidence` function serves HTTP and evaluation. Its injected spend gate is
+the HTTP admission adapter or `ledgerRankingSpendGate` (the production evaluation
+ledger, restore hold and allowance). Callers must keep any experiment allocation
+wrapper around that gate. It returns configuration version/sha256, executed lexical
+and vector texts, lexical source, stage outcomes/usage, and ranked cases.
+Those execution facts stay in private saved-search data; `evidence.v2` is unchanged.
+Evaluation caches must include this identity, dataset/indices and the exact inputs.
+
+After retrieval, `rerank.r1` sends at most 50 or 100 unique cases using request-local
+labels. The event year, first aircraft category/make/model plus additional-aircraft
+count, phase labels, every probable-cause variant and the displayed excerpts are
+the only case fields. Case-number tokens inside those fields are masked in this
+model input only. The frozen bounds are 500 `cl100k_base` tokens per serialized
+case, depth × 500 + 1,500 for the serialized user turn, 60 for aircraft, 50 for
+phases, 220 shared across cause variants and 260 shared across excerpts. Field
+shares keep complete sentences from the beginning; excess sentences are removed
+from the end (last excerpts, last causes, phases, aircraft). Every variant retains
+a slot even if empty; every cut is marked. Canonical displayed text is unchanged.
+
+Thinking is disabled, effort low, retries zero, fixed system caching at five minutes.
+The output is only `{grades:[{id,grade}]}` with integer grades 0–3, every label once
+and no extra fields. The selected prefix is sorted by grade descending with fused
+rank as tie-breaker; the tail is unchanged. Timeout, abort, refusal, truncation,
+invalid output or provider failure returns the fused order. No retry or model switch
+is possible. Deletion/shutdown checks precede each paid stage. A successful search
+counts once, independent of order or fallback; saved pages never call a provider.
+The `evidence.rerank` span contains only model, depth, usage, cost, duration and outcome.
+
+Public use of any non-baseline configuration needs evaluation, gate clearance, and
+the controller's `evidence.v3` UI disclosure for added terms and AI ordering.
+Changing the environment setting cannot bypass the live allowlist.
+The evaluated scope.e3 prompt/schema/settings are unchanged.
+
 ### Evidence pricing (initial AI feature)
 
 `server/evidence/pricing.ts` derives the reservation from the configured scope and
-embedding models and their hard caps. With Haiku 5.5 and `text-embedding-3-small`,
+embedding models and their hard caps, plus the selected reranker, with one final
+rounding. For the baseline with Haiku 5.5 and `text-embedding-3-small`,
 10,000 scope input tokens, a cache-write premium on up to 6,500 prefix tokens,
 2,500 output tokens and 1,000 embedding tokens cost at most **$0.0024325**. Round up
 to **$0.0025** per admitted search. These scope caps are independent of `scope.v2` for
@@ -914,10 +965,34 @@ retrieval continues with no suggestion or note. Only a search without results re
 If a principal has used its daily uncertain-charge allowance, admission skips evidence
 scope instead of refusing the search. Its suggestion and note are null; the full $0.0025
 reservation, normal embedding settlement and all remaining limits stay in force.
-The allowance resets at UTC midnight. This exception is confined to evidence search;
+Named uncertain rerank calls also count toward this allowance. A dev reranker still
+runs when scope is skipped; the configured full reservation and global budgets
+remain mandatory. The allowance resets at UTC midnight. This exception is confined to evidence search;
 the disabled generated-summary pipeline still refuses at that allowance.
 
-Startup derives and validates the evidence reservation. Free `ai-preflight` counts the
+Rerank input/output caps are 55,000/2,000 at depth 50 and 95,000/4,000 at depth 100;
+the cached-prefix premium reserves 1,500 tokens. Deadlines are 20 and 30 seconds.
+Free preflight measured the maximum-variant inputs at 43,348 and 85,498 provider
+tokens, and full-depth outputs at 658 and 1,308. Runtime also counts each actual
+request before generation, including unusual text. The 100-case cap stays below
+Haiku's higher-price context tier.
+
+| Configuration class | Worst total USD/search | Rounded reservation |
+| --- | ---: | ---: |
+| Baseline, or terms without rerank | 0.0024325 | 0.0025 |
+| Haiku, depth 50 | 0.0089700 | 0.0090 |
+| Haiku, depth 100 | 0.0139700 | 0.0140 |
+| Sonnet, depth 50 | 0.1331825 | 0.1332 |
+
+These include scope, one embedding and the rerank worst case. Edits release unused
+scope money. Every actual call settles its own usage; an unknown rerank bill keeps
+its own worst case, never the whole search's reservation. Evaluation reserves each
+stage through the production spend gate before dispatch. A failed reservation or
+settlement stops further spending. Free sizing is not a measured generation latency
+or quality result.
+
+Startup derives and validates the evidence reservation. Free `ai-preflight` counts all
+three rerank model/depth combinations as well as the
 actual `scope.e3` prompt/schema, questions, cache prefix and bounded output: measured
 5,701 fixed / 5,674 cached, 6,192 Latin / 7,190 dense input, 1,118 output, all within caps.
 Repeat against the deployment's frozen settings. No provider calls run in offline tests.

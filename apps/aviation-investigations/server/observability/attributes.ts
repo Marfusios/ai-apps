@@ -99,6 +99,7 @@ export interface AllowedAttrs {
   briefHash?: string;
   datasetGeneration?: string;
   indexVersion?: string;
+  depth?: number;
   passageCount?: number;
   caseCount?: number;
   /** A failed stage's category (on its stage span, and on the request span with `failureStage`). */
@@ -133,6 +134,7 @@ const KINDS: Readonly<Record<keyof AllowedAttrs, 'string' | 'number'>> = {
   briefHash: 'string',
   datasetGeneration: 'string',
   indexVersion: 'string',
+  depth: 'number',
   passageCount: 'number',
   caseCount: 'number',
   failure: 'string',

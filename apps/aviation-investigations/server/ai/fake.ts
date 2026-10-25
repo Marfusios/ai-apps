@@ -1,3 +1,5 @@
+import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser, type RerankInput, type RerankOutput } from './prompts/rerank.r1.js';
+import type { RerankConfig } from '../evidence/ranking-config.js';
 /**
  * Deterministic provider for tests (`AI_LLM_PROVIDER=fake`, NODE_ENV=test only).
  * It applies the same input bounds, context caps, pre-send token cap and output
@@ -75,6 +77,8 @@ export type FakeSteps<I, O> = FakeStep<I, O> | FakeStep<I, O>[];
 export type FakeCounts = { [S in LlmStage]?: number | ((input: StageInputs[S]) => number) };
 
 export interface FakeScript {
+  rerank?: FakeSteps<RerankInput, RerankOutput>;
+  rerankCounts?: number | ((input: RerankInput) => number);
   models?: StageModels;
   /** Token counts per stage; the default is ceil(characters / 4) of system prompt plus user turn. */
   counts?: FakeCounts;
@@ -85,7 +89,7 @@ export interface FakeScript {
 }
 
 export interface FakeCall {
-  stage: LlmStage;
+  stage: LlmStage | 'rerank';
   input: unknown;
 }
 
@@ -122,7 +126,8 @@ function waitForAbort(signal: AbortSignal): Promise<void> {
 
 interface FakeStageSpec<I, O> {
   caps?: { readonly input: number; readonly output: number };
-  name: LlmStage;
+  name: LlmStage | 'rerank';
+  model?: string;
   promptVersion: string;
   system: string;
   render: (input: I) => string;
@@ -138,7 +143,7 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
 
   function stage<I, O>(spec: FakeStageSpec<I, O>) {
     const queue = Array.isArray(spec.steps) ? [...spec.steps] : undefined;
-    const model = models[STAGE_ROLE[spec.name]];
+    const model = spec.name === 'rerank' ? spec.model! : models[STAGE_ROLE[spec.name]];
     const meta = { stage: spec.name, provider: 'fake', model, promptVersion: spec.promptVersion } as const;
     const fail = (
       category: StageErrorCategory,
@@ -256,6 +261,18 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
     steps: script.check,
     count: script.counts?.check,
   });
+  const rerankers = new Map<string, ReturnType<typeof stage<RerankInput, RerankOutput>>>();
+  function reranker(c: RerankConfig) {
+    const key = JSON.stringify(c);
+    let r = rerankers.get(key);
+    if (!r) {
+      r = stage({ name: 'rerank', model: c.model, caps: c.caps, promptVersion: RERANK_VERSION,
+        system: RERANK_SYSTEM, render: renderRerankUser, input: RerankInputSchema, output: RerankOutputSchema,
+        steps: script.rerank, count: script.rerankCounts });
+      rerankers.set(key, r);
+    }
+    return r;
+  }
   const counters = {
     scope: scope.countInputTokens,
     compose: compose.countInputTokens,
@@ -264,6 +281,8 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
 
   return {
     name: 'fake',
+    rerank: (input, ctx, config) => reranker(config).run(input, ctx),
+    countRerankTokens: (input, ctx, config) => reranker(config).countInputTokens(input, ctx),
     models,
     calls,
     countInputTokens<S extends LlmStage>(name: S, input: StageInputs[S], ctx: StageCtx): Promise<number> {

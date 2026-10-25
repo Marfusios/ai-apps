@@ -206,7 +206,7 @@ it('optional suggestions cannot push an otherwise valid result over its byte bud
   const normal = { ...data, cases: [result] };
   const marked = withSuggestion(normal, { filters: { state: ['CA'] }, terms: 'engine' });
   expect(marked.suggestion?.terms).toBe('engine');
-  expect(marked.cases![0]!.relevance.terms).toContainEqual({ term: 'engine', literal: 2, synonym: 0 });
+  expect(marked.cases![0]!.relevance).toEqual(result.relevance); // Advisory words never decorate a question-only search.
   expect(marked.cases![0]!.excerpts.map(({ highlights: _marks, ...e }) => e)).toEqual(result.excerpts.map(({ highlights: _marks, ...e }) => e));
 });
 

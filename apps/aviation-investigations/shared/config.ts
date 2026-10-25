@@ -1,3 +1,4 @@
+import { DEFAULT_EVIDENCE_RANKING, EVIDENCE_RANKING_VERSIONS, LIVE_EVIDENCE_RANKINGS, type EvidenceRankingVersion } from './evidence-ranking.js';
 import { isIP } from 'node:net';
 import { resolve } from 'node:path';
 import { z } from 'zod';
@@ -66,6 +67,7 @@ const envSchema = z.object({
   OPENAI_SCOPE_MODEL: str('gpt-5.6-luna'),
   OPENAI_ANSWER_MODEL: str('gpt-5.4-mini-2026-03-17'),
   OPENAI_CHECK_MODEL: str('gpt-5.6-luna'),
+  AVIATION_EVIDENCE_RANKING: z.enum(EVIDENCE_RANKING_VERSIONS).default(DEFAULT_EVIDENCE_RANKING),
   AVIATION_RETRIEVAL_VERSION: z.enum(RETRIEVAL_VERSIONS).default(DEFAULT_RETRIEVAL_VERSION),
   AVIATION_TRACING_ENABLED: z
     .enum(['true', 'false', '1', '0'])
@@ -153,6 +155,7 @@ export interface AppConfig {
     /** Show the statements the evidence check confirmed and remove the rest (`AI_PARTIAL_DISPLAY`; off until gate G6). */
     partialDisplay: boolean;
     briefsEnabled: boolean;
+    evidenceRanking: EvidenceRankingVersion;
     anthropic: { apiKey?: string; scopeModel: string; answerModel: string; checkModel: string };
     openai: {
       apiKey?: string;
@@ -259,6 +262,9 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
   if (e.AI_LLM_PROVIDER === 'fake' && e.NODE_ENV !== 'test') {
     throw new Error("Invalid configuration: AI_LLM_PROVIDER 'fake' is allowed only when NODE_ENV=test");
   }
+  if (e.APP_ENV === 'live' && !LIVE_EVIDENCE_RANKINGS.includes(e.AVIATION_EVIDENCE_RANKING)) {
+    throw new Error('Invalid configuration: AVIATION_EVIDENCE_RANKING is not cleared for live');
+  }
   if (e.APP_ENV === 'live' && isExperimentalRetrieval(e.AVIATION_RETRIEVAL_VERSION)) {
     throw new Error(`Invalid configuration: AVIATION_RETRIEVAL_VERSION ${e.AVIATION_RETRIEVAL_VERSION} is experimental and is never served on live`);
   }
@@ -287,6 +293,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): AppConfig {
       llmProvider: e.AI_LLM_PROVIDER,
       partialDisplay: e.AI_PARTIAL_DISPLAY,
       briefsEnabled: e.AI_BRIEFS_ENABLED,
+      evidenceRanking: e.AVIATION_EVIDENCE_RANKING,
       anthropic: {
         apiKey: e.ANTHROPIC_API_KEY,
         scopeModel: e.ANTHROPIC_SCOPE_MODEL,
