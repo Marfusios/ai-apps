@@ -7,14 +7,14 @@ import { configQuery } from '../api';
 import { Chip } from '../components/Chip';
 import { CompassMark } from '../components/CompassMark';
 import { SearchBox } from '../components/SearchBox';
-import { AskOutcome } from '../features/evidence/AskOutcome';
+import { AiNoticeBox } from '../features/ai/AiNoticeBox';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { formatChartDate, formatCount } from '../lib/format';
 
 /**
  * Home, "Clear sky" (UI_DESIGN §4.1): compass, headline, the question box and
  * examples. Example chips only fill the box; they never run a search. Ask AI starts an AI
- * evidence search (UI_DESIGN §4.9) and opens its results; a static reply shows under the box.
+ * evidence search (UI_DESIGN §4.9) and opens its results.
  */
 export function Home() {
   const navigate = useNavigate();
@@ -51,9 +51,8 @@ export function Home() {
           inputRef={input}
           className="mt-4 w-full max-w-[660px]"
         />
-        <AskOutcome
+        <AiNoticeBox
           notice={ai.notice}
-          reply={ai.reply}
           keywordHref={value.trim() ? `/explore?${new URLSearchParams({ q: value.trim() }).toString()}` : '/explore'}
           onRetry={() => void ai.ask(value)}
           className="mt-3 w-full"

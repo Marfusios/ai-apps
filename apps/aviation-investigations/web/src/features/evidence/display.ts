@@ -11,6 +11,7 @@ import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '.
 import {
   EVIDENCE_CANDIDATE_CEILING,
   EVIDENCE_HEADING,
+  EVIDENCE_NOTE_TEXT,
   EVIDENCE_NOTICE,
   EVIDENCE_SUGGESTION_LABEL,
   type EvidenceExcerpt,
@@ -23,7 +24,7 @@ import { formatDate } from '../../../../shared/format';
 import { formatCount, numberWord } from '../../lib/format';
 import { canonicalFilters } from '../ai/unsettled';
 
-export { EVIDENCE_HEADING, EVIDENCE_NOTICE };
+export { EVIDENCE_HEADING, EVIDENCE_NOTE_TEXT, EVIDENCE_NOTICE };
 
 // ---------------------------------------------------------------------------
 // Builder copy (Task 23), for the owner's review.
@@ -56,8 +57,6 @@ export const APPLY_BOTH = 'Apply filters and terms';
 export const SEARCH_SUGGESTED_TERMS = 'Search these terms';
 /** The hints of an explicit counting or comparison request, shown above the results. */
 export const STATISTICS_HINT = 'For counts and trends, the dashboard counts every investigation in the snapshot.';
-/** A counting hint's filters are the search's applied ones (contract `evidence.v2`). */
-export const STATISTICS_EXPLORE = 'Explore with these filters';
 export const COMPARISON_HINT = 'Comparing named investigations is free; it doesn’t need the AI.';
 export const COMPARISON_NONE = 'None of those case numbers is in this snapshot.';
 export const EXPIRED_TITLE = 'This AI search is no longer available.';

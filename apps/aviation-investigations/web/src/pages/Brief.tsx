@@ -20,7 +20,6 @@ import { busyLabel } from '../features/ai/AskAiButton';
 import { arrived, departed } from '../features/ai/unsettled';
 import { briefStepQuery, cancelBrief, isFinished } from '../features/brief/api';
 import { useAskAi } from '../features/ai/useAskAi';
-import { AskOutcome } from '../features/evidence/AskOutcome';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { BriefChips } from '../features/brief/BriefChips';
 import { BriefingSheet, sheetOrder } from '../features/brief/BriefingSheet';
@@ -98,7 +97,7 @@ function Expired({ id }: { id: string }) {
         askPhase={ai.phase}
         className="mt-4"
       />
-      <AskOutcome notice={ai.notice} reply={ai.reply} keywordHref={exploreHref({}, value)} onRetry={() => void ai.ask(value)} className="mt-3" />
+      <AiNoticeBox notice={ai.notice} keywordHref={exploreHref({}, value)} onRetry={() => void ai.ask(value)} className="mt-3" />
     </div>
   );
 }

@@ -8,12 +8,13 @@ const chipLink = 'inline-flex items-center rounded-chip border border-blue bg-ra
 const pillLink =
   'inline-flex items-center rounded-full border-[1.5px] border-blue px-3.5 py-[5px] text-ui font-bold text-blue hover:bg-blue-wash pointer-coarse:min-h-11';
 
-/** The static replies (no clarification round): all an evidence search can get instead of results. */
+/** A brief's static replies (every scope outcome but a clarification round). */
 export type StaticReply = Exclude<ScopeReply, { kind: 'needs_clarification' }>;
 
 /**
  * Out of scope, operational advice, counting and comparison (UI_DESIGN §4.3 "Scope outcomes",
- * §5): the server's fixed copy and free links, the same for a brief and an evidence search.
+ * §5): the server's fixed copy and free links for a brief. An evidence search never gets one
+ * (contract `evidence.v2`: nothing blocks a search; a note shows above its results instead).
  */
 export function StaticScopeReply({ question, reply, className = 'mt-4' }: { question: string; reply: StaticReply; className?: string }) {
   switch (reply.kind) {

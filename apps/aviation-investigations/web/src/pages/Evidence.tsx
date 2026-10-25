@@ -12,7 +12,7 @@ import { arrived, departed } from '../features/ai/unsettled';
 import { rememberedQuestion } from '../features/brief/memory';
 import { CaseDrawer, type DrawerPosition } from '../features/case/CaseDrawer';
 import { evidencePageQuery } from '../features/evidence/api';
-import { AskOutcome } from '../features/evidence/AskOutcome';
+import { AiNoticeBox } from '../features/ai/AiNoticeBox';
 import {
   EMPTY_TITLE,
   EVIDENCE_HEADING,
@@ -38,7 +38,7 @@ import { EvidenceHint } from '../features/evidence/Hint';
 import { SearchPanel } from '../features/evidence/SearchPanel';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
 import { MatchLegend } from '../features/evidence/MatchedText';
-import { EvidenceNotice } from '../features/evidence/Notice';
+import { CapabilityNote, EvidenceNotice } from '../features/evidence/Notice';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { COMPARE_FULL_MESSAGE, CompareTray } from '../features/explore/CompareTray';
 import { CASE_PARAM, readOpenCase, useCompareSelection } from '../features/explore/url-state';
@@ -98,7 +98,7 @@ function Expired({ id }: { id: string }) {
         askPhase={ai.phase}
         className="mt-4"
       />
-      <AskOutcome notice={ai.notice} reply={ai.reply} keywordHref={keyword} onRetry={() => void ai.ask(value)} className="mt-3" />
+      <AiNoticeBox notice={ai.notice} keywordHref={keyword} onRetry={() => void ai.ask(value)} className="mt-3" />
     </div>
   );
 }
@@ -127,7 +127,8 @@ function FewResults({ search }: { search: EvidencePage }) {
  * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only design): the
  * question as asked, what the search ran with (the question, or the reader's own words and
  * filters, editable) and the AI's suggestion beside it, never applied unless the reader chooses
- * it, a hint for an explicit counting or comparison request, then the investigations retrieved
+ * it, a hint for an explicit counting or comparison request, a fixed capability note when the
+ * question's intent selects one (nothing blocks a search), then the investigations retrieved
  * under the fixed heading and notice, as cards of NTSB text and coded data, best match first,
  * ten at a time ("Show more" is free and reads the pinned ranking). The drawer, Compare and print
  * show the same projection and the notice. Every read is the viewer's own; a search that is gone,
@@ -306,6 +307,7 @@ export function Evidence() {
         <h1 className="mt-1 mb-3 font-serif text-[17px] leading-[1.3] break-words sm:text-[19px]">{search.question}</h1>
         <SearchPanel key={search.id} search={search} />
         <EvidenceHint hint={search.hint} className="mt-3" />
+        <CapabilityNote note={search.note} className="mt-3" />
 
         <section aria-labelledby="evidence-heading" className="mt-5">
           <h2 id="evidence-heading" className="font-serif text-[19px] leading-tight font-semibold tracking-headline sm:text-[21px]">

@@ -321,10 +321,10 @@ export function SearchPanel({ search }: SearchPanelProps) {
     if (action === 'draft') {
       // Words go only when the reader typed new ones; without, the search keeps its query.
       const words = draft.terms !== null && draft.terms !== current.terms ? draft.terms : undefined;
-      void evidence.edit(search.id, search.question, draft.filters, words);
+      void evidence.edit(search.id, draft.filters, words);
     } else if (suggestion) {
       const filters = action === 'words' ? search.appliedFilters : suggestion.filters;
-      void evidence.edit(search.id, search.question, filters, action === 'filters' ? undefined : suggestion.terms);
+      void evidence.edit(search.id, filters, action === 'filters' ? undefined : suggestion.terms);
     }
   };
   const control = (action: Action) => ({ phase: acting === action ? evidence.phase : 'idle', disabled: busy && acting !== action, onAsk: () => act(action) }) as const;

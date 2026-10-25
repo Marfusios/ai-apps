@@ -15,7 +15,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { CaseDetail } from '../../shared/contracts/cases';
 import { REPORT_URL_PREFIX } from '../../shared/contracts/cases';
 import type { BriefFilters } from '../../shared/contracts/briefs';
-import { CreateEvidenceResponseSchema, EVIDENCE_HEADING, EVIDENCE_NOTICE, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence';
+import {
+  CreateEvidenceResponseSchema,
+  EVIDENCE_HEADING,
+  EVIDENCE_NOTE_TEXT,
+  EVIDENCE_NOTICE,
+  EvidencePageSchema,
+  type EvidenceCase,
+  type EvidencePage,
+} from '../../shared/contracts/evidence';
 import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../web/mock/ai-status';
 import casesJson from '../../web/mock/cases.json';
 import { MOCK_EVIDENCE_QUESTIONS } from '../../web/mock/evidence';
@@ -267,39 +275,43 @@ describe('Ask AI opens an AI search (UI_DESIGN §4.9)', { timeout: 20_000 }, () 
   });
 
   it.each([
-    [MOCK_EVIDENCE_QUESTIONS.outOfScope, 'This tool only searches NTSB aviation investigations.', 'Search by keyword instead'],
-    [MOCK_EVIDENCE_QUESTIONS.operational, 'This tool studies past investigations.', 'Power loss after maintenance'],
-  ])('a policy reply shows under the box, uses no search and opens no page: "%s"', async (question, title, link) => {
+    [MOCK_EVIDENCE_QUESTIONS.outOfScope, 'scope'],
+    [MOCK_EVIDENCE_QUESTIONS.operational, 'operational_advice'],
+  ] as const)('nothing blocks a search: "%s" opens its results, with the fixed %s note above them and the notice', async (question, note) => {
     freshApi();
     installTurnstile(5);
     const { router } = renderApp('/');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: question } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*10 free$/ }));
-    const reply = await screen.findByText(title, {}, SLOW);
-    // In a polite live region that was there before it.
-    expect(reply.closest('[aria-live="polite"]')).toBeTruthy();
-    expect(screen.getByRole('link', { name: link })).toBeTruthy();
-    expect(currentUrl(router)).toBe('/');
-    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 10 of 10'), SLOW);
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/ai\/[0-9a-f-]{36}$/), SLOW);
+    const shown = await present(() => document.querySelector<HTMLElement>('[data-evidence-note]'));
+    // The contract's fixed text, word for word: never model text, never about the question.
+    expect(shown.getAttribute('data-evidence-note')).toBe(note);
+    expect(shown.textContent).toBe(EVIDENCE_NOTE_TEXT[note]);
+    // Calm: no alert, no live region, no warning colour; it prints; and above the results, which still come.
+    expect(shown.closest('[role="alert"], [aria-live]')).toBeNull();
+    expect(shown.closest('[data-print="hide"]')).toBeNull();
+    expect(shown.className).not.toMatch(/magenta|red|amber|warn/);
+    expect(shown.compareDocumentPosition(screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelectorAll('article[data-card]').length).toBeGreaterThan(0);
+    expect(screen.getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
+    // A note comes with no suggestion; it was one AI search.
+    expect(screen.queryByRole('region', { name: SUGGESTION_LABEL })).toBeNull();
+    await waitFor(() => expect(screen.getByRole('banner').textContent).toContain('AI searches left: 9 of 10'), SLOW);
   });
 
-  it('a counting request gets its results and, above them, the dashboard hint; filters the search applied go to Explore too', async () => {
+  it('a counting request gets its results and, above them, the dashboard hint', async () => {
     freshApi();
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.statistics);
     const hint = document.querySelector('[data-hint="corpus_statistics"]') as HTMLElement;
     expect(hint.textContent).toContain(STATISTICS_HINT);
     expect(within(hint).getByRole('link', { name: 'Open the dashboard' }).getAttribute('href')).toBe('/dashboard');
-    // A question search applies no filter, so there is nothing to take to Explore.
     expect(within(hint).getAllByRole('link')).toHaveLength(1);
-    // Results still come, from the question, with no filter applied.
+    // Results still come, from the question, with no filter applied, and no note.
     expect(search.total).toBeGreaterThan(2);
     expect(document.querySelectorAll('article[data-card]').length).toBe(Math.min(10, search.total));
+    expect(document.querySelector('[data-evidence-note]')).toBeNull();
     expect(hint.compareDocumentPosition(screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // With applied filters (a synthetic page), the hint takes them to Explore, said as these filters.
-    const page = servePage({ ...search, id: '00000000-0000-4000-9000-0000000057a7', appliedFilters: { category: ['HELI'] }, hint: { kind: 'corpus_statistics', filters: { category: ['HELI'] } } });
-    renderApp(`/ai/${page.id}`);
-    const link = await screen.findByRole('link', { name: 'Explore with these filters: Aircraft: Helicopter' }, SLOW);
-    expect(link.getAttribute('href')).toBe('/explore?category=HELI');
   });
 
   it('a comparison request gets its results and the compare hint: the cases found, Compare, and the numbers no case has; a case number alone gets no hint', async () => {
@@ -341,8 +353,9 @@ describe('the results page', { timeout: 20_000 }, () => {
     expect(search.appliedFilters).toEqual({});
     expect(document.querySelector('[data-count-line]')?.textContent).toMatch(/^21 retrieved/);
     expect([...document.querySelectorAll('[data-relevance]')].some((r) => r.textContent?.includes('Phase: Approach'))).toBe(false);
-    // No unchecked readings in this beta, anywhere.
+    // No unchecked readings in this beta, anywhere; a case search has no capability note.
     expect(document.body.textContent).not.toMatch(/AirCase cannot check|Not applied|AI reading of your question/);
+    expect(document.querySelector('[data-evidence-note]')).toBeNull();
   });
 
   it('a search whose scope stage failed shows the question’s results with no suggestion; the marks are the reader’s words', async () => {
