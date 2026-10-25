@@ -580,9 +580,13 @@ work supplies the v3 contract below but grants none of those release clearances.
 ### Evidence automatic filters and v3 rollout
 
 `AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default) or
-`state-explicit.v1.1` (dev only until reviewed into the live allowlist). Unknown values
-fail startup. This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
+`state-explicit.v1.1`. Both are allowed on dev and live following the state policy's
+field confirmation and review. Unknown values fail startup. The default stays
+`none`: to enable state on live, set `AVIATION_EVIDENCE_AUTO_FILTERS=state-explicit.v1.1`
+in that environment's settings and run `pnpm app:up` with those settings.
+This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
 it does not change any evaluated ranking hash. The Docker service passes it through.
+The live ranking allowlist remains **`er-q-v1` only**.
 Each saved search records both configuration identities. No reindex is needed.
 `GET /api/config` reports `aiAutomaticFilters: []` for `none` and `['state']` for
 the state policy. Client copy follows this field, not a fixed claim about states.
@@ -606,9 +610,12 @@ unknown migration drift is still refused. Its columns/grants and snapshot are un
 the older client and MSW fixtures require the controller's parallel update. The
 server now discloses lexical keywords, automatic state, actual order and mark source,
 remaining suggestions, and the `freeUndo` result. v2 stored pages upgrade on read;
-pre-v2 pages remain unavailable. Roll back automatic state by setting
-`AVIATION_EVIDENCE_AUTO_FILTERS=none` and recreating the service. Saved pages retain
-their own facts; new edits use explicit filters only. Do not roll back the database
+pre-v2 pages remain unavailable. To roll back automatic state on live, set
+`AVIATION_EVIDENCE_AUTO_FILTERS=none` in the live settings, then run `pnpm app:up`
+with those settings. New question-search pages disclose no automatic filters;
+Explore and About switch wording through `aiAutomaticFilters: []`, subject to the
+five-minute config cache above. Saved pages retain their own facts; new edits use
+explicit filters only. Do not roll back the database
 schema or old private result data to disable this policy.
 
 Free undo is allowed once per original question, even at a visitor quota limit.
@@ -618,8 +625,9 @@ with the same key replay its result/failure once a search row exists. A pre-run 
 expires the idempotency slot without restoring the undo claim, so even a same-key retry
 is an ordinary quota-counted admission (or is refused at the quota limit).
 Confirm quota_counted=false for the free request and normal ledger settlement. No
-public request field can ask for free quota directly. A release still needs the ranking
-and automatic-filter allowlist decisions; this implementation enables neither on live.
+public request field can ask for free quota directly. Automatic state is cleared for
+live opt-in; a non-baseline ranking still requires its own evaluation and allowlist
+decision. Deploy the matching v3 web client before enabling automatic state.
 
 ### Retrieval version
 

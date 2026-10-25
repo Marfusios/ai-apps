@@ -966,7 +966,9 @@ remain those evaluated for Task 24; automatic filters are an independent, frozen
 policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
 identity includes the outputs of a fixed, versioned guard-probe set; a changed response
 to any probe changes the hash even without a guard version bump. Live accepts
-only `none` until an explicit reviewed allowlist change. `state-explicit.v1.1` uses
+`none` and the reviewed `state-explicit.v1.1`; the default stays `none` and an operator
+must explicitly enable state in the environment settings. The independent live
+ranking allowlist remains `er-q-v1` only. `state-explicit.v1.1` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
 It requires the complete explicit event-state set and abstains on ambiguous places,
 negation, unsafe contexts or unsupported attribution. After NFKC, a full state name
