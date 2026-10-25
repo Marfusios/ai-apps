@@ -584,19 +584,19 @@ work supplies the v3 contract below but grants none of those release clearances.
 fail startup. This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
 it does not change any evaluated ranking hash. The Docker service passes it through.
 Each saved search records both configuration identities. No reindex is needed.
-The automatic-policy identity includes `state-probes.v1` outputs. Current hashes:
+The automatic-policy identity includes `state-probes.v2` outputs. Current hashes:
 
 | Policy | SHA-256 |
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
-| `state-explicit.v1.1` | `1c587b2f70bd100a1ad5981d33991561614f16fd7adcd9e6840c78229adcfb4c` |
+| `state-explicit.v1.1` | `cb570aa5fde7eb03ef5dbc8198cd1e773d4ece79a0b50d2de50305454aa9a631` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs; `none`
 records no active guard. Do not relabel older cached results with these identities.
 The eleven ranking identities are unchanged.
 
 
-Apply migration 0025 before serving v3. Its known local-test-only round-2 version is
+Apply migration 0025 before serving v3. Its known local-test-only round-2 and round-3 versions are
 reapplied transactionally by the migrator without removing existing undo claims; other
 unknown migration drift is still refused. Its columns/grants and snapshot are unchanged. Deploy the matching evidence.v3 web client;
 the older client and MSW fixtures require the controller's parallel update. The

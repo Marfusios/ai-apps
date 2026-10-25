@@ -893,6 +893,62 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     expect((await h.request(undoBody(parent.id))).statusCode).toBe(404);
     expect(await spent()).toEqual(before);
   });
+  it('hands the trial parent to the account inside a deterministic first undo claim', async () => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion })), trialCookie = h.cookie();
+    const original = await stored(page.id);
+    expect(original).toMatchObject({ readOwnerKind: 'trial', billingKind: 'trial', freeUndoReservationId: null });
+    const account = await h.account(); nextMinute();
+    expect(h.cookie()).toContain(trialCookie);
+    // No callback handover or parent replay: the claim callback must move this row.
+    expect((await stored(page.id)).readOwner).toBe(original.readOwner);
+    const child = searchOf(await h.request(undoBody(page.id)));
+    expect(child).toMatchObject({ freeUndo: true, undo: 'none' });
+    const moved = await stored(page.id), childRow = await stored(child.id);
+    expect(moved).toMatchObject({ readOwner: account.hash, readOwnerKind: 'account',
+      billingPrincipal: original.billingPrincipal, billingKind: original.billingKind,
+      reservationId: original.reservationId, freeUndoReservationId: childRow.reservationId, data: original.data });
+    expect(moved.ownerMovedAt).not.toBeNull();
+    expect(childRow).toMatchObject({ billingPrincipal: account.hash, billingKind: 'account' });
+    expect((await db.execute(sql`SELECT principal_hash, principal_kind, quota_counted, status FROM reservations
+      WHERE id = ${childRow.reservationId}`)).rows).toEqual([
+      { principal_hash: account.hash, principal_kind: 'account', quota_counted: false, status: 'settled' },
+    ]);
+    expect((await h.get(page.id)).json().undo).toBe('used');
+    expect((await h.get(page.id, 1, trialCookie)).statusCode).toBe(404);
+    expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(2);
+  });
+  it.each(['trial', 'account'] as const)('returns expired without charge when the database clock rejects an app-eligible %s undo', async owner => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion }));
+    const original = await stored(page.id);
+    const databaseNow = Number((await db.execute(sql`SELECT extract(epoch FROM clock_timestamp()) * 1000 AS now_ms`)).rows[0]!.now_ms);
+    const expiresAt = new Date(databaseNow - 60_000);
+    const [parent] = await migrator.insert(evidenceSearches).values({ ...original, id: randomUUID(),
+      createdAt: new Date(expiresAt.getTime() - 86400_000), expiresAt }).returning();
+    if (owner === 'account') await h.account(); // trial cookie remains attached; handover also checks the database clock
+    clock = new Date(expiresAt.getTime() - 30_000); // the app lags the database by 90 seconds
+    expect((await h.get(parent!.id)).json().undo).toBe('available');
+    const balances = async () => (await db.execute(sql`SELECT
+      (SELECT count(*)::int FROM reservations) AS reservations,
+      (SELECT count(*)::int FROM leases) AS leases,
+      (SELECT count(*)::int FROM idempotency) AS idempotency,
+      (SELECT sum(requests_used)::int FROM trial_identities) AS quota,
+      (SELECT count(*)::int FROM evidence_searches) AS searches`)).rows[0];
+    const before = await balances(), cost = await spent();
+    const admission = vi.spyOn(quotaAdmission, 'admitPaidRequest');
+    const response = await h.request(undoBody(parent!.id));
+    expect(response.statusCode, response.body).toBe(404);
+    expect(admission).toHaveBeenCalledTimes(1);
+    await expect(admission.mock.results[0]!.value).rejects.toMatchObject({
+      cause: { code: '55000', constraint: 'evidence_undo_parent_unexpired' },
+    });
+    clock = expiresAt;
+    expect(response.json()).toEqual((await h.get(parent!.id)).json());
+    expect(await balances()).toEqual(before); expect(await spent()).toEqual(cost);
+    expect((await stored(parent!.id)).freeUndoReservationId).toBeNull();
+    expect((await stored(parent!.id)).readOwner).toBe(original.readOwner);
+    expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(1);
+    expect(h.logs.join('')).not.toContain('evidence undo parent expired');
+  });
 
   it('applies only guarded state before retrieval, removes it from suggestions and persists both identities', async () => {
     const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
@@ -1169,7 +1225,9 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     }
     const id = await reservation(invalid === 'counted', invalid === 'closed', invalid === 'wrong-owner' ? 'e'.repeat(64) : original.readOwner);
     const error = await db.execute(sql`UPDATE evidence_searches SET free_undo_reservation_id = ${id} WHERE id = ${parent!.id}`).then(() => null, e => e);
-    expect(error?.cause).toMatchObject({ code: '55000', message: 'evidence undo claim is immutable' });
+    expect(error?.cause).toMatchObject(invalid === 'expired'
+      ? { code: '55000', message: 'evidence undo parent expired', constraint: 'evidence_undo_parent_unexpired' }
+      : { code: '55000', message: 'evidence undo claim is immutable' });
     expect((await stored(parent!.id)).freeUndoReservationId).not.toBe(id);
   });
   it('a missing version cannot use SQL null logic to finalize changed query facts', async () => {

@@ -5,7 +5,7 @@ import { EVIDENCE_RANKING_VERSIONS } from '../../shared/evidence-ranking.js';
 import { CreateEvidenceRequestSchema, EvidencePageSchema, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
 import { autoFilterIdentity, autoFilterPolicy, automaticState } from '../../server/evidence/auto-filters.js';
 import { disclosedQuery, questionQuery, remainingSuggestion } from '../../server/evidence/disclosure.js';
-import { canUndo } from '../../server/evidence/undo.js';
+import { canUndo, isExpiredUndoClaim } from '../../server/evidence/undo.js';
 import { pageOf, withSuggestion, type EvidenceRow } from '../../server/evidence/store.js';
 import { evidenceRankingConfig, evidenceRankingIdentity } from '../../server/evidence/ranking-config.js';
 import { rankEvidence, rankingTexts } from '../../server/evidence/pipeline.js';
@@ -46,7 +46,7 @@ describe('independent automatic state policy', () => {
   it('has distinct immutable identities and rejects altered policies', () => {
     expect(Object.isFrozen(autoFilterPolicy('state-explicit.v1.1'))).toBe(true);
     expect(autoFilterIdentity(autoFilterPolicy()).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
-    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.1')).sha256).toBe('1c587b2f70bd100a1ad5981d33991561614f16fd7adcd9e6840c78229adcfb4c');
+    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.1')).sha256).toBe('cb570aa5fde7eb03ef5dbc8198cd1e773d4ece79a0b50d2de50305454aa9a631');
     expect(() => automaticState({ ...autoFilterPolicy('state-explicit.v1.1'), field: null } as never, question, rawSuggestion.filters, false, false)).toThrow('unregistered');
   });
   it('fingerprints the guard behaviour, including a regex change without a version bump', () => {
@@ -55,7 +55,7 @@ describe('independent automatic state policy', () => {
       ? { states: [...emitted], reason: 'applied' } : eligibleEmittedStates(q, emitted));
     expect(policy.behaviour?.sha256).toBe(stateGuardFingerprint());
     expect(changed).not.toBe(stateGuardFingerprint());
-    expect(autoFilterIdentity({ ...policy, behaviour: { version: 'state-probes.v1', sha256: changed } } as never).sha256)
+    expect(autoFilterIdentity({ ...policy, behaviour: { version: 'state-probes.v2', sha256: changed } } as never).sha256)
       .not.toBe(autoFilterIdentity(policy).sha256);
   });
   it('rejects an altered automatic policy before any scope call or spend reservation', async () => {
@@ -179,6 +179,16 @@ describe('read-time undo availability', () => {
 });
 
 describe('one-use free undo predicate', () => {
+  it('recognizes only the database expiry marker, including wrapped driver errors', () => {
+    const expired = { code: '55000', constraint: 'evidence_undo_parent_unexpired' };
+    expect(isExpiredUndoClaim(expired)).toBe(true);
+    expect(isExpiredUndoClaim(new Error('query failed', { cause: new Error('wrapper', { cause: expired }) }))).toBe(true);
+    const cycle: { cause?: unknown } = {}; cycle.cause = cycle;
+    for (const error of [null, '55000', { code: '55000' }, { ...expired, code: '23514' },
+      { code: '55000', message: 'evidence undo parent expired' }, { ...expired, constraint: 'evidence_query' }, cycle]) {
+      expect(isExpiredUndoClaim(error)).toBe(false);
+    }
+  });
   it.each([
     {}, { filters: { state: ['CA'], yearFrom: 2019 }, keywords: 'question' }, { keywords: 'question' },
     { filters: { state: [], yearFrom: 2019 } },

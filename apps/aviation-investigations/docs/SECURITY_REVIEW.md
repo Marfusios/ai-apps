@@ -331,7 +331,13 @@ restored after an admitted search fails, preventing repeated free paid attempts.
 Pre-run abandonment also consumes the claim: its idempotency slot expires, so a same-key
 retry requires an ordinary quota-counted admission. The trigger checks actual expiry,
 current owner and original payer, in addition to the open, quota-free reservation.
-A cross-principal handover race and direct SQL violations cover the boundary.
+A two-principal race proves that at most one admission claims the exemption; it does
+not require the account to win. A separate deterministic trial → sign-in → undo test
+proves that the claim-time handover succeeds with the account as current owner and
+the trial as original payer. Direct SQL violations test the owner/payer bindings.
+If the database clock finds the parent expired while the app clock still considers
+it eligible, the expiry-specific refusal returns the same 404 as an expired parent;
+the admission transaction rolls back its reservation, claim and quota changes.
 
 An eligible undo can pass exhausted visitor quota, but never bypasses Turnstile,
 principal/network rate limits, concurrency, emergency modes, restore hold, budgets,

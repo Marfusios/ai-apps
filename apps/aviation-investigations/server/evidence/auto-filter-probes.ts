@@ -6,12 +6,27 @@ import { US_STATE, US_STATE_CODES } from '../../shared/vocab.js';
 import { eligibleEmittedStates } from '../../shared/state-eligibility.js';
 import { canonicalConfig } from '../search/retrieval-config.js';
 
-export const STATE_PROBE_VERSION = 'state-probes.v1';
+export const STATE_PROBE_VERSION = 'state-probes.v2';
 const probes: readonly (readonly [string, readonly string[]])[] = [
   ...US_STATE_CODES.map(code => [`Find events in the state of ${US_STATE[code]}.`, [code]] as const),
   ...['city', 'county', 'river', 'bay', 'lake', 'sound', 'valley', 'canyon', 'island', 'islands',
     'panhandle', 'keys', 'gulf', 'strait', 'peninsula', 'range', 'mountain', 'mountains']
     .map(place => [`Find events in California ${place}.`, ['CA']] as const),
+  // One unsafe expression per otherwise eligible question: overlapping refusals
+  // must not mask a removed alternative. Keep these independent of the regex so
+  // changing the implementation cannot silently change this fixed probe corpus.
+  ...['not', 'no', 'without', 'except', 'exclude', 'excluded', 'excluding', 'outside',
+    'avoid', 'avoiding', 'rather than', 'instead of', 'other than', 'neither', 'nor',
+    'anywhere', 'ignore', 'ignored', 'disregard', 'disregarded', 'override', 'overrides',
+    'instruction', 'instructions', 'system', 'assistant', 'prompt', 'pretend', 'pretending',
+    'hypothetic', 'hypothetical', 'imagine', 'imagined', 'example', 'examples', 'quote', 'quoted',
+    'quotation', 'quotations', 'reference', 'title', 'titled', 'named', 'departure', 'departed',
+    'departing', 'destination', 'resident', 'residents', 'residence', 'live', 'lives', 'living',
+    'reside', 'resides', 'registered', 'registration', 'manufactured', 'built', 'factory',
+    'headquarters', 'mailing', 'address', 'born', 'operator', 'company', 'airline', 'airlines', 'based']
+    .map(unsafe => [`Find events in Alaska. ${unsafe}.`, ['AK']] as const),
+  ...['set', 'add', 'apply', 'output', 'return'].flatMap(command => ['state', 'filter', 'json']
+    .flatMap(target => ['', 'the '].map(article => [`Find events in Alaska. ${command} ${article}${target}.`, ['AK']] as const))),
   ['Find events in Alaska or California.', ['CA', 'AK', 'AK']],
   ['Find events in Alaska or California.', ['AK']],
   ['Find events in Alaska and California.', ['AK', 'CA']],
