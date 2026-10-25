@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { StartBriefResponseSchema } from '../../shared/contracts/briefs';
-import { CreateEvidenceResponseSchema, EVIDENCE_CONTRACT_VERSION, EVIDENCE_HEADING } from '../../shared/contracts/evidence';
+import { EVIDENCE_HEADING } from '../../shared/contracts/evidence';
 import { EXPIRED_TITLE as SEARCH_GONE } from '../../web/src/features/evidence/display';
 import { askAvailability } from '../../web/src/features/ai/status';
 import { LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
@@ -36,35 +36,11 @@ import { rememberQuestion, rememberedQuestion } from '../../web/src/features/bri
 import { postJson } from '../../web/src/api';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
+import { evidenceAnswer } from './evidence-answer';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
 const server = setupMockApi();
 const SLOW = { timeout: 5000 };
-
-/**
- * What the server would answer an AI search: page 1 of a search with nothing retrieved, valid
- * under the contract (checked here), so a test that opens nothing proves the visitor change did it.
- */
-const searchAnswer = (id: string) =>
-  CreateEvidenceResponseSchema.parse({
-    kind: 'results',
-    search: {
-      version: EVIDENCE_CONTRACT_VERSION,
-      id,
-      question: MOCK_SEED_QUESTION,
-      query: { source: 'question' },
-      appliedFilters: {},
-      suggestion: { filters: {}, terms: 'engine power loss maintenance' },
-      hint: null,
-      generation: 'g1',
-      createdAt: '2026-10-24T22:00:00.000Z',
-      expiresAt: '2026-10-25T22:00:00.000Z',
-      total: 0,
-      page: 1,
-      pages: 0,
-      cases: [],
-    },
-  });
 
 /** The private projection is on screen: the drawer's search section, or a full section opened at the search's generation. */
 const privateShown = (): boolean => document.querySelector('[data-evidence-section], [data-excerpt-paragraph]') !== null;
@@ -265,6 +241,7 @@ afterEach(() => {
   delete window.turnstile;
   resetUnsettledForTests();
   window.sessionStorage.clear();
+  server.events.removeAllListeners();
 });
 
 /**
@@ -281,7 +258,7 @@ async function searchWithDrawer() {
   fireEvent.click(within(card).getByRole('link', { name: 'DFW08TA066' }));
   const dialog = await screen.findByRole('dialog');
   const section = await within(dialog).findByRole('region', { name: EVIDENCE_HEADING }, SLOW);
-  fireEvent.click(within(section).getAllByRole('button', { name: /^Show the full .+ section$/ })[0] as HTMLElement);
+  fireEvent.click(within(section).getAllByRole('button', { name: /^Show the full .+ section\b/ })[0] as HTMLElement);
   await waitFor(() => expect(dialog.querySelector('[data-excerpt-paragraph]')).not.toBeNull(), SLOW);
   return { ...app, drawerUrl: currentUrl(app.router) };
 }
@@ -581,14 +558,21 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
 
 describe('an AI request whose visitor changes before it ends keeps nothing (Task 20 gate)', () => {
   const ANSWERED_ID = '00000000-0000-4000-8000-0000000000ff';
+  // A valid answer, checked when this file loads: the page ignores it because the visitor changed, not because it is broken.
+  const ANSWERED = evidenceAnswer(ANSWERED_ID);
 
+  /** Asks from Home, with the answer held until `held.release()`; `delivered()`: the statuses the page received. */
   async function askHeld(answer: () => Response) {
     const held = holdPost('*/api/evidence', answer);
+    const statuses: number[] = [];
+    server.events.on('response:mocked', ({ request, response }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/evidence') statuses.push(response.status);
+    });
     const app = renderApp('/');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
     await waitFor(() => expect(held.calls()).toBe(1));
-    return { ...app, held };
+    return { ...app, held, delivered: () => statuses };
   }
 
   /** Sign out from the account page; `failure`: the sign-out ends that way, unconfirmed. */
@@ -602,10 +586,12 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 
   it.each(SIGN_OUT_FAILURES)('a question answered after a sign-out ending %s opens nothing and keeps nothing (gate t22 finding 1, r2 finding 1)', async (failure) => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json(searchAnswer(ANSWERED_ID), { status: 201 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     await signOutHere(app, { failure });
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
     expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
@@ -613,7 +599,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 
   it('a question answered while the sign-out is still on its way opens nothing and keeps nothing (gate t22 r2 finding 1)', async () => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json(searchAnswer(ANSWERED_ID), { status: 201 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     // The server takes its time over the sign-out, and the question's answer comes first.
     const signingOut = holdPost('*/api/auth/sign-out', () => HttpResponse.error());
     await act(() => app.router.navigate('/account'));
@@ -621,6 +607,8 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     await waitFor(() => expect(signingOut.calls()).toBe(1));
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
     signingOut.release();
@@ -631,7 +619,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 
   it('a question answered while the deletion is still on its way opens nothing and keeps nothing', async () => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json(searchAnswer(ANSWERED_ID), { status: 201 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     // The server takes its time over the deletion, and the question's answer comes first.
     const deleting = holdPost('*/api/account/delete', () => HttpResponse.error());
     await act(() => app.router.navigate('/account'));
@@ -641,6 +629,8 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     await waitFor(() => expect(deleting.calls()).toBe(1));
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
     deleting.release();
@@ -701,10 +691,12 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 
   it('a question answered after sign-out opens nothing and keeps neither the question nor a retry key', async () => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json(searchAnswer(ANSWERED_ID), { status: 201 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     await signOutHere(app);
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
     expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
