@@ -8,9 +8,14 @@ import { defineConfig, devices } from '@playwright/test';
  * E2E_REAL_PORT picks the port (default 5181). Signing in and out runs against a second
  * server with Google sign-in and a stand-in for Google on another site
  * (tests/e2e-real/auth-server.ts, ports E2E_AUTH_PORT and E2E_GOOGLE_PORT, default 5182
- * and 5183). The mock-mode tests are playwright.config.ts (`pnpm test:e2e`).
+ * and 5183). The same process serves a second app with the evidence.v3 policies the evaluation
+ * may pick on E2E_REAL_V3_PORT (default E2E_REAL_PORT + 3) for tests/e2e-real/evidence-v3.spec.ts.
+ * The mock-mode tests are playwright.config.ts (`pnpm test:e2e`).
  */
 const port = Number(process.env.E2E_REAL_PORT) || 5181;
+const v3Port = Number(process.env.E2E_REAL_V3_PORT) || port + 3;
+// The workers read it too (tests/e2e-real/evidence-v3.spec.ts).
+process.env.E2E_REAL_V3_PORT = String(v3Port);
 const authPort = Number(process.env.E2E_AUTH_PORT) || 5182;
 const googlePort = Number(process.env.E2E_GOOGLE_PORT) || 5183;
 const env: Record<string, string> = {};
@@ -36,7 +41,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 240_000,
       gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
-      env: { ...env, E2E_REAL_PORT: String(port) },
+      env: { ...env, E2E_REAL_PORT: String(port), E2E_REAL_V3_PORT: String(v3Port) },
     },
     {
       command: 'tsx tests/e2e-real/auth-server.ts',
