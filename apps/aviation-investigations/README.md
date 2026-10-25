@@ -1208,12 +1208,13 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   total. Typing words, removing a chip or adding a filter is free until "Search again · uses
   1" sends `kind: "edited"`, a new 24-hour search that keeps the question, with exactly the
   filters left, `terms` only when the reader typed new words and `keywords: "question"` when they
-  removed the added terms. A draft that only removes what AirCase added (the whole automatic
-  state, the added terms, or both) reads "Search again · free": the search's one free undo,
-  mirroring the server's rule (`web/src/features/evidence/undo.ts`, held to
-  `server/evidence/undo.ts` by `tests/unit/evidence-undo.test.ts`), which runs with the visitor's
-  own searches used up and through the usual check; the created page's `freeUndo` decides, and a
-  page that says it was not free says "This search used one of your AI searches.". "Show keyword
+  removed the added terms. While the page says the search's one free undo is there (`undo:
+  "available"`), a draft that only removes what AirCase added (the whole automatic state, the
+  added terms, or both) reads "Search again · free", by the server's rule
+  (`web/src/features/evidence/undo.ts`, held to `server/evidence/undo.ts` by
+  `tests/unit/evidence-undo.test.ts`); it runs with the visitor's own searches used up and through
+  the usual check, and the searches it came from then say `used`. The created page's `freeUndo`
+  decides: a page that says it was not free says "This search used one of your AI searches.". "Show keyword
   results" opens Explore with the draft's words (or the question) and filters, free. An empty or
   tiny result shows its filters (an automatic state tagged, the added terms said) and a free
   keyword search without them; a gone search (a 404) says so
@@ -1308,7 +1309,8 @@ terms as the configuration says, with a state the question names applied through
 guard and the leading cases put in order by a fixed stand-in for a reranker's grades (an edit:
 exactly the filters sent, with the real filter rules, and the reader's words when sent, the
 question's when it restores them, else the earlier query), the one free undo by the server's rule
-(it uses none of the visitor's searches and passes a used-up quota), a stand-in scope
+(it uses none of the visitor's searches and passes a used-up quota; every page says whether it is
+still there, `undo`, as the server computes it from its claim), a stand-in scope
 stage that suggests filters and terms (rules for a few words, phases and states), hints for
 explicit counting and comparison requests, capability notes for questions about something else or
 asking for operational advice (results still come), whole paragraphs located
