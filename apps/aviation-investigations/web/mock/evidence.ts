@@ -373,10 +373,14 @@ function excerptOf(section: Section, paragraph: Span, marked: readonly Term[]): 
   };
 }
 
-/** Up to three paragraphs, chosen by the query's words (never the suggestion's), marked with `marked`. */
+/**
+ * Up to three paragraphs, chosen by the query's words (never the suggestion's), marked with `marked`.
+ * Any section can give one, the probable cause included, as on the server: its previews are the
+ * paragraphs of the passages retrieval found, and probable-cause statements are passages too.
+ */
 function excerptsOf(detail: CaseDetail, terms: readonly Term[], marked: readonly Term[]): EvidenceExcerpt[] {
   const order = { analysis: 0, factual: 1, probable_cause: 2 } as const;
-  const candidates = narratives(detail).flatMap((section) =>
+  const candidates = detail.sections.flatMap((section) =>
     paragraphsOf(section.text)
       .filter((p) => p.end - p.start <= 20_000 && !HEADING.test(section.text.slice(p.start, p.end)))
       .map((p) => ({ section, paragraph: p, hits: hitsIn(section.text.slice(p.start, p.end), terms).length })),
@@ -386,9 +390,9 @@ function excerptsOf(detail: CaseDetail, terms: readonly Term[], marked: readonly
     .sort((a, b) => b.hits - a.hits || order[a.section.kind] - order[b.section.kind] || a.paragraph.start - b.paragraph.start)
     .slice(0, MAX_EXCERPTS_PER_CASE);
   // Found by similarity alone: the first analysis paragraph stands for the passage it retrieved;
-  // a multi-aircraft event found that way has none to show (a case with no mappable passage keeps
-  // its facts and probable causes, with no excerpt).
-  if (matching.length === 0 && detail.aircraft.length > 1) return [];
+  // a multi-aircraft event whose narratives the words miss has none to show (a case with no
+  // mappable passage keeps its facts and probable causes, with no excerpt).
+  if (detail.aircraft.length > 1 && !matching.some((c) => c.section.kind !== 'probable_cause')) return [];
   const chosen = matching.length > 0 ? matching : candidates.sort((a, b) => order[a.section.kind] - order[b.section.kind]).slice(0, 1);
   return chosen.map((c) => excerptOf(c.section, c.paragraph, marked));
 }

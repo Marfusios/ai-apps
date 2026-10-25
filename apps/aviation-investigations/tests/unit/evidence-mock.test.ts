@@ -102,6 +102,13 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
     expect(marked('synonym')).toContain('carburetor');
     expect(marked('literal')).toContain('icing');
     expect(marked('literal').every((w) => w === 'carb' || w === 'icing')).toBe(true);
+    // As on the server, a probable-cause statement is a passage too: a paragraph of it can be an
+    // excerpt, beside the statement the card shows verbatim.
+    const carbCases = all(MOCK_EVIDENCE_QUESTIONS.carb);
+    const causeExcerpt = carbCases.find((c) => c.excerpts.some((e) => e.section === 'probable_cause'));
+    expect(causeExcerpt).toBeDefined();
+    const quoted = causeExcerpt?.excerpts.find((e) => e.section === 'probable_cause');
+    expect(causeExcerpt?.probableCauses.find((p) => p.sectionKey === quoted?.sectionKey)?.text.slice(quoted?.paragraph.start, quoted?.paragraph.end)).toBe(quoted?.text);
     // A highlight after multi-byte characters: the offsets are UTF-16 code units.
     const multibyte = all(MOCK_EVIDENCE_QUESTIONS.multibyte).flatMap((c) => c.excerpts);
     const after = multibyte.find((e) => {

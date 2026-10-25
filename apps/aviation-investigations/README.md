@@ -1290,7 +1290,8 @@ real filter rules, and the reader's words when sent, else the earlier query), a 
 stage that only suggests filters and terms (rules for a few words, phases and states), hints for
 explicit counting and comparison requests, capability notes for questions about something else or
 asking for operational advice (results still come), whole paragraphs located
-in the fixture texts and chosen by the query, with literal and declared-synonym highlights of the
+in the fixture texts and chosen by the query (a probable-cause paragraph among them, as the server's
+retrieved passages can be), with literal and declared-synonym highlights of the
 suggested terms (else the query's words), saved pages of 10 (past the last, a 404), 24-hour
 ownership handed over on sign-in, and idempotency keys (a replay answers the same search, another
 body under the same key is a 409). `MOCK_EVIDENCE_QUESTIONS` names the questions the tests ask:
