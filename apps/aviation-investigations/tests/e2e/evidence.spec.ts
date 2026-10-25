@@ -210,12 +210,38 @@ test('a counting request gets its results with the dashboard hint above them', a
   await expect(page.locator('article[data-card]').first()).toBeVisible();
 });
 
-test('a static reply shows under the box and uses no search', async ({ page }) => {
-  await open(page, { width: 1280, theme: 'night' });
-  await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill('Write a poem about clouds');
-  await page.getByRole('button', { name: 'Ask AI · 10 free' }).click();
-  await expect(page.getByText('This tool only searches NTSB aviation investigations.')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Search by keyword instead' })).toBeVisible();
-  await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('banner').getByText('AI searches left: 10 of 10')).toBeVisible();
-});
+const NOTE = {
+  scope: 'AirCase searches published NTSB aviation investigations only. The investigations below were retrieved for your words.',
+  operational:
+    'AirCase is a research tool, not a source of operational flight or maintenance advice. For a flight in progress, contact ATC; for airworthiness, use your aircraft’s approved data and a certificated mechanic.',
+};
+
+for (const [width, theme] of [
+  [1280, 'night'],
+  [390, 'day'],
+] as const) {
+  test(`nothing blocks a search: a question about something else, or asking for advice, gets its results under a fixed note (${width}px, ${theme})`, async ({ page }) => {
+    await open(page, { width, theme });
+    await ask(page, 'Write a poem about clouds');
+    const note = page.locator('[data-evidence-note]');
+    await expect(note).toHaveText(NOTE.scope);
+    await expect(note).toHaveAttribute('data-evidence-note', 'scope');
+    // Above the results, which still come, under the notice as always; it was one AI search.
+    await expect(page.getByRole('note').first()).toHaveText(NOTICE);
+    await expect(page.locator('article[data-card]').first()).toBeVisible();
+    const above = await page.evaluate<boolean>(`(() => {
+      const note = document.querySelector('[data-evidence-note]');
+      const heading = [...document.querySelectorAll('h2')].find((h) => h.textContent === ${JSON.stringify(HEADING)});
+      return Boolean(note.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING);
+    })()`);
+    expect(above).toBe(true);
+    await expect(page.getByRole('banner').getByText(width < 640 ? 'AI left 9 of 10' : 'AI searches left: 9 of 10')).toBeVisible();
+    await fitsTheWidth(page);
+
+    await page.getByRole('link', { name: 'AirCase' }).click();
+    await ask(page, 'What should I do right now, my engine is running rough');
+    await expect(note).toHaveText(NOTE.operational);
+    await expect(page.getByRole('region', { name: SUGGESTION })).toHaveCount(0);
+    await fitsTheWidth(page);
+  });
+}
