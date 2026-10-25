@@ -1303,9 +1303,9 @@ replays the started brief).
 The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v3`), standing in for one
 ranking configuration and automatic-filter policy, like a server (`createHandlers({ evidence })`;
 in the dev mock mode and the end-to-end tests, session storage `casebook-mock-evidence` as JSON
-`{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.2"}`; the server's defaults,
+`{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.3"}`; the server's defaults,
 `er-q-v1` and `none`, otherwise; `MOCK_EVIDENCE_RELEASE` is what live runs, `er-q-v1` with
-`state-explicit.v1.2`):
+`state-explicit.v1.3`):
 retrieval over the fixture index from the question's own words, plus or instead of the suggested
 terms as the configuration says, with a state the question names applied through the server's own
 guard and the leading cases put in order by a fixed stand-in for a reranker's grades (an edit:
@@ -1585,7 +1585,7 @@ since every browser of the run is 127.0.0.1. `tests/e2e-real/evidence.spec.ts` d
 evidence view through it, with the mock suite's Turnstile stand-in in the browser, and
 replays the known context-loss examples (`tests/support/context-loss.ts`) on the initial
 card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. The same process
-serves the evidence configuration live runs (`er-q-v1` with `state-explicit.v1.2`) as a second app
+serves the evidence configuration live runs (`er-q-v1` with `state-explicit.v1.3`) as a second app
 on `E2E_REAL_V3_PORT` (default `E2E_REAL_PORT` + 3), sharing the database, for
 `tests/e2e-real/evidence-v3.spec.ts`. It also starts a
 second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at

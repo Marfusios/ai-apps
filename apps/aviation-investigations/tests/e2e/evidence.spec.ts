@@ -279,7 +279,7 @@ async function configure(page: Page, config: { ranking: string; autoFilters: str
   await page.addInitScript(`sessionStorage.setItem('casebook-mock-evidence', ${JSON.stringify(JSON.stringify(config))})`);
 }
 
-const STATE_TERMS_AI = { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.2' };
+const STATE_TERMS_AI = { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.3' };
 const STATE_TERMS = 'Carb icing on approach in Texas';
 
 for (const [width, theme] of [
@@ -459,7 +459,7 @@ test('a free undo that fails after the server took it: the notice does not promi
 // ---------------------------------------------------------------------------
 // What live runs: the question alone, highest-ranked first, the suggested terms marked, a named state applied
 
-const RELEASE = { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.2' };
+const RELEASE = { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.3' };
 const STATE_MARKED = 'Carb icing on approach in Missouri';
 
 for (const [width, theme] of [

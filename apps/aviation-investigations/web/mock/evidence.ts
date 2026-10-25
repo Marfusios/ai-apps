@@ -123,7 +123,7 @@ export const MOCK_EVIDENCE_QUESTIONS = {
   single: 'What happened in DFW08TA066',
   /**
    * A state the question names, a suggested phase and terms: with the guarded automatic state
-   * (`state-explicit.v1.2`), Texas is applied and the phase stays a suggestion; with terms in
+   * (`state-explicit.v1.3`), Texas is applied and the phase stays a suggestion; with terms in
    * keyword search, "carb icing" is searched too and is no longer suggested.
    */
   stateTerms: 'Carb icing on approach in Texas',
@@ -143,7 +143,7 @@ export const MOCK_EVIDENCE_QUESTIONS = {
 export interface MockEvidenceConfig {
   /** What keyword search reads, and whether AI puts the leading results in order. */
   ranking: EvidenceRankingVersion;
-  /** Whether a state the question names is applied (`state-explicit.v1.2`) or only suggested (`none`). */
+  /** Whether a state the question names is applied (`state-explicit.v1.3`) or only suggested (`none`). */
   autoFilters: EvidenceAutoFilterVersion;
 }
 
@@ -154,7 +154,7 @@ export const MOCK_EVIDENCE_BASELINE: MockEvidenceConfig = { ranking: DEFAULT_EVI
  * What live runs (Task 24's release): the question alone, in match order, the suggested terms
  * marked, and a state the question names applied by the guarded policy.
  */
-export const MOCK_EVIDENCE_RELEASE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: 'state-explicit.v1.2' };
+export const MOCK_EVIDENCE_RELEASE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: 'state-explicit.v1.3' };
 
 /**
  * Session storage (dev mock mode and end-to-end tests): the configuration the mock API stands in
@@ -867,7 +867,7 @@ export class MockEvidence {
     // A state the question names, applied only by the guarded policy and the server's own guard.
     let suggested = scope;
     let automaticFilters: EvidenceAutomaticFilters | null = null;
-    if (scope && this.config.autoFilters === 'state-explicit.v1.2' && (scope.filters.state ?? []).length > 0) {
+    if (scope && this.config.autoFilters === 'state-explicit.v1.3' && (scope.filters.state ?? []).length > 0) {
       const { states } = eligibleEmittedStates(body.question, scope.filters.state ?? []);
       if (states.length > 0) {
         automaticFilters = { state: states as EvidenceAutomaticFilters['state'] };

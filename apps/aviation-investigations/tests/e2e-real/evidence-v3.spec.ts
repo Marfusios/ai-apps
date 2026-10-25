@@ -2,7 +2,7 @@
  * The evidence view's `evidence.v3` disclosures end to end (UI_DESIGN §4.9): the production build
  * against the real server's second app (tests/e2e-real/server.ts, E2E_REAL_V3_PORT), which runs the
  * configuration live runs (the question alone in keyword search, in match order, `er-q-v1`; a state
- * the question names applied automatically by the guarded policy, `state-explicit.v1.2`), over the
+ * the question names applied automatically by the guarded policy, `state-explicit.v1.3`), over the
  * fixture corpus with offline fakes for every provider. Covered: the automatic state, said and
  * removable; the suggested terms marked and said so; "highest-ranked first"; the suggestion keeping
  * the rest, terms included, under its note for a search AirCase added to; the state's one free undo,

@@ -975,9 +975,9 @@ AI's filters are **advisory** (gate decision of 2026-10-25): the scope stage sug
 terms beside the results. Contract `evidence.v3` (Task 24) lets the server, under the policies the
 evaluation selects and the live allowlist clears, do three things on its own, each said where the
 reader looks and the first two free to undo: apply a state the question explicitly names (the guard
-`state-explicit.v1.2`), add the AI's terms to keyword search (beside the question or instead of it),
+`state-explicit.v1.3`), add the AI's terms to keyword search (beside the question or instead of it),
 and put the leading results in order with an AI reranker. The server's defaults do none of them.
-Live runs the state policy alone (`state-explicit.v1.2` with ranking `er-q-v1`: the question alone
+Live runs the state policy alone (`state-explicit.v1.3` with ranking `er-q-v1`: the question alone
 in keyword search, in match order), so there a state the question names is the one thing AirCase may
 apply on its own, and the excerpts mark the suggested terms. The interface shows whatever the page
 says. Briefs (§4.3–§4.6) stay readable while they live,
