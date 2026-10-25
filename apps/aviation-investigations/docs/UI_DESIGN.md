@@ -1032,11 +1032,17 @@ note above them; counting and comparison questions get results with a hint.
 8. **Cards**, in rank order:
    - the case facts exactly as Explore's rows show them (case number, date, aircraft, place,
      status, Compare; the mono line, or one line per aircraft in a multi-aircraft event), the case
-     number and aircraft being the card's heading;
+     number and aircraft being the card's heading; the Compare box does not print on a card;
    - every probable-cause statement, verbatim, labelled "NTSB · PROBABLE CAUSE", with its scope in a
      multi-aircraft event ("· EVENT, BOTH AIRCRAFT" or "· AIRCRAFT A · …") and "· 1 OF 2" when there
      are several; the report link ("NTSB report ↗", or the labelled search fallback) on the first
-     label line;
+     label line. A probable-cause statement is a passage too, so the server can preview a paragraph
+     of it as an excerpt: that paragraph's marks are drawn in the statement (at its offsets) and it is
+     not shown again as an excerpt; the card, the drawer (in what investigators established, with
+     "Its excerpt is the probable cause above, marked there." or "The probable cause above is marked
+     too." under the search's heading) and Compare (the strip's probable-cause row, shown whole when
+     marked, and never as its best excerpt) do the same, and so does print. A statement that reads
+     differently at the excerpt's offsets (another generation) keeps the excerpt as it is;
    - up to three excerpts, each a whole paragraph under "NTSB · ANALYSIS" (section label, scope, and
      "· TEXT 2" when the card shows two texts of one kind), on a 2px rule, its line breaks kept: the
      server cuts paragraphs as the chunker does (hard wraps joined, a heading line kept with the
@@ -1088,6 +1094,7 @@ as the labelled counts and marks above.
 | No suggestion | The results, the "Your search" box and no suggestion block (the scope stage failed, or the search is an edit); the marks are the reader's words |
 | Gone or unknown | "This AI search is no longer available." / "AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it." with an empty box (Search, Ask AI) and [Ask again] from this page's memory only; tab "AI search expired · AirCase" |
 | Load failure | "This AI search didn't load." with Try again; a page that fails "The next investigations didn't load." |
+| Not finished | A search the server could not finish (503 `unavailable`, before or after it was admitted; no search is used either way): "AirCase couldn't finish this AI search." / "It didn't use one of your searches. Try again in a moment." with [Try again · uses 1] and the keyword way out |
 | Capability note | The results as always, with the fixed note above them (a question about something else, or asking for operational advice); a search with a note has no suggestion |
 
 **Drawer, Compare and print.** The drawer opened from a card adds, after what investigators
@@ -1488,7 +1495,8 @@ counting rules.
 - **Limits** (owner decision of 2026-10-24): anonymous visitors 10 AI searches a day, accounts 50 a
   day, new accounts 20 a day for their first 3 days, 600 a month, all reset at 00:00 UTC. The interface
   states only numbers the API reports (`/api/config` `aiLimits`, `/api/ai/status`).
-- Builder calls, for the owner's review: the route `/ai/:id`; the labels "Your search", "Searched
+- Builder calls, for the owner's review (final integration round: probable-cause excerpts folded
+  into their statement, the "couldn't finish" copy, cards not printing Compare): the route `/ai/:id`; the labels "Your search", "Searched
   for", "Your question, as asked", "Use your own words", "Your edited search"; the suggestion's note
   and its two buttons, "Apply these filters" and "Apply filters and terms" (or "Search these terms"
   without filters); the hints' copy; "Show more" paging with `?pages=n`; the relevance line's wording;

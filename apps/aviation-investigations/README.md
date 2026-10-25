@@ -1186,7 +1186,9 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   above the results (the dashboard; the cases found and Compare). Then the contract's heading and
   notice, the count ("21 retrieved · highest-ranked first · not every matching investigation") and the cards:
   Explore's case facts, every aircraft of a multi-aircraft event, every probable-cause
-  variant with its scope, and up to three whole paragraphs with their section and scope.
+  variant with its scope, and up to three whole paragraphs with their section and scope; a
+  probable-cause paragraph among them is marked inside its statement instead of shown twice
+  (`web/src/features/evidence/fold.ts`; the drawer and Compare do the same).
   Literal matches are marked with a solid underline and fill, synonyms with a dotted
   underline, with a legend and words for screen readers, never colour alone; the legend and
   the relevance line say whose terms are marked (the suggestion's, else the reader's words).
