@@ -28,6 +28,11 @@ export const COPY = {
     'Free searches return tomorrow; keyword search and every case work now.',
   ],
   failure: ["The AI search didn't finish.", 'Something went wrong before an answer was ready.'],
+  /**
+   * An AI evidence search the server could not finish (503 `unavailable`, before or after it was
+   * admitted: either way no search is used; Builder copy).
+   */
+  unfinished: ["AirCase couldn't finish this AI search.", "It didn't use one of your searches. Try again in a moment."],
   notSpent: "This didn't use one of your searches.",
   spent: 'This counted as a search, because the AI work was already under way.',
   /** No answer came back, so whether it counted is unknown (Builder copy). */
@@ -236,6 +241,22 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
               </Link>
             </div>
             <p className="pt-1 text-meta text-muted">{notice.spent === 'no' ? COPY.notSpent : COPY.unknownSpent}</p>
+          </Box>
+        );
+      case 'unfinished':
+        return (
+          <Box title={COPY.unfinished[0]}>
+            <p>{COPY.unfinished[1]}</p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              {onRetry && (
+                <Button variant="ai" counter="uses 1" onClick={onRetry}>
+                  Try again
+                </Button>
+              )}
+              <Link to={keywordHref} className="text-ui text-blue hover:underline">
+                {COPY.keyword}
+              </Link>
+            </div>
           </Box>
         );
       case 'check':

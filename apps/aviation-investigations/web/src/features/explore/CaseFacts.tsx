@@ -29,6 +29,8 @@ export interface CaseFactsProps {
    * evidence sheet. Explore's rows have none.
    */
   headingId?: string;
+  /** False: the Compare box does not print (the evidence view's cards). Explore's rows keep it. */
+  printCompare?: boolean;
 }
 
 /**
@@ -37,7 +39,7 @@ export interface CaseFactsProps {
  * and injury, or one sub-row per aircraft in a multi-aircraft event (decision 18). Coded NTSB
  * data only. Explore's result rows and the evidence view's cards share it.
  */
-export function CaseFacts({ row, caseTo, inCompare, onToggleCompare, headingId }: CaseFactsProps) {
+export function CaseFacts({ row, caseTo, inCompare, onToggleCompare, headingId, printCompare = true }: CaseFactsProps) {
   const multi = row.aircraft.length > 1;
   const injury = injuryShort(row.highestInjury);
   const completed = row.completion.class === 'completed';
@@ -80,7 +82,7 @@ export function CaseFacts({ row, caseTo, inCompare, onToggleCompare, headingId }
             <span className="text-meta text-muted">Probable-cause text unavailable</span>
           </span>
         )}
-        <label className="touch-target ml-auto flex cursor-pointer items-center gap-[5px] text-meta text-blue">
+        <label className="touch-target ml-auto flex cursor-pointer items-center gap-[5px] text-meta text-blue" data-print={printCompare ? undefined : 'hide'}>
           <input type="checkbox" className="check" checked={inCompare} onChange={onToggleCompare} />
           Compare<span className="sr-only"> {row.ntsbNo}</span>
         </label>

@@ -342,7 +342,11 @@ export function SearchPanel({ search }: SearchPanelProps) {
   const yearBounds: [number, number] = [config?.coverage.yearFrom ?? 1900, config?.coverage.yearTo ?? 2100];
   const keyword = exploreHref(draft.filters, draft.terms ?? search.question);
   const busy = evidence.phase !== 'idle';
+  // The suggestion is applied to the search as it is, never over changes not searched yet: this
+  // holds for every way in (its buttons, and Try again after a failed Apply).
+  const allowed = (action: Action): boolean => action === 'draft' || !changed;
   const act = (action: Action): void => {
+    if (!allowed(action)) return;
     setActing(action);
     if (action === 'draft') {
       // Words go only when the reader typed new ones; without, the search keeps its query.
@@ -354,10 +358,9 @@ export function SearchPanel({ search }: SearchPanelProps) {
     }
   };
   const control = (action: Action) => ({ phase: acting === action ? evidence.phase : 'idle', disabled: busy && acting !== action, onAsk: () => act(action) }) as const;
-  // The suggestion is applied to the search as it is, never over changes the reader has not searched yet.
   const suggestionControl = (action: Action) => {
     const c = control(action);
-    return { ...c, disabled: c.disabled || changed, onAsk: changed ? () => undefined : c.onAsk } as const;
+    return { ...c, disabled: c.disabled || !allowed(action) } as const;
   };
 
   return (
@@ -502,7 +505,7 @@ export function SearchPanel({ search }: SearchPanelProps) {
           {suggestionInWords(suggestion)}
         </p>
       )}
-      <AiNoticeBox notice={evidence.notice} keywordHref={keyword} onRetry={acting ? () => act(acting) : undefined} className="mt-2.5" />
+      <AiNoticeBox notice={evidence.notice} keywordHref={keyword} onRetry={acting && allowed(acting) ? () => act(acting) : undefined} className="mt-2.5" />
     </>
   );
 }

@@ -63,7 +63,7 @@ export const DRAFT_PENDING_NOTE = 'Your changes above are not searched yet: sear
 export const STATISTICS_HINT = 'For counts and trends, the dashboard charts the investigations in this snapshot by year, phase and more.';
 export const COMPARISON_HINT = 'Comparing named investigations is free; it doesn’t need the AI.';
 export const COMPARISON_NONE = 'None of those case numbers is in this snapshot.';
-export const EXPIRED_TITLE = 'This AI search is no longer available.';
+export { EXPIRED_TITLE } from './keys';
 export const EXPIRED_TEXT = 'AirCase deletes AI searches after 24 hours, and each one opens only for the person who asked it.';
 export const LOAD_FAILED = 'This AI search didn’t load.';
 export const PAGE_FAILED = 'The next investigations didn’t load.';

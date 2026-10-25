@@ -7,11 +7,10 @@ import { forgetUnsettled, rememberUnsettled, settleOnArrival, unsettledId, unset
 import { newIdempotencyKey, useAiRequest } from '../ai/useAiRequest';
 import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
 import { rememberQuestion } from '../brief/memory';
-import { isNotFound } from '../../api';
+import { ApiError, isNotFound } from '../../api';
 import { CASES_PARAM } from '../explore/url-state';
 import { expectArrival } from './arrival';
-import { EXPIRED_TITLE } from './display';
-import { evidencePageKey, evidencePath } from './keys';
+import { EXPIRED_TITLE, evidencePageKey, evidencePath } from './keys';
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
 
@@ -52,6 +51,8 @@ export function useEvidenceSearch() {
       let replayingEarlier = earlier !== null;
       // The search being edited turned out to be gone: its page says so, not a notice.
       let parentGone = false;
+      // The server could not finish it (503 `unavailable`): no search was used, and the box says so.
+      let unfinished = false;
       const result = await run(
         async (turnstileToken) => {
           // The evidence client and its contracts load with the first AI request, not with the home page.
@@ -66,6 +67,7 @@ export function useEvidenceSearch() {
               parentGone = true;
               void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
             }
+            unfinished = err instanceof ApiError && err.status === 503 && err.body?.error === 'unavailable';
             throw err;
           });
         },
@@ -93,6 +95,7 @@ export function useEvidenceSearch() {
       if (!result.ok) {
         if (result.outcomeUnknown) rememberUnsettled(id, idempotencyKey);
         else if (!replayingEarlier) forgetUnsettled(id, idempotencyKey);
+        if (unfinished && !result.busy) setNotice({ kind: 'unfinished' });
         return false;
       }
       const search = result.value.search;

@@ -131,7 +131,7 @@ function FewResults({ search }: { search: EvidencePage }) {
  * filters, editable) and the AI's suggestion beside it, never applied unless the reader chooses
  * it, a hint for an explicit counting or comparison request, a fixed capability note when the
  * question's intent selects one (nothing blocks a search), then the investigations retrieved
- * under the fixed heading and notice, as cards of NTSB text and coded data, best match first,
+ * under the fixed heading and notice, as cards of NTSB text and coded data, highest-ranked first,
  * ten at a time ("Show more" is free and reads the pinned ranking). The drawer, Compare and print
  * show the same projection and the notice. Every read is the viewer's own; a search that is gone,
  * or not theirs, shows the expired state.

@@ -100,7 +100,7 @@ export function EvidenceCard({ searchId, item, context, caseTo, inCompare, onTog
   return (
     <article aria-labelledby={`evidence-case-${row.ntsbNo}`} className="card mb-2.5 px-3.5 pt-[11px] pb-2.5 sm:px-4" data-card={row.ntsbNo} data-rank={item.rank}>
       <div data-print="keep">
-        <CaseFacts row={row} caseTo={caseTo} inCompare={inCompare} onToggleCompare={onToggleCompare} headingId={`evidence-case-${row.ntsbNo}`} />
+        <CaseFacts row={row} caseTo={caseTo} inCompare={inCompare} onToggleCompare={onToggleCompare} headingId={`evidence-case-${row.ntsbNo}`} printCompare={false} />
         <ProbableCauses item={item} className="mt-2" />
       </div>
       {item.excerpts.length > 0 ? (

@@ -1337,12 +1337,14 @@ describe('Failures are not expiry', { timeout: 20_000 }, () => {
     expect(screen.queryByText(/accepted earlier but did not start/)).toBeNull();
   });
 
-  it('a 503 "unavailable" shows the paused copy, and the next ask uses a new key', async () => {
+  it('a 503 "unavailable" says the search could not finish and used none of the visitor’s searches, and the next ask uses a new key', async () => {
     freshApi();
     installTurnstile();
     const keys = recordKeys();
     const { router } = await askOnHome('Engine power loss after maintenance, unavailable');
-    expect(await screen.findByText('AI search is temporarily unavailable.', {}, SLOW)).toBeTruthy();
+    expect(await screen.findByText("AirCase couldn't finish this AI search.", {}, SLOW)).toBeTruthy();
+    expect(screen.getByText("It didn't use one of your searches. Try again in a moment.")).toBeTruthy();
+    expect(screen.queryByText('AI search is temporarily unavailable.')).toBeNull();
     // Known outcome: nothing was spent, so the free-search claim is not withheld here.
     expect(screen.queryByText('If it went through, Try again opens it without using another search.')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Ask AI\s*·\s*10 free$/ }));
@@ -1598,7 +1600,7 @@ describe('Unknown outcomes stay unknown until a 2xx or a 409 settles them', { ti
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*10 free$/ }));
     expect(await screen.findByText(UNKNOWN_LINE, {}, SLOW)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /^Try again/ }));
-    expect(await screen.findByText('AI search is temporarily unavailable.', {}, SLOW)).toBeTruthy();
+    expect(await screen.findByText("AirCase couldn't finish this AI search.", {}, SLOW)).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*9 free$/ }, SLOW));
     expect(await screen.findByText('Slow down a moment. Try again in 3 seconds.', {}, SLOW)).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·\s*9 free$/ }, SLOW));
