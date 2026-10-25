@@ -636,8 +636,9 @@ server-side (DESIGN §2):
 Every variant goes through the full scope check again and counts as one
 refinement.
 
-**Scope outcomes** (Proposed). None of these is chat, and none uses a free
-search. They still count toward abuse limits.
+**Scope outcomes** (Proposed; briefs only). None of these is chat, and none uses a free
+search. They still count toward abuse limits. The evidence view (§4.9) has no such screens:
+nothing blocks a search, and every search that opens its results uses one AI search.
 
 | Scope result | What the user sees |
 | --- | --- |
@@ -1144,7 +1145,7 @@ the tab gets focus until it can (Task 22).
 | Later anonymous AI requests (Proposed) | Every anonymous AI request, including refinements and retries, needs a fresh single-use Turnstile token (DESIGN §8: tokens expire after five minutes). The page keeps an invisible or managed widget and gets a new token at click time. The button shows "Checking…" briefly, then "Starting…" while the request is on its way (Task 22, Proposed: the server answers once the scope stage is done, a few seconds). Only if Cloudflare demands interaction does the panel reappear, titled "Quick check before this AI search". The server validates every token; an expired or reused token fails before any spend. |
 | Trial used up | "That was your tenth free AI search today." / "Sign in with Google to keep asking. New accounts start with 20 AI searches a day, rising to 50 after three days." / [Continue with Google] / "Free AI searches return at 00:00 UTC. Search, case pages, compare and the dashboard stay open without an account." Shown **only while signed-in capacity remains**. Task 23: the anonymous allowance is daily; every number comes from `aiLimits` and the time from the status's `retryAt`, and a line the API gives no number for leaves it out ("Sign in with Google to keep asking."). Where sign-in is not offered (Task 22, Proposed): "That was your tenth free AI search today." / "Free AI searches return at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
 | AI paused for today | Ink-edged box: "AI search is done for today." / "This beta runs on a small daily AI budget, and today's is used up. It resets at 00:00 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. Shown to everyone, signed in or not. This is a normal state. Proposed variants: for the monthly budget, "AI search is done for this month." / "It returns on {date}."; for maintenance or a provider outage, "AI search is temporarily unavailable." with no time promised. |
-| Operational question | Blue-edged box: "This tool studies past investigations." / "It can't help with a flight in progress or a maintenance decision. In flight, contact ATC. For airworthiness, use your aircraft's approved data and a certificated mechanic." / "You can still look for past cases like yours:" plus two blue suggestion chips. Static text; no AI-written advice. |
+| Operational question (briefs; an evidence search shows its results under the `operational_advice` capability note instead, §4.9) | Blue-edged box: "This tool studies past investigations." / "It can't help with a flight in progress or a maintenance decision. In flight, contact ATC. For airworthiness, use your aircraft's approved data and a certificated mechanic." / "You can still look for past cases like yours:" plus two blue suggestion chips. Static text; no AI-written advice. |
 | Failure | "The AI search didn't finish." / "Something went wrong before an answer was ready." / [Try again] [Search by keyword instead]. Add "This didn't use one of your searches." if nothing was spent, or "This counted as a search, because the AI work was already under way." if it was. Try again sends the same request (Task 22, Proposed): a failed refinement is refined again with its change; where that is impossible there is no Try again but "This brief has used its three refinements. Start a new search to keep going." or "The changed reading can't be tried again from here. Start a new search to keep going." with [New search]. A Try again that fails too adds, in the same card, "Trying again didn't finish either." and whether it counted. |
 | No results | "No completed investigations match all of this." Below it, the query and filters in words, and suggestion chips with real counts for removing one filter at a time, e.g. "without Fatal · 1 case", "without Phase: Taxi · 102 cases", "include other records". |
 | Free searches paused, visitor's trial untouched (Proposed) | "Free AI searches are used up for today." / "Signed-in AI search is still open today. Sign in with Google to ask." / [Continue with Google] / "Free searches return tomorrow; keyword search and every case work now." Also used in the login-required emergency mode (DESIGN §7), with the last sentence dropped. Where sign-in is not offered (Task 22, Proposed): "Free AI searches are used up for today." / "Free searches return tomorrow; keyword search and every case work now."; in the login-required mode, the "AI search is temporarily unavailable." box. |
@@ -1155,12 +1156,20 @@ the tab gets focus until it can (Task 22).
 | Limit reached (rate) (Proposed) | "Slow down a moment. Try again in {n} seconds." Uses the 429 retry information. For two minutes or more, the per-network hourly and daily limits (Task 22, Proposed): ink-edged box "AI searches from this network are limited for now." / "Try again in 58 minutes." (under an hour) or "Try again after 15:01 UTC." / "Everything else works: keyword search, every case, comparisons and printing." / [Search by keyword instead]. |
 | Unexpected error (Task 22, Proposed) | Any page that fails: "Something went wrong." / "This page stopped because of an unexpected error. Try again, or start again from the home page." / [Try again] (reloads) [Home], inside the header and footer; never the router's developer page or the error itself. |
 
-**Counting rules (Owner-approved):**
+**Counting rules (Owner-approved, for briefs):**
 
 - An off-topic or operational question does not use a free search, but it
   counts toward the abuse rate limits.
 - Cancel counts.
 - A withheld summary counts.
+
+These hold only for the brief pipeline, which is off (`AI_BRIEFS_ENABLED=false`). **AI evidence
+searches** (§4.9; Task 23, gate answer 2 of 2026-10-25) count differently: every search that opens its
+results uses one AI search, a question about something else or asking for operational advice included
+(it gets its results with a capability note), and each edited search ("Search again", "Apply …") uses
+one more. Paging, the full section, the drawer, Compare, print and a retry of the same request are free.
+A search that fails before its results are stored gives its search back; the provider spend it caused
+stays charged to the budget (README, "AI evidence view").
 
 **Signing in mid-brief** (Proposed). Google sign-in returns to the page it
 started from. When an anonymous visitor signs in from a brief, the server hands
@@ -1351,7 +1360,8 @@ counting rules.
     "Show keyword results" are free. Earlier steps stay readable through a step
     switcher.
 17. Clarification, statistics, comparison and off-topic scope results get
-    static, non-chat responses and are not charged.
+    static, non-chat responses and are not charged. (Briefs only: in the evidence
+    view nothing blocks a search and every search counts, §4.9 and §5.)
 18. The event is the unit for multi-aircraft cases, with per-aircraft sub-rows
     and ambiguity shown, not guessed.
 19. Keyword search requires all words, with stemming and a small aviation

@@ -105,6 +105,8 @@ interface AdmitOptions {
   question?: string;
   db?: Db;
   policy?: QuotaPolicy;
+  /** The evidence route's choice at the daily uncertain-charge limit (default: refuse). */
+  uncertainAction?: 'refuse' | 'skip_scope';
 }
 
 function admit(principal: Principal, o: AdmitOptions = {}): Promise<AdmissionResult> {
@@ -116,6 +118,7 @@ function admit(principal: Principal, o: AdmitOptions = {}): Promise<AdmissionRes
     requestHash: bodyHash(o.question ?? 'carburetor icing in cruise'),
     reservationUsd: RESERVATION,
     now: o.now ?? T0,
+    ...(o.uncertainAction ? { uncertainAction: o.uncertainAction } : {}),
   });
 }
 
@@ -837,6 +840,125 @@ describe('principal quotas and rate limits', () => {
     expect(await recordAttempt(app, { policy: POLICY, principal: null, networkId: 'net-other', now: at(T0, 13 * MIN) })).toEqual({
       ok: true,
     });
+  });
+});
+
+// The evidence route admits with `uncertainAction: 'skip_scope'` (server/routes/evidence.ts): at the
+// daily uncertain-charge limit it skips only the advisory scope call. Every other refusal still applies.
+describe('evidence admission at the uncertain limit (skip_scope)', () => {
+  const skip = (p: Principal, o: AdmitOptions = {}) => admit(p, { ...o, uncertainAction: 'skip_scope' });
+  /** One reservation of uncertain scope charges today: the principal's daily uncertain limit. */
+  async function reachUncertainLimit(p: Principal, now: Date, net = 'net-a'): Promise<void> {
+    const a = admitted(await admit(p, { now, net }));
+    await settle(app, a, { lines: [{ usd: RESERVATION, stage: 'scope', uncertain: true }] }, a.fencingToken, at(now, 1_000));
+  }
+
+  it('below the limit there is no skipScope; at it, skip_scope admits with the full reservation where the default refuses', async () => {
+    const p = account('skip-account');
+    const first = admitted(await skip(p));
+    expect(first).not.toHaveProperty('skipScope');
+    await settle(app, first, { lines: [{ usd: 0.1, stage: 'scope', uncertain: true }] }, first.fencingToken, at(T0, 1_000));
+    // $0.10 of uncertain charges, below one reservation ($0.14): still no skipScope.
+    const second = admitted(await skip(p, { now: at(T0, MIN) }));
+    expect(second).not.toHaveProperty('skipScope');
+    await settle(app, second, { lines: [{ usd: 0.05, stage: 'embed', uncertain: true }] }, second.fencingToken, at(T0, MIN + 1_000));
+    // $0.15: the default refuses until midnight, skip_scope admits with the same full reservation and counts the search.
+    expect(await admit(p, { now: at(T0, 2 * MIN) })).toEqual({ ok: false, reason: 'uncertain_limit', retryAt: new Date('2026-11-02T00:00:00Z') });
+    const skipped = admitted(await skip(p, { now: at(T0, 3 * MIN) }));
+    expect(skipped).toMatchObject({ skipScope: true, reservationUsd: RESERVATION });
+    const day = await migrator.execute(
+      sql`SELECT requests FROM usage_buckets WHERE scope = 'principal' AND period = 'day' AND subject = ${principalHash(POLICY, p)}`,
+    );
+    expect(day.rows).toEqual([{ requests: 3 }]);
+    await settle(app, skipped, 0.00002, skipped.fencingToken, at(T0, 3 * MIN + 1_000));
+    // A trial the same way; the next UTC day starts afresh, without skipScope.
+    const trial = await newTrial();
+    await reachUncertainLimit(trial, at(T0, 4 * MIN), 'net-t');
+    expect(await admit(trial, { now: at(T0, 5 * MIN), net: 'net-t' })).toMatchObject({ ok: false, reason: 'uncertain_limit' });
+    const t = admitted(await skip(trial, { now: at(T0, 6 * MIN), net: 'net-t' }));
+    expect(t.skipScope).toBe(true);
+    await settle(app, t, 0.00002, t.fencingToken, at(T0, 6 * MIN + 1_000));
+    expect(admitted(await skip(p, { now: new Date('2026-11-02T00:00:01Z') }))).not.toHaveProperty('skipScope');
+  });
+
+  it('at the limit the rate limits still refuse', async () => {
+    const trial = await newTrial();
+    await reachUncertainLimit(trial, T0);
+    // A second attempt in the same minute fills the anonymous limit of two a minute.
+    expect(await recordAttempt(app, { policy: POLICY, principal: trial, networkId: 'net-a', now: at(T0, 2_000) })).toEqual({ ok: true });
+    expect(await skip(trial, { now: at(T0, 3_000) })).toEqual({ ok: false, reason: 'rate_limited', retryAt: new Date('2026-11-01T10:01:00Z') });
+    // And the network limit: ten anonymous attempts an hour from one network.
+    const other = await newTrial();
+    await reachUncertainLimit(other, at(T0, MIN), 'net-busy');
+    for (let i = 0; i < 9; i++) {
+      expect(await recordAttempt(app, { policy: POLICY, principal: null, networkId: 'net-busy', now: at(T0, 2 * MIN + i * 1_000) })).toEqual({ ok: true });
+    }
+    expect(await skip(other, { now: at(T0, 3 * MIN), net: 'net-busy' })).toMatchObject({ ok: false, reason: 'rate_limited' });
+  });
+
+  it('at the limit the budgets still refuse', async () => {
+    const p = account('skip-budget');
+    await reachUncertainLimit(p, T0);
+    await chargeInteractive(at(T0, 30_000), 2.6);
+    expect(await skip(p, { now: at(T0, MIN) })).toEqual({
+      ok: false,
+      reason: 'global_paused',
+      pause: 'daily_budget',
+      retryAt: new Date('2026-11-02T00:00:00Z'),
+    });
+  });
+
+  it('at the limit the trial and account quotas still refuse', async () => {
+    // The trial's last search was the uncertain one.
+    const trial = await newTrial(2);
+    await reachUncertainLimit(trial, T0);
+    expect(await skip(trial, { now: at(T0, MIN) })).toEqual({
+      ok: false,
+      reason: 'trial_exhausted',
+      ...(daily ? { retryAt: new Date('2026-11-02T00:00:00Z') } : {}),
+    });
+    // A new account (five a day here) whose fifth search today was the uncertain one.
+    const p = account('skip-new', at(T0, -DAY));
+    for (let i = 0; i < 4; i++) {
+      const a = admitted(await admit(p, { now: at(T0, i * MIN) }));
+      await settle(app, a, 0.01, a.fencingToken, at(T0, i * MIN + 1_000));
+    }
+    await reachUncertainLimit(p, at(T0, 4 * MIN));
+    expect(await skip(p, { now: at(T0, 5 * MIN) })).toMatchObject({ ok: false, reason: 'daily_cap' });
+  });
+
+  it('at the limit the anonymous share still refuses', async () => {
+    // Four trials with $0.14 each of uncertain charges: the share ($0.666666) has no room for a fifth reservation.
+    const trials = [await newTrial(), await newTrial(), await newTrial(), await newTrial()];
+    for (const [i, t] of trials.entries()) await reachUncertainLimit(t, at(T0, i * MIN));
+    expect(await skip(trials[3]!, { now: at(T0, 5 * MIN) })).toEqual({
+      ok: false,
+      reason: 'anonymous_share_exhausted',
+      retryAt: new Date('2026-11-02T00:00:00Z'),
+    });
+  });
+
+  it('at the limit the concurrency limits still refuse', async () => {
+    // One request in flight per principal.
+    const p = account('skip-flight');
+    await reachUncertainLimit(p, T0);
+    const running = admitted(await skip(p, { now: at(T0, MIN) }));
+    expect(running.skipScope).toBe(true);
+    expect(await skip(p, { now: at(T0, MIN + 1_000) })).toEqual({ ok: false, reason: 'concurrency' });
+    await settle(app, running, 0.00002, running.fencingToken, at(T0, MIN + 2_000));
+    // Two in flight in total, one of them anonymous.
+    const [x, y] = [account('skip-x'), account('skip-y')];
+    const xa = admitted(await admit(x, { now: at(T0, 2 * MIN) }));
+    const ya = admitted(await admit(y, { now: at(T0, 2 * MIN) }));
+    expect(await skip(p, { now: at(T0, 2 * MIN + 1_000) })).toEqual({ ok: false, reason: 'concurrency' });
+    await settle(app, xa, 0.01, xa.fencingToken, at(T0, 2 * MIN + 2_000));
+    await settle(app, ya, 0.01, ya.fencingToken, at(T0, 2 * MIN + 2_000));
+    const trial = await newTrial();
+    await reachUncertainLimit(trial, at(T0, 3 * MIN), 'net-t');
+    const other = admitted(await admit(await newTrial(), { now: at(T0, 4 * MIN), net: 'net-o' }));
+    expect(await skip(trial, { now: at(T0, 4 * MIN + 1_000), net: 'net-t' })).toEqual({ ok: false, reason: 'concurrency' });
+    await settle(app, other, 0.01, other.fencingToken, at(T0, 4 * MIN + 2_000));
+    expect(admitted(await skip(trial, { now: at(T0, 5 * MIN), net: 'net-t' })).skipScope).toBe(true);
   });
 });
 

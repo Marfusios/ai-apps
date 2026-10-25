@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { buildApp } from '../../server/app.js';
 import { createAiRuntime } from '../../server/ai/runtime.js';
 import { createFakeProvider, type FakeScript } from '../../server/ai/fake.js';
+import { EvidenceScopeOutputSchema, validateEvidenceScope } from '../../server/ai/prompts/scope.e1.js';
 import { createEvidenceRetriever, createEvidenceServices, type EvidenceRetriever } from '../../server/evidence/retrieve.js';
 import { pageOf, readOwnedSearch } from '../../server/evidence/store.js';
 import { evidenceSnapshot } from '../../server/evidence/snapshot.js';
@@ -546,6 +547,7 @@ describe('evidence fix-round regressions', () => {
 describe('advisory isolation', () => {
   it('filters, terms, every intent and prose cannot change ranked cases, paragraphs, cause variants or pagination', async () => {
     const malicious = '<script>CONFIRMED_FAILURE</script>&\u2028';
+    const staticWithFilters = { intent: 'out_of_scope', filters: { state: ['CA'] } };
     const outputs: unknown[] = [
       success,
       { ...success, filters: { state: ['AK'], category: ['HELI'], phase: ['approach'], yearFrom: 2099 }, terms: malicious },
@@ -554,9 +556,12 @@ describe('advisory isolation', () => {
       { ...success, unchecked: [{ kind: 'timing', quote: malicious }] },
       { ...success, explanation: malicious }, { ...success, terms: malicious.repeat(40) },
       null, undefined, {},
-      { ...success, intent: 'out_of_scope', filters: { state: ['CA'] } },
+      // Schema-valid (no `terms`), so it reaches validateEvidenceScope, which refuses filters on a static intent.
+      staticWithFilters,
       { ...success, terms: 'bad\0text' }, { ...success, terms: 'bad\uD800text' }, { ...success, terms: 'bad\uDC00text' },
     ];
+    expect(EvidenceScopeOutputSchema.safeParse(staticWithFilters).success).toBe(true);
+    expect(() => validateEvidenceScope(staticWithFilters)).toThrow('invalid static evidence scope fields');
     // One account keeps the test inside daily trial limits without weakening production admission.
     const script = { evidenceScope: outputs.map(output => ({ output })) } as unknown as FakeScript;
     const plans: unknown[] = [];
