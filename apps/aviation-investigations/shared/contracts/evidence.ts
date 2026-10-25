@@ -3,7 +3,7 @@
  * Every surface keeps EVIDENCE_NOTICE. Canonical paragraphs and cause variants are unchanged.
  */
 import { z } from 'zod';
-import { BRIEF_FILTER_FACETS, BriefFiltersSchema, IdempotencyKeySchema, QuestionSchema, ScopeReplySchema, TurnstileTokenSchema } from './briefs.js';
+import { BRIEF_FILTER_FACETS, BriefFiltersSchema, IdempotencyKeySchema, QuestionSchema, TurnstileTokenSchema } from './briefs.js';
 import { ReportLinkSchema } from './cases.js';
 import { NtsbNoSchema, Sha256Schema } from './common.js';
 import { CaseRowSchema, SectionKindSchema, SpanSchema } from './search.js';
@@ -26,6 +26,21 @@ export const EVIDENCE_NOTICE =
 
 /** Required label beside model suggestions; accepting filters never accepts terms. */
 export const EVIDENCE_SUGGESTION_LABEL = 'Suggested filters and terms — not applied';
+
+/**
+ * Capability notes (gate answer 2, 2026-10-25): a validated scope intent may select one of these
+ * fixed, generally true reminders, shown above the results. They are never model text, never a claim
+ * about the particular question, and never affect retrieval, ranking, filters, pages, admission or
+ * accounting; their absence means nothing. Nothing in the evidence view blocks a search.
+ */
+export const EVIDENCE_NOTE_KINDS = ['scope', 'operational_advice'] as const;
+export const EvidenceNoteSchema = z.enum(EVIDENCE_NOTE_KINDS);
+export type EvidenceNote = z.infer<typeof EvidenceNoteSchema>;
+export const EVIDENCE_NOTE_TEXT: Readonly<Record<EvidenceNote, string>> = {
+  scope: 'AirCase searches published NTSB aviation investigations only. The investigations below were retrieved for your words.',
+  operational_advice:
+    'AirCase is a research tool, not a source of operational flight or maintenance advice. For a flight in progress, contact ATC; for airworthiness, use your aircraft’s approved data and a certificated mechanic.',
+};
 export const EvidenceSearchIdSchema = z.uuid();
 export type EvidenceSearchId = z.infer<typeof EvidenceSearchIdSchema>;
 export const EvidenceSuggestionSchema = z.strictObject({
@@ -39,7 +54,8 @@ export const EvidenceQuerySchema = z.discriminatedUnion('source', [
 ]);
 export type EvidenceQuery = z.infer<typeof EvidenceQuerySchema>;
 export const EvidenceHintSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('corpus_statistics'), filters: BriefFiltersSchema }),
+  /** An explicit request for counts or trends: the UI links to the dashboard. */
+  z.strictObject({ kind: z.literal('corpus_statistics') }),
   z.strictObject({ kind: z.literal('case_comparison'), found: z.array(NtsbNoSchema).max(4), notFound: z.array(NtsbNoSchema).max(4) }),
 ]);
 export type EvidenceHint = z.infer<typeof EvidenceHintSchema>;
@@ -164,6 +180,8 @@ export const EvidencePageSchema = z.strictObject({
   appliedFilters: BriefFiltersSchema,
   suggestion: EvidenceSuggestionSchema.nullable(),
   hint: EvidenceHintSchema.nullable(),
+  /** A fixed capability reminder selected by the validated scope intent, or null (also for edits). */
+  note: EvidenceNoteSchema.nullable(),
   /** The dataset generation the ranking is pinned to. */
   generation: z.string().min(1).max(80),
   createdAt: z.iso.datetime(),
@@ -176,16 +194,9 @@ export const EvidencePageSchema = z.strictObject({
 });
 export type EvidencePage = z.infer<typeof EvidencePageSchema>;
 
-/** The scope replies an evidence search can get instead of results (static server templates; no AI search used). */
-// Keep the inferred TypeScript union as narrow as the runtime contract.
-export const EvidenceScopeReplySchema = z.discriminatedUnion('kind', [
-  ScopeReplySchema.options[0], // out_of_scope
-  ScopeReplySchema.options[1], // operational_advice
-]);
-
-/** `POST /api/evidence` → 201 `results` (page 1 of the new search) or 200 `scope_reply`. */
+/** `POST /api/evidence` → 201 `results` (page 1 of the new search). Nothing blocks a search: policy
+ * intents only select a capability note (`note`). */
 export const CreateEvidenceResponseSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('results'), search: EvidencePageSchema }),
-  z.strictObject({ kind: z.literal('scope_reply'), reply: EvidenceScopeReplySchema }),
 ]);
 export type CreateEvidenceResponse = z.infer<typeof CreateEvidenceResponseSchema>;
