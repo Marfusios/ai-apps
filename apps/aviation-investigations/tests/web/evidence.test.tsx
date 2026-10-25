@@ -27,7 +27,7 @@ import {
 import { AI_STATUS_SAMPLES, MOCK_AI_LIMITS } from '../../web/mock/ai-status';
 import casesJson from '../../web/mock/cases.json';
 import { MOCK_EVIDENCE_QUESTIONS } from '../../web/mock/evidence';
-import { firstCheckText } from '../../web/src/features/ai/limits';
+import { firstCheckText, trialUsedSignIn, welcomeText } from '../../web/src/features/ai/limits';
 import { FIRST_CHECK_TITLE, LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { resetUnsettledForTests } from '../../web/src/features/ai/unsettled';
 import { rememberQuestion } from '../../web/src/features/brief/memory';
@@ -38,11 +38,14 @@ import {
   APPLY_BOTH,
   APPLY_FILTERS,
   COMPARISON_HINT,
+  DRAFT_PENDING_NOTE,
   EDITED_LABEL,
   EMPTY_TITLE,
   EMPTY_WORDS,
   EXPIRED_TEXT,
   EXPIRED_TITLE,
+  FULL_SECTION_FAILED,
+  arrivalLine,
   LEGEND,
   NO_EXCERPT,
   OWN_WORDS,
@@ -62,6 +65,7 @@ import {
   relevanceParts,
   showMoreLabel,
   showingLine,
+  suggestionInWords,
   termInWords,
 } from '../../web/src/features/evidence/display';
 import { LONG_TEXT_CHARS } from '../../web/src/features/evidence/Excerpt';
@@ -76,6 +80,7 @@ const server = setupMockApi();
 const SLOW = { timeout: 5000 };
 const CASES = casesJson as unknown as Record<string, CaseDetail>;
 const TOKEN = 'XXXX.DUMMY.TOKEN.XXXX';
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 afterEach(() => {
   delete window.turnstile;
@@ -201,6 +206,12 @@ const visibleText = (el: Element): string => {
   clone.querySelectorAll('.sr-only').forEach((n) => n.remove());
   return clone.textContent ?? '';
 };
+
+/** Page `n` of a search, as the mock API serves it. */
+async function queryPage(id: string, n: number): Promise<EvidencePage> {
+  const response = await fetch(new URL(`/api/evidence/${id}?page=${n}`, window.location.origin));
+  return EvidencePageSchema.parse(await response.json());
+}
 
 /** A page served for a search id instead of the mock's own (a synthetic shape), validated with the contract first. */
 function servePage(page: EvidencePage, detail?: CaseDetail): EvidencePage {
@@ -374,8 +385,8 @@ describe('the results page', { timeout: 20_000 }, () => {
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.seed);
     const notice = screen.getByRole('note');
     expect(notice.textContent).toBe(EVIDENCE_NOTICE);
-    expect(document.querySelector('[data-count-line]')?.textContent).toBe('21 retrieved · best match first · not every matching investigation');
-    expect(countLine(100)).toBe('100 retrieved · best match first · the most one search ranks · not every matching investigation');
+    expect(document.querySelector('[data-count-line]')?.textContent).toBe('21 retrieved · highest-ranked first · not every matching investigation');
+    expect(countLine(100)).toBe('100 retrieved · highest-ranked first · the most one search ranks · not every matching investigation');
     // The marks are the suggested words, and the key says so.
     const legend = document.querySelector('[data-legend]') as HTMLElement;
     expect(legend.getAttribute('data-legend')).toBe('suggested');
@@ -412,6 +423,8 @@ describe('the results page', { timeout: 20_000 }, () => {
     expect(synonym.className).toBe('hit-synonym');
     expect(visibleText(synonym).toLowerCase()).toBe('carburetor');
     expect(synonym.textContent).toMatch(/\(synonym\)$/);
+    // Heard, never copied with the text.
+    expect(synonym.querySelector('.sr-only')?.className).toContain('select-none');
     const literal = card.querySelector('mark[data-match="literal"]') as HTMLElement;
     expect(literal.className).toBe('hit');
     expect(literal.textContent?.toLowerCase()).toBe('icing');
@@ -487,17 +500,23 @@ describe('the results page', { timeout: 20_000 }, () => {
     const item = search.cases[0] as EvidenceCase;
     const excerpt = item.excerpts[0] as EvidenceCase['excerpts'][number];
     const card = cardOf(item.case.ntsbNo);
-    const toggle = within(card).getAllByRole('button', { name: fullSectionLabel(excerpt) })[0] as HTMLElement;
+    // Each excerpt's control has a name of its own: the label, then its place among the card's excerpts.
+    const toggle = within(card).getByRole('button', { name: new RegExp(`^${fullSectionLabel(excerpt)}\\s*, excerpt 1 of ${item.excerpts.length}$`) });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).toBeTruthy();
     fireEvent.click(toggle);
     const marked = await present(() => card.querySelector<HTMLElement>('[data-excerpt-paragraph]'));
     await waitFor(() => expect(document.activeElement).toBe(marked));
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(toggle.textContent).toBe('Show the excerpt only');
+    expect(visibleText(toggle)).toBe('Show the excerpt only');
     expect(visibleText(marked)).toBe(excerpt.text);
-    // Screen readers hear where the excerpt starts and ends in the section.
+    // Screen readers hear where the excerpt starts and ends in the section, words a selection never copies.
     expect(marked.textContent).toMatch(/^Start of the excerpt\. [\s\S]* End of the excerpt\.$/);
+    for (const words of marked.querySelectorAll('.sr-only')) expect(words.className).toContain('select-none');
+    // And the section's arrival is said, politely.
+    const status = card.querySelector('[data-full-section-status]') as HTMLElement;
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(status.textContent).toBe(`The full ${excerpt.label.toLowerCase()} section is shown, with the excerpt marked.`);
     // The whole section, the paragraph in its place: the text before it and after it.
     const section = CASES[item.case.ntsbNo]?.sections.find((s) => s.key === excerpt.sectionKey)?.text ?? '';
     const region = card.querySelector('[data-full-section]') as HTMLElement;
@@ -508,6 +527,37 @@ describe('the results page', { timeout: 20_000 }, () => {
     fireEvent.click(toggle);
     expect(card.querySelector('[data-excerpt-paragraph]')).toBeNull();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(status.textContent).toBe('');
+  });
+
+  it('a full section that does not load says so, politely, with Try again; focus stays where it was', async () => {
+    freshApi();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    server.use(http.get(`*/api/evidence/${search.id}/cases/:ntsbNo`, () => HttpResponse.json({ error: 'unavailable', message: 'Try later.' }, { status: 503 })));
+    const item = search.cases[0] as EvidenceCase;
+    const card = cardOf(item.case.ntsbNo);
+    const toggle = within(card).getAllByRole('button', { name: /^Show the full .+ section\b/ })[0] as HTMLElement;
+    toggle.focus();
+    fireEvent.click(toggle);
+    const status = card.querySelector('[data-full-section-status]') as HTMLElement;
+    await waitFor(() => expect(status.textContent).toBe(FULL_SECTION_FAILED), { timeout: 8000 });
+    expect(within(card).getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(document.activeElement).toBe(toggle);
+  }, 20_000);
+
+  it('a paragraph keeps its line breaks and the heading line above it, as real narratives have', async () => {
+    freshApi();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.seed);
+    const pages = [search, ...(await Promise.all([2, 3].map((n) => queryPage(search.id, n))))];
+    const headed = pages.flatMap((p) => p.cases).find((c) => c.excerpts.some((e) => e.text.includes('\n'))) as EvidenceCase;
+    expect(headed).toBeDefined();
+    const excerpt = headed.excerpts.find((e) => e.text.includes('\n')) as EvidenceCase['excerpts'][number];
+    const page = servePage({ ...search, id: '00000000-0000-4000-9000-0000000ead01', cases: [{ ...headed, rank: 1 }], total: 1, pages: 1 });
+    renderApp(`/ai/${page.id}`);
+    const card = await waitFor(() => cardOf(headed.case.ntsbNo), SLOW);
+    const paragraph = [...card.querySelectorAll('blockquote p')].find((p) => p.textContent?.includes('\n')) as HTMLElement;
+    expect(paragraph.className).toContain('whitespace-pre-line');
+    expect(visibleText(paragraph)).toBe(excerpt.text);
   });
 
   it('the full section is text, never markup; astral and multi-byte characters keep their marks (a synthetic page)', async () => {
@@ -760,8 +810,10 @@ describe('the suggestion is applied only by choice, and the reader edits the sea
     fireEvent.click(within(yours).getByRole('button', { name: OWN_WORDS }));
     fireEvent.change(within(yours).getByRole('textbox', { name: 'Search words' }), { target: { value: '  carburetor   heat ' } });
     fireEvent.keyDown(within(yours).getByRole('textbox', { name: 'Search words' }), { key: 'Enter' });
-    const words = await within(yours).findByRole('button', { name: /^carburetor heat\s*, edit the search words$/ });
+    // Typed, not searched yet: dashed, and said so.
+    const words = await within(yours).findByRole('button', { name: /^carburetor heat\s*, not searched yet, edit the search words$/ });
     expect(words.className).toContain('border-blue');
+    expect(words.className).toContain('border-dashed');
     expect(within(yours).getByRole('link', { name: /^Show keyword results/ }).getAttribute('href')).toBe('/explore?q=carburetor+heat');
     fireEvent.click(within(yours).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }));
     await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
@@ -782,10 +834,22 @@ describe('the suggestion is applied only by choice, and the reader edits the sea
     expect(within(editor).getByRole('alert').textContent).toBe('Enter a year from 2008 to 2026, or both in order.');
     fireEvent.change(within(editor).getByLabelText('To'), { target: { value: '2024' } });
     fireEvent.click(within(editor).getByRole('button', { name: 'Add' }));
-    const years = within(yours).getByRole('button', { name: /^Years: 2020–2024\s*, remove$/ });
+    // Added, not searched yet: it looks (and is said) different from an applied filter.
+    const years = within(yours).getByRole('button', { name: /^Years: 2020–2024\s*, not searched yet, remove$/ });
     expect(years.className).toContain('border-blue');
+    expect(years.className).toContain('border-dashed');
     expect(document.activeElement).toBe(add);
     expect(within(yours).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ })).toBeTruthy();
+    // Applying the suggestion now would drop these changes: its buttons are off, and it says why.
+    const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+    expect(suggestion.querySelector('[data-draft-pending]')?.textContent).toBe(DRAFT_PENDING_NOTE);
+    for (const button of within(suggestion).getAllByRole('button', { name: /uses 1$/ })) expect(button.getAttribute('aria-disabled')).toBe('true');
+    // Undo: the changes go, focus goes to "+ Filter", and the suggestion can be applied again.
+    fireEvent.click(within(yours).getByRole('button', { name: 'Undo changes' }));
+    await waitFor(() => expect(document.activeElement).toBe(within(yours).getByRole('button', { name: '+ Filter' })));
+    expect(within(yours).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(0);
+    expect(suggestion.querySelector('[data-draft-pending]')).toBeNull();
+    expect(within(suggestion).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) }).getAttribute('aria-disabled')).toBe('false');
   });
 
   it('model text in the suggestion is shown as text under its label, never markup, and reaches no result (a synthetic page)', async () => {
@@ -800,6 +864,153 @@ describe('the suggestion is applied only by choice, and the reader edits the sea
     const results = screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING }).closest('section') as HTMLElement;
     expect(results.textContent).not.toContain('Ignore the notice');
     expect(within(results).getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
+  });
+});
+
+describe('focus, announcements and state that stays with its case (UI review fix round)', { timeout: 30_000 }, () => {
+  const live = (): string => (document.querySelector('[data-evidence-live]')?.textContent ?? '').trim();
+
+  it('results opened by Ask AI are announced, and focus goes to their heading when it was lost on the way', async () => {
+    freshApi();
+    installTurnstile(5);
+    const { router } = renderApp('/');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_EVIDENCE_QUESTIONS.carb } });
+    const ask = await screen.findByRole('button', { name: /^Ask AI\s*·/ });
+    ask.focus();
+    fireEvent.click(ask);
+    await waitFor(() => expect(currentUrl(router)).toMatch(/^\/ai\//), SLOW);
+    const heading = await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(heading.getAttribute('tabindex')).toBe('-1');
+    await waitFor(() => expect(live()).toBe('21 investigations retrieved.'));
+    expect(arrivalLine(1)).toBe('1 investigation retrieved.');
+    expect(arrivalLine(0)).toBe(EMPTY_TITLE);
+  });
+
+  it('Apply and Search again do the same for the search they open; a page opened by its link leaves focus alone', async () => {
+    freshApi();
+    installTurnstile(5);
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    expect(document.activeElement).toBe(document.body);
+    expect(live()).toBe('');
+    const apply = within(screen.getByRole('region', { name: SUGGESTION_LABEL })).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) });
+    apply.focus();
+    fireEvent.click(apply);
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING })), SLOW);
+    await waitFor(() => expect(live()).toBe('7 investigations retrieved.'));
+    // Search again from there: the same again, for the new search.
+    const yours = screen.getByRole('region', { name: EDITED_LABEL });
+    fireEvent.click(within(yours).getByRole('button', { name: /^Phase: Approach\s*, remove$/ }));
+    fireEvent.click(within(yours).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }));
+    await waitFor(() => expect(live()).toBe('21 investigations retrieved.'), SLOW);
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING }));
+  });
+
+  it('Undo changes gives focus back to the words when they changed', async () => {
+    freshApi();
+    await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const yours = screen.getByRole('region', { name: YOUR_SEARCH_LABEL });
+    fireEvent.click(within(yours).getByRole('button', { name: OWN_WORDS }));
+    fireEvent.change(within(yours).getByRole('textbox', { name: 'Search words' }), { target: { value: 'carburetor heat' } });
+    fireEvent.keyDown(within(yours).getByRole('textbox', { name: 'Search words' }), { key: 'Enter' });
+    fireEvent.click(await within(yours).findByRole('button', { name: 'Undo changes' }));
+    await waitFor(() => expect(document.activeElement).toBe(within(yours).getByRole('button', { name: OWN_WORDS })));
+  });
+
+  it('the drawer never carries an open section from one case to the next, nor pulls focus into it', async () => {
+    freshApi();
+    const search = await makeSearch(MOCK_EVIDENCE_QUESTIONS.seed);
+    // Two cases in a row whose first excerpts share a section key and offset: the keys that once collided.
+    const key = (c: EvidenceCase | undefined): string | null => (c?.excerpts[0] ? `${c.excerpts[0].sectionKey}:${c.excerpts[0].paragraph.start}` : null);
+    const at = search.cases.findIndex((c, i) => key(c) !== null && key(c) === key(search.cases[i + 1]));
+    expect(at).toBeGreaterThanOrEqual(0);
+    const [a, b] = [search.cases[at] as EvidenceCase, search.cases[at + 1] as EvidenceCase];
+    const { router } = renderApp(`/ai/${search.id}?case=${a.case.ntsbNo}`);
+    const sectionOf = async () => within(await screen.findByRole('dialog', {}, SLOW)).findByRole('region', { name: EVIDENCE_HEADING }, SLOW);
+    await sectionOf();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Next case' }));
+    await waitFor(() => expect(currentUrl(router)).toContain(`case=${b.case.ntsbNo}`), SLOW);
+    const inB = await sectionOf();
+    fireEvent.click(within(inB).getAllByRole('button', { name: /^Show the full .+ section\b/ })[0] as HTMLElement);
+    await waitFor(() => expect(within(inB).getAllByRole('button', { name: /^Show the excerpt only\b/ }).length).toBe(1), SLOW);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Previous case' }));
+    await waitFor(() => expect(currentUrl(router)).toContain(`case=${a.case.ntsbNo}`), SLOW);
+    await act(() => sleep(400));
+    const inA = await sectionOf();
+    expect(within(inA).queryAllByRole('button', { name: /^Show the excerpt only\b/ })).toHaveLength(0);
+    expect(document.activeElement?.hasAttribute('data-excerpt-paragraph')).toBe(false);
+  });
+
+  it('every “Show the full … section” on a card has a name of its own', async () => {
+    freshApi();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    for (const c of search.cases.filter((x) => x.excerpts.length > 1)) {
+      const names = within(cardOf(c.case.ntsbNo))
+        .getAllByRole('button', { name: /^Show the full .+ section\b/ })
+        .map((b) => b.textContent);
+      expect(new Set(names).size).toBe(names.length);
+    }
+  });
+
+  it('Search again or Apply on a search that expired while the tab was open shows the expired state, not a failure', async () => {
+    freshApi();
+    installTurnstile(5);
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    // The server's answer to an edit of a search that is gone, and to reads of it from now on.
+    server.use(
+      http.post('*/api/evidence', () => HttpResponse.json({ error: 'not_found', message: 'No AI search with that link is available.' }, { status: 404 })),
+      http.get(`*/api/evidence/${search.id}`, () => HttpResponse.json({ error: 'not_found', message: 'No AI search with that link is available.' }, { status: 404 })),
+    );
+    fireEvent.click(within(screen.getByRole('region', { name: SUGGESTION_LABEL })).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) }));
+    expect(await screen.findByRole('heading', { level: 1, name: EXPIRED_TITLE }, SLOW)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/didn.t finish|went wrong/i);
+    expect(live()).toBe(EXPIRED_TITLE);
+  });
+
+  it('an edit refused as gone while its page still reads says so in the box, never a generic failure', async () => {
+    freshApi();
+    installTurnstile(5);
+    await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    server.use(http.post('*/api/evidence', () => HttpResponse.json({ error: 'not_found', message: 'No AI search with that link is available.' }, { status: 404 })));
+    fireEvent.click(within(screen.getByRole('region', { name: SUGGESTION_LABEL })).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) }));
+    expect(await screen.findByText(EXPIRED_TITLE, {}, SLOW)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/didn.t finish|went wrong/i);
+  });
+
+  it('Compare by link holds a strip’s place while the pages it names load, then shows the case', async () => {
+    freshApi();
+    const first = await makeSearch(MOCK_EVIDENCE_QUESTIONS.seed);
+    const target = (await queryPage(first.id, 3)).cases[0]?.case.ntsbNo as string;
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    server.use(
+      http.get('*/api/evidence/:id', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('page') !== '1') await held;
+        return undefined;
+      }),
+    );
+    renderApp(`/compare?cases=${target}&evidence=${first.id}&pages=3`);
+    const row = await present(() => screen.queryByRole('article', { name: `${target}, strip 1` })?.querySelector<HTMLElement>('[data-strip-evidence]'));
+    expect(row.getAttribute('data-strip-evidence')).toBe('loading');
+    expect(row.getAttribute('aria-busy')).toBe('true');
+    expect(row.textContent).not.toContain(NOT_IN_SEARCH);
+    release();
+    await waitFor(() => expect(row.getAttribute('data-strip-evidence')).toBe('found'), SLOW);
+  });
+
+  it('the singular reads as singular in the limits’ copy', () => {
+    const one = { ...MOCK_AI_LIMITS, newAccountDaily: 1, newAccountDays: 1 };
+    expect(welcomeText(one, undefined)).toBe('You have 1 AI search a day for your first day, then 50.');
+    expect(trialUsedSignIn(one)).toBe('Sign in with Google to keep asking. New accounts start with 1 AI search a day, rising to 50 after one day.');
+    expect(welcomeText(MOCK_AI_LIMITS, undefined)).toBe('You have 20 AI searches a day for your first three days, then 50.');
+  });
+
+  it('Explore’s Compare box prints as it did before the evidence view shared its row', async () => {
+    freshApi();
+    renderApp('/explore?q=carburetor+icing');
+    const box = (await screen.findAllByRole('checkbox', { name: /^Compare/ }, SLOW))[0] as HTMLElement;
+    expect(box.closest('[data-print="hide"]')).toBeNull();
   });
 });
 
@@ -868,9 +1079,14 @@ describe('the drawer, Compare and print show the same projection and the notice'
     expect(hidden(screen.getByRole('heading', { level: 2, name: EVIDENCE_HEADING }))).toBe(false);
     expect(hidden(screen.getByRole('region', { name: YOUR_SEARCH_LABEL }))).toBe(false);
     expect(hidden(screen.getByRole('region', { name: SUGGESTION_LABEL }))).toBe(true);
+    // Paper keeps the suggestion as one line under its label, so "Suggested terms in these excerpts" reads on its own.
+    const printed = document.querySelector('[data-suggestion-print]') as HTMLElement;
+    expect(printed.getAttribute('data-print')).toBe('only');
+    expect(printed.textContent).toBe(suggestionInWords(search.suggestion as NonNullable<EvidencePage['suggestion']>));
+    expect(printed.textContent).toBe('Suggested filters and terms — not applied: Phase: Approach · “carb icing”');
     expect(hidden(cardOf((search.cases[0] as EvidenceCase).case.ntsbNo))).toBe(false);
     expect(hidden(screen.getByRole('button', { name: '+ Filter' }))).toBe(true);
-    expect(hidden(screen.getAllByRole('button', { name: /^Show the full .+ section$/ })[0] as HTMLElement)).toBe(true);
+    expect(hidden(screen.getAllByRole('button', { name: /^Show the full .+ section\b/ })[0] as HTMLElement)).toBe(true);
     expect(hidden(screen.getByRole('navigation', { name: 'More investigations' }))).toBe(true);
     const header = document.querySelector('[data-print="only"]') as HTMLElement;
     expect(header.textContent).toContain(`AirCase · ${EVIDENCE_HEADING}`);
@@ -901,8 +1117,9 @@ describe('a result surface shows NTSB text, coded data, fixed copy and the reade
       parts.push('Compare', ',', 'How it was found:', relevanceParts(c.relevance, relevanceContext(page), c.excerpts.length > 0).join(' · '));
       c.probableCauses.forEach((p, i) => parts.push(probableCauseLabel(row.ntsbNo, row.aircraft, p, i, c.probableCauses.length), p.text));
       const numbered = numberedKinds(c.excerpts);
-      for (const e of c.excerpts) {
+      for (const [i, e] of c.excerpts.entries()) {
         parts.push(excerptLabel(row.ntsbNo, row.aircraft, e, numbered.has(e.section)), e.text, fullSectionLabel(e), '(synonym)');
+        if (c.excerpts.length > 1) parts.push(`, excerpt ${i + 1} of ${c.excerpts.length}`);
         if (e.text.length > LONG_TEXT_CHARS) parts.push(`Show the whole paragraph (${e.text.trim().split(/\s+/).length.toLocaleString('en-US')} words)`);
       }
       if (c.excerpts.length === 0) parts.push(NO_EXCERPT, `Open ${row.ntsbNo}`);

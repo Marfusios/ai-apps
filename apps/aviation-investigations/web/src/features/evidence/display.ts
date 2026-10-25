@@ -55,8 +55,12 @@ export const TERMS_LABEL = 'Terms';
 export const APPLY_FILTERS = 'Apply these filters';
 export const APPLY_BOTH = 'Apply filters and terms';
 export const SEARCH_SUGGESTED_TERMS = 'Search these terms';
+/** A draft chip or words the reader has not searched with yet (dashed, and said so). */
+export const NOT_SEARCHED_YET = 'not searched yet';
+/** Why the suggestion's buttons are off while the reader's own changes wait for Search again. */
+export const DRAFT_PENDING_NOTE = 'Your changes above are not searched yet: search again or undo them before applying the suggestion.';
 /** The hints of an explicit counting or comparison request, shown above the results. */
-export const STATISTICS_HINT = 'For counts and trends, the dashboard counts every investigation in the snapshot.';
+export const STATISTICS_HINT = 'For counts and trends, the dashboard charts the investigations in this snapshot by year, phase and more.';
 export const COMPARISON_HINT = 'Comparing named investigations is free; it doesn’t need the AI.';
 export const COMPARISON_NONE = 'None of those case numbers is in this snapshot.';
 export const EXPIRED_TITLE = 'This AI search is no longer available.';
@@ -109,10 +113,16 @@ export function relevanceContext(search: Pick<EvidencePage, 'appliedFilters' | '
   return { appliedFilters: search.appliedFilters, marked: search.suggestion ? 'suggested' : 'yours' };
 }
 
-/** "21 retrieved · best match first · not every matching investigation" (DESIGN §5: never all matches). */
+/** "21 retrieved · highest-ranked first · not every matching investigation" (DESIGN §5: never all matches). */
 export function countLine(total: number): string {
   const ceiling = total >= EVIDENCE_CANDIDATE_CEILING ? ` · the most one search ranks` : '';
-  return `${formatCount(total)} retrieved · best match first${ceiling} · not every matching investigation`;
+  return `${formatCount(total)} retrieved · highest-ranked first${ceiling} · not every matching investigation`;
+}
+
+/** What a screen reader hears when a search's results open: "21 investigations retrieved." */
+export function arrivalLine(total: number): string {
+  if (total === 0) return EMPTY_TITLE;
+  return `${formatCount(total)} ${total === 1 ? 'investigation' : 'investigations'} retrieved.`;
 }
 
 /** "Showing 1–10 of 21". */
@@ -163,6 +173,11 @@ export function filtersInWords(filters: BriefFilters): string[] {
   const words = appliedFacets(filters).map((f) => facetInWords(filters, f));
   const years = yearsInWords(filters);
   return years ? [...words, years] : words;
+}
+
+/** The suggestion on one line, under its label (what print keeps of it): "Suggested filters and terms — not applied: Phase: Approach · “carb icing”". */
+export function suggestionInWords(suggestion: NonNullable<EvidencePage['suggestion']>): string {
+  return `${SUGGESTION_LABEL}: ${[...filtersInWords(suggestion.filters), `“${suggestion.terms}”`].join(' · ')}`;
 }
 
 /** A search the reader is changing: its filters, and its words (null: the question as asked). */
@@ -292,4 +307,12 @@ export function probableCauseLabel(ntsbNo: string, aircraft: readonly AircraftRe
 /** "Show the full analysis section". */
 export function fullSectionLabel(excerpt: Pick<EvidenceExcerpt, 'label'>): string {
   return `Show the full ${excerpt.label.toLowerCase()} section`;
+}
+
+/** What a screen reader hears once a full section has been read: shown at the excerpt, changed, gone, or not loaded. */
+export function fullSectionShown(excerpt: Pick<EvidenceExcerpt, 'label'>, state: 'marked' | 'changed' | 'gone' | 'failed'): string {
+  if (state === 'marked') return `The full ${excerpt.label.toLowerCase()} section is shown, with the excerpt marked.`;
+  if (state === 'changed') return FULL_SECTION_CHANGED;
+  if (state === 'gone') return FULL_SECTION_GONE;
+  return FULL_SECTION_FAILED;
 }

@@ -1184,7 +1184,7 @@ The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,bri
   filters and terms · uses 1" sends the suggested terms. A search whose scope stage failed has no
   suggestion and nothing else changes. An explicit counting or comparison request adds a hint
   above the results (the dashboard; the cases found and Compare). Then the contract's heading and
-  notice, the count ("21 retrieved · best match first · not every matching investigation") and the cards:
+  notice, the count ("21 retrieved · highest-ranked first · not every matching investigation") and the cards:
   Explore's case facts, every aircraft of a multi-aircraft event, every probable-cause
   variant with its scope, and up to three whole paragraphs with their section and scope.
   Literal matches are marked with a solid underline and fill, synonyms with a dotted

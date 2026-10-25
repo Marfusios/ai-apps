@@ -133,7 +133,7 @@ test('signing out forgets the AI search and the cases it opened: going back show
   const section = drawer.locator('[data-evidence-section]');
   await section.scrollIntoViewIfNeeded();
   // The full section, read at the search's generation: private, like the search.
-  await section.getByRole('button', { name: /^Show the full .+ section$/ }).first().click();
+  await section.getByRole('button', { name: /^Show the full .+ section\b/ }).first().click();
   await expect(drawer.locator('[data-excerpt-paragraph]')).toBeVisible();
   await expect(page).toHaveURL(/case=DFW08TA066/);
   const drawerUrl = new URL(page.url());

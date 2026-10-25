@@ -467,7 +467,8 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
         </>
       )}
       {ai && <BriefSections ai={ai} ntsbNo={detail.ntsbNo} aircraft={detail.aircraft} mode={mode} />}
-      {evidence && <EvidenceSection searchId={evidence.searchId} item={evidence.item} context={evidence.context} />}
+      {/* Keyed by case: stepping to the next case never carries an open section or paragraph over. */}
+      {evidence && <EvidenceSection key={evidence.item.case.ntsbNo} searchId={evidence.searchId} item={evidence.item} context={evidence.context} />}
       <Provenance detail={detail} />
     </article>
   );

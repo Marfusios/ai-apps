@@ -7,7 +7,10 @@ import { forgetUnsettled, rememberUnsettled, settleOnArrival, unsettledId, unset
 import { newIdempotencyKey, useAiRequest } from '../ai/useAiRequest';
 import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
 import { rememberQuestion } from '../brief/memory';
+import { isNotFound } from '../../api';
 import { CASES_PARAM } from '../explore/url-state';
+import { expectArrival } from './arrival';
+import { EXPIRED_TITLE } from './display';
 import { evidencePageKey, evidencePath } from './keys';
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
@@ -47,6 +50,8 @@ export function useEvidenceSearch() {
       let idempotencyKey = earlier ?? newIdempotencyKey();
       // The key on its way is an earlier send's, whose outcome is unknown: a known refusal of it settles nothing.
       let replayingEarlier = earlier !== null;
+      // The search being edited turned out to be gone: its page says so, not a notice.
+      let parentGone = false;
       const result = await run(
         async (turnstileToken) => {
           // The evidence client and its contracts load with the first AI request, not with the home page.
@@ -54,7 +59,15 @@ export function useEvidenceSearch() {
           if (gone()) throw new VisitorChangedError('the visitor changed before this was sent');
           // Write-ahead: kept for the tab before it leaves (createEvidence sends in this same turn).
           rememberUnsettled(id, idempotencyKey);
-          return createEvidence(body(idempotencyKey, turnstileToken), visitor);
+          return createEvidence(body(idempotencyKey, turnstileToken), visitor).catch((err: unknown) => {
+            // The search being edited is gone (expired, or not this visitor's): its page reads it
+            // again, finds it gone and says so, instead of a generic failure under it.
+            if (shape.kind === 'evidence-edited' && isNotFound(err)) {
+              parentGone = true;
+              void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
+            }
+            throw err;
+          });
         },
         earlier
           ? {
@@ -70,6 +83,13 @@ export function useEvidenceSearch() {
           : { visitor },
       );
       if (gone() || (!result.ok && result.discarded)) return false;
+      if (!result.ok && parentGone) {
+        // A 404 settles the key: nothing was made. Its page is read again and turns to the gone
+        // state; until it does (or if a read still answers), the box says so in the same words.
+        forgetUnsettled(id, idempotencyKey);
+        setNotice({ kind: 'message', text: EXPIRED_TITLE });
+        return false;
+      }
       if (!result.ok) {
         if (result.outcomeUnknown) rememberUnsettled(id, idempotencyKey);
         else if (!replayingEarlier) forgetUnsettled(id, idempotencyKey);
@@ -82,6 +102,8 @@ export function useEvidenceSearch() {
       settleOnArrival(search.id, 'page', id, idempotencyKey);
       const next = new URLSearchParams();
       if (keepCompare && cases) next.set(CASES_PARAM, cases);
+      // Its page announces the results and takes focus if it was lost on the way.
+      expectArrival(search.id);
       navigate(`${evidencePath(search.id)}${next.size > 0 ? `?${next.toString()}` : ''}`);
       return true;
     },

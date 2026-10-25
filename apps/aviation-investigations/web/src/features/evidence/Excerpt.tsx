@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { CaseDetail } from '../../../../shared/contracts/cases';
 import type { EvidenceExcerpt } from '../../../../shared/contracts/evidence';
 import type { AircraftBrief } from '../../../../shared/contracts/search';
@@ -14,6 +14,7 @@ import {
   FULL_SECTION_GONE,
   excerptLabel,
   fullSectionLabel,
+  fullSectionShown,
 } from './display';
 import { MatchedText } from './MatchedText';
 
@@ -70,23 +71,45 @@ function Context({ text }: { text: string }) {
   );
 }
 
+/** How a full section ended up once read: marked at the excerpt, changed, gone, or not loaded. */
+export type FullSectionState = Located['kind'] | 'failed';
+
 /**
  * "Show the full section" (UI_DESIGN §4.9; Astra's condition 2): the canonical section text at
  * the search's own generation (never the public case, which may be newer), opened at the
  * excerpt's paragraph, which is marked (ink on a blue rule, the context muted) and keeps the
- * search's highlights. Scrolls the paragraph into view and gives it focus, so the reader is
- * where the excerpt was, now with the text around it.
+ * search's highlights. Opened by the reader (`focus`), it scrolls the paragraph into view and
+ * gives it focus once, so the reader is where the excerpt was, now with the text around it;
+ * focus never moves otherwise. `onSettled` says how it ended, for the announcement.
  */
-function FullSection({ searchId, ntsbNo, excerpt, id }: { searchId: string; ntsbNo: string; excerpt: EvidenceExcerpt; id: string }) {
+function FullSection({
+  searchId,
+  ntsbNo,
+  excerpt,
+  id,
+  focus,
+  onSettled,
+}: {
+  searchId: string;
+  ntsbNo: string;
+  excerpt: EvidenceExcerpt;
+  id: string;
+  focus: boolean;
+  onSettled: (state: FullSectionState) => void;
+}) {
   const query = useQuery(evidenceCaseQuery(searchId, ntsbNo));
   const marked = useRef<HTMLParagraphElement>(null);
   const located = query.data ? locateExcerpt(query.data, excerpt) : null;
-  const ready = located?.kind === 'marked';
+  const settled: FullSectionState | null = located ? located.kind : query.isError ? 'failed' : null;
+  // Focus moves once, and only because the reader opened this section.
+  const wantFocus = useRef(focus);
   useEffect(() => {
-    if (!ready) return;
+    if (settled) onSettled(settled);
+    if (settled !== 'marked' || !wantFocus.current) return;
+    wantFocus.current = false;
     marked.current?.scrollIntoView?.({ block: 'center' });
     marked.current?.focus({ preventScroll: true });
-  }, [ready]);
+  }, [settled, onSettled]);
 
   let body: ReactNode;
   if (!located) {
@@ -118,10 +141,15 @@ function FullSection({ searchId, ntsbNo, excerpt, id }: { searchId: string; ntsb
     body = (
       <>
         <Context text={located.text.slice(0, located.span.start)} />
-        <p ref={marked} tabIndex={-1} data-excerpt-paragraph="" className="scroll-mt-16 border-l-2 border-blue pl-[11px] text-ink outline-none focus-visible:outline-2">
-          <span className="sr-only">{EXCERPT_START} </span>
+        <p
+          ref={marked}
+          tabIndex={-1}
+          data-excerpt-paragraph=""
+          className="scroll-mt-16 border-l-2 border-blue pl-[11px] whitespace-pre-line text-ink outline-none focus-visible:outline-2"
+        >
+          <span className="sr-only select-none">{EXCERPT_START} </span>
           {same ? <MatchedText text={excerpt.text} highlights={excerpt.highlights} /> : located.text.slice(located.span.start, located.span.end)}
-          <span className="sr-only"> {EXCERPT_END}</span>
+          <span className="sr-only select-none"> {EXCERPT_END}</span>
         </p>
         <Context text={located.text.slice(located.span.end)} />
       </>
@@ -175,15 +203,21 @@ export interface ExcerptProps {
   excerpt: EvidenceExcerpt;
   /** The case shows more than one section of this kind: say which ("TEXT 2"). */
   numbered?: boolean;
+  /** Its place among the case's excerpts shown, so each "Show the full … section" has a name of its own. */
+  position?: { index: number; count: number };
 }
 
 /**
- * One excerpt (UI_DESIGN §4.9): a whole paragraph of NTSB text, never cut, under its section
- * label and scope, with the search's matches marked; "Show the full section" opens the section
- * around it in place, and "Show the excerpt only" closes it again.
+ * One excerpt (UI_DESIGN §4.9): a whole paragraph of NTSB text, never cut, its line breaks kept
+ * (a paragraph can carry the heading line above it), under its section label and scope, with the
+ * search's matches marked; "Show the full section" opens the section around it in place, says
+ * how that went in a polite live region, and "Show the excerpt only" closes it again. State is
+ * this excerpt's own: keyed by case, section and offset wherever it is listed.
  */
-export function Excerpt({ searchId, ntsbNo, aircraft, excerpt, numbered = false }: ExcerptProps) {
-  const [full, setFull] = useState(false);
+export function Excerpt({ searchId, ntsbNo, aircraft, excerpt, numbered = false, position }: ExcerptProps) {
+  // Open, and whether the reader just opened it (only then does it take focus).
+  const [full, setFull] = useState<{ focus: boolean } | null>(null);
+  const [said, setSaid] = useState('');
   const regionId = useId();
   const toggle = useRef<HTMLButtonElement>(null);
   const closing = useRef(false);
@@ -193,15 +227,17 @@ export function Excerpt({ searchId, ntsbNo, aircraft, excerpt, numbered = false 
     // Closing shortens the page above the button: keep it in view.
     toggle.current?.scrollIntoView?.({ block: 'nearest' });
   }, [full]);
+  const settled = useCallback((state: FullSectionState) => setSaid(fullSectionShown(excerpt, state)), [excerpt]);
+  const where = position && position.count > 1 ? `, excerpt ${position.index + 1} of ${position.count}` : '';
   return (
     <figure data-excerpt={excerpt.sectionKey}>
       <figcaption className="mb-[3px] text-[10px] tracking-[.12em] text-muted">{excerptLabel(ntsbNo, aircraft, excerpt, numbered)}</figcaption>
       {full ? (
-        <FullSection searchId={searchId} ntsbNo={ntsbNo} excerpt={excerpt} id={regionId} />
+        <FullSection searchId={searchId} ntsbNo={ntsbNo} excerpt={excerpt} id={regionId} focus={full.focus} onSettled={settled} />
       ) : (
         <blockquote id={regionId} className="border-l-2 border-rule py-px pl-[11px]">
           <LongText text={excerpt.text}>
-            <p className="font-serif text-body leading-[1.55] text-ink">
+            <p className="font-serif text-body leading-[1.55] whitespace-pre-line text-ink">
               <MatchedText text={excerpt.text} highlights={excerpt.highlights} />
             </p>
           </LongText>
@@ -210,17 +246,22 @@ export function Excerpt({ searchId, ntsbNo, aircraft, excerpt, numbered = false 
       <button
         ref={toggle}
         type="button"
-        aria-expanded={full}
+        aria-expanded={full !== null}
         aria-controls={regionId}
         data-print="hide"
         onClick={() => {
-          closing.current = full;
-          setFull(!full);
+          closing.current = full !== null;
+          setSaid('');
+          setFull(full ? null : { focus: true });
         }}
         className={cx('mt-1.5 cursor-pointer text-meta text-blue hover:underline pointer-coarse:min-h-11', full && 'mt-2')}
       >
         {full ? 'Show the excerpt only' : fullSectionLabel(excerpt)}
+        {where && <span className="sr-only">{where}</span>}
       </button>
+      <span aria-live="polite" className="sr-only" data-full-section-status="">
+        {said}
+      </span>
     </figure>
   );
 }

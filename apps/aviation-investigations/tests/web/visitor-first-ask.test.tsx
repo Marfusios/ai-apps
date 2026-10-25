@@ -11,13 +11,13 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CreateEvidenceResponseSchema, EVIDENCE_CONTRACT_VERSION } from '../../shared/contracts/evidence';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { resetUnsettledForTests, unsettledId, unsettledKey } from '../../web/src/features/ai/unsettled';
 import { VISITOR_CHANNEL, visitorGeneration } from '../../web/src/features/auth/visitor';
 import { rememberedQuestion } from '../../web/src/features/brief/memory';
 import { createHandlers } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
+import { evidenceAnswer } from './evidence-answer';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
 /** How far the AI search client's load got: `started` loads, held until `open()`. */
@@ -38,30 +38,10 @@ function holdSearchClient(): void {
   vi.doMock('../../web/src/features/evidence/api', (importOriginal) => searchClient(importOriginal));
 }
 
-/** What the server would answer: page 1 of a search with nothing retrieved, valid under the contract (checked here). */
-const answered = (id: string) =>
-  CreateEvidenceResponseSchema.parse({
-    kind: 'results',
-    search: {
-      version: EVIDENCE_CONTRACT_VERSION,
-      id,
-      question: MOCK_SEED_QUESTION,
-      query: { source: 'question' },
-      appliedFilters: {},
-      suggestion: { filters: {}, terms: 'engine power loss maintenance' },
-      hint: null,
-      generation: 'g1',
-      createdAt: '2026-10-24T22:00:00.000Z',
-      expiresAt: '2026-10-25T22:00:00.000Z',
-      total: 0,
-      page: 1,
-      pages: 0,
-      cases: [],
-    },
-  });
-
 const server = setupMockApi();
 const ANSWERED_ID = '00000000-0000-4000-8000-0000000000ff';
+/** What the server would answer, valid under the contract (checked when this file loads). */
+const ANSWERED = evidenceAnswer(ANSWERED_ID);
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 afterEach(() => {
@@ -79,7 +59,7 @@ async function askWhileTheClientLoads() {
   server.use(
     http.post('*/api/evidence', () => {
       posts += 1;
-      return HttpResponse.json(answered(ANSWERED_ID), { status: 201 });
+      return HttpResponse.json(ANSWERED, { status: 201 });
     }),
   );
   holdSearchClient();

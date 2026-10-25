@@ -30,14 +30,15 @@ export function EvidenceSection({ searchId, item, context }: DrawerEvidence) {
       {item.excerpts.some((e) => e.highlights.length > 0) && <MatchLegend marked={context.marked} className="mt-1" />}
       {item.excerpts.length > 0 ? (
         <div className="mt-3 space-y-4">
-          {item.excerpts.map((e) => (
+          {item.excerpts.map((e, i) => (
             <Excerpt
-              key={`${e.sectionKey}:${e.paragraph.start}`}
+              key={`${item.case.ntsbNo}:${e.sectionKey}:${e.paragraph.start}`}
               searchId={searchId}
               ntsbNo={item.case.ntsbNo}
               aircraft={item.case.aircraft}
               excerpt={e}
               numbered={numbered.has(e.section)}
+              position={{ index: i, count: item.excerpts.length }}
             />
           ))}
         </div>

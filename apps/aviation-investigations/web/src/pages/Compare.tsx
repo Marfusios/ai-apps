@@ -50,6 +50,8 @@ const GRID_AI = 'sm:grid-cols-[30px_1.05fr_1fr_1.1fr_0.85fr_0.9fr_0.95fr_1.2fr]'
 const PC_PREVIEW = 300;
 
 export const AI_NOTES_GONE_PLURAL = "The AI notes for these cases have expired or aren't yours.";
+/** A strip's evidence row when a page of the search did not load, so whether it shows the case is unknown. */
+export const EVIDENCE_PAGES_FAILED = 'Part of your search didn’t load, so this case’s excerpts may be missing here.';
 /** Compare opened from an evidence search that is gone (Builder copy, Task 23). */
 export const EVIDENCE_GONE_PLURAL = 'The AI search these cases came from is no longer available, so its excerpts are not shown.';
 export const EVIDENCE_FAILED_PLURAL = 'The AI search these cases came from didn’t load.';
@@ -69,15 +71,40 @@ export function readEvidenceRef(params: URLSearchParams): { id: string; pages: n
   return { id, pages };
 }
 
+/** How the case stands in the search's pages read so far. */
+export type StripEvidenceState = 'found' | 'loading' | 'incomplete' | 'absent';
+
+/** What a strip's evidence row knows: the case as the search shows it, while its pages are still read, or not. */
+export interface StripEvidenceProps {
+  searchId: string;
+  /** The case as the search shows it (`state` 'found'). */
+  item: EvidenceCase | undefined;
+  context: RelevanceContext;
+  state: StripEvidenceState;
+}
+
 /**
  * The evidence row of a strip (UI_DESIGN §4.9): how the search found the case and its best
  * excerpt, a whole paragraph with the matches marked, under the page's heading and notice.
+ * While the pages the link names are still being read it holds its place; only once every one
+ * has answered does it say the search did not show the case.
  */
-function StripEvidence({ searchId, item, context }: { searchId: string; item: EvidenceCase | undefined; context: RelevanceContext }) {
+function StripEvidence({ searchId, item, context, state }: StripEvidenceProps) {
   return (
-    <div className="border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1]" data-strip-evidence="">
+    <div
+      className="border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1]"
+      data-strip-evidence={state}
+      aria-busy={state === 'loading' || undefined}
+    >
       <p className="text-micro tracking-caps text-muted uppercase">Retrieved for your search</p>
-      {item ? (
+      {state === 'loading' ? (
+        <div aria-hidden="true" className="mt-1.5 space-y-1.5" data-strip-evidence-pending="">
+          <div className="h-2.5 w-3/5 rounded-[2px] bg-tint" />
+          <div className="h-3 w-11/12 rounded-[2px] bg-tint opacity-70" />
+        </div>
+      ) : state === 'incomplete' ? (
+        <p className="text-meta text-muted">{EVIDENCE_PAGES_FAILED}</p>
+      ) : item ? (
         <>
           <RelevanceLine item={item} context={context} />
           {item.excerpts[0] && (
@@ -228,7 +255,7 @@ function Strip({
   onRemove: () => void;
   ai: StripAi | null;
   /** Opened from an evidence search: the case as that search shows it (`item` undefined: not among its investigations read). */
-  evidence?: { searchId: string; item: EvidenceCase | undefined; context: RelevanceContext } | null;
+  evidence?: StripEvidenceProps | null;
 }) {
   const multi = detail.aircraft.length > 1;
   const injury = injuryShort(detail.highestInjury);
@@ -323,7 +350,7 @@ function Strip({
         </p>
         <span className="flex-none text-meta whitespace-nowrap">{sourceLink(detail)}</span>
       </div>
-      {evidence && <StripEvidence searchId={evidence.searchId} item={evidence.item} context={evidence.context} />}
+      {evidence && <StripEvidence {...evidence} />}
     </article>
   );
 }
@@ -432,8 +459,15 @@ export function Compare() {
   );
   const evidenceGone = eref === 'invalid' || (evidenceRef !== null && isNotFound(firstEvidence.error));
   const evidenceFailed = evidenceRef !== null && firstEvidence.isError && !isNotFound(firstEvidence.error);
-  const evidenceFor = (ntsbNo: string) =>
-    evidenceSearch ? { searchId: evidenceSearch.id, item: evidenceCases.get(ntsbNo), context: relevanceContext(evidenceSearch) } : null;
+  // Every page the link names has answered (or failed); until then a case not seen yet may still come.
+  const evidencePending = laterEvidence.some((q) => q.isPending);
+  const evidencePartial = laterEvidence.some((q) => q.isError);
+  const evidenceFor = (ntsbNo: string): StripEvidenceProps | null => {
+    if (!evidenceSearch) return null;
+    const item = evidenceCases.get(ntsbNo);
+    const state: StripEvidenceState = item ? 'found' : evidencePending ? 'loading' : evidencePartial ? 'incomplete' : 'absent';
+    return { searchId: evidenceSearch.id, item, context: relevanceContext(evidenceSearch), state };
+  };
   const [sort, setSort] = useState<SortKey>('added');
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const from = (location.state as { from?: string } | null)?.from;

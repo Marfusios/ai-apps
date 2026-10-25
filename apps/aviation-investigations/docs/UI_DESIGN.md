@@ -990,10 +990,12 @@ note above them; counting and comparison questions get results with a hint.
    edit the box is labelled "Your edited search".
 3. **Editing.** Typing words (Enter keeps, Escape cancels, empty is refused: "Type at least one search
    word."), removing chips and "+ Filter" (a facet value, or a year range checked against the coverage
-   years) change a draft for free. Once it differs, "Search again · uses 1" (the AI button, an `edited`
-   search: a new 24-hour search with the original question, exactly the filters left, and the words
-   only when the reader typed new ones; a filter removed stays removed) and "Undo changes" appear;
-   before, a muted "Change the words or filters to search again." "Show keyword results" (free) opens
+   years) change a draft for free. A chip or words added and not searched yet are dashed (and said
+   "not searched yet"), so a draft never looks applied. Once it differs, "Search again · uses 1" (the
+   AI button, an `edited` search: a new 24-hour search with the original question, exactly the filters
+   left, and the words only when the reader typed new ones; a filter removed stays removed) and "Undo
+   changes" appear; before, a muted "Change the words or filters to search again." Undo gives focus
+   back to the words when they changed, else to "+ Filter". "Show keyword results" (free) opens
    Explore with the draft's words (or the question) and filters at any time.
 4. **The suggestion** (magenta, dashed: not applied; only a question search can have one) under the
    contract's label `EVIDENCE_SUGGESTION_LABEL`, "Suggested filters and terms — not applied", with
@@ -1002,11 +1004,14 @@ note above them; counting and comparison questions get results with a hint.
    (not controls), or "None"; TERMS: the suggested terms in quotes, as text. Then "Apply these filters ·
    uses 1" (an edited search with exactly those filters and the question as asked: never the terms)
    and "Apply filters and terms · uses 1" (the explicit choice to take the terms too); without
-   suggested filters, "Search these terms · uses 1". A search whose scope stage failed simply has no
-   suggestion; an edited search never has one.
+   suggested filters, "Search these terms · uses 1". While the reader has changes not searched yet,
+   these buttons are off and the box says "Your changes above are not searched yet: search again or
+   undo them before applying the suggestion." (applying never drops a draft). A search whose scope
+   stage failed simply has no suggestion; an edited search never has one. Print keeps the suggestion
+   as one line, "Suggested filters and terms — not applied: Phase: Approach · “carb icing”".
 5. **A hint** (only for an explicit counting or comparison request, read by the server from the
-   question; non-blocking, above the results): "For counts and trends, the dashboard counts every
-   investigation in the snapshot." with [Open the dashboard]; or "Comparing named investigations is
+   question; non-blocking, above the results): "For counts and trends, the dashboard charts the
+   investigations in this snapshot by year, phase and more." with [Open the dashboard]; or "Comparing named investigations is
    free; it doesn't need the AI." with [Compare A, B →], each case number found as a link, and "Not
    found: …" ("None of those case numbers is in this snapshot." when none is).
    **A capability note** (`note`, when the validated scope intent selects one): the contract's fixed
@@ -1020,7 +1025,7 @@ note above them; counting and comparison questions get results with a hint.
 6. **"Investigations retrieved for your search"** (`EVIDENCE_HEADING`) and under it, always,
    `EVIDENCE_NOTICE` in an ink-ruled note: "AirCase matched your words and filters. It has not checked
    timing, causes or things that did not happen: read the excerpts."
-7. A count line: "21 retrieved · best match first · not every matching investigation" (DESIGN §5;
+7. A count line: "21 retrieved · highest-ranked first · not every matching investigation" (DESIGN §5;
    at the ceiling it adds "the most one search ranks"; none for an empty result), and the key to the
    marks: "Marked in the excerpts: the suggested terms · their synonyms" (or "your words" when the
    search has no suggestion).
@@ -1033,7 +1038,9 @@ note above them; counting and comparison questions get results with a hint.
      are several; the report link ("NTSB report ↗", or the labelled search fallback) on the first
      label line;
    - up to three excerpts, each a whole paragraph under "NTSB · ANALYSIS" (section label, scope, and
-     "· TEXT 2" when the card shows two texts of one kind), on a 2px rule. A paragraph longer than
+     "· TEXT 2" when the card shows two texts of one kind), on a 2px rule, its line breaks kept: the
+     server cuts paragraphs as the chunker does (hard wraps joined, a heading line kept with the
+     paragraph under it, `shared/narrative-paragraphs.ts`). A paragraph longer than
      3,000 characters is collapsed under a fade with "Show the whole paragraph (n words)"; it is
      never cut, all of it is in the page and all of it prints. A case with no passage to quote says
      "No excerpt for this case. Its case page has the whole report narrative." with a link;
@@ -1047,18 +1054,25 @@ note above them; counting and comparison questions get results with a hint.
 9. **"Show the full section"** under each excerpt ("Show the full analysis section") opens the
    section in place, read at the search's own generation (`GET /api/evidence/:id/cases/:ntsbNo`, never
    the public case), at the excerpt's paragraph: that paragraph in ink on a 2px blue rule with the
-   search's marks, the rest of the section muted around it, scrolled into view and given focus
-   (screen readers hear "Start of the excerpt." and "End of the excerpt."). Text only, never markup.
-   If the section changed or is gone, it says so ("This section has changed since your search, so
-   the excerpt is not marked in it." / "This section is no longer in the case record, so it can't be
-   shown here."). "Show the excerpt only" closes it.
+   search's marks, the rest of the section muted around it, scrolled into view and given focus, only
+   because the reader opened it (screen readers hear "Start of the excerpt." and "End of the
+   excerpt.", words a selection never copies, and a polite "The full analysis section is shown, with
+   the excerpt marked."). Text only, never markup. If the section changed, is gone or does not load,
+   it says so, there and politely ("This section has changed since your search, so the excerpt is not
+   marked in it." / "This section is no longer in the case record, so it can't be shown here." / "The
+   full section didn't load." with Try again). "Show the excerpt only" closes it. Each button's name
+   carries its place among the card's excerpts (", excerpt 2 of 3"), so no two are named alike. An
+   excerpt's open state is its own: keyed by case, section and offset on cards and in the drawer.
 10. **Paging**: "Showing 1–10 of 21 · Show 10 more" (free; the pinned ranking, ten at a time) moves
     focus to the first new case; then "That's all 21 retrieved."
+    **Arrival**: results this tab just asked for (Ask AI, Search again, Apply) are announced ("21
+    investigations retrieved.") and, when focus was lost on the way, the results heading takes it
+    (as a brief's finished step); a page opened by a link or a reload leaves focus alone.
 11. "Only you can open this search. AirCase deletes it on 25 Oct 2026 at 22:13 UTC."
 
 **Highlights.** A literal occurrence of a marked term is the existing `hit` mark (blue wash, solid
 blue underline); a synonym the analyzer matched is `hit-synonym` (no wash, dotted blue underline)
-and carries " (synonym)" for screen readers. Line and fill differ, so print and greyscale keep the
+and carries " (synonym)" for screen readers (never copied with a selection). Line and fill differ, so print and greyscale keep the
 difference; the legend says it in words, and whose terms they are.
 
 **Model text.** The suggestion's terms (and anything else the scope stage wrote) are untrusted text:
@@ -1082,10 +1096,13 @@ marks and the excerpts (each with its full section); "‹ n of N ›" follows th
 last card shown, shows more. Compare opened from the tray (`/compare?cases=…&evidence=:id&pages=n`)
 shows "From your search “…”", the heading as a placard, the notice and the key to the marks, and a
 last row per strip, "RETRIEVED FOR YOUR SEARCH": the relevance facts and the best excerpt, with "2 more
-excerpts on the search's page."; a case the search did not show says "Not among the investigations
-shown for your search."; a search that is gone says "The AI search these cases came from is no longer
+excerpts on the search's page."; while the pages the link names are still read, a strip's row holds its
+place (a quiet placeholder, `aria-busy`), and only once every page has answered does a case the search
+did not show say "Not among the investigations shown for your search." (a page that failed: "Part of
+your search didn't load, so this case's excerpts may be missing here."); a search that is gone says "The AI search these cases came from is no longer
 available, so its excerpts are not shown." Print (§7) keeps the heading, the notice, the capability note, "Your
-search" and the cards (collapsed paragraphs print whole, open sections print open); the suggestion, the hint,
+search", the suggestion's one line and the cards (collapsed paragraphs print whole, open sections print open);
+the suggestion box, the hint,
 the editing, paging and section controls do not print; a print-only header names the page, the case
 numbers and the snapshot.
 
@@ -1476,5 +1493,7 @@ counting rules.
   and its two buttons, "Apply these filters" and "Apply filters and terms" (or "Search these terms"
   without filters); the hints' copy; "Show more" paging with `?pages=n`; the relevance line's wording;
   the empty, tiny and gone copy; collapsing paragraphs over 3,000 characters; the Explore nudge's and
-  About's new copy; the header counter's short form below 700px; and a brief made read-only while the
-  server has briefs off.
+  About's new copy; the header counter's short form below 700px; a brief made read-only while the
+  server has briefs off; and, from the UI review, dashed "not searched yet" draft chips, the
+  suggestion's buttons held off over a pending draft, "highest-ranked first", and the strip
+  placeholder and "Part of your search didn't load…" in Compare.

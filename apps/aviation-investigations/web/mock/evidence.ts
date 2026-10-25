@@ -19,7 +19,8 @@
  *   about something else, or asking for operational advice, gets its results with one of the
  *   contract's fixed capability notes (`EVIDENCE_NOTE_TEXT`) and no suggestion.
  * - **Projection**: the probable-cause statements in section order; up to three whole
- *   paragraphs (runs of text between line breaks) of the factual and analysis sections with
+ *   paragraphs (cut as the server cuts them: hard wraps joined, a heading kept with the paragraph
+ *   under it) of the factual and analysis sections with
  *   the most matches of the marked words, highlighted as `literal` (the word itself) or
  *   `synonym` (the analyzer's equivalences, shared/aviation-analysis.ts); relevance facts
  *   counted from those excerpts; the channels that would find it.
@@ -56,6 +57,7 @@ import type { ErrorResponse } from '../../shared/contracts/common.js';
 import { SECTION_LABEL, defaultSearchRequest, type CaseRow, type SearchRequest } from '../../shared/contracts/search.js';
 import { US_STATE } from '../../shared/vocab.js';
 import { AVIATION_SYNONYMS } from '../../shared/aviation-analysis.js';
+import { isNarrativeHeading, wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
 import { searchCorpus, type MockCorpus } from './engine.js';
 import type { MockReader, MockReply } from './briefs.js';
 import casesJson from './cases.json' with { type: 'json' };
@@ -301,21 +303,14 @@ function hitsIn(text: string, terms: readonly Term[]): Hit[] {
   return out;
 }
 
-/** Paragraphs of a section: maximal runs of text between line breaks, without surrounding spaces. */
+/**
+ * Paragraphs of a section as the server cuts them (shared/narrative-paragraphs.ts, used by the
+ * projection and the chunker): hard-wrapped lines joined, and a heading line kept with the
+ * paragraph under it, so an excerpt can hold line breaks and start with its heading.
+ */
 export function paragraphsOf(text: string): Span[] {
-  const out: Span[] = [];
-  for (const m of text.matchAll(/[^\n]+/g)) {
-    const raw = m[0];
-    const lead = raw.length - raw.trimStart().length;
-    const body = raw.trim();
-    if (body === '') continue;
-    out.push({ start: m.index + lead, end: m.index + lead + body.length });
-  }
-  return out;
+  return wholeNarrativeParagraphs(text);
 }
-
-/** A line that is only a heading ("HISTORY OF FLIGHT"): never an excerpt on its own. */
-const HEADING = /^[A-Z0-9 ,.'’&/()-]{4,60}$/;
 
 // ---------------------------------------------------------------------------
 // Ranking and projection
@@ -382,7 +377,8 @@ function excerptsOf(detail: CaseDetail, terms: readonly Term[], marked: readonly
   const order = { analysis: 0, factual: 1, probable_cause: 2 } as const;
   const candidates = detail.sections.flatMap((section) =>
     paragraphsOf(section.text)
-      .filter((p) => p.end - p.start <= 20_000 && !HEADING.test(section.text.slice(p.start, p.end)))
+      // A heading with nothing under it (the section's last line) is never an excerpt on its own.
+      .filter((p) => p.end - p.start <= 20_000 && !isNarrativeHeading(section.text.slice(p.start, p.end)))
       .map((p) => ({ section, paragraph: p, hits: hitsIn(section.text.slice(p.start, p.end), terms).length })),
   );
   const matching = candidates
