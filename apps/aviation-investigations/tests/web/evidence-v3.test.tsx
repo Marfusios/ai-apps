@@ -3,10 +3,10 @@
  * configurations the evaluation may pick (UI_DESIGN §4.9): a state AirCase applied because the
  * question names it, terms it added to keyword search, AI's order of the leading results and whose
  * words are marked, each said as such on every surface; the suggestion keeping only what was not
- * used; and "Search again · free", the one free undo of what AirCase added, mirroring the server's
- * rule (positive cases and each condition that makes an edit use one), at zero searches left, with
- * the server's `freeUndo` as the last word. The baseline configuration's states are in
- * evidence.test.tsx.
+ * used; and "Search again · free", the one free undo of what AirCase added, when the page says it is
+ * there (`undo: 'available'`) and the draft qualifies by the server's rule (positive cases and each
+ * condition that makes an edit use one), at zero searches left, with the server's `freeUndo` as the
+ * last word. The baseline configuration's states are in evidence.test.tsx.
  */
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
@@ -41,6 +41,7 @@ import {
   countLine,
   excerptLabel,
   fullSectionLabel,
+  isEditedSearch,
   numberedKinds,
   probableCauseLabel,
   relevanceContext,
@@ -220,7 +221,8 @@ describe('what AirCase added on its own is said as such (contract evidence.v3)',
     expect(terms.getAttribute('data-added-terms')).toBe('terms');
     expect(terms.closest('div')?.querySelector('dt')?.textContent).toBe(KEYWORDS_SEARCHED_LABEL);
     expect(panel.querySelector('[data-keywords-note]')?.textContent).toBe(KEYWORDS_SEARCHED_NOTE);
-    // Nothing applied automatically: the suggestion's note is today's, and only the filter is left to suggest.
+    // Nothing applied automatically, but terms were added: the suggestion's note is the one for a search
+    // AirCase added to, and only the filter is left to suggest.
     expect(within(panel).queryByRole('button', { name: /added automatically/ })).toBeNull();
     const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
     expect(suggestion.querySelector('[data-suggestion-note]')?.textContent).toBe(SUGGESTION_NOTE_AUTOMATIC);
@@ -298,9 +300,10 @@ describe('what AirCase added on its own is said as such (contract evidence.v3)',
       if (!found) throw new Error('not yet');
       return found;
     }, SLOW);
-    expect(box.textContent).toBe(`Filters: Location: Alaska (${FROM_QUESTION}) · ${QUESTION_AS_ASKED} · ${ALSO_SEARCHED_LABEL}: “${(tiny.search.query as { keywords: { terms: string } }).keywords.terms}”`);
+    expect(box.textContent).toBe(`Filters: Location: Alaska (${FROM_QUESTION}) · ${QUESTION_AS_ASKED} · ${ALSO_SEARCHED_LABEL} (added by AI): “${(tiny.search.query as { keywords: { terms: string } }).keywords.terms}”`);
     expect(filtersInWords({ state: ['AK'], phase: ['approach'] }, { state: ['AK'] })).toEqual(['Phase: Approach', 'Location: Alaska (from your question)']);
-    expect(searchedInWords({ question: 'Q', query: { source: 'question', keywords: { kind: 'terms', terms: 'carb icing' } } })).toEqual([QUESTION_AS_ASKED, `${KEYWORDS_SEARCHED_LABEL}: “carb icing”`]);
+    expect(searchedInWords({ question: 'Q', query: { source: 'question', keywords: { kind: 'terms', terms: 'carb icing' } } })).toEqual([QUESTION_AS_ASKED, `${KEYWORDS_SEARCHED_LABEL} (added by AI): “carb icing”`]);
+    expect(searchedInWords({ question: 'Q', query: { source: 'question', keywords: { kind: 'question+terms', terms: 'carb icing' } } })).toEqual([QUESTION_AS_ASKED, 'Also searched (added by AI): “carb icing”']);
     expect(searchedInWords({ question: 'Q', query: { source: 'edited', terms: 'carb heat' } })).toEqual(['Search words: “carb heat”']);
     // Nothing in the state the question names: the empty result says the same.
     cleanup();
@@ -311,7 +314,7 @@ describe('what AirCase added on its own is said as such (contract evidence.v3)',
       if (!found) throw new Error('not yet');
       return found;
     }, SLOW);
-    expect(empty.textContent).toContain(`Filters: Location: Vermont (${FROM_QUESTION}) · ${QUESTION_AS_ASKED} · ${ALSO_SEARCHED_LABEL}: “engine power loss”`);
+    expect(empty.textContent).toContain(`Filters: Location: Vermont (${FROM_QUESTION}) · ${QUESTION_AS_ASKED} · ${ALSO_SEARCHED_LABEL} (added by AI): “engine power loss”`);
   });
 });
 
@@ -398,14 +401,33 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     // The undo's search kept the added terms (it removed only the state), but it is an edit: no undo of its own.
     fireEvent.click(within(edited).getByRole('button', { name: /^“carb icing”\s*,\s*added by AI\s*,\s*remove$/ }));
     expect(within(edited).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ })).toBeTruthy();
-    // Back on the first search: its undo is used.
+    // Back on the first search: its page says its undo is used now.
     await act(() => router.navigate(`/ai/${search.id}`));
     await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
     removeTerms();
-    expect(searchAgain('uses 1')).toBeTruthy();
+    expect(await within(yours()).findByRole('button', { name: /^Search again\s*·\s*uses 1$/ }, SLOW)).toBeTruthy();
   });
 
-  it('an edit this tab made that looks like a question search (no filter left, the terms kept) has no undo', async () => {
+  it('a search whose page says its undo is used, or that it has none, offers no free search', async () => {
+    freshApi({ evidence: STATE_TERMS_AI });
+    const parent = await makeSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
+    expect(parent.undo).toBe('available');
+    // Its undo used elsewhere (another tab, before this page was opened).
+    const undone = await post({ kind: 'edited', from: parent.id, filters: {} });
+    expect(undone.freeUndo).toBe(true);
+    renderApp(`/ai/${parent.id}`);
+    await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
+    removeTexas();
+    expect(searchAgain('uses 1')).toBeTruthy();
+    // An original question search with nothing added has none: a filter added and removed again is no undo either.
+    cleanup();
+    freshApi({ evidence: { ranking: 'er-q-v1', autoFilters: 'none' } });
+    const plain = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    expect(plain.search.undo).toBe('none');
+    expect(yours().querySelector('[data-added-terms], [data-automatic]')).toBeNull();
+  });
+
+  it('an edit has no undo of its own, even one that kept the question and its added terms with no filter left (its page says none)', async () => {
     freshApi({ evidence: STATE_TERMS_AI });
     installTurnstile();
     const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.seed);
@@ -421,8 +443,12 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     fireEvent.click(within(panel).getByRole('button', { name: /^Phase: .+\s*, remove$/ }));
     fireEvent.click(within(panel).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ }));
     await waitFor(() => expect(currentUrl(router)).not.toBe(firstEdit), SLOW);
-    panel = await screen.findByRole('region', { name: EDITED_LABEL }, SLOW);
-    expect(within(panel).queryAllByRole('button', { name: /, remove$/ }).map((b) => b.getAttribute('data-added-terms'))).toEqual(['question+terms']);
+    // Its page says it has no undo, though it kept the added terms: it is an edit, without an undo of its own.
+    await waitFor(() => {
+      const shown = screen.getByRole('region', { name: EDITED_LABEL });
+      expect(within(shown).queryAllByRole('button', { name: /, remove$/ }).map((b) => b.getAttribute('data-added-terms'))).toEqual(['question+terms']);
+    }, SLOW);
+    panel = screen.getByRole('region', { name: EDITED_LABEL });
     fireEvent.click(within(panel).getByRole('button', { name: /added by AI\s*,\s*remove$/ }));
     expect(within(panel).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ })).toBeTruthy();
   });
@@ -444,11 +470,11 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     expect(note.textContent).toBe(UNDO_CHARGED);
     expect(hidden(note)).toBe(true);
     await waitFor(() => expect(live()).toMatch(new RegExp(`^\\d+ investigations? retrieved\\. ${UNDO_CHARGED}$`)), SLOW);
-    // Back on the first search, its undo is no longer offered as free.
+    // Back on the first search, read again: its undo is no longer offered as free.
     await act(() => router.navigate(`/ai/${search.id}`));
     await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
     removeTerms();
-    expect(searchAgain('uses 1')).toBeTruthy();
+    expect(await within(yours()).findByRole('button', { name: /^Search again\s*·\s*uses 1$/ }, SLOW)).toBeTruthy();
   });
 
   it('with no searches left the free undo still runs, with the usual check, and charged actions stay off', async () => {
@@ -512,6 +538,21 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     );
     fireEvent.click(screen.getByRole('button', { name: /^Try again\s*·\s*free$/ }));
     expect(await screen.findByRole('heading', { level: 1, name: 'This AI search is no longer available.' }, SLOW)).toBeTruthy();
+  });
+
+  it('“Your edited search” from what the page says: words, an undo, filters of the reader’s, or added terms without an undo', () => {
+    const question = { source: 'question', keywords: { kind: 'question' } } as const;
+    const added = { source: 'question', keywords: { kind: 'question+terms', terms: 'carb icing' } } as const;
+    const page = { query: question, appliedFilters: {}, automaticFilters: null, freeUndo: false, undo: 'none' } as const;
+    // Original question searches: nothing added, or something added (whose undo is there or used).
+    expect(isEditedSearch(page)).toBe(false);
+    expect(isEditedSearch({ ...page, appliedFilters: { state: ['TX'] }, automaticFilters: { state: ['TX'] }, undo: 'available' })).toBe(false);
+    expect(isEditedSearch({ ...page, query: added, undo: 'used' })).toBe(false);
+    // Edits.
+    expect(isEditedSearch({ ...page, query: { source: 'edited', terms: 'carb heat' } })).toBe(true);
+    expect(isEditedSearch({ ...page, freeUndo: true })).toBe(true);
+    expect(isEditedSearch({ ...page, appliedFilters: { phase: ['approach'] } })).toBe(true);
+    expect(isEditedSearch({ ...page, query: added })).toBe(true);
   });
 
   it('the retry key of an undo is its own: restoring the question’s keywords is another request than keeping them', async () => {

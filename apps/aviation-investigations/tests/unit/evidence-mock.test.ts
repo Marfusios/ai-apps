@@ -130,8 +130,8 @@ describe('mock evidence pages are valid evidence.v3 and NTSB text only', () => {
     expect(seed.pages).toBeGreaterThanOrEqual(3);
     expect(seed.cases).toHaveLength(EVIDENCE_PAGE_SIZE);
     expect([seed.query, seed.appliedFilters, seed.hint, seed.note]).toEqual([{ source: 'question', keywords: { kind: 'question' } }, {}, null, null]);
-    // The baseline: nothing applied on its own, the match order, the suggested terms marked.
-    expect([seed.automaticFilters, seed.order, seed.marks, seed.freeUndo]).toEqual([null, 'match', 'suggested_terms', false]);
+    // The baseline: nothing applied on its own, so nothing to undo; the match order, the suggested terms marked.
+    expect([seed.automaticFilters, seed.order, seed.marks, seed.freeUndo, seed.undo]).toEqual([null, 'match', 'suggested_terms', false, 'none']);
     // A suggestion of filters and words, not applied: the question's results are every case of the cohort.
     const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb, 102);
     expect(carb.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'carb icing' });
@@ -238,8 +238,8 @@ describe('the suggestion is advisory only', () => {
       null,
       null,
     ]);
-    // An edit has no suggestion, so it marks its own words; it applies nothing on its own and is no undo.
-    expect([filtersOnly.marks, filtersOnly.automaticFilters, filtersOnly.freeUndo]).toEqual(['search_words', null, false]);
+    // An edit has no suggestion, so it marks its own words; it applies nothing on its own, is no undo and has none.
+    expect([filtersOnly.marks, filtersOnly.automaticFilters, filtersOnly.freeUndo, filtersOnly.undo]).toEqual(['search_words', null, false, 'none']);
     // Ranked by the question's words within the filter, the excerpts marking them.
     expect(placement(readAll(server, filtersOnly))).toEqual(placement(evidenceCases({ phase: ['approach'] }, questionWords(carb.question))));
     expect(filtersOnly.cases.every((c) => c.relevance.filters.join() === 'phase')).toBe(true);
@@ -344,7 +344,7 @@ describe('every configuration says what it applied on its own (evidence.v3)', ()
     expect(page.automaticFilters).toEqual({ state: ['TX'] });
     expect(page.appliedFilters).toEqual({ state: ['TX'] });
     expect(page.query).toEqual({ source: 'question', keywords: { kind: 'question+terms', terms: 'carb icing' } });
-    expect([page.order, page.marks, page.freeUndo]).toEqual(['ai_relevance', 'search_words', false]);
+    expect([page.order, page.marks, page.freeUndo, page.undo]).toEqual(['ai_relevance', 'search_words', false, 'available']);
     // The phase stays a suggestion; the state and the terms were used, so they are not suggested.
     expect(page.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: null });
     // Every case meets the state, and its relevance facts say so.
@@ -408,8 +408,12 @@ describe('the one free undo follows the server’s rule (server/evidence/undo.ts
     ] as [BriefFilters, boolean][]) {
       const server = v3();
       const parent = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms);
+      expect(parent.undo).toBe('available');
       const first = undoReply(server, parent, filters, restore, 2);
       expect([first.exempt, first.reply.quotaExempt, first.search.freeUndo]).toEqual([true, true, true]);
+      // Read again, the search says its undo is used; the undo's own search has none.
+      expect((server.read(parent.id, 1).body as EvidencePage).undo).toBe('used');
+      expect(first.search.undo).toBe('none');
       // What it searched: the question's own keywords once restored, else the parent's; nothing automatic.
       expect(first.search.query).toEqual(restore ? { source: 'question', keywords: { kind: 'question' } } : parent.query);
       expect([first.search.automaticFilters, first.search.appliedFilters]).toEqual([null, filters]);
@@ -443,6 +447,7 @@ describe('the one free undo follows the server’s rule (server/evidence/undo.ts
     charged({ filters: { phase: ['approach'] } }, 6);
     charged({ filters: { state: ['TX'], phase: ['approach'] }, keywords: 'question' }, 7);
     // Still free after all of those: none of them was an undo.
+    expect((server.read(parent.id, 1).body as EvidencePage).undo).toBe('available');
     const free = undoReply(server, parent, {}, false, 8).search;
     expect(free.freeUndo).toBe(true);
     // An edit is never an undo's parent, even one that kept the question and its added terms.

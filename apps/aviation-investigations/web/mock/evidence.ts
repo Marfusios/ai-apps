@@ -34,6 +34,8 @@
  *   question search the visitor owns, sending no words, that only removes what AirCase added (the
  *   whole automatic state, the added terms, or both) is made without using one of the visitor's
  *   searches (`freeUndo`), once per search; every other edit uses one (`quotaExempt` on the reply).
+ *   Every page read says whether it is still there, as the server computes it from its claim
+ *   (`undo`: `available`, `used` once claimed, `none` for an edit or a search with nothing added).
  * - **Projection**: the probable-cause statements in section order; up to three whole
  *   paragraphs (cut as the server cuts them: hard wraps joined, a heading kept with the paragraph
  *   under it) of the factual and analysis sections with
@@ -644,6 +646,32 @@ export class MockEvidence {
     return search;
   }
 
+  /**
+   * Test hook: a search of the given shape, owned by the visitor now asking, as if asked or edited
+   * earlier (no cases, so its page reads empty), with its undo claimed when `undoClaimed`, gone when
+   * `expired`. Returns its id.
+   */
+  seedForTests(fields: Pick<MockSearch, 'question' | 'query' | 'appliedFilters' | 'automaticFilters' | 'edited'> & Partial<Pick<MockSearch, 'undoClaimed' | 'freeUndo' | 'expired'>>): string {
+    const search: MockSearch = {
+      id: this.newId(),
+      suggestion: null,
+      hint: null,
+      note: null,
+      order: 'match',
+      marks: 'search_words',
+      freeUndo: false,
+      lexical: fields.question,
+      undoClaimed: false,
+      cases: [],
+      createdAt: this.now(),
+      owner: this.visitor(),
+      expired: false,
+      ...fields,
+    };
+    this.searches.set(search.id, search);
+    return search.id;
+  }
+
   /** Signing in from a search's page moves it from the trial to the account (the handover). */
   handOver(id: string): void {
     const search = this.searches.get(id);
@@ -653,6 +681,17 @@ export class MockEvidence {
   /** Deleting the account deletes the searches it reads. */
   dropAccountSearches(): void {
     for (const [id, search] of this.searches) if (search.owner === 'account') this.searches.delete(id);
+  }
+
+  /**
+   * The search's undo hint at this read (server/evidence/store.ts `pageOf`): an original question
+   * search with an automatic state or added terms has its one free undo until it is claimed; an
+   * edit, or a search with nothing added, has none.
+   */
+  private undoHint(search: MockSearch): EvidencePage['undo'] {
+    if (search.edited || search.query.source !== 'question') return 'none';
+    if (!search.automaticFilters?.state.length && search.query.keywords.kind === 'question') return 'none';
+    return search.undoClaimed ? 'used' : 'available';
   }
 
   private page(search: MockSearch, n: number): EvidencePage {
@@ -668,6 +707,7 @@ export class MockEvidence {
       order: search.order,
       marks: search.marks,
       freeUndo: search.freeUndo,
+      undo: this.undoHint(search),
       suggestion: search.suggestion,
       hint: search.hint,
       note: search.note,

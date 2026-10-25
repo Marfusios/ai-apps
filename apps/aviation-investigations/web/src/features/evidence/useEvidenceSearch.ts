@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
-import type { CreateEvidenceRequest } from '../../../../shared/contracts/evidence';
+import type { CreateEvidenceRequest, EvidencePage } from '../../../../shared/contracts/evidence';
 import { forgetUnsettled, rememberUnsettled, settleOnArrival, unsettledId, unsettledKey, type AiRequestShape } from '../ai/unsettled';
 import { newIdempotencyKey, useAiRequest } from '../ai/useAiRequest';
 import { VisitorChangedError, visitorGeneration } from '../auth/visitor';
@@ -11,7 +11,7 @@ import { ApiError, isNotFound } from '../../api';
 import { CASES_PARAM } from '../explore/url-state';
 import { expectArrival } from './arrival';
 import { EXPIRED_TITLE, evidencePageKey, evidencePath } from './keys';
-import { rememberEdit } from './undo';
+import { rememberCharged } from './undo';
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
 
@@ -22,8 +22,9 @@ export interface EvidenceEdit {
   /** Take out the terms AirCase added: keyword search reads the question's own words again. */
   keywords?: 'question' | undefined;
   /**
-   * Shown as the search's one free undo (web/src/features/evidence/undo.ts): it is sent while the
-   * visitor's own searches are used up, and the created page's `freeUndo` is checked against it.
+   * Shown as the search's one free undo (its page says `undo: 'available'`,
+   * web/src/features/evidence/undo.ts): it is sent while the visitor's own searches are used up,
+   * and the created page's `freeUndo` is checked against it.
    */
   free?: boolean | undefined;
 }
@@ -118,8 +119,14 @@ export function useEvidenceSearch() {
       const search = result.value.search;
       queryClient.setQueryData(evidencePageKey(search.id, 1), search);
       rememberQuestion(search.id, search.question);
-      // What the edit made, and whether the server took it as the free undo it was shown as.
-      if (shape.kind === 'evidence-edited') rememberEdit(shape.from, search, free);
+      if (shape.kind === 'evidence-edited' && (free || search.freeUndo)) {
+        // The server's word: an undo shown as free that it counted says so on its page.
+        if (free && !search.freeUndo) rememberCharged(search.id);
+        // The edited search's undo hint is read from its claim at every page read: once used, its
+        // cached pages say so at once, and every one is read again.
+        if (search.freeUndo) queryClient.setQueriesData<EvidencePage>({ queryKey: ['evidence', shape.from] }, (page) => (page ? { ...page, undo: 'used' } : page));
+        void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
+      }
       // Settled once the search's page is on screen; until then a reload or a second ask replays the key.
       settleOnArrival(search.id, 'page', id, idempotencyKey);
       const next = new URLSearchParams();

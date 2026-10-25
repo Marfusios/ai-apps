@@ -2,16 +2,18 @@
  * The one free undo of an AI evidence search (contract `evidence.v3`; the server's rule is
  * server/evidence/undo.ts `canUndo`, DESIGN "Evidence.v3"). What AirCase added to a question
  * search on its own (a state the question names, applied as a filter, and the AI's terms in
- * keyword search) can be taken out again without using one of the visitor's searches: once per
- * search, by an edit of the original question search, sending no words of its own, that removes
- * the whole automatic state, the added terms, or both, and changes nothing else. Removing one
- * state of several narrows the search, so that is an ordinary edit. The server decides; the
- * created page's `freeUndo` says what it decided.
+ * keyword search) can be taken out again without using one of the visitor's searches, once per
+ * search. The page says whether that undo is still there (`undo: 'available'`, read from the
+ * server's one-use claim at every page read; `used` once claimed; `none` for an edit or a search
+ * with nothing added). A draft qualifies when it sends no words of its own and removes the whole
+ * automatic state, the added terms, or both, and changes nothing else; removing one state of
+ * several narrows the search, so that is an ordinary edit. The server decides at admission, and the
+ * created page's `freeUndo` says what it decided: the hint is a snapshot, which another tab can
+ * overtake.
  *
- * What a page cannot say, this tab remembers (memory only, forgotten with the visitor,
- * web/src/features/auth/visitor.ts): the searches it made by editing (never an undo's parent),
- * the searches whose free undo it has used, and the searches that used one of the visitor's
- * searches though "free" was shown. A reload forgets them, and the server's answer stands.
+ * This tab remembers only the searches that used one of the visitor's searches though "free" was
+ * shown (memory only, forgotten with the visitor, web/src/features/auth/visitor.ts), so that their
+ * pages can say so.
  *
  * Kept free of the evidence contracts' values and copy, and of the browser: the Ask AI hook,
  * which records what an edit made, loads with the home page, and a Node test holds the rule to
@@ -46,32 +48,15 @@ export interface UndoEdit {
 }
 
 /** What the rule reads of the page being edited. */
-export type UndoParent = Pick<EvidencePage, 'id' | 'query' | 'appliedFilters' | 'automaticFilters' | 'freeUndo' | 'expiresAt'>;
-
-/** What the page cannot say about itself: from this tab's memory (`undoMemoryOf`). */
-export interface UndoKnown {
-  /** This tab made the search by editing another. */
-  edited: boolean;
-  /** Its free undo is used (this tab used it, or the server charged one that looked free). */
-  used: boolean;
-}
+export type UndoParent = Pick<EvidencePage, 'undo' | 'query' | 'appliedFilters' | 'automaticFilters'>;
 
 /**
- * True when the page may be an original question search: the reader's words never replaced the
- * question, it is no undo, and it applies exactly what AirCase applied on its own (a question
- * request carries no filters). An edit that kept the question and only removed filters can look
- * the same; this tab remembers its own (`UndoKnown.edited`), and the server knows the rest.
+ * The server's rule, as the page states it: true when `edit` of `parent` would be its one free
+ * undo. The page's `undo` says the search is an original question search with something added and
+ * its undo unused; the edit must then remove only what was added.
  */
-export function mayBeOriginal(page: Pick<EvidencePage, 'query' | 'appliedFilters' | 'automaticFilters' | 'freeUndo'>): boolean {
-  return page.query.source === 'question' && !page.freeUndo && sameFilters(page.appliedFilters, page.automaticFilters ?? {});
-}
-
-/**
- * The server's rule, as far as this page and this tab can tell: true when `edit` of `parent`
- * would be its one free undo. `now` is when it would be sent (ms since the epoch).
- */
-export function freeUndoRule(parent: UndoParent, edit: UndoEdit, known: UndoKnown, now: number): boolean {
-  if (known.edited || known.used || !mayBeOriginal(parent) || Date.parse(parent.expiresAt) <= now) return false;
+export function freeUndoRule(parent: UndoParent, edit: UndoEdit): boolean {
+  if (parent.undo !== 'available') return false;
   // Words of the reader's own are a new search, even the same words.
   if (edit.terms !== undefined) return false;
   const removedTerms = edit.keywords === 'question' && addedTerms(parent.query) !== null;
@@ -92,24 +77,11 @@ export function freeUndoRule(parent: UndoParent, edit: UndoEdit, known: UndoKnow
 // ---------------------------------------------------------------------------
 // This tab's memory
 
-const editedHere = new Set<string>();
-const usedHere = new Set<string>();
 const chargedHere = new Set<string>();
 
-/** What this tab knows of search `id` beyond its page. */
-export function undoMemoryOf(id: string): UndoKnown {
-  return { edited: editedHere.has(id), used: usedHere.has(id) };
-}
-
-/**
- * An edit of `from` made search `made`. `expectedFree`: the edit was shown as free. The created
- * page's `freeUndo` is the server's word: once `from` has made a free undo, or its undo was
- * refused, every later edit of it uses one of the visitor's searches.
- */
-export function rememberEdit(from: string, made: Pick<EvidencePage, 'id' | 'freeUndo'>, expectedFree: boolean): void {
-  editedHere.add(made.id);
-  if (made.freeUndo || expectedFree) usedHere.add(from);
-  if (expectedFree && !made.freeUndo) chargedHere.add(made.id);
+/** Search `id` was made by an edit shown as free, and the server counted it (its `freeUndo` is false). */
+export function rememberCharged(id: string): void {
+  chargedHere.add(id);
 }
 
 /** True when search `id` was shown as a free undo but used one of the visitor's searches. */
@@ -119,7 +91,5 @@ export function undoWasCharged(id: string): boolean {
 
 /** Forget everything (the visitor changed, web/src/features/auth/visitor.ts; tests). */
 export function forgetUndos(): void {
-  editedHere.clear();
-  usedHere.clear();
   chargedHere.clear();
 }

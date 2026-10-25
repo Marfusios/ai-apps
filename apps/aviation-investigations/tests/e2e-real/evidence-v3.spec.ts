@@ -96,6 +96,8 @@ test('a state the question names is applied and said, the added terms are said, 
   // The question alone was sent: what was applied, the server applied.
   expect(searches(api).map((c) => c.body)).toEqual([{ kind: 'question', question: E2E_QUESTIONS.state, idempotencyKey: expect.any(String), turnstileToken: DUMMY_TOKEN }]);
   await expect(counter(page, 9)).toBeVisible();
+  // The server says the search's one free undo is there.
+  expect(await (await page.request.get(`/api/evidence/${asked}?page=1`)).json()).toMatchObject({ undo: 'available', freeUndo: false });
   // The state, a normal applied chip with its tag; the terms, with the AI's tag.
   await expect(texasChip(page)).toBeVisible();
   await expect(texasChip(page).locator('[data-automatic-tag]')).toHaveText('from your question');
@@ -125,13 +127,15 @@ test('a state the question names is applied and said, the added terms are said, 
   expect(searches(api)[1]?.body).toEqual({ kind: 'edited', from: asked, filters: {}, keywords: 'question', idempotencyKey: expect.any(String), turnstileToken: DUMMY_TOKEN });
   await expect(page.locator('[data-undo-charged]')).toHaveCount(0);
   const page1 = await (await page.request.get(`/api/evidence/${undone}?page=1`)).json();
-  expect(page1).toMatchObject({ freeUndo: true, automaticFilters: null, appliedFilters: {}, query: { source: 'question', keywords: { kind: 'question' } } });
+  expect(page1).toMatchObject({ freeUndo: true, undo: 'none', automaticFilters: null, appliedFilters: {}, query: { source: 'question', keywords: { kind: 'question' } } });
+  // The first search's undo is used now, read from the server's claim.
+  expect(await (await page.request.get(`/api/evidence/${asked}?page=1`)).json()).toMatchObject({ undo: 'used' });
   // It used none of the visitor's searches.
   await expect(counter(page, 9)).toBeVisible();
   await expect(yours(page, true).locator('[data-added-terms], [data-automatic]')).toHaveCount(0);
   await shot(page, 'real-v3-undone-1280-day');
 
-  // Back on the first search: its undo is used, so the next one says it uses one, and the server counts it.
+  // Back on the first search: its page says its undo is used, so the next one says it uses one, and the server counts it.
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/ai/${asked}`));
   await texasChip(page).click();

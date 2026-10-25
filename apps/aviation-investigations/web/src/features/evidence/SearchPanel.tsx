@@ -44,13 +44,14 @@ import {
   UNDO_CHARGED,
   WORDS_LABEL,
   YOUR_SEARCH_LABEL,
+  isEditedSearch,
   sameSearch,
   suggestionInWords,
   withSuggestedFilters,
   yearsInWords,
   type SearchDraft,
 } from './display';
-import { addedTerms, freeUndoRule, mayBeOriginal, undoMemoryOf, undoWasCharged } from './undo';
+import { addedTerms, freeUndoRule, undoWasCharged } from './undo';
 import { useEvidenceSearch } from './useEvidenceSearch';
 
 type FacetLists = Partial<Record<BriefFilterFacet, string[]>>;
@@ -319,7 +320,7 @@ function AiTag() {
 }
 
 export interface SearchPanelProps {
-  search: Pick<EvidencePage, 'id' | 'question' | 'query' | 'appliedFilters' | 'automaticFilters' | 'suggestion' | 'freeUndo' | 'expiresAt'>;
+  search: Pick<EvidencePage, 'id' | 'question' | 'query' | 'appliedFilters' | 'automaticFilters' | 'suggestion' | 'freeUndo' | 'undo'>;
 }
 
 /** What a control of the panel runs: the reader's draft, or the suggestion's filters, filters and words, or words. */
@@ -333,8 +334,9 @@ type Action = 'draft' | 'filters' | 'both' | 'words';
  * the reader can remove (blue), a state AirCase applied because the question names it tagged
  * "from your question". Changing them is free until "Search again" (an `edited` search: exactly
  * those filters, words only when they typed them, `keywords: 'question'` when they took the added
- * terms out); it says "· free" when the draft only removes what AirCase added (the search's one free
- * undo, web/src/features/evidence/undo.ts), else "· uses 1". The same words and filters open in
+ * terms out); it says "· free" when the page says the search's one free undo is there (`undo:
+ * 'available'`) and the draft only removes what AirCase added (web/src/features/evidence/undo.ts),
+ * else "· uses 1". The same words and filters open in
  * Explore as a free keyword search at any time. The suggestion (magenta, dashed, under the
  * contract's "not applied" label) shows what the AI suggests and AirCase did not apply; "Apply these
  * filters" adds them to the search's filters and keeps its words, and only "Apply filters and
@@ -343,9 +345,7 @@ type Action = 'draft' | 'filters' | 'both' | 'words';
 export function SearchPanel({ search }: SearchPanelProps) {
   const added = addedTerms(search.query);
   const current: SearchDraft = { filters: search.appliedFilters, terms: search.query.source === 'edited' ? search.query.terms : null, addedTerms: added?.terms ?? null };
-  const known = undoMemoryOf(search.id);
-  // An edit made here, or one the page shows to be an edit (words, filters of the reader's, an undo).
-  const edited = known.edited || !mayBeOriginal(search);
+  const edited = isEditedSearch(search);
   const [draft, setDraft] = useState<SearchDraft>(current);
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<Action | null>(null);
@@ -358,7 +358,8 @@ export function SearchPanel({ search }: SearchPanelProps) {
   useEffect(() => {
     const target = refocus.current;
     refocus.current = null;
-    if (target === 'words') wordsOpener.current?.focus();
+    // The words' opener is not there while their field is open: "+ Filter" then.
+    if (target === 'words') (wordsOpener.current ?? addButton.current)?.focus();
     else if (target === 'filters') addButton.current?.focus();
   }, [draft]);
   const labelId = useId();
@@ -376,7 +377,7 @@ export function SearchPanel({ search }: SearchPanelProps) {
   // What Search again sends: words only when the reader typed new ones; the question's own keywords once the added terms are out.
   const words = draft.terms !== null && draft.terms !== current.terms ? draft.terms : undefined;
   const keywords = words === undefined && current.addedTerms !== null && draft.addedTerms === null ? ('question' as const) : undefined;
-  const free = changed && freeUndoRule(search, { filters: draft.filters, terms: words, keywords }, known, Date.now());
+  const free = changed && freeUndoRule(search, { filters: draft.filters, terms: words, keywords });
   const suggestion = search.suggestion;
   const suggested = suggestion ? filterChips(suggestion.filters) : [];
   // The block shows only what is still suggested (the server makes a suggestion with nothing left null).
@@ -426,7 +427,8 @@ export function SearchPanel({ search }: SearchPanelProps) {
                 type="button"
                 onClick={() => {
                   setDraft((d) => ({ ...d, addedTerms: null }));
-                  wordsOpener.current?.focus();
+                  // The words' opener is not there while their field is open: "+ Filter" then.
+                  (wordsOpener.current ?? addButton.current)?.focus();
                 }}
                 className={cx(chipButton, 'max-w-full flex-wrap border-blue text-blue hover:bg-blue-wash')}
                 data-added-terms={added.kind}

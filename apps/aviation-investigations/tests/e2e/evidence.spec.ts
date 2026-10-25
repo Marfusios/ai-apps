@@ -336,11 +336,12 @@ for (const [width, theme] of [
     await expect(page.locator('[data-legend]')).toHaveText(/^Marked in the excerpts: your words/);
     await shot(page, `v3-undone-${width}-${theme}`);
 
-    // Back on the first search: its free undo is used, so removing the state again uses one.
+    // Back on the first search: its page says its free undo is used, so removing the state again uses one.
     await page.goBack();
     await expect(page).toHaveURL(parent);
     await page.getByRole('region', { name: 'Your search', exact: true }).getByRole('button', { name: /^Location: Texas/ }).click();
     await expect(page.getByRole('region', { name: 'Your search', exact: true }).getByRole('button', { name: 'Search again · uses 1' })).toBeVisible();
+    await shot(page, `v3-undo-used-${width}-${theme}`);
 
     // Print: the tags, the added terms and the order line; no controls.
     await page.getByRole('region', { name: 'Your search', exact: true }).getByRole('button', { name: 'Undo changes' }).click();
@@ -355,15 +356,20 @@ for (const [width, theme] of [
   });
 }
 
-test('terms instead of the question in keyword search: “Keywords searched”, with its note', async ({ page }) => {
+test('terms instead of the question in keyword search: “Keywords searched”, with its note, on a phone', async ({ page }) => {
   await configure(page, { ranking: 'er-t-v1', autoFilters: 'none' });
-  await open(page, { width: 1280, theme: 'day' });
+  await open(page, { width: 390, theme: 'day' });
   await ask(page, CARB);
   const yours = page.getByRole('region', { name: 'Your search', exact: true });
   await expect(yours.locator('dt').filter({ hasText: 'Keywords searched' })).toBeVisible();
   await expect(yours.locator('[data-keywords-note]')).toHaveText('Keyword search used these terms instead of your question; similarity search still used your question.');
   await expect(page.locator('[data-count-line]')).toHaveText('21 retrieved · highest-ranked first · not every matching investigation');
-  await shot(page, 'v3-keywords-1280-day');
+  await fitsTheWidth(page);
+  // Taking the terms out is the search's free undo.
+  await yours.getByRole('button', { name: /^“carb icing”\s*,\s*added by AI\s*,\s*remove$/ }).click();
+  await expect(yours.getByRole('button', { name: 'Search again · free' })).toBeVisible();
+  await fitsTheWidth(page);
+  await shot(page, 'v3-keywords-390-day');
 });
 
 test('with no searches left the free undo still runs, with the usual check; anything else stays off', async ({ page }) => {

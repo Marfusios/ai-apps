@@ -26,7 +26,7 @@ import { FACET_TITLE, facetValueLabel, type AircraftBrief } from '../../../../sh
 import { formatDate } from '../../../../shared/format';
 import { formatCount, numberWord } from '../../lib/format';
 import { canonicalFilters } from '../ai/unsettled';
-import { addedTerms } from './undo';
+import { addedTerms, sameFilters } from './undo';
 
 export { EVIDENCE_BOUNDARY, EVIDENCE_HEADING, EVIDENCE_NOTE_TEXT, EVIDENCE_NOTICE };
 
@@ -74,6 +74,8 @@ export const KEYWORDS_SEARCHED_NOTE = 'Keyword search used these terms instead o
 /** The small magenta tag on those terms, and what a screen reader hears for it (the chip removes them, like a filter's). */
 export const AI_TAG = 'AI';
 export const AI_TAG_SPOKEN = 'added by AI';
+/** The summary lines' word for the added terms (an empty or tiny result, print): "Also searched (added by AI): “…”". */
+export const ADDED_BY_AI = 'added by AI';
 /** The tag of a filter applied automatically because the question names it, and what a screen reader hears. */
 export const FROM_QUESTION = 'from your question';
 export const FROM_QUESTION_SPOKEN = 'added automatically from your question';
@@ -161,7 +163,7 @@ const MARKED_IN_EXCERPTS: Readonly<Record<MarkedWords, string>> = { suggested: '
  * leading results ordered by AI for relevance · not every matching investigation". Fixed words:
  * never a grade or anything the AI wrote.
  */
-export function countLine(total: number, order: EvidencePage['order'] = 'match'): string {
+export function countLine(total: number, order: EvidencePage['order']): string {
   const ceiling = total >= EVIDENCE_CANDIDATE_CEILING ? ` · the most one search ranks` : '';
   return `${formatCount(total)} retrieved · ${order === 'ai_relevance' ? AI_ORDER : MATCH_ORDER}${ceiling} · not every matching investigation`;
 }
@@ -231,13 +233,26 @@ export function filtersInWords(filters: BriefFilters, automatic: EvidencePage['a
 
 /**
  * What keyword search read, in words, for the lines that sum a search up (an empty or tiny
- * result): "Your question, as asked · Also searched: “carb icing”", or the reader's own words.
+ * result): "Your question, as asked · Also searched (added by AI): “carb icing”", or the reader's
+ * own words.
  */
 export function searchedInWords(search: Pick<EvidencePage, 'question' | 'query'>): string[] {
   if (search.query.source === 'edited') return [`Search words: “${search.query.terms}”`];
   const added = addedTerms(search.query);
   if (!added) return [QUESTION_AS_ASKED];
-  return [QUESTION_AS_ASKED, `${added.kind === 'terms' ? KEYWORDS_SEARCHED_LABEL : ALSO_SEARCHED_LABEL}: “${added.terms}”`];
+  return [QUESTION_AS_ASKED, `${added.kind === 'terms' ? KEYWORDS_SEARCHED_LABEL : ALSO_SEARCHED_LABEL} (${ADDED_BY_AI}): “${added.terms}”`];
+}
+
+/**
+ * Whether the page shows an edited search ("Your edited search"): the reader's own words, an
+ * undo, filters the question did not apply on its own, or added terms on a search without an undo
+ * (an original question search with something added has one, available or used: `undo` is not
+ * `none`). An edit that kept the question alone and has no filter left reads as the question's own
+ * search, as the page cannot tell them apart.
+ */
+export function isEditedSearch(search: Pick<EvidencePage, 'query' | 'appliedFilters' | 'automaticFilters' | 'freeUndo' | 'undo'>): boolean {
+  if (search.undo !== 'none') return false;
+  return search.query.source === 'edited' || search.freeUndo || addedTerms(search.query) !== null || !sameFilters(search.appliedFilters, search.automaticFilters ?? {});
 }
 
 /**

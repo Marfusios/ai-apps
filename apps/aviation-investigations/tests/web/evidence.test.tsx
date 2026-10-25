@@ -390,7 +390,7 @@ describe('the results page', { timeout: 20_000 }, () => {
     const notice = screen.getByRole('note');
     expect(notice.textContent).toBe(EVIDENCE_NOTICE);
     expect(document.querySelector('[data-count-line]')?.textContent).toBe('21 retrieved · highest-ranked first · not every matching investigation');
-    expect(countLine(100)).toBe('100 retrieved · highest-ranked first · the most one search ranks · not every matching investigation');
+    expect(countLine(100, 'match')).toBe('100 retrieved · highest-ranked first · the most one search ranks · not every matching investigation');
     // The marks are the suggested words, and the key says so.
     const legend = document.querySelector('[data-legend]') as HTMLElement;
     expect(legend.getAttribute('data-legend')).toBe('suggested');
@@ -792,8 +792,8 @@ describe('the suggestion is applied only by choice, and the reader edits the sea
     expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: {} });
     expect('terms' in (posts[0] as object)).toBe(false);
     await waitFor(() => expect(document.querySelector('[data-count-line]')?.textContent).toMatch(/^21 retrieved/), SLOW);
-    // An edit this tab made is said to be one, though it kept the question and has no filter left.
-    expect(within(screen.getByRole('region', { name: EDITED_LABEL })).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(0);
+    // An edit that kept the question and has no filter left reads as the question's own search: the page cannot tell them apart.
+    expect(within(screen.getByRole('region', { name: YOUR_SEARCH_LABEL })).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(0);
   });
 
   it('the reader’s own words: ✎ opens the field, Enter keeps, Escape cancels, empty is refused; Search again sends them', async () => {
@@ -1241,7 +1241,7 @@ describe('a result surface shows NTSB text, coded data, fixed copy and the reade
 
   /** What a page may show: its NTSB fields and coded data, said by the deterministic display rules, and fixed copy. */
   function allowed(page: EvidencePage): string {
-    const parts: string[] = [EVIDENCE_HEADING, EVIDENCE_NOTICE, EVIDENCE_BOUNDARY, countLine(page.total), showingLine(page.cases.length, page.total), allShownLine(page.total)];
+    const parts: string[] = [EVIDENCE_HEADING, EVIDENCE_NOTICE, EVIDENCE_BOUNDARY, countLine(page.total, page.order), showingLine(page.cases.length, page.total), allShownLine(page.total)];
     parts.push(showMoreLabel(page.cases.length, page.total, 10), '(free)', 'Marked in the excerpts:', page.suggestion ? LEGEND.suggested : LEGEND.yours, LEGEND.synonym, '; dotted:', '·', expiryLine(page.expiresAt));
     for (const c of page.cases) {
       const row = c.case;

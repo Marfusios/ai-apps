@@ -9,8 +9,8 @@
  * case goes through the server's own projection (`projectCase`) with its retrieval seed
  * narrowed to exactly the old unsafe quotation, as that test does; the page is one
  * `evidence.v3` page of the three (the question alone, in match order, its words marked, nothing
- * applied automatically), validated with the contract and serialized as the routes serialize it
- * (`evidenceJson`).
+ * applied automatically, so no undo), validated with the contract and serialized as the routes
+ * serialize it (`evidenceJson`).
  *
  * The fixture corpus does not have these cases, so their case pages (`contextLossDetail`, for
  * the drawer and Compare) are stand-ins: the case number, the aircraft and the two texts are the
@@ -244,6 +244,7 @@ export function contextLossPage(now = new Date('2026-10-25T08:00:00Z')): Evidenc
     order: 'match',
     marks: 'search_words',
     freeUndo: false,
+    undo: 'none',
     suggestion: null,
     hint: null,
     note: null,
