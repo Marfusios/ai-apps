@@ -1,0 +1,89 @@
+{
+  "version": "task24-fields-c2-construction-v1",
+  "seed": "2026102506",
+  "hashes": {
+    "corpus": "f71ddcae244e1a0c04510cd4adbeaa6472eab0f599259f36c695f8c9b7fab595",
+    "aircraft": "f220ae7c8193afcc3a328a82abf541b415a44bf657ec2803d515fafa0be71422",
+    "exclusions": "c25da9a322810ceec45fa3272af73ed17d1c6bfde62a2e8365699a8195927f6b",
+    "fields": "7dfdf59ab386bee17645f3c3f073dcd3af700aa1ef6cda7c6ab7aa5f8ae3eca6"
+  },
+  "questions": 1600,
+  "freshSeedCases": 1600,
+  "nearDuplicateRejections": [],
+  "strata": {
+    "yearRange": {
+      "positive": {
+        "single": 100,
+        "closed": 100,
+        "lower": 100,
+        "upper": 100
+      },
+      "control": {
+        "negation": 50,
+        "vague_relative": 50,
+        "manufacture_certificate": 50,
+        "publication_rule": 50,
+        "unrelated_multiple": 50,
+        "injection_quotation": 50,
+        "partial_uncertain": 50,
+        "no_event_date": 50
+      }
+    },
+    "category": {
+      "positive": {
+        "PLFT": 4,
+        "ULTR": 11,
+        "BALL": 35,
+        "GLI": 50,
+        "HELI": 150,
+        "AIR": 150
+      },
+      "control": {
+        "negation": 50,
+        "collision": 50,
+        "relationship": 50,
+        "multiple_alternative": 50,
+        "model_only": 50,
+        "incidental_attribution": 50,
+        "injection_quotation": 50,
+        "ambiguous_unspecified": 50
+      }
+    }
+  },
+  "yearCoverage": {
+    "2024": 23,
+    "2008": 40,
+    "2016": 22,
+    "2010": 23,
+    "2018": 19,
+    "2012": 16,
+    "2015": 18,
+    "2022": 23,
+    "2011": 15,
+    "2020": 22,
+    "2019": 21,
+    "2025": 21,
+    "2023": 27,
+    "2014": 14,
+    "2009": 28,
+    "2021": 22,
+    "2013": 17,
+    "2017": 25,
+    "2026": 4
+  },
+  "unsupportedCategories": [
+    "GYRO",
+    "WSFT",
+    "PPAR",
+    "BLIM",
+    "UNK"
+  ],
+  "leakage": {
+    "oldQuestionsChecked": 2219,
+    "normalizedDuplicates": 0,
+    "oldTokenJaccardThreshold": 0.7,
+    "oldTrigramThreshold": 0.8,
+    "stateYearMaskedAlsoChecked": true,
+    "note": "Distinct seed cases; finite wording families are intentionally shared within the new test and are not independent language populations."
+  }
+}

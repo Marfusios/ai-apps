@@ -12,7 +12,8 @@ import type { EvaluationSettings } from './config.js';
 export const TASK_ALLOCATION = 'eval-task24';
 export const TASK_LOCK_KEY = 732400024;
 export const TASK_CAP_MICROS = 30_000_000;
-export const PHASE_CAP_MICROS = { selection: 9_000_000, confirmation: 12_000_000, fields: 3_000_000, narrative: 5_000_000 } as const;
+export const PHASE_CAP_MICROS = { selection: 9_000_000, confirmation: 12_000_000, fields: 3_000_000, narrative: 5_000_000,
+  confirmation2: 8_000_000, fields_c2: 5_000_000 } as const;
 export type Phase = keyof typeof PHASE_CAP_MICROS;
 export interface Totals { chargedMicros: number; openMicros: number; open: number; reservations: number; ledgerMicros: number }
 export class EvaluationError extends Error { override name = 'EvaluationError'; }

@@ -21,4 +21,11 @@ describe('Task 24 cumulative allocation, all phases and providers', () => {
     expect(() => checkAllocation(totals(), totals(), 'fields', 1040 * 2413)).not.toThrow();
     expect(() => checkAllocation(totals(29_997_587), totals(2_997_587), 'fields', 2413)).not.toThrow();
   });
+  it('keeps Part 5 caps separate while counting every earlier Task 24 charge', () => {
+    expect(() => checkAllocation(totals(1_859_745), totals(), 'fields_c2', 1600 * 2413)).not.toThrow();
+    expect(() => checkAllocation(totals(1_859_745), totals(), 'confirmation2', 7_728_000)).not.toThrow();
+    expect(() => checkAllocation(totals(1_859_745), totals(), 'confirmation2', 8_000_001)).toThrow('phase');
+    expect(() => checkAllocation(totals(1_859_745), totals(), 'fields_c2', 5_000_001)).toThrow('phase');
+    expect(() => checkAllocation(totals(29_999_999), totals(), 'fields_c2', 2)).toThrow('$30');
+  });
 });
