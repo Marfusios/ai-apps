@@ -1323,7 +1323,7 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
 | `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
 | `GET /api/ai/status` | `AiStatusResponse` for this visitor ([anonymous gate](#anonymous-gate-and-ai-status)) | `no-store` |
-| `POST /api/evidence` | 201 `results` (page 1), or 200 static `scope_reply`; [evidence view](#ai-evidence-view) | `private, no-store` |
+| `POST /api/evidence` | 201 `results` (page 1), with an optional fixed capability note; [evidence view](#ai-evidence-view) | `private, no-store` |
 | `GET /api/evidence/:id?page=n` | `EvidencePage`, read owner only; free paging | `private, no-store` |
 | `GET /api/evidence/:id/cases/:ntsbNo` | full `CaseDetail` at the pinned generation, canonical section revision IDs; read owner only | `private, no-store` |
 | `POST /api/briefs`, `POST /api/briefs/:id/refine` | `StartBriefResponse` only with `AI_BRIEFS_ENABLED=true`; otherwise 404 ([AI briefs](#ai-briefs)) | `no-store` |
@@ -1623,13 +1623,16 @@ retention are in migrations 0008 and 0009.
   hour and 20 a day anonymously, 30 an hour and 100 a day signed in. One request per
   principal, two in total and one anonymous request can be in flight. A principal whose
   calls of unknown usage today (cancelled or timed out mid-call, each charged at its own
-  worst case) add up to one reservation is refused until 00:00 UTC (429
-  `quota_exhausted`; DESIGN §9, "Uncertain calls"). A full charge after a server failure
+  worst case) add up to one reservation skips advisory scope for evidence searches
+  until 00:00 UTC, with no suggestion or note; other limits remain enforced. The
+  disabled generated-summary pipeline instead refuses with 429 `quota_exhausted`
+  (DESIGN §9, "Uncertain calls"). A full charge after a server failure
   (lease expiry, a step that broke outside its stages) is not counted there.
 - **Quota units.** The unit is taken at admission, so concurrent requests can never
   both use the last trial search. `releaseQuota` gives it back for a reply that must
-  not count (off-topic, operational, nothing spent); the attempt still counts.
-  `recordAttempt` counts an attempt that makes no paid call.
+  not count (a failed evidence search, or a static reply in the disabled summary
+  pipeline); the attempt still counts. Evidence results always count, with or without
+  a capability note. `recordAttempt` counts an attempt that makes no paid call.
 - **Settlement.** `settle` (interactive) and `settleSpend` (indexing, evaluation) need
   the reservation's fencing token and a live lease. They charge the reported usage,
   optionally itemized by provider, model, stage and token counts. A call whose usage is
@@ -1750,25 +1753,37 @@ specific unchecked readings or generated factual prose.
 - `{kind: "question", question, idempotencyKey, turnstileToken?}`: one optional-suggestion
   scope attempt, then one query embedding and retrieval over the default cohort with
   **no model-applied filters**. Scope error, timeout, invalid or over-cap output returns
-  ordinary results with `suggestion: null` and settles any scope spend.
+  ordinary results with `suggestion: null`, `note: null` and settles any scope spend.
 - `{kind: "edited", from, filters, terms?, idempotencyKey, turnstileToken?}`: an owned,
   unexpired search's original question, with exactly the user-supplied filters. Omitted
   `terms` retains the parent's executed query; present `terms` explicitly accepts or
   types a replacement. Applying suggested filters alone never accepts suggested terms.
-  A removed filter stays removed. Edits skip scope and use the current publication.
+  A removed filter stays removed. Edits skip scope, have `note: null`, and use the
+  current publication.
+
+Questions and edited terms containing NUL or lone UTF-16 surrogates are rejected with
+400 before identity, admission or provider calls; valid astral characters are accepted.
 
 A synchronous 201 returns `{kind: "results", search: EvidencePage}`. The page records
 `query: {source: "question"} | {source: "edited", terms}`, `appliedFilters`, nullable
-`suggestion: {filters, terms}` and nullable `hint`. It has no `interpretation` or `edited`
-response field. A filter-only edit may still have `query.source: "question"`.
-Explicit statistics and named-case comparisons add non-blocking hints above results:
-`{kind: "corpus_statistics", filters}` links to the dashboard with applied filters;
-`{kind: "case_comparison", found, notFound}` links up to four case numbers. A single ID,
-a negated comparison or an injected ID list is insufficient. Only explicit off-topic
-or operational-advice requests recognized by the server's conservative versioned
-routing grammar receive static 200 policy replies and no results. Model intents have
-no routing authority. Ambiguous requests keep search available. There is no generated
-answer or clarification fallback. Retrieval/projection failures still return 503.
+`suggestion: {filters, terms}`, nullable `hint` and nullable `note`. It has no
+`interpretation` or `edited` response field. A filter-only edit may still have
+`query.source: "question"`. A validated scope intent selects only a fixed capability note:
+`out_of_scope` → `note: "scope"`; `operational_advice` → `note: "operational_advice"`;
+every other intent, invalid/missing output, timeout or skipped scope → `note: null`.
+Render the fixed `EVIDENCE_NOTE_TEXT[note]`, never model-written policy text. Notes are
+general reminders, not judgments about this question; absence of a note assures nothing.
+The research-only boundary and `EVIDENCE_NOTICE` stay visible unconditionally. No intent
+blocks search or changes ranking, filters, pagination, admission or accounting.
+
+The server's `evidence-hints.v3` grammar supplies navigation hints only:
+`{kind: "corpus_statistics"}` links to the dashboard without filters;
+`{kind: "case_comparison", found, notFound}` links up to four case numbers captured
+by that exact comparison match. A single ID, a negated comparison or an injected ID
+list is insufficient. Hints and notes are independent. Every successful search returns
+201 `results`, including off-topic and operational questions. There is no generated
+answer or clarification fallback. Retrieval/projection failures still return 503;
+normal validation, identity, quota and budget checks remain enforced.
 
 `retrieval.v2` fuses passage BM25, passage similarity and cases narrative BM25, 200
 candidates per channel with the existing fusion and tie ordering. All three channels,
@@ -1816,7 +1831,7 @@ If optional suggestion metadata would exceed the storage budget, it is omitted a
 original query's highlights remain. Canonical text and selection never change to make room.
 
 Each finished, replayable results search counts once; edits count again; paging and
-idempotent retries are free. Static scope replies and failures return the quota unit,
+idempotent retries are free. Failures before a replayable result return the quota unit,
 while actual or uncertain provider spend remains charged. A lost HTTP response can be
 replayed with the original key. Disconnecting does not cancel admitted work; only
 shutdown, account deletion or the 30-second server deadline stops it. A new anonymous POST (including replay) needs a fresh
@@ -1832,7 +1847,12 @@ and 2,500 output tokens, plus a cache-write premium on up to 6,500 prefix tokens
 1,000 embedding tokens. With the repository's Haiku/OpenAI price rows this costs at most
 **$0.0024325**, rounded up to a **$0.0025 reservation**. Edits keep that conservative
 reservation and settle only their embedding. No generation retries run. A scope failure
-only removes the suggestion; successful retrieval still consumes one search unit.
+removes both the suggestion and note; successful retrieval still consumes one search unit.
+Once this principal's uncertain named-call charges reach one reservation in a UTC day,
+new evidence searches skip scope instead of refusing search: no suggestion or note, the
+same full reservation, normal embedding settlement and all other limits still enforced.
+This decision is made under admission's lock and resets at UTC midnight; the disabled
+summary pipeline retains its refusal rule.
 
 `scope.e3` uses the revision1 suggestion prompt, with unchecked readings removed and
 advisory wording. It retains the single-value enum discriminator inside the strict
@@ -1845,14 +1865,18 @@ These are sizing checks, not interpretation-quality clearance.
 Pre-v2 saved searches are not re-labelled or reused as edit parents: reads return 404
 and those private rows expire normally. Migration `0024_evidence_query` makes the stored
 version, query and applied filters immutable even while scope is running. Idempotency
-hashes include the contract version.
+hashes include the contract version. Earlier v2 results remain readable with a null note
+and filter-free statistics hints; old blocking policy replies return 404 rather than
+being re-labelled as results or automatically dispatched again.
 
-Before public launch, freeze the routing grammar, prompt/schema/caps and UI contract,
-then confirm on fresh questions: 100% static-template routing accuracy, zero false
-static blocks on critical searches, zero injection-induced unauthorized behaviour,
-with routing errors and Wilson intervals reported. Track C/N is regression material;
-the earlier failed scope evaluation is not clearance. The excerpt/provenance/UI gates
-also remain required. Generated summaries remain separately gated.
+`scope.e3` is frozen at its evaluated prompt, wire schema, model and settings. The gate
+accepted the recorded confirmation for fixed capability notes, replacing the old
+blocking-policy routing condition; this is not a pass of the earlier failed scope
+quality gate. No new paid suggestion threshold is required for this design. Offline
+regressions must keep retrieval and accounting independent of every intent, invalid
+output, timeout and the recorded injection examples. Before public launch, the final
+server, excerpt/provenance/UI, security, budget and lifecycle gates must still clear.
+Track C/N is regression material. Generated summaries remain separately gated.
 
 `AI_BRIEFS_ENABLED=false` is the default and must stay off while G6 for generated
 summaries is closed. It disables create/refine with 404 even with provider keys present;

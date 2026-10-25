@@ -391,13 +391,21 @@ question; edits skip scope. Scope is revision1 with unchecked readings removed,
 advisory wording and a strict `{result: ...}` envelope around its discriminated union.
 Suggestions are labelled **not applied**, escaped/rendered as text, and never control
 routing or retrieval. The result carries the executed `query`, `appliedFilters`,
-nullable `suggestion` and nullable `hint`; no specific unchecked readings are shown.
-The fixed `EVIDENCE_NOTICE` remains mandatory. Provider errors, timeouts, invalid or
-over-cap scope output remove only the suggestion; retrieval and its quota unit remain.
-Only server-recognized explicit off-topic/operational requests get static policy
-replies. Statistics and comparison requests instead add non-blocking hints; an ID alone
+nullable `suggestion`, nullable `hint` and nullable `note`; no specific unchecked readings
+are shown. The research-only boundary and fixed `EVIDENCE_NOTICE` remain mandatory on
+every surface. A validated `out_of_scope` intent selects the fixed `scope` capability
+note; `operational_advice` selects the fixed operational-advice note. All other intents,
+provider errors, timeouts, invalid/missing or over-cap scope output, and skipped scope
+select no note. Edits always have no note. Render only `EVIDENCE_NOTE_TEXT[note]`: no
+model-written policy text or judgment about the particular question. Absence of a note
+assures nothing. Nothing in scope blocks retrieval, changes its inputs, or alters
+admission, quota counting or accounting. Every successful search returns results.
+
+The server's `evidence-hints.v3` grammar supplies only optional navigation hints:
+statistics without filters, and comparisons naming exactly the matched IDs. An ID alone
 never requests comparison. Ambiguous, negated and injected requests stay ordinary search.
-The versioned server grammar needs fresh routing confirmation before public launch.
+NUL and lone surrogates in questions or edited terms fail with 400 before admission;
+valid astral characters remain supported. Normal security, quota and budget gates apply.
 
 The three-channel `retrieval.v2` ranking stays unchanged (200/channel, exact case RRF,
 deterministic lexical cutoffs; kNN remains approximate). Delivery is separately versioned:
@@ -428,21 +436,22 @@ is bounded at 8 MiB UTF-8 JSON; exceeding it fails without truncation or quota c
 Search ownership and content are read together. Handover changes read ownership once,
 never billing or expiry. Edited requests recheck and lock their source under the same
 account lifecycle protocol. Deletion removes searches and replay references; backups
-omit them. Provider calls settle with result storage in one transaction. Static replies
-and failures return quota units but retain real spend. Crash recovery closes abandoned
-searches and returns their units while charging the reservation conservatively. A
+omit them. Provider calls settle with result storage in one transaction. A failed search
+returns its quota unit but retains real spend; a result with any note counts once.
+Crash recovery closes abandoned searches and returns their units while charging the reservation conservatively. A
 client disconnect leaves admitted work running and replayable; shutdown, deletion
 and the 30-second server deadline can stop it.
 
 Before enabling this path, freeze and review scope/excerpt/pagination versions; replay
 context-loss counterexamples through the actual UI, including required context on the
 initial surface; test exact provenance and no generated factual prose across all views.
-Fresh confirmation must retain 100% static-template routing accuracy, zero false static
-blocks on critical search questions and zero injection-induced unauthorized behaviour;
-report every routing error and Wilson intervals. Freeze `evidence.v2`, `scope.e3` and
-`evidence-routing.v2`. The earlier scope evaluation remains failed; Track C/N supplies
-regressions only. Metamorphic tests vary every model output while holding all three
-retrieval channels, default cohort, ranking, excerpt selection and pagination fixed.
+Freeze `evidence.v2`, the evaluated `scope.e3` prompt/schema/model/settings and the
+server-only `evidence-hints.v3` grammar. The gate accepted the recorded confirmation for
+fixed capability notes instead of blocking policy replies. This does not retroactively
+pass the earlier scope quality evaluation or clear public launch. No new paid suggestion
+threshold is required; final server, excerpt/UI, security, budget and lifecycle checks
+remain required. Track C/N supplies regressions only. Metamorphic tests vary every model
+output while holding all three retrieval channels, default cohort, ranking, excerpt selection and pagination fixed.
 The ordinary result is projected and byte-checked before suggested highlights are added.
 If optional suggestion metadata would exceed the storage budget, it is omitted and the
 original query's highlights remain. Canonical text and selection never change to make room.
@@ -901,13 +910,19 @@ to **$0.0025** per admitted search. These scope caps are independent of `scope.v
 summaries. Edited searches skip scope but keep the conservative reservation; settlement
 releases the unused amount. One attempt per stage, no model or generated-summary fallback.
 A failed scope is charged for known usage or its own worst case when uncertain;
-retrieval continues with no suggestion. Only a search without results refunds its unit.
+retrieval continues with no suggestion or note. Only a search without results refunds its unit.
+If a principal has used its daily uncertain-charge allowance, admission skips evidence
+scope instead of refusing the search. Its suggestion and note are null; the full $0.0025
+reservation, normal embedding settlement and all remaining limits stay in force.
+The allowance resets at UTC midnight. This exception is confined to evidence search;
+the disabled generated-summary pipeline still refuses at that allowance.
 
 Startup derives and validates the evidence reservation. Free `ai-preflight` counts the
 actual `scope.e3` prompt/schema, questions, cache prefix and bounded output: measured
 5,701 fixed / 5,674 cached, 6,192 Latin / 7,190 dense input, 1,118 output, all within caps.
 Repeat against the deployment's frozen settings. No provider calls run in offline tests.
-Fresh routing/quality confirmation is still required. Re-enabling briefs would inherit
+The fixed-note design has separate final server and UI gates; the earlier failed scope
+quality evaluation remains failed. Re-enabling briefs would inherit
 the evidence-sized daily allowances and needs separate quota/cost review. The prices
 below describe the disabled generated-summary pipeline.
 
@@ -1098,8 +1113,8 @@ cancels from one account paused AI for everyone for the day (the review's findin
 **Per principal.** A cancel during the answer stage still costs about three finished
 briefs. So a principal (a trial or an account) whose uncertain lines of the current UTC
 day add up to one reservation (`UNCERTAIN_DAILY_RESERVATIONS`, $0.36 with the Opus answer
-model) is refused further AI requests until 00:00 UTC: admission answers `uncertain_limit`,
-the API 429 `quota_exhausted` with `Retry-After`, nothing reserved and no search taken.
+model) is refused further generated-summary requests until 00:00 UTC: admission answers
+`uncertain_limit`, the API 429 `quota_exhausted` with `Retry-After`, nothing reserved and no search taken.
 That allows at most two answer-stage cancels or timeouts a day (about $0.68, the cost of
 six finished briefs) and some thirty check-stage ones. Only the named calls count (the
 scope, the answer's compose, the check and the query embedding: `UNCERTAIN_CALL_STAGES`).

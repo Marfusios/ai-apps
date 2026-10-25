@@ -48,18 +48,25 @@ settlement. Known embedding usage is captured before downstream failures.
 Evidence scope is `scope.e3`: revision1's suggestion generator with no specific unchecked
 readings, a strict wire envelope and a single-value enum discriminator. Suggestions
 are unapplied text; scope failure emits only the fixed `no_suggestion` category and
-retrieval continues. Known or uncertain scope spend still settles. A model intent cannot
-route or block the request. Server routing (`evidence-routing.v2`) supplies policy replies
-or non-blocking statistics/comparison hints. Counts are literal/synonym occurrences of
-suggested terms (or executed query words), never evidence of question satisfaction.
+retrieval continues with no suggestion or note. Known or uncertain scope spend still
+settles. A validated `out_of_scope` or `operational_advice` intent selects only a fixed
+capability note (`scope` or `operational_advice`); other intents select none. Edits and
+scope skipped by admission's daily uncertain-charge rule have no note. Notes never
+block search or affect retrieval, pagination, admission or accounting; they are stored
+with the private page, not exported as question-derived trace attributes. Server-only
+`evidence-hints.v3` supplies filter-free statistics and captured-ID comparison hints.
+Counts are literal/synonym occurrences of suggested terms (or executed query words), never evidence of question satisfaction.
 
 Before paid evaluation, freeze prompts, models, separate evidence caps, routing guards,
 `paragraphs.v2`, `evidence.v2`, labels, thresholds and the ledger allocation. Require
-fresh confirmation of 100% static-template routing accuracy, zero critical false blocks
-and zero injection-induced unauthorized behaviour; publish errors and Wilson intervals.
-Track C/N supplies regression questions only, and the earlier scope evaluation stays
-failed. Offline metamorphic tests prove that arbitrary output, including invalid output,
-cannot change filters, channels, ranking, canonical excerpts or later pages. UI tests
+the final server and UI review for fixed capability notes. The gate accepted recorded
+confirmation for this narrower design in place of blocking replies; no new paid
+suggestion threshold is required. That decision does not change the earlier failed scope
+quality result. Track C/N supplies regression questions only. Keep the evaluated
+`scope.e3` prompt, schema, model and settings frozen. Offline metamorphic tests replay
+every intent, invalid/missing output, timeout and the two recorded injection examples:
+only the fixed note and optional suggestion may differ; filters, channels, ranking,
+canonical excerpts, later pages and accounting remain independent. UI tests
 must verify the unapplied label, text escaping, explicit term acceptance and fixed notice.
 Context-loss counterexamples must preserve needed context on the initial surface.
 The free provider sizing preflight is separate from these gates. Generated summaries
