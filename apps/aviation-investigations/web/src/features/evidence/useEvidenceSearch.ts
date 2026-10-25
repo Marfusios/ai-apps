@@ -11,16 +11,32 @@ import { ApiError, isNotFound } from '../../api';
 import { CASES_PARAM } from '../explore/url-state';
 import { expectArrival } from './arrival';
 import { EXPIRED_TITLE, evidencePageKey, evidencePath } from './keys';
+import { rememberEdit } from './undo';
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
+
+/** What an edit changes besides its filters. */
+export interface EvidenceEdit {
+  /** The reader's words, accepted or typed; without them the search keeps the earlier query. */
+  terms?: string | undefined;
+  /** Take out the terms AirCase added: keyword search reads the question's own words again. */
+  keywords?: 'question' | undefined;
+  /**
+   * Shown as the search's one free undo (web/src/features/evidence/undo.ts): it is sent while the
+   * visitor's own searches are used up, and the created page's `freeUndo` is checked against it.
+   */
+  free?: boolean | undefined;
+}
 
 /**
  * AI evidence searches (UI_DESIGN §4.9): `ask` sends a question (Ask AI on Home, Explore and
  * the expired page), `edit` a search the reader owns with exactly the filters they chose and,
- * only when they accepted or typed them, words (Search again, Apply). Both are one AI search with
- * the usual Turnstile check, status and sign-in handling (useAiRequest). Nothing blocks a search
- * (contract `evidence.v2`, gate answer 2): the answer is always results, which open the search's
- * page with page 1 already in the cache (the POST answers with it).
+ * only when they accepted or typed them, words, or the question's own keywords when they took out
+ * the terms AirCase added (Search again, Apply). Each is one AI search with the usual Turnstile
+ * check, status and sign-in handling (useAiRequest), except a search's one free undo, which uses
+ * none and is sent while the visitor's own searches are used up (contract `evidence.v3`). Nothing
+ * blocks a search (gate answer 2): the answer is always results, which open the search's page with
+ * page 1 already in the cache (the POST answers with it).
  *
  * The idempotency key is kept for the tab right before the request leaves (write-ahead,
  * web/src/features/ai/unsettled.ts), so a reload or Back while it is on its way loses nothing,
@@ -39,7 +55,7 @@ export function useEvidenceSearch() {
   const cases = params.get(CASES_PARAM);
 
   const send = useCallback(
-    async (shape: EvidenceShape, body: (idempotencyKey: string, turnstileToken: string | null) => CreateEvidenceRequest, keepCompare: boolean): Promise<boolean> => {
+    async (shape: EvidenceShape, body: (idempotencyKey: string, turnstileToken: string | null) => CreateEvidenceRequest, keepCompare: boolean, free = false): Promise<boolean> => {
       // The visitor this search is for, read before anything asynchronous.
       const visitor = visitorGeneration();
       const gone = (): boolean => visitorGeneration() !== visitor;
@@ -74,6 +90,7 @@ export function useEvidenceSearch() {
         earlier
           ? {
               visitor,
+              quotaExempt: free,
               replaying: true,
               // A replay answered 409: the earlier attempt never completed, so send it under a new key.
               onConflict: () => {
@@ -82,7 +99,7 @@ export function useEvidenceSearch() {
                 replayingEarlier = false;
               },
             }
-          : { visitor },
+          : { visitor, quotaExempt: free },
       );
       if (gone() || (!result.ok && result.discarded)) return false;
       if (!result.ok && parentGone) {
@@ -101,6 +118,8 @@ export function useEvidenceSearch() {
       const search = result.value.search;
       queryClient.setQueryData(evidencePageKey(search.id, 1), search);
       rememberQuestion(search.id, search.question);
+      // What the edit made, and whether the server took it as the free undo it was shown as.
+      if (shape.kind === 'evidence-edited') rememberEdit(shape.from, search, free);
       // Settled once the search's page is on screen; until then a reload or a second ask replays the key.
       settleOnArrival(search.id, 'page', id, idempotencyKey);
       const next = new URLSearchParams();
@@ -127,15 +146,27 @@ export function useEvidenceSearch() {
 
   /**
    * An `edited` search of `from` (which the reader owns): exactly `filters`, and `terms` only when
-   * the reader accepted or typed them; without, it keeps `from`'s query (its question, or its words).
+   * the reader accepted or typed them, or `keywords: 'question'` when they took out the terms
+   * AirCase added (never both: words of their own replace the question anyway); without either,
+   * it keeps `from`'s query (its question and keywords, or its words).
    */
   const edit = useCallback(
-    async (from: string, filters: BriefFilters, terms?: string): Promise<boolean> => {
-      const words = terms?.trim() || undefined;
+    async (from: string, filters: BriefFilters, change: EvidenceEdit = {}): Promise<boolean> => {
+      const words = change.terms?.trim() || undefined;
+      const keywords = words === undefined ? change.keywords : undefined;
       return send(
-        { kind: 'evidence-edited', from, filters, terms: words },
-        (idempotencyKey, turnstileToken) => ({ kind: 'edited', from, filters, ...(words !== undefined ? { terms: words } : {}), idempotencyKey, turnstileToken }),
+        { kind: 'evidence-edited', from, filters, terms: words, keywords },
+        (idempotencyKey, turnstileToken) => ({
+          kind: 'edited',
+          from,
+          filters,
+          ...(words !== undefined ? { terms: words } : {}),
+          ...(keywords !== undefined ? { keywords } : {}),
+          idempotencyKey,
+          turnstileToken,
+        }),
         true,
+        change.free === true,
       );
     },
     [send],

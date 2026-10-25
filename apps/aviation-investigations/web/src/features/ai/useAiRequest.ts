@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiStatusResponse } from '../../../../shared/contracts/ai';
 import { ApiError, aiStatusQuery } from '../../api';
 import { VisitorChangedError, forgetVisitor, visitorGeneration } from '../auth/visitor';
-import { askAvailability } from './status';
+import { askAvailability, undoAvailability } from './status';
 import { AiCheckError, useAiCheck, type AiCheckFailure } from './TurnstileGate';
 
 /**
@@ -56,6 +56,12 @@ export interface RunOptions {
    * under, read before any of its asynchronous work; default: when `run` is called.
    */
   visitor?: number;
+  /**
+   * The request uses none of the visitor's own searches (an evidence search's one free undo,
+   * web/src/features/evidence/undo.ts): it is sent while they are used up, with the usual check
+   * (`undoAvailability`). The server decides, and refuses what is not.
+   */
+  quotaExempt?: boolean;
 }
 
 /** A fresh idempotency key for one logical AI request (kept across its retries). */
@@ -159,7 +165,7 @@ export function useAiRequest() {
       if (changed()) return finish(discarded);
       const current = status.data ?? (await queryClient.fetchQuery(aiStatusQuery()).catch(() => undefined));
       if (changed()) return finish(discarded);
-      const availability = askAvailability(current, current === undefined);
+      const availability = options.quotaExempt ? undoAvailability(current, current === undefined) : askAvailability(current, current === undefined);
       const refused = { ok: false, outcomeUnknown: false } as const;
       if (availability.kind === 'paused') return finish(refused, { kind: 'paused', status: availability.status });
       if (availability.kind === 'sign_in') {

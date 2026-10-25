@@ -792,7 +792,8 @@ describe('the suggestion is applied only by choice, and the reader edits the sea
     expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: {} });
     expect('terms' in (posts[0] as object)).toBe(false);
     await waitFor(() => expect(document.querySelector('[data-count-line]')?.textContent).toMatch(/^21 retrieved/), SLOW);
-    expect(within(screen.getByRole('region', { name: YOUR_SEARCH_LABEL })).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(0);
+    // An edit this tab made is said to be one, though it kept the question and has no filter left.
+    expect(within(screen.getByRole('region', { name: EDITED_LABEL })).queryAllByRole('button', { name: /, remove$/ })).toHaveLength(0);
   });
 
   it('the reader’s own words: ✎ opens the field, Enter keeps, Escape cancels, empty is refused; Search again sends them', async () => {

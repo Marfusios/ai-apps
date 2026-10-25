@@ -14,7 +14,7 @@ export type StaticReply = Exclude<ScopeReply, { kind: 'needs_clarification' }>;
 /**
  * Out of scope, operational advice, counting and comparison (UI_DESIGN §4.3 "Scope outcomes",
  * §5): the server's fixed copy and free links for a brief. An evidence search never gets one
- * (contract `evidence.v2`: nothing blocks a search; a note shows above its results instead).
+ * (contract `evidence.v3`: nothing blocks a search; a note shows above its results instead).
  */
 export function StaticScopeReply({ question, reply, className = 'mt-4' }: { question: string; reply: StaticReply; className?: string }) {
   switch (reply.kind) {

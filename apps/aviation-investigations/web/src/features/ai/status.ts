@@ -56,6 +56,25 @@ export function askAvailability(status: AiStatusResponse | undefined, unreadable
 }
 
 /**
+ * What a click can do for an AI evidence search's one free undo (contract `evidence.v3`), which
+ * uses none of the visitor's own searches: it runs while those are used up (a trial's: signed-in
+ * only with `trial_used`; an account's day or month: paused with `daily_cap` or `monthly_cap`),
+ * with the usual Turnstile check, saying "free". Every other state is as for any AI request: a
+ * pause for everyone, the anonymous share, the login-required mode or an unreadable status still
+ * stop it (the server's gate and admission, server/quota/admit.ts).
+ */
+export function undoAvailability(status: AiStatusResponse | undefined, unreadable = false): AskAvailability {
+  const r = status?.remaining;
+  if (status?.state === 'signed_in_only' && status.reason === 'trial_used' && r?.kind === 'trial') {
+    return { kind: 'available', counter: 'free', anonymous: true, firstCheck: !r.started, check: true };
+  }
+  if (status?.state === 'paused' && (status.reason === 'daily_cap' || status.reason === 'monthly_cap') && r?.kind === 'account') {
+    return { kind: 'available', counter: 'free', anonymous: false, firstCheck: false, check: r.check === true };
+  }
+  return askAvailability(status, unreadable);
+}
+
+/**
  * What the counter and Ask AI say when only signed-in AI is open and sign-in is not
  * offered here (Google sign-in not configured): never "sign in" (Task 22 review W-10;
  * Builder copy, for the owner's review). With the login-required mode nobody can ask, so

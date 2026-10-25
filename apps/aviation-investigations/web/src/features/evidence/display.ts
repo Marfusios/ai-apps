@@ -3,8 +3,10 @@
  * the notice, shared/contracts/evidence.ts) and how coded data and counts are said. Nothing here
  * is model text: labels are fixed, values come from the contract's NTSB and coded fields, and
  * the question and typed words are the reader's own. The scope stage's suggestion is shown only
- * under its own label, never applied unless the reader chooses it (contract `evidence.v2`).
- * Copy marked Builder awaits the owner's review.
+ * under its own label, never applied unless the reader chooses it; what AirCase applied on its
+ * own (a state the question names, the AI's terms in keyword search, AI order) is said as such
+ * and can be undone (contract `evidence.v3`). The AI's terms are the only model text shown, always
+ * quoted and labelled. Copy marked Builder awaits the owner's review.
  */
 import { aircraftLetter, aircraftName } from '../../../../shared/case-view';
 import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '../../../../shared/contracts/briefs';
@@ -24,6 +26,7 @@ import { FACET_TITLE, facetValueLabel, type AircraftBrief } from '../../../../sh
 import { formatDate } from '../../../../shared/format';
 import { formatCount, numberWord } from '../../lib/format';
 import { canonicalFilters } from '../ai/unsettled';
+import { addedTerms } from './undo';
 
 export { EVIDENCE_BOUNDARY, EVIDENCE_HEADING, EVIDENCE_NOTE_TEXT, EVIDENCE_NOTICE };
 
@@ -58,6 +61,31 @@ export const APPLY_BOTH = 'Apply filters and terms';
 export const SEARCH_SUGGESTED_TERMS = 'Search these terms';
 /** A draft chip or words the reader has not searched with yet (dashed, and said so). */
 export const NOT_SEARCHED_YET = 'not searched yet';
+
+// ---------------------------------------------------------------------------
+// Builder copy (Task 24, contract `evidence.v3`), for the owner's review: what AirCase added on
+// its own, said as such, and the one free undo.
+
+/** The row of the AI's terms that keyword search read beside the question (`question+terms`)… */
+export const ALSO_SEARCHED_LABEL = 'Also searched';
+/** …or instead of it (`terms`), with a note that similarity search still read the question. */
+export const KEYWORDS_SEARCHED_LABEL = 'Keywords searched';
+export const KEYWORDS_SEARCHED_NOTE = 'Keyword search used these terms instead of your question; similarity search still used your question.';
+/** The small magenta tag on those terms, and what a screen reader hears for it (the chip removes them, like a filter's). */
+export const AI_TAG = 'AI';
+export const AI_TAG_SPOKEN = 'added by AI';
+/** The tag of a filter applied automatically because the question names it, and what a screen reader hears. */
+export const FROM_QUESTION = 'from your question';
+export const FROM_QUESTION_SPOKEN = 'added automatically from your question';
+/** The suggestion's note when AirCase applied something on its own (a state, or terms). */
+export const SUGGESTION_NOTE_AUTOMATIC = 'AI suggested these as well. AirCase applies none of them unless you choose them.';
+/** "Search again · free": an undo of what AirCase added, which uses none of the visitor's searches. */
+export const FREE_COUNTER = 'free';
+/** Said on the search a free-looking undo made when the server counted it after all (its `freeUndo` is false). */
+export const UNDO_CHARGED = 'This search used one of your AI searches.';
+/** The order the count line names: AI's (`order: 'ai_relevance'`), or the match's. */
+export const AI_ORDER = 'leading results ordered by AI for relevance';
+export const MATCH_ORDER = 'highest-ranked first';
 /** Why the suggestion's buttons are off while the reader's own changes wait for Search again. */
 export const DRAFT_PENDING_NOTE = 'Your changes above are not searched yet: search again or undo them before applying the suggestion.';
 /** The hints of an explicit counting or comparison request, shown above the results. */
@@ -70,7 +98,7 @@ export const LOAD_FAILED = 'This AI search didn’t load.';
 export const PAGE_FAILED = 'The next investigations didn’t load.';
 export const EMPTY_TITLE = 'No investigations were retrieved for this search.';
 /** The key to the marks: whose words the excerpts mark, and their synonyms (dotted). */
-export const LEGEND = { yours: 'your words', suggested: 'the suggested terms', synonym: 'their synonyms' } as const;
+export const LEGEND = { yours: 'your words', suggested: 'the suggested terms', searched: 'the words searched', synonym: 'their synonyms' } as const;
 export const FULL_SECTION_GONE = 'This section is no longer in the case record, so it can’t be shown here.';
 export const FULL_SECTION_CHANGED = 'This section has changed since your search, so the excerpt is not marked in it.';
 export const FULL_SECTION_FAILED = 'The full section didn’t load.';
@@ -102,10 +130,12 @@ export function queryWords(search: Pick<EvidencePage, 'question' | 'query'>): st
 }
 
 /**
- * Whose words the excerpts mark and the relevance facts count: the suggestion's when the search
- * has one (contract `evidence.v2`), else the search's own.
+ * Whose words the excerpts mark and the relevance facts count (the server's `marks`): the
+ * suggested terms (`suggested_terms`), or the words searched (`search_words`), which are the
+ * reader's own (their question, or the words they typed) unless AirCase added terms to keyword
+ * search: then they are "the words searched".
  */
-export type MarkedWords = 'yours' | 'suggested';
+export type MarkedWords = 'yours' | 'suggested' | 'searched';
 
 /** What a search's relevance facts are said against: the filters it applied, and whose words it marks. */
 export interface RelevanceContext {
@@ -113,14 +143,27 @@ export interface RelevanceContext {
   marked: MarkedWords;
 }
 
-export function relevanceContext(search: Pick<EvidencePage, 'appliedFilters' | 'suggestion'>): RelevanceContext {
-  return { appliedFilters: search.appliedFilters, marked: search.suggestion ? 'suggested' : 'yours' };
+export function markedWords(search: Pick<EvidencePage, 'marks' | 'query'>): MarkedWords {
+  if (search.marks === 'suggested_terms') return 'suggested';
+  return addedTerms(search.query) ? 'searched' : 'yours';
 }
 
-/** "21 retrieved · highest-ranked first · not every matching investigation" (DESIGN §5: never all matches). */
-export function countLine(total: number): string {
+export function relevanceContext(search: Pick<EvidencePage, 'appliedFilters' | 'marks' | 'query'>): RelevanceContext {
+  return { appliedFilters: search.appliedFilters, marked: markedWords(search) };
+}
+
+/** The relevance facts' word counts, said as whose words they are. */
+const MARKED_IN_EXCERPTS: Readonly<Record<MarkedWords, string>> = { suggested: 'Suggested terms', yours: 'Your words', searched: 'Words searched' };
+
+/**
+ * "21 retrieved · highest-ranked first · not every matching investigation" (DESIGN §5: never all
+ * matches), or, when AI put the leading results in order (`order: 'ai_relevance'`), "21 retrieved ·
+ * leading results ordered by AI for relevance · not every matching investigation". Fixed words:
+ * never a grade or anything the AI wrote.
+ */
+export function countLine(total: number, order: EvidencePage['order'] = 'match'): string {
   const ceiling = total >= EVIDENCE_CANDIDATE_CEILING ? ` · the most one search ranks` : '';
-  return `${formatCount(total)} retrieved · highest-ranked first${ceiling} · not every matching investigation`;
+  return `${formatCount(total)} retrieved · ${order === 'ai_relevance' ? AI_ORDER : MATCH_ORDER}${ceiling} · not every matching investigation`;
 }
 
 /** What a screen reader hears when a search's results open: "21 investigations retrieved." */
@@ -172,27 +215,68 @@ export function facetInWords(filters: BriefFilters, facet: BriefFilterFacet): st
   return `${FACET_TITLE[facet]}: ${values.map((v) => facetValueLabel(facet, v)).join(' or ')}`;
 }
 
-/** Every applied filter in words, years last. */
-export function filtersInWords(filters: BriefFilters): string[] {
-  const words = appliedFacets(filters).map((f) => facetInWords(filters, f));
+/**
+ * Every applied filter in words, years last. With `automatic` (the page's `automaticFilters`),
+ * a facet AirCase applied on its own is tagged: "Location: Texas (from your question)".
+ */
+export function filtersInWords(filters: BriefFilters, automatic: EvidencePage['automaticFilters'] = null): string[] {
+  const words = appliedFacets(filters).map((f) => {
+    const values = (filters as Partial<Record<BriefFilterFacet, string[]>>)[f] ?? [];
+    const tagged = f === 'state' && automatic !== null && values.every((v) => (automatic.state as readonly string[]).includes(v));
+    return tagged ? `${facetInWords(filters, f)} (${FROM_QUESTION})` : facetInWords(filters, f);
+  });
   const years = yearsInWords(filters);
   return years ? [...words, years] : words;
 }
 
-/** The suggestion on one line, under its label (what print keeps of it): "Suggested filters and terms — not applied: Phase: Approach · “carb icing”". */
-export function suggestionInWords(suggestion: NonNullable<EvidencePage['suggestion']>): string {
-  return `${SUGGESTION_LABEL}: ${[...filtersInWords(suggestion.filters), `“${suggestion.terms}”`].join(' · ')}`;
+/**
+ * What keyword search read, in words, for the lines that sum a search up (an empty or tiny
+ * result): "Your question, as asked · Also searched: “carb icing”", or the reader's own words.
+ */
+export function searchedInWords(search: Pick<EvidencePage, 'question' | 'query'>): string[] {
+  if (search.query.source === 'edited') return [`Search words: “${search.query.terms}”`];
+  const added = addedTerms(search.query);
+  if (!added) return [QUESTION_AS_ASKED];
+  return [QUESTION_AS_ASKED, `${added.kind === 'terms' ? KEYWORDS_SEARCHED_LABEL : ALSO_SEARCHED_LABEL}: “${added.terms}”`];
 }
 
-/** A search the reader is changing: its filters, and its words (null: the question as asked). */
+/**
+ * The suggestion on one line, under its label (what print keeps of it): "Suggested filters and
+ * terms — not applied: Phase: Approach · “carb icing”", without terms once they were searched.
+ */
+export function suggestionInWords(suggestion: NonNullable<EvidencePage['suggestion']>): string {
+  return `${SUGGESTION_LABEL}: ${[...filtersInWords(suggestion.filters), ...(suggestion.terms !== null ? [`“${suggestion.terms}”`] : [])].join(' · ')}`;
+}
+
+/** The search's filters with the suggested ones added (Apply): what AirCase applied stays applied. */
+export function withSuggestedFilters(applied: BriefFilters, suggested: BriefFilters): BriefFilters {
+  const out = { ...applied } as Partial<Record<BriefFilterFacet, string[]>> & BriefFilters;
+  for (const facet of BRIEF_FILTER_FACETS) {
+    const values = (suggested as Partial<Record<BriefFilterFacet, string[]>>)[facet] ?? [];
+    if (values.length > 0) out[facet] = [...new Set([...(out[facet] ?? []), ...values])];
+  }
+  if (suggested.yearFrom !== undefined) out.yearFrom = suggested.yearFrom;
+  if (suggested.yearTo !== undefined) out.yearTo = suggested.yearTo;
+  return out;
+}
+
+/**
+ * A search the reader is changing: its filters, its words (null: the question as asked), and
+ * the terms AirCase added to keyword search while they stay (null: none, or removed).
+ */
 export interface SearchDraft {
   filters: BriefFilters;
   terms: string | null;
+  addedTerms: string | null;
 }
 
-/** True when two drafts search the same: the same filters (in any order) and words. */
+/** True when two drafts search the same: the same filters (in any order), words and added terms. */
 export function sameSearch(a: SearchDraft, b: SearchDraft): boolean {
-  return JSON.stringify(canonicalFilters(a.filters)) === JSON.stringify(canonicalFilters(b.filters)) && (a.terms?.trim() ?? null) === (b.terms?.trim() ?? null);
+  return (
+    JSON.stringify(canonicalFilters(a.filters)) === JSON.stringify(canonicalFilters(b.filters)) &&
+    (a.terms?.trim() ?? null) === (b.terms?.trim() ?? null) &&
+    a.addedTerms === b.addedTerms
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -236,8 +320,9 @@ export function termInWords(t: EvidenceRelevance['terms'][number]): string {
 
 /**
  * Why a case is listed, as facts: the applied filters it satisfies, how often each marked word
- * occurs in the excerpts shown, said as the suggested terms or the reader's own words (nothing
- * about words when there is no excerpt to count them in), and the searches that found it.
+ * occurs in the excerpts shown, said as the suggested terms, the reader's own words or the words
+ * searched (nothing about words when there is no excerpt to count them in), and the searches that
+ * found it.
  * "Phase: Approach · Suggested terms in these excerpts: “carburetor” appears 3 times · found by
  * keyword and similarity search".
  */
@@ -250,8 +335,7 @@ export function relevanceParts(relevance: EvidenceRelevance, context: RelevanceC
     if (years) parts.push(years);
   }
   if (hasExcerpts && relevance.terms.length > 0) {
-    const whose = context.marked === 'suggested' ? 'Suggested terms' : 'Your words';
-    parts.push(`${whose} in these excerpts: ${relevance.terms.map(termInWords).join(', ')}`);
+    parts.push(`${MARKED_IN_EXCERPTS[context.marked]} in these excerpts: ${relevance.terms.map(termInWords).join(', ')}`);
   }
   parts.push(channelsInWords(relevance.channels));
   return parts;

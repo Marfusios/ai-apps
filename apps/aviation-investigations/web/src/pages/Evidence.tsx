@@ -21,7 +21,7 @@ import {
   LOAD_FAILED,
   PAGE_FAILED,
   TINY_RESULTS,
-  QUESTION_AS_ASKED,
+  UNDO_CHARGED,
   allShownLine,
   arrivalLine,
   countLine,
@@ -29,6 +29,7 @@ import {
   filtersInWords,
   queryWords,
   relevanceContext,
+  searchedInWords,
   showMoreLabel,
   showingLine,
   tinyTitle,
@@ -39,6 +40,7 @@ import { EvidenceHint } from '../features/evidence/Hint';
 import { SearchPanel } from '../features/evidence/SearchPanel';
 import { takeArrival } from '../features/evidence/arrival';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
+import { undoWasCharged } from '../features/evidence/undo';
 import { MatchLegend } from '../features/evidence/MatchedText';
 import { CapabilityNote, EvidenceNotice } from '../features/evidence/Notice';
 import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
@@ -105,15 +107,19 @@ function Expired({ id }: { id: string }) {
   );
 }
 
-/** An empty or tiny result (UI_DESIGN §4.9): the filters and words the search ran with, and the free way out. */
+/**
+ * An empty or tiny result (UI_DESIGN §4.9): the filters and words the search ran with (a state
+ * AirCase applied on its own tagged "from your question", and the terms it added), and the free
+ * way out.
+ */
 function FewResults({ search }: { search: EvidencePage }) {
   const terms = queryWords(search);
-  const words = filtersInWords(search.appliedFilters);
+  const words = filtersInWords(search.appliedFilters, search.automaticFilters);
   return (
     <div className="card mt-3 px-4 py-3.5" data-few-results="">
       <p className="font-serif text-[18px] leading-tight font-semibold">{search.total === 0 ? EMPTY_TITLE : tinyTitle(search.total)}</p>
-      <p className="mt-1 text-ui text-muted">
-        {words.length > 0 ? `Filters: ${words.join(' · ')}` : 'No filters'} · {search.query.source === 'edited' ? <>Search words: “{terms}”</> : QUESTION_AS_ASKED}
+      <p className="mt-1 text-ui text-muted" data-few-results-search="">
+        {[words.length > 0 ? `Filters: ${words.join(' · ')}` : 'No filters', ...searchedInWords(search)].join(' · ')}
       </p>
       <div className="mt-2.5">
         <Link to={`/explore?${new URLSearchParams({ q: terms }).toString()}`} className={pill}>
@@ -126,12 +132,13 @@ function FewResults({ search }: { search: EvidencePage }) {
 }
 
 /**
- * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only design): the
- * question as asked, what the search ran with (the question, or the reader's own words and
- * filters, editable) and the AI's suggestion beside it, never applied unless the reader chooses
- * it, a hint for an explicit counting or comparison request, a fixed capability note when the
- * question's intent selects one (nothing blocks a search), then the investigations retrieved
- * under the fixed heading and notice, as cards of NTSB text and coded data, highest-ranked first,
+ * The AI evidence view (UI_DESIGN §4.9; contract `evidence.v3`): the question as asked, what the
+ * search ran with (the question, or the reader's own words and filters, editable, and what AirCase
+ * added on its own, said as such and free to undo) and the AI's suggestion beside it, never applied
+ * unless the reader chooses it, a hint for an explicit counting or comparison request, a fixed
+ * capability note when the question's intent selects one (nothing blocks a search), then the
+ * investigations retrieved under the fixed heading and notice, as cards of NTSB text and coded
+ * data, highest-ranked first or with the leading ones in AI's order (the count line says which),
  * ten at a time ("Show more" is free and reads the pinned ranking). The drawer, Compare and print
  * show the same projection and the notice. Every read is the viewer's own; a search that is gone,
  * or not theirs, shows the expired state.
@@ -197,7 +204,8 @@ export function Evidence() {
   // takes focus to its results heading if focus was lost on the way (as a brief's finished step).
   useEffect(() => {
     if (!search || !takeArrival(search.id)) return;
-    announce(arrivalLine(search.total));
+    // A free-looking undo the server counted after all says so (its page says it too).
+    announce(undoWasCharged(search.id) ? `${arrivalLine(search.total)} ${UNDO_CHARGED}` : arrivalLine(search.total));
     if (document.activeElement === document.body || document.activeElement === null) resultsHeading.current?.focus({ preventScroll: true });
   }, [search]);
 
@@ -333,7 +341,7 @@ export function Evidence() {
           <EvidenceNotice className="mt-2" />
           {search.total > 0 && (
             <p className="mt-2.5 text-meta text-muted" data-count-line="">
-              {countLine(search.total)}
+              {countLine(search.total, search.order)}
             </p>
           )}
           {search.total > 0 && <MatchLegend marked={context.marked} className="mt-0.5 mb-2" />}

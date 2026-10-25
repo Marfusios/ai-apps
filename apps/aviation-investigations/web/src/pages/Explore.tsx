@@ -40,7 +40,7 @@ import {
 /**
  * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23; Builder copy for the owner's
  * review): what an AI search does, never a promise to explain or group the results. It searches
- * the question alone (contract `evidence.v2`), so the nudge says when the filters set here stay behind.
+ * the question alone (contract `evidence.v3`), so the nudge says when the filters set here stay behind.
  */
 export const AI_NUDGE = 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.';
 export const AI_NUDGE_FILTERS = 'It searches the question alone, not the filters set here.';
@@ -221,7 +221,7 @@ export function Explore() {
   const state = (location.state ?? {}) as ExploreLocationState;
   const ai = useEvidenceSearch();
   const [askedFrom, setAskedFrom] = useState<'box' | 'nudge'>('box');
-  // An AI search reads the question alone (contract evidence.v2): it applies no filter set here.
+  // An AI search reads the question alone (contract evidence.v3): it applies no filter set here.
   const askAi = (question: string, from: 'box' | 'nudge'): void => {
     setAskedFrom(from);
     void ai.ask(question);
