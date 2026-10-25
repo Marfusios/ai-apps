@@ -307,3 +307,37 @@ Paging and idempotent replays never run a provider. Tracing carries only operati
 metadata (including rerank depth and outcome). Questions, case texts and grades
 are not exported to traces. Saved execution metadata inherits the search's ownership,
 backup exclusion and 24-hour expiry.
+
+
+## Evidence.v3 automatic-state and free-undo boundary (pending review)
+
+The automatic-state policy is frozen/hashed separately from the evaluated rankings.
+Its sole live allowlist entry remains `none`. The v1.1 state guard accepts only a
+complete explicit model-emitted event-state set; new state-named-place rejection
+can only reduce v1's applied set. No other scope filter is applied automatically.
+Scope's evaluated schema remains non-nullable and unchanged despite nullable terms
+in the public remaining suggestion. Private policy/reason/ledger metadata is never
+spread into the strict public page.
+
+The quota exemption is server-owned and bounded to **one admission per original
+question search**. Eligibility requires current ownership, an unexpired results row,
+no explicit terms, removal of at least one automatic addition and no other change.
+Its parent is locked before bucket/spend locks; a write-once parent reservation claim
+commits with the exempt reservation. Concurrent keys, replays, sign-in/handover,
+failed child searches and descendants cannot multiply the exemption. The child has
+no automatic additions and is explicitly marked as edited. Removing a state-OR member
+is a paid narrowing; undo removes the entire automatic state facet. A claim is not
+restored after an admitted search fails, preventing repeated free paid attempts.
+
+An eligible undo can pass exhausted visitor quota, but never bypasses Turnstile,
+principal/network rate limits, concurrency, emergency modes, restore hold, budgets,
+reservation fencing or settlement. The anonymous availability shortcut ignores only
+its advisory `trial_used` outcome for a checked candidate; transactional admission
+rechecks and claims eligibility. Every money gate remains authoritative. The request
+schema refuses a client-supplied freeUndo or automaticFilters field. Account deletion
+and retention remove parent claims with their already excluded private evidence rows.
+The new claim column is private, non-resettable and included in restore privilege checks.
+
+The scope guard is a conservative permission rule, not a proof of semantic safety for
+all language. Relevance and incident interpretation remain research tasks; all public
+filters, lexical changes, AI ordering and mark sources are disclosed and undoable.

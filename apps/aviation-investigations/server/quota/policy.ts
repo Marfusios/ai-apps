@@ -70,7 +70,7 @@ export const LEASE_TTL_MS = 120_000;
 export const UNCERTAIN_DAILY_RESERVATIONS = 1;
 /**
  * The calls that count toward that bound: the named provider calls of a step (scope, the
- * answer's compose, check, the query embedding), each charged at its own worst case. A
+ * answer's compose, check, the query embedding and evidence rerank), each charged at its own worst case. A
  * charge in full that follows a server failure is not the principal's uncertain call and
  * never counts: lease expiry, and a step that broke outside its stages (task 22 re-review N1).
  */

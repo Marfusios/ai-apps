@@ -1,6 +1,6 @@
 import { ScopeReplySchema } from '../../shared/contracts/briefs.js';
 /**
- * The evidence view's contract (`evidence.v2`, shared/contracts/evidence.ts): what a page of a
+ * The evidence view's contract (`evidence.v3`, shared/contracts/evidence.ts): what a page of a
  * stored search may carry, and the refusals that keep generated text and clarification rounds out.
  */
 import { describe, expect, it } from 'vitest';
@@ -37,10 +37,11 @@ const excerpt = {
 } as const;
 
 const page = {
-  version: 'evidence.v2',
+  version: 'evidence.v3',
   id: '0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f',
   question: 'carburetor icing on approach',
-  query: { source: 'question' },
+  query: { source: 'question', keywords: { kind: 'question' } },
+  automaticFilters: null, order: 'match', marks: 'suggested_terms', freeUndo: false,
   appliedFilters: {},
   suggestion: { filters: { phase: ['approach'] }, terms: 'carburetor icing' },
   hint: null,
@@ -54,7 +55,7 @@ const page = {
   cases: [],
 };
 
-describe('evidence.v2 contract', () => {
+describe('evidence.v3 contract', () => {
   it('accepts a page and an excerpt that is exactly its paragraph, with sorted highlights', () => {
     expect(EvidencePageSchema.safeParse(page).success).toBe(true);
     const fixed = { ...excerpt, paragraph: { start: 120, end: 120 + excerpt.text.length } };

@@ -4,7 +4,8 @@
  * 0. The caller's precondition, if any, first (for a signed-in account: its lifecycle lock
  *    and a check that its session still exists, server/auth/lifecycle.ts), before any lock
  *    other accounts share: waiting for one account's lock never stalls another account's
- *    admission. A failure rolls everything back (`signed_out`).
+ *    admission. A failure rolls everything back (`signed_out`). A one-use evidence undo
+ *    then locks its parent and checks exemption eligibility before shared locks.
  * 1. Kill switch, the hold on paid operations after a restore (server/quota/hold.ts), and the
  *    login-required emergency mode for trial principals.
  * 2. Lock the principal, network and global buckets in key order.
@@ -16,15 +17,17 @@
  * 5. Under the spend lock: the monthly and paced daily budgets; then `concurrency` if
  *    the principal already has a request in flight (so a running request never shows
  *    as an exhausted quota); then the principal's quota (trial searches, account
- *    daily/monthly searches), its uncertain charges today (`uncertain_limit`: calls of
+ *    daily/monthly searches, except a validated one-use undo), its uncertain charges today (`uncertain_limit`: calls of
  *    unknown usage, each charged at its own worst case, add up to one reservation;
  *    DESIGN §9, "Uncertain calls"; evidence may instead skip advisory scope), the
  *    anonymous share, and the total and anonymous
  *    in-flight limits (two in total, one anonymous).
- * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
+ * 6. Reserve the request's maximum cost, take one unit of quota (or atomically claim
+ *    the one-use undo with quota_counted=false), and acquire a lease
  *    (`LEASE_TTL_MS`, 120 s) with a fencing token. Commit before any provider call.
  *
- * Lock order: the account's lock (step 0), the bucket rows in key order, the spend lock.
+ * Lock order: the account's lock (step 0), an undo parent's row if applicable, the
+ * bucket rows in key order, the spend lock.
  * Nothing takes buckets or the spend lock and then an account's lock.
  *
  * Lock waits are bounded (2 s) here and in `releaseQuota` and `recordAttempt`; a timeout
@@ -117,6 +120,9 @@ export interface AdmissionInput {
    * admission under way (bounded by its lock wait).
    */
   precondition?: (tx: DbOrTx) => Promise<boolean>;
+  /** Server-owned one-use undo. eligible must lock its parent before bucket/spend locks;
+   * claim runs in this same transaction only after every gate passed and a reservation exists. */
+  quotaExemption?: { eligible: (tx: DbOrTx) => Promise<boolean>; claim: (tx: DbOrTx, reservationId: number) => Promise<void> };
 }
 
 /** Thrown inside the admission's transaction when its precondition fails: rolls everything back. */
@@ -137,6 +143,7 @@ export interface Admission {
   accountingDay: string;
   /** Admission's server-owned decision, never chosen by a scope response or the client. */
   skipScope?: true;
+  quotaExempt?: true;
 }
 
 /** A retry of an admitted request (same principal, key and body): its state, never a new run. */
@@ -357,6 +364,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
       await setLockTimeout(tx);
       // The account's own lock before anything shared (see the module comment).
       if (a.precondition && !(await a.precondition(tx))) throw new PreconditionFailed('admission precondition failed');
+      const exempt = a.quotaExemption ? await a.quotaExemption.eligible(tx) : false;
       const aiSwitch = await readAiSwitch(tx);
       if (!aiSwitch.enabled) return { ok: false, reason: 'global_paused', pause: 'maintenance' };
       // A restored ledger lacks the spend after its backup: nothing paid starts until it is reconciled.
@@ -399,7 +407,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
         principal.kind === 'trial'
           ? await trialQuota(tx, policy, principal, now, account ? countsOf(counts, account.day).requests : 0)
           : accountQuota(policy, principal, counts, account!, now);
-      if (quota) return quota;
+      if (quota && !exempt) return quota;
       const uncertainLimit = (await uncertainChargedMicros(tx, pHash, utcDay(now))) >= reservation * UNCERTAIN_DAILY_RESERVATIONS;
       if (uncertainLimit && a.uncertainAction !== 'skip_scope') {
         return { ok: false, reason: 'uncertain_limit', retryAt: nextUtcMidnight(now) };
@@ -418,7 +426,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
         INSERT INTO reservations (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day,
           quota_counted, request_id, created_at)
         VALUES ('interactive', ${principal.kind}, ${pHash}, ${microsToNumeric(reservation)}::numeric, 'open',
-          ${leaseExpiresAt}, ${accountingDay}::date, true, ${a.requestId ?? null}, ${now})
+          ${leaseExpiresAt}, ${accountingDay}::date, ${!exempt}, ${a.requestId ?? null}, ${now})
         RETURNING id, fencing_token::text AS fencing_token`);
       const row = inserted.rows[0] as { id: string; fencing_token: string };
       const reservationId = Number(row.id);
@@ -438,12 +446,12 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
         WHERE idempotency.expires_at <= ${now}`);
       if (idem.rowCount !== 1) throw new Error('idempotency record changed during admission');
 
-      if (principal.kind === 'trial') {
+      if (principal.kind === 'trial' && !exempt) {
         const used = await tx.execute(sql`
           UPDATE trial_identities SET requests_used = requests_used + 1
           WHERE id = ${principal.id}::uuid AND (${policy.trialDaily === true} OR requests_used < ${l.trialRequests})`);
         if (used.rowCount !== 1) throw new Error('trial identity changed during admission');
-      } else {
+      } else if (principal.kind === 'account') {
         await tx.execute(sql`
           INSERT INTO abuse_records (identity_hash, first_seen_at, last_seen_at, retain_until)
           VALUES (${pHash}, ${now}, ${now}, ${account!.month.expiresAt})
@@ -451,7 +459,8 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
             SET last_seen_at = greatest(abuse_records.last_seen_at, EXCLUDED.last_seen_at),
                 retain_until = greatest(abuse_records.retain_until, EXCLUDED.retain_until)`);
       }
-      await addToBuckets(tx, requestBuckets, 'requests', 1);
+      if (!exempt) await addToBuckets(tx, requestBuckets, 'requests', 1);
+      else await a.quotaExemption!.claim(tx, reservationId);
 
       return {
         ok: true,
@@ -463,6 +472,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
         principal,
         principalHash: pHash,
         accountingDay,
+        ...(exempt ? { quotaExempt: true as const } : {}),
         ...(uncertainLimit ? { skipScope: true as const } : {}),
       };
     });

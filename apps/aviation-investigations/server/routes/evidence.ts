@@ -1,4 +1,7 @@
 /** Private evidence search creation and free pagination. Matched routes enforce network limits. */
+import { autoFilterPolicy, autoFilterIdentity } from '../evidence/auto-filters.js';
+import { canUndo } from '../evidence/undo.js';
+import { disclosedQuery, questionQuery } from '../evidence/disclosure.js';
 import { evidenceRankingConfig, evidenceRankingIdentity } from '../evidence/ranking-config.js';
 import { rankingTexts, vectorText } from '../evidence/pipeline.js';
 import { evidenceJson } from '../evidence/routing.js';
@@ -95,7 +98,8 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const pinned = await ctx.datasets.current().catch(() => null);
     if (!pinned?.passages?.servable || !pinned.manifest.passagesIndex || !(await svc.retriever.available(pinned))) return sendError(reply, 503, 'unavailable');
     if (svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
-    const billed = await billing(ctx, runtime, request, reply, who, body.turnstileToken);
+    const undoCandidate = body.kind === 'edited' && parent !== null && canUndo(parent, body, ai.now());
+    const billed = await billing(ctx, runtime, request, reply, who, body.turnstileToken, undoCandidate);
     if (!billed.ok) return billed.reply;
     who = billed.who;
     if (svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
@@ -106,7 +110,18 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     try {
       admitted = await admitPaidRequest(ctx.db, { policy: ai.policy, principal: payer.principal, networkId: payer.networkId,
         idempotencyKey: body.idempotencyKey, requestHash, reservationUsd, uncertainAction: 'skip_scope', requestId: `evidence:${randomUUID()}`, now: ai.now(),
-        ...(payer.account ? { precondition: (tx) => lockLiveAccount(tx, payer.account!) } : {}) });
+        ...(payer.account ? { precondition: (tx) => lockLiveAccount(tx, payer.account!) } : {}),
+        ...(body.kind === 'edited' ? { quotaExemption: {
+          eligible: async (tx) => {
+            const source = await readOwnedSearch(tx, body.from, readersOf(who), ai.now(), true);
+            return source !== null && canUndo(source, body, ai.now());
+          },
+          claim: async (tx, reservationId) => {
+            const claimed = await tx.update(evidenceSearches).set({ freeUndoReservationId: reservationId })
+              .where(and(eq(evidenceSearches.id, body.from), sql`${evidenceSearches.freeUndoReservationId} IS NULL`)).returning({ id: evidenceSearches.id });
+            if (claimed.length !== 1) throw new Error('evidence undo claim conflict');
+          },
+        } } : {}), });
     } catch (err) {
       if (err instanceof UnknownPrincipalError) return sendError(reply, 403, 'challenge_required');
       throw err;
@@ -154,17 +169,19 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
         const legacyQuery = source?.data.query.source === 'edited' ? source.data.query.terms : question;
         const inherited = source?.data.executed ?? rankingTexts(legacyQuery, null, evidenceRankingConfig()).executed;
         const executed = body.kind === 'question' ? rankingTexts(question, null, ranking).executed :
-          body.terms === undefined ? inherited : { lexical: vectorText(body.terms), vector: vectorText(body.terms) };
+          body.keywords === 'question' ? rankingTexts(question, null, evidenceRankingConfig()).executed : body.terms === undefined ? inherited : { lexical: vectorText(body.terms), vector: vectorText(body.terms) };
         const lexicalSource = body.kind === 'question' ? rankingTexts(question, null, ranking).lexicalSource :
-          body.terms === undefined ? source!.data.lexicalSource ?? (source!.data.query.source === 'question' ? 'question' : 'terms') : 'terms';
+          body.keywords === 'question' ? 'question' : body.terms === undefined ? source!.data.lexicalSource ?? (source!.data.query.source === 'question' ? 'question' : 'terms') : 'terms';
         const inserted = await insertSearch(tx, {
           readOwner: principalHash(ai.policy!, payer.principal), readOwnerKind: payer.principal.kind,
           billingPrincipal: admission.principalHash, billingKind: payer.principal.kind, reservationId: admission.reservationId,
           generationId: pinned.manifest.generationId, casesIndex: pinned.manifest.casesIndex, passagesIndex: pinned.manifest.passagesIndex!, now: ai.now(),
-          data: { executed, lexicalSource, rankingConfig: evidenceRankingIdentity(ranking),
+          data: { automaticFilters: null, marks: 'search_words', freeUndo: admission.quotaExempt === true,
+            autoFilterPolicy: autoFilterIdentity(ai.evidenceAutoFilters ?? autoFilterPolicy()), autoFilterReason: body.kind === 'edited' ? 'edited' : 'scope_unavailable',
+            executed, lexicalSource, rankingConfig: evidenceRankingIdentity(ranking),
             scopeOutcome: 'skipped', rerankOutcome: ranking.rerank ? 'not_run' : 'disabled', question, edited: body.kind === 'edited',
             version: EVIDENCE_CONTRACT_VERSION,
-            query: body.kind === 'question' ? { source: 'question' } : body.terms === undefined ? source!.data.query : { source: 'edited', terms: body.terms },
+            query: body.kind === 'question' || body.keywords === 'question' ? questionQuery(question) : body.terms === undefined ? disclosedQuery(source!.data) : { source: 'edited', terms: body.terms },
             appliedFilters: body.kind === 'edited' ? body.filters : {}, suggestion: null, hint: null, note: null,
             context: { dataset: pinned.dataset, citationTextVersion: pinned.manifest.citationTextVersion,
               fieldNormalizationVersion: pinned.fieldNormalizationVersion, mappingVerified: pinned.manifest.mappingVerified } },

@@ -2362,3 +2362,12 @@ The hashed highlight policy preserves Task 23 suggestion highlights for the base
 every alternative uses executed lexical words. The existing mock/UI descriptions above
 describe Task 23; the controller's planned `evidence.v3` must disclose applied terms
 and AI ordering before any alternative is allowed on live.
+
+
+Evidence.v3 adds server-owned disclosures for executed keywords, automatically applied
+state, ordering, mark source and a one-use quota-free undo. Automatic filtering is
+independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default and only
+live-allowed policy; the guarded state option is available on dev. See
+[the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migration
+0025, the matching client, rollback and accounting. Existing v2 records upgrade on
+read; the original scope.e3 wire schema and all evaluated ranking hashes are unchanged.

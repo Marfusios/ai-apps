@@ -575,7 +575,32 @@ No reindex or data migration is needed.
 
 Non-baseline live deployment additionally requires a reviewed code allowlist change,
 evaluation/gate approval and the controller's `evidence.v3` disclosure. This server
-work changes no public response contract and grants none of those clearances.
+work supplies the v3 contract below but grants none of those release clearances.
+
+### Evidence automatic filters and v3 rollout
+
+`AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default) or
+`state-explicit.v1.1` (dev only until reviewed into the live allowlist). Unknown values
+fail startup. This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
+it does not change any evaluated ranking hash. The Docker service passes it through.
+Each saved search records both configuration identities. No reindex is needed.
+
+Apply migration 0025 before serving v3. Deploy the matching evidence.v3 web client;
+the older client and MSW fixtures require the controller's parallel update. The
+server now discloses lexical keywords, automatic state, actual order and mark source,
+remaining suggestions, and the `freeUndo` result. v2 stored pages upgrade on read;
+pre-v2 pages remain unavailable. Roll back automatic state by setting
+`AVIATION_EVIDENCE_AUTO_FILTERS=none` and recreating the service. Saved pages retain
+their own facts; new edits use explicit filters only. Do not roll back the database
+schema or old private result data to disable this policy.
+
+Free undo is allowed once per original question, even at a visitor quota limit.
+Its attempt, concurrency, Turnstile and money checks are unchanged. The parent claim
+is taken atomically at admission and is not reset after a downstream failure; retries
+with the same key replay that request, while a new key is an ordinary charged edit.
+Confirm quota_counted=false for the free request and normal ledger settlement. No
+public request field can ask for free quota directly. A release still needs the ranking
+and automatic-filter allowlist decisions; this implementation enables neither on live.
 
 ### Retrieval version
 

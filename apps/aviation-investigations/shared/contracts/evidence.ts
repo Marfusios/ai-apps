@@ -1,14 +1,15 @@
-/** Advisory evidence search: only the question and explicit user edits control retrieval.
- * Suggestions are unapplied, untrusted text. Render them as labelled text, never HTML.
+/** Evidence search with explicit disclosures of applied state, keywords, ordering and marks.
+ * Remaining suggestions are unapplied, untrusted text. Render them as labelled text, never HTML.
  * Every surface keeps EVIDENCE_NOTICE. Canonical paragraphs and cause variants are unchanged.
  */
 import { z } from 'zod';
 import { BRIEF_FILTER_FACETS, BriefFiltersSchema, IdempotencyKeySchema, QuestionSchema, TurnstileTokenSchema } from './briefs.js';
+import { AUTOMATIC_STATE_CODES } from '../state-eligibility.js';
 import { ReportLinkSchema } from './cases.js';
 import { NtsbNoSchema, Sha256Schema } from './common.js';
 import { CaseRowSchema, SectionKindSchema, SpanSchema } from './search.js';
 
-export const EVIDENCE_CONTRACT_VERSION = 'evidence.v2';
+export const EVIDENCE_CONTRACT_VERSION = 'evidence.v3';
 export const EVIDENCE_PAGE_SIZE = 10;
 /** Retrieval ranks at most this many cases for one search (10 pages). */
 export const EVIDENCE_CANDIDATE_CEILING = 100;
@@ -49,14 +50,22 @@ export const EVIDENCE_NOTE_TEXT: Readonly<Record<EvidenceNote, string>> = {
 };
 export const EvidenceSearchIdSchema = z.uuid();
 export type EvidenceSearchId = z.infer<typeof EvidenceSearchIdSchema>;
-export const EvidenceSuggestionSchema = z.strictObject({
-  filters: BriefFiltersSchema,
-  terms: z.string().min(1).max(MAX_TERMS_CHARS).regex(/\S/, 'the search terms are empty'),
-});
+export const EvidenceTermsSchema = z.string().min(1).max(MAX_TERMS_CHARS).regex(/\S/, 'the search terms are empty');
+/** Frozen model-facing shape: scope.e3 is evaluated independently of the public contract. */
+export const EvidenceScopeSuggestionSchema = z.strictObject({ filters: BriefFiltersSchema, terms: EvidenceTermsSchema });
+export type EvidenceScopeSuggestion = z.infer<typeof EvidenceScopeSuggestionSchema>;
+export const EvidenceSuggestionSchema = z.strictObject({ filters: BriefFiltersSchema, terms: EvidenceTermsSchema.nullable() });
+export const EvidenceAutomaticFiltersSchema = z.strictObject({ state: z.array(z.enum(AUTOMATIC_STATE_CODES)).min(1).max(AUTOMATIC_STATE_CODES.length) });
+export type EvidenceAutomaticFilters = z.infer<typeof EvidenceAutomaticFiltersSchema>;
+export const EvidenceKeywordsSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('question') }),
+  z.strictObject({ kind: z.literal('question+terms'), terms: EvidenceTermsSchema }),
+  z.strictObject({ kind: z.literal('terms'), terms: EvidenceTermsSchema }),
+]);
 export type EvidenceSuggestion = z.infer<typeof EvidenceSuggestionSchema>;
 export const EvidenceQuerySchema = z.discriminatedUnion('source', [
-  z.strictObject({ source: z.literal('question') }),
-  z.strictObject({ source: z.literal('edited'), terms: EvidenceSuggestionSchema.shape.terms }),
+  z.strictObject({ source: z.literal('question'), keywords: EvidenceKeywordsSchema }),
+  z.strictObject({ source: z.literal('edited'), terms: EvidenceTermsSchema }),
 ]);
 export type EvidenceQuery = z.infer<typeof EvidenceQuerySchema>;
 export const EvidenceHintSchema = z.discriminatedUnion('kind', [
@@ -79,10 +88,11 @@ export const CreateEvidenceRequestSchema = z.discriminatedUnion('kind', [
     kind: z.literal('edited'),
     from: EvidenceSearchIdSchema,
     filters: BriefFiltersSchema,
-    terms: EvidenceSuggestionSchema.shape.terms.optional(),
+    terms: EvidenceTermsSchema.optional(),
+    keywords: z.literal('question').optional(),
     idempotencyKey: IdempotencyKeySchema,
     turnstileToken: TurnstileTokenSchema,
-  }),
+  }).refine(v => v.terms === undefined || v.keywords === undefined, { message: 'terms and keywords cannot be combined', path: ['keywords'] }),
 ]);
 export type CreateEvidenceRequest = z.infer<typeof CreateEvidenceRequestSchema>;
 
@@ -184,6 +194,10 @@ export const EvidencePageSchema = z.strictObject({
   question: QuestionSchema,
   query: EvidenceQuerySchema,
   appliedFilters: BriefFiltersSchema,
+  automaticFilters: EvidenceAutomaticFiltersSchema.nullable(),
+  order: z.enum(['ai_relevance', 'match']),
+  marks: z.enum(['suggested_terms', 'search_words']),
+  freeUndo: z.boolean(),
   suggestion: EvidenceSuggestionSchema.nullable(),
   hint: EvidenceHintSchema.nullable(),
   /** A fixed capability reminder selected by the validated scope intent, or null (also for edits). */

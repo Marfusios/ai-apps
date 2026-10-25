@@ -1,4 +1,7 @@
 /** Real canonical rows, production retrieval, fake embeddings/scope, no provider network. */
+import type { EvidenceAutoFilterVersion } from '../../shared/evidence-auto-filters.js';
+import { autoFilterIdentity } from '../../server/evidence/auto-filters.js';
+import { suggestedHighlights } from '../../server/evidence/project.js';
 import type { EvidenceRankingVersion } from '../../shared/evidence-ranking.js';
 import { evidenceRankingIdentity } from '../../server/evidence/ranking-config.js';
 import scopeReplays from '../support/evidence-scope-replays.json' with { type: 'json' };
@@ -43,10 +46,10 @@ let db: Db, ingest: Db, migrator: Db, es: Client, writer: Client, dataset: Fixtu
 let clock: Date;
 const now = () => clock;
 const nextMinute = () => { clock = new Date(clock.getTime() + 61_000); };
-const configs = () => loadConfig({ files: [], env: {
+const configs = (env: Record<string, string> = {}) => loadConfig({ files: [], env: {
   NODE_ENV: 'test', APP_ENV: 'dev', APP_URL: `https://${host}`, AI_LLM_PROVIDER: 'fake',
   IDENTITY_HMAC_SECRET: 'evidence-test-identity-key-012345678901', IP_HMAC_SECRET: 'evidence-test-network-key-012345678901',
-  TURNSTILE_SITE_KEY: REAL_SITE_KEY, TURNSTILE_SECRET_KEY: REAL_SECRET,
+  TURNSTILE_SITE_KEY: REAL_SITE_KEY, TURNSTILE_SECRET_KEY: REAL_SECRET, ...env,
 } });
 const success = { intent: 'case_search' as const, filters: {}, terms: 'engine power loss maintenance' };
 const harnesses: { app: ReturnType<typeof buildApp> }[] = [];
@@ -59,8 +62,9 @@ afterEach(async () => { vi.restoreAllMocks(); for (const h of harnesses.splice(0
 afterAll(async () => { await resetControls(); await deleteIndices(writer, prefix); await resetCorpus();
   await Promise.all([closeDb(db), closeDb(ingest), closeDb(migrator), es.close(), writer.close()]); });
 
-function harness(script: FakeScript = { evidenceScope: { output: success } }, wrap?: (r: EvidenceRetriever) => EvidenceRetriever, ranking?: EvidenceRankingVersion) {
-  const config = configs();
+function harness(script: FakeScript = { evidenceScope: { output: success } }, wrap?: (r: EvidenceRetriever) => EvidenceRetriever, ranking?: EvidenceRankingVersion, options: { autoFilters?: EvidenceAutoFilterVersion; env?: Record<string, string> } = {}) {
+  const config = configs(options.env);
+  if (options.autoFilters) config.ai.evidenceAutoFilters = options.autoFilters;
   if (ranking) config.ai.evidenceRanking = ranking;
   const verify = new FakeSiteverify(now, { hostname: host, action: 'ask-ai' });
   const llm = createFakeProvider(script);
@@ -586,7 +590,7 @@ describe('advisory isolation', () => {
       const p2 = EvidencePageSchema.parse((await h.get(page.id, 2)).json());
       baseline ??= invariant(page); second ??= invariant(p2);
       expect(invariant(page)).toEqual(baseline); expect(invariant(p2)).toEqual(second);
-      expect(page.query).toEqual({ source: 'question' }); expect(page.appliedFilters).toEqual({}); expect(page.hint).toBeNull();
+      expect(page.query).toEqual({ source: 'question', keywords: { kind: 'question' } }); expect(page.appliedFilters).toEqual({}); expect(page.hint).toBeNull();
       expect(page.cases.every(c => c.relevance.filters.length === 0)).toBe(true);
       const expectedNote = i === 2 ? 'scope' : i === 3 ? 'operational_advice' : null;
       expect(page.note).toBe(expectedNote); expect(p2.note).toBe(expectedNote);
@@ -695,7 +699,7 @@ describe('advisory isolation', () => {
         await expect(db.execute(sql`UPDATE evidence_searches SET data = jsonb_set(data, ARRAY[${key}], ${JSON.stringify(value)}::jsonb) WHERE status = 'running'`)).rejects.toThrow();
       }
     } finally { release(); }
-    expect(searchOf(await req).query).toEqual({ source: 'question' });
+    expect(searchOf(await req).query).toEqual({ source: 'question', keywords: { kind: 'question' } });
   });
   it('a scope deadline falls back to retrieval while preserving the outer request', async () => {
     const h = harness({ evidenceScope: async (_input, ctx) => {
@@ -713,7 +717,7 @@ describe('advisory isolation', () => {
     } }));
     const first = searchOf(await h.request()); nextMinute();
     const edited = searchOf(await h.request({ kind: 'edited', question: undefined, from: first.id, filters: { state: ['CA'] } })); nextMinute();
-    expect(edited.query).toEqual({ source: 'question' }); expect(edited.suggestion).toBeNull();
+    expect(edited.query).toEqual({ source: 'question', keywords: { kind: 'question' } }); expect(edited.suggestion).toBeNull();
     const cleared = searchOf(await h.request({ kind: 'edited', question: undefined, from: edited.id, filters: {} })); nextMinute();
     expect(cleared.appliedFilters).toEqual({});
     const accepted = searchOf(await h.request({ kind: 'edited', question: undefined, from: cleared.id, filters: {}, terms: 'carb icing' })); nextMinute();
@@ -731,7 +735,7 @@ describe('advisory isolation', () => {
   ])('no comparison hint for an ordinary/negated/injected lookup: %s', async question => {
     const h = harness({ evidenceScope: { output: { intent: 'case_comparison', filters: {} } } });
     const page = searchOf(await h.request({ question }));
-    expect(page.hint).toBeNull(); expect(page.query).toEqual({ source: 'question' });
+    expect(page.hint).toBeNull(); expect(page.query).toEqual({ source: 'question', keywords: { kind: 'question' } });
   });
 });
 
@@ -742,7 +746,7 @@ describe('evidence ranking selection and persistence', () => {
       rerank: input => ({ output: { grades: input.cases.map(c => ({ id: c.id, grade: 2 })) } }),
     }, actual => ({ ...actual, search: async (...args) => { plans.push(args[1]); return actual.search(...args); } }), 'er-t-h50-v1');
     const page = searchOf(await h.request({ question: 'Find  engine\n failures' }));
-    const query = kind === 'question' ? { source: 'question' } : { source: 'edited', terms: 'carb  icing' };
+    const query = kind === 'question' ? { source: 'question', keywords: { kind: 'question' } } : { source: 'edited', terms: 'carb  icing' };
     // Completed searches cannot be edited in place. This represents a real historical v2 row.
     const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
       (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
@@ -830,5 +834,195 @@ describe('evidence ranking selection and persistence', () => {
     expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence search did not finish')).toMatchObject({ stage: 'retrieval', outcome: 'failed' });
     expect(h.logs.join('')).not.toContain('SENTINEL_UPSTREAM');
     expect(h.llm.calls.map(c => c.stage)).toEqual(['scope']);
+  });
+});
+
+describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
+  const stateScope = { intent: 'case_search' as const, filters: { state: ['CA'] }, terms: 'engine' };
+  const stateQuestion = 'Find engine power loss in California';
+  const withState = (env: Record<string, string> = {}) => harness({ evidenceScope: { output: stateScope } }, undefined, 'er-t-v1', { autoFilters: 'state-explicit.v1.1', env });
+  const undoBody = (id: string, changes: Record<string, unknown> = {}) => ({ kind: 'edited', question: undefined, from: id, filters: {}, ...changes });
+  const stored = async (id: string) => (await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, id)))[0]!;
+
+  it('applies only guarded state before retrieval, removes it from suggestions and persists both identities', async () => {
+    const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
+    const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: ['CA'], yearFrom: 2019 } } } },
+      r => ({ ...r, search: async (...args) => { plans.push(args[1]); return r.search(...args); } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.1' });
+    const page = searchOf(await h.request({ question: stateQuestion }));
+    expect(plans[0]).toMatchObject({ filters: { state: ['CA'] }, keywordText: 'engine', text: stateQuestion });
+    expect(page).toMatchObject({ version: 'evidence.v3', appliedFilters: { state: ['CA'] }, automaticFilters: { state: ['CA'] },
+      query: { source: 'question', keywords: { kind: 'terms', terms: 'engine' } }, order: 'match', marks: 'search_words', freeUndo: false,
+      suggestion: { filters: { yearFrom: 2019 }, terms: null } });
+    expect((await stored(page.id)).data).toMatchObject({ autoFilterPolicy: autoFilterIdentity(h.ai.evidenceAutoFilters),
+      rankingConfig: evidenceRankingIdentity(h.ai.evidenceRanking), autoFilterReason: 'applied' });
+    expect(page).not.toHaveProperty('autoFilterPolicy'); expect(page).not.toHaveProperty('autoFilterReason');
+    nextMinute();
+    const edited = searchOf(await h.request(undoBody(page.id, { filters: { state: ['NV'] } })));
+    expect(edited).toMatchObject({ automaticFilters: null, appliedFilters: { state: ['NV'] }, freeUndo: false, suggestion: null });
+    expect(plans[1]).toMatchObject({ filters: { state: ['NV'] }, keywordText: 'engine', text: stateQuestion });
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope']);
+  });
+  it.each(['Kansas City', 'Michigan City', 'the Mississippi River', 'Iowa City'])('abstains on %s and retains its state as an unapplied suggestion', async location => {
+    const states: Record<string, string> = { 'Kansas City': 'KS', 'Michigan City': 'MI', 'the Mississippi River': 'MS', 'Iowa City': 'IA' };
+    const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: [states[location]!] } } } }, undefined, undefined, { autoFilters: 'state-explicit.v1.1' });
+    const page = searchOf(await h.request({ question: `Find cases in ${location}` }));
+    expect(page.automaticFilters).toBeNull(); expect(page.appliedFilters).toEqual({});
+    expect(page.suggestion?.filters.state).toEqual([states[location]]);
+    expect((await stored(page.id)).data).toMatchObject({ autoFilterReason: 'ambiguous_context' });
+  });
+  it.each(['er-q-v1', 'er-q-h50-v1'] as const)('wires %s highlights through runEvidence, not merely a helper', async ranking => {
+    const raw: Awaited<ReturnType<EvidenceRetriever['search']>>[] = [];
+    const h = harness({ evidenceScope: { output: { ...success, terms: 'engine' } }, rerank: input => ({ output: { grades: input.cases.map(c => ({ id: c.id, grade: 2 })) } }) },
+      r => ({ ...r, search: async (...args) => { const result = await r.search(...args); raw.push(structuredClone(result)); return result; } }), ranking);
+    const page = searchOf(await h.request({ question: 'Find power loss' }));
+    expect(page.total).toBeGreaterThan(0);
+    expect(page.marks).toBe(ranking === 'er-q-v1' ? 'suggested_terms' : 'search_words');
+    expect(page.order).toBe(ranking === 'er-q-v1' ? 'match' : 'ai_relevance');
+    expect(page.cases).toEqual(raw[0]!.cases.slice(0, 10).map(c => ranking === 'er-q-v1' ? suggestedHighlights(c, 'engine') : c));
+  });
+  it.each(['state', 'terms', 'both'] as const)('undoes %s without a quota unit, pays the real calls, and cannot make descendants free', async removal => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    const body = undoBody(page.id, { filters: removal === 'terms' ? page.appliedFilters : {}, ...(removal === 'state' ? {} : { keywords: 'question' }) });
+    const key = randomUUID(), before = await spent();
+    const child = searchOf(await h.request(body, key));
+    expect(child.freeUndo).toBe(true); expect(child.automaticFilters).toBeNull(); expect(child.suggestion).toBeNull();
+    expect(child.query).toEqual(removal === 'state' ? page.query : { source: 'question', keywords: { kind: 'question' } });
+    expect(child.appliedFilters).toEqual(removal === 'terms' ? { state: ['CA'] } : {});
+    expect((await usage())).toMatchObject({ quota_counted: false, status: 'settled' });
+    const childRow = await stored(child.id), parent = await stored(page.id);
+    expect(parent.freeUndoReservationId).toBe(childRow.reservationId);
+    const lines = await db.execute(sql`SELECT stage FROM cost_ledger WHERE reservation_id = ${childRow.reservationId}`);
+    expect(lines.rows).toEqual([{ stage: 'embed' }]); expect((await spent()).lines).toBe(before.lines + 1);
+    const after = await spent(); nextMinute();
+    expect(searchOf(await h.request(body, key))).toEqual(child); expect(await spent()).toEqual(after);
+    nextMinute();
+    const descendant = searchOf(await h.request(undoBody(child.id)));
+    expect(descendant.freeUndo).toBe(false); expect((await usage()).quota_counted).toBe(true);
+    nextMinute();
+    const repeat = searchOf(await h.request(body));
+    expect(repeat.freeUndo).toBe(false); expect((await usage()).quota_counted).toBe(true);
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope']);
+    await expect(db.execute(sql`UPDATE evidence_searches SET free_undo_reservation_id = NULL WHERE id = ${page.id}`)).rejects.toThrow();
+  });
+  it.each(['trial', 'account-day', 'account-month'] as const)('permits the one undo at the %s quota limit without bypassing Turnstile', async kind => {
+    const env: Record<string, string> = kind === 'trial' ? { AI_ANONYMOUS_TRIAL_REQUESTS: '1' } : kind === 'account-day' ? { AI_USER_DAILY_REQUESTS: '1', AI_NEW_ACCOUNT_DAILY_REQUESTS: '1' } : { AI_USER_MONTHLY_REQUESTS: '1' };
+    const h = withState(env); if (kind !== 'trial') await h.account();
+    const page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    if (kind === 'account-month') await ingest.execute(sql`UPDATE ai_switch SET account_check = 'always' WHERE id = 1`);
+    const body = undoBody(page.id, { keywords: 'question' });
+    const before = await spent();
+    expect((await h.request({ ...body, turnstileToken: undefined })).statusCode).toBe(403);
+    expect((await stored(page.id)).freeUndoReservationId).toBeNull(); expect(await spent()).toEqual(before);
+    const child = searchOf(await h.request(body));
+    expect(child.freeUndo).toBe(true); expect((await usage()).quota_counted).toBe(false);
+    expect((await spent()).lines).toBe(before.lines + 1);
+    nextMinute();
+    expect((await h.request(body)).statusCode).toBe(429);
+    nextMinute();
+    expect((await h.request()).statusCode).toBe(429);
+  });
+  it.each([
+    { filters: { state: ['CA'] } }, // unchanged
+    { terms: 'engine' }, // explicit terms, even equal
+    { filters: { state: ['NV'] } }, // changed state
+    { filters: { yearFrom: 2019 } }, // added another constraint
+    { filters: {}, keywords: 'question', terms: 'engine' }, // invalid combination
+  ])('charges ordinary edits, or rejects invalid requests, for negative condition %#', async change => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    const before = await spent(), res = await h.request(undoBody(page.id, change));
+    if (change.terms && 'keywords' in change) { expect(res.statusCode).toBe(400); expect(await spent()).toEqual(before); }
+    else { expect(searchOf(res).freeUndo).toBe(false); expect((await usage()).quota_counted).toBe(true); }
+    expect((await stored(page.id)).freeUndoReservationId).toBeNull();
+  });
+  it('no-keywords undo requires real additions, and explicit question keywords never invoke scope', async () => {
+    const plans: { text: string; keywordText?: string }[] = [];
+    const h = harness(undefined, r => ({ ...r, search: async (...args) => { plans.push(args[1]); return r.search(...args); } }));
+    const page = searchOf(await h.request()); nextMinute();
+    const child = searchOf(await h.request(undoBody(page.id, { keywords: 'question' })));
+    expect(child.freeUndo).toBe(false); expect(child.query).toEqual(page.query); expect(plans[1]).toEqual(plans[0]);
+    expect(h.llm.calls).toHaveLength(1);
+  });
+  it('an expired or differently owned parent cannot waive quota or expose its question', async () => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion }));
+    const other = withState(), before = await spent();
+    expect((await other.request(undoBody(page.id))).statusCode).toBe(404); expect(await spent()).toEqual(before);
+    clock = new Date(clock.getTime() + 86400_001);
+    expect((await h.request(undoBody(page.id))).statusCode).toBe(404); expect(await spent()).toEqual(before);
+  });
+  it('concurrent attempts can consume the parent claim only once, including when quota is exhausted', async () => {
+    const h = withState({ AI_ANONYMOUS_TRIAL_REQUESTS: '1' }), page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    const results = await Promise.all([h.request(undoBody(page.id)), h.request(undoBody(page.id))]);
+    expect(results.filter(r => r.statusCode === 201)).toHaveLength(1);
+    expect(searchOf(results.find(r => r.statusCode === 201)!).freeUndo).toBe(true);
+    expect(results.find(r => r.statusCode !== 201)!.statusCode).toBe(429);
+    const free = await db.execute(sql`SELECT count(*)::int AS n FROM evidence_searches WHERE data->>'freeUndo' = 'true'`);
+    expect(free.rows[0]?.n).toBe(1); expect(h.embed).toHaveBeenCalledTimes(2);
+  });
+  it('all money gates still apply and a refused admission leaves the free claim usable', async () => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    const daily = h.ai.policy!.budgets.interactiveDailyUsd;
+    h.ai.policy!.budgets.interactiveDailyUsd = 0;
+    const before = await spent();
+    expect((await h.request(undoBody(page.id))).statusCode).toBe(503);
+    expect((await stored(page.id)).freeUndoReservationId).toBeNull(); expect(await spent()).toEqual(before);
+    h.ai.policy!.budgets.interactiveDailyUsd = daily; nextMinute();
+    expect(searchOf(await h.request(undoBody(page.id))).freeUndo).toBe(true);
+  });
+  it('a downstream failure settles the free attempt without refunding quota or resetting its claim', async () => {
+    let fail = false;
+    const h = harness({ evidenceScope: { output: stateScope } }, r => ({ ...r, search: async (...args) => {
+      const found = await r.search(...args);
+      if (fail) throw new Error('synthetic downstream failure');
+      return found;
+    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.1', env: { AI_ANONYMOUS_TRIAL_REQUESTS: '1' } });
+    const page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    fail = true;
+    const key = randomUUID(), body = undoBody(page.id), before = await spent();
+    expect((await h.request(body, key)).statusCode).toBe(503);
+    expect((await usage())).toMatchObject({ quota_counted: false, status: 'settled' });
+    const claimed = (await stored(page.id)).freeUndoReservationId;
+    expect(claimed).not.toBeNull();
+    const failed = await db.execute(sql`SELECT status, data->>'freeUndo' AS free FROM evidence_searches WHERE reservation_id = ${claimed}`);
+    expect(failed.rows).toEqual([{ status: 'failed', free: 'true' }]);
+    const after = await spent();
+    expect(after.lines).toBe(before.lines + 1);
+    const ledger = await db.execute(sql`SELECT stage, usd::float AS usd FROM cost_ledger WHERE reservation_id = ${claimed}`);
+    // Tiny fake embeddings round to zero at the ledger's micro-dollar precision.
+    expect(ledger.rows).toEqual([{ stage: 'embed', usd: 0 }]); expect(after.usd).toBe(before.usd);
+    nextMinute();
+    expect((await h.request(body, key)).statusCode).toBe(503); // exact failure replay, no new spend
+    fail = false;
+    expect((await h.request(body)).statusCode).toBe(429); // a new key cannot refund/reuse the exemption
+    expect((await stored(page.id)).freeUndoReservationId).toBe(claimed);
+    expect(await spent()).toEqual(after); expect(h.embed).toHaveBeenCalledTimes(2);
+  });
+  it('a rejected projection after automatic state/keywords still closes and settles the search', async () => {
+    const h = harness({ evidenceScope: { output: stateScope } }, r => ({ ...r, search: async (...args) => {
+      const result = await r.search(...args);
+      expect(args[1].filters).toEqual({ state: ['CA'] });
+      result.cases[0]!.probableCauses[0]!.text = 'x'.repeat(EVIDENCE_DATA_MAX_BYTES);
+      return result;
+    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.1' });
+    expect((await h.request({ question: stateQuestion })).statusCode).toBe(503);
+    expect(await usage()).toMatchObject({ quota_counted: false, status: 'settled' });
+    expect((await spent()).lines).toBe(2);
+    const [failed] = await db.select().from(evidenceSearches);
+    expect(failed!.status).toBe('failed'); expect(failed!.data).not.toHaveProperty('cases');
+    expect(failed!.data).toMatchObject({ query: { source: 'question', keywords: { kind: 'question' } },
+      appliedFilters: {}, automaticFilters: null, autoFilterReason: 'applied', lexicalSource: 'terms',
+      executed: { lexical: 'engine', vector: stateQuestion } });
+  });
+  it('reads an actual v2 row as v3 with its pinned results and no invented automatic additions', async () => {
+    const h = harness(), page = searchOf(await h.request());
+    const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
+      (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
+      SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
+        status, (data - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'marks' - 'freeUndo' - 'executed' - 'lexicalSource' - 'rankingConfig') ||
+          jsonb_build_object('version', 'evidence.v2', 'query', jsonb_build_object('source', 'question')), created_at, expires_at
+      FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
+    const before = await spent();
+    const read = EvidencePageSchema.parse((await h.get(String(legacy.rows[0]!.id))).json());
+    expect(read).toMatchObject({ version: 'evidence.v3', automaticFilters: null, freeUndo: false, order: 'match', marks: 'suggested_terms', query: page.query });
+    expect(read.cases).toEqual(page.cases); expect(await spent()).toEqual(before);
   });
 });

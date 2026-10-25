@@ -1,6 +1,7 @@
 /** The sole scope → retrieve → rerank entry point for HTTP and evaluation. No HTTP or quota identity. */
+import { automaticState, autoFilterPolicy, autoFilterIdentity, type EvidenceAutoFilterPolicy, type AutoFilterReason } from './auto-filters.js';
 import type { RerankInput } from '../ai/prompts/rerank.r1.js';
-import type { EvidenceNote, EvidenceSuggestion } from '../../shared/contracts/evidence.js';
+import type { EvidenceNote, EvidenceScopeSuggestion, EvidenceAutomaticFilters } from '../../shared/contracts/evidence.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { fitQueryText } from '../briefs/retriever.js';
 import { evidenceScopeCtx, StageError, type LlmProvider, type StageResult } from '../ai/provider.js';
@@ -33,6 +34,7 @@ export interface RankingInput {
   /** Explicit evaluator skip, distinct from the allowance that skips both optional stages. */
   skipScope?: boolean;
   uncertainAllowanceReached?: boolean;
+  autoFilters?: EvidenceAutoFilterPolicy;
   dataset: PinnedDataset;
   signal: AbortSignal;
 }
@@ -41,7 +43,11 @@ export interface RankingResult extends EvidenceRetrievalResult {
   configuration: ReturnType<typeof evidenceRankingIdentity>;
   executed: ExecutedTexts;
   lexicalSource: LexicalSource;
-  suggestion: EvidenceSuggestion | null;
+  suggestion: EvidenceScopeSuggestion | null;
+  appliedFilters: BriefFilters;
+  automaticFilters: EvidenceAutomaticFilters | null;
+  autoFilterPolicy: ReturnType<typeof autoFilterIdentity>;
+  autoFilterReason: AutoFilterReason;
   note: EvidenceNote | null;
   scopeOutcome: ScopeOutcome;
   rerankOutcome: RerankOutcome;
@@ -135,7 +141,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     if (!result) throw failure ?? new Error('missing stage result');
     return result;
   }
-  let suggestion: EvidenceSuggestion | null = null, note: EvidenceNote | null = null;
+  let suggestion: EvidenceScopeSuggestion | null = null, note: EvidenceNote | null = null;
   let scopeOutcome: ScopeOutcome = 'skipped';
   enter('scope');
   input.signal.throwIfAborted();
@@ -159,6 +165,13 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     }
   }
   const { executed, lexicalSource } = input.edited ?? rankingTexts(input.question, suggestion?.terms ?? null, config);
+  const policy = input.autoFilters ?? autoFilterPolicy();
+  const automatic = automaticState(policy, input.question, suggestion?.filters ?? null, Boolean(input.edited), scopeOutcome === 'non_search');
+  const appliedFilters = automatic.filters ? { ...input.filters, ...automatic.filters } : input.filters;
+  if (automatic.filters && suggestion) {
+    const { state: _applied, ...filters } = suggestion.filters;
+    suggestion = { ...suggestion, filters };
+  }
   enter('retrieval');
   try { await guard(); } catch { throw new RankingFailure('retrieve', [...usage]); }
   const embedding: RankingCall = { stage: 'embed', provider: 'openai', model: embeddingModel, worstCaseUsd: embeddingWorstCaseUsd(embeddingModel) };
@@ -169,7 +182,7 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
     // Admission can have waited; no paid embedding after deletion/shutdown while it waited.
     await guard();
     result = await stageSpan('evidence.retrieve', { stage: 'retrieve', retrievalVersion: config.retrieval.version }, async span => {
-      const found = await retriever.search(input.dataset, { text: executed.vector, keywordText: executed.lexical, filters: input.filters },
+      const found = await retriever.search(input.dataset, { text: executed.vector, keywordText: executed.lexical, filters: appliedFilters },
         AbortSignal.any([input.signal, AbortSignal.timeout(config.retrievalTimeoutMs)]), u => {
           if (!accepting) return;
           embedLines.push({ stage: 'embed', provider: 'openai', model: u.model, usd: u.billing === 'uncertain' ? embedding.worstCaseUsd : u.usd,
@@ -219,5 +232,5 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
       }
     }
   }
-  return { ...result, configuration, executed, lexicalSource, suggestion, note, scopeOutcome, rerankOutcome, usage };
+  return { ...result, appliedFilters, automaticFilters: automatic.filters, autoFilterPolicy: autoFilterIdentity(policy), autoFilterReason: automatic.reason, configuration, executed, lexicalSource, suggestion, note, scopeOutcome, rerankOutcome, usage };
 }

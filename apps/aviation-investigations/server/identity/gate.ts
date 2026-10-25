@@ -132,12 +132,12 @@ export class AnonymousGate {
    * Check one anonymous AI request with its Turnstile token (the request body's
    * `turnstileToken`, unvalidated). Throws only when the database fails (fail closed).
    */
-  async check(request: FastifyRequest, reply: FastifyReply, token: unknown): Promise<GateResult> {
+  async check(request: FastifyRequest, reply: FastifyReply, token: unknown, quotaExemptionCandidate = false): Promise<GateResult> {
     const networkId = request.networkIdentity;
     // The access hook resolves it for every API route; a route without one is a wiring bug.
     if (!networkId) throw new Error('the anonymous gate needs the request network identity');
     reply.header('cache-control', 'no-store');
-    const result = await this.decide(request, reply, networkId, token);
+    const result = await this.decide(request, reply, networkId, token, quotaExemptionCandidate);
     if (!result.ok) request.log.info({ gate: result.reason, detail: result.detail }, 'anonymous AI request refused');
     return result;
   }
@@ -156,13 +156,15 @@ export class AnonymousGate {
     return refused;
   }
 
-  private async decide(request: FastifyRequest, reply: FastifyReply, networkId: string, token: unknown): Promise<GateResult> {
+  private async decide(request: FastifyRequest, reply: FastifyReply, networkId: string, token: unknown, quotaExemptionCandidate: boolean): Promise<GateResult> {
     const now = this.now();
     if (!(await readAiSwitch(this.db)).anonymousEnabled) return refusal('login_required', 403);
     const existing = await this.trials.fromRequest(request, now);
     if (this.availability) {
       const refused = await this.availability(existing, now);
-      if (refused) return refused;
+      // Only the caller's validated undo candidate may pass this advisory quota read.
+      // Admission revalidates/claims it atomically; all other gates stay enforced.
+      if (refused && !(existing && quotaExemptionCandidate && refused.reason === 'trial_used')) return refused;
     }
 
     const refused = await this.verifyToken(request, token, now);

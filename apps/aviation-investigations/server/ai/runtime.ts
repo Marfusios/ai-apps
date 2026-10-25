@@ -34,12 +34,14 @@ import { aiStatus } from '../quota/status.js';
 import { createAnthropicProvider } from './anthropic.js';
 import { startupAiCheck, type AiStartupCheck } from './pricing.js';
 import type { LlmProvider } from './provider.js';
+import { autoFilterPolicy, type EvidenceAutoFilterPolicy } from '../evidence/auto-filters.js';
 import { evidenceRankingConfig, type EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { evidenceStartupCheck } from '../evidence/pricing.js';
 
 export interface AiRuntime {
   startup: AiStartupCheck;
   evidenceRanking: EvidenceRankingConfig;
+  evidenceAutoFilters: EvidenceAutoFilterPolicy;
   policy: QuotaPolicy | null;
   trials: TrialIdentities | null;
   gate: AnonymousGate | null;
@@ -154,5 +156,5 @@ export function createAiRuntime(config: AiRuntimeConfig, deps: AiRuntimeDeps): A
   }
   if (!llm && startup.enabled) problems.push('no language-model provider is available');
   const traceSalt = policy ? deriveIdentityKey(policy.secrets.identity, 'brief-trace').toString('hex') : null;
-  return { startup, evidenceRanking: evidenceRankingConfig(config.ai.evidenceRanking), policy, trials, gate, llm, traceSalt, now, problems };
+  return { startup, evidenceAutoFilters: autoFilterPolicy(config.ai.evidenceAutoFilters), evidenceRanking: evidenceRankingConfig(config.ai.evidenceRanking), policy, trials, gate, llm, traceSalt, now, problems };
 }

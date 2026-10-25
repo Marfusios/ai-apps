@@ -1,6 +1,8 @@
 /** One admitted evidence search. No path here can call compose or check. */
 import { and, eq, inArray } from 'drizzle-orm';
 import { rankEvidence, RankingFailure, vectorText, type LexicalSource, type RankingPhase } from './pipeline.js';
+import { disclosedQuery, questionQuery, remainingSuggestion } from './disclosure.js';
+import { autoFilterPolicy } from './auto-filters.js';
 import { evidenceRankingConfig } from './ranking-config.js';
 import { admittedRankingSpendGate } from './spend.js';
 import { cases, evidenceSearches } from '../db/schema/index.js';
@@ -28,6 +30,13 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
   let execution: Partial<SearchData> = {};
   let outcome: 'results' | 'failed' = 'failed';
   let failed = false;
+  const failureData = (): SearchData => {
+    // Only a completed result may replace the admitted public query/filter facts.
+    // Keep private execution diagnostics on failure without preventing settlement
+    // under the immutable-row guard (including a rejected/oversized projection).
+    const { query: _query, appliedFilters: _filters, automaticFilters: _automatic, ...facts } = execution;
+    return { ...row.data, rerankOutcome: config.rerank ? 'not_run' : 'disabled', ...facts };
+  };
   await startRequestSpan('evidence.request', { datasetGeneration: String(row.generationId) }, async (span) => {
     try {
       signal.throwIfAborted();
@@ -41,6 +50,7 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
       const legacyText = row.data.query.source === 'question' ? row.data.question : row.data.query.terms;
       const result = await rankEvidence(config, {
         question: row.data.question, filters: row.data.appliedFilters, dataset: pinned, signal, uncertainAllowanceReached: admission.skipScope,
+        autoFilters: ai.evidenceAutoFilters ?? autoFilterPolicy(),
         ...(row.data.edited ? { edited: {
           executed: row.data.executed ?? { lexical: legacyText.replace(/\s+/gu, ' ').trim(), vector: vectorText(legacyText) },
           lexicalSource: row.data.lexicalSource ?? (row.data.query.source === 'question' ? 'question' : 'terms') as LexicalSource,
@@ -59,10 +69,13 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
           else ctx.log.warn({ stage, outcome }, 'evidence rerank unavailable');
         },
       });
-      execution = { executed: result.executed, lexicalSource: result.lexicalSource, rankingConfig: result.configuration,
+      execution = { appliedFilters: result.appliedFilters, automaticFilters: result.automaticFilters,
+        autoFilterPolicy: result.autoFilterPolicy, autoFilterReason: result.autoFilterReason,
+        query: row.data.edited ? row.data.query : questionQuery(row.data.question, result.lexicalSource, result.executed),
+        executed: result.executed, lexicalSource: result.lexicalSource, rankingConfig: result.configuration,
         scopeOutcome: result.scopeOutcome, rerankOutcome: result.rerankOutcome };
       active = 'storage';
-      finalData = withSuggestion({ ...finalData, ...execution, ranking: result.ranking, cases: result.cases, note: result.note }, result.suggestion, config.query.highlights);
+      finalData = withSuggestion({ ...finalData, ...execution, ranking: result.ranking, cases: result.cases, note: result.note }, remainingSuggestion(disclosedQuery({ ...row.data, ...execution }), result.suggestion), config.query.highlights);
       // Validate the exact public page before keeping its quota unit or storing success.
       pageOf({ ...row, status: 'results', data: finalData }, 1);
       outcome = 'results'; // A rerank abort preserves the already retrieved order.
@@ -70,7 +83,7 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
       if (error instanceof RankingFailure && error.stage !== 'spend') active = error.stage === 'retrieve' ? 'retrieval' : error.stage;
       failed = true;
       outcome = 'failed';
-      finalData = { ...row.data, rerankOutcome: config.rerank ? 'not_run' : 'disabled', ...execution };
+      finalData = failureData();
       ctx.log.warn({ stage: active, outcome: signal.aborted ? 'stopped' : 'failed' }, 'evidence search did not finish');
     }
     // Finishing the row, refunding unsuccessful searches, and settlement commit together.
@@ -88,7 +101,7 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
       }
       const settled = await settle(tx, admission, { lines }, admission.fencingToken, ai.now());
       if (!settled.ok && settled.reason === 'busy') throw new EvidenceFailure('storage');
-      if (!settled.ok) { outcome = 'failed'; failed = true; }
+      if (!settled.ok) { outcome = 'failed'; failed = true; finalData = failureData(); }
       if (stored) await finishSearch(tx, row.id, outcome, finalData);
       else failed = true;
     });

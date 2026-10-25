@@ -55,7 +55,10 @@ scope skipped by admission's daily uncertain-charge rule have no note. Notes nev
 block search or affect retrieval, pagination, admission or accounting; they are stored
 with the private page, not exported as question-derived trace attributes. Server-only
 `evidence-hints.v3` supplies filter-free statistics and captured-ID comparison hints.
-Counts are literal/synonym occurrences of executed lexical words, never evidence of question satisfaction.
+The baseline counts literal/synonym occurrences of retained suggested terms, or executed
+words when no suggestion is retained. Other ranking versions count executed lexical
+words. The v3 `marks` field states which policy actually produced the marks/counts;
+none establishes satisfaction of the question.
 
 Before paid evaluation, freeze prompts, models, separate evidence caps, routing guards,
 `paragraphs.v2`, `evidence.v2`, labels, thresholds and the ledger allocation. Require
@@ -547,3 +550,19 @@ log around the gate. Cache identity includes the ranking hash, exact inputs and 
 dataset/index identity. Free `ai-preflight` checks rerank depths 50/100 and Sonnet/50
 as well as scope. Generation quality/latency and the planned public disclosure require
 separate evaluation and gate review; sizing is not an approval to spend or deploy.
+
+
+### Evidence.v3 disclosures and automatic state
+
+Automatic filtering has its own frozen identity, separate from every evaluated ranking
+configuration. Saved searches record `autoFilterPolicy` (version/sha256),
+`automaticFilters` and `autoFilterReason`; only the applied state set is public.
+Cache identities for an automatic-filter experiment must include both policy identities,
+the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
+`none` remains the default and sole live-allowed automatic-filter policy.
+
+A page discloses actual lexical keywords, `order` (AI grades applied versus match order),
+`marks`, automatic state and `freeUndo`. These are server-derived facts, never scope prose.
+Quota-free undo still reserves and settles real provider spend, counts rate-limit attempts,
+and appears in the cost ledger. Its original parent's write-once reservation claim prevents
+reuse with another idempotency key or after sign-in. It is not a paid-call exemption.

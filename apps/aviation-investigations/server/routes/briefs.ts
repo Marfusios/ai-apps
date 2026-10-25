@@ -417,7 +417,7 @@ type Billing = { ok: true; payer: Payer; who: Visitor } | { ok: false; reply: Fa
  * anonymous gate passes (it may create the trial and set its cookie). `who` gains a trial
  * the gate created.
  */
-export async function billing(ctx: ApiContext, r: Pick<Runtime, 'ai'>, request: FastifyRequest, reply: FastifyReply, who: Visitor, token: unknown): Promise<Billing> {
+export async function billing(ctx: ApiContext, r: Pick<Runtime, 'ai'>, request: FastifyRequest, reply: FastifyReply, who: Visitor, token: unknown, quotaExemptionCandidate = false): Promise<Billing> {
   const gate = r.ai.gate;
   if (who.account) {
     const networkId = request.networkIdentity;
@@ -433,7 +433,7 @@ export async function billing(ctx: ApiContext, r: Pick<Runtime, 'ai'>, request: 
     return { ok: true, payer: { principal: who.account.principal, networkId, account: who.account }, who };
   }
   if (!gate) return { ok: false, reply: sendError(reply, 503, 'unavailable') };
-  const pass = await gate.check(request, reply, token);
+  const pass = await gate.check(request, reply, token, quotaExemptionCandidate);
   if (!pass.ok) return { ok: false, reply: sendGateRefusal(reply, pass, r.ai.now()) };
   const trial = who.trial ?? { principal: pass.principal, hash: principalHash(r.ai.policy, pass.principal) };
   return { ok: true, payer: { principal: pass.principal, networkId: pass.networkId, account: null }, who: { ...who, trial } };
