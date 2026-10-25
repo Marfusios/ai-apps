@@ -1039,10 +1039,11 @@ note above them; counting and comparison questions get results with a hint.
      "No excerpt for this case. Its case page has the whole report narrative." with a link;
    - the relevance facts in muted interface text, never as a reason: the applied filters it
      satisfies, the marked terms' occurrences in the excerpts shown, said as whose they are ("Suggested
-     terms in these excerpts: “icing” appears 3 times, synonyms of “carb” appear 9 times,
-     “maintenance” does not appear", or "Your words in these excerpts: …"), and the searches that found
-     it ("found by keyword, similarity and case-narrative keyword search"; never "meaning match").
-     Counts of words, never a sign that the question is answered.
+     terms in these excerpts: “icing” appears 3 times, synonyms of “carb” appear 9 times", or "Your
+     words in these excerpts: …"; the server lists only the terms that occur, so "“maintenance” does
+     not appear" is said only if a count of zero is ever sent), and the searches that found it ("found
+     by keyword, similarity and case-narrative keyword search"; never "meaning match"). Counts of
+     words, never a sign that the question is answered.
 9. **"Show the full section"** under each excerpt ("Show the full analysis section") opens the
    section in place, read at the search's own generation (`GET /api/evidence/:id/cases/:ntsbNo`, never
    the public case), at the excerpt's paragraph: that paragraph in ink on a 2px blue rule with the

@@ -66,6 +66,9 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
         expect(detail, c.case.ntsbNo).toBeDefined();
         // Every probable-cause statement of the case, verbatim, in section order.
         expect(c.probableCauses.map((p) => p.text)).toEqual(detail.sections.filter((s) => s.kind === 'probable_cause').map((s) => s.text));
+        // As on the server, the relevance facts list only the marked words that occur in the excerpts.
+        expect(c.relevance.terms.every((t) => t.literal + t.synonym > 0)).toBe(true);
+        if (c.excerpts.length === 0) expect(c.relevance.terms).toEqual([]);
         for (const e of c.excerpts) {
           const section = detail.sections.find((s) => s.key === e.sectionKey);
           expect(section?.revision).toBe(e.revision);

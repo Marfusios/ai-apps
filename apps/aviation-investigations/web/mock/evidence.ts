@@ -420,7 +420,8 @@ function relevanceOf(filters: BriefFilters, detail: CaseDetail, excerpts: readon
   if (inPassages) channels.push('keyword');
   channels.push('similarity');
   if (inNarrative) channels.push('narrative');
-  return { filters: applied, terms: counted, channels };
+  // Only the words that occur, as the server lists them (server/evidence/project.ts).
+  return { filters: applied, terms: counted.filter((t) => t.literal + t.synonym > 0), channels };
 }
 
 /**
