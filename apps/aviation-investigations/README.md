@@ -1247,7 +1247,7 @@ WEB_MOCK_API=1 pnpm dev:web   # no API server: /api answered by MSW from web/moc
 pnpm build:web        # production build into dist/web
 pnpm test:web         # component tests (jsdom, offline, MSW)
 pnpm test:e2e         # Playwright against the dev server in mock mode
-pnpm test:e2e:real    # Playwright against the real API server: the fixture index, and signing in and out
+pnpm test:e2e:real    # Playwright against the real API server: the fixture index, AI evidence search with offline fakes, signing in and out
 ```
 
 ### API contracts and the mock API
@@ -1542,7 +1542,17 @@ stalled connections are checked every 5 s.
 (`fixtures/ntsb` and `fixtures/ntsb-ui`) published as the active dataset of
 `aviation_test`. `pnpm test:e2e:real` builds the web client and starts the real server
 on that dataset (`tests/e2e-real/server.ts`, port `E2E_REAL_PORT`, default 5181). Both
-reset `aviation_test`'s corpus, so do not run them at the same time. It also starts a
+reset `aviation_test`'s corpus, so do not run them at the same time. That server has AI
+evidence search on, offline: the production pipeline (admission, quotas, ledger,
+retrieval, projection, storage) with the fake language-model provider and a scripted scope
+stage (`tests/e2e-real/evidence-fakes.ts`), the fake embedder of the fixture passages index,
+Cloudflare's always-passing Turnstile test keys answered by a local siteverify stand-in
+(`tests/support/fake-siteverify.ts`) and `AI_BRIEFS_ENABLED=false`; it empties the control
+tables when it starts and raises only the per-minute, per-network and in-flight AI limits,
+since every browser of the run is 127.0.0.1. `tests/e2e-real/evidence.spec.ts` drives the
+evidence view through it, with the mock suite's Turnstile stand-in in the browser, and
+replays the known context-loss examples (`tests/support/context-loss.ts`) on the initial
+card, drawer, Compare and print; `E2E_SCREENSHOTS=<dir>` keeps its screenshots. It also starts a
 second real server with Google sign-in (`tests/e2e-real/auth-server.ts`, on 127.0.0.1 at
 `E2E_AUTH_PORT`, default 5182) and an offline stand-in for Google on another site
 (localhost at `E2E_GOOGLE_PORT`, default 5183), so that Chromium applies `SameSite` to the
