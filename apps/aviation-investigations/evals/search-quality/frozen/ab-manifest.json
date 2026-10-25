@@ -1,0 +1,1114 @@
+{
+  "version": "task24-ab-freeze-v1",
+  "frozenAt": "2026-10-25T11:14:03.859Z",
+  "codeCommit": "6f40e03fdfd5bd33010bb653012904f864f36b49",
+  "serverCommit": "6ecb2aa217b96cd2206c9a74a67a0d5327f6deb9",
+  "protocolSha256": "c187753a2bec9cbe32e39186a486c0deb616984d1842bd2768a6c1356feb4a7e",
+  "fieldDesignSha256": "82948acf42d90f02fa63361004ccfd19789b1aa250f0b55f29a06a233b42c3fb",
+  "files": {
+    "evals/retrieval/coded/build-coded.ts": "5218a601841161b16d0d3d3d68276ad3c3c143f54a20a8b4e509ea895967ddb4",
+    "evals/retrieval/coded/coded.ts": "cfe4229e9e22b8ace8650363fa69e7cd1d612901d2fb9291ecfc05c581c81d05",
+    "evals/retrieval/coded/dataset.json": "5d1746bd04af8602c18babf2ae6cca6b3e1fd2760f6d72852df86ba240b8b3a4",
+    "evals/retrieval/coded/evaluate.ts": "5bcce317c25e48ed16423beef0b8e9a67c9ec38cef5ef6ee71360483cdc7bfec",
+    "evals/retrieval/coded/questions.ts": "0f29a4bfc5340741af543d2bef8e08214ac413472c7f626bac4618063a4d7eae",
+    "evals/retrieval/coded/run.ts": "9ef69f8f81ace4cdd798fcf432154d9dbae93d0513b5afd353d9cf1ac9f352a8",
+    "evals/retrieval/experiments/stats.ts": "54a9b35b53c46f8eea94cc98214b476fa7fd5644d392f196a58950939190a70b",
+    "evals/retrieval/generation.ts": "8922b27cbc5709c9e3dea9d6e9b5973f912059eef697ff319f2c52d255c32efe",
+    "evals/retrieval/narrative/build.ts": "11d97c8ea6e668e4adc61bfc7b77cb71212079d723e835a9949cb5362c6de814",
+    "evals/retrieval/narrative/calibration.json": "d277db450d418010965126dccf100fcfb80810be20b92eb1ce76f389c275b180",
+    "evals/retrieval/narrative/calibration.ts": "1c4260a28bc62e503313768a8ed64c8516a3f9e4f1d56b328b185be0b5ee0758",
+    "evals/retrieval/narrative/calibration/controls-bundles.ts": "faee07ddb7534acb0a089ce48980f996dafd9dafcba2bbd865006eef6c7ed5af",
+    "evals/retrieval/narrative/calibration/controls-long.ts": "c0c9cd06bb45a68fa229c2a0272023e66e8705b9cb52ea0e13c01ced617cb5e9",
+    "evals/retrieval/narrative/calibration/controls-reading.ts": "13283c036bce7f33ec12925f605fc7aa9c9f20fc4d7a67291a1a0fd2aa1163e8",
+    "evals/retrieval/narrative/calibration/controls.ts": "24045b0c001e2655ac9b890354c339b933aed0290bd85adf1bd18a9bd291ad9f",
+    "evals/retrieval/narrative/calibration/filler.ts": "cf576787d481b365c662fbdc349cd4c66e61ae1de08b8fa9b651fa81d5e17030",
+    "evals/retrieval/narrative/cli.ts": "d1bd01c9ad7cad06832e99d325c06e918b366af7cd38be3d6db98b049958e0c1",
+    "evals/retrieval/narrative/clients.ts": "1f169b4bc57fa11985e9752ad04435bccbc0b01afbb2651207311b6c6b40458e",
+    "evals/retrieval/narrative/commands.ts": "d6ac608f052c655e138a23e48851028937b954e7bf3211f2c3e00a42aaf7723a",
+    "evals/retrieval/narrative/config.ts": "32eca3580fb88774758c0ee580e7d023f425609ef214a56d3ec441120e18ffd7",
+    "evals/retrieval/narrative/criteria.ts": "3007ce28bafc388ccb622401fd0d5abfd54edb91e7367714436bd66e244c3924",
+    "evals/retrieval/narrative/dataset.json": "7c94921eb7ba527b258649b926f034b6bd45773b0e1db3fe9b01221c5be526b2",
+    "evals/retrieval/narrative/dataset.ts": "57c0736ac20b8b5f63727e43c42be7bc29f12a9c821376654f3e158bad22ce4c",
+    "evals/retrieval/narrative/evidence.ts": "876e00d679bd5150e6d869774906186d813aebcc8f04ac7079503f1765e68681",
+    "evals/retrieval/narrative/frozen-configuration.json": "ea64288b43c3653bdae68af28de775e179a92512c2587e1cb4a74681217e8c8f",
+    "evals/retrieval/narrative/frozen-pools.json": "b1ccd8d25af9c9044c7a9c5cb05999e971e4de76486883baa31f4e21b2fbcbbd",
+    "evals/retrieval/narrative/holdout-runs.jsonl": "e57e2ff6a7681dd611cfa007553ee82495252628fc0ec242f002bfc56e4105a8",
+    "evals/retrieval/narrative/identity.ts": "a8a8d410c89ff59efac84078af7db43c47f6b60178cd10ecfcc09d2de0978db4",
+    "evals/retrieval/narrative/inputs.ts": "d845c85a84b6a120c2d8f2163e3947bfb64ddf92c0db5d48b5f00e64edcd0763",
+    "evals/retrieval/narrative/judging.ts": "ca8e67f802fda1f2593ef85985d2727e6cd722bd48be2935a42ed6a8f8242972",
+    "evals/retrieval/narrative/judgment.ts": "38f4c369fdfa57c92bc5cf60c59a44f9488546b53a1366360737802e012f4d6b",
+    "evals/retrieval/narrative/plan.ts": "665ef2d0d1c28714eede3dfd03a5d1f4f005e96784dbd57a8fcec0beaa8b655c",
+    "evals/retrieval/narrative/pool.ts": "922aaf4c284c09a8056b3ceb99adb9fd33a0523a8befc0788fc1d40e3c6a3031",
+    "evals/retrieval/narrative/prompts.ts": "9320b8729fdbc8df9dc6062c47942737b9abb604aa80c8b44a351f2088760dcf",
+    "evals/retrieval/narrative/questions.ts": "2d4f586df050642174883c12fd7516f6fac6593786bde8178717d1fe83a58237",
+    "evals/retrieval/narrative/results/annotations-2026-10.json": "df99c13d3594c73564252d617123919272732420155f34a3c98fb1aa9b8b0fa0",
+    "evals/retrieval/narrative/results/audit-2026-10.json": "844460c9d6458e90d6cd0a45c9ea20cd40297df39c8a51a5e905698debea53e8",
+    "evals/retrieval/narrative/results/pooled-2026-10.json": "cc6e52c57774932851d4b5177017314ec4fd704a1d1973167595b50f03cf09ef",
+    "evals/retrieval/narrative/schemas.ts": "d61268c1d4bad915a886ec691a15cbed6a1bad206590638b0f8d2838e502438e",
+    "evals/retrieval/narrative/score.ts": "1ba3ea9c2550bb8189e764134cda8a172b214a46dc164be3ec00fa34d732067d",
+    "evals/retrieval/narrative/spec.ts": "14b5df0e5886df1979a8642b607f07151eb6faf3719479d2d946ac87dc6295bf",
+    "evals/search-quality/README.md": "841c30f38d42c3a446f33fface805ef8ab14936fb37f3bc7202c941141130728",
+    "evals/search-quality/ab-manifest.ts": "676df3f472fc55280665dd4ed2f525c9d8ad69912598bd6efad90589b43222e2",
+    "evals/search-quality/ab-production.ts": "796e09349fa426fb40c7aa25180e05fc6892941cb5b542999da549cc232e3f8e",
+    "evals/search-quality/ab-run.ts": "c3d2d1d2f088dc0166d24c123a9d2c497b795517b202b1b05218400f6add28e0",
+    "evals/search-quality/ab-schedule.ts": "2371d938f3595bc7544d1833d6242022369f15bc0520d1a6f10ba3abb5c0b76e",
+    "evals/search-quality/ab-score.ts": "1c1de23406c07c0e4fc90f54eea966d71faffeef5ce441ec6c36676637b734c5",
+    "evals/search-quality/ab-target.ts": "f636285ba4d0665eabf00364d1260a79768077811784c288081669fd78c5814a",
+    "evals/search-quality/ab-types.ts": "6fbd74bd2a92806edc163d5d490261e929075221dae3f2943e1471bb0c232171",
+    "evals/search-quality/ab.ts": "146328ed056fd1110ef69ecfdd4984c519ea701cf38a1f39498473ca365e6f70",
+    "evals/search-quality/config.ts": "996918e249d493f0398374a8f12b74a2776ca887724b992b7a40a0f67b3ef6bf",
+    "evals/search-quality/construct.py": "eba37aa1c6b4634b5a597e5689f9d8593f945ed23aee420b8c22d8fff1c3f77f",
+    "evals/search-quality/exclusions.py": "b88d4055ae1fcd3ebc122ee5e5ce5e158e9ad60ed5e4b99df6934a6d627d11d9",
+    "evals/search-quality/field-score.ts": "d41f2a4f0bb9868bef6021b2b19f3d3896c1258c788d1de33de80472c8eb20a0",
+    "evals/search-quality/fields.ts": "72f1e5188166a7b1a75cde336988e096eeb4e71e7f7ddbb1866a034403ce2170",
+    "evals/search-quality/filter-rescore.json": "dd89b1b775c51a13d2d5eaa22fa4b399a8dfe4f4d0e04c1568acb9a0941164d3",
+    "evals/search-quality/freeze-ab.ts": "be3a5ebd46736c1187874de3ee723443ee2e51187504a89f451b346e0d595b46",
+    "evals/search-quality/freeze-fields.ts": "df1c01688402f0e0e9c8050240691d6b61fec999a30125b37613f9fc02b7c48e",
+    "evals/search-quality/frozen.ts": "f4a611a2f60ad0869c254ecd436114b74111423251285ae3cb092070c48a679c",
+    "evals/search-quality/frozen/confirmation.json": "9e228d4aca9fdd947d38c57348ec8eb41f5bc4870440f5cf8adee27097130bd3",
+    "evals/search-quality/frozen/construction-review.json": "74827f8bf54826e2768b9514051aadd88678e234929adaf04c5765f635ed9a4a",
+    "evals/search-quality/frozen/construction.json": "be5d3e7bd259777508b5b3e45e7a458b304b5dc620362f56f7658931a359f30f",
+    "evals/search-quality/frozen/exclusions.json": "6d8e3d7eb56a7704cf7849ad957d65bd7bf246c3e5f39fc9bd594a988e6d6c49",
+    "evals/search-quality/frozen/field-manifest.json": "90f4945c5e5ea1b23509a46b4b6b82f3e5a24baa270278640c867b24458942f5",
+    "evals/search-quality/frozen/fields.json": "779419fda1b74c6620a2ea60a6dfc098e866456f46237810104b2adf312cee36",
+    "evals/search-quality/frozen/gold-verification.json": "94778c2f2532f192a4f0883174db23007af059caf1570878742adbec2e56d5c5",
+    "evals/search-quality/frozen/leakage.json": "2258d8e584fbfa7cdf53444ff1075ce7f34ed9d2278f336612554fe59c664a27",
+    "evals/search-quality/frozen/narrative-plan.json": "0eaf7063d50593e9776685b3afb4a6afc231eba91eb2f58983655a997af33b0b",
+    "evals/search-quality/money.ts": "040eb305b3c5c04fc47d169f170c5a1640ef7a38bcb6053d73180c57599bbf2d",
+    "evals/search-quality/parts-1-2-manifest.json": "65470bc99315f770b63e60aaa3c9b533d242c523e4ae68c27ce28239a04df9d6",
+    "evals/search-quality/rescore-filters.py": "91d3370c34545f271e58d19140b7d3774506ba3c5f2098621be34cc115b33d70",
+    "evals/search-quality/snapshot.ts": "7b537680d329b08b0c7e93a1a7453776bf618f56693ec13b17a01d387e1ab90f",
+    "evals/search-quality/types.ts": "a7d5e888a13603ce0ad68823a7e10d43b9d7c9bf5521e988d954d64833581c00",
+    "evals/search-quality/verify-data.ts": "bf7f943d4327a6bacf4a262d436fd60901a085224527ae78ff8f3750c9c05ac9",
+    "package.json": "92bbe940ccf841e31343a778ebd0bf69ccf38eaa8c8a99bcd728c79ccd165106",
+    "pnpm-lock.yaml": "16b13bb77b04dc42b9fa323a0a7a4c841a10137455f011dde8898c44dbd51047",
+    "server/ai/anthropic.ts": "5ee3eed652b2be9bd7867f50ca96bec1955aca019073ad80cb242bead819205d",
+    "server/ai/embeddings.ts": "fb65ee461cabb0bf15ad04cbd68203b78211840b70cdd0d60c4d27869f3ca77f",
+    "server/ai/fake.ts": "ef873b9716b622b21bc76e350837f8b5b9c4dd465e9e60b9e41ae6fb38c6983d",
+    "server/ai/pricing.ts": "9d841a208f4f9bbeae65e5517baca42b29235d44afb3d6dd6546e7490c822a3f",
+    "server/ai/prompts/check.v7.ts": "789b0508afd7d712e411394558b695e35e448e36d8ca9cb6aacd4d9528640428",
+    "server/ai/prompts/check.v8.ts": "cc19e3a0a4a994b8808547d79ea20b6ff93b39395160e65c1a7d801a8c4a6b5e",
+    "server/ai/prompts/check.v9.ts": "00c46c482aeace7b38a7372bf10e3cdcb9260e8248ac097a32a9c8f4ef76e0f7",
+    "server/ai/prompts/compose.v7.ts": "f0457a62836893252c9543aed642e750a00bbb5b93f0bae4ccc0ffb702bdd522",
+    "server/ai/prompts/compose.v8.ts": "1297ac4f38b2e44afd3e5be78c096888baa40138d3508931ecf17e96f7dd7d4e",
+    "server/ai/prompts/rerank.r1.ts": "57a719ae3447413e497ed1022affba7f05414c26fe4ea8a45c69936fb1c121fe",
+    "server/ai/prompts/scope.e1.ts": "3fc179ccee841756a0a094dc9b1ce6b4cb6a7d1dcc33ced01822b86a604fdde6",
+    "server/ai/prompts/scope.v2.ts": "e8a82854991a16470a69f01ffe95260c73a65700f8eb42005d5c7d8677169b9c",
+    "server/ai/prompts/untrusted.ts": "1b2ea3ec8a7b8efbe4cbca5939a83690b8172ecf0f18d698f2c370c9e5ace93b",
+    "server/ai/provider.ts": "00a7e47b75d24cecb8dac1e056b057504c8db9bc5d228e2c329bcfe8e0cc4eaa",
+    "server/ai/runtime.ts": "8a4ef6269e15fae81473c8e3e0c2ff5f0007c99b07b40f67d6d5446745a53a5e",
+    "server/ai/tokens.ts": "f8b4a2af1b275fffcdcb75c2d78d73e110baacdb5fccc885e18e45d8e1de0010",
+    "server/app.ts": "f8a377a98f110e4b918e092dc71cbcf0c42c6ca549ca4ad3f6faadedf1e6a7fa",
+    "server/auth/better-auth.ts": "8a51543a73796a1c349451e36eb3793837156d695a805db67eda30dc846b9634",
+    "server/auth/deletion.ts": "f74f7845a5210f9030704e7adebff22ee43a02b51177afa0c845f325d8f3a190",
+    "server/auth/handover.ts": "14a5d7e03c2948386ac28dc7669e0c23211c51a2298d5475636c27ed78166cfb",
+    "server/auth/lifecycle.ts": "b188ba7ec95304691240e5445f68f17cbd05a4d52f92149ca1fc6ad1bb1191b8",
+    "server/briefs/aliases.ts": "55ca5ee5c604f77236516fec5d9136527b85de3d125046b0c55ad55a21886712",
+    "server/briefs/catalog.ts": "229249c389a005cae9ff6a4b052e1925a45c911612b88fc5e196ef8c6cd44893",
+    "server/briefs/clarify.ts": "75c8eb72401de4826df9cb2575b89b70bf7af8c7c568db5a2ec9ec3fd71aae79",
+    "server/briefs/context.ts": "287232a9a785fe795db9670a5342f5b0864f3a7eef9005f27681fae16b23ed00",
+    "server/briefs/criteria.ts": "1714c9bca786bdc59c4fd04ee5a56511afc3a04e1874f6d51cd169218f2dec2c",
+    "server/briefs/display.ts": "e520a80c74b9286b58f6738da132a21afcd634769cadf75ccb4dfb5675d77d5e",
+    "server/briefs/evidence.ts": "90e77961e8010035cda0c9e568e15d3ced0800fccf6c92cef5e668e57dad629d",
+    "server/briefs/excerpts.ts": "be038e15ec209583d5346d7afa8116263c14c9f78c2f1338ed6c3011fbf51c9c",
+    "server/briefs/intent.ts": "e1c82452bb62f854d1c703f6a95259d57a8b757e292c37240973e6a2fc3dd141",
+    "server/briefs/ordinals.ts": "4b93376ba7378aa2e7475db389a2d1fb6f4493b6fb0896c598b9f336c38b4ae4",
+    "server/briefs/pipeline.ts": "c37a6db024a771e43c02f717285628dc4378dc5971b19f9477f1233935444320",
+    "server/briefs/render.ts": "45111608688e61a0c172c6099f07abc30459b787de8cc233a5caf3791792c105",
+    "server/briefs/retriever.ts": "4db24ebd739bea91df066dd928f0739e0a12827dbeb3fe3f2bafbae685666752",
+    "server/briefs/sentences.ts": "6911c94335334725dd33b9a435ec54c0078f3c96bab635e51e9c753ee22c6a58",
+    "server/briefs/services.ts": "b30e688077a18e403d2432bc0c4631148304fc359fa651533b5b2b2e7331b679",
+    "server/briefs/static-replies.ts": "ab7a5391b13edec26a3aac0d79ab0b14f824fc9c29496add3b60fad83e053ff2",
+    "server/briefs/store.ts": "0573d87ab065bf2b0c4115f2eb7f95f705d16b24c713fe62e42a92ecc60e3cd2",
+    "server/briefs/validate.ts": "a461f6c98baed0ae6fa646a23e8acf464f64b190f42f8e379473cae89ba5b0c9",
+    "server/briefs/verdicts.ts": "837131ee02e4504d9f8e4c77446df6b3ad19e9d98b20f2acb87d64b2b4109e9f",
+    "server/dataset.ts": "a10657e6f1e8aa432eefa4bbd17e3d562eaa3248a1816f702471365118f85e94",
+    "server/db/backup.ts": "76e198c690876374dd66cf81f4736913ff7f0676b0de31c7e159edd371625ff9",
+    "server/db/bounded-read.ts": "a5eb3e86667d636dd5e502cc94ebebc00b4128582e896c7b5fd3eedce02b4fea",
+    "server/db/client.ts": "7c1707bbb49b9bd195183598fe901bebef1b4e5ac669c75a991c3f5fb100ca7f",
+    "server/db/generations.ts": "1b098e0ae86813c9e3732bc2f871d7958d5993d04bbbfab0a3dd93fac1784048",
+    "server/db/migrate.ts": "6e3a8b391c17006433fdcfae93cb9b79b37925c4b4a1e68850f89e207d5fef87",
+    "server/db/migrations/0000_corpus.sql": "88aedc6552b1140c516afea7926c382161a242bd5eb5486c1b44a36df52442ef",
+    "server/db/migrations/0001_grants.sql": "f345ea09bef947388d6b0d523f54aebcfd48746aa9a7670e8531c40339795b37",
+    "server/db/migrations/0002_lifecycle.sql": "06005e6ea2e87649f762bd70bcccbdc5191d6b638be720ec3bce251240241659",
+    "server/db/migrations/0003_lifecycle_guards.sql": "bb1817f03fd3f1887bf0a4ba4266718f095efbc06ab53e000c3bdf85aa082b2b",
+    "server/db/migrations/0004_pin_functions.sql": "31e7965a61382589beadd86dfaa77368ef62582bd591df10a6199aa826c1d831",
+    "server/db/migrations/0005_report_links.sql": "e85dac359e42db7ba5ea9b9a8066e3ec2530e52a970a1760f2fca8496eeec73f",
+    "server/db/migrations/0006_report_link_provenance.sql": "40cf2ac05f2aa8704aec623d6a8b56c15192353046143b63d63c83d010243019",
+    "server/db/migrations/0007_controls.sql": "7ef79d7248cc653829c5744860a85e42133499a43c4e0ac77b679cc61e1743f4",
+    "server/db/migrations/0008_control_grants.sql": "08d3340ca30c29d6329854d0d99b62971e9e49face0353fae2d74869dcd0580a",
+    "server/db/migrations/0009_control_hardening.sql": "f1518192b9f7412b8ee85b01278df533fd4d14c0fc1b23b034ffc45a557e8645",
+    "server/db/migrations/0010_index_switches.sql": "9e3f50b6bffc0c45dbe66e99b8d8c01c82177e85144fae2eaca05ebf03cf7d90",
+    "server/db/migrations/0011_manifest_without_passages.sql": "734ec74d03d47c28248cc33e7fed2e68f878afdff5a2537fc57a3a72b66932c7",
+    "server/db/migrations/0012_passages.sql": "ac949f32400d0b977fa5372b00fcea6a8068cc4abfc4491f08b46a72b7bc4df2",
+    "server/db/migrations/0013_identity.sql": "1df1c767af3144f6bc61a6431c9f9b7eab45443b95d7b6bc300f94f21d63d090",
+    "server/db/migrations/0014_briefs.sql": "89115729dd9ab6be305d23f829ef63e32fca995182527c1d080f745e258e5dba",
+    "server/db/migrations/0015_brief_no_match.sql": "2c6049d5f0f2c16af256562c554ed2517d08293b1ec18f7d297de8d2c1e122e8",
+    "server/db/migrations/0016_brief_step_diagnostics.sql": "8386c91615c7ac8442a2aa906e47044878b193df1f3aa386aec7d1b80919d929",
+    "server/db/migrations/0017_auth.sql": "27f0eb3384cbba95af56e39af86071bc95fdfeb14ea13928e889a4890abf523b",
+    "server/db/migrations/0018_auth_races.sql": "13ed7a76e91774744b078ff4f0d3b45fba48172ef9c2b1b88f7a1122e4780cb3",
+    "server/db/migrations/0019_lock_order.sql": "852a288a2ec896adb04ec38ce28e0df3d701db45e8dc5aab4c11b62b52020676",
+    "server/db/migrations/0020_restore_hold.sql": "9ceb73a34792728ae1e9ef8e1a1711deba9233bf26235ea603a0f7512dd7b8c9",
+    "server/db/migrations/0021_live_brief_generations.sql": "0170252853cda8ff94e3c9d184d1d490f7a0565eca159d3ea87cf68fd4351412",
+    "server/db/migrations/0022_evidence_searches.sql": "b7e2c624c39a6606255a5d0626357b37a2c85dc3850b94155b67a433fc62c859",
+    "server/db/migrations/0023_evidence_storage_bound.sql": "136bb5d9dc6500b0afcde4e6e198a312a8a9da4986c14a0b62e3f0f3c24a14a9",
+    "server/db/migrations/0024_evidence_query.sql": "d6217f752391535e293afe34aee60c3613e29101aad3830e558404620c362c4c",
+    "server/db/migrations/meta/0000_snapshot.json": "9636d52ed9cb148c1a570c3c87b61ce7549a61b4fb6671c67c34f725b6dcb3a1",
+    "server/db/migrations/meta/0001_snapshot.json": "8ddcd314d0e35afee62046f43176cf4f97ecdb10c637fd34980abb3d183519c8",
+    "server/db/migrations/meta/0002_snapshot.json": "08359086b0c54b1fe12cfb44d8fdfaecb5ec92669447e8916ec189cb626cd989",
+    "server/db/migrations/meta/0003_snapshot.json": "eb3d257a9cde66d051d46d19f744a27d4cec0efa532f0b84c4689275b2956ddf",
+    "server/db/migrations/meta/0004_snapshot.json": "79aed3e2304d4d2908c60d1a272a2ae47f57980ef5b8a09718073d0984153dcf",
+    "server/db/migrations/meta/0005_snapshot.json": "b2a6d6c627592c5d4d03bdb13c9f624c6ce536d0ab26148cc8d2520cd8b7ffa8",
+    "server/db/migrations/meta/0006_snapshot.json": "c29ee06bbdedc826fc7bb592de48fedae9f1e67ddef8efecee91e74b0d3fd502",
+    "server/db/migrations/meta/0007_snapshot.json": "31a633b38c8420c7f0c8bf5849a00e0cf7de5ba48977e600d9fec5ff9439dcb1",
+    "server/db/migrations/meta/0008_snapshot.json": "55afde9e8e6784b7e722cee0b38c8839dcf07136da12f706a969fc0d40fa5683",
+    "server/db/migrations/meta/0009_snapshot.json": "da05abd36189fd9aa36315c6503b337a4107a94f341e76c86259f1075f13416a",
+    "server/db/migrations/meta/0010_snapshot.json": "7c9a5fe9f3f4d899403cd33e544e54fd96d457b136099e9af061e831ae083338",
+    "server/db/migrations/meta/0011_snapshot.json": "d676316bd328b13f4016c9cba1bdba11617428ad66d6cc7a3851a60a1e2dad20",
+    "server/db/migrations/meta/0012_snapshot.json": "38aded551707df89064479a7588d493e724c676b6859be4983b1a9fa490b44de",
+    "server/db/migrations/meta/0013_snapshot.json": "c06402fa80119d5cb202cb6c7ad0d8b4db07b8de82abd3d8960e0efdb46b877e",
+    "server/db/migrations/meta/0014_snapshot.json": "ce0fefc2b9481927ebe58d0d1233607bf806e6a5c0704ae03d893f5c8cfb75b5",
+    "server/db/migrations/meta/0015_snapshot.json": "c6e4ffb8ea307ce9c36bc34269c35bf45da538ad3b748547575dd0b204ef8683",
+    "server/db/migrations/meta/0016_snapshot.json": "b2031959e0069c9e0e3f2afcbf19e73dbc5d39eb23d223b3cc943617e68df148",
+    "server/db/migrations/meta/0017_snapshot.json": "c3d712edc13c8ffc90c0237136e4ad96f3517868a32c34d87abb0f06ff4ef627",
+    "server/db/migrations/meta/0018_snapshot.json": "ce1f5cc1065dc93bb4b2ca4dfedcc54c7dfb8db697373017f4503379798ddab7",
+    "server/db/migrations/meta/0019_snapshot.json": "352d15447359b315034c9738e0e12983dbf279d90baf427dba4fe2feb9302427",
+    "server/db/migrations/meta/0020_snapshot.json": "ee228efa3e1d1ec77f45a264748274e943bf1a57628a97706a84886527d808bc",
+    "server/db/migrations/meta/0021_snapshot.json": "ffda34b8507e795ad37d5f79f62c1c86f3ebd24f58716350ff55f66dc28e6243",
+    "server/db/migrations/meta/0022_snapshot.json": "e262f65a7b64a46f5e4c66cec08d58f4c07ea4afa52c1a8af07f82e84b4ed006",
+    "server/db/migrations/meta/0023_snapshot.json": "eeef2b632da278668f4b904aab3dacb61e75ecee3e8267e71048db4629f21cf8",
+    "server/db/migrations/meta/0024_snapshot.json": "58f1c2ba0da3733fdca2eb89b228877076837c11331000b98323864c98c415a9",
+    "server/db/migrations/meta/_journal.json": "adc7bda84ef9a8ef4ce561b80c92dffdcd946fc010c2ccbc823ed7dadac13c49",
+    "server/db/privileges-expected.ts": "147a15b90c884b7577f6b59681981cabc63c80a1ea1614e14d192274f9279bf6",
+    "server/db/privileges.ts": "59ab222767b9ddf02ab0a815a6fd8ea36f1295a1281be9647ff60fe1d690822a",
+    "server/db/queries/case-records.ts": "c3f8a3560a30e7ffaa27fb6aaa5e9d82c26e99fea1901a2539587820bd8b7e46",
+    "server/db/queries/case-views.ts": "820460f8b9fcdfe7484182687c7c35837bd27400ddc90fbd5bd8f73e593eaefb",
+    "server/db/schema/auth.ts": "afaa1ab63b0c2de614cb085780e402713b9727c3274a5641700f18ae35ba6752",
+    "server/db/schema/briefs.ts": "1e64041f804e3703f05f5bb3cd6e73d75b36c52a2d93f57254f3b382a98e687a",
+    "server/db/schema/controls.ts": "49d746392eac9aad096c73c6586897a6e0a0c141d166df96a376262ccb736dbb",
+    "server/db/schema/corpus.ts": "114a11dac3e41201f17f1c389f173a867f8ad38d1abfd224ab78cabe38d1b628",
+    "server/db/schema/evidence.ts": "7809d67ad3f917af046e62e38ad40db8e369d433980ee8ad86e16e6cbb2028bf",
+    "server/db/schema/index.ts": "f158f6eed116e72044b26700e2e0de8609a98553d412e0cbba68dc1158b9da26",
+    "server/db/schema/passages.ts": "5df0738ebe43118bfe9800aff3c0e27db21c0dd79606637a75eb298350df5430",
+    "server/db/schema/search.ts": "cb488c7a2aa390e253be8f817dfb14b2c07de97963bf96f3cc6b86d843933f2f",
+    "server/evidence/outcomes.ts": "3e18f1f58f5abcc9dfb133c6f1851862c8b6e33eaa7aff8140f681fe401cc0ed",
+    "server/evidence/pipeline.ts": "efa85f31495a361ee92674dcbb10cf415818694e18ae1e740765f1f41d8cf624",
+    "server/evidence/pricing.ts": "b0e5969b2385d1ab4165fcde8fcc4761378649f224cede28e883f3b065180e5e",
+    "server/evidence/project.ts": "9ccd24dd1fee45a99f1fcd49744c8930c42a34cb592b118918ee1ef21c2e90bd",
+    "server/evidence/ranking-config.ts": "cdc877212f00f27441a1345f1c3b56f3baffb835a11bf309acbaffc5c33a8d2c",
+    "server/evidence/rerank.ts": "7177cadc587ba0d0097e31932045d4ec155da8a640c519ec107db3d8d5adc415",
+    "server/evidence/retrieve.ts": "d9718f33c4301bad81c4e122c823d1a593d697af980cb187111b999ef149856b",
+    "server/evidence/routing.ts": "83ee9097001570bcf9d3138e0a298c27e0c512d2ce13284898575b683f9742b4",
+    "server/evidence/run.ts": "1bc4d4888027debe0bb7ddbddff779427d73fb9dbf70579d8a9fe70df9207a9b",
+    "server/evidence/snapshot.ts": "23a466a8bef086f9c3d281916abdf61aa4bb1bba91a9d128a6b7999c1bf77ab1",
+    "server/evidence/spend.ts": "1c038458eec54f1100bc493eb8994ca6f4568010449d1e8e5dd9073eaaa460ca",
+    "server/evidence/store.ts": "86cd11f4c327bf1be320a748b827e955689f637935b4d36c63f3e2a2426f8bef",
+    "server/http/cache-headers.ts": "785340deea54a7961a4aff7e9c59af2c4ae7bee66ef329ff5f0de7187980071d",
+    "server/http/client-error.ts": "a1651f70a35aab4c9cbe8e8a2354b9560e2597e2c53ae7d6b467e4c8162a67cf",
+    "server/http/network-identity.ts": "3352cce41f45253e13bd84dc4d528adafbdbef385c2a182487523653edbba78e",
+    "server/http/origin.ts": "4a2b228375d27d347852734cb5f10c95b24c0f938ad5cb11ba42a3a4ab217847",
+    "server/http/rate-limit.ts": "893fd6955ede46eb256aa2bd332638040580405a8f3044a907b251fcfe2bb9eb",
+    "server/http/reply.ts": "ef2b68b0d076d958680ca4b0fd4b029bc09b69cd9317c4650e9b90e673777cf2",
+    "server/http/request-target.ts": "4ae634d9ecfddadd9253ca569218eaa8f36701e6386cb0b3e828167cb087b7fe",
+    "server/http/security-headers.ts": "badc915af9bdf96864d20faa0303b62a371b79040f0bb17d65e3b30109416710",
+    "server/identity/gate.ts": "5431dd4a173fa882e6138ac3119674dac9b01b0bb8a9a35f35bf613f249b11a8",
+    "server/identity/keys.ts": "f68a77d0ce84d04784424ded210a3b2bd26ffe075a3d156ca33a1e23eda9477d",
+    "server/identity/step-up.ts": "ee128a92412ac4ff0d7557d900c1378a33bdc302c928a77fb1e310068b7d2cc2",
+    "server/identity/trial.ts": "59534bb4df2c44b5c902e69c5780342361010cfc7e4584a8e6cb4b22af614c7b",
+    "server/identity/turnstile.ts": "8afc55edf756b87012716a6f477ca266fdaf4816985ff18bf1e7f31567ad8ec9",
+    "server/main.ts": "ddb3de7fabaa6b6f8d07c2ed1aef2a7ff5a9e9df3b283068bf92210a536359ba",
+    "server/observability/attributes.ts": "cd4328dc84b2f384b19536f0fb4aadc5473e9aeaff2971b79574e960352e4243",
+    "server/observability/tracing.ts": "8b46574cd6ae872deb62db095b9eb3d1c7e48b7a12acb19fdc115ab20a1f8c1a",
+    "server/projection/cases.ts": "b2e62b86b47fba236769cc30c6de03bbec0a0eccb48ea1c4f44edd2f7e30f6e1",
+    "server/projection/map.ts": "61e6fec8d794bb94edbd7fc7b218d02bb5ade96f17ceea03cba94ba74dfa5388",
+    "server/quota/admit.ts": "814d8323e0942624b4dfff2aa8b7f809af927ba8d0011edbde013cbdac7c8a97",
+    "server/quota/buckets.ts": "cf2995f0d92aab98ea8d7a58b8057699e7e7a05d2549c036c4bb96db3dd960a3",
+    "server/quota/hold.ts": "78ce19c81f0fe75458245c734b8cf1e105739add448a75a435caa47be6b9107e",
+    "server/quota/index.ts": "2c1ae68d9f95b6339fb041176ca8c94d15c65a232d7dfd0786e8a6827cc5ed5f",
+    "server/quota/locks.ts": "bab3820c599cec7ceb2f994ce68adb4b3a6b59fac4aa0a144eb7e12bd42f5962",
+    "server/quota/maintenance.ts": "2f333f29a86015f3247a67ed25bfef6e8b879c2bd267cae727d313cd72b73441",
+    "server/quota/pacing.ts": "02f86cbb6dea40578e25d860e0ca89a2f688dc7c0ae2fe275f5b23982ffc7c9b",
+    "server/quota/policy.ts": "6d13b9ba48e5f5fa24925148f0136695f989004280d6a88593be7f60cdfa25b4",
+    "server/quota/retention.ts": "b7af34b0d972960c14433d1a694d8c46fd7d98a948137f7a994cac71fb5bb9ce",
+    "server/quota/settle.ts": "b3fbe373524a8e5b395800c88feb8af720445755fd2d807728a39a065db235ed",
+    "server/quota/spend.ts": "6bf98e4f75c102df6c57ff86e5012c6a4c9aa8d54fef87c346f3276cb438058e",
+    "server/quota/status.ts": "c1340f39eab7b22f0046882591d0d288fda18945fc8ffb425709bd4979bd5ae6",
+    "server/quota/switch.ts": "2792c618f261b562bc99f1d702f3ee3f2065779ab8160fb148b63eb26b36cbe6",
+    "server/routes/account.ts": "d74cc7943135f9f9d7087263b740c6e55ea637276c9ad1110d78cea4d9a5bb60",
+    "server/routes/ai-status.ts": "271df4c6817daae418379f3d21e8e81d73381b0d18a19bc71fb846400bd7b523",
+    "server/routes/briefs.ts": "3612506abd67bbc4531eb99dafa93fb0001843d8e58a2f962076513786302502",
+    "server/routes/cases.ts": "cf0581a9ce5b097cb15bfc2884fe2d8275f3c548dc238ca05d668c722c3810c7",
+    "server/routes/config.ts": "2639f1acc188754faed3f1c3e9fc668ddb4d092ac2629f14c9502bc1856b0e3d",
+    "server/routes/context.ts": "15697f86aca9dfad091a1adfff6bc87716b41f6d27ac53185906bbef6eb1f7b5",
+    "server/routes/dashboard.ts": "ba147994371bf8e90a3ffe93777d6a8201bc569eda4f3dfaabce98ecc08d4e3d",
+    "server/routes/evidence.ts": "d6ee50217920ef5de65a41a20bb6fcd412012c5cc1fd0480fde1efb5eb39a29e",
+    "server/routes/health.ts": "a92ebc81a6d7dae8082e5439981b18bfc3e6d299d6cee158cc4224d67806843a",
+    "server/routes/pages.ts": "56e5c42823709931184ff3556aab4552a59b9083d4c4696ec06d28ae688ab0b5",
+    "server/routes/search.ts": "f0671629900b3a2daca705ba0adaf8a006d98eb17c513c7af509d18d5cb48b56",
+    "server/search/case-fusion.ts": "3c99fcb7398dd3278aacaa8c83c50614eec910035817b1f0d42dd0be6fff2016",
+    "server/search/case-mapping.ts": "b3f3a923f6b23a802baa219826f70245e0e94912222df471c31f021d7034ef13",
+    "server/search/case-retrieval.ts": "d90dfd086e244276403c9ab08587cfd75022a28ba04899b2beab3d8b94ec045b",
+    "server/search/cases-channel.ts": "ddf7b3ed944a8710ef55aae80206be46b61b16d33c74dd75b7c88b68655ab0f3",
+    "server/search/dashboard.ts": "e1cc15705a1da0a494ca3f6e7851966fc5bb8bb3b57c6d847bdf3b378b0a02f3",
+    "server/search/es.ts": "e30d3b6b91dc6fc6c795fdc2c32352189149d859e03d151eeb87bb3a3cc188d3",
+    "server/search/evidence.ts": "f36f630d7aa35ff53c0e07b741b51656244538b1a5c020489bc16da7307f4b39",
+    "server/search/facets.ts": "0c8e0d99a84e4653c458ee79d226c7144a870ce19bf5016d50962f4af4fa8579",
+    "server/search/filters.ts": "2c228a97f682ff0abcb2259fe091608f414358559f96f6076788500af2c17412",
+    "server/search/hybrid.ts": "0a416eb98ce2892ee7235301cac68c6c0610cf4550c9938a7d6b823a8dcf3cf9",
+    "server/search/index-meta.ts": "437bc4dfe38fae289e471b967fc2166131899ac86478572d45028430a24df7cc",
+    "server/search/keyword.ts": "ca58fbc9db2cb3d4d570a8daf331e8c026d7a517c16e227f6d414c3f4961dcf5",
+    "server/search/passages-contract.ts": "04baea8a15ce739e12b973527ff4b94ba4045d50cc434d19a965027d4cda3e20",
+    "server/search/retrieval-config.ts": "05bf8bf4a2e46bcb1ec2c4045f3da012fa1c4c24c54b6cf2aae51e2249d25d24",
+    "server/search/rrf.ts": "39f891b966249aaa8c34366af24602d16faacbe3ebd108c2a9dc88dfa9628814",
+    "server/search/timeout.ts": "7af503ffcd69fba5af00b5646e76569889fbacbed855ff7ca211060902d9c747",
+    "server/seo/case-description.ts": "990594e750dcf68e2aa71e815a5b18f6ddf1d904a685e29e6c4597ddf6d0abcf",
+    "server/seo/head.ts": "3629d44e1b2ae6264da3690152086ed4687cf22807b715303e6013402c616b1c",
+    "server/seo/page-template.ts": "b1471ad3cacc37c1d4456c0388bfc10ec3fede2a36db04a59ea2e6f7ed87c05c",
+    "server/seo/robots.ts": "75e57508e8aafc5a2df8567c8d26287b918af3709686d1a3c34052c7017cf55b",
+    "server/seo/sitemaps.ts": "5720fb115d665c7a7f320777d54156f6aa892151fc9889d3b5e62dda74282d96",
+    "shared/aviation-analysis.ts": "c81d742a0a92c0727b2e15bfd5ea0d88e20b4438f279a49db39568e14d275077",
+    "shared/brand-mark.ts": "b38e89f47e8c363e44724b9d6f453e951a92c15d5b3d0c10f09cbc4edc87fe68",
+    "shared/brand.ts": "f2bf08f9ac891aee5641c7ccf148886ac2d0faf24f43c38d22b3ba5f053c210e",
+    "shared/case-view.ts": "e5b77d20a20b2d733528cd470552d97e24f28f4d6287fb87c2583c3eea088874",
+    "shared/codes.ts": "02fa08d63a1b7ea3e60673c39f6dfc64acb11dc94396919a11ac0d6c5051203d",
+    "shared/completion.ts": "5f72f1fe694fa4fcf4594d7a93bf09edc3c12995d354585fc4ecd7cd514d3ef4",
+    "shared/config.ts": "8eac5d168e316fc01a446f641c608f64cd76b337ed0597ed9397d43501e1c0dc",
+    "shared/contracts/account.ts": "4eb7e78bea3015bfba900f4e290cc91fe7a89d0b07147125bcfd9b09824160bb",
+    "shared/contracts/ai.ts": "10ef4451a07e6873133d6da8a85979ea5bbbbebd3bd8cb159e7521a5eaa18d9c",
+    "shared/contracts/briefs.ts": "48870e420ac5ca654a6c65f1238b596db14043ba84393d257d225e2f2b04c7a7",
+    "shared/contracts/cases.ts": "18d95a12938a52549349a283fda6ea055521bf684d753c1625d827a0b78b6c88",
+    "shared/contracts/common.ts": "08135c0b602282c92985e093dabc123bffc64ae6d148ff88cb3ad37eb2ae37df",
+    "shared/contracts/config.ts": "b4a99735da5048be68c25fa8482524e847cfd897fbd6a60a694e5f08b77e920f",
+    "shared/contracts/dashboard.ts": "d7e0b3fa6673cc382aec79b2c61c9d9d2bb3dbea02ed7c8f697edd26876c7f46",
+    "shared/contracts/evidence.ts": "a7db7e16ee276cd9f8fb302313673846b73f8692e115d9ae1becda20cbe230be",
+    "shared/contracts/retrieval.ts": "b1b65d4ac13c9137b5865ba9ff446a2db2b5dc905dc788bdf2307d35a10afed1",
+    "shared/contracts/search.ts": "25fded21963af500b5f2a6b778a6bbd94d63aaada71fc8461db18fd63e991d0c",
+    "shared/env-files.ts": "2ec0e81c12fb8f36e592929a66ec99bfe523c7cc702eb6c0a5095465ae1438f8",
+    "shared/evidence-ranking.ts": "4d349352b0a60e2703256103ad8b8675556f481fc59f2d27f29f8106ed6f6786",
+    "shared/examples.ts": "5b2ed82cd3535184b80516a398f26b749d9eeb559d4d876445f038918121d2dc",
+    "shared/format.ts": "41ae1a3d29d836a935077096a02332bb442bf12a7487b55a139d07800b1be92f",
+    "shared/narrative-paragraphs.ts": "2725c3033090f526d7044b36cebac13382de1c5b355257d3c9749f9eae316357",
+    "shared/occurrences.ts": "673a924d082a731a57b0d523ed7179bb7d6dace194abcb0606c11b8e9709ff58",
+    "shared/page-params.ts": "8327ce367b5624de36692f5aaf319123e836b55ad0b52c33ca3e6c014d5b4fb5",
+    "shared/page-titles.ts": "eeccf97ab5e565ce55f13fbb35042898fb7e7ea351a2cbd1a0ee47ff4b0a10a6",
+    "shared/privacy.ts": "d1a6fc1ef04a2a80f824781112891220b5eb1b619258f3c8d02c6f366512768c",
+    "shared/report-links.ts": "41ff1e4a5355184e4ae2a9b374e634c04f59a4a976de35745beb899ee20535f4",
+    "shared/snippet.ts": "1e510a607d0f4ad423b224e5849dbb0d57471184f70743b46731c941af7658f8",
+    "shared/state-eligibility.ts": "079771657f20c8300ad4357d14fd0495b3590c0c0594339be8c67e174d3368bb",
+    "shared/vocab.ts": "d16b81ff34e1be4a853dafc4180f9b5b70f54ea49f5678e7f02b3f6828a88775",
+    "tests/unit/task24-ab.test.ts": "fe6e057eee61e0e128e76ff7f3cddcc8f7a6001766829db26e9549a950bb3886",
+    "tests/unit/task24-production-port.test.ts": "e91ea1ac0a83336bdbf70fc7db981e46763557ad42618ea32a6c9d9242bf66a6",
+    "worker/ai-preflight.ts": "45a3b2e3818416de28d4a6ab46a819bafad2845a76ac055f7011ff799ad531dd",
+    "worker/brief-diagnose.ts": "723a1df5f7aebf19854a7205b804acf49b7fa2b3cceb78631166dcadda21e2e3",
+    "worker/cli.ts": "9b8c809ac8e079bb492eff7fb73d52317750d7a6863a820a220a7da558a58b71",
+    "worker/config.ts": "341e924c6d7bd7aeb07bc10389dd9f39aa8bf2fa145c5c1648163d43c12b2e6b",
+    "worker/errors.ts": "cd71bf7aec33c870fde5f1aa1d62cfff879d3cb5615aa1424e82ea43e95db3a0",
+    "worker/index/aliases.ts": "7e35b782135f58c5e0127bddfc09b0b963a9ac56d8908daea9aac406801dab20",
+    "worker/index/analysis.ts": "457d82ce4ef5849c00740d30da7d61b33f6a9495e519cc08a29ef41b3eb61de7",
+    "worker/index/cases-index.ts": "e1f61d6fba6f53807f3809165dfd064198e8bf20a713f4535701092398fb2ec2",
+    "worker/index/chunk.ts": "8e6db8baaf7c23cdcf953705d0da9428880df248d578055ba1bfd485fa76ca43",
+    "worker/index/embed.ts": "1d633cf5877f6e8b565751af0b9d2cd05a5c7cf6550af6712b48c9e90d74aa86",
+    "worker/index/embedding-cache.ts": "44faffa779a58940455c579c542b1dcb2c5ac03d83ed4d39a55a2029978e840b",
+    "worker/index/passages-index.ts": "1ee826837bdff032d47130816a17cbc35a77f45d69efe987e6861f839cdfcbd6",
+    "worker/index/passages.ts": "c07dc36f734d73a1879a30d6895f53d786845ab24d584001f7404adb6820db66",
+    "worker/index/publications.ts": "4bcb1103c72692bb8381b5712049cc0a17ab5cc2a35eb3f689bedbfcc49a4207",
+    "worker/index/publish.ts": "f12f123dd1cc1102ac42fb63b66ebec428e485d1933ef75fb02ea75ab03a21cc",
+    "worker/index/spend-gate.ts": "ce5314a3a9f452b5f1ba72eac28c6daaa3d323660766b4f7977b03c40db6f34e",
+    "worker/index/synonyms.ts": "c870a6e05678b7e68299aaaaae9d15d48fa59963cbf0034e6fc9bdd8006142eb",
+    "worker/index/tokens.ts": "65d3f0c3c9ed825275541f233f3b2fe9a7eb62e3b773489326401a1cffa29513",
+    "worker/ingest/archive.ts": "41570db101f7e37cbca159ce20391baf8c1b8c99cd571bcb7801f7043702ddd3",
+    "worker/ingest/citation-text.ts": "096fa33a37bd7f5e2b04f842a5a51d6f45e1799226417841af8854f207de3213",
+    "worker/ingest/extract.ts": "650ddb41fced881a8e455000ac2577e213f5be6d95e57caa88290efb92303d35",
+    "worker/ingest/load.ts": "75f8b4852a0fdc66a5f0d1a7a8989e19bbd58be8760f99840f64d12dab762049",
+    "worker/ingest/normalize.ts": "262e70f7f9aa9fcc4cdb52d8fa817031ce88c619cc56373a2fb3e403d9e7892d",
+    "worker/ingest/report-links.ts": "bf6a5087d61fbbba5b0622d0ba24191a9e32ff4736acc041f07cdb65a6cc8a1f",
+    "worker/ingest/runs.ts": "4d3e56ba343fc14c511969f2c70ba49f1943c8a58f88db36d9a64c1a64fc2f19",
+    "worker/ingest/scalars.ts": "8e3bb956d527f86f66ed041c7787e2186aaebd6deb6c9bf4ddec381a3c696343",
+    "worker/ingest/tables.ts": "49244aa1c0f855593bc70932013ca9ae6e8257450503bf27b508fe5175d4c89f",
+    "worker/ingest/verify-profiles/avall-2026-10-16.json": "54d5eaed52473d270ea15f8133fe526c0fbf250cf280b69f5066c60c7e937c0e",
+    "worker/ingest/verify.ts": "9fbc8b30769af891c40407a91d836def073dacf67c2ac7a72974cabac8946822",
+    "worker/rerank-preflight.ts": "21460c1c565ec9ac1eee3fb2213e237449de63fe2c0556243f3cef6a36b0db89"
+  },
+  "arms": {
+    "Q0": {
+      "alias": "Q0",
+      "version": "er-q-v1",
+      "sha256": "5f7a79a594f29ae083971ee0ddfe1ce402200f9f0fcf0fd2702905d6e2ac83d4",
+      "reservationUsd": 0.0025,
+      "changedKnobs": 0,
+      "depth": 0
+    },
+    "T0": {
+      "alias": "T0",
+      "version": "er-t-v1",
+      "sha256": "0152dceef9c2afddc231b3cb0c06f3cc8cf97ff4dfc8c6b553dd2f96d613745f",
+      "reservationUsd": 0.0025,
+      "changedKnobs": 1,
+      "depth": 0
+    },
+    "QT0": {
+      "alias": "QT0",
+      "version": "er-qt-v1",
+      "sha256": "ac956338efb1aae64d0b3afb75e8059095d8e4d266d5650f685af39034bb73b0",
+      "reservationUsd": 0.0025,
+      "changedKnobs": 1,
+      "depth": 0
+    },
+    "QH50": {
+      "alias": "QH50",
+      "version": "er-q-h50-v1",
+      "sha256": "aaa8aaa28a0e1f065810fd85be7220357d4c21def31db8c25fa8d1d7cf2c746d",
+      "reservationUsd": 0.009,
+      "changedKnobs": 1,
+      "depth": 50
+    },
+    "TH50": {
+      "alias": "TH50",
+      "version": "er-t-h50-v1",
+      "sha256": "8ce91d882efd973e8f3c9dc97463d7a8bd2c1888b0e21c775f4eb62e26acab1c",
+      "reservationUsd": 0.009,
+      "changedKnobs": 2,
+      "depth": 50
+    },
+    "QTH50": {
+      "alias": "QTH50",
+      "version": "er-qt-h50-v1",
+      "sha256": "71b1d025ca149cefcb7377338da10d5a876ccab51c2af0189641ccdff86d6f7e",
+      "reservationUsd": 0.009,
+      "changedKnobs": 2,
+      "depth": 50
+    },
+    "QH100": {
+      "alias": "QH100",
+      "version": "er-q-h100-v1",
+      "sha256": "28ae53ed326fc88285f72079023c78a93a21b6d98df698333bee0dd0ee881744",
+      "reservationUsd": 0.014,
+      "changedKnobs": 1,
+      "depth": 100
+    },
+    "TH100": {
+      "alias": "TH100",
+      "version": "er-t-h100-v1",
+      "sha256": "79b3a3204aedf3acfa9aedfd606e29a439f3606896584f398f1f130457b76a81",
+      "reservationUsd": 0.014,
+      "changedKnobs": 2,
+      "depth": 100
+    },
+    "QTH100": {
+      "alias": "QTH100",
+      "version": "er-qt-h100-v1",
+      "sha256": "8ba2b7122c793bc80ecc5ce43357971e68e4ad9b308b730f1661199367c02920",
+      "reservationUsd": 0.014,
+      "changedKnobs": 2,
+      "depth": 100
+    },
+    "TS50": {
+      "alias": "TS50",
+      "version": "er-t-s50-v1",
+      "sha256": "2382709a2b06f1651da5a7928fab12c337599adaa5a5f1bebbebd1803f2cca94",
+      "reservationUsd": 0.1332,
+      "changedKnobs": 2,
+      "depth": 50
+    },
+    "QTS50": {
+      "alias": "QTS50",
+      "version": "er-qt-s50-v1",
+      "sha256": "bc7909e8857d5f1df1c2c7e843ac081d0ff73beb27706420d354d218afdd0d1a",
+      "reservationUsd": 0.1332,
+      "changedKnobs": 2,
+      "depth": 50
+    }
+  },
+  "target": {
+    "source": {
+      "generationId": 1,
+      "archiveSha256": "bc74fefb1b39e1b86700a4be82b8ff6014bb1f6d81008524de73f2ddbd38b052",
+      "mappingVersion": "v1-empirical",
+      "fieldNormalizationVersion": "v1",
+      "citationTextVersion": "v1"
+    },
+    "cases": {
+      "index": "ai-aviation-dev-cases-v3-g1-20261022143728115-f0d0e84d",
+      "indexVersion": "cases-v3",
+      "fingerprint": "2a6f1f58b54e6da00bb252ec921b44e22cd2c3f7f9a5d95e6d526913328545e9",
+      "generationId": 1,
+      "buildId": "f0d0e84d",
+      "embeddingModel": null,
+      "embeddingDims": null,
+      "chunkerVersion": null,
+      "inputTemplateVersion": null
+    },
+    "passages": {
+      "index": "ai-aviation-dev-passages-v2-g1-20261022185219373-e0c815e5",
+      "indexVersion": "passages-v2",
+      "fingerprint": "ed335f462734e6b8e4888ed51f6ba2f9926747b100e97d9735eeb0c1f6043dd2",
+      "generationId": 1,
+      "buildId": "e0c815e5",
+      "embeddingModel": "text-embedding-3-small",
+      "embeddingDims": 1536,
+      "chunkerVersion": "chunk-v2",
+      "inputTemplateVersion": "input-v1"
+    },
+    "dataset": {
+      "revision": "g1-cases-v3-a7bb7831",
+      "snapshotDate": "2026-09-30"
+    },
+    "indexVersion": "cases-v3",
+    "fieldNormalizationVersion": "v1",
+    "eligibleCases": 24291,
+    "selectionGoldVerified": 21,
+    "confirmationGoldVerified": 48
+  },
+  "coreWorstCaseUsd": 2.1735,
+  "seeds": {
+    "order": 2026102502,
+    "bootstrap": 2026102503,
+    "resamples": 10000,
+    "samples": 3
+  },
+  "modelPreflight": {
+    "paidCalls": 0,
+    "counts": [
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "env-carb-icing-cause-michigan",
+        "tokens": 19,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "env-carb-icing-texas",
+        "tokens": 16,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "sys-fuel-system-failure-airplanes-2008-2012",
+        "tokens": 25,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "sys-fuel-selector-misuse-2023-2026",
+        "tokens": 27,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "sys-gear-not-operated-2023-2026",
+        "tokens": 29,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "sys-recip-power-section-arizona",
+        "tokens": 26,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "sys-magneto-failure-2014-2016",
+        "tokens": 26,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "per-maintenance-personnel-cause-hawaii",
+        "tokens": 16,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "per-preflight-cause-alaska",
+        "tokens": 18,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "per-pilot-decision-cause-weight-shift",
+        "tokens": 18,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "occ-fuel-starvation-minnesota",
+        "tokens": 8,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "occ-fuel-starvation-takeoff",
+        "tokens": 8,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "occ-midair-nevada",
+        "tokens": 10,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "occ-midair-helicopters",
+        "tokens": 8,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "occ-cfit-utah",
+        "tokens": 13,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "para-carb-icing-cause-michigan",
+        "tokens": 31,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "para-maintenance-personnel-cause-hawaii",
+        "tokens": 22,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "para-preflight-cause-alaska",
+        "tokens": 24,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "para-fuel-starvation-minnesota",
+        "tokens": 16,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "para-midair-nevada",
+        "tokens": 15,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "para-cfit-utah",
+        "tokens": 29,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-broad-01-p1",
+        "tokens": 31,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-broad-01-p2",
+        "tokens": 31,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-broad-02-p1",
+        "tokens": 36,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-broad-02-p2",
+        "tokens": 36,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-broad-03-p1",
+        "tokens": 27,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-broad-03-p2",
+        "tokens": 27,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-broad-01-p1",
+        "tokens": 31,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-broad-01-p2",
+        "tokens": 31,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-broad-02-p1",
+        "tokens": 40,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-broad-02-p2",
+        "tokens": 40,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-broad-03-p1",
+        "tokens": 34,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-broad-03-p2",
+        "tokens": 34,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-broad-01-p1",
+        "tokens": 46,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-broad-01-p2",
+        "tokens": 46,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-broad-02-p1",
+        "tokens": 47,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-broad-02-p2",
+        "tokens": 47,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-broad-03-p1",
+        "tokens": 40,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-broad-03-p2",
+        "tokens": 40,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-broad-01-p1",
+        "tokens": 38,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-broad-01-p2",
+        "tokens": 44,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-broad-02-p1",
+        "tokens": 32,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-broad-02-p2",
+        "tokens": 38,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-broad-03-p1",
+        "tokens": 30,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-broad-03-p2",
+        "tokens": 36,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-narrow-01-p1",
+        "tokens": 21,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-narrow-01-p2",
+        "tokens": 21,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-narrow-02-p1",
+        "tokens": 21,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-narrow-02-p2",
+        "tokens": 21,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-narrow-03-p1",
+        "tokens": 24,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-environment-narrow-03-p2",
+        "tokens": 24,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-narrow-01-p1",
+        "tokens": 30,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-narrow-01-p2",
+        "tokens": 30,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-narrow-02-p1",
+        "tokens": 32,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-narrow-02-p2",
+        "tokens": 32,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-narrow-03-p1",
+        "tokens": 28,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-aircraft-systems-narrow-03-p2",
+        "tokens": 28,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-narrow-01-p1",
+        "tokens": 27,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-narrow-01-p2",
+        "tokens": 27,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-narrow-02-p1",
+        "tokens": 30,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-narrow-02-p2",
+        "tokens": 30,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-narrow-03-p1",
+        "tokens": 29,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-personnel-narrow-03-p2",
+        "tokens": 29,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-narrow-01-p1",
+        "tokens": 22,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-narrow-01-p2",
+        "tokens": 28,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-narrow-02-p1",
+        "tokens": 19,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-narrow-02-p2",
+        "tokens": 25,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-narrow-03-p1",
+        "tokens": 21,
+        "limit": 1000
+      },
+      {
+        "stage": "embed-local-count",
+        "configuration": "text-embedding-3-small",
+        "request": "t24-occurrence-narrow-03-p2",
+        "tokens": 27,
+        "limit": 1000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h50-v1",
+        "request": "fixed",
+        "tokens": 1044,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h50-v1",
+        "request": "Latin maximum fields",
+        "tokens": 39648,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h50-v1",
+        "request": "maximum cause variants",
+        "tokens": 43348,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h50-v1",
+        "request": "dense text maximum fields",
+        "tokens": 24656,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h50-v1",
+        "request": "typical",
+        "tokens": 23015,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h100-v1",
+        "request": "fixed",
+        "tokens": 1044,
+        "limit": 95000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h100-v1",
+        "request": "Latin maximum fields",
+        "tokens": 78098,
+        "limit": 95000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h100-v1",
+        "request": "maximum cause variants",
+        "tokens": 85498,
+        "limit": 95000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h100-v1",
+        "request": "dense text maximum fields",
+        "tokens": 47806,
+        "limit": 95000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-q-h100-v1",
+        "request": "typical",
+        "tokens": 45215,
+        "limit": 95000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-t-s50-v1",
+        "request": "fixed",
+        "tokens": 1044,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-t-s50-v1",
+        "request": "Latin maximum fields",
+        "tokens": 39648,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-t-s50-v1",
+        "request": "maximum cause variants",
+        "tokens": 43348,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-t-s50-v1",
+        "request": "dense text maximum fields",
+        "tokens": 24656,
+        "limit": 55000
+      },
+      {
+        "stage": "rerank",
+        "configuration": "er-t-s50-v1",
+        "request": "typical",
+        "tokens": 23015,
+        "limit": 55000
+      },
+      {
+        "stage": "scope",
+        "configuration": "scope.e3",
+        "request": "t24-personnel-broad-01-p2",
+        "tokens": 5776,
+        "limit": 10000
+      },
+      {
+        "stage": "scope",
+        "configuration": "scope.e3",
+        "request": "t24-personnel-broad-02-p2",
+        "tokens": 5776,
+        "limit": 10000
+      },
+      {
+        "stage": "scope",
+        "configuration": "scope.e3",
+        "request": "t24-personnel-broad-01-p1",
+        "tokens": 5775,
+        "limit": 10000
+      },
+      {
+        "stage": "scope",
+        "configuration": "scope.e3",
+        "request": "t24-personnel-broad-02-p1",
+        "tokens": 5775,
+        "limit": 10000
+      },
+      {
+        "stage": "scope",
+        "configuration": "scope.e3",
+        "request": "t24-personnel-broad-03-p2",
+        "tokens": 5766,
+        "limit": 10000
+      }
+    ],
+    "ledger": {
+      "total": {
+        "reservations": 1040,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 95422,
+        "ledgerMicros": 95422
+      },
+      "selection": {
+        "reservations": 0,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 0,
+        "ledgerMicros": 0
+      }
+    }
+  },
+  "gateStatus": "pending-controller-review"
+}
