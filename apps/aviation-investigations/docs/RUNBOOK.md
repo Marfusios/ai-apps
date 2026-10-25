@@ -48,11 +48,20 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    Require no OVER rows. Evidence has separate 10,000/2,500 input/output caps; measured
    5,701 fixed / 5,674 cached input, 6,192 Latin / 7,190 dense input and 1,118 output.
    Check the derived reservation: $0.0024325 worst case → $0.0025 reserved.
-   Freeze evidence.v2 and the advisory prompt/routing guards; require fresh confirmation
-   (100% static-template routing accuracy, no critical false blocks or injection-induced
-   unauthorized behaviour, with Wilson intervals) plus the existing excerpt/UI gates.
-   Scope failures leave ordinary retrieval available. Suggestions remain unapplied;
-   filter-only edits retain the parent query. Statistics/comparison hints do not block.
+   Keep evidence.v2 and the evaluated scope.e3 prompt/schema/model/settings frozen.
+   The gate accepted recorded confirmation for fixed capability notes instead of blocking
+   policy replies; no new paid suggestion threshold is required. This is not a pass of
+   the earlier scope quality gate. Require the final server, excerpt/UI, security, budget
+   and lifecycle gates before public launch. Scope intents never block search: only
+   validated out_of_scope/operational_advice select the fixed scope/operational_advice
+   notes. All other outputs, failures, edits and skipped scope have no note. Render
+   EVIDENCE_NOTE_TEXT, keep the research boundary and EVIDENCE_NOTICE unconditional,
+   and never treat no note as assurance. Suggestions remain unapplied; filter-only edits
+   retain the parent query. Server-owned statistics hints carry no filters; comparison
+   hints name only the matched IDs. All successful searches return 201 results.
+   At the daily uncertain-charge limit, evidence searches skip scope while retaining
+   the full reservation, embedding accounting and other limits; they are not refused
+   solely for that limit. Generated summaries keep their old refusal rule.
    Restart with the new environment settings, then use `pnpm worker ai-switch --on`
    only after clearance. A restore hold still blocks payment until reconciliation.
 6. Check `/api/config.aiLimits` and `/api/ai/status`, the default-off brief POST/refine

@@ -5,7 +5,6 @@ import { StageError, evidenceScopeCtx } from '../ai/provider.js';
 import { validateEvidenceScope, EVIDENCE_SCOPE_VERSION } from '../ai/prompts/scope.e1.js';
 import { STAGE_CAPS, EVIDENCE_SCOPE_CAPS, stageCostUsd, stageWorstCaseUsd, embeddingWorstCaseUsd, embeddingCostUsd } from '../ai/pricing.js';
 import { QueryEmbeddingError } from '../ai/embeddings.js';
-import { operationalReply, outOfScopeReply } from '../briefs/static-replies.js';
 import { cases, evidenceSearches } from '../db/schema/index.js';
 import type { PinnedDataset } from '../dataset.js';
 import { evidenceRoute } from './routing.js';
@@ -40,66 +39,62 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
       usd: stageWorstCaseUsd(llm.models.scope, EVIDENCE_SCOPE_CAPS), uncertain: true });
   }
   let suggestion: EvidenceSuggestion | null = null;
-  let finalData: SearchData = { ...row.data };
-  let outcome: 'results' | 'scope_reply' | 'failed' = 'failed';
+  let finalData: SearchData = { ...row.data, note: null };
+  let outcome: 'results' | 'failed' = 'failed';
   let failed = false;
   await startRequestSpan('evidence.request', { datasetGeneration: String(row.generationId) }, async (span) => {
     try {
       signal.throwIfAborted();
       const route = row.data.edited ? { kind: 'search' as const } : evidenceRoute(row.data.question);
-      if (route.kind === 'operational_advice' || route.kind === 'out_of_scope') {
-        finalData.reply = route.kind === 'operational_advice' ? operationalReply() : outOfScopeReply();
-        outcome = 'scope_reply';
-      } else {
-        if (!row.data.edited) {
-          try {
-            const planned = await stageSpan('evidence.scope', { stage: 'scope', provider: llm.name, model: llm.models.scope, promptVersion: EVIDENCE_SCOPE_VERSION }, async (stage) => {
-              scopeStarted = true;
-              const result = await llm.evidenceScope!({ question: row.data.question }, evidenceScopeCtx(AbortSignal.any([signal, AbortSignal.timeout(10_000)]), 10_000));
-              const usd = stageCostUsd(result.model, result.usage);
-              lines.push({ stage: 'scope', provider: result.provider, model: result.model, usd, tokens: { ...result.usage } });
-              scopeRecorded = true;
-              stage.setAttrs({ ...result.usage, usd });
-              return validateEvidenceScope(result.output, row.data.question);
-            });
-            if (planned.intent === 'case_search') suggestion = { filters: planned.filters, terms: planned.terms };
-            // Model intents cannot block retrieval or create hints. All other valid outputs
-            // simply mean no suggestion. Unknown/prose fields fail the strict schema.
-          } catch (error) {
-            recordScopeFailure(error);
-            suggestion = null;
-            ctx.log.warn({ stage: 'scope', outcome: 'no_suggestion' }, 'evidence suggestion unavailable');
-            signal.throwIfAborted(); // Deletion/shutdown still stop all subsequent paid work.
-          }
+      if (!row.data.edited && !admission.skipScope) {
+        try {
+          const planned = await stageSpan('evidence.scope', { stage: 'scope', provider: llm.name, model: llm.models.scope, promptVersion: EVIDENCE_SCOPE_VERSION }, async (stage) => {
+            scopeStarted = true;
+            const result = await llm.evidenceScope!({ question: row.data.question }, evidenceScopeCtx(AbortSignal.any([signal, AbortSignal.timeout(10_000)]), 10_000));
+            const usd = stageCostUsd(result.model, result.usage);
+            lines.push({ stage: 'scope', provider: result.provider, model: result.model, usd, tokens: { ...result.usage } });
+            scopeRecorded = true;
+            stage.setAttrs({ ...result.usage, usd });
+            return validateEvidenceScope(result.output, row.data.question);
+          });
+          if (planned.intent === 'case_search') suggestion = { filters: planned.filters, terms: planned.terms };
+          // A validated policy intent selects a fixed capability note only. It has
+          // no authority over hints, retrieval, ranking, filters or accounting.
+          finalData.note = planned.intent === 'out_of_scope' ? 'scope' : planned.intent === 'operational_advice' ? 'operational_advice' : null;
+        } catch (error) {
+          recordScopeFailure(error);
+          suggestion = null;
+          ctx.log.warn({ stage: 'scope', outcome: 'no_suggestion' }, 'evidence suggestion unavailable');
+          signal.throwIfAborted(); // Deletion/shutdown still stop all subsequent paid work.
         }
-        if (route.kind === 'corpus_statistics') finalData.hint = { kind: 'corpus_statistics', filters: row.data.appliedFilters };
-        if (route.kind === 'case_comparison') {
-          const existing = await ctx.db.select({ ntsbNo: cases.ntsbNo }).from(cases).where(and(eq(cases.generationId, row.generationId), inArray(cases.ntsbNo, route.numbers)));
-          const found = new Set(existing.map(c => c.ntsbNo));
-          finalData.hint = { kind: 'case_comparison', found: route.numbers.filter(n => found.has(n)), notFound: route.numbers.filter(n => !found.has(n)) };
-        }
-        signal.throwIfAborted();
-        // Account deletion may have happened while scope ran: no second provider call then.
-        const still = await ctx.db.select({ id: evidenceSearches.id }).from(evidenceSearches).where(and(eq(evidenceSearches.id, row.id), eq(evidenceSearches.status, 'running')));
-        if (!still.length) throw new EvidenceFailure('stopped');
-        active = 'retrieval';
-        const retrieved = await stageSpan('evidence.retrieve', { stage: 'retrieve', retrievalVersion: 'retrieval.v2' }, async (stage) => {
-          const result = await services.retriever.search(pinned, { text: row.data.query.source === 'question' ? row.data.question : row.data.query.terms, filters: row.data.appliedFilters }, AbortSignal.any([signal, AbortSignal.timeout(8_000)]), (u) => {
-            const duplicate = embedRecorded;
-            embedRecorded = true;
-            lines.push({ stage: 'embed', provider: 'openai', model: u.model, usd: u.billing === 'uncertain' ? embeddingWorstCaseUsd(u.model) : u.usd,
-              tokens: { inputTokens: u.tokens }, ...(u.billing === 'uncertain' ? { uncertain: true } : {}) });
-            if (duplicate) throw new EvidenceFailure('retrieval');
-          }, row.data.query.source === 'question' ? row.data.question : row.data.query.terms);
-          stage.setAttrs({ caseCount: result.cases.length });
-          return result;
-        });
-        finalData = { ...finalData, ranking: retrieved.ranking, cases: retrieved.cases };
-        finalData = withSuggestion(finalData, suggestion);
-        // Validate the exact public page before keeping its quota unit or storing success.
-        pageOf({ ...row, status: 'results', data: finalData }, 1);
-        outcome = 'results';
       }
+      if (route.kind === 'corpus_statistics') finalData.hint = { kind: 'corpus_statistics' };
+      if (route.kind === 'case_comparison') {
+        const existing = await ctx.db.select({ ntsbNo: cases.ntsbNo }).from(cases).where(and(eq(cases.generationId, row.generationId), inArray(cases.ntsbNo, route.numbers)));
+        const found = new Set(existing.map(c => c.ntsbNo));
+        finalData.hint = { kind: 'case_comparison', found: route.numbers.filter(n => found.has(n)), notFound: route.numbers.filter(n => !found.has(n)) };
+      }
+      signal.throwIfAborted();
+      // Account deletion may have happened while scope ran: no second provider call then.
+      const still = await ctx.db.select({ id: evidenceSearches.id }).from(evidenceSearches).where(and(eq(evidenceSearches.id, row.id), eq(evidenceSearches.status, 'running')));
+      if (!still.length) throw new EvidenceFailure('stopped');
+      active = 'retrieval';
+      const retrieved = await stageSpan('evidence.retrieve', { stage: 'retrieve', retrievalVersion: 'retrieval.v2' }, async (stage) => {
+        const result = await services.retriever.search(pinned, { text: row.data.query.source === 'question' ? row.data.question : row.data.query.terms, filters: row.data.appliedFilters }, AbortSignal.any([signal, AbortSignal.timeout(8_000)]), (u) => {
+          const duplicate = embedRecorded;
+          embedRecorded = true;
+          lines.push({ stage: 'embed', provider: 'openai', model: u.model, usd: u.billing === 'uncertain' ? embeddingWorstCaseUsd(u.model) : u.usd,
+            tokens: { inputTokens: u.tokens }, ...(u.billing === 'uncertain' ? { uncertain: true } : {}) });
+          if (duplicate) throw new EvidenceFailure('retrieval');
+        }, row.data.query.source === 'question' ? row.data.question : row.data.query.terms);
+        stage.setAttrs({ caseCount: result.cases.length });
+        return result;
+      });
+      finalData = { ...finalData, ranking: retrieved.ranking, cases: retrieved.cases };
+      finalData = withSuggestion(finalData, suggestion);
+      // Validate the exact public page before keeping its quota unit or storing success.
+      pageOf({ ...row, status: 'results', data: finalData }, 1);
+      outcome = 'results';
       signal.throwIfAborted();
     } catch (error) {
       failed = true;
