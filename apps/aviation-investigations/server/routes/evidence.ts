@@ -1,6 +1,6 @@
 /** Private evidence search creation and free pagination. Matched routes enforce network limits. */
 import { autoFilterPolicy, autoFilterIdentity } from '../evidence/auto-filters.js';
-import { canUndo } from '../evidence/undo.js';
+import { canUndo, isExpiredUndoClaim } from '../evidence/undo.js';
 import { initialExecution } from '../evidence/execution.js';
 import { evidenceRankingConfig, evidenceRankingIdentity } from '../evidence/ranking-config.js';
 import { evidenceJson } from '../evidence/routing.js';
@@ -126,6 +126,9 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
         } } : {}), });
     } catch (err) {
       if (err instanceof UnknownPrincipalError) return sendError(reply, 403, 'challenge_required');
+      // Admission has rolled back its reservation and claim. A lagging app clock
+      // must not turn the database's expiry refusal into an internal server error.
+      if (undoCandidate && isExpiredUndoClaim(err)) return notFound(reply);
       throw err;
     }
     if (!admitted.ok) return sendRejection(reply, admitted, ai.now());

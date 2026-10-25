@@ -559,7 +559,7 @@ configuration. Saved searches record `autoFilterPolicy` (version/sha256),
 `automaticFilters` and `autoFilterReason`; only the applied state set is public.
 The fitted `addedTerms` suffix is saved once and drives disclosure. Failed attempts
 retain actual automatic state/filters in private diagnostics, never logs or traces.
-The automatic policy binds `state-probes.v1` outputs as well as the guard version.
+The automatic policy binds `state-probes.v2` outputs as well as the guard version.
 Cache identities for an automatic-filter experiment must include both policy identities,
 the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
 `none` remains the default and sole live-allowed automatic-filter policy.

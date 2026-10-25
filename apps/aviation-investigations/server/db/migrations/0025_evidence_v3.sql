@@ -15,9 +15,14 @@ BEGIN
     RAISE EXCEPTION 'evidence search is immutable' USING ERRCODE = '55000';
   END IF;
   IF NEW.free_undo_reservation_id IS DISTINCT FROM OLD.free_undo_reservation_id THEN
+    -- The route must distinguish clock-skew expiry from every other claim violation.
+    -- Check it before the owner tie: an expired trial parent cannot be handed over.
+    IF OLD.expires_at <= clock_timestamp() THEN
+      RAISE EXCEPTION 'evidence undo parent expired' USING ERRCODE = '55000',
+        CONSTRAINT = 'evidence_undo_parent_unexpired';
+    END IF;
     IF OLD.free_undo_reservation_id IS NOT NULL OR NEW.free_undo_reservation_id IS NULL
        OR OLD.status <> 'results' OR OLD.data->>'edited' IS DISTINCT FROM 'false'
-       OR OLD.expires_at <= clock_timestamp()
        OR NOT EXISTS (SELECT 1 FROM reservations claim
          JOIN reservations paid ON paid.id = OLD.reservation_id
          WHERE claim.id = NEW.free_undo_reservation_id

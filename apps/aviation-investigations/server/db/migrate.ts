@@ -23,7 +23,7 @@ const JOURNAL = 'drizzle.__drizzle_migrations';
  * (dev and live were at 0016 and 0019 when they were rewritten). Their current statements
  * converge from each version listed (CREATE ... IF NOT EXISTS, CREATE OR REPLACE, ON CONFLICT
  * DO NOTHING), so `runMigrations` runs the current version again over such a database and
- * records its hash. The same rule covers local-test-only 0025 from Task 24 round 2;
+ * records its hash. The same rule covers local-test-only 0025 from Task 24 rounds 2/3;
  * ADD COLUMN IF NOT EXISTS and CREATE OR REPLACE preserve existing undo claims.
  * Any other difference stops it (`MigrationHistoryError`).
  */
@@ -38,6 +38,7 @@ export const REAPPLIED_MIGRATIONS: Readonly<Record<string, readonly string[]>> =
   ],
   '0025_evidence_v3': [
     'cd529ed2ec5beb47fc0aa07aca141dc128cba4cbe0806f59cfcfeb83bc4fba81', // Task 24 round 2; applied only to local test databases
+    'eda715d2611a20f824d4957b8ede8b62fe176dcabfb8ad47ff273a59451473f7', // Task 24 round 3; applied only to local test databases
   ],
 };
 
