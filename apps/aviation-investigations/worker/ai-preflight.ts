@@ -24,6 +24,12 @@
  * `preflightRequests` is pure, so the offline unit test sizes the same requests with the
  * local tokenizer (tests/unit/ai-preflight.test.ts).
  */
+import { FACET_VALUES } from '../shared/contracts/search.js';
+import { BRIEF_FILTER_FACETS } from '../shared/contracts/briefs.js';
+import { stageWorstCaseUsd, embeddingWorstCaseUsd } from '../server/ai/pricing.js';
+import { EVIDENCE_SCOPE_CAPS } from '../server/ai/pricing.js';
+import { evidenceScopeCtx } from '../server/ai/provider.js';
+import { EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from '../server/ai/prompts/scope.e1.js';
 import { createHash } from 'node:crypto';
 import { MAX_BRIEF_CASES, MAX_BRIEF_PASSAGES, QUESTION_MAX_CHARS, type ComposeOutput } from '../shared/contracts/briefs.js';
 import { PHASE_GROUPS } from '../shared/codes.js';
@@ -394,6 +400,24 @@ export function preflightRequests(): PreflightRequests {
   };
 }
 
+/** Evidence has no refinement history or case text in scope; extrema are questions only.
+ * The output uses every filter at its array limit and maximum-length dense terms. The provider counter must expose an output-cap shortfall,
+ * not hide it behind a representative sample. No cap is silently raised here.
+ */
+export function evidencePreflightRequests() {
+  const quote = '整備直後に発動機の出力が低下し、操縦士は農地に不時着した。'.repeat(20).slice(0, 300);
+  const filters = Object.fromEntries(BRIEF_FILTER_FACETS.map((f) => [f, [...FACET_VALUES[f]]]));
+  return {
+    fixed: { question: 'Find engine power loss investigations.' },
+    worst: [
+      { label: 'maximum Latin question', latin: true, input: { question: exactly(QUESTION_MAX_CHARS) } },
+      { label: 'maximum dense question', latin: false, input: { question: quote.repeat(Math.ceil(QUESTION_MAX_CHARS / quote.length)).slice(0, QUESTION_MAX_CHARS) } },
+    ],
+    output: JSON.stringify({ result: { intent: 'case_search', filters: { ...filters, yearFrom: 1900, yearTo: 2100 },
+      terms: quote } }),
+  };
+}
+
 /** The provider's token counter for a plain user message (an output counted as text). */
 export type TextCounter = (model: string, text: string) => Promise<number>;
 
@@ -407,7 +431,12 @@ export interface PreflightRow {
 }
 
 /** Count every request and output against its cap. `countText` counts a plain user message. */
-export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels): Promise<PreflightRow[]> {
+export async function runAiPreflight(provider: LlmProvider, countText: TextCounter, models: StageModels, evidence?: { embeddingModel: string; reservationUsd: number }): Promise<PreflightRow[]> {
+  if (provider.countEvidenceScopeTokens) {
+    if (!evidence) throw new Error('evidence preflight requires the configured embedding model and reservation');
+    const worst = stageWorstCaseUsd(models.scope, EVIDENCE_SCOPE_CAPS) + embeddingWorstCaseUsd(evidence.embeddingModel);
+    if (!Number.isFinite(evidence.reservationUsd) || evidence.reservationUsd < worst) throw new Error('evidence reservation too small');
+  }
   const r = preflightRequests();
   const rows: PreflightRow[] = [];
   const ctx = (stage: LlmStage) => stageCtx(stage, AbortSignal.timeout(30_000), 30_000);
@@ -418,6 +447,17 @@ export async function runAiPreflight(provider: LlmProvider, countText: TextCount
   // The cached prefix: the fixed request less its (minimal) user turn counted on its own.
   const prefix = async (model: string, fixed: number, userTurn: string) => fixed - (await countText(model, userTurn));
 
+  // The separate evidence scope has its own capped price, no compose/check reachability.
+  if (provider.countEvidenceScopeTokens) {
+    const e = evidencePreflightRequests();
+    const tokens = await provider.countEvidenceScopeTokens(e.fixed, evidenceScopeCtx(AbortSignal.timeout(30_000), 30_000));
+    add('scope', `${EVIDENCE_SCOPE_VERSION}: fixed prompt + schema`, tokens, EVIDENCE_SCOPE_CAPS.input);
+    add('scope', `${EVIDENCE_SCOPE_VERSION}: cached prefix`, Math.max(0, tokens - await countText(models.scope, renderEvidenceScopeUser(e.fixed))), CACHED_PREFIX_MAX);
+    for (const w of e.worst) {
+      add('scope', `${EVIDENCE_SCOPE_VERSION}: ${w.label}`, await provider.countEvidenceScopeTokens(w.input, evidenceScopeCtx(AbortSignal.timeout(30_000), 30_000)), EVIDENCE_SCOPE_CAPS.input);
+    }
+    add('scope', `${EVIDENCE_SCOPE_VERSION}: output at its schema bounds`, await output(models.scope, e.output), EVIDENCE_SCOPE_CAPS.output);
+  }
   const scopeFixed = await provider.countInputTokens('scope', r.fixed.scope, ctx('scope'));
   add('scope', 'fixed (system prompt + schema)', scopeFixed, STAGE_CAPS.scope.input);
   add('scope', 'cached prefix (system prompt + schema)', await prefix(models.scope, scopeFixed, renderScopeUser(r.fixed.scope)), CACHED_PREFIX_MAX);

@@ -19,6 +19,7 @@ export interface PruneReport {
   costLedger: number;
   leases: number;
   reservations: number;
+  evidenceSearches: number;
   briefs: number;
   briefSteps: number;
 }

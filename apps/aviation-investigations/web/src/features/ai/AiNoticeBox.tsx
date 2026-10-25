@@ -2,10 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { AiStatusResponse } from '../../../../shared/contracts/ai';
-import { aiStatusQuery } from '../../api';
+import { aiStatusQuery, configQuery } from '../../api';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
 import { GoogleButton, useSignIn } from '../auth/SignInDialog';
+import { trialReturns, trialUsedSignIn, trialUsedTitle } from './limits';
 import { retryDay } from './status';
 import type { AiNotice } from './useAiRequest';
 
@@ -19,17 +20,19 @@ export const COPY = {
   pausedUnavailableTitle: 'AI search is temporarily unavailable.',
   everythingElse: 'Everything else works: keyword search, every case, comparisons and printing.',
   keyword: 'Search by keyword instead',
-  trialUsed: [
-    'That was your third free AI search.',
-    'Sign in with Google to keep asking. New accounts start with 5 AI searches a day, rising to 20 after three days.',
-    'Search, case pages, compare and the dashboard stay open without an account.',
-  ],
+  /** The trial-used box's last line; its first two name the limits the API reports (web/src/features/ai/limits.ts). */
+  trialUsedOpen: 'Search, case pages, compare and the dashboard stay open without an account.',
   freePaused: [
     'Free AI searches are used up for today.',
     'Signed-in AI search is still open today. Sign in with Google to ask.',
     'Free searches return tomorrow; keyword search and every case work now.',
   ],
   failure: ["The AI search didn't finish.", 'Something went wrong before an answer was ready.'],
+  /**
+   * An AI evidence search the server could not finish (503 `unavailable`, before or after it was
+   * admitted: either way no search is used; Builder copy).
+   */
+  unfinished: ["AirCase couldn't finish this AI search.", "It didn't use one of your searches. Try again in a moment."],
   notSpent: "This didn't use one of your searches.",
   spent: 'This counted as a search, because the AI work was already under way.',
   /** No answer came back, so whether it counted is unknown (Builder copy). */
@@ -156,7 +159,10 @@ export interface AiNoticeBoxProps {
  */
 export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNoticeBoxProps) {
   const live = useQuery(aiStatusQuery());
+  const limits = useQuery(configQuery()).data?.aiLimits;
   const signIn = useSignIn();
+  const trialUsed = trialUsedTitle(limits, live.data);
+  const returns = trialReturns(live.data);
   const body = (() => {
     if (!notice) return null;
     switch (notice.kind) {
@@ -164,21 +170,25 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
         return <Paused status={notice.status ?? (live.data?.state === 'paused' ? live.data : null)} keywordHref={keywordHref} />;
       case 'trial_used':
         // Not known yet whether sign-in is offered: only the title both versions share (re-review N-4).
-        if (signIn.pending) return <Box title={COPY.trialUsed[0]} />;
+        if (signIn.pending) return <Box title={trialUsed} />;
         // Sign-in is not offered: the same moment, without telling the visitor to sign in (review W-10).
         if (!signIn.enabled) {
           return (
-            <Box title={COPY.trialUsed[0]}>
+            <Box title={trialUsed}>
+              {returns && <p>{returns}</p>}
               <p>{COPY.everythingElse}</p>
               <KeywordLink href={keywordHref} />
             </Box>
           );
         }
         return (
-          <Box title={COPY.trialUsed[0]}>
-            <p>{COPY.trialUsed[1]}</p>
+          <Box title={trialUsed}>
+            <p>{trialUsedSignIn(limits)}</p>
             <SignInButton />
-            <p className="pt-1 text-meta text-muted">{COPY.trialUsed[2]}</p>
+            <p className="pt-1 text-meta text-muted">
+              {returns && `${returns} `}
+              {COPY.trialUsedOpen}
+            </p>
           </Box>
         );
       case 'free_paused':
@@ -231,6 +241,22 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, className }: AiNotic
               </Link>
             </div>
             <p className="pt-1 text-meta text-muted">{notice.spent === 'no' ? COPY.notSpent : COPY.unknownSpent}</p>
+          </Box>
+        );
+      case 'unfinished':
+        return (
+          <Box title={COPY.unfinished[0]}>
+            <p>{COPY.unfinished[1]}</p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              {onRetry && (
+                <Button variant="ai" counter="uses 1" onClick={onRetry}>
+                  Try again
+                </Button>
+              )}
+              <Link to={keywordHref} className="text-ui text-blue hover:underline">
+                {COPY.keyword}
+              </Link>
+            </div>
           </Box>
         );
       case 'check':

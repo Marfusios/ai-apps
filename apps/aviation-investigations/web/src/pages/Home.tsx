@@ -8,12 +8,13 @@ import { Chip } from '../components/Chip';
 import { CompassMark } from '../components/CompassMark';
 import { SearchBox } from '../components/SearchBox';
 import { AiNoticeBox } from '../features/ai/AiNoticeBox';
-import { useAskAi } from '../features/ai/useAskAi';
+import { useEvidenceSearch } from '../features/evidence/useEvidenceSearch';
 import { formatChartDate, formatCount } from '../lib/format';
 
 /**
  * Home, "Clear sky" (UI_DESIGN §4.1): compass, headline, the question box and
- * examples. Example chips only fill the box; they never run a search.
+ * examples. Example chips only fill the box; they never run a search. Ask AI starts an AI
+ * evidence search (UI_DESIGN §4.9) and opens its results.
  */
 export function Home() {
   const navigate = useNavigate();
@@ -21,7 +22,7 @@ export function Home() {
   const input = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
   const config = useQuery(configQuery());
   const coverage = config.data?.coverage;
-  const ai = useAskAi();
+  const ai = useEvidenceSearch();
 
   const search = (q: string): void => {
     const query = q.trim();

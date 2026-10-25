@@ -1,0 +1,1 @@
+ALTER TABLE "evidence_searches" ADD CONSTRAINT "evidence_data_bytes_check" CHECK (octet_length("evidence_searches"."data"::text) <= 8388608);

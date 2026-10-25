@@ -1,9 +1,10 @@
 /**
  * Whose data the page holds (Task 20 review): signing out or deleting the account forgets
- * every private query (the brief, its case context, the AI counts, the account), the
- * questions held in memory and the retry keys, and an answer still on its way cannot put
- * any of it back. Also how the page meets the server's extra check for signed-in AI, and a
- * request refused because the session ended.
+ * every private query (an AI search and the cases it opened, a brief and its case context,
+ * the AI counts, the account), the questions held in memory and the retry keys, and an answer
+ * still on its way cannot put any of it back. Also how the page meets the server's extra check
+ * for signed-in AI, and a request refused because the session ended. Ask AI starts an AI
+ * evidence search (Task 23); briefs that exist are opened by their link.
  */
 import { QueryClient } from '@tanstack/react-query';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -14,6 +15,9 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
+import { StartBriefResponseSchema } from '../../shared/contracts/briefs';
+import { EVIDENCE_HEADING } from '../../shared/contracts/evidence';
+import { EXPIRED_TITLE as SEARCH_GONE } from '../../web/src/features/evidence/display';
 import { askAvailability } from '../../web/src/features/ai/status';
 import { LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { rememberUnsettled, resetUnsettledForTests, unsettledId, unsettledKey } from '../../web/src/features/ai/unsettled';
@@ -32,12 +36,14 @@ import { rememberQuestion, rememberedQuestion } from '../../web/src/features/bri
 import { postJson } from '../../web/src/api';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
-import { EXPIRED_TITLE } from '../../web/src/pages/Brief';
+import { evidenceAnswer } from './evidence-answer';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
 const server = setupMockApi();
 const SLOW = { timeout: 5000 };
-const CITED = /castellated nut used to secure the governor lever control rod/;
+
+/** The private projection is on screen: the drawer's search section, or a full section opened at the search's generation. */
+const privateShown = (): boolean => document.querySelector('[data-evidence-section], [data-excerpt-paragraph]') !== null;
 
 /** This tab starts signed in (the mock keeps it in session storage), with fresh handlers. */
 function signedInApi(options: HandlerOptions = {}): void {
@@ -235,49 +241,81 @@ afterEach(() => {
   delete window.turnstile;
   resetUnsettledForTests();
   window.sessionStorage.clear();
+  server.events.removeAllListeners();
 });
 
-/** Ask from the home page and open the drawer of the cited case: the brief's private context is on screen. */
-async function briefWithDrawer() {
+/**
+ * Ask from the home page, open a case's drawer and its first excerpt's full section: the
+ * search's pages and a case at its generation, all private, are on screen.
+ */
+async function searchWithDrawer() {
   const app = renderApp('/');
   fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
   fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
-  await waitFor(() => expect(currentUrl(app.router)).toMatch(/^\/briefs\/[0-9a-f-]{36}$/), SLOW);
-  const label = await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
-  fireEvent.click(within(label.parentElement as HTMLElement).getByRole('link', { name: 'DFW08TA066' }));
+  await waitFor(() => expect(currentUrl(app.router)).toMatch(/^\/ai\/[0-9a-f-]{36}$/), SLOW);
+  await screen.findByRole('heading', { name: EVIDENCE_HEADING }, SLOW);
+  const card = (await waitFor(() => document.querySelector('article[data-card="DFW08TA066"]') as HTMLElement, SLOW)) as HTMLElement;
+  fireEvent.click(within(card).getByRole('link', { name: 'DFW08TA066' }));
   const dialog = await screen.findByRole('dialog');
-  await within(dialog).findByText(CITED, { selector: 'mark' }, SLOW);
+  const section = await within(dialog).findByRole('region', { name: EVIDENCE_HEADING }, SLOW);
+  fireEvent.click(within(section).getAllByRole('button', { name: /^Show the full .+ section\b/ })[0] as HTMLElement);
+  await waitFor(() => expect(dialog.querySelector('[data-excerpt-paragraph]')).not.toBeNull(), SLOW);
   return { ...app, drawerUrl: currentUrl(app.router) };
 }
 
+/** A brief that exists, opened by its link (the interface starts none): created as a request of this visitor would. */
+async function openBrief() {
+  const response = await fetch(new URL('/api/briefs', window.location.href), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ question: MOCK_SEED_QUESTION, idempotencyKey: crypto.randomUUID(), turnstileToken: null }),
+  });
+  const { briefId } = StartBriefResponseSchema.parse(await response.json());
+  const app = renderApp(`/briefs/${briefId}`);
+  await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+  return { ...app, briefId };
+}
+
 /**
- * Nothing of the previous visitor is left in the cache: no brief or case context, the
+ * Nothing of the previous visitor is left in the cache: no search, brief or case context, the
  * account signed out, and AI counts only as read again for the new (anonymous) visitor.
  */
 function previousVisitorGone(client: QueryClient): boolean {
   const empty = (root: string) => client.getQueriesData({ queryKey: [root] }).every(([, data]) => data === undefined);
   const counts = client.getQueryData<{ remaining?: { kind?: string } | null }>(['ai-status']);
-  return empty('brief') && empty('brief-case') && counts?.remaining?.kind !== 'account' && client.getQueryData<{ signedIn: boolean }>(['account'])?.signedIn === false;
+  const privateData = ['brief', 'brief-case', 'evidence', 'evidence-case'].every(empty);
+  return privateData && counts?.remaining?.kind !== 'account' && client.getQueryData<{ signedIn: boolean }>(['account'])?.signedIn === false;
 }
 
 describe('a new visitor sees nothing of the previous one (Task 20 review)', () => {
-  it('signing out forgets the brief and its case context: back at the evidence drawer, nothing private shows', async () => {
+  it('signing out forgets the search and the cases it opened: back at the drawer, nothing private shows', async () => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     await act(() => app.router.navigate('/account'));
     fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
     await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
     expect(previousVisitorGone(app.client)).toBe(true);
-    // Back to the drawer: the brief is read again as the new visitor and is not theirs; no AI context shows.
+    // Back to the drawer: the search is read again as the new visitor and is not theirs; nothing private shows.
     await act(() => app.router.navigate(app.drawerUrl));
-    expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
-    expect(screen.queryByText('AI classified')).toBeNull();
+    expect((await screen.findAllByText(SEARCH_GONE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(privateShown()).toBe(false);
+  }, 20_000);
+
+  it('signing out forgets a brief that exists and its case context too', async () => {
+    signedInApi();
+    const app = await openBrief();
+    await act(() => app.router.navigate('/account'));
+    fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
+    await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle });
+    expect(previousVisitorGone(app.client)).toBe(true);
+    await act(() => app.router.navigate(`/briefs/${app.briefId}`));
+    expect((await screen.findAllByText('This AI search has expired.', {}, SLOW)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('heading', { name: /AI summary/i })).toBeNull();
   }, 20_000);
 
   it.each(['pending', 'interrupted'] as const)('a sign-out the server could not confirm (%s) forgets them all the same, in every tab, and says so (gate t22 finding 1, r2 finding 1)', async (failure) => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     signOutFails(failure);
     const generation = visitorGeneration();
     const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
@@ -304,7 +342,7 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
 
   it('a sign-out that got no answer forgets them all the same and shows the account the server still has, saying so (gate t22 r2 finding 1)', async () => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     signOutFails('network');
     const generation = visitorGeneration();
     const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
@@ -316,7 +354,7 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
     expect(visitorGeneration()).toBeGreaterThan(generation);
     expect(window.localStorage.getItem(VISITOR_STORAGE_KEY)).not.toBe(marker);
     const empty = (root: string) => app.client.getQueriesData({ queryKey: [root] }).every(([, data]) => data === undefined);
-    expect(empty('brief') && empty('brief-case')).toBe(true);
+    expect(['brief', 'brief-case', 'evidence', 'evidence-case'].every(empty)).toBe(true);
   }, 20_000);
 
   it.each(SIGN_OUT_FAILURES)('a sign-out ending %s forgets at once: late private answers, held questions, retry keys and AI sends of the previous visitor (gate t22 r2 finding 1)', async (failure) => {
@@ -349,7 +387,7 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
 
   it.each(DELETION_FAILURES)('the account page after a deletion ending %s: everything private forgotten, the account read again, and the server’s silence said', async (failure) => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     deletionFails(failure);
     const generation = visitorGeneration();
     const marker = window.localStorage.getItem(VISITOR_STORAGE_KEY);
@@ -369,14 +407,14 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
     expect(visitorGeneration()).toBeGreaterThan(generation);
     expect(window.localStorage.getItem(VISITOR_STORAGE_KEY)).not.toBe(marker);
     const empty = (root: string) => app.client.getQueriesData({ queryKey: [root] }).every(([, data]) => data === undefined);
-    expect(empty('brief') && empty('brief-case')).toBe(true);
+    expect(['brief', 'brief-case', 'evidence', 'evidence-case'].every(empty)).toBe(true);
     expect(screen.queryByText(ACCOUNT_COPY.deleted)).toBeNull();
     expect(screen.queryByText(ACCOUNT_COPY.failed)).toBeNull();
   }, 20_000);
 
   it('deleting the account forgets them too', async () => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     await act(() => app.router.navigate('/account'));
     fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
     await screen.findByText(ACCOUNT_COPY.deleteAsk);
@@ -384,8 +422,8 @@ describe('a new visitor sees nothing of the previous one (Task 20 review)', () =
     expect(await screen.findByText(ACCOUNT_COPY.deleted)).toBeTruthy();
     expect(previousVisitorGone(app.client)).toBe(true);
     await act(() => app.router.navigate(app.drawerUrl));
-    expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
+    expect((await screen.findAllByText(SEARCH_GONE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(privateShown()).toBe(false);
   }, 20_000);
 
   it('an answer still on its way when the visitor changes is dropped, never cached', async () => {
@@ -446,7 +484,7 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
   it('ordinary signed-in requests take no check', async () => {
     signedInApi();
     const turnstile = installTurnstile();
-    await briefWithDrawer();
+    await searchWithDrawer();
     expect(turnstile.appearances).toEqual([]);
   });
 
@@ -455,14 +493,14 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
     const turnstile = installTurnstile();
     const tokens: (string | undefined)[] = [];
     server.events.on('request:start', ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/evidence') {
         void request.clone().json().then((b: { turnstileToken?: string }) => tokens.push(b.turnstileToken));
       }
     });
     const app = renderApp('/');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
-    await waitFor(() => expect(currentUrl(app.router)).toMatch(/^\/briefs\//), SLOW);
+    await waitFor(() => expect(currentUrl(app.router)).toMatch(/^\/ai\//), SLOW);
     expect(turnstile.appearances).toEqual(['interaction-only']);
     expect(tokens).toEqual(['XXXX.DUMMY.TOKEN.XXXX']);
     expect(screen.queryByRole('dialog', { name: LATER_CHECK_TITLE })).toBeNull();
@@ -474,7 +512,7 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
     const turnstile = installTurnstile();
     let refused = 0;
     server.use(
-      http.post('*/api/briefs', async ({ request }) => {
+      http.post('*/api/evidence', async ({ request }) => {
         const body = (await request.clone().json()) as { turnstileToken?: string };
         if (!body.turnstileToken) {
           refused += 1;
@@ -487,7 +525,7 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
     expect(await screen.findByRole('dialog', { name: LATER_CHECK_TITLE })).toBeTruthy();
-    await waitFor(() => expect(currentUrl(app.router)).toMatch(/^\/briefs\//), SLOW);
+    await waitFor(() => expect(currentUrl(app.router)).toMatch(/^\/ai\//), SLOW);
     expect(refused).toBe(1);
     expect(turnstile.appearances).toEqual(['always']);
   });
@@ -495,7 +533,7 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
   it('a request refused because the session ended says so and forgets the previous visitor', async () => {
     signedInApi();
     server.use(
-      http.post('*/api/briefs', () =>
+      http.post('*/api/evidence', () =>
         HttpResponse.json({ error: 'signed_out', message: "You were signed out, so this AI search didn't start. Sign in to ask again." }, { status: 403 }),
       ),
     );
@@ -520,14 +558,21 @@ describe('signed-in AI and the extra check (DESIGN §8)', () => {
 
 describe('an AI request whose visitor changes before it ends keeps nothing (Task 20 gate)', () => {
   const ANSWERED_ID = '00000000-0000-4000-8000-0000000000ff';
+  // A valid answer, checked when this file loads: the page ignores it because the visitor changed, not because it is broken.
+  const ANSWERED = evidenceAnswer(ANSWERED_ID);
 
+  /** Asks from Home, with the answer held until `held.release()`; `delivered()`: the statuses the page received. */
   async function askHeld(answer: () => Response) {
-    const held = holdPost('*/api/briefs', answer);
+    const held = holdPost('*/api/evidence', answer);
+    const statuses: number[] = [];
+    server.events.on('response:mocked', ({ request, response }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/evidence') statuses.push(response.status);
+    });
     const app = renderApp('/');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
     fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
     await waitFor(() => expect(held.calls()).toBe(1));
-    return { ...app, held };
+    return { ...app, held, delivered: () => statuses };
   }
 
   /** Sign out from the account page; `failure`: the sign-out ends that way, unconfirmed. */
@@ -541,18 +586,20 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 
   it.each(SIGN_OUT_FAILURES)('a question answered after a sign-out ending %s opens nothing and keeps nothing (gate t22 finding 1, r2 finding 1)', async (failure) => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     await signOutHere(app, { failure });
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
   });
 
   it('a question answered while the sign-out is still on its way opens nothing and keeps nothing (gate t22 r2 finding 1)', async () => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     // The server takes its time over the sign-out, and the question's answer comes first.
     const signingOut = holdPost('*/api/auth/sign-out', () => HttpResponse.error());
     await act(() => app.router.navigate('/account'));
@@ -560,17 +607,19 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     await waitFor(() => expect(signingOut.calls()).toBe(1));
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
     signingOut.release();
     await screen.findByText(ACCOUNT_COPY.signOutUnconfirmed);
     expect(currentUrl(app.router)).toBe('/account');
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
   });
 
   it('a question answered while the deletion is still on its way opens nothing and keeps nothing', async () => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     // The server takes its time over the deletion, and the question's answer comes first.
     const deleting = holdPost('*/api/account/delete', () => HttpResponse.error());
     await act(() => app.router.navigate('/account'));
@@ -580,12 +629,14 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     await waitFor(() => expect(deleting.calls()).toBe(1));
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
     deleting.release();
     await screen.findByText(ACCOUNT_COPY.deleteUnconfirmed);
     expect(currentUrl(app.router)).toBe('/account');
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
   }, 20_000);
 
   it.each(DELETION_FAILURES)('a check still open when a deletion ends %s is cancelled, and nothing is sent', async (failure) => {
@@ -593,7 +644,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     const turnstile = installTurnstile({ hold: true });
     let posts = 0;
     server.events.on('request:start', ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/evidence') posts += 1;
     });
     try {
       const app = renderApp('/');
@@ -607,7 +658,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
       await act(() => sleep(150));
       expect(posts).toBe(0);
       expect(currentUrl(app.router)).toBe('/');
-      expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+      expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
     } finally {
       server.events.removeAllListeners();
     }
@@ -618,7 +669,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     const turnstile = installTurnstile({ hold: true });
     let posts = 0;
     server.events.on('request:start', ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/evidence') posts += 1;
     });
     try {
       const app = renderApp('/');
@@ -632,7 +683,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
       await act(() => sleep(150));
       expect(posts).toBe(0);
       expect(currentUrl(app.router)).toBe('/');
-      expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+      expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
     } finally {
       server.events.removeAllListeners();
     }
@@ -640,13 +691,15 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 
   it('a question answered after sign-out opens nothing and keeps neither the question nor a retry key', async () => {
     signedInApi();
-    const app = await askHeld(() => HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 }));
+    const app = await askHeld(() => HttpResponse.json(ANSWERED, { status: 201 }));
     await signOutHere(app);
     app.held.release();
     await act(() => sleep(150));
+    // The answer arrived whole: the page left it alone because the visitor changed.
+    expect(app.delivered()).toEqual([201]);
     expect(currentUrl(app.router)).toBe('/account');
     expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
   });
 
   it('a question whose answer is lost after sign-out keeps no retry key', async () => {
@@ -656,16 +709,13 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     app.held.release();
     await act(() => sleep(150));
     expect(currentUrl(app.router)).toBe('/account');
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
   });
 
   it('a refinement whose answer is lost after the account is deleted keeps no retry key and moves nowhere', async () => {
     signedInApi();
-    const app = renderApp('/');
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
-    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
-    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
-    const briefId = currentUrl(app.router).split('/')[2]!;
+    const app = await openBrief();
+    const briefId = app.briefId;
     const held = holdPost('*/api/briefs/:id/refine', () => HttpResponse.error());
     fireEvent.change(screen.getByRole('textbox', { name: /^refine$/i }), { target: { value: 'only helicopters' } });
     fireEvent.click(screen.getByRole('button', { name: /^Refine\s*·\s*uses 1$/ }));
@@ -684,10 +734,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 
   it('a refinement whose brief is still being read again when the visitor changes moves nowhere', async () => {
     signedInApi();
-    const app = renderApp('/');
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
-    fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
-    await screen.findByRole('heading', { name: /AI summary/i }, SLOW);
+    const app = await openBrief();
     // Once the refinement is answered, the brief is read again: those reads wait.
     let reads = 0;
     let release!: () => void;
@@ -716,7 +763,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     const turnstile = installTurnstile({ hold: true });
     let posts = 0;
     server.use(
-      http.post('*/api/briefs', () => {
+      http.post('*/api/evidence', () => {
         posts += 1;
         return HttpResponse.json({ error: 'challenge_required', message: 'A quick check is needed before this AI search.' }, { status: 403 });
       }),
@@ -730,7 +777,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     await act(() => sleep(150));
     expect(posts).toBe(1);
     expect(currentUrl(app.router)).toBe('/');
-    expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+    expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
   });
 
   it('a check still open when the visitor changes is cancelled, and nothing is sent', async () => {
@@ -738,7 +785,7 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
     const turnstile = installTurnstile({ hold: true });
     let posts = 0;
     server.events.on('request:start', ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/evidence') posts += 1;
     });
     const app = renderApp('/');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
@@ -755,45 +802,44 @@ describe('an AI request whose visitor changes before it ends keeps nothing (Task
 });
 
 describe('every open tab forgets the previous visitor (Task 20 review N4)', () => {
-  it('another tab’s sign-out makes this tab drop the previous visitor’s brief and AI context', async () => {
+  it('another tab’s sign-out makes this tab drop the previous visitor’s search and the cases it opened', async () => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     // The other tab signs out (the server's session ends) and says so.
     await fetch(new URL('/api/auth/sign-out', window.location.href), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     await otherTabChangesVisitor();
     await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
-    // What this tab still shows is read again as the new visitor: the brief is not theirs.
-    expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
-    expect(screen.queryByText('AI classified')).toBeNull();
+    // What this tab still shows is read again as the new visitor: the search is not theirs.
+    expect((await screen.findAllByText(SEARCH_GONE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(privateShown()).toBe(false);
   }, 20_000);
 
   it('without BroadcastChannel the change still arrives: the other tab’s record in local storage (Task 20 review N9)', async () => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     await signOutOnServer();
     await otherTabRecordsChange({ event: true });
     await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
-    expect((await screen.findAllByText(EXPIRED_TITLE, {}, SLOW)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
+    expect((await screen.findAllByText(SEARCH_GONE, {}, SLOW)).length).toBeGreaterThan(0);
+    expect(privateShown()).toBe(false);
   }, 20_000);
 
   it('a page restored from the back/forward cache checks the record: a change made while it was away is forgotten (N9)', async () => {
     signedInApi();
-    const app = await briefWithDrawer();
+    const app = await searchWithDrawer();
     // Restored with nothing changed: everything stays.
     const before = visitorGeneration();
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
     await act(() => sleep(50));
     expect(visitorGeneration()).toBe(before);
-    expect(screen.getByText(CITED, { selector: 'mark' })).toBeTruthy();
+    expect(privateShown()).toBe(true);
     // Away while another tab signed out: no message reached it, the record did change.
     await signOutOnServer();
     await otherTabRecordsChange({ event: false });
     expect(visitorGeneration()).toBe(before);
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
     await waitFor(() => expect(previousVisitorGone(app.client)).toBe(true));
-    expect(screen.queryByText(CITED, { selector: 'mark' })).toBeNull();
+    await waitFor(() => expect(privateShown()).toBe(false), SLOW);
   }, 20_000);
 
   it('a tab that starts listening after another tab’s change still forgets it (N9)', async () => {
@@ -839,12 +885,12 @@ describe('every open tab forgets the previous visitor (Task 20 review N4)', () =
     const turnstile = installTurnstile({ hold: true });
     let posts = 0;
     server.events.on('request:start', ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === '/api/briefs') posts += 1;
+      if (request.method === 'POST' && new URL(request.url).pathname === '/api/evidence') posts += 1;
     });
     // What the page holds for this visitor: a question for "Ask again" and a retry key.
     const heldId = '00000000-0000-4000-8000-0000000000bb';
     rememberQuestion(heldId, 'an earlier question');
-    const retryId = await unsettledId({ kind: 'create', question: 'an earlier question' });
+    const retryId = await unsettledId({ kind: 'evidence', question: 'an earlier question' });
     rememberUnsettled(retryId, 'an-earlier-retry-key');
     const app = renderApp('/');
     // An AI request waits for its check.

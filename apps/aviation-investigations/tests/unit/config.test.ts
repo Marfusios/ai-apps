@@ -119,11 +119,11 @@ describe('loadConfig', () => {
       anonymousShare: 0.25,
     });
     expect(c.ai.limits).toEqual({
-      anonymousTrialRequests: 3,
-      newAccountDailyRequests: 5,
+      anonymousTrialRequests: 10,
+      newAccountDailyRequests: 20,
       newAccountDays: 3,
-      userDailyRequests: 20,
-      userMonthlyRequests: 150,
+      userDailyRequests: 50,
+      userMonthlyRequests: 600,
       globalConcurrency: 2,
     });
     expect(c.ai.llmProvider).toBe('anthropic');

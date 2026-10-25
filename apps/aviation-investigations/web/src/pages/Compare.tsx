@@ -4,6 +4,7 @@ import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
 import type { CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
 import type { CaseDetail } from '../../../shared/contracts/cases';
+import { EVIDENCE_CANDIDATE_CEILING, EVIDENCE_PAGE_SIZE, EvidenceSearchIdSchema, type EvidenceCase, type EvidenceExcerpt } from '../../../shared/contracts/evidence';
 import { compareHeading, pageTitle } from '../../../shared/page-titles';
 import { caseQuery, configQuery, isNotFound } from '../api';
 import { Button } from '../components/Button';
@@ -29,6 +30,15 @@ import {
 import { briefStepQuery, caseContextQuery } from '../features/brief/api';
 import { UnconfirmedTag } from '../features/brief/CaseCard';
 import { evidenceAttribution } from '../features/brief/display';
+import { evidencePageQuery } from '../features/evidence/api';
+import { EVIDENCE_HEADING, FOLDED_ONLY, relevanceContext, type RelevanceContext } from '../features/evidence/display';
+import { RelevanceLine } from '../features/evidence/EvidenceCard';
+import { Excerpt } from '../features/evidence/Excerpt';
+import { foldProbableCauses, trimmedWithMarks } from '../features/evidence/fold';
+import { MatchLegend, MatchedText } from '../features/evidence/MatchedText';
+import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
+import { EvidenceNotice } from '../features/evidence/Notice';
+import { Placard } from '../components/Placard';
 import { COMPARE_LIMIT, CASES_PARAM, readCompare, withCompare } from '../features/explore/url-state';
 import { PrintHeader, readBriefRef } from './CasePage';
 
@@ -41,6 +51,87 @@ const GRID_AI = 'sm:grid-cols-[30px_1.05fr_1fr_1.1fr_0.85fr_0.9fr_0.95fr_1.2fr]'
 const PC_PREVIEW = 300;
 
 export const AI_NOTES_GONE_PLURAL = "The AI notes for these cases have expired or aren't yours.";
+/** A strip's evidence row when a page of the search did not load, so whether it shows the case is unknown. */
+export const EVIDENCE_PAGES_FAILED = 'Part of your search didn’t load, so this case’s excerpts may be missing here.';
+/** Compare opened from an evidence search that is gone (Builder copy, Task 23). */
+export const EVIDENCE_GONE_PLURAL = 'The AI search these cases came from is no longer available, so its excerpts are not shown.';
+export const EVIDENCE_FAILED_PLURAL = 'The AI search these cases came from didn’t load.';
+/** A compared case that is not among the search's investigations read so far. */
+export const NOT_IN_SEARCH = 'Not among the investigations shown for your search.';
+
+/**
+ * `evidence` and `pages` of a compare link opened from an evidence search (UI_DESIGN §4.9),
+ * or null; a malformed reference reads as a search that is gone (`invalid`).
+ */
+export function readEvidenceRef(params: URLSearchParams): { id: string; pages: number } | 'invalid' | null {
+  const id = params.get('evidence');
+  if (id === null) return null;
+  const raw = params.get(PAGES_PARAM) ?? '1';
+  const pages = /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
+  if (!EvidenceSearchIdSchema.safeParse(id).success || !(pages >= 1 && pages <= EVIDENCE_CANDIDATE_CEILING / EVIDENCE_PAGE_SIZE)) return 'invalid';
+  return { id, pages };
+}
+
+/** How the case stands in the search's pages read so far. */
+export type StripEvidenceState = 'found' | 'loading' | 'incomplete' | 'absent';
+
+/** What a strip's evidence row knows: the case as the search shows it, while its pages are still read, or not. */
+export interface StripEvidenceProps {
+  searchId: string;
+  /** The case as the search shows it (`state` 'found'). */
+  item: EvidenceCase | undefined;
+  context: RelevanceContext;
+  state: StripEvidenceState;
+}
+
+/**
+ * The evidence row of a strip (UI_DESIGN §4.9): how the search found the case and its best
+ * excerpt, a whole paragraph with the matches marked, under the page's heading and notice.
+ * While the pages the link names are still being read it holds its place; only once every one
+ * has answered does it say the search did not show the case. `shown`: the excerpts left once
+ * the probable-cause paragraphs are marked in the strip's own probable-cause row (fold.ts), so
+ * its best excerpt is never the statement again.
+ */
+function StripEvidence({ searchId, item, context, state, shown = item?.excerpts ?? [], folded = false }: StripEvidenceProps & { shown?: EvidenceExcerpt[]; folded?: boolean }) {
+  return (
+    <div
+      className="border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1]"
+      data-strip-evidence={state}
+      aria-busy={state === 'loading' || undefined}
+    >
+      <p className="text-micro tracking-caps text-muted uppercase">Retrieved for your search</p>
+      {state === 'loading' ? (
+        <div aria-hidden="true" className="mt-1.5 space-y-1.5" data-strip-evidence-pending="">
+          <div className="h-2.5 w-3/5 rounded-[2px] bg-tint" />
+          <div className="h-3 w-11/12 rounded-[2px] bg-tint opacity-70" />
+        </div>
+      ) : state === 'incomplete' ? (
+        <p className="text-meta text-muted">{EVIDENCE_PAGES_FAILED}</p>
+      ) : item ? (
+        <>
+          <RelevanceLine item={item} context={context} />
+          {folded && shown.length === 0 && (
+            <p className="mt-1 text-meta text-muted" data-folded-note="">
+              {FOLDED_ONLY}
+            </p>
+          )}
+          {shown[0] && (
+            <div className="mt-1.5">
+              <Excerpt searchId={searchId} ntsbNo={item.case.ntsbNo} aircraft={item.case.aircraft} excerpt={shown[0]} />
+            </div>
+          )}
+          {shown.length > 1 && (
+            <p className="mt-1 text-meta text-muted">
+              {shown.length - 1 === 1 ? 'One more excerpt' : `${shown.length - 1} more excerpts`} on the search’s page.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-meta text-muted">{NOT_IN_SEARCH}</p>
+      )}
+    </div>
+  );
+}
 export const AI_NOTES_FAILED_PLURAL = "The AI notes for these cases didn't load.";
 export const AI_READING_FAILED = "The AI reading didn't load.";
 /** A case of the brief whose AI reading the evidence check removed (Task 16e, partial display). */
@@ -160,12 +251,35 @@ interface StripAi {
   retry: () => void;
 }
 
-function Strip({ detail, order, onRemove, ai }: { detail: CaseDetail; order: number; onRemove: () => void; ai: StripAi | null }) {
+function Strip({
+  detail,
+  order,
+  onRemove,
+  ai,
+  evidence = null,
+}: {
+  detail: CaseDetail;
+  order: number;
+  onRemove: () => void;
+  ai: StripAi | null;
+  /** Opened from an evidence search: the case as that search shows it (`item` undefined: not among its investigations read). */
+  evidence?: StripEvidenceProps | null;
+}) {
   const multi = detail.aircraft.length > 1;
   const injury = injuryShort(detail.highestInjury);
   const causes = detail.sections.filter((s) => s.kind === 'probable_cause');
   const cause = causes.map((s) => s.text.trim()).join(' ');
   const preview = cause.length > PC_PREVIEW ? `${cause.slice(0, cause.lastIndexOf(' ', PC_PREVIEW))}…` : cause;
+  // Opened from an evidence search: its probable-cause paragraphs are marked here, whole (a preview
+  // could cut the marks off), and not repeated as the strip's best excerpt.
+  const fold =
+    evidence?.item !== undefined
+      ? foldProbableCauses(
+          causes.map((s) => ({ key: s.key, text: s.text })),
+          evidence.item.excerpts,
+        )
+      : null;
+  const marked = fold !== null && fold.marks.size > 0;
   const damage = [...new Set(detail.aircraft.map((a) => (a.damage.code ? a.damage.label : '')).filter(Boolean))];
   const completed = detail.completion.class === 'completed';
   const glyph = ai?.context?.reading?.glyph ?? null;
@@ -250,10 +364,23 @@ function Strip({ detail, order, onRemove, ai }: { detail: CaseDetail; order: num
       <div className="flex flex-col gap-1 border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1] sm:flex-row sm:items-baseline sm:gap-2.5">
         <span className="flex-none text-micro tracking-caps text-muted uppercase">Probable cause</span>
         <p className={cx('min-w-0 flex-1 font-serif text-[13px] leading-[1.45]', !cause && 'text-muted')}>
-          {cause ? preview : 'No probable cause on record.'}
+          {!cause
+            ? 'No probable cause on record.'
+            : marked
+              ? causes.map((s, i) => {
+                  const shown = trimmedWithMarks(s.text, fold.marks.get(s.key) ?? []);
+                  return (
+                    <Fragment key={s.key}>
+                      {i > 0 && ' '}
+                      <MatchedText text={shown.text} highlights={shown.marks} />
+                    </Fragment>
+                  );
+                })
+              : preview}
         </p>
         <span className="flex-none text-meta whitespace-nowrap">{sourceLink(detail)}</span>
       </div>
+      {evidence && <StripEvidence {...evidence} shown={fold?.shown} folded={marked} />}
     </article>
   );
 }
@@ -348,6 +475,29 @@ export function Compare() {
       retry: () => void read?.refetch(),
     };
   };
+  // Opened from an evidence search (`evidence`, `pages`): its pages as read there (cached, free).
+  const eref = readEvidenceRef(params);
+  const evidenceRef = eref !== null && eref !== 'invalid' ? eref : null;
+  const firstEvidence = useQuery({ ...evidencePageQuery(evidenceRef?.id ?? '', 1), enabled: evidenceRef !== null });
+  const evidencePages = firstEvidence.data ? Math.max(1, Math.min(evidenceRef?.pages ?? 1, firstEvidence.data.pages)) : 1;
+  const laterEvidence = useQueries({
+    queries: Array.from({ length: evidencePages - 1 }, (_, i) => ({ ...evidencePageQuery(evidenceRef?.id ?? '', i + 2), enabled: evidenceRef !== null })),
+  });
+  const evidenceSearch = firstEvidence.data;
+  const evidenceCases = new Map(
+    [evidenceSearch, ...laterEvidence.map((q) => q.data)].flatMap((p) => p?.cases ?? []).map((c) => [c.case.ntsbNo, c] as const),
+  );
+  const evidenceGone = eref === 'invalid' || (evidenceRef !== null && isNotFound(firstEvidence.error));
+  const evidenceFailed = evidenceRef !== null && firstEvidence.isError && !isNotFound(firstEvidence.error);
+  // Every page the link names has answered (or failed); until then a case not seen yet may still come.
+  const evidencePending = laterEvidence.some((q) => q.isPending);
+  const evidencePartial = laterEvidence.some((q) => q.isError);
+  const evidenceFor = (ntsbNo: string): StripEvidenceProps | null => {
+    if (!evidenceSearch) return null;
+    const item = evidenceCases.get(ntsbNo);
+    const state: StripEvidenceState = item ? 'found' : evidencePending ? 'loading' : evidencePartial ? 'incomplete' : 'absent';
+    return { searchId: evidenceSearch.id, item, context: relevanceContext(evidenceSearch), state };
+  };
   const [sort, setSort] = useState<SortKey>('added');
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const from = (location.state as { from?: string } | null)?.from;
@@ -389,7 +539,7 @@ export function Compare() {
   const loaded = strips.map((s) => s.query.data).filter((d): d is CaseDetail => d !== undefined);
   const same = loaded.length === list.length ? sameInAll(loaded) : [];
   const title = compareHeading(list.length);
-  const back = from ?? `/explore${list.length ? `?${CASES_PARAM}=${list.join(',')}` : ''}`;
+  const back = from ?? (evidenceRef ? `${evidencePath(evidenceRef.id)}?${PAGES_PARAM}=${evidenceRef.pages}` : `/explore${list.length ? `?${CASES_PARAM}=${list.join(',')}` : ''}`);
 
   return (
     <div className="mx-auto w-full max-w-page px-4 pt-5 pb-12 sm:px-[26px] sm:pt-[22px]">
@@ -437,9 +587,30 @@ export function Compare() {
           From your search <span className="font-serif text-ink">“{briefStep.data.question}”</span>
         </p>
       )}
+      {evidenceSearch && (
+        <section aria-label={EVIDENCE_HEADING} className="-mt-2 mb-4" data-compare-evidence="">
+          <p className="text-ui text-muted">
+            From your search <span className="font-serif text-ink">“{evidenceSearch.question}”</span>
+          </p>
+          <Placard tone="ink" as="h2" className="mt-2.5">
+            {EVIDENCE_HEADING}
+          </Placard>
+          <EvidenceNotice className="mt-1.5" />
+          <MatchLegend marked={relevanceContext(evidenceSearch).marked} className="mt-1.5" />
+        </section>
+      )}
       {/* Rendered before any note, so a gone or failed brief read is announced when it appears. */}
       <div aria-live="polite">
         {aiGone && <p className="-mt-2 mb-4 text-meta text-muted">{AI_NOTES_GONE_PLURAL}</p>}
+        {evidenceGone && <p className="-mt-2 mb-4 text-meta text-muted">{EVIDENCE_GONE_PLURAL}</p>}
+        {evidenceFailed && (
+          <p className="-mt-2 mb-4 text-meta text-muted">
+            {EVIDENCE_FAILED_PLURAL}{' '}
+            <button type="button" onClick={() => void firstEvidence.refetch()} className="cursor-pointer text-blue hover:underline pointer-coarse:min-h-11">
+              Try again
+            </button>
+          </p>
+        )}
         {aiFailed && (
           <p className="-mt-2 mb-4 text-meta text-muted">
             {AI_NOTES_FAILED_PLURAL}{' '}
@@ -483,7 +654,7 @@ export function Compare() {
           <div>
             {strips.map((s) =>
               s.query.data ? (
-                <Strip key={s.ntsbNo} detail={s.query.data} order={s.order} onRemove={() => remove(s.ntsbNo)} ai={aiFor(s.ntsbNo)} />
+                <Strip key={s.ntsbNo} detail={s.query.data} order={s.order} onRemove={() => remove(s.ntsbNo)} ai={aiFor(s.ntsbNo)} evidence={evidenceFor(s.ntsbNo)} />
               ) : (
                 <PendingStrip key={s.ntsbNo} ntsbNo={s.ntsbNo} order={s.order} query={s.query} onRemove={() => remove(s.ntsbNo)} ai={aiOn} />
               ),
@@ -511,6 +682,8 @@ export function Compare() {
               <>
                 <span className="text-magenta">Magenta columns are the AI’s reading from your brief</span>; check the cited passages in each case.
               </>
+            ) : evidenceSearch ? (
+              'The last row of each strip is from your AI search: how it found the case and its best excerpt, in NTSB words.'
             ) : (
               'NTSB data only.'
             )}

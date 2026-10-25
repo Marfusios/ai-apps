@@ -3,12 +3,16 @@ import { useQuery } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { WELCOME_PARAM } from '../../../../shared/contracts/account';
+import { aiStatusQuery, configQuery } from '../../api';
 import { Button } from '../../components/Button';
+import { welcomeText } from '../ai/limits';
 import { accountQuery, returnPath } from './api';
 
-/** UI_DESIGN §4.8 copy (first sign-in). The training-email opt-in is deferred (Owner). */
+/**
+ * UI_DESIGN §4.8 copy (first sign-in). The training-email opt-in is deferred (Owner). The
+ * line under the title names the limits the API reports (`welcomeText`, web/src/features/ai/limits.ts).
+ */
 export const WELCOME_TITLE = 'Welcome aboard.';
-export const WELCOME_TEXT = 'You have 5 AI searches a day for your first three days, then 20.';
 export const WELCOME_CONTINUE = 'Continue';
 
 /**
@@ -21,6 +25,8 @@ export function Welcome() {
   const location = useLocation();
   const navigate = useNavigate();
   const account = useQuery(accountQuery());
+  const limits = useQuery(configQuery()).data?.aiLimits;
+  const status = useQuery(aiStatusQuery()).data;
   const title = useRef<HTMLHeadingElement>(null);
   const asked = new URLSearchParams(location.search).get(WELCOME_PARAM) === '1';
   const open = asked && account.data?.signedIn === true;
@@ -44,7 +50,7 @@ export function Welcome() {
           <Dialog.Title ref={title} tabIndex={-1} className="font-serif text-[18px] leading-tight font-semibold outline-none focus-visible:outline-2">
             {WELCOME_TITLE}
           </Dialog.Title>
-          <p className="mt-1.5 text-ui">{WELCOME_TEXT}</p>
+          <p className="mt-1.5 text-ui">{welcomeText(limits, status)}</p>
           <div className="mt-3.5">
             <Dialog.Close asChild>
               <Button variant="search">{WELCOME_CONTINUE}</Button>

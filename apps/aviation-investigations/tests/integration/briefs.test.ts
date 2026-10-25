@@ -156,6 +156,7 @@ function aiConfig(over: { trialRequests?: number; anonymousShare?: number } = {}
     ai: {
       ...base.ai,
       llmProvider: 'fake',
+      briefsEnabled: true,
       limits: { ...base.ai.limits, anonymousTrialRequests: over.trialRequests ?? 3 },
       budgets: { ...base.ai.budgets, ...(over.anonymousShare !== undefined ? { anonymousShare: over.anonymousShare } : {}) },
     },
@@ -220,7 +221,7 @@ function harness(script: FakeScript, opts: HarnessOptions = {}): Harness {
   const embedding = opts.embedding === undefined ? FIXTURE_EMBEDDING : opts.embedding;
   const logs: string[] = [];
   const app = buildApp({
-    config: { appUrl: `https://${HOST}`, trustedProxyCidrs: [] },
+    config: { appUrl: `https://${HOST}`, trustedProxyCidrs: [], ai: { ...loadConfig({ env: {}, files: [] }).ai, briefsEnabled: true } },
     db: appDb,
     es,
     ai,

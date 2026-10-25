@@ -11,7 +11,7 @@ import { QueryEmbeddingError, queryEmbeddingInput, type Embedder, type EmbedResu
 import { RetrievalFailure, type EmbeddingUsage, type EvidenceQuery } from '../../server/briefs/evidence.js';
 import { createHybridRetriever, retrievalFailureOf } from '../../server/briefs/retriever.js';
 import { exactRrf, uniqueCases } from '../../server/search/case-fusion.js';
-import { MAX_EXACT_CANDIDATES, mapCasesToPassages } from '../../server/search/case-mapping.js';
+import { MAX_EXACT_CANDIDATES, MAPPING_CONCURRENCY, mapCasesToPassages } from '../../server/search/case-mapping.js';
 import { retrieveCandidatesWith, retrieveCaseCandidates, type CaseRetrievalQuery } from '../../server/search/case-retrieval.js';
 import { casesChannelFilter } from '../../server/search/cases-channel.js';
 import { compileFilters } from '../../server/search/filters.js';
@@ -576,5 +576,32 @@ describe('the binding under a case-level version', () => {
     expect(v.passages.map((p) => [p.scope, p.aircraftKey])).toEqual(v.passages.map(() => ['event', null]));
     // Every cause variant is attached.
     expect(v.passages.filter((p) => p.sectionKind === 'probable_cause')).toHaveLength(2);
+  });
+});
+
+describe('bounded mapping fan-out', () => {
+  const cases = Array.from({ length: 100 }, (_, i) => `T00FA${String(i).padStart(3, '0')}`);
+  const opts = { passagesPerCase: 2, maxMappablePassages: 1000, maxCases: 100 };
+  it('queues both waves at eight requests without changing any of the 100 case results', async () => {
+    const f = fake({ corpus: cases.flatMap((n) => casePassages(n)), hold: ['count', 'mapping'] });
+    const pending = mapCasesToPassages(f.es, PASSAGES, [], [...fakeVector('q', DIMS)], cases, { timeoutMs: 8000 }, opts);
+    await f.arrived('count');
+    expect(f.calls.filter((c) => c.kind === 'count')).toHaveLength(MAPPING_CONCURRENCY);
+    f.release('count'); await f.arrived('mapping');
+    expect(f.calls.filter((c) => c.kind === 'mapping')).toHaveLength(MAPPING_CONCURRENCY);
+    f.release('mapping');
+    const result = await pending;
+    expect(result.cases.map((c) => c.ntsbNo)).toEqual(cases);
+    expect(result.cases.every((c) => c.status === 'mapped')).toBe(true);
+    expect(f.calls).toHaveLength(200);
+  });
+  it('a failed request cancels active siblings and never dispatches the queued cases', async () => {
+    const f = fake({ corpus: cases.flatMap((n) => casePassages(n)), hold: ['count'], failIf: (kind, body) => kind === 'count' && caseTermOf(body) === cases[0] ? new Error('failure') : undefined });
+    const pending = mapCasesToPassages(f.es, PASSAGES, [], [...fakeVector('q', DIMS)], cases, { timeoutMs: 8000 }, opts);
+    const rejected = expect(pending).rejects.toThrow();
+    await f.arrived('count'); f.release('count'); await rejected;
+    expect(f.calls.length).toBeLessThanOrEqual(MAPPING_CONCURRENCY);
+    expect(f.calls.every((c) => c.signal?.aborted)).toBe(true);
+    expect(f.kinds()).not.toContain('mapping');
   });
 });

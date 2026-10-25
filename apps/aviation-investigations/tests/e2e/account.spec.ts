@@ -4,7 +4,8 @@ import { expect, test, type Page } from '@playwright/test';
  * Google sign-in and the account against the mock API (web/src/mocks/handlers.ts): the
  * mock answers sign-in with the page to come back to, as if Google had sent the browser
  * straight back, and keeps the signed-in state in the tab's session storage across that
- * reload. Cloudflare's Turnstile is a local stand-in, as in brief.spec.ts.
+ * reload. Cloudflare's Turnstile is a minimal local stand-in (tests/e2e/fake-turnstile.ts is
+ * one that also records what it was asked).
  */
 
 const SEED_QUESTION = 'Engine power loss shortly after maintenance';
@@ -26,14 +27,18 @@ test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
 });
 
+/** Today's ten free AI searches (Ask AI starts an AI evidence search), each from the home page. */
 async function useUpTrial(page: Page): Promise<void> {
   await page.goto('/');
-  for (const left of [3, 2, 1]) {
-    await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
+  for (let left = 10; left >= 1; left--) {
+    await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(`${SEED_QUESTION} ${left}`);
     await page.getByRole('button', { name: `Ask AI · ${left} free` }).click();
-    await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
+    await expect(page).toHaveURL(/\/ai\/[0-9a-f-]{36}$/);
+    // The search's page is on screen before going home (the URL changes before React shows it).
+    await expect(page.getByRole('heading', { level: 2, name: 'Investigations retrieved for your search' })).toBeVisible();
     await page.getByRole('link', { name: 'AirCase' }).click();
     await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Learn from the record.' })).toBeVisible();
   }
 }
 
@@ -41,13 +46,13 @@ test('trial used up: Continue with Google opens the sign-in dialog; a first sign
   await useUpTrial(page);
   await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
   await page.getByRole('button', { name: 'Ask AI · sign in' }).click();
-  await expect(page.getByText('That was your third free AI search.')).toBeVisible();
+  await expect(page.getByText('That was your tenth free AI search today.')).toBeVisible();
   await page.getByRole('button', { name: 'Continue with Google' }).click();
 
   const dialog = page.getByRole('dialog', { name: 'Sign in to AirCase' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("We keep your Google account ID, email and name, and how many AI searches you've used.");
-  await expect(dialog).toContainText('Questions and answers are held for up to 24 hours to deliver them, then deleted.');
+  await expect(dialog).toContainText('Questions and results are held for up to 24 hours to deliver them, then deleted.');
   await expect(dialog).toContainText('Delete your account any time from Account.');
   await expect(dialog.getByRole('link', { name: 'Privacy notice' })).toHaveAttribute('href', '/privacy');
   await dialog.getByRole('button', { name: 'Continue with Google' }).click();
@@ -55,15 +60,15 @@ test('trial used up: Continue with Google opens the sign-in dialog; a first sign
   // Back on the same page, signed in, with the welcome once.
   await expect(page).toHaveURL(/\/\?welcome=1$/);
   const welcome = page.getByRole('dialog', { name: 'Welcome aboard.' });
-  await expect(welcome).toContainText('You have 5 AI searches a day for your first three days, then 20.');
+  await expect(welcome).toContainText('You have 20 AI searches a day for your first three days, then 50.');
   await welcome.getByRole('button', { name: 'Continue' }).click();
   await expect(welcome).toBeHidden();
   await expect(page).toHaveURL(/\/$/);
   const banner = page.getByRole('banner');
-  await expect(banner.getByText('AI left today: 5 of 5')).toBeVisible();
+  await expect(banner.getByText('AI left today: 20 of 20')).toBeVisible();
   await expect(banner.getByRole('link', { name: 'Account' })).toBeVisible();
   // Signed in, Ask AI needs no check.
-  await expect(page.getByRole('button', { name: 'Ask AI · 5 left today' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ask AI · 20 left today' })).toBeVisible();
 });
 
 test('account page: name, email and searches left; sign out; delete asks once more', async ({ page }) => {
@@ -76,7 +81,7 @@ test('account page: name, email and searches left; sign out; delete asks once mo
 
   await expect(page.getByRole('heading', { level: 1, name: 'Alex Example' })).toBeVisible();
   await expect(page.getByText('alex@example.com')).toBeVisible();
-  await expect(page.getByRole('main').getByText(/5 of 5\s*left today/)).toBeVisible();
+  await expect(page.getByRole('main').getByText(/20 of 20\s*left today/)).toBeVisible();
   await expect(page.getByText(/Backups never include your account or your AI searches/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Delete account' }).click();
@@ -117,19 +122,22 @@ test('deleting after an older sign-in confirms with Google first, then asks once
   await expect(page.getByText('Your account is deleted.')).toBeVisible();
 });
 
-test('signing out forgets the brief and its AI context: going back shows nothing of it', async ({ page }) => {
+test('signing out forgets the AI search and the cases it opened: going back shows nothing of it', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('banner').getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('dialog', { name: 'Sign in to AirCase' }).getByRole('button', { name: 'Continue with Google' }).click();
   await page.getByRole('dialog', { name: 'Welcome aboard.' }).getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('textbox', { name: 'Search NTSB investigations' }).fill(SEED_QUESTION);
-  await page.getByRole('button', { name: 'Ask AI · 5 left today' }).click();
-  await expect(page).toHaveURL(/\/briefs\/[0-9a-f-]{36}$/);
-  const summary = page.getByRole('heading', { name: /AI summary/i });
-  await expect(summary).toBeVisible();
-  await summary.locator('..').getByRole('link', { name: 'DFW08TA066' }).click();
+  await page.getByRole('button', { name: 'Ask AI · 20 left today' }).click();
+  await expect(page).toHaveURL(/\/ai\/[0-9a-f-]{36}$/);
+  const card = page.locator('article[data-card="DFW08TA066"]');
+  await card.getByRole('link', { name: 'DFW08TA066', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: /^DFW08TA066: / });
-  await expect(drawer.locator('[data-cited] mark.hit').first()).toBeVisible();
+  const section = drawer.locator('[data-evidence-section]');
+  await section.scrollIntoViewIfNeeded();
+  // The full section, read at the search's generation: private, like the search.
+  await section.getByRole('button', { name: /^Show the full .+ section\b/ }).first().click();
+  await expect(drawer.locator('[data-excerpt-paragraph]')).toBeVisible();
   await expect(page).toHaveURL(/case=DFW08TA066/);
   const drawerUrl = new URL(page.url());
 
@@ -141,11 +149,10 @@ test('signing out forgets the brief and its AI context: going back shows nothing
   await expect(page.getByRole('heading', { level: 1, name: 'You aren’t signed in.' })).toBeVisible();
 
   // Back to the drawer in the same page (no reload: the page's cache is what is tested): the
-  // brief is not this visitor's, and nothing of its AI context shows.
+  // search is not this visitor's, and nothing of it shows.
   const target = JSON.stringify(`${drawerUrl.pathname}${drawerUrl.search}`);
   await page.evaluate(`history.pushState(null, '', ${target}); dispatchEvent(new PopStateEvent('popstate'));`);
   await expect(page).toHaveURL(/case=DFW08TA066/);
-  await expect(page.getByText('This AI search has expired.').first()).toBeVisible();
-  await expect(page.locator('[data-cited] mark.hit')).toHaveCount(0);
-  await expect(page.getByText('AI classified')).toHaveCount(0);
+  await expect(page.getByText('This AI search is no longer available.').first()).toBeVisible();
+  await expect(page.locator('[data-evidence-section], [data-excerpt-paragraph], article[data-card]')).toHaveCount(0);
 });

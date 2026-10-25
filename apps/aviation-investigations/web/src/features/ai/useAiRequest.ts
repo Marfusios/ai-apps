@@ -26,7 +26,9 @@ export type AiNotice =
   /** `unknownBefore`: an earlier send of this request has an unknown outcome (it may have counted). */
   | { kind: 'check'; reason: Exclude<AiCheckFailure, 'cancelled'>; unknownBefore?: boolean }
   | { kind: 'empty' }
-  | { kind: 'message'; text: string };
+  | { kind: 'message'; text: string }
+  /** An AI evidence search the server could not finish (503 `unavailable`): it used none of the visitor's searches. */
+  | { kind: 'unfinished' };
 
 export type AiPhase = 'idle' | 'checking' | 'sending';
 

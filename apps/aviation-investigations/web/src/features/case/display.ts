@@ -100,7 +100,7 @@ export function phaseEventShort(a: AircraftBrief): string {
 }
 
 /** The row's second line for a single-aircraft event: phase · event · conditions · injury. */
-export function rowMonoParts(row: CaseRow): { text: string; strong?: boolean }[] {
+export function rowMonoParts(row: Pick<CaseRow, 'aircraft' | 'conditions' | 'light' | 'highestInjury'>): { text: string; strong?: boolean }[] {
   const parts: { text: string; strong?: boolean }[] = [];
   if (row.aircraft.length === 1) parts.push({ text: phaseEventShort(row.aircraft[0] as AircraftBrief) });
   parts.push({ text: conditionsShort(row.conditions, row.light) });

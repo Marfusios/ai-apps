@@ -104,6 +104,8 @@ describe('pages for search engines and link previews', () => {
       ['/compare?cases=DFW08TA066,SEA08LA057', 200, 'noindex, nofollow', '/compare', 'Comparing 2 cases · AirCase'],
       ['/account', 200, 'noindex, nofollow', '/account', 'Account · AirCase'],
       [`/briefs/${BRIEF_ID}?step=2`, 200, 'noindex, nofollow', `/briefs/${BRIEF_ID}`, 'AI brief · AirCase'],
+      // An AI evidence search's page (Task 23): private, so the head says nothing of it.
+      [`/ai/${BRIEF_ID}?pages=2&case=DFW08TA066`, 200, 'noindex, nofollow', `/ai/${BRIEF_ID}`, 'AI search · AirCase'],
       ['/no-such-page', 404, 'noindex', null, 'Page not found · AirCase'],
     ];
     for (const [url, status, robots, canonical, title] of table) {
@@ -136,6 +138,7 @@ describe('pages for search engines and link previews', () => {
       ['/about/', '/about'],
       ['/compare/?cases=DFW08TA066', '/compare'],
       [`/briefs/${BRIEF_ID}/`, `/briefs/${BRIEF_ID}`],
+      [`/ai/${BRIEF_ID}/`, `/ai/${BRIEF_ID}`],
     ] as const) {
       const r = await page(url);
       expect(r.status, url).toBe(301);

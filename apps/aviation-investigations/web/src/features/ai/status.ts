@@ -67,6 +67,17 @@ export function signedInOnlyNote(reason: Extract<AiStatusResponse, { state: 'sig
   return 'AI temporarily unavailable';
 }
 
+/**
+ * Whether this site offers AI searches (the About page, Task 23): available, open to signed-in
+ * visitors only, or paused by a budget or an account's cap, which end by themselves. Paused for
+ * maintenance (the kill switch) or a missing dependency (AI not configured, a provider or the
+ * check unavailable) reads as off.
+ */
+export function aiFeatureOn(status: AiStatusResponse): boolean {
+  if (status.state !== 'paused') return true;
+  return status.reason !== 'maintenance' && status.reason !== 'dependency';
+}
+
 /** The counter suffix of an AI button: "3 free", "sign in", or nothing when paused. */
 export function askCounter(a: AskAvailability): string | undefined {
   if (a.kind === 'available') return a.counter;

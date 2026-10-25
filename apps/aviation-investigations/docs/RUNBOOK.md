@@ -22,6 +22,70 @@ in the env files described below, which are kept outside the repository.
 Requirements: Docker Engine with Docker Compose 2.24 or later (`compose.tunnel.yaml`
 uses `!reset`; the wrappers check the version), Node 24 and pnpm for the wrappers.
 
+## Enabling the evidence view
+
+Only enable after the independent evidence-view review, scope preflight and UI gates
+clear. Software tests do not establish scope-filter quality or excerpt context safety.
+Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
+**`AI_PARTIAL_DISPLAY=false`** in both environments.
+
+1. Migrate with the environment's migrator role (including `0022_evidence_searches`,
+   `0023_evidence_storage_bound` and `0024_evidence_query`).
+   Verify the privilege baseline and backup exclusions. The app role owns no schema
+   objects; the ingest role cannot read evidence searches.
+2. Publish a verified generation with compatible cases and passages indices. Evidence
+   uses `retrieval.v2`; private saved pages retain that generation and both index names.
+3. Supply only the backend's `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, identity/network
+   HMAC secrets, and the environment's Turnstile pair (real keys and HTTPS in `live`).
+   Existing Google settings enable signed-in ownership. Do not expose provider or
+   Langfuse credentials through public runtime config.
+4. Confirm the configured budgets and limits in `.env.example`: at most $3/day,
+   $80 interactive/month, $20 indexing+evaluation/month, $100 total/month; 25% of the
+   paced daily allowance for anonymous users. Limits are 10/trial/day, 50/account/day,
+   20/day in an account's first 3 days, 600/account/month. Daily resets are 00:00 UTC.
+   The old name `AI_ANONYMOUS_TRIAL_REQUESTS` now denotes the daily allowance.
+5. Run `pnpm worker ai-preflight` (free counts only, no generation), including `scope.e3`.
+   Require no OVER rows. Evidence has separate 10,000/2,500 input/output caps; measured
+   5,701 fixed / 5,674 cached input, 6,192 Latin / 7,190 dense input and 1,118 output.
+   Check the derived reservation: $0.0024325 worst case → $0.0025 reserved.
+   Keep evidence.v2 and the evaluated scope.e3 prompt/schema/model/settings frozen.
+   The gate accepted recorded confirmation for fixed capability notes instead of blocking
+   policy replies; no new paid suggestion threshold is required. This is not a pass of
+   the earlier scope quality gate. Require the final server, excerpt/UI, security, budget
+   and lifecycle gates before public launch. Scope intents never block search: only
+   validated out_of_scope/operational_advice select the fixed scope/operational_advice
+   notes. All other outputs, failures, edits and skipped scope have no note. Render
+   EVIDENCE_NOTE_TEXT, keep the research boundary and EVIDENCE_NOTICE unconditional,
+   and never treat no note as assurance. Suggestions remain unapplied; filter-only edits
+   retain the parent query. Server-owned statistics hints carry no filters; comparison
+   hints name only the matched IDs. All successful searches return 201 results.
+   At the daily uncertain-charge limit, evidence searches skip scope while retaining
+   the full reservation, embedding accounting and other limits; they are not refused
+   solely for that limit. Generated summaries keep their old refusal rule.
+   Restart with the new environment settings, then use `pnpm worker ai-switch --on`
+   only after clearance. A restore hold still blocks payment until reconciliation.
+6. Check `/api/config.aiLimits` and `/api/ai/status`, the default-off brief POST/refine
+   gate (404), and metadata-only traces. The web client states only the limits these two
+   report (Ask AI, the counter, the first check, the welcome), and its Ask AI starts an
+   evidence search, never a brief. Start any authorized paid smoke test with one
+   request inside the existing ledger; do not bypass admission for a demonstration.
+
+`pnpm worker ai-switch --off` immediately refuses new paid evidence searches; saved
+pages and canonical context remain readable by their owner until their 24-hour expiry.
+New searches use the current publication; republishing never reranks existing pages.
+Do not delete indices or generations manually: cleanup and pruning honor saved search
+references. Migration 0022 extends those existing brief-reference functions. Migration 0024 freezes
+the executed query and filters. Pre-v2 searches return 404 and cannot be edited; their
+rows and generation/index protections remain until the original 24-hour expiry.
+
+`evidence_searches` is excluded from every backup and checked empty after restore,
+like briefs and sign-in state. Maintenance deletes expired searches and marks orphaned
+ones failed after closing their leases. Normal failures settle known provider usage
+and return the quota unit. A process/storage outage retains the full reservation until
+lease recovery charges it conservatively and returns the search unit; never subtract
+unknown provider spend from budgets. Account deletion removes searches and their replay
+records; it keeps only the already documented content-free accounting/anti-abuse rows.
+
 ## Environments
 
 | | dev | live |
@@ -708,7 +772,8 @@ and each needs an explicit flag or key:
 | `pnpm eval:retrieval:narrative judge --set relevance --confirm-cost --allocation <name>` (stage 2) | the rest of the pools (about 2,110 pairs; 2,627 in the built pools) | about $6.01 expected before the pools were built ($14.47 at the bound); the cache keeps stage 1, so it is not paid again. Measured on 2026-10-23: $4.10, nearly all of it both judges on the 2,627 pairs; the allocation's cap stopped the escalations after one. The 455 left cost about $9.70 in a later month, from the cache, under a fresh allocation; run it with `--concurrency 3` or lower until the ledger's connection pressure is fixed (at 6, a ledger connection timed out) |
 | `pnpm eval:checker retrieve [--questions 16d\|16e] --confirm-cost` (README, "Checker calibration") | embeddings of the calibration questions (9; 17 with `16d`; 16 with `16e`) | about $0.000005 |
 | `pnpm eval:checker run --candidate <name> --split dev\|holdout --confirm-cost` | the check stage on every calibration input of a split (Task 16e: 179 development or 105 held-out calls) | $0.46 a development pass at effort `low`, $0.62 at `medium`, $0.39 the held-out pilot at `medium`; `inventory` (free) prints the expected and worst-case cost first; charged to the allocation `checker-16e-2026-10` and stopped before a call that would take it over $2.50 or the ledger's evaluation allowance below the $12 protected for another track |
-| AI briefs | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
+| Evidence search | advisory scope.e3 and one query embedding; edits skip scope | at most $0.0024325, reserving $0.0025; same global budgets |
+| AI briefs (disabled) | the scope, answer and check models per request | about $0.11 a typical request with the Opus answer model, reserving its worst case of $0.36 until it settles (DESIGN §9); capped by the budgets below |
 | `pnpm worker ai-preflight` | nothing: token counts only | free |
 | `pnpm worker brief-diagnose <brief-id>` | nothing: one database read | free |
 
@@ -738,7 +803,7 @@ What lives only in PostgreSQL, and must be backed up:
 
 **Never in a backup** (server/db/backup.ts): the rows of the account and sign-in tables
 (`auth_users`, `auth_accounts`, `auth_sessions`, `auth_verifications`, `auth_state_uses`,
-`auth_deletion_confirmations`), of the AI briefs (`briefs`, `brief_steps`) and of the
+`auth_deletion_confirmations`), of the AI searches and briefs (`evidence_searches`, `briefs`, `brief_steps`) and of the
 idempotency records (`idempotency`); their definitions are kept. They hold people's
 accounts and what they asked, which deleting an account removes for good, so a backup
 that held them would bring a deleted account and its content back on restore; and
@@ -947,10 +1012,10 @@ on for an environment:
    `shared/privacy.ts`, and deploy (done: the owner approved the notice on 24 October
    2026). Without a final notice live keeps sign-in off whatever is
    configured, and says so in the startup log ("Google sign-in off ... final privacy
-   notice"). In the same release that opens AI searches, update the About page too:
-   `web/src/pages/About.tsx` says "AI features are not available yet." as fixed text,
-   not tied to the AI switch, so it goes stale the day AI opens (`tests/web/brand.test.tsx`
-   checks the line and needs the same change).
+   notice"). The About page's AI line follows the AI status (Task 23): "AI features are
+   not available yet." while `/api/ai/status` says AI is off, and the evidence view's line
+   once AI searches are offered, so opening AI needs no change there
+   (`tests/web/brand.test.tsx` checks both).
 1. In the Google Cloud console, configure the OAuth consent screen (External; the app
    name AirCase, support email and the privacy notice URL `<APP_URL>/privacy`; scopes `openid`,
    `email` and `profile` only, which need no verification) and create an OAuth client of

@@ -3,7 +3,8 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * End-to-end tests against the real API server (`pnpm test:e2e:real`): the fixture
  * corpus is loaded into the local `test` environment (local services, aviation_test)
- * and served with the production web build on one origin (tests/e2e-real/server.ts).
+ * and served with the production web build on one origin (tests/e2e-real/server.ts),
+ * with AI evidence search on through offline fakes (nothing leaves the machine).
  * E2E_REAL_PORT picks the port (default 5181). Signing in and out runs against a second
  * server with Google sign-in and a stand-in for Google on another site
  * (tests/e2e-real/auth-server.ts, ports E2E_AUTH_PORT and E2E_GOOGLE_PORT, default 5182

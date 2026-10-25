@@ -8,7 +8,7 @@ import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { AiNoticeBox } from '../../web/src/features/ai/AiNoticeBox';
 import { reauthRequest, returnPath, signInNavigation, signInRequest } from '../../web/src/features/auth/api';
 import { CONTINUE_WITH_GOOGLE, KEPT, PRIVACY_LINK, SIGN_IN_FAILED, SIGN_IN_TITLE, SIGN_IN_UNAVAILABLE, SignInDialog } from '../../web/src/features/auth/SignInDialog';
-import { WELCOME_TEXT, WELCOME_TITLE } from '../../web/src/features/auth/Welcome';
+import { WELCOME_TITLE } from '../../web/src/features/auth/Welcome';
 import { MOCK_USER, createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
@@ -67,7 +67,7 @@ describe('sign-in dialog (UI_DESIGN §4.8)', () => {
     expect(within(d).getAllByRole('listitem').map((li) => li.textContent)).toEqual(KEPT.map((line) => `·${line}`));
     expect(KEPT).toEqual([
       "We keep your Google account ID, email and name, and how many AI searches you've used.",
-      'Questions and answers are held for up to 24 hours to deliver them, then deleted.',
+      'Questions and results are held for up to 24 hours to deliver them, then deleted.',
       'Delete your account any time from Account.',
     ]);
     expect(within(d).getByRole('link', { name: PRIVACY_LINK }).getAttribute('href')).toBe('/privacy');
@@ -158,7 +158,8 @@ describe('sign-in in the app', () => {
     expect(ask.getAttribute('aria-disabled')).toBe('true');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: 'Engine power loss' } });
     fireEvent.click(ask);
-    expect(await screen.findByText('That was your third free AI search.')).toBeTruthy();
+    expect(await screen.findByText('That was your tenth free AI search today.')).toBeTruthy();
+    expect(screen.getByText('Free AI searches return at 00:00 UTC.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: CONTINUE_WITH_GOOGLE })).toBeNull();
     expect(document.body.textContent).not.toMatch(/sign in/i);
   });
@@ -182,15 +183,15 @@ describe('sign-in in the app', () => {
     freshApi({ signedIn: true });
     const { router } = renderApp('/explore?q=icing&welcome=1');
     const d = await screen.findByRole('dialog', { name: WELCOME_TITLE });
-    expect(within(d).getByText(WELCOME_TEXT)).toBeTruthy();
-    expect(WELCOME_TEXT).toBe('You have 5 AI searches a day for your first three days, then 20.');
+    // The limits the configuration reports (Task 23), never numbers typed into the copy.
+    expect(within(d).getByText('You have 20 AI searches a day for your first three days, then 50.')).toBeTruthy();
     expect(within(d).queryByRole('checkbox')).toBeNull();
     fireEvent.click(within(d).getByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: WELCOME_TITLE })).toBeNull());
     expect(currentUrl(router)).toBe('/explore?q=icing');
     const header = await screen.findByRole('banner');
     expect(await within(header).findByRole('link', { name: 'Account' })).toBeTruthy();
-    expect(within(header).getByText('5 of 5')).toBeTruthy();
+    expect(within(header).getByText('20 of 20')).toBeTruthy();
   });
 
   it('the welcome is not shown to a visitor who is not signed in', async () => {
@@ -221,7 +222,7 @@ describe('account page (UI_DESIGN §4.8)', () => {
     expect(await screen.findByRole('heading', { level: 1, name: MOCK_USER.name })).toBeTruthy();
     expect(screen.getByText(MOCK_USER.email)).toBeTruthy();
     const main = screen.getByRole('main');
-    await waitFor(() => expect(within(main).getByText(/left today/).closest('p')?.textContent).toBe('5 of 5 left today · , 150 of 150 left this month'));
+    await waitFor(() => expect(within(main).getByText(/left today/).closest('p')?.textContent).toBe('20 of 20 left today · , 600 of 600 left this month'));
     fireEvent.click(screen.getByRole('button', { name: ACCOUNT_COPY.signOut }));
     expect(await screen.findByRole('heading', { level: 1, name: ACCOUNT_COPY.signedOutTitle })).toBeTruthy();
     expect(within(screen.getByRole('banner')).getByRole('button', { name: 'Sign in' })).toBeTruthy();

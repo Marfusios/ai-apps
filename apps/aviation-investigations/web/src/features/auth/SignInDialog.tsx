@@ -14,7 +14,7 @@ export const SIGN_IN_TITLE = `Sign in to ${PRODUCT_NAME}`;
 export const CONTINUE_WITH_GOOGLE = 'Continue with Google';
 export const KEPT = [
   "We keep your Google account ID, email and name, and how many AI searches you've used.",
-  'Questions and answers are held for up to 24 hours to deliver them, then deleted.',
+  'Questions and results are held for up to 24 hours to deliver them, then deleted.',
   'Delete your account any time from Account.',
 ] as const;
 export const PRIVACY_LINK = 'Privacy notice';

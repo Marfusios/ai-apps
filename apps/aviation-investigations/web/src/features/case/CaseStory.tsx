@@ -11,6 +11,9 @@ import { SectionHead } from '../../components/SectionHead';
 import { StatusBadge } from '../../components/StatusBadge';
 import { cx } from '../../lib/cx';
 import { formatDate } from '../../lib/format';
+import { EvidenceSection, type DrawerEvidence } from '../evidence/EvidenceSection';
+import { foldProbableCauses, type Mark } from '../evidence/fold';
+import { MatchedText } from '../evidence/MatchedText';
 import { BriefSections, BriefVerdict, citedTarget, passageAnchor, type AiCaseContext } from './BriefContext';
 import {
   aircraftName,
@@ -39,6 +42,8 @@ export interface CaseStoryProps {
   ai?: AiCaseContext;
   /** Scroll to the cited passage once the AI context arrives (the drawer opened from a citation). */
   openAtCited?: boolean;
+  /** The case as the viewer's evidence search shows it (the drawer over that search), else none. */
+  evidence?: DrawerEvidence | null;
 }
 
 function lowerFirst(text: string): string {
@@ -208,27 +213,48 @@ function ScopeNote({ detail, section, index, of }: { detail: CaseDetail; section
 
 const HEADING_LINE = /^[A-Z0-9 ,.'’&/()-]{4,60}$/;
 
-/** Narrative text: paragraphs on blank lines; short all-caps lines become small headings. */
-export function NarrativeText({ text, className }: { text: string; className?: string }) {
-  const paragraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+/** Paragraphs of a narrative, split on blank lines and trimmed, each with its offset in the text. */
+function narrativeParagraphs(text: string): { text: string; start: number }[] {
+  const out: { text: string; start: number }[] = [];
+  const push = (from: number, to: number): void => {
+    const raw = text.slice(from, to);
+    const body = raw.trim();
+    if (body) out.push({ text: body, start: from + raw.length - raw.trimStart().length });
+  };
+  let at = 0;
+  for (const m of text.matchAll(/\n\s*\n/g)) {
+    push(at, m.index);
+    at = m.index + m[0].length;
+  }
+  push(at, text.length);
+  return out;
+}
+
+/**
+ * Narrative text: paragraphs on blank lines; short all-caps lines become small headings.
+ * `highlights`: marks in the text's offsets (an evidence search's, folded into its statement).
+ */
+export function NarrativeText({ text, className, highlights }: { text: string; className?: string; highlights?: readonly Mark[] }) {
   return (
     <div className={cx('space-y-2.5 font-serif text-quote leading-[1.6]', className)}>
-      {paragraphs.map((p, i) =>
-        HEADING_LINE.test(p) && /[A-Z]{3}/.test(p) ? (
+      {narrativeParagraphs(text).map((p, i) => {
+        const marks = (highlights ?? []).filter((h) => h.start >= p.start && h.end <= p.start + p.text.length).map((h) => ({ ...h, start: h.start - p.start, end: h.end - p.start }));
+        const body = marks.length > 0 ? <MatchedText text={p.text} highlights={marks} /> : p.text;
+        return HEADING_LINE.test(p.text) && /[A-Z]{3}/.test(p.text) ? (
           <p key={i} className="pt-1 font-sans text-micro font-bold tracking-caps text-muted">
-            {p}
+            {body}
           </p>
         ) : (
           <p key={i} className="whitespace-pre-line">
-            {p}
+            {body}
           </p>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }
 
-function ProbableCause({ detail }: { detail: CaseDetail }) {
+function ProbableCause({ detail, marks }: { detail: CaseDetail; marks?: ReadonlyMap<string, readonly Mark[]> }) {
   const causes = detail.sections.filter((s) => s.kind === 'probable_cause');
   // UI_DESIGN §4.2: wherever the field is empty, whatever the status. A completed
   // record also says "Probable-cause text unavailable" by its badge.
@@ -238,18 +264,18 @@ function ProbableCause({ detail }: { detail: CaseDetail }) {
       {causes.map((s, i) => (
         <div key={s.key}>
           <ScopeNote detail={detail} section={s} index={i} of={causes.length} />
-          <NarrativeText text={s.text} className="text-lead leading-[1.5]" />
+          <NarrativeText text={s.text} highlights={marks?.get(s.key)} className="text-lead leading-[1.5]" />
         </div>
       ))}
     </div>
   );
 }
 
-function Established({ detail }: { detail: CaseDetail }) {
+function Established({ detail, marks }: { detail: CaseDetail; marks?: ReadonlyMap<string, readonly Mark[]> }) {
   return (
     <section className="mt-6" aria-label="What investigators established" id="probable-cause">
       <SectionHead tag="NTSB">What investigators established</SectionHead>
-      <ProbableCause detail={detail} />
+      <ProbableCause detail={detail} marks={marks} />
       <Findings detail={detail} />
     </section>
   );
@@ -417,12 +443,21 @@ function useOpenAtCited(ai: AiCaseContext | undefined, ntsbNo: string, enabled: 
  * flight, then what investigators established, and provenance. NTSB data only,
  * unless it is opened from the viewer's own live brief (`ai`): then the verdict pill,
  * "why it's in your results" and the cited passages come from the brief's private
- * context. The full page adds the aircraft and the factual and analysis narratives.
+ * context. Opened from the viewer's evidence search (`evidence`), it adds that search's
+ * projection of the case after what investigators established (UI_DESIGN §4.9). The full page
+ * adds the aircraft and the factual and analysis narratives.
  */
-export function CaseStory({ detail, mode, headingRef, headingId, matched, actions, ai, openAtCited = false }: CaseStoryProps) {
+export function CaseStory({ detail, mode, headingRef, headingId, matched, actions, ai, openAtCited = false, evidence = null }: CaseStoryProps) {
   const Heading = mode === 'page' ? 'h1' : 'h2';
   const completed = detail.completion.class === 'completed';
   useOpenAtCited(ai, detail.ntsbNo, openAtCited);
+  // Opened from an evidence search: its probable-cause paragraphs are marked in the statement here, not repeated below.
+  const fold = evidence
+    ? foldProbableCauses(
+        detail.sections.filter((s) => s.kind === 'probable_cause').map((s) => ({ key: s.key, text: s.text })),
+        evidence.item.excerpts,
+      )
+    : null;
   return (
     <article className="text-ink">
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-meta">
@@ -457,11 +492,22 @@ export function CaseStory({ detail, mode, headingRef, headingId, matched, action
         </>
       ) : (
         <>
-          <Established detail={detail} />
+          <Established detail={detail} marks={fold?.marks} />
           {matched && matched.section !== 'probable_cause' && <Matched detail={detail} matched={matched} />}
         </>
       )}
       {ai && <BriefSections ai={ai} ntsbNo={detail.ntsbNo} aircraft={detail.aircraft} mode={mode} />}
+      {/* Keyed by case: stepping to the next case never carries an open section or paragraph over. */}
+      {evidence && (
+        <EvidenceSection
+          key={evidence.item.case.ntsbNo}
+          searchId={evidence.searchId}
+          item={evidence.item}
+          context={evidence.context}
+          shown={fold?.shown}
+          folded={(fold?.marks.size ?? 0) > 0}
+        />
+      )}
       <Provenance detail={detail} />
     </article>
   );

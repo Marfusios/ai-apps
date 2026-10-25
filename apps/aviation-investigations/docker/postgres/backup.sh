@@ -42,6 +42,7 @@ pg_dump --format=custom \
   --exclude-table-data=auth_verifications \
   --exclude-table-data=auth_state_uses \
   --exclude-table-data=auth_users \
+  --exclude-table-data=evidence_searches \
   --exclude-table-data=brief_steps \
   --exclude-table-data=briefs \
   --exclude-table-data=idempotency \
