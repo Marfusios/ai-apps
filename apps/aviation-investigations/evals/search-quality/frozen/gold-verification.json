@@ -1,0 +1,593 @@
+{
+  "version": "task24-independent-gold-verification-v1",
+  "passed": true,
+  "hashes": {
+    "corpus": "f71ddcae244e1a0c04510cd4adbeaa6472eab0f599259f36c695f8c9b7fab595",
+    "exclusions": "6d8e3d7eb56a7704cf7849ad957d65bd7bf246c3e5f39fc9bd594a988e6d6c49",
+    "confirmation": "9e228d4aca9fdd947d38c57348ec8eb41f5bc4870440f5cf8adee27097130bd3",
+    "fields": "779419fda1b74c6620a2ea60a6dfc098e866456f46237810104b2adf312cee36"
+  },
+  "abQuestions": 48,
+  "groups": 24,
+  "freshGoldCases": 283,
+  "fieldQuestions": 1040,
+  "fieldSeedCases": 1110,
+  "guardOnConstructedGold": {
+    "appliedPositive": 378,
+    "abstainedPositive": 22,
+    "controlsWouldApply": 0
+  },
+  "components": [
+    {
+      "id": "g1",
+      "ids": [
+        "t24-environment-broad-01-p1",
+        "t24-environment-broad-01-p2"
+      ],
+      "cases": [
+        "CEN09CA480",
+        "CEN09LA105",
+        "CEN09LA209",
+        "CEN10CA172",
+        "CEN10CA507",
+        "CEN12LA445",
+        "CEN13CA495",
+        "CEN13LA032",
+        "CEN14CA151",
+        "CEN15LA402",
+        "CEN17LA060",
+        "CEN17LA311",
+        "CEN20LA264",
+        "CHI08CA112",
+        "CHI08CA120",
+        "ERA15CA364",
+        "ERA18LA041",
+        "ERA18LA195",
+        "GAA16CA277",
+        "GAA18CA284",
+        "GAA19CA069",
+        "GAA19CA116",
+        "GAA19CA224",
+        "MIA08CA126"
+      ],
+      "family": "03022047",
+      "class": "broad",
+      "area": "environment"
+    },
+    {
+      "id": "g2",
+      "ids": [
+        "t24-environment-broad-02-p1",
+        "t24-environment-broad-02-p2"
+      ],
+      "cases": [
+        "ANC13CA064",
+        "ANC14CA082",
+        "ANC19TA037",
+        "ANC19TA055",
+        "ANC20CA055",
+        "ANC20CA087",
+        "ANC22LA027",
+        "CEN13CA106",
+        "CEN13LA426",
+        "CEN14CA525",
+        "CEN14LA433",
+        "CEN20CA350",
+        "CEN21LA185",
+        "CEN21LA317",
+        "ERA13CA255",
+        "GAA16CA111",
+        "GAA17CA232",
+        "GAA18CA321",
+        "GAA19CA551",
+        "WPR14CA264",
+        "WPR15CA006"
+      ],
+      "family": "03034010",
+      "class": "broad",
+      "area": "environment"
+    },
+    {
+      "id": "g3",
+      "ids": [
+        "t24-environment-broad-03-p1",
+        "t24-environment-broad-03-p2"
+      ],
+      "cases": [
+        "CEN09LA093",
+        "CEN10CA094",
+        "CEN11CA139",
+        "CEN14CA132",
+        "CEN21LA127",
+        "CEN22LA092",
+        "CEN23LA098",
+        "CHI08CA076",
+        "GAA18CA106",
+        "GAA18CA221",
+        "GAA19CA143",
+        "GAA19CA157",
+        "GAA20CA004",
+        "WPR09CA066",
+        "WPR10CA201",
+        "WPR10LA155",
+        "WPR11CA088",
+        "WPR12CA041",
+        "WPR12CA060",
+        "WPR12CA112",
+        "WPR12CA148",
+        "WPR22LA139"
+      ],
+      "family": "03023015",
+      "class": "broad",
+      "area": "environment"
+    },
+    {
+      "id": "g4",
+      "ids": [
+        "t24-aircraft-systems-broad-01-p1",
+        "t24-aircraft-systems-broad-01-p2"
+      ],
+      "cases": [
+        "CEN20CA274",
+        "CEN20LA063",
+        "CEN20LA092",
+        "CEN20LA290",
+        "CEN20LA422",
+        "CEN21LA020",
+        "CEN21LA250",
+        "CEN21LA265",
+        "CEN21LA365",
+        "CEN21LA457",
+        "ERA20CA226",
+        "ERA20LA295",
+        "ERA21FA237",
+        "ERA21LA042",
+        "ERA22LA002",
+        "ERA22LA130",
+        "ERA22LA258",
+        "ERA22LA276",
+        "ERA22LA298",
+        "ERA22LA406",
+        "ERA23LA018",
+        "ERA23LA089"
+      ],
+      "family": "01071010",
+      "class": "broad",
+      "area": "aircraft_systems"
+    },
+    {
+      "id": "g5",
+      "ids": [
+        "t24-aircraft-systems-broad-02-p1",
+        "t24-aircraft-systems-broad-02-p2"
+      ],
+      "cases": [
+        "CEN11LA441",
+        "CEN12LA326",
+        "CEN12LA357",
+        "CEN12LA508",
+        "CEN12LA637",
+        "CEN13LA346",
+        "CEN14CA318",
+        "CEN14CA515",
+        "CEN14FA232",
+        "CEN14LA204",
+        "CEN15LA172",
+        "CEN15LA279",
+        "CEN16LA309",
+        "CEN17IA094",
+        "CEN17IA233",
+        "CEN19LA111",
+        "CEN19LA290",
+        "CEN22LA007",
+        "CEN22LA330",
+        "ERA09LA324",
+        "ERA10LA335"
+      ],
+      "family": "01071020",
+      "class": "broad",
+      "area": "aircraft_systems"
+    },
+    {
+      "id": "g6",
+      "ids": [
+        "t24-aircraft-systems-broad-03-p1",
+        "t24-aircraft-systems-broad-03-p2"
+      ],
+      "cases": [
+        "CEN09CA020",
+        "CEN09CA450",
+        "CEN09IA294",
+        "CEN10CA174",
+        "CEN10CA215",
+        "CEN11IA369",
+        "CEN12LA023",
+        "CEN12LA087",
+        "CEN12LA335",
+        "CEN13CA139",
+        "CEN13LA408",
+        "CHI08CA234",
+        "CHI08CA247",
+        "DFW08CA096",
+        "ERA11CA002",
+        "ERA12LA456",
+        "ERA13CA286",
+        "LAX08LA217",
+        "MIA08CA155",
+        "WPR09CA295",
+        "WPR12CA322",
+        "WPR12CA355"
+      ],
+      "family": "01023242",
+      "class": "broad",
+      "area": "aircraft_systems"
+    },
+    {
+      "id": "g7",
+      "ids": [
+        "t24-personnel-broad-01-p1",
+        "t24-personnel-broad-01-p2"
+      ],
+      "cases": [
+        "CEN10CA343",
+        "CEN11CA486",
+        "CEN12CA026",
+        "CEN12CA568",
+        "CEN12LA459",
+        "CEN12LA500",
+        "CEN14LA251",
+        "CEN15LA276",
+        "CEN19LA173",
+        "CEN20TA031",
+        "CEN21FA377",
+        "CEN25LA231",
+        "CHI08CA276",
+        "CHI08CA296",
+        "CHI08LA215",
+        "ERA13FA259",
+        "ERA17LA311",
+        "ERA24LA197",
+        "GAA15CA117",
+        "WPR14CA401",
+        "WPR21LA239"
+      ],
+      "family": "02061010",
+      "class": "broad",
+      "area": "personnel"
+    },
+    {
+      "id": "g8",
+      "ids": [
+        "t24-personnel-broad-02-p1",
+        "t24-personnel-broad-02-p2"
+      ],
+      "cases": [
+        "ANC21LA002",
+        "ANC21LA054",
+        "ANC22LA026",
+        "ANC24LA033",
+        "ANC25LA071",
+        "CEN22LA205",
+        "CEN26LA106",
+        "ERA21LA236",
+        "ERA23LA316",
+        "ERA25LA118",
+        "ERA26LA143",
+        "WPR20CA293",
+        "WPR21LA054",
+        "WPR21LA190",
+        "WPR22LA086",
+        "WPR22LA175",
+        "WPR22LA234",
+        "WPR23LA091",
+        "WPR23LA132",
+        "WPR23LA164",
+        "WPR23LA242"
+      ],
+      "family": "02021535",
+      "class": "broad",
+      "area": "personnel"
+    },
+    {
+      "id": "g9",
+      "ids": [
+        "t24-personnel-broad-03-p1",
+        "t24-personnel-broad-03-p2"
+      ],
+      "cases": [
+        "CEN10CA333",
+        "CEN11CA477",
+        "CEN12CA313",
+        "CEN12LA336",
+        "CEN13CA386",
+        "CEN21LA156",
+        "CEN22LA006",
+        "CEN22LA200",
+        "CEN23LA056",
+        "CEN25LA075",
+        "CEN26LA019",
+        "DCA16IA200",
+        "ERA10CA271",
+        "ERA11CA339",
+        "ERA11LA208",
+        "ERA14LA158",
+        "ERA21FA263",
+        "ERA22LA081",
+        "GAA15CA091",
+        "GAA16CA357",
+        "GAA16CA512"
+      ],
+      "family": "02061025",
+      "class": "broad",
+      "area": "personnel"
+    },
+    {
+      "id": "g10",
+      "ids": [
+        "t24-occurrence-broad-01-p1",
+        "t24-occurrence-broad-01-p2"
+      ],
+      "cases": [
+        "CEN10CA378",
+        "CEN10LA227",
+        "CEN11CA037",
+        "CEN13LA273",
+        "CEN15LA183",
+        "CEN15LA252",
+        "CEN16LA208",
+        "CEN18FA143",
+        "ERA13CA316",
+        "ERA13LA339",
+        "GAA15CA094",
+        "GAA16CA278",
+        "GAA16CA320",
+        "GAA16CA359",
+        "GAA17CA202",
+        "GAA17CA526",
+        "WPR12LA283",
+        "WPR13CA325",
+        "WPR13CA395",
+        "WPR14CA317",
+        "WPR14LA220",
+        "WPR17LA064"
+      ],
+      "family": "ev500",
+      "class": "broad",
+      "area": "occurrence"
+    },
+    {
+      "id": "g11",
+      "ids": [
+        "t24-occurrence-broad-02-p1",
+        "t24-occurrence-broad-02-p2"
+      ],
+      "cases": [
+        "CEN17LA136",
+        "CEN20CA048",
+        "CEN22LA084",
+        "CEN23LA131",
+        "CEN23LA379",
+        "CEN24LA025",
+        "CEN24LA035",
+        "CEN24LA054",
+        "CEN25LA362",
+        "DCA23LA067",
+        "ERA21LA047",
+        "ERA21LA197",
+        "ERA22LA110",
+        "ERA22LA124",
+        "ERA23LA106",
+        "GAA17CA429",
+        "GAA18CA071",
+        "GAA18CA128",
+        "GAA18CA475",
+        "GAA19CA400",
+        "GAA20CA054"
+      ],
+      "family": "ev901",
+      "class": "broad",
+      "area": "occurrence"
+    },
+    {
+      "id": "g12",
+      "ids": [
+        "t24-occurrence-broad-03-p1",
+        "t24-occurrence-broad-03-p2"
+      ],
+      "cases": [
+        "CEN10CA286",
+        "CEN12FA521",
+        "CEN12LA236",
+        "CEN13LA263",
+        "CEN14LA211",
+        "CEN15LA403",
+        "CEN16CA277",
+        "CEN21LA062",
+        "CEN23LA303",
+        "GAA17CA170",
+        "GAA19CA352",
+        "MIA08CA145",
+        "NYC08LA263",
+        "WPR10LA406",
+        "WPR11LA388",
+        "WPR12LA301",
+        "WPR13LA248",
+        "WPR20CA160",
+        "WPR20LA170",
+        "WPR24LA115",
+        "WPR24LA187"
+      ],
+      "family": "ev220",
+      "class": "broad",
+      "area": "occurrence"
+    },
+    {
+      "id": "g13",
+      "ids": [
+        "t24-environment-narrow-01-p1",
+        "t24-environment-narrow-01-p2"
+      ],
+      "cases": [
+        "ERA14CA184",
+        "ERA22LA395"
+      ],
+      "family": "03034050",
+      "class": "narrow",
+      "area": "environment"
+    },
+    {
+      "id": "g14",
+      "ids": [
+        "t24-environment-narrow-02-p1",
+        "t24-environment-narrow-02-p2"
+      ],
+      "cases": [
+        "SEA08LA082"
+      ],
+      "family": "03012015",
+      "class": "narrow",
+      "area": "environment"
+    },
+    {
+      "id": "g15",
+      "ids": [
+        "t24-environment-narrow-03-p1",
+        "t24-environment-narrow-03-p2"
+      ],
+      "cases": [
+        "ERA10CA017",
+        "ERA10CA392",
+        "ERA17CA008",
+        "ERA19FA003",
+        "ERA23FA131"
+      ],
+      "family": "03035075",
+      "class": "narrow",
+      "area": "environment"
+    },
+    {
+      "id": "g16",
+      "ids": [
+        "t24-aircraft-systems-narrow-01-p1",
+        "t24-aircraft-systems-narrow-01-p2"
+      ],
+      "cases": [
+        "CEN12LA622",
+        "CEN20LA360"
+      ],
+      "family": "01057322",
+      "class": "narrow",
+      "area": "aircraft_systems"
+    },
+    {
+      "id": "g17",
+      "ids": [
+        "t24-aircraft-systems-narrow-02-p1",
+        "t24-aircraft-systems-narrow-02-p2"
+      ],
+      "cases": [
+        "WPR14LA023"
+      ],
+      "family": "01023020",
+      "class": "narrow",
+      "area": "aircraft_systems"
+    },
+    {
+      "id": "g18",
+      "ids": [
+        "t24-aircraft-systems-narrow-03-p1",
+        "t24-aircraft-systems-narrow-03-p2"
+      ],
+      "cases": [
+        "ENG16IA027"
+      ],
+      "family": "01057330",
+      "class": "narrow",
+      "area": "aircraft_systems"
+    },
+    {
+      "id": "g19",
+      "ids": [
+        "t24-personnel-narrow-01-p1",
+        "t24-personnel-narrow-01-p2"
+      ],
+      "cases": [
+        "CEN10CA468",
+        "CEN15CA373"
+      ],
+      "family": "02021540",
+      "class": "narrow",
+      "area": "personnel"
+    },
+    {
+      "id": "g20",
+      "ids": [
+        "t24-personnel-narrow-02-p1",
+        "t24-personnel-narrow-02-p2"
+      ],
+      "cases": [
+        "WPR24FA124"
+      ],
+      "family": "02021015",
+      "class": "narrow",
+      "area": "personnel"
+    },
+    {
+      "id": "g21",
+      "ids": [
+        "t24-personnel-narrow-03-p1",
+        "t24-personnel-narrow-03-p2"
+      ],
+      "cases": [
+        "CEN09CA184",
+        "CEN12CA081"
+      ],
+      "family": "02031045",
+      "class": "narrow",
+      "area": "personnel"
+    },
+    {
+      "id": "g22",
+      "ids": [
+        "t24-occurrence-narrow-01-p1",
+        "t24-occurrence-narrow-01-p2"
+      ],
+      "cases": [
+        "ANC11LA008",
+        "ANC20CA036",
+        "ANC26LA011"
+      ],
+      "family": "ev284",
+      "class": "narrow",
+      "area": "occurrence"
+    },
+    {
+      "id": "g23",
+      "ids": [
+        "t24-occurrence-narrow-02-p1",
+        "t24-occurrence-narrow-02-p2"
+      ],
+      "cases": [
+        "OPS11IA401",
+        "OPS12IA849",
+        "OPS14IA007"
+      ],
+      "family": "ev100",
+      "class": "narrow",
+      "area": "occurrence"
+    },
+    {
+      "id": "g24",
+      "ids": [
+        "t24-occurrence-narrow-03-p1",
+        "t24-occurrence-narrow-03-p2"
+      ],
+      "cases": [
+        "ERA18LA087"
+      ],
+      "family": "ev510",
+      "class": "narrow",
+      "area": "occurrence"
+    }
+  ]
+}
