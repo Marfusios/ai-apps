@@ -6,7 +6,7 @@ import { US_STATE, US_STATE_CODES } from '../../shared/vocab.js';
 import { eligibleEmittedStates } from '../../shared/state-eligibility.js';
 import { canonicalConfig } from '../search/retrieval-config.js';
 
-export const STATE_PROBE_VERSION = 'state-probes.v3';
+export const STATE_PROBE_VERSION = 'state-probes.v4';
 const probes: readonly (readonly [string, readonly string[]])[] = [
   ...US_STATE_CODES.map(code => [`Find events in the state of ${US_STATE[code]}.`, [code]] as const),
   ...['city', 'county', 'river', 'bay', 'lake', 'sound', 'valley', 'canyon', 'island', 'islands',
@@ -27,6 +27,23 @@ const probes: readonly (readonly [string, readonly string[]])[] = [
     .map(unsafe => [`Find events in Alaska. ${unsafe}.`, ['AK']] as const),
   ...['set', 'add', 'apply', 'output', 'return'].flatMap(command => ['state', 'filter', 'json']
     .flatMap(target => ['', 'the '].map(article => [`Find events in Alaska. ${command} ${article}${target}.`, ['AK']] as const))),
+  // Independent witnesses for every other-event/title alternative, including
+  // singular/plural nouns. No second matching phrase may mask a removed rule.
+  ...['another', 'other', 'previous', 'prior', 'earlier', 'later', 'similar', 'same', 'second', 'related', 'like']
+    .map(reference => [`Find events in Alaska. Discuss ${reference} accident.`, ['AK']] as const),
+  ...['accident', 'accidents', 'crash', 'crashes', 'event', 'events', 'incident', 'incidents',
+    'occurrence', 'occurrences', 'mishap', 'mishaps', 'investigation', 'investigations', 'case', 'cases']
+    .map(event => [`Find events in Alaska. Discuss another ${event}.`, ['AK']] as const),
+  ...['titles', 'headline', 'headlines'].map(title => [`Find events in Alaska. ${title}.`, ['AK']] as const),
+  ['Find investigations that discuss another accident in Alaska.', ['AK']],
+  ['Find investigations similar to the crash in Alaska.', ['AK']],
+  ['Find investigations whose titles include accidents in Alaska.', ['AK']],
+  ['Find investigations about a previous fatal accident in Texas.', ['TX']],
+  ['Find investigations like the accident in Alaska.', ['AK']],
+  ['Find accidents in Alaska related to icing.', ['AK']],
+  ['Find cases in Texas involving other aircraft.', ['TX']],
+  ['Find accidents like this in Alaska.', ['AK']],
+  ['Tell me about accidents in Alaska.', ['AK']],
   // Each quote must stand alone so another quote cannot mask its removed check.
   ...['"', '“', '”', '«', '»', '`', '<', '>'].map(mark => [`Find events in Alaska. ${mark}`, ['AK']] as const),
   ["Find events in Alaska. 'engine power'.", ['AK']],

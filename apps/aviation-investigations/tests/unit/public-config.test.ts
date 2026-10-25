@@ -20,14 +20,14 @@ async function config(policy: EvidenceAutoFilterVersion | null, etag?: string) {
 
 describe('public automatic-filter policy', () => {
   it.each([
-    [null, []], ['none', []], ['state-explicit.v1.1', ['state']],
+    [null, []], ['none', []], ['state-explicit.v1.2', ['state']],
   ] as const)('reports the fields of the active %s policy', async (policy, expected) => {
     const response = await config(policy);
     expect(response.statusCode).toBe(200);
     expect(ConfigResponseSchema.parse(response.json()).aiAutomaticFilters).toEqual(expected);
   });
   it('changes the ETag when the policy rolls back on an unchanged dataset', async () => {
-    const active = await config('state-explicit.v1.1');
+    const active = await config('state-explicit.v1.2');
     const rollback = await config('none', String(active.headers.etag));
     expect(rollback.statusCode).toBe(200);
     expect(rollback.json().datasetRevision).toBe(active.json().datasetRevision);

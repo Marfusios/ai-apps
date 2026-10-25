@@ -4,17 +4,18 @@
  */
 import { US_STATE, US_STATE_CODES } from './vocab.js';
 
-export const STATE_GUARD_VERSION = 'state-explicit.v1.1';
+export const STATE_GUARD_VERSION = 'state-explicit.v1.2';
 export const AUTOMATIC_STATE_CODES = US_STATE_CODES;
 const allowed = new Set<string>(AUTOMATIC_STATE_CODES);
 const ambiguous = new Set(['GA', 'NY', 'WA']);
 const names = [...AUTOMATIC_STATE_CODES].sort((a, b) => US_STATE[b]!.length - US_STATE[a]!.length);
 const unsafe = /\b(?:not|no|without|except|exclude\w*|excluding|outside|avoid\w*|rather\s+than|instead\s+of|other\s+than|neither|nor|anywhere|ignore\w*|disregard\w*|override\w*|instructions?|system|assistant|prompt|pretend\w*|hypothetic\w*|imagine\w*|example\w*|quoted?|quotations?|reference|titled?|named|departure|departed|departing|destination|resident\w*|residence|lives?|living|resides?|registered|registration|manufactured|built|factory|headquarters|mailing|address|born|operator|company|airlines?|based)\b|\b(?:set|add|apply|output|return)\s+(?:the\s+)?(?:state|filter|json)\b/i;
+const otherEvent = /\b(?:another|other|previous|prior|earlier|later|similar|same|second|related|like)\s+(?:[\w-]+\s+){0,2}?(?:accidents?|crash(?:es)?|events?|incidents?|occurrences?|mishaps?|investigations?|cases?)\b|\b(?:titles|headlines?)\b/i;
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 interface Mention { code: string; start: number; end: number; eligible: boolean }
 export interface StateEligibility {
   states: string[];
-  reason: 'applied' | 'empty' | 'unsupported_state' | 'unsafe_context' | 'not_explicit' | 'ambiguous_context' | 'set_mismatch';
+  reason: 'applied' | 'empty' | 'unsupported_state' | 'unsafe_context' | 'other_event' | 'not_explicit' | 'ambiguous_context' | 'set_mismatch';
 }
 
 export function eligibleEmittedStates(question: string, emitted: readonly string[]): StateEligibility {
@@ -25,6 +26,9 @@ export function eligibleEmittedStates(question: string, emitted: readonly string
   if (question.length > 600 || /[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(question)) return reject('unsafe_context');
   const text = question.normalize('NFKC');
   if (unsafe.test(text) || /["“”«»`<>]|(?:^|\W)'[^']+'(?:\W|$)/u.test(text)) return reject('unsafe_context');
+  // Another event's state or title wording does not establish this event's state.
+  // This adds only a rejection to v1.1; accepted sets cannot expand.
+  if (otherEvent.test(text)) return reject('other_event');
   // Reject state-named places even when the state would otherwise be eligible.
   // This only removes applications from the evaluated v1 guard.
   for (const code of names) {

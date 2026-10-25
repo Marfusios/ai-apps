@@ -9,7 +9,7 @@ import { canonicalConfig } from '../search/retrieval-config.js';
 
 const policies = Object.freeze({
   none: Object.freeze({ version: 'none', guard: null, behaviour: null, field: null, appliesTo: 'question-case-search' }),
-  'state-explicit.v1.1': Object.freeze({ version: 'state-explicit.v1.1', guard: STATE_GUARD_VERSION, behaviour: Object.freeze({ version: STATE_PROBE_VERSION, sha256: stateGuardFingerprint() }), field: 'state', appliesTo: 'question-case-search' }),
+  'state-explicit.v1.2': Object.freeze({ version: 'state-explicit.v1.2', guard: STATE_GUARD_VERSION, behaviour: Object.freeze({ version: STATE_PROBE_VERSION, sha256: stateGuardFingerprint() }), field: 'state', appliesTo: 'question-case-search' }),
 } as const);
 export type EvidenceAutoFilterPolicy = typeof policies[EvidenceAutoFilterVersion];
 export const autoFilterPolicy = (version: EvidenceAutoFilterVersion = DEFAULT_EVIDENCE_AUTO_FILTERS): EvidenceAutoFilterPolicy => {
