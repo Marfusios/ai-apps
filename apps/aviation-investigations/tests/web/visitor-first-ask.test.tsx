@@ -11,6 +11,7 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CreateEvidenceResponseSchema, EVIDENCE_CONTRACT_VERSION } from '../../shared/contracts/evidence';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { resetUnsettledForTests, unsettledId, unsettledKey } from '../../web/src/features/ai/unsettled';
 import { VISITOR_CHANNEL, visitorGeneration } from '../../web/src/features/auth/visitor';
@@ -37,24 +38,27 @@ function holdSearchClient(): void {
   vi.doMock('../../web/src/features/evidence/api', (importOriginal) => searchClient(importOriginal));
 }
 
-/** What the server would answer: page 1 of a search with nothing retrieved (valid `evidence.v1`). */
-const answered = (id: string) => ({
-  kind: 'results',
-  search: {
-    version: 'evidence.v1',
-    id,
-    question: MOCK_SEED_QUESTION,
-    interpretation: { filters: {}, terms: 'engine power loss maintenance', unchecked: [] },
-    edited: false,
-    generation: 'g1',
-    createdAt: '2026-10-24T22:00:00.000Z',
-    expiresAt: '2026-10-25T22:00:00.000Z',
-    total: 0,
-    page: 1,
-    pages: 0,
-    cases: [],
-  },
-});
+/** What the server would answer: page 1 of a search with nothing retrieved, valid under the contract (checked here). */
+const answered = (id: string) =>
+  CreateEvidenceResponseSchema.parse({
+    kind: 'results',
+    search: {
+      version: EVIDENCE_CONTRACT_VERSION,
+      id,
+      question: MOCK_SEED_QUESTION,
+      query: { source: 'question' },
+      appliedFilters: {},
+      suggestion: { filters: {}, terms: 'engine power loss maintenance' },
+      hint: null,
+      generation: 'g1',
+      createdAt: '2026-10-24T22:00:00.000Z',
+      expiresAt: '2026-10-25T22:00:00.000Z',
+      total: 0,
+      page: 1,
+      pages: 0,
+      cases: [],
+    },
+  });
 
 const server = setupMockApi();
 const ANSWERED_ID = '00000000-0000-4000-8000-0000000000ff';

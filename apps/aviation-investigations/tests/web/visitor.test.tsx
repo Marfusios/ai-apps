@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { StartBriefResponseSchema } from '../../shared/contracts/briefs';
-import { EVIDENCE_HEADING } from '../../shared/contracts/evidence';
+import { CreateEvidenceResponseSchema, EVIDENCE_CONTRACT_VERSION, EVIDENCE_HEADING } from '../../shared/contracts/evidence';
 import { EXPIRED_TITLE as SEARCH_GONE } from '../../web/src/features/evidence/display';
 import { askAvailability } from '../../web/src/features/ai/status';
 import { LATER_CHECK_TITLE, type TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
@@ -41,24 +41,30 @@ import { currentUrl, renderApp, setupMockApi } from './render-app';
 const server = setupMockApi();
 const SLOW = { timeout: 5000 };
 
-/** What the server would answer an AI search: page 1 of a search with nothing retrieved (valid `evidence.v1`). */
-const searchAnswer = (id: string) => ({
-  kind: 'results',
-  search: {
-    version: 'evidence.v1',
-    id,
-    question: MOCK_SEED_QUESTION,
-    interpretation: { filters: {}, terms: 'engine power loss maintenance', unchecked: [] },
-    edited: false,
-    generation: 'g1',
-    createdAt: '2026-10-24T22:00:00.000Z',
-    expiresAt: '2026-10-25T22:00:00.000Z',
-    total: 0,
-    page: 1,
-    pages: 0,
-    cases: [],
-  },
-});
+/**
+ * What the server would answer an AI search: page 1 of a search with nothing retrieved, valid
+ * under the contract (checked here), so a test that opens nothing proves the visitor change did it.
+ */
+const searchAnswer = (id: string) =>
+  CreateEvidenceResponseSchema.parse({
+    kind: 'results',
+    search: {
+      version: EVIDENCE_CONTRACT_VERSION,
+      id,
+      question: MOCK_SEED_QUESTION,
+      query: { source: 'question' },
+      appliedFilters: {},
+      suggestion: { filters: {}, terms: 'engine power loss maintenance' },
+      hint: null,
+      generation: 'g1',
+      createdAt: '2026-10-24T22:00:00.000Z',
+      expiresAt: '2026-10-25T22:00:00.000Z',
+      total: 0,
+      page: 1,
+      pages: 0,
+      cases: [],
+    },
+  });
 
 /** The private projection is on screen: the drawer's search section, or a full section opened at the search's generation. */
 const privateShown = (): boolean => document.querySelector('[data-evidence-section], [data-excerpt-paragraph]') !== null;

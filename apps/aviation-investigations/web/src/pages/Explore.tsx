@@ -221,7 +221,7 @@ export function Explore() {
   const state = (location.state ?? {}) as ExploreLocationState;
   const ai = useEvidenceSearch();
   const [askedFrom, setAskedFrom] = useState<'box' | 'nudge'>('box');
-  // An AI search reads the question alone (contract evidence.v1): its own reading sets its filters.
+  // An AI search reads the question alone (contract evidence.v2): it applies no filter set here.
   const askAi = (question: string, from: 'box' | 'nudge'): void => {
     setAskedFrom(from);
     void ai.ask(question);
