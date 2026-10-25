@@ -3,17 +3,18 @@ import { ScopeReplySchema } from '../../shared/contracts/briefs.js';
  * The evidence view's contract (`evidence.v2`, shared/contracts/evidence.ts): what a page of a
  * stored search may carry, and the refusals that keep generated text and clarification rounds out.
  */
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   CreateEvidenceRequestSchema,
   CreateEvidenceResponseSchema,
-  type CreateEvidenceResponse,
   EVIDENCE_NOTICE,
   EvidenceExcerptSchema,
   EvidencePageSchema,
   EvidenceHintSchema,
   EvidenceQuerySchema,
   EVIDENCE_SUGGESTION_LABEL,
+  EVIDENCE_NOTE_KINDS,
+  EVIDENCE_NOTE_TEXT,
 } from '../../shared/contracts/evidence.js';
 
 const SHA = 'a'.repeat(64);
@@ -42,6 +43,7 @@ const page = {
   appliedFilters: {},
   suggestion: { filters: { phase: ['approach'] }, terms: 'carburetor icing' },
   hint: null,
+  note: null,
   generation: 'g1',
   createdAt: '2026-10-24T22:00:00.000Z',
   expiresAt: '2026-10-25T22:00:00.000Z',
@@ -69,12 +71,23 @@ describe('evidence.v2 contract', () => {
     expect(EvidenceExcerptSchema.safeParse(overlapping).success).toBe(false);
   });
 
-  it('never carries a clarification round', () => {
-    const clarification = {
-      kind: 'scope_reply',
-      reply: { kind: 'needs_clarification', label: 'Which?', line: 'Pick one', readings: [] },
-    };
-    expect(CreateEvidenceResponseSchema.safeParse(clarification).success).toBe(false);
+  it('never blocks a search: there is no scope reply of any kind, only results', () => {
+    const replies = [
+      { kind: 'needs_clarification', label: 'Which?', line: 'Pick one', readings: [] },
+      { kind: 'out_of_scope', lines: ['AirCase searches NTSB investigations.'], keywordSearchLabel: 'Search' },
+    ];
+    for (const reply of replies) expect(CreateEvidenceResponseSchema.safeParse({ kind: 'scope_reply', reply }).success).toBe(false);
+    expect(CreateEvidenceResponseSchema.safeParse({ kind: 'results', search: page }).success).toBe(true);
+  });
+
+  it('a capability note is one of two fixed reminders, never free text (gate answer 2)', () => {
+    expect([...EVIDENCE_NOTE_KINDS]).toEqual(['scope', 'operational_advice']);
+    for (const note of EVIDENCE_NOTE_KINDS) {
+      expect(EVIDENCE_NOTE_TEXT[note]).toMatch(/\S/);
+      expect(EvidencePageSchema.safeParse({ ...page, note }).success).toBe(true);
+    }
+    expect(EVIDENCE_NOTE_TEXT.operational_advice).toContain('not a source of operational flight or maintenance advice');
+    expect(EvidencePageSchema.safeParse({ ...page, note: 'This question is unsafe.' }).success).toBe(false);
   });
 
   it('edited filters and terms are independent, never a new question', () => {
@@ -107,11 +120,11 @@ it('distinguishes executed query from suggestions and rejects the old contract',
   expect(EvidenceQuerySchema.safeParse({ source: 'question', terms: 'silent rewrite' }).success).toBe(false);
   expect(EvidenceQuerySchema.safeParse({ source: 'edited', terms: 'power loss' }).success).toBe(true);
 });
-it('keeps statistics and comparison as bounded hints, not blocking scope replies', () => {
-  expectTypeOf<Extract<CreateEvidenceResponse, { kind: 'scope_reply' }>['reply']['kind']>().toEqualTypeOf<'out_of_scope' | 'operational_advice'>();
-  const stats = { kind: 'corpus_statistics', filters: {} };
+it('keeps statistics and comparison as bounded, non-blocking hints', () => {
+  const stats = { kind: 'corpus_statistics' };
   const compare = { kind: 'case_comparison', found: ['SEA08LA057'], notFound: [] };
   for (const hint of [stats, compare]) expect(EvidenceHintSchema.safeParse(hint).success).toBe(true);
+  expect(EvidenceHintSchema.safeParse({ ...stats, filters: {} }).success).toBe(false);
   expect(EvidenceHintSchema.safeParse({ ...compare, found: Array(5).fill('SEA08LA057') }).success).toBe(false);
   for (const reply of [{ kind: 'corpus_statistics', filters: {}, lines: ['Use the dashboard'] }, compare]) {
     expect(ScopeReplySchema.safeParse(reply).success).toBe(true);
