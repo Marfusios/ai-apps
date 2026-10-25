@@ -44,6 +44,8 @@ import {
   EMPTY_WORDS,
   EXPIRED_TEXT,
   EXPIRED_TITLE,
+  FOLDED_ONLY,
+  FOLDED_TOO,
   FULL_SECTION_FAILED,
   arrivalLine,
   LEGEND,
@@ -70,9 +72,10 @@ import {
 } from '../../web/src/features/evidence/display';
 import { LONG_TEXT_CHARS } from '../../web/src/features/evidence/Excerpt';
 import { evidencePageKey } from '../../web/src/features/evidence/keys';
+import { foldProbableCauses } from '../../web/src/features/evidence/fold';
 import { markRanges } from '../../web/src/features/evidence/MatchedText';
 import { createHandlers, type HandlerOptions } from '../../web/src/mocks/handlers';
-import { EVIDENCE_GONE_PLURAL, NOT_IN_SEARCH } from '../../web/src/pages/Compare';
+import { EVIDENCE_GONE_PLURAL, EVIDENCE_PAGES_FAILED, NOT_IN_SEARCH } from '../../web/src/pages/Compare';
 import { AI_NUDGE, AI_NUDGE_FILTERS } from '../../web/src/pages/Explore';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
@@ -1014,6 +1017,134 @@ describe('focus, announcements and state that stays with its case (UI review fix
   });
 });
 
+describe('a probable-cause paragraph is marked in its statement, never shown twice (final integration round)', { timeout: 30_000 }, () => {
+  /** A case of the search with a probable-cause excerpt, and that excerpt. */
+  function withCauseExcerpt(search: EvidencePage): { item: EvidenceCase; cause: EvidenceCase['excerpts'][number] } {
+    const item = search.cases.find((c) => c.excerpts.some((e) => e.section === 'probable_cause')) as EvidenceCase;
+    expect(item).toBeDefined();
+    return { item, cause: item.excerpts.find((e) => e.section === 'probable_cause') as EvidenceCase['excerpts'][number] };
+  }
+  const marksIn = (el: Element): string[] => [...el.querySelectorAll('mark')].map((m) => visibleText(m));
+  const quoted = (e: EvidenceCase['excerpts'][number]): string[] => e.highlights.map((h) => e.text.slice(h.start, h.end));
+
+  it('on the card: the statement carries the excerpt’s marks, the excerpt is not repeated, and every mark is still on screen', async () => {
+    freshApi();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const { item, cause } = withCauseExcerpt(search);
+    const card = cardOf(item.case.ntsbNo);
+    expect(card.querySelector('figure[data-excerpt^="probable_cause/"]')).toBeNull();
+    const statement = card.querySelector(`[data-probable-cause="${cause.sectionKey}"]`) as HTMLElement;
+    expect(statement.getAttribute('data-marked')).toBe('true');
+    const causeMarks = item.excerpts.filter((e) => e.section === 'probable_cause' && e.sectionKey === cause.sectionKey).flatMap(quoted);
+    expect(marksIn(statement)).toEqual(causeMarks);
+    // The statement still reads whole, word for word.
+    expect(visibleText(statement.querySelector('p.font-serif') as Element)).toBe(item.probableCauses.find((p) => p.sectionKey === cause.sectionKey)?.text.trim());
+    // The other excerpts stay, and no mark is lost: the relevance line's counts describe marked text on screen.
+    expect(card.querySelectorAll('figure')).toHaveLength(item.excerpts.filter((e) => e.section !== 'probable_cause').length);
+    expect(card.querySelectorAll('mark')).toHaveLength(item.excerpts.reduce((n, e) => n + e.highlights.length, 0));
+    expect(card.querySelector('[data-no-excerpt]')).toBeNull();
+  });
+
+  it('in the drawer: marked in what investigators established, said so, and not repeated under the search’s heading', async () => {
+    freshApi();
+    const search = await makeSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const { item, cause } = withCauseExcerpt(search);
+    renderApp(`/ai/${search.id}?case=${item.case.ntsbNo}`);
+    const dialog = await screen.findByRole('dialog', {}, SLOW);
+    const section = await within(dialog).findByRole('region', { name: EVIDENCE_HEADING }, SLOW);
+    const established = within(dialog).getByRole('region', { name: 'What investigators established' });
+    await waitFor(() => expect(marksIn(established)).toEqual(item.excerpts.filter((e) => e.section === 'probable_cause').flatMap(quoted)));
+    expect(section.querySelector('figure[data-excerpt^="probable_cause/"]')).toBeNull();
+    const shown = item.excerpts.filter((e) => e.section !== 'probable_cause').length;
+    expect(section.querySelectorAll('figure')).toHaveLength(shown);
+    expect(section.querySelector('[data-folded-note]')?.textContent).toBe(shown > 0 ? FOLDED_TOO : FOLDED_ONLY);
+    expect(cause.sectionKey).toMatch(/^probable_cause\//);
+  });
+
+  it('in Compare: marked in the strip’s probable cause, whole, and never its best excerpt', async () => {
+    freshApi();
+    const search = await makeSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const { item } = withCauseExcerpt(search);
+    renderApp(`/compare?cases=${item.case.ntsbNo}&evidence=${search.id}&pages=1`);
+    const strip = await present(() => screen.queryByRole('article', { name: `${item.case.ntsbNo}, strip 1` })?.querySelector('[data-strip-evidence="found"]')?.closest('article'));
+    const causeRow = [...strip.querySelectorAll('p')].find((p) => p.previousElementSibling?.textContent === 'Probable cause') as HTMLElement;
+    expect(marksIn(causeRow)).toEqual(item.excerpts.filter((e) => e.section === 'probable_cause').flatMap(quoted));
+    expect(causeRow.textContent).not.toMatch(/…$/);
+    const row = strip.querySelector('[data-strip-evidence]') as HTMLElement;
+    expect(row.querySelector('figure[data-excerpt^="probable_cause/"]')).toBeNull();
+    const narrative = item.excerpts.filter((e) => e.section !== 'probable_cause');
+    if (narrative.length > 0) expect(row.querySelector('figure')?.getAttribute('data-excerpt')).toBe(narrative[0]?.sectionKey);
+    else expect(row.querySelector('[data-folded-note]')?.textContent).toBe(FOLDED_ONLY);
+  });
+
+  it('a statement that reads differently from the excerpt (another generation) keeps the excerpt as it is (a synthetic page)', async () => {
+    freshApi();
+    const search = await makeSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const { item, cause } = withCauseExcerpt(search);
+    const page = servePage({
+      ...search,
+      id: '00000000-0000-4000-9000-00000000f01d',
+      cases: [{ ...item, rank: 1, probableCauses: item.probableCauses.map((p) => (p.sectionKey === cause.sectionKey ? { ...p, text: `Revised. ${p.text}` } : p)) }],
+      total: 1,
+      pages: 1,
+    });
+    renderApp(`/ai/${page.id}`);
+    const card = await waitFor(() => cardOf(item.case.ntsbNo), SLOW);
+    expect(card.querySelector(`figure[data-excerpt="${cause.sectionKey}"]`)).toBeTruthy();
+    expect(card.querySelector(`[data-probable-cause="${cause.sectionKey}"]`)?.getAttribute('data-marked')).toBeNull();
+  });
+});
+
+describe('the final integration round’s small fixes', { timeout: 30_000 }, () => {
+  it('a search the server could not finish (503) says it used none of the visitor’s searches; Try again never applies over a pending draft', async () => {
+    freshApi();
+    installTurnstile(5);
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const posts = recordPosts('/api/evidence');
+    server.use(http.post('*/api/evidence', () => HttpResponse.json({ error: 'unavailable', message: 'The service is temporarily unavailable. Try again shortly.' }, { status: 503 })));
+    fireEvent.click(within(screen.getByRole('region', { name: SUGGESTION_LABEL })).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) }));
+    expect(await screen.findByText("AirCase couldn't finish this AI search.", {}, SLOW)).toBeTruthy();
+    expect(screen.getByText("It didn't use one of your searches. Try again in a moment.")).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Try again\s*·?\s*uses 1$/ })).toBeTruthy();
+    await waitFor(() => expect(posts).toHaveLength(1));
+    // A draft change now: Try again would apply the suggestion over it, so it is not offered.
+    const yours = screen.getByRole('region', { name: YOUR_SEARCH_LABEL });
+    fireEvent.click(within(yours).getByRole('button', { name: '+ Filter' }));
+    fireEvent.click(within(within(yours).getByRole('group', { name: 'Add a filter' })).getByRole('button', { name: 'Add' }));
+    expect(screen.queryByRole('button', { name: /^Try again\s*·?\s*uses 1$/ })).toBeNull();
+    await act(() => sleep(100));
+    expect(posts).toHaveLength(1);
+    expect(currentUrl(router)).toBe(`/ai/${search.id}`);
+  });
+
+  it('an evidence card does not print its Compare box; Explore’s row still does', async () => {
+    freshApi();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    const box = within(cardOf((search.cases[0] as EvidenceCase).case.ntsbNo)).getByRole('checkbox', { name: /^Compare/ });
+    expect(box.closest('[data-print="hide"]')).not.toBeNull();
+    renderApp('/explore?q=carburetor+icing');
+    const results = await screen.findByRole('list', { name: 'Results' }, SLOW);
+    const row = within(results).getAllByRole('checkbox', { name: /^Compare/ })[0] as HTMLElement;
+    expect(row.closest('[data-print="hide"]')).toBeNull();
+  });
+
+  it('Compare says when a page of the search did not load, rather than “not among” it', async () => {
+    freshApi();
+    const first = await makeSearch(MOCK_EVIDENCE_QUESTIONS.seed);
+    const target = (await queryPage(first.id, 3)).cases[0]?.case.ntsbNo as string;
+    server.use(
+      http.get('*/api/evidence/:id', ({ request }) =>
+        new URL(request.url).searchParams.get('page') === '3' ? HttpResponse.json({ error: 'unavailable', message: 'Try later.' }, { status: 503 }) : undefined,
+      ),
+    );
+    renderApp(`/compare?cases=${target}&evidence=${first.id}&pages=3`);
+    const row = await present(() => screen.queryByRole('article', { name: `${target}, strip 1` })?.querySelector<HTMLElement>('[data-strip-evidence]'));
+    await waitFor(() => expect(row.getAttribute('data-strip-evidence')).toBe('incomplete'), { timeout: 10_000 });
+    expect(row.textContent).toContain(EVIDENCE_PAGES_FAILED);
+    expect(row.textContent).not.toContain(NOT_IN_SEARCH);
+  });
+});
+
 describe('the drawer, Compare and print show the same projection and the notice', { timeout: 20_000 }, () => {
   it('the drawer: under the heading and notice, how the case was found and its excerpts; ‹ n of N › follows the ranking and shows more past the last card', async () => {
     freshApi();
@@ -1116,10 +1247,15 @@ describe('a result surface shows NTSB text, coded data, fixed copy and the reade
       row.aircraft.forEach((a, i) => parts.push(letterOf(row.ntsbNo, a, i), aircraftName(a), phaseEventShort(a)));
       parts.push('Compare', ',', 'How it was found:', relevanceParts(c.relevance, relevanceContext(page), c.excerpts.length > 0).join(' · '));
       c.probableCauses.forEach((p, i) => parts.push(probableCauseLabel(row.ntsbNo, row.aircraft, p, i, c.probableCauses.length), p.text));
-      const numbered = numberedKinds(c.excerpts);
-      for (const [i, e] of c.excerpts.entries()) {
+      // The excerpts shown on their own: probable-cause paragraphs are marked in their statement instead.
+      const shown = foldProbableCauses(
+        c.probableCauses.map((p) => ({ key: p.sectionKey, text: p.text })),
+        c.excerpts,
+      ).shown;
+      const numbered = numberedKinds(shown);
+      for (const [i, e] of shown.entries()) {
         parts.push(excerptLabel(row.ntsbNo, row.aircraft, e, numbered.has(e.section)), e.text, fullSectionLabel(e), '(synonym)');
-        if (c.excerpts.length > 1) parts.push(`, excerpt ${i + 1} of ${c.excerpts.length}`);
+        if (shown.length > 1) parts.push(`, excerpt ${i + 1} of ${shown.length}`);
         if (e.text.length > LONG_TEXT_CHARS) parts.push(`Show the whole paragraph (${e.text.trim().split(/\s+/).length.toLocaleString('en-US')} words)`);
       }
       if (c.excerpts.length === 0) parts.push(NO_EXCERPT, `Open ${row.ntsbNo}`);

@@ -4,6 +4,8 @@ import { cx } from '../../lib/cx';
 import { CaseFacts } from '../explore/CaseFacts';
 import { NO_EXCERPT, numberedKinds, probableCauseLabel, relevanceParts, type RelevanceContext } from './display';
 import { Excerpt, LongText } from './Excerpt';
+import { foldProbableCauses, trimmedWithMarks, type Mark } from './fold';
+import { MatchedText } from './MatchedText';
 
 /** The report link, or the labelled search fallback (DESIGN §4). */
 export function ReportLink({ item }: { item: Pick<EvidenceCase, 'report' | 'case'> }) {
@@ -42,9 +44,17 @@ export function RelevanceLine({ item, context, className }: { item: Pick<Evidenc
 /**
  * Every probable-cause statement of the case, verbatim, with its scope (several in some
  * multi-aircraft events); the report link sits on the first label line, with the NTSB's own
- * conclusion.
+ * conclusion. `marks`: the search's marks folded in from the statement's own excerpts (fold.ts).
  */
-export function ProbableCauses({ item, className }: { item: Pick<EvidenceCase, 'case' | 'probableCauses' | 'report'>; className?: string }) {
+export function ProbableCauses({
+  item,
+  marks,
+  className,
+}: {
+  item: Pick<EvidenceCase, 'case' | 'probableCauses' | 'report'>;
+  marks?: ReadonlyMap<string, readonly Mark[]>;
+  className?: string;
+}) {
   const { case: row, probableCauses } = item;
   const link = (
     <span className="ml-auto text-meta tracking-normal">
@@ -61,17 +71,22 @@ export function ProbableCauses({ item, className }: { item: Pick<EvidenceCase, '
   }
   return (
     <div className={cx('space-y-2', className)}>
-      {probableCauses.map((p, i) => (
-        <div key={p.sectionKey} data-probable-cause={p.sectionKey}>
-          <p className="mb-px flex flex-wrap items-baseline gap-x-3 text-[10px] tracking-[.12em] text-muted">
-            {probableCauseLabel(row.ntsbNo, row.aircraft, p, i, probableCauses.length)}
-            {i === 0 && link}
-          </p>
-          <LongText text={p.text}>
-            <p className="font-serif text-quote leading-[1.5] whitespace-pre-line text-ink">{p.text.trim()}</p>
-          </LongText>
-        </div>
-      ))}
+      {probableCauses.map((p, i) => {
+        const shown = trimmedWithMarks(p.text, marks?.get(p.sectionKey) ?? []);
+        return (
+          <div key={p.sectionKey} data-probable-cause={p.sectionKey} data-marked={shown.marks.length > 0 || undefined}>
+            <p className="mb-px flex flex-wrap items-baseline gap-x-3 text-[10px] tracking-[.12em] text-muted">
+              {probableCauseLabel(row.ntsbNo, row.aircraft, p, i, probableCauses.length)}
+              {i === 0 && link}
+            </p>
+            <LongText text={p.text}>
+              <p className="font-serif text-quote leading-[1.5] whitespace-pre-line text-ink">
+                {shown.marks.length > 0 ? <MatchedText text={shown.text} highlights={shown.marks} /> : shown.text}
+              </p>
+            </LongText>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -96,16 +111,21 @@ export interface EvidenceCardProps {
  */
 export function EvidenceCard({ searchId, item, context, caseTo, inCompare, onToggleCompare }: EvidenceCardProps) {
   const { case: row } = item;
-  const numbered = numberedKinds(item.excerpts);
+  // A probable-cause paragraph is marked in its statement above, not shown again.
+  const fold = foldProbableCauses(
+    item.probableCauses.map((p) => ({ key: p.sectionKey, text: p.text })),
+    item.excerpts,
+  );
+  const numbered = numberedKinds(fold.shown);
   return (
     <article aria-labelledby={`evidence-case-${row.ntsbNo}`} className="card mb-2.5 px-3.5 pt-[11px] pb-2.5 sm:px-4" data-card={row.ntsbNo} data-rank={item.rank}>
       <div data-print="keep">
         <CaseFacts row={row} caseTo={caseTo} inCompare={inCompare} onToggleCompare={onToggleCompare} headingId={`evidence-case-${row.ntsbNo}`} printCompare={false} />
-        <ProbableCauses item={item} className="mt-2" />
+        <ProbableCauses item={item} marks={fold.marks} className="mt-2" />
       </div>
-      {item.excerpts.length > 0 ? (
+      {fold.shown.length > 0 ? (
         <div className="mt-3.5 space-y-4">
-          {item.excerpts.map((e, i) => (
+          {fold.shown.map((e, i) => (
             <Excerpt
               key={`${row.ntsbNo}:${e.sectionKey}:${e.paragraph.start}`}
               searchId={searchId}
@@ -113,11 +133,11 @@ export function EvidenceCard({ searchId, item, context, caseTo, inCompare, onTog
               aircraft={row.aircraft}
               excerpt={e}
               numbered={numbered.has(e.section)}
-              position={{ index: i, count: item.excerpts.length }}
+              position={{ index: i, count: fold.shown.length }}
             />
           ))}
         </div>
-      ) : (
+      ) : item.excerpts.length > 0 ? null : (
         <p className="mt-3 text-meta text-muted" data-no-excerpt="">
           {NO_EXCERPT}{' '}
           <Link to={`/cases/${row.ntsbNo}`} className="text-blue hover:underline">

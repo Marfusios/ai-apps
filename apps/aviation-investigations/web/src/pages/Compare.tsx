@@ -4,7 +4,7 @@ import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
 import type { CaseCard, CaseContextResponse } from '../../../shared/contracts/briefs';
 import type { CaseDetail } from '../../../shared/contracts/cases';
-import { EVIDENCE_CANDIDATE_CEILING, EVIDENCE_PAGE_SIZE, EvidenceSearchIdSchema, type EvidenceCase } from '../../../shared/contracts/evidence';
+import { EVIDENCE_CANDIDATE_CEILING, EVIDENCE_PAGE_SIZE, EvidenceSearchIdSchema, type EvidenceCase, type EvidenceExcerpt } from '../../../shared/contracts/evidence';
 import { compareHeading, pageTitle } from '../../../shared/page-titles';
 import { caseQuery, configQuery, isNotFound } from '../api';
 import { Button } from '../components/Button';
@@ -31,10 +31,11 @@ import { briefStepQuery, caseContextQuery } from '../features/brief/api';
 import { UnconfirmedTag } from '../features/brief/CaseCard';
 import { evidenceAttribution } from '../features/brief/display';
 import { evidencePageQuery } from '../features/evidence/api';
-import { EVIDENCE_HEADING, relevanceContext, type RelevanceContext } from '../features/evidence/display';
+import { EVIDENCE_HEADING, FOLDED_ONLY, relevanceContext, type RelevanceContext } from '../features/evidence/display';
 import { RelevanceLine } from '../features/evidence/EvidenceCard';
 import { Excerpt } from '../features/evidence/Excerpt';
-import { MatchLegend } from '../features/evidence/MatchedText';
+import { foldProbableCauses, trimmedWithMarks } from '../features/evidence/fold';
+import { MatchLegend, MatchedText } from '../features/evidence/MatchedText';
 import { PAGES_PARAM, evidencePath } from '../features/evidence/keys';
 import { EvidenceNotice } from '../features/evidence/Notice';
 import { Placard } from '../components/Placard';
@@ -87,9 +88,11 @@ export interface StripEvidenceProps {
  * The evidence row of a strip (UI_DESIGN §4.9): how the search found the case and its best
  * excerpt, a whole paragraph with the matches marked, under the page's heading and notice.
  * While the pages the link names are still being read it holds its place; only once every one
- * has answered does it say the search did not show the case.
+ * has answered does it say the search did not show the case. `shown`: the excerpts left once
+ * the probable-cause paragraphs are marked in the strip's own probable-cause row (fold.ts), so
+ * its best excerpt is never the statement again.
  */
-function StripEvidence({ searchId, item, context, state }: StripEvidenceProps) {
+function StripEvidence({ searchId, item, context, state, shown = item?.excerpts ?? [], folded = false }: StripEvidenceProps & { shown?: EvidenceExcerpt[]; folded?: boolean }) {
   return (
     <div
       className="border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1]"
@@ -107,14 +110,19 @@ function StripEvidence({ searchId, item, context, state }: StripEvidenceProps) {
       ) : item ? (
         <>
           <RelevanceLine item={item} context={context} />
-          {item.excerpts[0] && (
+          {folded && shown.length === 0 && (
+            <p className="mt-1 text-meta text-muted" data-folded-note="">
+              {FOLDED_ONLY}
+            </p>
+          )}
+          {shown[0] && (
             <div className="mt-1.5">
-              <Excerpt searchId={searchId} ntsbNo={item.case.ntsbNo} aircraft={item.case.aircraft} excerpt={item.excerpts[0]} />
+              <Excerpt searchId={searchId} ntsbNo={item.case.ntsbNo} aircraft={item.case.aircraft} excerpt={shown[0]} />
             </div>
           )}
-          {item.excerpts.length > 1 && (
+          {shown.length > 1 && (
             <p className="mt-1 text-meta text-muted">
-              {item.excerpts.length - 1 === 1 ? 'One more excerpt' : `${item.excerpts.length - 1} more excerpts`} on the search’s page.
+              {shown.length - 1 === 1 ? 'One more excerpt' : `${shown.length - 1} more excerpts`} on the search’s page.
             </p>
           )}
         </>
@@ -262,6 +270,16 @@ function Strip({
   const causes = detail.sections.filter((s) => s.kind === 'probable_cause');
   const cause = causes.map((s) => s.text.trim()).join(' ');
   const preview = cause.length > PC_PREVIEW ? `${cause.slice(0, cause.lastIndexOf(' ', PC_PREVIEW))}…` : cause;
+  // Opened from an evidence search: its probable-cause paragraphs are marked here, whole (a preview
+  // could cut the marks off), and not repeated as the strip's best excerpt.
+  const fold =
+    evidence?.item !== undefined
+      ? foldProbableCauses(
+          causes.map((s) => ({ key: s.key, text: s.text })),
+          evidence.item.excerpts,
+        )
+      : null;
+  const marked = fold !== null && fold.marks.size > 0;
   const damage = [...new Set(detail.aircraft.map((a) => (a.damage.code ? a.damage.label : '')).filter(Boolean))];
   const completed = detail.completion.class === 'completed';
   const glyph = ai?.context?.reading?.glyph ?? null;
@@ -346,11 +364,23 @@ function Strip({
       <div className="flex flex-col gap-1 border-t border-dashed border-strip-line px-2.5 pt-1.5 pb-2 sm:col-start-2 sm:col-end-[-1] sm:flex-row sm:items-baseline sm:gap-2.5">
         <span className="flex-none text-micro tracking-caps text-muted uppercase">Probable cause</span>
         <p className={cx('min-w-0 flex-1 font-serif text-[13px] leading-[1.45]', !cause && 'text-muted')}>
-          {cause ? preview : 'No probable cause on record.'}
+          {!cause
+            ? 'No probable cause on record.'
+            : marked
+              ? causes.map((s, i) => {
+                  const shown = trimmedWithMarks(s.text, fold.marks.get(s.key) ?? []);
+                  return (
+                    <Fragment key={s.key}>
+                      {i > 0 && ' '}
+                      <MatchedText text={shown.text} highlights={shown.marks} />
+                    </Fragment>
+                  );
+                })
+              : preview}
         </p>
         <span className="flex-none text-meta whitespace-nowrap">{sourceLink(detail)}</span>
       </div>
-      {evidence && <StripEvidence {...evidence} />}
+      {evidence && <StripEvidence {...evidence} shown={fold?.shown} folded={marked} />}
     </article>
   );
 }

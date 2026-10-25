@@ -73,6 +73,9 @@ export const LEGEND = { yours: 'your words', suggested: 'the suggested terms', s
 export const FULL_SECTION_GONE = 'This section is no longer in the case record, so it can’t be shown here.';
 export const FULL_SECTION_CHANGED = 'This section has changed since your search, so the excerpt is not marked in it.';
 export const FULL_SECTION_FAILED = 'The full section didn’t load.';
+/** Where a folded probable-cause excerpt's marks are, in the drawer and Compare (its statement is shown above). */
+export const FOLDED_ONLY = 'Its excerpt is the probable cause above, marked there.';
+export const FOLDED_TOO = 'The probable cause above is marked too.';
 /** A ranked case with no passage to quote (the server keeps it, with its facts and probable causes). */
 export const NO_EXCERPT = 'No excerpt for this case. Its case page has the whole report narrative.';
 /** The paragraph's place, for screen readers, in the full section. */
