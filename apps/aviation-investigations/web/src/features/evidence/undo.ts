@@ -9,7 +9,9 @@
  * automatic state, the added terms, or both, and changes nothing else; removing one state of
  * several narrows the search, so that is an ordinary edit. The server decides at admission, and the
  * created page's `freeUndo` says what it decided: the hint is a snapshot, which another tab can
- * overtake.
+ * overtake. So the hint is read again right before a request is sent as free, and after a free
+ * attempt that failed: the server keeps the claim once admission took it, even when the search then
+ * fails (DESIGN "Evidence.v3").
  *
  * This tab remembers only the searches that used one of the visitor's searches though "free" was
  * shown (memory only, forgotten with the visitor, web/src/features/auth/visitor.ts), so that their
@@ -73,6 +75,12 @@ export function freeUndoRule(parent: UndoParent, edit: UndoEdit): boolean {
   // At least one addition removed: an edit that changes nothing is no undo.
   return removedState || removedTerms;
 }
+
+/**
+ * Said when the hint, read again right before a request shown as free is sent, says the undo is
+ * used: nothing is sent, and the button says "uses 1" (Builder copy, for the owner's review).
+ */
+export const UNDO_USED_NOTICE = "This search's free undo has already been used, so searching again uses one of your AI searches.";
 
 // ---------------------------------------------------------------------------
 // This tab's memory

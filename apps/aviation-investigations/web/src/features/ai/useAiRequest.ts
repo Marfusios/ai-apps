@@ -27,8 +27,12 @@ export type AiNotice =
   | { kind: 'check'; reason: Exclude<AiCheckFailure, 'cancelled'>; unknownBefore?: boolean }
   | { kind: 'empty' }
   | { kind: 'message'; text: string }
-  /** An AI evidence search the server could not finish (503 `unavailable`): it used none of the visitor's searches. */
-  | { kind: 'unfinished' };
+  /**
+   * An AI evidence search the server could not finish (503 `unavailable`): it used none of the
+   * visitor's searches. `undo`: it was sent as the search's free undo, whose one-use claim the
+   * server may have taken before it failed.
+   */
+  | { kind: 'unfinished'; undo?: true };
 
 export type AiPhase = 'idle' | 'checking' | 'sending';
 

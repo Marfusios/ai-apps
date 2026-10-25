@@ -33,6 +33,12 @@ export const COPY = {
    * admitted: either way no search is used; Builder copy).
    */
   unfinished: ["AirCase couldn't finish this AI search.", "It didn't use one of your searches. Try again in a moment."],
+  /**
+   * …when it was sent as a search's free undo, which the server may have used up before it failed,
+   * until the search's page, read again, says the undo is still there (Try again says "· free"
+   * then, and the box the line above; Builder copy).
+   */
+  unfinishedUndo: 'The free undo may be used up now, so trying again can use one of your AI searches.',
   notSpent: "This didn't use one of your searches.",
   spent: 'This counted as a search, because the AI work was already under way.',
   /** No answer came back, so whether it counted is unknown (Builder copy). */
@@ -248,7 +254,7 @@ export function AiNoticeBox({ notice, keywordHref, onRetry, retryCounter = 'uses
       case 'unfinished':
         return (
           <Box title={COPY.unfinished[0]}>
-            <p>{COPY.unfinished[1]}</p>
+            <p>{notice.undo && retryCounter !== 'free' ? COPY.unfinishedUndo : COPY.unfinished[1]}</p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {onRetry && (
                 <Button variant="ai" counter={retryCounter} onClick={onRetry}>

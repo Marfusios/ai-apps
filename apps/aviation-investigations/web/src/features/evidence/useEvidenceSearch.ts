@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import type { BriefFilters } from '../../../../shared/contracts/briefs';
 import type { CreateEvidenceRequest, EvidencePage } from '../../../../shared/contracts/evidence';
@@ -11,7 +11,7 @@ import { ApiError, isNotFound } from '../../api';
 import { CASES_PARAM } from '../explore/url-state';
 import { expectArrival } from './arrival';
 import { EXPIRED_TITLE, evidencePageKey, evidencePath } from './keys';
-import { rememberCharged } from './undo';
+import { UNDO_USED_NOTICE, rememberCharged } from './undo';
 
 type EvidenceShape = Extract<AiRequestShape, { kind: 'evidence' | 'evidence-edited' }>;
 
@@ -35,7 +35,9 @@ export interface EvidenceEdit {
  * only when they accepted or typed them, words, or the question's own keywords when they took out
  * the terms AirCase added (Search again, Apply). Each is one AI search with the usual Turnstile
  * check, status and sign-in handling (useAiRequest), except a search's one free undo, which uses
- * none and is sent while the visitor's own searches are used up (contract `evidence.v3`). Nothing
+ * none and is sent while the visitor's own searches are used up (contract `evidence.v3`): its
+ * search's undo hint is read again right before it is sent, and nothing is sent when it says the
+ * undo is used; after a free attempt that failed it is read again too. Nothing
  * blocks a search (gate answer 2): the answer is always results, which open the search's page with
  * page 1 already in the cache (the POST answers with it).
  *
@@ -54,6 +56,12 @@ export function useEvidenceSearch() {
   const [params] = useSearchParams();
   const { run, setNotice } = request;
   const cases = params.get(CASES_PARAM);
+  // Reading a search's undo hint again before a request shown as free is sent ("Checking…").
+  const [verifying, setVerifying] = useState(false);
+  // A page on screen whose undo hint is known to be out of date (a free attempt of it failed, or the
+  // read right before one found it used): its undo is not offered until a newer read of it is there.
+  // The cache has that read (or a mark) already, but its readers learn of it a moment later.
+  const [staleHint, setStaleHint] = useState<EvidencePage | null>(null);
 
   const send = useCallback(
     async (shape: EvidenceShape, body: (idempotencyKey: string, turnstileToken: string | null) => CreateEvidenceRequest, keepCompare: boolean, free = false): Promise<boolean> => {
@@ -113,7 +121,15 @@ export function useEvidenceSearch() {
       if (!result.ok) {
         if (result.outcomeUnknown) rememberUnsettled(id, idempotencyKey);
         else if (!replayingEarlier) forgetUnsettled(id, idempotencyKey);
-        if (unfinished && !result.busy) setNotice({ kind: 'unfinished' });
+        // A free undo that failed may have used the search's one claim (the server keeps it once
+        // admission took it): its cached pages stop offering it at once, and they are read again,
+        // so it is offered free again only when a read says it is still there.
+        if (free && shape.kind === 'evidence-edited' && !result.busy) {
+          setStaleHint(queryClient.getQueryData<EvidencePage>(evidencePageKey(shape.from, 1)) ?? null);
+          queryClient.setQueriesData<EvidencePage>({ queryKey: ['evidence', shape.from] }, (page) => (page && page.undo === 'available' ? { ...page, undo: 'used' } : page));
+          void queryClient.invalidateQueries({ queryKey: ['evidence', shape.from] });
+        }
+        if (unfinished && !result.busy) setNotice(free ? { kind: 'unfinished', undo: true } : { kind: 'unfinished' });
         return false;
       }
       const search = result.value.search;
@@ -161,6 +177,29 @@ export function useEvidenceSearch() {
     async (from: string, filters: BriefFilters, change: EvidenceEdit = {}): Promise<boolean> => {
       const words = change.terms?.trim() || undefined;
       const keywords = words === undefined ? change.keywords : undefined;
+      const free = change.free === true;
+      if (free) {
+        // The hint on screen may be stale (another tab, a failed attempt): read it again first, and
+        // send nothing as free when it says the undo is used. A read that fails leaves it to the server.
+        const visitor = visitorGeneration();
+        const shown = queryClient.getQueryData<EvidencePage>(evidencePageKey(from, 1));
+        setVerifying(true);
+        let fresh: EvidencePage | undefined;
+        try {
+          const { evidencePageQuery } = await import('./api');
+          fresh = await queryClient.fetchQuery({ ...evidencePageQuery(from, 1), staleTime: 0 });
+        } catch {
+          fresh = undefined;
+        } finally {
+          setVerifying(false);
+        }
+        if (visitorGeneration() !== visitor) return false;
+        if (fresh && fresh.undo !== 'available') {
+          setStaleHint(shown ?? null);
+          setNotice({ kind: 'message', text: UNDO_USED_NOTICE });
+          return false;
+        }
+      }
       return send(
         { kind: 'evidence-edited', from, filters, terms: words, keywords },
         (idempotencyKey, turnstileToken) => ({
@@ -173,11 +212,11 @@ export function useEvidenceSearch() {
           turnstileToken,
         }),
         true,
-        change.free === true,
+        free,
       );
     },
-    [send],
+    [queryClient, send, setNotice],
   );
 
-  return { ...request, ask, edit };
+  return { ...request, phase: verifying ? ('checking' as const) : request.phase, staleHint, ask, edit };
 }

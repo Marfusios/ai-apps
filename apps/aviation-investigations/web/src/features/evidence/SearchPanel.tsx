@@ -336,7 +336,9 @@ type Action = 'draft' | 'filters' | 'both' | 'words';
  * those filters, words only when they typed them, `keywords: 'question'` when they took the added
  * terms out); it says "· free" when the page says the search's one free undo is there (`undo:
  * 'available'`) and the draft only removes what AirCase added (web/src/features/evidence/undo.ts),
- * else "· uses 1". The same words and filters open in
+ * else "· uses 1" (also after a free attempt that failed, until the page, read again, says the undo
+ * is still there; and right before one is sent the page is read again, "Checking…"). The same words
+ * and filters open in
  * Explore as a free keyword search at any time. The suggestion (magenta, dashed, under the
  * contract's "not applied" label) shows what the AI suggests and AirCase did not apply; "Apply these
  * filters" adds them to the search's filters and keeps its words, and only "Apply filters and
@@ -377,7 +379,8 @@ export function SearchPanel({ search }: SearchPanelProps) {
   // What Search again sends: words only when the reader typed new ones; the question's own keywords once the added terms are out.
   const words = draft.terms !== null && draft.terms !== current.terms ? draft.terms : undefined;
   const keywords = words === undefined && current.addedTerms !== null && draft.addedTerms === null ? ('question' as const) : undefined;
-  const free = changed && freeUndoRule(search, { filters: draft.filters, terms: words, keywords });
+  // A page whose undo hint is known to be out of date offers no free undo (useEvidenceSearch).
+  const free = changed && search !== evidence.staleHint && freeUndoRule(search, { filters: draft.filters, terms: words, keywords });
   const suggestion = search.suggestion;
   const suggested = suggestion ? filterChips(suggestion.filters) : [];
   // The block shows only what is still suggested (the server makes a suggestion with nothing left null).

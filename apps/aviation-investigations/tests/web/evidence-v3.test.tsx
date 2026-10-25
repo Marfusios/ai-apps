@@ -1,12 +1,14 @@
 /**
  * The evidence view's `evidence.v3` disclosures over the mock API (web/mock/evidence.ts) in the
- * configurations the evaluation may pick (UI_DESIGN §4.9): a state AirCase applied because the
- * question names it, terms it added to keyword search, AI's order of the leading results and whose
- * words are marked, each said as such on every surface; the suggestion keeping only what was not
- * used; and "Search again · free", the one free undo of what AirCase added, when the page says it is
- * there (`undo: 'available'`) and the draft qualifies by the server's rule (positive cases and each
- * condition that makes an edit use one), at zero searches left, with the server's `freeUndo` as the
- * last word. The baseline configuration's states are in evidence.test.tsx.
+ * configurations the evaluation may pick and the one live runs (`MOCK_EVIDENCE_RELEASE`; UI_DESIGN
+ * §4.9): a state AirCase applied because the question names it, terms it added to keyword search,
+ * AI's order of the leading results and whose words are marked, each said as such on every surface;
+ * the suggestion keeping only what was not used; and "Search again · free", the one free undo of
+ * what AirCase added, when the page says it is there (`undo: 'available'`) and the draft qualifies
+ * by the server's rule (positive cases and each condition that makes an edit use one), at zero
+ * searches left, read again right before it is sent and after it fails (never shown free while the
+ * hint is in doubt), with the server's `freeUndo` as the last word. The baseline configuration's
+ * states are in evidence.test.tsx.
  */
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
@@ -15,7 +17,10 @@ import type { AiStatusResponse } from '../../shared/contracts/ai';
 import type { BriefFilters } from '../../shared/contracts/briefs';
 import { CreateEvidenceResponseSchema, EVIDENCE_BOUNDARY, EVIDENCE_HEADING, EVIDENCE_NOTICE, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
-import { MOCK_EVIDENCE_QUESTIONS, type MockEvidenceConfig } from '../../web/mock/evidence';
+import { MOCK_EVIDENCE_QUESTIONS, MOCK_EVIDENCE_RELEASE, type MockEvidenceConfig } from '../../web/mock/evidence';
+import { UNDO_USED_NOTICE } from '../../web/src/features/evidence/undo';
+import { COPY } from '../../web/src/features/ai/AiNoticeBox';
+import { ClientConfigSchema } from '../../web/src/api';
 import type { TurnstileApi } from '../../web/src/features/ai/TurnstileGate';
 import { resetUnsettledForTests, unsettledId } from '../../web/src/features/ai/unsettled';
 import {
@@ -102,6 +107,37 @@ function recordPosts(path: string): Record<string, unknown>[] {
     if (request.method === 'POST' && new URL(request.url).pathname === path) void request.clone().json().then((b: Record<string, unknown>) => bodies.push(b));
   });
   return bodies;
+}
+
+/** Every GET path the app read. */
+function recordReads(): string[] {
+  const reads: string[] = [];
+  server.events.on('request:start', ({ request }) => {
+    if (request.method === 'GET') {
+      const url = new URL(request.url);
+      reads.push(`${url.pathname}${url.search}`);
+    }
+  });
+  return reads;
+}
+
+/**
+ * Every label "Try again" and "Search again" show while `text` is on the page, at every change of
+ * it (a label shown for a moment counts too).
+ */
+function watchLabels(text: string): { stop: () => string[] } {
+  const shown: string[] = [];
+  const watch = new MutationObserver(() => {
+    if (!document.body.textContent?.includes(text)) return;
+    for (const b of document.querySelectorAll('button')) if (/^(?:Try again|Search again)/.test(b.textContent ?? '')) shown.push(b.textContent ?? '');
+  });
+  watch.observe(document.body, { childList: true, subtree: true, characterData: true });
+  return {
+    stop: () => {
+      watch.disconnect();
+      return shown;
+    },
+  };
 }
 
 async function post(body: Record<string, unknown>): Promise<EvidencePage> {
@@ -319,6 +355,90 @@ describe('what AirCase added on its own is said as such (contract evidence.v3)',
   });
 });
 
+describe('what live runs (`MOCK_EVIDENCE_RELEASE`): the question alone, highest-ranked first, the suggested terms marked, a named state applied', { timeout: 20_000 }, () => {
+  it('the state is a blue chip “from your question” and nothing else was added; the excerpts mark the suggested terms; the count line says highest-ranked first', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateMarked);
+    expect([search.automaticFilters, search.query, search.order, search.marks, search.undo]).toEqual([
+      { state: ['MO'] },
+      { source: 'question', keywords: { kind: 'question' } },
+      'match',
+      'suggested_terms',
+      'available',
+    ]);
+    const panel = yours();
+    expect(panel.textContent).toContain(QUESTION_AS_ASKED);
+    const chip = within(panel).getByRole('button', { name: /^Location: Missouri\s*, added automatically from your question, remove$/ });
+    expect(chip.className).toContain('border-blue');
+    expect(visibleText(chip)).toBe(`Location: Missouri${FROM_QUESTION}`);
+    // Keyword search read the question alone: no row of added terms, no note about them.
+    expect(panel.querySelector('[data-added-terms], [data-keywords-note]')).toBeNull();
+    expect(panel.textContent).not.toMatch(new RegExp(`${ALSO_SEARCHED_LABEL}|${KEYWORDS_SEARCHED_LABEL}`));
+    // The match order.
+    const count = document.querySelector('[data-count-line]')?.textContent ?? '';
+    expect(count).toBe(`${search.total} retrieved · highest-ranked first · not every matching investigation`);
+    expect(count).toBe(countLine(search.total, 'match'));
+    // The marks: the suggested terms, in the legend and the relevance lines.
+    const legend = document.querySelector('[data-legend]') as HTMLElement;
+    expect(legend.getAttribute('data-legend')).toBe('suggested');
+    expect(visibleText(legend)).toBe(`Marked in the excerpts: ${LEGEND.suggested} · ${LEGEND.synonym}`);
+    const lines = [...document.querySelectorAll('[data-relevance]')].map((r) => visibleText(r));
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.every((l) => l.startsWith('Location: Missouri · Suggested terms in these excerpts: '))).toBe(true);
+    expect(document.body.textContent).not.toMatch(/Your words in these excerpts|Words searched in these excerpts/);
+  });
+
+  it('the suggestion has its note for a search AirCase added to, with the suggested filter and terms; Apply keeps the state', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    installTurnstile();
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
+    expect(search.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'carb icing' });
+    const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+    expect(suggestion.querySelector('[data-suggestion-note]')?.textContent).toBe(SUGGESTION_NOTE_AUTOMATIC);
+    expect([...suggestion.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['Filters', 'Terms']);
+    expect(within(suggestion).getByRole('list', { name: 'Suggested filters' }).textContent).toBe('Phase: Approach');
+    expect(suggestion.textContent).toContain('“carb icing”');
+    for (const action of [APPLY_FILTERS, APPLY_BOTH]) {
+      expect(within(suggestion).getByRole('button', { name: new RegExp(`^${action}\\s*·\\s*uses 1$`) })).toBeTruthy();
+    }
+    expect(within(suggestion).queryByRole('button', { name: new RegExp(`^${SEARCH_SUGGESTED_TERMS}`) })).toBeNull();
+    expect(document.querySelector('[data-suggestion-print]')?.textContent).toBe('Suggested filters and terms — not applied: Phase: Approach · “carb icing”');
+    expect(suggestionInWords({ filters: { phase: ['approach'] }, terms: 'carb icing' })).toBe(document.querySelector('[data-suggestion-print]')?.textContent);
+    // Apply filters and terms: the search's own filters (the state among them) and the suggested ones, the terms as the words.
+    const posts = recordPosts('/api/evidence');
+    fireEvent.click(within(suggestion).getByRole('button', { name: new RegExp(`^${APPLY_BOTH}`) }));
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ kind: 'edited', from: search.id, filters: { phase: ['approach'], state: ['TX'] }, terms: 'carb icing' });
+    const edited = await screen.findByRole('region', { name: EDITED_LABEL }, SLOW);
+    expect(within(edited).getByRole('button', { name: /^Location: Texas\s*, remove$/ })).toBeTruthy();
+    expect(within(edited).getByRole('button', { name: /^Phase: Approach\s*, remove$/ })).toBeTruthy();
+  });
+
+  it('removing the state is the one free undo: an edit with no filters and no words that uses none of the visitor’s searches; once used, removing it again uses one', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    installTurnstile();
+    const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
+    await waitFor(() => expect(banner()).toContain('AI searches left: 9 of 10'), SLOW);
+    const posts = recordPosts('/api/evidence');
+    removeTexas();
+    fireEvent.click(searchAgain('free'));
+    await waitFor(() => expect(currentUrl(router)).not.toBe(`/ai/${search.id}`), SLOW);
+    expect(posts).toEqual([{ kind: 'edited', from: search.id, filters: {}, idempotencyKey: expect.any(String), turnstileToken: TOKEN }]);
+    const edited = await screen.findByRole('region', { name: EDITED_LABEL }, SLOW);
+    expect(within(edited).queryByRole('button', { name: /added automatically/ })).toBeNull();
+    await waitFor(() => expect(live()).toMatch(/^\d+ investigations? retrieved\.$/), SLOW);
+    expect(document.querySelector('[data-undo-charged]')).toBeNull();
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(banner()).toContain('AI searches left: 9 of 10');
+    // Back on the first search: its undo is used, so removing the state again uses one.
+    await act(() => router.navigate(`/ai/${search.id}`));
+    await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
+    removeTexas();
+    expect(await within(yours()).findByRole('button', { name: /^Search again\s*·\s*uses 1$/ }, SLOW)).toBeTruthy();
+  });
+});
+
 describe('Search again is free only for the one undo of what AirCase added (server/evidence/undo.ts)', { timeout: 30_000 }, () => {
   it.each([
     ['the automatic state', () => removeTexas(), { filters: {} }],
@@ -454,11 +574,35 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     expect(within(panel).getByRole('button', { name: /^Search again\s*·\s*uses 1$/ })).toBeTruthy();
   });
 
-  it('the server’s word stands: an undo shown as free that it counted says it used one, on the search it made and aloud', async () => {
+  it('a free undo used elsewhere since the page was read is caught right before sending: nothing is sent, and it says so', async () => {
+    freshApi({ evidence: STATE_TERMS_AI });
+    installTurnstile();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
+    // Its free undo used elsewhere (another tab): the page on screen still says it is there.
+    expect((await post({ kind: 'edited', from: search.id, filters: {} })).freeUndo).toBe(true);
+    const posts = recordPosts('/api/evidence');
+    const labels = watchLabels(UNDO_USED_NOTICE);
+    removeTexas();
+    fireEvent.click(searchAgain('free'));
+    // The page is read again first: its undo is used, so nothing is sent as free, and the button says so with the notice.
+    expect(await screen.findByText(UNDO_USED_NOTICE, {}, SLOW)).toBeTruthy();
+    expect(searchAgain('uses 1')).toBeTruthy();
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(posts).toHaveLength(0);
+    expect(banner()).toContain('AI searches left: 9 of 10');
+    // Never "free" beside the notice, not even for a moment.
+    const shown = labels.stop();
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.filter((label) => /free$/.test(label))).toEqual([]);
+  });
+
+  it('the server’s word stands: an undo it counted, though read as free right before sending, says it used one, on the search it made and aloud', async () => {
     freshApi({ evidence: STATE_TERMS_AI });
     installTurnstile();
     const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
-    // Its free undo used elsewhere (another tab), so this tab does not know.
+    // Another tab uses the undo between the read right before sending and the admission: the read
+    // still finds it there (a stale answer stands in for the race).
+    server.use(http.get(`*/api/evidence/${search.id}`, () => HttpResponse.json(search), { once: true }));
     expect((await post({ kind: 'edited', from: search.id, filters: {} })).freeUndo).toBe(true);
     removeTexas();
     fireEvent.click(searchAgain('free'));
@@ -523,37 +667,78 @@ describe('Search again is free only for the one undo of what AirCase added (serv
     expect(posts.at(-1)).toMatchObject({ kind: 'edited', from: search.id, filters: { state: ['TX'] }, keywords: 'question' });
   });
 
-  it('a failed free undo offers “Try again · free”; a search that expired while open shows the expired state', async () => {
+  it('a free undo that fails after admission: the notice does not say it was free, and nothing is promised free again once the search is read again', async () => {
+    freshApi({ evidence: STATE_TERMS_AI });
+    installTurnstile();
+    const { search } = await openSearch(`${MOCK_EVIDENCE_QUESTIONS.stateTerms}, undo fails`);
+    expect(search.undo).toBe('available');
+    const reads = recordReads();
+    const labels = watchLabels("AirCase couldn't finish this AI search.");
+    removeTexas();
+    fireEvent.click(searchAgain('free'));
+    // From the notice's first showing: the undo may be used, and neither button promises it free.
+    expect(await screen.findByText("AirCase couldn't finish this AI search.", {}, SLOW)).toBeTruthy();
+    expect(screen.getByText('The free undo may be used up now, so trying again can use one of your AI searches.')).toBeTruthy();
+    expect(document.body.textContent).not.toContain("It didn't use one of your searches.");
+    expect(screen.getByRole('button', { name: /^Try again\s*·\s*uses 1$/ })).toBeTruthy();
+    expect(searchAgain('uses 1')).toBeTruthy();
+    // The search is read again, and its undo is used now: Try again and Search again say they use one.
+    await waitFor(() => expect(reads.filter((r) => r.startsWith(`/api/evidence/${search.id}?page=1`)).length).toBeGreaterThanOrEqual(2), SLOW);
+    expect(await screen.findByRole('button', { name: /^Try again\s*·\s*uses 1$/ }, SLOW)).toBeTruthy();
+    expect(searchAgain('uses 1')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /·\s*free$/ })).toBeNull();
+    expect(screen.getByText(COPY.unfinishedUndo)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("It didn't use one of your searches.");
+    // Not even for a moment.
+    const shown = labels.stop();
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.filter((label) => /free$/.test(label))).toEqual([]);
+  });
+
+  it('a failed free undo is shown as using one until the search is read again, and free again when the read says so', async () => {
     freshApi({ evidence: STATE_TERMS_AI });
     installTurnstile();
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
-    server.use(http.post('*/api/evidence', () => HttpResponse.json({ error: 'unavailable', message: 'The service is temporarily unavailable. Try again shortly.' }, { status: 503 })));
+    // A failure before admission (nothing was taken); the read after it is held for a moment.
+    server.use(http.post('*/api/evidence', () => HttpResponse.json({ error: 'unavailable', message: 'The service is temporarily unavailable. Try again shortly.' }, { status: 503 }), { once: true }));
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let pageReads = 0;
+    server.use(
+      http.get(`*/api/evidence/${search.id}`, async () => {
+        pageReads += 1;
+        // The first read is the one right before sending; the second follows the failure.
+        if (pageReads === 2) await held;
+        return undefined;
+      }),
+    );
     removeTexas();
     fireEvent.click(searchAgain('free'));
-    expect(await screen.findByText("AirCase couldn't finish this AI search.", {}, SLOW)).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Try again\s*·\s*free$/ })).toBeTruthy();
-    // An old link: the search is gone by now.
+    await screen.findByText("AirCase couldn't finish this AI search.", {}, SLOW);
+    // While it is read again: "uses 1", on Try again and on Search again, and the undo may be used up.
+    expect(screen.getByRole('button', { name: /^Try again\s*·\s*uses 1$/ })).toBeTruthy();
+    expect(searchAgain('uses 1')).toBeTruthy();
+    expect(screen.getByText(COPY.unfinishedUndo)).toBeTruthy();
+    expect(pageReads).toBe(2);
+    release();
+    // Read again: still there (nothing was taken), so it is free again, and the box says nothing was used.
+    expect(await screen.findByRole('button', { name: /^Try again\s*·\s*free$/ }, SLOW)).toBeTruthy();
+    expect(searchAgain('free')).toBeTruthy();
+    expect(screen.getByText(COPY.unfinished[1])).toBeTruthy();
+    expect(screen.queryByText(COPY.unfinishedUndo)).toBeNull();
+  });
+
+  it('an old link: a free undo of a search that expired while open shows the expired state', async () => {
+    freshApi({ evidence: STATE_TERMS_AI });
+    installTurnstile();
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
     server.use(
       http.post('*/api/evidence', () => HttpResponse.json({ error: 'not_found', message: 'No AI search with that link is available.' }, { status: 404 })),
       http.get(`*/api/evidence/${search.id}`, () => HttpResponse.json({ error: 'not_found', message: 'No AI search with that link is available.' }, { status: 404 })),
     );
-    fireEvent.click(screen.getByRole('button', { name: /^Try again\s*·\s*free$/ }));
+    removeTexas();
+    fireEvent.click(searchAgain('free'));
     expect(await screen.findByRole('heading', { level: 1, name: 'This AI search is no longer available.' }, SLOW)).toBeTruthy();
-  });
-
-  it('“Your edited search” from what the page says: words, an undo, filters of the reader’s, or added terms without an undo', () => {
-    const question = { source: 'question', keywords: { kind: 'question' } } as const;
-    const added = { source: 'question', keywords: { kind: 'question+terms', terms: 'carb icing' } } as const;
-    const page = { query: question, appliedFilters: {}, automaticFilters: null, freeUndo: false, undo: 'none' } as const;
-    // Original question searches: nothing added, or something added (whose undo is there or used).
-    expect(isEditedSearch(page)).toBe(false);
-    expect(isEditedSearch({ ...page, appliedFilters: { state: ['TX'] }, automaticFilters: { state: ['TX'] }, undo: 'available' })).toBe(false);
-    expect(isEditedSearch({ ...page, query: added, undo: 'used' })).toBe(false);
-    // Edits.
-    expect(isEditedSearch({ ...page, query: { source: 'edited', terms: 'carb heat' } })).toBe(true);
-    expect(isEditedSearch({ ...page, freeUndo: true })).toBe(true);
-    expect(isEditedSearch({ ...page, appliedFilters: { phase: ['approach'] } })).toBe(true);
-    expect(isEditedSearch({ ...page, query: added })).toBe(true);
   });
 
   it('the retry key of an undo is its own: restoring the question’s keywords is another request than keeping them', async () => {
@@ -622,6 +807,15 @@ describe('the AI nudge on Explore follows the server’s automatic-filter policy
     const nudge = await nudgeWith(AI_NUDGE_STATE);
     expect(nudge.textContent).toContain(`${AI_NUDGE_STATE} ${AI_NUDGE_FILTERS}`);
     expect(document.body.textContent).not.toContain(AI_NUDGE);
+  });
+
+  it('a server that does not report the policy: the configuration still reads, and the nudge claims nothing applied', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_RELEASE, aiAutomaticFilters: null });
+    const response = await fetch(new URL('/api/config', window.location.origin));
+    const parsed = ClientConfigSchema.safeParse(await response.json());
+    expect([parsed.success, parsed.data && 'aiAutomaticFilters' in parsed.data]).toEqual([true, false]);
+    await nudgeWith(AI_NUDGE);
+    expect(document.body.textContent).not.toContain(AI_NUDGE_STATE);
   });
 
   it('the configuration decides, and while it is unknown the nudge claims nothing applied', async () => {

@@ -12,7 +12,9 @@ import { FAKE_TURNSTILE, TEST_SITE_KEY } from './fake-turnstile.js';
  * search; and, with the mock standing in for the configurations the evaluation may pick (session
  * storage `casebook-mock-evidence`), what AirCase added on its own (a state the question names,
  * terms in keyword search, AI's order), said as such, and its one free undo, at zero searches left
- * too. Cloudflare's Turnstile is a local stand-in (tests/e2e/fake-turnstile.ts).
+ * too, used in another tab, or failing after the server took it; and the configuration live runs
+ * (`er-q-v1` with the state policy). Cloudflare's Turnstile is a local stand-in
+ * (tests/e2e/fake-turnstile.ts).
  *
  * `E2E_SCREENSHOTS=<dir>` keeps screenshots of the new states there.
  */
@@ -412,7 +414,7 @@ test('with no searches left the free undo still runs, with the usual check; anyt
   await expect(first.getByRole('button', { name: /^Search again\s*·\s*sign in$/ })).toBeVisible();
 });
 
-test('a free undo the server counted says it used one, on the search it made and aloud', async ({ page }) => {
+test('a free undo used in another tab is caught right before sending: nothing is sent, and it says so', async ({ page }) => {
   await configure(page, STATE_TERMS_AI);
   await open(page, { width: 1280, theme: 'night' });
   await ask(page, STATE_TERMS);
@@ -428,18 +430,98 @@ test('a free undo the server counted says it used one, on the search it made and
   const yours = page.getByRole('region', { name: 'Your search', exact: true });
   await yours.getByRole('button', { name: /^Location: Texas/ }).click();
   await yours.getByRole('button', { name: 'Search again · free' }).click();
-  await expect(page.getByRole('region', { name: 'Your edited search', exact: true })).toBeVisible();
-  await expect(page.locator('[data-undo-charged]')).toHaveText('This search used one of your AI searches.');
-  await expect(page.locator('[data-evidence-live]')).toHaveText(/^\d+ investigations retrieved\. This search used one of your AI searches\.\s*$/);
-  await shot(page, 'v3-undo-charged-1280-night');
+  // The page is read again first: its undo is used, so nothing is sent as free.
+  await expect(page.getByText("This search's free undo has already been used, so searching again uses one of your AI searches.")).toBeVisible();
+  await expect(yours.getByRole('button', { name: 'Search again · uses 1' })).toBeVisible();
+  expect(await posts(page, '/api/evidence')).toBe(2);
+  await expect(page.getByRole('banner').getByText('AI searches left: 9 of 10')).toBeVisible();
+  await shot(page, 'v3-undo-used-notice-1280-night');
 });
+
+test('a free undo that fails after the server took it: the notice does not promise free, and trying again uses one', async ({ page }) => {
+  await configure(page, STATE_TERMS_AI);
+  await open(page, { width: 1280, theme: 'day' });
+  await ask(page, `${STATE_TERMS}, undo fails`);
+  const yours = page.getByRole('region', { name: 'Your search', exact: true });
+  await yours.getByRole('button', { name: /^Location: Texas/ }).click();
+  await yours.getByRole('button', { name: 'Search again · free' }).click();
+  await expect(page.getByText("AirCase couldn't finish this AI search.")).toBeVisible();
+  await expect(page.getByText('The free undo may be used up now, so trying again can use one of your AI searches.')).toBeVisible();
+  await expect(page.getByText("It didn't use one of your searches.")).toHaveCount(0);
+  // Read again: the server kept the undo, so both buttons say they use one.
+  await expect(page.getByRole('button', { name: /^Try again\s*·\s*uses 1$/ })).toBeVisible();
+  await expect(yours.getByRole('button', { name: 'Search again · uses 1' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /·\s*free$/ })).toHaveCount(0);
+  await fitsTheWidth(page);
+  await shot(page, 'v3-undo-failed-1280-day');
+});
+
+// ---------------------------------------------------------------------------
+// What live runs: the question alone, highest-ranked first, the suggested terms marked, a named state applied
+
+const RELEASE = { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.2' };
+const STATE_MARKED = 'Carb icing on approach in Missouri';
+
+for (const [width, theme] of [
+  [1280, 'day'],
+  [390, 'night'],
+] as const) {
+  test(`what live runs: the state chip, the suggested terms marked and suggested, highest-ranked first, and the state's free undo (${width}px, ${theme})`, async ({ page }) => {
+    await configure(page, RELEASE);
+    await open(page, { width, theme });
+    await ask(page, STATE_MARKED);
+    const parent = page.url();
+    const yours = page.getByRole('region', { name: 'Your search', exact: true });
+    const missouri = yours.getByRole('button', { name: /^Location: Missouri\s*, added automatically from your question, remove$/ });
+    await expect(missouri).toBeVisible();
+    await expect(missouri.locator('[data-automatic-tag]')).toHaveText('from your question');
+    // Keyword search read the question alone: nothing else was added.
+    await expect(yours.locator('[data-added-terms], [data-keywords-note]')).toHaveCount(0);
+    await expect(page.locator('[data-count-line]')).toHaveText(/^\d+ retrieved · highest-ranked first · not every matching investigation$/);
+    // The suggested terms are marked, and said so.
+    await expect(page.locator('[data-legend]')).toHaveText(/^Marked in the excerpts: the suggested terms · .*their synonyms$/);
+    await expect(page.locator('[data-relevance]').first()).toContainText('Suggested terms in these excerpts:');
+    // The suggestion keeps the phase and the terms, with the note for a search AirCase added to.
+    const suggestion = page.getByRole('region', { name: SUGGESTION });
+    await expect(suggestion).toContainText('AI suggested these as well. AirCase applies none of them unless you choose them.');
+    await expect(suggestion.getByRole('list', { name: 'Suggested filters' })).toHaveText('Phase: Approach');
+    await expect(suggestion).toContainText('“carb icing”');
+    await expect(suggestion.getByRole('button', { name: /^Apply these filters\s*·\s*uses 1$/ })).toBeVisible();
+    await expect(suggestion.getByRole('button', { name: /^Apply filters and terms\s*·\s*uses 1$/ })).toBeVisible();
+    await fitsTheWidth(page);
+    await shot(page, `release-search-${width}-${theme}`);
+
+    // Removing the state: the free undo, an edit with no filters and no words.
+    await missouri.click();
+    const again = yours.getByRole('button', { name: 'Search again · free' });
+    await expect(again).toBeVisible();
+    await again.click();
+    const edited = page.getByRole('region', { name: 'Your edited search', exact: true });
+    await expect(edited).toBeVisible();
+    await expect(page.locator('[data-evidence-live]')).toHaveText(/^\d+ investigations? retrieved\.\s*$/);
+    const bodies = await postBodies(page, '/api/evidence');
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toEqual({ kind: 'edited', from: expect.any(String), filters: {}, idempotencyKey: expect.any(String), turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX' });
+    await expect(page.getByRole('banner').getByText(width < 640 ? 'AI left 9 of 10' : 'AI searches left: 9 of 10')).toBeVisible();
+    await expect(page.locator('[data-undo-charged]')).toHaveCount(0);
+    await expect(edited.locator('[data-automatic]')).toHaveCount(0);
+    await expect(page.locator('[data-count-line]')).toHaveText(/^\d+ retrieved · highest-ranked first/);
+    await shot(page, `release-undone-${width}-${theme}`);
+
+    // Back on the first search: its undo is used, so removing the state again uses one.
+    await page.goBack();
+    await expect(page).toHaveURL(parent);
+    await page.getByRole('region', { name: 'Your search', exact: true }).getByRole('button', { name: /^Location: Missouri/ }).click();
+    await expect(page.getByRole('region', { name: 'Your search', exact: true }).getByRole('button', { name: 'Search again · uses 1' })).toBeVisible();
+  });
+}
 
 for (const [policy, config, sentence] of [
   ['none', null, 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.'],
   [
     'state',
-    STATE_TERMS_AI,
-    'Ask in plain English: AirCase searches with your question. A US state it names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
+    RELEASE,
+    'Ask in plain English: AirCase searches with your question. A US state it names explicitly can be applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
   ],
 ] as const) {
   test(`the AI nudge on Explore follows the server’s automatic-filter policy (${policy})`, async ({ page }) => {
