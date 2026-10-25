@@ -7,6 +7,7 @@ import type { Snippet } from '../../../../shared/contracts/search';
 import { caseQuery, isNotFound } from '../../api';
 import { caseContextQuery } from '../brief/api';
 import { cx } from '../../lib/cx';
+import type { DrawerEvidence } from '../evidence/EvidenceSection';
 import type { AiCaseContext } from './BriefContext';
 import { CaseStory } from './CaseStory';
 
@@ -36,6 +37,12 @@ export interface CaseDrawerProps {
    * cited passage (UI_DESIGN §4.3, §4.5).
    */
   brief?: { id: string; step: number } | null;
+  /**
+   * The case as the viewer's evidence search shows it, when the drawer is opened over that
+   * search: its relevance facts and excerpts, under the search's heading and notice (UI_DESIGN
+   * §4.9). Already on the page: nothing more is read.
+   */
+  evidence?: DrawerEvidence | null;
 }
 
 const toolButton =
@@ -68,6 +75,7 @@ export function CaseDrawer({
   fullPageState,
   matched,
   brief = null,
+  evidence = null,
 }: CaseDrawerProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -184,7 +192,7 @@ export function CaseDrawer({
           <div ref={body} className="flex-1 overflow-y-auto overscroll-contain px-4 pt-5 pb-8 sm:px-[30px] sm:pt-[22px]">
             {query.data ? (
               <>
-                <CaseStory detail={query.data} mode="drawer" headingRef={heading} matched={matched} ai={ai} openAtCited={brief !== null} />
+                <CaseStory detail={query.data} mode="drawer" headingRef={heading} matched={matched} ai={ai} openAtCited={brief !== null} evidence={evidence} />
                 <Link to={fullPage} state={fullPageState} className="link mt-4 inline-block text-ui sm:hidden">
                   Open the full case page
                 </Link>

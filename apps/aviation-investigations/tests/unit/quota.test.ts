@@ -173,10 +173,10 @@ describe('policy and hashing', () => {
   it('builds the policy from configuration with the DESIGN §7 defaults', () => {
     expect(policy.limits).toEqual({
       ...DEFAULT_RATE_LIMITS,
-      trialRequests: 3,
-      accountDailyRequests: 20,
-      accountMonthlyRequests: 150,
-      newAccountDailyRequests: 5,
+      trialRequests: 10,
+      accountDailyRequests: 50,
+      accountMonthlyRequests: 600,
+      newAccountDailyRequests: 20,
       newAccountDays: 3,
       globalInFlight: 2,
     });

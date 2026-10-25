@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { TURNSTILE_ACTION } from '../../../../shared/contracts/ai';
-import { configQuery } from '../../api';
+import { aiStatusQuery, configQuery } from '../../api';
+import { firstCheckText } from './limits';
 import { onVisitorChange } from '../auth/visitor';
 import { Button } from '../../components/Button';
 import { cx } from '../../lib/cx';
@@ -30,7 +31,8 @@ import { useTheme } from '../../theme';
 
 export const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 export const FIRST_CHECK_TITLE = 'Quick check before your first AI search';
-export const FIRST_CHECK_TEXT = 'Up to three free AI searches, subject to daily availability. Search, cases and comparisons never need this.';
+/** The panel's text with the limits `/api/config` reports (web/src/features/ai/limits.ts). */
+export { firstCheckText };
 export const LATER_CHECK_TITLE = 'Quick check before this AI search';
 export const LATER_CHECK_TEXT = 'Search, cases and comparisons never need this.';
 /** An invisible check that has not finished by then is shown, so nobody waits on nothing. */
@@ -135,6 +137,7 @@ interface Pending {
 export function TurnstileGate({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const config = useQuery(configQuery());
+  const status = useQuery(aiStatusQuery());
   const [theme] = useTheme();
   const [mode, setMode] = useState<Mode>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -327,7 +330,7 @@ export function TurnstileGate({ children }: { children: ReactNode }) {
         <h2 ref={heading} id={titleId} tabIndex={-1} className="font-serif text-[18px] leading-tight font-semibold outline-none">
           {mode === 'first' ? FIRST_CHECK_TITLE : LATER_CHECK_TITLE}
         </h2>
-        <p className="mt-1 text-ui">{mode === 'first' ? FIRST_CHECK_TEXT : LATER_CHECK_TEXT}</p>
+        <p className="mt-1 text-ui">{mode === 'first' ? firstCheckText(config.data?.aiLimits, status.data) : LATER_CHECK_TEXT}</p>
         <div ref={container} className="mt-2.5 min-h-[65px]" />
         <div className="mt-1 flex justify-end">
           <Button variant="ghost" size="sm" onClick={cancelCurrent}>

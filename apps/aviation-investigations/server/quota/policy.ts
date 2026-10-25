@@ -84,6 +84,8 @@ export const SPEND_LOCK_KEY = 7_311_905_023;
 export const MAINTENANCE_LOCK_KEY = 7_311_905_024;
 
 export interface QuotaPolicy {
+  /** Evidence-view trials reset at UTC midnight; omitted only for legacy callers. */
+  trialDaily?: boolean;
   budgets: QuotaBudgets;
   limits: QuotaLimits;
   leaseTtlMs: number;
@@ -123,6 +125,7 @@ export function quotaPolicy(config: Pick<AppConfig, 'ai' | 'auth'>): QuotaPolicy
   }
   const l = config.ai.limits;
   const policy: QuotaPolicy = {
+    trialDaily: true,
     budgets: { ...config.ai.budgets },
     limits: {
       ...DEFAULT_RATE_LIMITS,

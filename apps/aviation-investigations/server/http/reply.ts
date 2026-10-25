@@ -54,7 +54,7 @@ export const ERROR_MESSAGES = {
   challenge_failed: "The quick check didn't go through. Try again.",
   sign_in_required: 'Sign in to ask the AI.',
   ai_paused: 'AI search is temporarily unavailable.',
-  trial_used: 'Your free AI searches are used up.',
+  trial_used: "Today's free AI searches are used up. Your allowance resets at 00:00 UTC.",
   free_searches_paused: 'Free AI searches are used up for today.',
   quota_exhausted: "You've used your AI searches for now.",
   in_flight: 'An AI search is already running. Wait for it to finish.',

@@ -34,6 +34,7 @@ import { aiStatus } from '../quota/status.js';
 import { createAnthropicProvider } from './anthropic.js';
 import { startupAiCheck, type AiStartupCheck } from './pricing.js';
 import type { LlmProvider } from './provider.js';
+import { evidenceStartupCheck } from '../evidence/pricing.js';
 
 export interface AiRuntime {
   startup: AiStartupCheck;
@@ -73,7 +74,7 @@ export function gateAvailability(db: Db, policy: QuotaPolicy, reservationUsd: nu
     if (s.state === 'available') return null;
     const retryAt = s.retryAt ? { retryAt: s.retryAt } : {};
     if (s.state === 'paused') return { ok: false, reason: 'ai_paused', status: 503, detail: s.reason ?? 'paused', ...retryAt };
-    if (s.reason === 'trial_used') return { ok: false, reason: 'trial_used', status: 429, detail: 'trial_used' };
+    if (s.reason === 'trial_used') return { ok: false, reason: 'trial_used', status: 429, detail: 'trial_used', ...retryAt };
     if (s.reason === 'anonymous_share') return { ok: false, reason: 'free_searches_paused', status: 429, detail: 'anonymous_share', ...retryAt };
     return { ok: false, reason: 'login_required', status: 403 };
   };
@@ -104,7 +105,7 @@ export function turnstileConfigProblem(config: Pick<AppConfig, 'appEnv' | 'appUr
 export function createAiRuntime(config: AiRuntimeConfig, deps: AiRuntimeDeps): AiRuntime {
   const now = deps.now ?? (() => new Date());
   const problems: string[] = [];
-  const startup = startupAiCheck(config);
+  const startup = config.ai.briefsEnabled ? startupAiCheck(config) : evidenceStartupCheck(config);
   if (!startup.enabled) problems.push(startup.reason ?? 'the AI startup check failed');
 
   let policy: QuotaPolicy | null = null;

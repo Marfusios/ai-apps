@@ -15,6 +15,7 @@ const pages: RouteObject[] = [
   // Explore, case and compare load on first use, which keeps the home page light.
   { path: 'explore', lazy: async () => ({ Component: (await import('./pages/Explore')).Explore }) },
   { path: 'briefs/:id', lazy: async () => ({ Component: (await import('./pages/Brief')).Brief }) },
+  { path: 'ai/:id', lazy: async () => ({ Component: (await import('./pages/Evidence')).Evidence }) },
   { path: 'cases/:ntsbNo', lazy: async () => ({ Component: (await import('./pages/CasePage')).CasePage }) },
   { path: 'compare', lazy: async () => ({ Component: (await import('./pages/Compare')).Compare }) },
   { path: 'dashboard', lazy: async () => ({ Component: (await import('./pages/Dashboard')).Dashboard }) },

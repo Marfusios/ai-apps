@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, createDb, type Db } from '../../server/db/client.js';
-import { utcDay } from '../../server/quota/buckets.js';
+import { utcDay, bucketRef, lockBuckets, addToBuckets } from '../../server/quota/buckets.js';
 import {
   admitPaidRequest,
   aiStatus,
@@ -35,10 +35,14 @@ import { loadConfig } from '../../shared/config.js';
 import { sqlState } from './corpus-helpers.js';
 import { resetControls, testDb, testDbUrl, testPool } from './helpers.js';
 
+describe.each([false, true])('quota regression with daily trial counting = %s', (daily) => {
 const POLICY = quotaPolicy({
-  ai: loadConfig({ env: {}, files: [] }).ai,
+  ai: loadConfig({ env: { AI_ANONYMOUS_TRIAL_REQUESTS: '3', AI_USER_DAILY_REQUESTS: '20', AI_USER_MONTHLY_REQUESTS: '150', AI_NEW_ACCOUNT_DAILY_REQUESTS: '5', AI_BRIEFS_ENABLED: 'true' }, files: [] }).ai,
   auth: { identityHmacSecret: 'test-identity-hmac-secret-0123456789', ipHmacSecret: 'test-network-hmac-secret-0123456789' },
 });
+// Exercise the production daily policy as well as the explicit legacy fixture policy.
+// Small configured quotas keep boundary/race tests short; evidence.test covers 10/50/600 defaults.
+if (!daily) POLICY.trialDaily = false;
 const BUDGETS = POLICY.budgets;
 const RESERVATION = 0.14;
 /** A fresh 30-day month: the paced allowance is 80 / 30 = $2.666666. */
@@ -76,7 +80,14 @@ const bodyHash = (question: string) => canonicalRequestHash({ question });
 
 async function newTrial(used = 0, now = T0): Promise<Extract<Principal, { kind: 'trial' }>> {
   const t = await createTrialIdentity(app, POLICY, randomBytes(32).toString('hex'), now);
-  if (used > 0) await migrator.execute(sql`UPDATE trial_identities SET requests_used = ${used} WHERE id = ${t.id}::uuid`);
+  if (used > 0) {
+    await migrator.execute(sql`UPDATE trial_identities SET requests_used = ${used} WHERE id = ${t.id}::uuid`);
+    if (daily) await app.transaction(async (tx) => {
+      const hash = principalHash(POLICY, { kind: 'trial', id: t.id });
+      const refs = [bucketRef('principal', hash, 'day', now), bucketRef('principal', hash, 'month', now)];
+      await lockBuckets(tx, refs); await addToBuckets(tx, refs, 'requests', used);
+    });
+  }
   return { kind: 'trial', id: t.id };
 }
 
@@ -166,7 +177,7 @@ describe('admission is atomic', () => {
     const counted = admitted(await admit(trial, { now: at(T0, MIN) }));
     expect(await aiStatus(app, trial, { ...opts, now: at(T0, MIN + 1_000) })).toMatchObject({ state: 'available' });
     await settle(app, counted, 0.09, counted.fencingToken, at(T0, MIN + 20_000));
-    expect(await admit(trial, { now: at(T0, 2 * MIN) })).toEqual({ ok: false, reason: 'trial_exhausted' });
+    expect(await admit(trial, { now: at(T0, 2 * MIN) })).toEqual({ ok: false, reason: 'trial_exhausted', ...(daily ? { retryAt: new Date('2026-11-02T00:00:00Z') } : {}) });
     expect(await aiStatus(app, trial, { ...opts, now: at(T0, 2 * MIN) })).toMatchObject({
       state: 'signed_in_only',
       reason: 'trial_used',
@@ -736,10 +747,11 @@ describe('principal quotas and rate limits', () => {
 
   it('a trial has three searches', async () => {
     const trial = await newTrial();
-    expect(await useRequests(trial, T0, 3)).toEqual({ ok: false, reason: 'trial_exhausted' });
+    expect(await useRequests(trial, T0, 3)).toEqual({ ok: false, reason: 'trial_exhausted', ...(daily ? { retryAt: new Date('2026-11-02T00:00:00Z') } : {}) });
     expect(await aiStatus(app, trial, { policy: POLICY, reservationUsd: RESERVATION, now: T0 })).toEqual({
       state: 'signed_in_only',
       reason: 'trial_used',
+      ...(daily ? { retryAt: new Date('2026-11-02T00:00:00.000Z') } : {}),
       remaining: { kind: 'trial', left: 0, limit: 3 },
     });
   });
@@ -1118,7 +1130,7 @@ describe('roles and guards', () => {
     expect(report).toEqual({
       idempotency: 1,
       // The trial's minute, network hour and day, and global day and month buckets.
-      usageBuckets: 5,
+      usageBuckets: daily ? 7 : 5,
       trialIdentities: 1,
       turnstileRedemptions: 0,
       abuseRecords: 0,
@@ -1127,8 +1139,11 @@ describe('roles and guards', () => {
       reservations: 1,
       briefs: 0,
       briefSteps: 0,
+      evidenceSearches: 0,
     });
     const left = await migrator.execute(sql`SELECT id::int AS id FROM reservations`);
     expect(left.rows).toEqual([{ id: current.reservationId }]);
   });
+});
+
 });

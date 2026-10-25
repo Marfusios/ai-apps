@@ -48,6 +48,7 @@ const STATIC_PAGES: ReadonlyMap<string, (request: FastifyRequest) => PageRoute> 
   ['/privacy', () => ({ kind: 'privacy' })],
   ['/compare', (request) => ({ kind: 'compare', query: queryOf(request) })],
   ['/account', () => ({ kind: 'account' })],
+  ['/ai/:id', (request) => ({ kind: 'evidence', id: paramOf(request, 'id') })],
   ['/briefs/:id', (request) => ({ kind: 'brief', id: paramOf(request, 'id') })],
 ]);
 
@@ -61,7 +62,7 @@ export const PUBLIC_PAGE_ROUTES: readonly string[] = [...STATIC_PAGES.keys(), IN
 
 /** Page paths of one segment (`/about`), and the pages with one parameter (`/cases/X`, `/briefs/X`). */
 const ONE_SEGMENT_PAGES: ReadonlySet<string> = new Set(['explore', 'dashboard', 'about', 'privacy', 'compare', 'account']);
-const PARAMETER_PAGES: ReadonlySet<string> = new Set(['cases', 'briefs']);
+const PARAMETER_PAGES: ReadonlySet<string> = new Set(['cases', 'briefs', 'ai']);
 
 /** How crawlers may cache robots.txt and the sitemaps. */
 const CRAWL_CACHE = 'public, max-age=3600';
@@ -128,7 +129,7 @@ export function unmatchedPage(path: string): { redirect: string } | { route: Pag
   if (segments.length === 1 && ONE_SEGMENT_PAGES.has(page) && first !== page) return { redirect: `/${page}` };
   if (segments.length !== 2 || !PARAMETER_PAGES.has(page) || param === '') return null;
   if (first !== page) return { redirect: `/${page}/${encodeURIComponent(param)}` };
-  return { route: page === 'cases' ? { kind: 'missing_case', requested: param } : { kind: 'brief', id: param } };
+  return { route: page === 'cases' ? { kind: 'missing_case', requested: param } : { kind: page === 'ai' ? 'evidence' : 'brief', id: param } };
 }
 
 /** The page a request's matched route serves (a case page without its record), or null. */
@@ -151,7 +152,7 @@ export function pageRoutes(app: FastifyInstance, ctx: ApiContext, opts: PageOpti
     return reply
       .code(pagePolicy(route, failure).status)
       .header('content-security-policy', contentSecurityPolicy({ styleNonce: nonce, turnstile: opts.turnstile }))
-      .header('cache-control', failure === undefined ? 'no-cache' : 'no-store')
+      .header('cache-control', route.kind === 'evidence' || route.kind === 'brief' ? 'private, no-store' : failure === undefined ? 'no-cache' : 'no-store')
       .type('text/html; charset=utf-8')
       .send(html);
   };

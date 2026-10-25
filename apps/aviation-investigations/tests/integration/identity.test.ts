@@ -80,7 +80,7 @@ afterEach(async () => {
 });
 
 function aiConfig(over: Partial<AiRuntimeConfig> = {}): AiRuntimeConfig {
-  const base = loadConfig({ env: {}, files: [] });
+  const base = loadConfig({ env: { AI_ANONYMOUS_TRIAL_REQUESTS: '3', AI_USER_DAILY_REQUESTS: '20', AI_USER_MONTHLY_REQUESTS: '150', AI_NEW_ACCOUNT_DAILY_REQUESTS: '5', AI_BRIEFS_ENABLED: 'true' }, files: [] });
   return {
     nodeEnv: 'test',
     appEnv: 'dev',
@@ -541,7 +541,7 @@ describe('GET /api/ai/status', () => {
       else expect(s).toMatchObject({ state: 'signed_in_only', reason: 'trial_used', remaining: { left: 0, started: true } });
       advance(MIN);
     }
-    expect((await status(h, cookie)).raw).not.toMatch(/retryAt/);
+    expect(await status(h, cookie)).toMatchObject({ retryAt: '2026-11-02T00:00:00.000Z' });
     // A fourth request is refused by the gate before its token is claimed or checked.
     const calls = h.sv.calls.length;
     const fourth = await ask(h, { turnstileToken: h.sv.issue() }, { cookie });

@@ -1,7 +1,7 @@
 /**
  * Periodic upkeep of the control tables, run inside the API server: expire the leases of
  * reservations nobody settled (`expireLeases`), apply retention (`pruneControls`), mark
- * brief steps whose process died as failed once their reservation is closed
+ * brief steps and evidence searches whose process died as failed once their reservation is closed
  * (`failOrphanedSteps`), and delete expired sign-in sessions, OAuth state, claimed states
  * and deletion confirmations (`pruneAuth`, server/auth/deletion.ts), in that order: the
  * pass takes locks in the order every writer does (server/auth/lifecycle.ts): briefs
@@ -20,6 +20,7 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { MAINTENANCE_LOCK_KEY } from './policy.js';
 import { pruneAuth } from '../auth/deletion.js';
+import { failOrphanedSearches } from '../evidence/store.js';
 import { failOrphanedSteps } from '../briefs/store.js';
 import { pruneControls, type PruneReport } from './retention.js';
 import { expireLeases } from './settle.js';
@@ -35,6 +36,7 @@ export type MaintenanceResult =
       expired: { expired: number; chargedUsd: number } | null;
       /** Brief steps marked failed because their process died. */
       orphanedSteps: number | null;
+      orphanedSearches?: number | null;
       pruned: PruneReport | null;
       /** Expired sign-in rows deleted. */
       authPruned: Awaited<ReturnType<typeof pruneAuth>> | null;
@@ -54,6 +56,7 @@ export async function runControlMaintenance(db: Db, log: MaintenanceLog, now: Da
       let expired: { expired: number; chargedUsd: number } | null = null;
       let pruned: PruneReport | null = null;
       let orphanedSteps: number | null = null;
+      let orphanedSearches: number | null = null;
       let authPruned: Awaited<ReturnType<typeof pruneAuth>> | null = null;
       // Leases first, so what they close is retained like any other settled reservation.
       try {
@@ -79,13 +82,19 @@ export async function runControlMaintenance(db: Db, log: MaintenanceLog, now: Da
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: orphaned brief steps failed');
       }
       try {
+        orphanedSearches = await tx.transaction((sp) => failOrphanedSearches(sp));
+      } catch {
+        failed.push('failOrphanedSearches');
+        log.warn({}, 'control maintenance: orphaned evidence searches failed');
+      }
+      try {
         authPruned = await tx.transaction((sp) => pruneAuth(sp));
       } catch (err) {
         failed.push('pruneAuth');
         log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance: sign-in retention failed');
       }
-      log.info({ leasesExpired: expired?.expired ?? null, orphanedSteps, pruned, authPruned, failed }, 'control maintenance pass');
-      return { ran: true, expired, orphanedSteps, pruned, authPruned, failed };
+      log.info({ leasesExpired: expired?.expired ?? null, orphanedSteps, orphanedSearches, pruned, authPruned, failed }, 'control maintenance pass');
+      return { ran: true, expired, orphanedSteps, orphanedSearches, pruned, authPruned, failed };
     });
   } catch (err) {
     log.warn({ err: { name: (err as Error)?.name } }, 'control maintenance failed');

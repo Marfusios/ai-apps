@@ -74,4 +74,10 @@
   [data-print="keep"] {
     break-inside: avoid;
   }
+
+  /* A long excerpt collapsed on screen (web/src/features/evidence/Excerpt.tsx, LongText) prints whole. */
+  [data-long-text="closed"] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
 }

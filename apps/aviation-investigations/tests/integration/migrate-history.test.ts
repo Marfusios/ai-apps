@@ -109,7 +109,7 @@ describe('a database that recorded an earlier version of 0020 and 0021', () => {
         async (urls) => {
           await withClient(urls.migrator, state.build);
           const report = await runMigrations(urls.migrator);
-          expect(report, state.name).toEqual({ applied: [], reapplied: ['0020_restore_hold', '0021_live_brief_generations'] });
+          expect(report, state.name).toEqual({ applied: FILES.filter((f) => f.folderMillis > when('0021_live_brief_generations')).map((f) => f.tag), reapplied: ['0020_restore_hold', '0021_live_brief_generations'] });
           const recorded = await withClient(urls.migrator, journal);
           expect(recorded.map((r) => r.hash)).toEqual(FILES.map((f) => f.hash));
           await expectAsFresh(urls.migrator, fresh);

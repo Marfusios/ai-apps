@@ -11,7 +11,9 @@ and the `casebook-*` keys in browser storage keep their names.
 
 **Status: Experimental.** Keyword search, case pages and the dashboard are live on the
 dev environment (API server, web client, container deployment, trial identity and AI
-status); AI searches are in progress (the evidence view).
+status). The evidence view is implemented, server and interface (the interface tested
+against the mock API); a run of the two together with AI on, and the view's narrower G6
+clearance, remain pending. Generated summaries stay disabled.
 The live deployment is at `https://aircase.app` (public, with Google sign-in and the
 published privacy notice; AI features are not enabled yet).
 
@@ -1094,11 +1096,13 @@ breakpoints. Components never use raw colours.
 Pages (UI_DESIGN §3–§7): Home ("Clear sky"), Explore (keyword search with facet
 counts, the case drawer and the compare tray), the full case page and Compare
 (flight strips with NTSB columns, "Same in all", sort and Print for class), the AI
-brief (`/briefs/:id`), plus About and Privacy. View state is in the URL: the search
+evidence search (`/ai/:id`), AI briefs that exist (`/briefs/:id`; the interface starts
+none), plus About and Privacy. View state is in the URL: the search
 keys of `SearchRequest` (`q`, `mentionedIn`, the facet names, `yearFrom`, `yearTo`,
-`sort`, `page`), the open case (`case`), the compare selection (`cases`) and, for
-briefs, the step (`step`) and the brief a case or compare page was opened from
-(`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
+`sort`, `page`), the open case (`case`), the compare selection (`cases`), for an
+evidence search the pages shown (`pages`) and the search Compare was opened from
+(`evidence`, `pages`) and, for briefs, the step (`step`) and the brief a case or compare
+page was opened from (`brief`, `step`). Phones get a "Filters (n)" sheet, a full-screen case sheet and a
 compare bar. The footer gives the snapshot's real age once it is more than 45 days old
 (DESIGN §4: monthly full snapshots), and carries the owner's credit under it, "Built by
 Mariusz Kotas · mkotas.cz" with the website as a link (a new tab), on every page and in
@@ -1121,10 +1125,14 @@ The link's box, and so its focus ring, holds the mark and the wordmark at every 
 line keeps the desktop and phone headers as tall as they were (a tablet's grows by it), and it
 does not print. At night the wordmark is plain blue text like by day, not an engraved placard.
 
-The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
+The AI interface (UI_DESIGN §4.3–§4.6, §4.9, §5; `web/src/features/{ai,brief,evidence}`):
 
 - **Ask AI and the counter** read `GET /api/ai/status` before anyone clicks ("Ask AI ·
-  3 free", "AI searches left: 2 of 3", "AI back tomorrow"). Ask AI needs a click or
+  10 free", "AI searches left: 9 of 10", "AI left 9 of 10" below 700px, "AI back
+  tomorrow"). Every allowance the copy states (the first check's "Up to ten free AI
+  searches a day", the welcome's "20 AI searches a day for your first three days, then
+  50", the trial's "Free AI searches return at 00:00 UTC.") comes from `/api/config`'s
+  `aiLimits` and the visitor's status; a number the API does not report is left out. Ask AI needs a click or
   Ctrl/Cmd+Enter; Enter runs the free Search. While the status cannot be read the
   controls say "AI temporarily unavailable" and the status is read again every 15 s and
   when the tab gets focus. Where Google sign-in is not configured nothing says "sign in":
@@ -1148,7 +1156,8 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   answer comes back (a network or server error), the notice does not claim the search was
   free, and Try again replays the same request under the same key; if that replay is a
   409 `conflict` (the earlier attempt never completed), it is sent once more under a new
-  key. The key is kept until the page has taken over from a 2xx (a new brief once the
+  key. The key is kept until the page has taken over from a 2xx (an evidence search once
+  its page is on screen; a new brief once the
   brief page, which may still be loading after the answer, is on screen; a refinement
   once its step is shown; a second ask in that gap replays the key) or that 409 settles
   it: a refused retry (a failed or cancelled check, a paused or used-up status, a known
@@ -1162,6 +1171,45 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   it. The server's Content-Security-Policy allows `https://challenges.cloudflare.com` as
   a script and frame source whenever anonymous AI is configured (see "Security headers"
   under API server).
+- **The evidence view** (`/ai/:id`, UI_DESIGN §4.9; contract `evidence.v2`, the advisory-only
+  design): Ask AI on Home or Explore sends `POST /api/evidence` (`kind: "question"`). Nothing
+  blocks a search: the answer is always results, which open the search's page, seeded from the
+  answer; a question about something else, or asking for operational advice, gets the contract's
+  fixed capability note (`EVIDENCE_NOTE_TEXT`) calmly above its results. Results always come from the question as asked, or
+  from the reader's own words and filters. The page shows the question, then "Your search" (the
+  question as asked or the reader's words, and the applied filters from `appliedFilters`, each a
+  removable chip), then the AI's suggestion, magenta and dashed under the contract's label
+  "Suggested filters and terms — not applied": "Apply these filters · uses 1" sends an edited
+  search with exactly those filters and no `terms`, so the question stays the query, and only "Apply
+  filters and terms · uses 1" sends the suggested terms. A search whose scope stage failed has no
+  suggestion and nothing else changes. An explicit counting or comparison request adds a hint
+  above the results (the dashboard; the cases found and Compare). Then the contract's heading and
+  notice, the count ("21 retrieved · best match first · not every matching investigation") and the cards:
+  Explore's case facts, every aircraft of a multi-aircraft event, every probable-cause
+  variant with its scope, and up to three whole paragraphs with their section and scope.
+  Literal matches are marked with a solid underline and fill, synonyms with a dotted
+  underline, with a legend and words for screen readers, never colour alone; the legend and
+  the relevance line say whose terms are marked (the suggestion's, else the reader's words).
+  The relevance line gives only the applied filters met, the marked terms' occurrences in the
+  shown paragraphs ("Suggested terms in these excerpts: “icing” appears 3 times") and the
+  retrieval channels ("found by keyword and similarity search"). "Show the full analysis
+  section" reads the section from `GET /api/evidence/:id/cases/:ntsbNo` (the search's
+  generation, never the public case endpoint) and marks the excerpt's paragraph at its
+  offsets; a paragraph over 3,000 characters folds and opens whole, never cut. "Show 10
+  more" reads the next saved page for free (`?pages=n` keeps them on a reload) under the
+  total. Typing words, removing a chip or adding a filter is free until "Search again · uses
+  1" sends `kind: "edited"`, a new 24-hour search that keeps the question, with exactly the
+  filters left and `terms` only when the reader typed new words; "Show keyword results" opens
+  Explore with the draft's words (or the question) and filters, free. An empty or tiny result
+  shows its filters and a free keyword search without them; a gone search (a 404) says so
+  and offers to ask again. The drawer, Compare (`?evidence=:id&pages=n`) and print show
+  the same projection under the heading and notice. Nothing on these surfaces is written
+  by AI: only NTSB text, coded data, the contract's fixed copy, the reader's own question and
+  edits, and the suggested terms only as labelled counts and marks (a component test checks
+  every text node). Model text is always rendered as text, never markup.
+- **Briefs that exist**: the interface starts none. While the server has briefs off
+  (`aiLimits.briefsEnabled: false`, its default) a brief is read-only: no Refine, and a
+  failed step offers New search, not Try again.
 - **The brief page** polls the running step once a second and shows the answer
   checklist (completions announced politely, once each). Polling stops on a 404 (the
   expired view never polls) or another refusal, waits for `Retry-After` on a 429, and
@@ -1187,7 +1235,8 @@ The AI interface (UI_DESIGN §4.3–§4.6, §5; `web/src/features/{ai,brief}`):
   again that fails too is said in the same card. The drawer's "‹ n of N ›" follows the
   order the sheet shows the cards in.
 - **AI context** for a case (the drawer, the case page, compare's AI columns) comes
-  only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, never merged into the
+  only from `GET /api/briefs/:id/steps/:n/cases/:ntsbNo` (an evidence search's, from its
+  pages and `GET /api/evidence/:id/cases/:ntsbNo`), never merged into the
   public case data. A citation opens the drawer at the cited passage, with the quoted
   spans highlighted from their UTF-16 offsets; all AI and NTSB text is rendered as
   text.
@@ -1203,9 +1252,9 @@ pnpm test:e2e:real    # Playwright against the real API server: the fixture inde
 
 ### API contracts and the mock API
 
-`shared/contracts/{config,search,cases,dashboard,ai,briefs}.ts` are the Zod contracts of the
+`shared/contracts/{config,search,cases,dashboard,ai,briefs,evidence}.ts` are the Zod contracts of the
 public API (`GET /api/config`, `/api/search`, `/api/cases/:ntsbNo`,
-`/api/dashboard`, `/api/ai/status`, and the [AI brief](#ai-briefs) routes). Every object is strict, `ev_id` never appears, and the case
+`/api/dashboard`, `/api/ai/status`, and the [AI evidence](#ai-evidence-view) and [AI brief](#ai-briefs) routes). Every object is strict, `ev_id` never appears, and the case
 detail is NTSB-only by construction (a test walks the schema for AI fields). The
 web client validates every response against them. `shared/case-view.ts` builds the
 deterministic headline, finding text and data cautions; `shared/vocab.ts` holds the
@@ -1235,13 +1284,33 @@ of scope, operational, counting, comparison, clarification, no results) or, the 
 a question is asked, a failure: "unavailable" (503, its key then a 409), "lost before
 start" (no answer, its key then a 409) and "lost response" (no answer, its key then
 replays the started brief).
+The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v2`): retrieval over the
+fixture index from the question's own words alone (an edit: exactly the filters sent, with the
+real filter rules, and the reader's words when sent, else the earlier query), a stand-in scope
+stage that only suggests filters and terms (rules for a few words, phases and states), hints for
+explicit counting and comparison requests, capability notes for questions about something else or
+asking for operational advice (results still come), whole paragraphs located
+in the fixture texts and chosen by the query, with literal and declared-synonym highlights of the
+suggested terms (else the query's words), saved pages of 10 (past the last, a 404), 24-hour
+ownership handed over on sign-in, and idempotency keys (a replay answers the same search, another
+body under the same key is a 409). `MOCK_EVIDENCE_QUESTIONS` names the questions the tests ask:
+21 results, suggested filters that leave 2 and none once applied, a midair, multi-byte text, a
+failed scope stage ("scope failure"), the hints and both notes; a question with "nothing"
+retrieves none, one with "expire" makes a search that is gone at once, and the brief's failure
+keywords work here too. Every answer is checked against the contract in
+`tests/unit/evidence-mock.test.ts`, which also checks that the suggestion changes no ranking,
+filter or excerpt.
+`/api/config` reports `aiLimits` (`MOCK_AI_LIMITS` in `web/mock/ai-status.ts`: 10 a day
+anonymous, 50 per account, 20 in an account's first 3 days, 600 a month; briefs on, so the
+brief pages stay testable; `createHandlers({ aiLimits })` changes them).
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).
 It needs Playwright's Chromium (`pnpm exec playwright install chromium`, plus
-`--with-deps` on a fresh Linux machine). `tests/e2e/brief.spec.ts` installs a local
-stand-in for Cloudflare's widget before the app loads, so the AI tests make no
-network requests.
+`--with-deps` on a fresh Linux machine). The AI specs install a local stand-in for
+Cloudflare's widget before the app loads (`tests/e2e/fake-turnstile.ts`), so the AI tests
+make no network requests. `tests/e2e/evidence.spec.ts` runs the evidence view on a desktop
+by day and a phone at night.
 
 `WEB_DEV_PORT` (default 5173) and `WEB_DEV_API_URL` (default
 `http://localhost:3000`) are read from the process environment by `vite.config.ts`
@@ -1322,7 +1391,10 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
 | `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
 | `GET /api/ai/status` | `AiStatusResponse` for this visitor ([anonymous gate](#anonymous-gate-and-ai-status)) | `no-store` |
-| `POST /api/briefs`, `POST /api/briefs/:id/refine` | `StartBriefResponse` ([AI briefs](#ai-briefs)) | `no-store` |
+| `POST /api/evidence` | 201 `results` (page 1), with an optional fixed capability note; [evidence view](#ai-evidence-view) | `private, no-store` |
+| `GET /api/evidence/:id?page=n` | `EvidencePage`, read owner only; free paging | `private, no-store` |
+| `GET /api/evidence/:id/cases/:ntsbNo` | full `CaseDetail` at the pinned generation, canonical section revision IDs; read owner only | `private, no-store` |
+| `POST /api/briefs`, `POST /api/briefs/:id/refine` | `StartBriefResponse` only with `AI_BRIEFS_ENABLED=true`; otherwise 404 ([AI briefs](#ai-briefs)) | `no-store` |
 | `GET /api/briefs/:id?step=n`, `GET /api/briefs/:id/steps/:n/cases/:ntsbNo`, `POST /api/briefs/:id/cancel` | the step, the case context, 204; read owner only | `no-store` |
 
 Every response is validated against its contract before it is sent. ETags are the
@@ -1341,7 +1413,7 @@ the route `unmatched` and nothing of the request target. A logged error carries 
 code and (Elasticsearch's) error type, never its message or stack, and any message string
 loses the query string of a path it quotes (Fastify's own warnings quote the request URL).
 The static files never include a dotfile or a dot directory (404). Per-visitor routes
-(`/api/ai`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
+(`/api/ai`, `/api/evidence`, `/api/briefs`, `/api/auth`, `/api/account`, chosen from the matched route
 prefix, so later routes are covered) answer `Cache-Control: private, no-store`; public
 data routes are cacheable and keyed by the dataset revision; errors are `no-store`.
 Requests the HTTP parser itself refuses (400, or 408 for a request timeout and 431 for
@@ -1613,19 +1685,22 @@ retention are in migrations 0008 and 0009.
   reservation, giving a search back and counting an attempt are bounded at 2 seconds; a
   timeout rolls back and returns `busy`
   (503, fail closed).
-- **Limits.** A trial has 3 searches and lasts 30 days. Signed-in users get 20 a day
-  and 150 a month, 5 a day during their first 3 days. Attempts are limited to 2 a
+- **Limits.** A trial gets 10 searches per UTC day; its identity lasts 30 days. Signed-in users get 50 a day
+  and 600 a month, 20 a day during their first 3 days. Attempts are limited to 2 a
   minute anonymously and 5 signed in, and per network identity and class to 10 an
   hour and 20 a day anonymously, 30 an hour and 100 a day signed in. One request per
   principal, two in total and one anonymous request can be in flight. A principal whose
   calls of unknown usage today (cancelled or timed out mid-call, each charged at its own
-  worst case) add up to one reservation is refused until 00:00 UTC (429
-  `quota_exhausted`; DESIGN §9, "Uncertain calls"). A full charge after a server failure
+  worst case) add up to one reservation skips advisory scope for evidence searches
+  until 00:00 UTC, with no suggestion or note; other limits remain enforced. The
+  disabled generated-summary pipeline instead refuses with 429 `quota_exhausted`
+  (DESIGN §9, "Uncertain calls"). A full charge after a server failure
   (lease expiry, a step that broke outside its stages) is not counted there.
 - **Quota units.** The unit is taken at admission, so concurrent requests can never
   both use the last trial search. `releaseQuota` gives it back for a reply that must
-  not count (off-topic, operational, nothing spent); the attempt still counts.
-  `recordAttempt` counts an attempt that makes no paid call.
+  not count (a failed evidence search, or a static reply in the disabled summary
+  pipeline); the attempt still counts. Evidence results always count, with or without
+  a capability note. `recordAttempt` counts an attempt that makes no paid call.
 - **Settlement.** `settle` (interactive) and `settleSpend` (indexing, evaluation) need
   the reservation's fencing token and a live lease. They charge the reported usage,
   optionally itemized by provider, model, stage and token counts. A call whose usage is
@@ -1733,7 +1808,155 @@ log what keeps any part off (setting names only). The tables are in migration 00
   names no passages index, or evidence retrieval is not bound or refuses it) or (for
   anonymous visitors) Turnstile are missing.
 
+### AI evidence view
+
+The backend contract is `evidence.v2` (`shared/contracts/evidence.ts`). Original-question
+retrieval runs independently of the advisory `scope.e3` generator. Its suggested filters
+and terms are **not applied**. Render them as text under `EVIDENCE_SUGGESTION_LABEL`;
+never render model text as HTML. All surfaces keep `EVIDENCE_NOTICE`. This beta has no
+specific unchecked readings or generated factual prose.
+
+`POST /api/evidence` accepts either:
+
+- `{kind: "question", question, idempotencyKey, turnstileToken?}`: one optional-suggestion
+  scope attempt, then one query embedding and retrieval over the default cohort with
+  **no model-applied filters**. Scope error, timeout, invalid or over-cap output returns
+  ordinary results with `suggestion: null`, `note: null` and settles any scope spend.
+- `{kind: "edited", from, filters, terms?, idempotencyKey, turnstileToken?}`: an owned,
+  unexpired search's original question, with exactly the user-supplied filters. Omitted
+  `terms` retains the parent's executed query; present `terms` explicitly accepts or
+  types a replacement. Applying suggested filters alone never accepts suggested terms.
+  A removed filter stays removed. Edits skip scope, have `note: null`, and use the
+  current publication.
+
+Questions and edited terms containing NUL or lone UTF-16 surrogates are rejected with
+400 before identity, admission or provider calls; valid astral characters are accepted.
+
+A synchronous 201 returns `{kind: "results", search: EvidencePage}`. The page records
+`query: {source: "question"} | {source: "edited", terms}`, `appliedFilters`, nullable
+`suggestion: {filters, terms}`, nullable `hint` and nullable `note`. It has no
+`interpretation` or `edited` response field. A filter-only edit may still have
+`query.source: "question"`. A validated scope intent selects only a fixed capability note:
+`out_of_scope` → `note: "scope"`; `operational_advice` → `note: "operational_advice"`;
+every other intent, invalid/missing output, timeout or skipped scope → `note: null`.
+Render the fixed `EVIDENCE_NOTE_TEXT[note]`, never model-written policy text. Notes are
+general reminders, not judgments about this question; absence of a note assures nothing.
+The research-only boundary and `EVIDENCE_NOTICE` stay visible unconditionally. No intent
+blocks search or changes ranking, filters, pagination, admission or accounting.
+
+The server's `evidence-hints.v3` grammar supplies navigation hints only:
+`{kind: "corpus_statistics"}` links to the dashboard without filters;
+`{kind: "case_comparison", found, notFound}` links up to four case numbers captured
+by that exact comparison match. A single ID, a negated comparison or an injected ID
+list is insufficient. Hints and notes are independent. Every successful search returns
+201 `results`, including off-topic and operational questions. There is no generated
+answer or clarification fallback. Retrieval/projection failures still return 503;
+normal validation, identity, quota and budget checks remain enforced.
+
+`retrieval.v2` fuses passage BM25, passage similarity and cases narrative BM25, 200
+candidates per channel with the existing fusion and tie ordering. All three channels,
+cohort, ranking, excerpts and pagination use only the executed query and user filters.
+Suggested terms affect highlights and occurrence labels only; without a suggestion,
+those use the executed query's words. They do not establish satisfaction of the question.
+`evidence.v2` maps at most 100 cases with eight concurrent requests inside the shared deadline.
+It stores that ranking, concrete
+indices, canonical generation, retrieval seed spans, channels and result projection.
+It has 10 cases/page and at most 10 pages; `total` is the saved candidate count, not
+the number of relevant investigations in the corpus. Zero results is page 1 with
+`pages: 0`. Beyond the last page is 404. Pages never re-rank, embed or call a model.
+
+Every card has coded facts, every canonical probable-cause variant and up to three
+**whole-paragraph previews** (`paragraphs.v2`). The shared `ntsb-paragraphs.v1` rule
+uses single newlines, joins hard-wrapped sentences and attaches heading lines to the
+following paragraph. Paragraphs are not shortened; UTF-16
+spans are checked against canonical sections and the stored passage rows. Multi-aircraft
+narratives stay event-scoped. Literal and explicitly declared analyzer-synonym matches
+are distinguished; stemming or semantic similarity is never presented as a word match.
+Relevance fields contain only satisfied coded filters, occurrence counts in the shown
+paragraphs and retrieval-channel enums. They establish no causal or timing relationship.
+
+For authoritative context use `GET /api/evidence/:id/cases/:ntsbNo`, **not the current
+public case endpoint**: it reads this search's generation. Its section `revision` is
+the canonical revision ID used by the excerpts (the public case endpoint uses a text
+hash). Both paragraphs and full sections must be rendered as text, with validated
+highlights, never HTML. Search creation/expiry timestamps are UTC instants ending in Z.
+
+Ownership is checked in the query reading private content. Unowned, missing and expired
+searches are indistinguishable 404s. The 24-hour lifetime never extends on read, retry or
+sign-in. The canonical results page is `/ai/:id` (private, no-store, noindex/nofollow;
+head title “AI search · AirCase”). Sign-in from it, or a signed-in edit/retry from the
+owning trial browser, moves read ownership once; original charges stay on the original
+principal. Account deletion removes searches and their idempotent results. Maintenance
+deletes expired searches. Backup and restore checks exclude `evidence_searches` data.
+Page reads select only the requested ten cases; context membership is checked in SQL
+without loading the stored ranking. A search has an 8 MiB UTF-8 JSON budget, checked
+before storage and enforced by the database. Oversized results fail without truncation,
+returning the quota unit and settling actual spend.
+Generation and index cleanup honor the live-search references, including after republish.
+
+The ordinary result is projected and byte-checked before suggested highlights are added.
+If optional suggestion metadata would exceed the storage budget, it is omitted and the
+original query's highlights remain. Canonical text and selection never change to make room.
+
+Each finished, replayable results search counts once; edits count again; paging and
+idempotent retries are free. Failures before a replayable result return the quota unit,
+while actual or uncertain provider spend remains charged. A lost HTTP response can be
+replayed with the original key. Disconnecting does not cancel admitted work; only
+shutdown, account deletion or the 30-second server deadline stops it. A new anonymous POST (including replay) needs a fresh
+Turnstile token. Signed-in step-up, network limits, concurrency, restore hold and the
+existing $3/day / $80 interactive / $20 indexing+evaluation / $100 total monthly gates
+are retained. Daily limits reset at 00:00 UTC: 10/trial, 50/account, 20/account during
+the first 3 days; accounts also have 600/month. `/api/config.aiLimits` and
+`/api/ai/status` report the configured limits and the visitor's remaining allowance.
+The legacy setting name `AI_ANONYMOUS_TRIAL_REQUESTS` now means per UTC day.
+
+The evidence scope caps are separate from the disabled summary pipeline: 10,000 input
+and 2,500 output tokens, plus a cache-write premium on up to 6,500 prefix tokens and
+1,000 embedding tokens. With the repository's Haiku/OpenAI price rows this costs at most
+**$0.0024325**, rounded up to a **$0.0025 reservation**. Edits keep that conservative
+reservation and settle only their embedding. No generation retries run. A scope failure
+removes both the suggestion and note; successful retrieval still consumes one search unit.
+Once this principal's uncertain named-call charges reach one reservation in a UTC day,
+new evidence searches skip scope instead of refusing search: no suggestion or note, the
+same full reservation, normal embedding settlement and all other limits still enforced.
+This decision is made under admission's lock and resets at UTC midnight; the disabled
+summary pipeline retains its refusal rule.
+
+`scope.e3` uses the revision1 suggestion prompt, with unchecked readings removed and
+advisory wording. It retains the single-value enum discriminator inside the strict
+`{result: ...}` wire envelope. The adapter unwraps it and validates the inner union;
+counting and generation share the same schema. The free provider preflight measured
+5,701 fixed input tokens, 5,674 cached prefix, 6,192 Latin / 7,190 dense question input
+and 1,118 bounded-output tokens; all fit. Run it again for the deployed configuration.
+These are sizing checks, not interpretation-quality clearance.
+
+Pre-v2 saved searches are not re-labelled or reused as edit parents: reads return 404
+and those private rows expire normally. Migration `0024_evidence_query` makes the stored
+version, query and applied filters immutable even while scope is running. Idempotency
+hashes include the contract version. Earlier v2 results remain readable with a null note
+and filter-free statistics hints; old blocking policy replies return 404 rather than
+being re-labelled as results or automatically dispatched again.
+
+`scope.e3` is frozen at its evaluated prompt, wire schema, model and settings. The gate
+accepted the recorded confirmation for fixed capability notes, replacing the old
+blocking-policy routing condition; this is not a pass of the earlier failed scope
+quality gate. No new paid suggestion threshold is required for this design. Offline
+regressions must keep retrieval and accounting independent of every intent, invalid
+output, timeout and the recorded injection examples. Before public launch, the final
+server, excerpt/provenance/UI, security, budget and lifecycle gates must still clear.
+Track C/N is regression material. Generated summaries remain separately gated.
+
+`AI_BRIEFS_ENABLED=false` is the default and must stay off while G6 for generated
+summaries is closed. It disables create/refine with 404 even with provider keys present;
+legacy reads and cancel still work until expiry. Re-enabling briefs would inherit the
+same daily evidence-sized anonymous allowance, so quotas and costs must be reviewed
+together before doing so. `AI_PARTIAL_DISPLAY` stays off too.
+See [RUNBOOK](docs/RUNBOOK.md#enabling-the-evidence-view) for enabling evidence after review.
+
 ### AI briefs
+
+The following describes the experimental generated-summary pipeline. Its writes are
+disabled by default (`AI_BRIEFS_ENABLED=false`); it is not the evidence-view flow.
 
 `server/briefs/` runs a brief (DESIGN §2, §5; UI_DESIGN §4.3–§4.6): one question plus
 at most three refinements, each a step through the anonymous gate, admission, and
@@ -1992,8 +2215,8 @@ lock order in migration 0019.
   Auth's goes to the console; telemetry is off. A callback that fails unexpectedly (its
   account deleted while it completes, say) lands on the sign-in error page.
 - **Signed in, AI.** A signed-in visitor's AI requests are billed to the account: its
-  quota key is HMAC(issuer, sub) (`abuse_records`, usage buckets), its daily allowance 5
-  for the first 3 days (from the account's creation), then 20, and 150 a month.
+  quota key is HMAC(issuer, sub) (`abuse_records`, usage buckets), its daily allowance 20
+  for the first 3 days (from the account's creation), then 50, and 600 a month.
   `GET /api/ai/status` reports the account's counts. Ordinary use takes no Turnstile
   check; a request takes one when the account made 3 AI attempts this minute, has used
   half of today's allowance, or its network made 10 signed-in attempts this hour, and

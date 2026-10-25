@@ -6,8 +6,9 @@
  *
  * - **A generation** counts visitor changes (`visitorGeneration`).
  * - **Private queries** are the namespaces in `PRIVATE_QUERY_ROOTS`: the account, the AI
- *   counts, every brief step and every case's AI context (`brief-case`, which never goes
- *   stale by itself). `forgetVisitor` cancels what is in flight, shows the account as
+ *   counts, every brief step, every case's AI context (`brief-case`, which never goes
+ *   stale by itself), every page of an evidence search (`evidence`, likewise) and the
+ *   cases it opens at its own generation (`evidence-case`). `forgetVisitor` cancels what is in flight, shows the account as
  *   signed out at once, and resets every other private query to no data: what a screen
  *   still shows is read again as the new visitor (a brief or its context is then not
  *   found), and nothing cached is shown on the way back to it.
@@ -43,7 +44,7 @@ import { forgetAllUnsettled } from '../ai/unsettled';
 import { forgetQuestions } from '../brief/memory';
 
 /** Query namespaces that hold one visitor's data. */
-export const PRIVATE_QUERY_ROOTS = ['account', 'ai-status', 'brief', 'brief-case'] as const;
+export const PRIVATE_QUERY_ROOTS = ['account', 'ai-status', 'brief', 'brief-case', 'evidence', 'evidence-case'] as const;
 /** Query namespaces that are the same for every visitor. */
 export const PUBLIC_QUERY_ROOTS = ['config', 'search', 'case', 'dashboard'] as const;
 

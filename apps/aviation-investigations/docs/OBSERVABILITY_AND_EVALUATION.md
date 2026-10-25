@@ -4,7 +4,7 @@
 tracing, scores, datasets, and experiments. Implement aviation-specific evaluators
 in TypeScript. Keep Vitest, Fastify injection tests, and Playwright for ordinary
 software behavior. A shared Langfuse v4 service exists with separate development
-and production projects; the application is not implemented or instrumented yet.
+and production projects; the application exports metadata-only traces (implementation details below).
 See the [implementation design](DESIGN.md) for the application and launch gates.
 
 Use Langfuse's existing UI. Jaeger and a custom Jaeger dashboard/plugin are outside
@@ -29,6 +29,48 @@ analytics in its [observability UI](https://langfuse.com/docs/observability/over
 It has a [JS/TS experiment runner](https://langfuse.com/docs/evaluation/experiments/experiments-via-sdk)
 that accepts local or hosted datasets and application/evaluator functions. We still
 write the aviation pipeline, reference labels, and scoring rules.
+
+## Evidence-view instrumentation
+
+The initial AI flow has `evidence.request`, `evidence.scope`, `evidence.embed` and
+`evidence.retrieve` spans. It calls no compose/check model. They use the existing
+closed attribute allowlist: stage/model/provider/prompt/retrieval versions, token
+counts, USD, duration, generation, case count and fixed outcomes. Errors export no
+raw SDK or database message. Idempotent replay and free paging make no paid stage.
+
+Question text, model-derived suggestions, filters that might reveal a
+question, user/account/trial identifiers, cookies, canonical passages, vectors and
+returned pages never enter these spans or ordinary logs. Private search data stays in
+PostgreSQL for at most 24 hours, is excluded from backups and removed on account
+deletion. Langfuse remains optional; an exporter outage cannot change retrieval or
+settlement. Known embedding usage is captured before downstream failures.
+
+Evidence scope is `scope.e3`: revision1's suggestion generator with no specific unchecked
+readings, a strict wire envelope and a single-value enum discriminator. Suggestions
+are unapplied text; scope failure emits only the fixed `no_suggestion` category and
+retrieval continues with no suggestion or note. Known or uncertain scope spend still
+settles. A validated `out_of_scope` or `operational_advice` intent selects only a fixed
+capability note (`scope` or `operational_advice`); other intents select none. Edits and
+scope skipped by admission's daily uncertain-charge rule have no note. Notes never
+block search or affect retrieval, pagination, admission or accounting; they are stored
+with the private page, not exported as question-derived trace attributes. Server-only
+`evidence-hints.v3` supplies filter-free statistics and captured-ID comparison hints.
+Counts are literal/synonym occurrences of suggested terms (or executed query words), never evidence of question satisfaction.
+
+Before paid evaluation, freeze prompts, models, separate evidence caps, routing guards,
+`paragraphs.v2`, `evidence.v2`, labels, thresholds and the ledger allocation. Require
+the final server and UI review for fixed capability notes. The gate accepted recorded
+confirmation for this narrower design in place of blocking replies; no new paid
+suggestion threshold is required. That decision does not change the earlier failed scope
+quality result. Track C/N supplies regression questions only. Keep the evaluated
+`scope.e3` prompt, schema, model and settings frozen. Offline metamorphic tests replay
+every intent, invalid/missing output, timeout and the two recorded injection examples:
+only the fixed note and optional suggestion may differ; filters, channels, ranking,
+canonical excerpts, later pages and accounting remain independent. UI tests
+must verify the unapplied label, text escaping, explicit term acceptance and fixed notice.
+Context-loss counterexamples must preserve needed context on the initial surface.
+The free provider sizing preflight is separate from these gates. Generated summaries
+and checker evaluations remain a separate disabled track.
 
 ## One request, one trace
 

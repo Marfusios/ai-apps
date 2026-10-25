@@ -1,3 +1,5 @@
+import { QUESTION_MAX_CHARS } from '../../shared/contracts/briefs.js';
+import { EVIDENCE_SCOPE_CAPS } from '../../server/ai/pricing.js';
 /**
  * The hard caps against the requests they bound, sized offline: the fixed part of each
  * stage (system prompt and the structured-output schema the adapter sends) with the local
@@ -6,6 +8,8 @@
  * The requests are the same synthetic worst cases `pnpm worker ai-preflight` counts with
  * the provider. A prompt or schema that grows past its cap fails here before any paid run.
  */
+import { EvidenceScopeInputSchema, EvidenceScopeWireOutputSchema, EVIDENCE_SCOPE_SYSTEM, renderEvidenceScopeUser } from '../../server/ai/prompts/scope.e1.js';
+import { evidencePreflightRequests } from '../../worker/ai-preflight.js';
 import { describe, expect, it } from 'vitest';
 import { outputJsonSchema } from '../../server/ai/anthropic.js';
 import { CACHED_PREFIX_MAX, STAGE_CAPS } from '../../server/ai/pricing.js';
@@ -120,6 +124,17 @@ describe('runAiPreflight with a stub counter', () => {
   const countText = async (_model: string, text: string) => userTurns.get(text) ?? 10;
   const prefixRows = async () => (await runAiPreflight(provider, countText, models)).filter((row) => row.request.startsWith('cached prefix'));
 
+  it('validates the actual reservation and configured embedder before counting, and verifies the separate advisory output cap', async () => {
+    const evidenceProvider = { ...provider, countEvidenceScopeTokens: async () => 100 };
+    await expect(runAiPreflight(evidenceProvider, countText, models)).rejects.toThrow('configured embedding');
+    await expect(runAiPreflight(evidenceProvider, countText, models, { embeddingModel: 'text-embedding-3-small', reservationUsd: 0 })).rejects.toThrow('reservation too small');
+    // A configured model without an approved price row cannot silently use the small price.
+    await expect(runAiPreflight(evidenceProvider, countText, models, { embeddingModel: 'text-embedding-3-large', reservationUsd: 0.0025 })).rejects.toThrow('has no price row');
+    const rows = await runAiPreflight(evidenceProvider, async (_m, t) => text(t), models,
+      { embeddingModel: 'text-embedding-3-small', reservationUsd: 0.0025 });
+    expect(rows.find((r) => r.request === 'scope.e3: output at its schema bounds')).toMatchObject({ ok: true, limit: EVIDENCE_SCOPE_CAPS.output });
+  });
+
   it('reports each stage’s cached prefix as its fixed request less its user turn, against CACHED_PREFIX_MAX', async () => {
     const row = (stage: 'scope' | 'answer' | 'check', tokens: number) => ({
       stage,
@@ -143,5 +158,24 @@ describe('runAiPreflight with a stub counter', () => {
     } finally {
       fixedCounts.compose = saved;
     }
+  });
+});
+
+
+describe('evidence scope preflight (offline)', () => {
+  it('sizes the actual prompt/schema, longest Latin question and every output field at its schema bound', () => {
+    const e = evidencePreflightRequests();
+    const base = fixed(EVIDENCE_SCOPE_SYSTEM, EvidenceScopeWireOutputSchema);
+    expect(base).toBeLessThanOrEqual(CACHED_PREFIX_MAX);
+    for (const w of e.worst) {
+      expect(EvidenceScopeInputSchema.safeParse(w.input).success).toBe(true);
+      expect(w.input.question).toHaveLength(QUESTION_MAX_CHARS);
+      if (w.latin) expect(base + text(renderEvidenceScopeUser(w.input))).toBeLessThanOrEqual(EVIDENCE_SCOPE_CAPS.input);
+    }
+    expect(EvidenceScopeWireOutputSchema.safeParse(JSON.parse(e.output)).success).toBe(true);
+    const out = JSON.parse(e.output).result;
+    expect(out.terms).toHaveLength(300); expect(out).not.toHaveProperty('unchecked');
+    // Advisory caps cover every bounded field, separately from summary scope.
+    expect(text(e.output)).toBeLessThanOrEqual(EVIDENCE_SCOPE_CAPS.output);
   });
 });

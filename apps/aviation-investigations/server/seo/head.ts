@@ -26,7 +26,7 @@ export type PageRoute =
   | { kind: 'home' | 'dashboard' | 'about' | 'privacy' | 'account' | 'not_found' }
   /** `query`: the page's query string (Explore's title and robots, Compare's title). */
   | { kind: 'explore' | 'compare'; query: URLSearchParams }
-  | { kind: 'brief'; id: string }
+  | { kind: 'brief' | 'evidence'; id: string }
   /** A case that `GET /api/cases/:ntsbNo` serves. */
   | { kind: 'case'; detail: CaseDetail }
   /**
@@ -63,6 +63,8 @@ export function pagePolicy(route: PageRoute, failure?: PageFailure): PagePolicy 
     case 'compare':
     case 'account':
       return { status: 200, robots: 'noindex, nofollow', canonicalPath: `/${route.kind}` };
+    case 'evidence':
+      return { status: 200, robots: 'noindex, nofollow', canonicalPath: `/ai/${encodeURIComponent(route.id)}` };
     case 'brief':
       return { status: 200, robots: 'noindex, nofollow', canonicalPath: `/briefs/${encodeURIComponent(route.id)}` };
     case 'case':

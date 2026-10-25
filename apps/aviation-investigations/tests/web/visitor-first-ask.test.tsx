@@ -1,16 +1,17 @@
 /**
- * The first AI request of a page loads the brief client (web/src/features/brief/api.ts)
- * before it sends (Task 20 gate, fix round 3). If the visitor signs out or deletes the
- * account while it loads, nothing is sent: no POST with the previous visitor's question
- * (possibly under another account's cookies, signed in from another tab), and nothing of
- * the request is kept (question, retry key) or opened.
+ * The first AI request of a page loads the AI search client (web/src/features/evidence/api.ts,
+ * Task 23; the brief client before it) before it sends (Task 20 gate, fix round 3). If the
+ * visitor signs out or deletes the account while it loads, nothing is sent: no POST with the
+ * previous visitor's question (possibly under another account's cookies, signed in from another
+ * tab), and nothing of the request is kept (question, retry key) or opened.
  *
- * Its own file: the brief client loads once per module registry, and every test here needs
- * that first load. Each test holds it from the start (`holdBriefClient`).
+ * Its own file: the client loads once per module registry, and every test here needs that first
+ * load. Each test holds it from the start (`holdSearchClient`).
  */
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CreateEvidenceResponseSchema, EVIDENCE_CONTRACT_VERSION } from '../../shared/contracts/evidence';
 import { MOCK_SEED_QUESTION } from '../../web/mock/briefs';
 import { resetUnsettledForTests, unsettledId, unsettledKey } from '../../web/src/features/ai/unsettled';
 import { VISITOR_CHANNEL, visitorGeneration } from '../../web/src/features/auth/visitor';
@@ -19,23 +20,45 @@ import { createHandlers } from '../../web/src/mocks/handlers';
 import { ACCOUNT_COPY } from '../../web/src/pages/Account';
 import { currentUrl, renderApp, setupMockApi } from './render-app';
 
-/** How far the brief client's load got: `started` loads, held until `open()`. */
+/** How far the AI search client's load got: `started` loads, held until `open()`. */
 const load = vi.hoisted(() => ({ started: 0, gate: Promise.resolve(), open: (): void => {} }));
 
-async function briefClient(importOriginal: () => Promise<unknown>): Promise<unknown> {
+async function searchClient(importOriginal: () => Promise<unknown>): Promise<unknown> {
   load.started += 1;
   await load.gate;
   return importOriginal();
 }
 
-vi.mock('../../web/src/features/brief/api', (importOriginal) => briefClient(importOriginal));
+vi.mock('../../web/src/features/evidence/api', (importOriginal) => searchClient(importOriginal));
 
-/** The next load of the brief client waits until `load.open()`; registered again, so the module loads anew. */
-function holdBriefClient(): void {
+/** The next load of the client waits until `load.open()`; registered again, so the module loads anew. */
+function holdSearchClient(): void {
   load.started = 0;
   load.gate = new Promise<void>((resolve) => (load.open = resolve));
-  vi.doMock('../../web/src/features/brief/api', (importOriginal) => briefClient(importOriginal));
+  vi.doMock('../../web/src/features/evidence/api', (importOriginal) => searchClient(importOriginal));
 }
+
+/** What the server would answer: page 1 of a search with nothing retrieved, valid under the contract (checked here). */
+const answered = (id: string) =>
+  CreateEvidenceResponseSchema.parse({
+    kind: 'results',
+    search: {
+      version: EVIDENCE_CONTRACT_VERSION,
+      id,
+      question: MOCK_SEED_QUESTION,
+      query: { source: 'question' },
+      appliedFilters: {},
+      suggestion: { filters: {}, terms: 'engine power loss maintenance' },
+      hint: null,
+      generation: 'g1',
+      createdAt: '2026-10-24T22:00:00.000Z',
+      expiresAt: '2026-10-25T22:00:00.000Z',
+      total: 0,
+      page: 1,
+      pages: 0,
+      cases: [],
+    },
+  });
 
 const server = setupMockApi();
 const ANSWERED_ID = '00000000-0000-4000-8000-0000000000ff';
@@ -47,19 +70,19 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
-/** Signed in, asks from the home page, and waits until the brief client is loading (held). */
+/** Signed in, asks from the home page, and waits until the AI search client is loading (held). */
 async function askWhileTheClientLoads() {
   window.sessionStorage.setItem('casebook-mock-account', JSON.stringify({ signedIn: true, registered: true }));
   let posts = 0;
   server.use(...createHandlers({ googleEnabled: true, briefPolls: 1 }));
   // Ahead of the mock's own handler (each `use` goes first).
   server.use(
-    http.post('*/api/briefs', () => {
+    http.post('*/api/evidence', () => {
       posts += 1;
-      return HttpResponse.json({ kind: 'started', briefId: ANSWERED_ID, step: 1, stage: 'retrieve' }, { status: 202 });
+      return HttpResponse.json(answered(ANSWERED_ID), { status: 201 });
     }),
   );
-  holdBriefClient();
+  holdSearchClient();
   const app = renderApp('/');
   fireEvent.change(screen.getByRole('textbox', { name: 'Search NTSB investigations' }), { target: { value: MOCK_SEED_QUESTION } });
   fireEvent.click(await screen.findByRole('button', { name: /^Ask AI\s*·/ }));
@@ -76,11 +99,11 @@ async function nothingOfTheAsk(app: Awaited<ReturnType<typeof askWhileTheClientL
   expect(app.posts()).toBe(0);
   expect(currentUrl(app.router)).toBe(url);
   expect(rememberedQuestion(ANSWERED_ID)).toBeNull();
-  expect(unsettledKey(await unsettledId({ kind: 'create', question: MOCK_SEED_QUESTION }))).toBeNull();
+  expect(unsettledKey(await unsettledId({ kind: 'evidence', question: MOCK_SEED_QUESTION }))).toBeNull();
 }
 
 describe('a visitor change while the first AI request loads sends nothing (Task 20 gate, fix round 3)', () => {
-  it('signed out while the brief client loads: no POST, no question, no retry key, no navigation', async () => {
+  it('signed out while the AI search client loads: no POST, no question, no retry key, no navigation', async () => {
     const app = await askWhileTheClientLoads();
     await act(() => app.router.navigate('/account'));
     fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.signOut }));
@@ -88,7 +111,7 @@ describe('a visitor change while the first AI request loads sends nothing (Task 
     await nothingOfTheAsk(app, '/account');
   });
 
-  it('the account deleted while the brief client loads: no POST, no question, no retry key, no navigation', async () => {
+  it('the account deleted while the AI search client loads: no POST, no question, no retry key, no navigation', async () => {
     const app = await askWhileTheClientLoads();
     await act(() => app.router.navigate('/account'));
     fireEvent.click(await screen.findByRole('button', { name: ACCOUNT_COPY.deleteConfirm }));
@@ -98,7 +121,7 @@ describe('a visitor change while the first AI request loads sends nothing (Task 
     await nothingOfTheAsk(app, '/account');
   });
 
-  it('another tab signs out (and could sign in as someone else) while the brief client loads: nothing is sent either', async () => {
+  it('another tab signs out (and could sign in as someone else) while the AI search client loads: nothing is sent either', async () => {
     const app = await askWhileTheClientLoads();
     const before = visitorGeneration();
     await fetch(new URL('/api/auth/sign-out', window.location.href), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });

@@ -18,6 +18,8 @@
  *   uncertain lines at their worst cases, is not; its uncertain lines are.
  * - A lease that expires first is charged the full reservation (`expired_charged`) and
  *   never refunded; a late settlement is refused. Expiry frees the concurrency slot.
+ *   Evidence-search quota units are returned separately: open reservations cannot back
+ *   a committed evidence result (the result and settlement commit together).
  */
 import { sql } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../db/client.js';
@@ -25,6 +27,7 @@ import type { ReservationStatus } from '../db/schema/index.js';
 import { microsToNumeric, microsToUsd, toMicros } from './pacing.js';
 import { isLockTimeout, setLockTimeout } from './locks.js';
 import { QuotaInputError } from './policy.js';
+import { addToBuckets, bucketRef, lockBuckets } from './buckets.js';
 
 /** One priced call. `usd` comes from `stageCostUsd`/`embeddingCostUsd`. */
 export interface SpendLine {
@@ -76,6 +79,8 @@ const MAX_LINES = 50;
 /** Raw row: bigint columns come back as text. */
 interface ReservationRow {
   id: string;
+  quota_counted: boolean;
+  created_ms: string;
   category: string;
   principal_kind: string;
   principal_hash: string | null;
@@ -186,7 +191,7 @@ function ledgerLines(usage: SpendUsage, row: ReservationRow): { lines: LedgerLin
 
 async function lockReservation(tx: DbOrTx, id: number): Promise<ReservationRow> {
   const res = await tx.execute(sql`
-    SELECT id, category, principal_kind, principal_hash, (usd * 1000000)::bigint AS usd_micros, status,
+    SELECT id, category, principal_kind, principal_hash, quota_counted, (extract(epoch FROM created_at) * 1000)::bigint AS created_ms, (usd * 1000000)::bigint AS usd_micros, status,
       fencing_token::text AS fencing_token, (extract(epoch FROM lease_expires_at) * 1000)::bigint AS lease_expires_ms,
       accounting_day::text AS accounting_day,
       provider, model, stage, request_id, (charged_usd * 1000000)::bigint AS charged_micros
@@ -209,6 +214,14 @@ async function close(
   now: Date,
 ): Promise<number> {
   const charged = lines.reduce((s, l) => s + l.micros, 0);
+  if (status === 'expired_charged' && row.category === 'interactive' && row.request_id?.startsWith('evidence:') && row.quota_counted && row.principal_hash) {
+    const at = new Date(Number(row.created_ms));
+    const buckets = [bucketRef('principal', row.principal_hash, 'day', at), bucketRef('principal', row.principal_hash, 'month', at),
+      bucketRef('global', 'interactive', 'day', at), bucketRef('global', 'interactive', 'month', at)];
+    await lockBuckets(tx, buckets);
+    await addToBuckets(tx, buckets, 'requests', -1);
+    await tx.execute(sql`UPDATE reservations SET quota_counted = false WHERE id = ${row.id}`);
+  }
   const updated = await tx.execute(sql`
     UPDATE reservations SET status = ${status}, settled_at = ${now}, charged_usd = ${microsToNumeric(charged)}::numeric,
       uncertain = ${uncertain}
@@ -235,7 +248,7 @@ async function close(
 
 /** Settle any reservation (interactive or spend) with its fencing token. */
 export async function settleReservation(
-  db: Db,
+  db: DbOrTx,
   reservationId: number,
   usage: SpendUsage,
   fencingToken: string,
@@ -278,7 +291,7 @@ export async function settleReservation(
 
 /** Settle an admitted interactive request. `'uncertain'` charges the full reservation. */
 export function settle(
-  db: Db,
+  db: DbOrTx,
   admission: { readonly reservationId: number },
   usage: SpendUsage,
   fencingToken: string,
@@ -295,14 +308,29 @@ export function settle(
  */
 export async function expireLeases(db: Db, now: Date = new Date()): Promise<{ expired: number; chargedUsd: number }> {
   return db.transaction(async (tx) => {
+    // The evidence flow commits results and settlement atomically. An open evidence
+    // reservation therefore never backs returned results: after a crash its quota can
+    // be returned, while its uncertain money is still charged in full below.
+    const due = await tx.execute(sql`
+      SELECT id, category, principal_hash, quota_counted, request_id,
+        (extract(epoch FROM created_at) * 1000)::bigint AS created_ms
+      FROM reservations WHERE status = 'open' AND lease_expires_at <= ${now}
+      ORDER BY id FOR UPDATE SKIP LOCKED`);
+    const expired = due.rows as { id: string; category: string; principal_hash: string | null; quota_counted: boolean; request_id: string | null; created_ms: string }[];
+    const refunds = expired.filter((r) => r.category === 'interactive' && r.request_id?.startsWith('evidence:') && r.quota_counted && r.principal_hash);
+    const bucketsFor = (r: typeof expired[number]) => {
+      const at = new Date(Number(r.created_ms));
+      return [bucketRef('principal', r.principal_hash!, 'day', at), bucketRef('principal', r.principal_hash!, 'month', at),
+        bucketRef('global', 'interactive', 'day', at), bucketRef('global', 'interactive', 'month', at)];
+    };
+    await lockBuckets(tx, refunds.flatMap(bucketsFor));
+    for (const r of refunds) await addToBuckets(tx, bucketsFor(r), 'requests', -1);
+    if (!expired.length) return { expired: 0, chargedUsd: 0 };
     const res = await tx.execute(sql`
-      WITH due AS (
-        SELECT id FROM reservations WHERE status = 'open' AND lease_expires_at <= ${now}
-        ORDER BY id FOR UPDATE SKIP LOCKED
-      )
-      UPDATE reservations r SET status = 'expired_charged', settled_at = ${now}, charged_usd = r.usd, uncertain = true
-      FROM due WHERE r.id = due.id
-      RETURNING r.id, r.category, (r.usd * 1000000)::bigint AS usd_micros`);
+      UPDATE reservations SET status = 'expired_charged', settled_at = ${now}, charged_usd = usd, uncertain = true,
+        quota_counted = CASE WHEN id = ANY(${sql.param(refunds.map((r) => Number(r.id)))}::bigint[]) THEN false ELSE quota_counted END
+      WHERE id = ANY(${sql.param(expired.map((r) => Number(r.id)))}::bigint[])
+      RETURNING id, category, (usd * 1000000)::bigint AS usd_micros`);
     const rows = res.rows as { id: string; category: string; usd_micros: string }[];
     if (rows.length === 0) return { expired: 0, chargedUsd: 0 };
     const ids = rows.map((r) => Number(r.id));
