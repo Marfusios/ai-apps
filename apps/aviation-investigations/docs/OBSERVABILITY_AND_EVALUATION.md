@@ -562,7 +562,9 @@ retain actual automatic state/filters in private diagnostics, never logs or trac
 The automatic policy binds `state-probes.v3` outputs as well as the guard version.
 Cache identities for an automatic-filter experiment must include both policy identities,
 the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
-`none` remains the default and sole live-allowed automatic-filter policy.
+`none` remains the default and rollback. The reviewed `state-explicit.v1.1` is also
+allowed on live; the operator enables it explicitly. The live ranking allowlist
+remains `er-q-v1` only, and neither the ranking nor automatic-policy hashes change.
 
 A page discloses actual lexical keywords, `order` (AI grades applied versus match order),
 `marks`, automatic state and `freeUndo`. These are server-derived facts, never scope prose.
