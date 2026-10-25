@@ -694,7 +694,8 @@ of the generated-brief retrieval setting above. Dev-only frozen alternatives use
 validated scope.e3 terms, or bounded question-plus-terms, in both lexical channels;
 failure/no terms falls back to the question. No suggested filters apply.
 Explicit edited terms drive all channels; omitted terms preserve both saved executed
-texts. Deterministic highlights/counts use the executed lexical words.
+texts. The baseline retains suggested-term highlights/counts when it has a suggestion,
+otherwise executed words; every alternative uses executed lexical words only.
 
 The same `server/evidence/pipeline.ts:rankEvidence` serves HTTP and evaluations.
 Optional `rerank.r1` grades only its supplied leading 50/100 cases. Bounded case
@@ -702,7 +703,8 @@ metadata, every cause variant and the displayed excerpts are model input; opaque
 labels, strict coverage and integer-grade validation restrict output to a permutation
 of that prefix, with fused-rank ties and unchanged tail. Whole-sentence input cuts
 are marked and never change displayed evidence. Every failure returns fused order.
-Model, prompt/schema hashes, caps, deadlines, input policy, query policy and retrieval
+Model, prompt/schema hashes, user-turn template, caps, deadlines, input version plus
+a rendered masking/truncation fixture hash, query/highlight policy and retrieval
 configuration belong to one canonical hashed object; version/hash, actual texts,
 lexical source and outcomes stay private with the saved search. Paging is free and
 never re-ranks. Only the baseline is allowed on live until evaluation, the gate and

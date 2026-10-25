@@ -1869,8 +1869,9 @@ normal validation, identity, quota and budget checks remain enforced.
 `retrieval.v2` fuses passage BM25, passage similarity and cases narrative BM25, 200
 candidates per channel with the existing fusion and tie ordering. All three channels,
 cohort, ranking, excerpts and pagination use only the executed query and user filters.
-Highlights and occurrence labels use the executed lexical text (Task 24); in the baseline,
-those use the executed query's words. They do not establish satisfaction of the question.
+The baseline keeps Task 23 highlights and occurrence labels: suggested terms when
+a suggestion is retained, otherwise executed query words. Non-baseline configurations
+use executed lexical words. These occurrences do not establish question satisfaction.
 `evidence.v2` maps at most 100 cases with eight concurrent requests inside the shared deadline.
 It stores that ranking, concrete
 indices, canonical generation, retrieval seed spans, channels and result projection.
@@ -1908,8 +1909,8 @@ returning the quota unit and settling actual spend.
 Generation and index cleanup honor the live-search references, including after republish.
 
 The ordinary result is projected and byte-checked before the optional suggestion is added.
-If that metadata would exceed the storage budget, it is omitted and the executed
-lexical highlights remain. Canonical text and selection never change to make room.
+If that metadata and its baseline suggestion highlights would exceed the storage
+budget, the suggestion is omitted and the executed lexical highlights remain. Canonical text and selection never change to make room.
 
 Each finished, replayable results search counts once; edits count again; paging and
 idempotent retries are free. Failures before a replayable result return the quota unit,
@@ -1930,8 +1931,9 @@ and 2,500 output tokens, plus a cache-write premium on up to 6,500 prefix tokens
 reservation and settle only their embedding. No generation retries run. A scope failure
 removes both the suggestion and note; successful retrieval still consumes one search unit.
 Once this principal's uncertain named-call charges reach one reservation in a UTC day,
-new evidence searches skip scope instead of refusing search: no suggestion or note, the
-same full reservation, normal embedding settlement and all other limits still enforced.
+new evidence searches skip scope and any configured reranker instead of refusing
+search: no suggestion or note, `skipped_uncertain_allowance` for the enabled reranker,
+the same full reservation, only embedding spend and all other limits still enforced.
 This decision is made under admission's lock and resets at UTC midnight; the disabled
 summary pipeline retains its refusal rule.
 
@@ -2356,6 +2358,7 @@ Dev alternatives use validated scope terms in BM25 and/or a bounded Haiku/Sonnet
 reranker. See [Evidence ranking](docs/RUNBOOK.md#evidence-ranking) for configurations,
 reservations, evaluation entry points and rollback. The server records executed
 lexical/vector texts and the configuration hash privately; `evidence.v2` is unchanged.
-Highlights use executed lexical words. The existing mock/UI descriptions above
+The hashed highlight policy preserves Task 23 suggestion highlights for the baseline;
+every alternative uses executed lexical words. The existing mock/UI descriptions above
 describe Task 23; the controller's planned `evidence.v3` must disclose applied terms
 and AI ordering before any alternative is allowed on live.

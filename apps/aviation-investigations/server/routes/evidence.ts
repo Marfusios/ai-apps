@@ -1,6 +1,6 @@
+/** Private evidence search creation and free pagination. Matched routes enforce network limits. */
 import { evidenceRankingConfig, evidenceRankingIdentity } from '../evidence/ranking-config.js';
 import { rankingTexts, vectorText } from '../evidence/pipeline.js';
-/** Private evidence search creation and free pagination. Matched routes enforce network limits. */
 import { evidenceJson } from '../evidence/routing.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gt, sql } from 'drizzle-orm';

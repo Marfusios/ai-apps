@@ -1,5 +1,3 @@
-import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser } from './prompts/rerank.r1.js';
-import type { RerankConfig } from '../evidence/ranking-config.js';
 /**
  * Anthropic adapter for the language-model stages (DESIGN §6 and §9 "Anthropic call
  * settings"): structured outputs through `messages.parse`, each stage's effort
@@ -7,6 +5,8 @@ import type { RerankConfig } from '../evidence/ranking-config.js';
  * it (adaptive for the check), a cached frozen system prompt, no retries, prefill, sampling
  * parameters, server tools or refusal fallbacks.
  */
+import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser } from './prompts/rerank.r1.js';
+import { assertEvidenceRanking, type EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { EVIDENCE_SCOPE_CAPS } from './pricing.js';
 import { EvidenceScopeInputSchema, EvidenceScopeWireOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser } from './prompts/scope.e1.js';
 import Anthropic, {
@@ -410,9 +410,10 @@ export function createAnthropicProvider(cfg: AnthropicProviderConfig): LlmProvid
     return { run, countInputTokens: async (rawInput: I, ctx: StageCtx) => count(prepare(rawInput, ctx)) };
   }
 
-  const reranker = (config: RerankConfig) => {
-    if (!['claude-haiku-5-5', 'claude-sonnet-5-5'].includes(config.model) || ![50, 100].includes(config.depth) ||
-        config.caps.input > 95_000 || config.caps.output > 4000 || config.prompt.version !== RERANK_VERSION) throw new Error('invalid rerank configuration');
+  const reranker = (ranking: EvidenceRankingConfig) => {
+    assertEvidenceRanking(ranking);
+    const config = ranking.rerank;
+    if (!config) throw new Error('reranking is disabled in this configuration');
     return stage({ stage: 'rerank', model: config.model, caps: config.caps,
       promptVersion: RERANK_VERSION, system: RERANK_SYSTEM, input: RerankInputSchema, output: RerankOutputSchema, render: renderRerankUser });
   };

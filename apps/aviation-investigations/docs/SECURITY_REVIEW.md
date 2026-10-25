@@ -299,7 +299,10 @@ timeouts and provider failures all keep the fused order without retry.
 Stage reservation includes full input/output caps and cache-write premiums; actual
 usage settles per call and uncertain usage costs that stage's worst case. HTTP keeps
 settlement and saved-result publication atomic; evaluation uses the production spend
-gate and its allocation wrapper. Deletion/shutdown guards run before each stage.
+gate and its allocation wrapper. The daily uncertain-charge allowance skips both
+scope and rerank (zero charge for either), with normal embedding settlement.
+Deletion/shutdown guards run before each stage; a guard refusal is `stopped`.
+The adapter asserts the full registered configuration before counts or generation.
 Paging and idempotent replays never run a provider. Tracing carries only operational
 metadata (including rerank depth and outcome). Questions, case texts and grades
 are not exported to traces. Saved execution metadata inherits the search's ownership,

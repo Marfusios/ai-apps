@@ -1,9 +1,9 @@
+/** Real canonical rows, production retrieval, fake embeddings/scope, no provider network. */
 import type { EvidenceRankingVersion } from '../../shared/evidence-ranking.js';
 import { evidenceRankingIdentity } from '../../server/evidence/ranking-config.js';
 import scopeReplays from '../support/evidence-scope-replays.json' with { type: 'json' };
 import { evidenceReservation } from '../../server/evidence/pricing.js';
 import { stageWorstCaseUsd, EVIDENCE_SCOPE_CAPS } from '../../server/ai/pricing.js';
-/** Real canonical rows, production retrieval, fake embeddings/scope, no provider network. */
 import { request as httpRequest } from 'node:http';
 import * as quotaAdmission from '../../server/quota/admit.js';
 import { paragraphSpans } from '../../server/evidence/project.js';
@@ -225,6 +225,7 @@ describe('evidence search routes', () => {
     expect((await usage()).quota_counted).toBe(false);
     expect((await spent()).lines).toBe(2);
     expect(res.body + h.logs.join('')).not.toContain('SENTINEL_PRIVATE');
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence search did not finish')).toMatchObject({ stage: 'retrieval', outcome: 'failed' });
     expect(h.llm.calls).toHaveLength(1);
   });
   it.each(['timeout', 'invalid_output', 'truncated', 'cap_exceeded', 'network', 'count_failed'] as const)('a %s scope still retrieves, accounts for spend and keeps a successful search', async (fail) => {
@@ -232,6 +233,9 @@ describe('evidence search routes', () => {
     const page = searchOf(await h.request());
     expect(page.suggestion).toBeNull(); expect(page.note).toBeNull(); expect(page.appliedFilters).toEqual({});
     expect(page.total).toBeGreaterThan(0); expect(h.embed).toHaveBeenCalledTimes(1);
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence suggestion unavailable')).toMatchObject({
+      stage: 'scope', outcome: 'no_suggestion', failure: ['cap_exceeded', 'network'].includes(fail) ? 'provider_error' : fail,
+    });
     expect((await usage()).quota_counted).toBe(true);
     if (fail === 'timeout' || fail === 'network') {
       const result = await db.execute(sql`SELECT usd::float AS usd FROM cost_ledger WHERE stage = 'scope'`);
@@ -732,6 +736,46 @@ describe('advisory isolation', () => {
 });
 
 describe('evidence ranking selection and persistence', () => {
+  it.each(['question', 'edited'] as const)('edits a legacy v2 %s parent without executed metadata using its historical query', async kind => {
+    const plans: { text: string; keywordText?: string }[] = [];
+    const h = harness({ evidenceScope: { output: success },
+      rerank: input => ({ output: { grades: input.cases.map(c => ({ id: c.id, grade: 2 })) } }),
+    }, actual => ({ ...actual, search: async (...args) => { plans.push(args[1]); return actual.search(...args); } }), 'er-t-h50-v1');
+    const page = searchOf(await h.request({ question: 'Find  engine\n failures' }));
+    const query = kind === 'question' ? { source: 'question' } : { source: 'edited', terms: 'carb  icing' };
+    // Completed searches cannot be edited in place. This represents a real historical v2 row.
+    const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
+      (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
+      SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
+        status, (data - 'executed' - 'lexicalSource' - 'rankingConfig' - 'scopeOutcome' - 'rerankOutcome') ||
+          jsonb_build_object('query', ${JSON.stringify(query)}::jsonb, 'edited', ${kind === 'edited'}::boolean), created_at, expires_at
+      FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
+    nextMinute();
+    const edited = searchOf(await h.request({ kind: 'edited', from: String(legacy.rows[0]!.id), filters: {}, question: undefined }));
+    const expected = kind === 'question' ? 'Find engine failures' : 'carb icing';
+    expect(plans[1]).toMatchObject({ text: expected, keywordText: expected });
+    const [stored] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, edited.id));
+    expect(stored!.data).toMatchObject({ executed: { lexical: expected, vector: expected }, lexicalSource: kind === 'question' ? 'question' : 'terms' });
+    expect(edited.query).toEqual(query); expect(edited.suggestion).toBeNull(); expect(edited.note).toBeNull();
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope', 'rerank', 'rerank']);
+  });
+  it.each(['trial', 'account'] as const)('the %s uncertain allowance skips scope and rerank for questions and edits', async kind => {
+    const h = harness({ evidenceScope: { output: success }, rerank: { fail: 'timeout' } }, undefined, 'er-q-h50-v1');
+    if (kind === 'account') await h.account();
+    for (let i = 0; i < 2; i++) { searchOf(await h.request()); nextMinute(); }
+    const before = await spent(), calls = h.llm.calls.length;
+    const page = searchOf(await h.request()); nextMinute();
+    const edited = searchOf(await h.request({ kind: 'edited', from: page.id, filters: {}, question: undefined }));
+    for (const p of [page, edited]) {
+      const [row] = await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, p.id));
+      expect(row!.data).toMatchObject({ scopeOutcome: 'skipped', rerankOutcome: 'skipped_uncertain_allowance' });
+      expect(p.suggestion).toBeNull(); expect(p.note).toBeNull(); expect(p.total).toBeGreaterThan(0);
+      const ledger = await db.execute(sql`SELECT stage, uncertain FROM cost_ledger WHERE reservation_id = ${row!.reservationId}`);
+      expect(ledger.rows).toEqual([{ stage: 'embed', uncertain: false }]);
+    }
+    expect(h.llm.calls).toHaveLength(calls); expect(h.embed).toHaveBeenCalledTimes(4);
+    expect((await spent()).lines).toBe(before.lines + 2); expect((await usage()).quota_counted).toBe(true);
+  });
   it('uses terms in both lexical channels, inherits different executed texts on edits and pages without paid work', async () => {
     const plans: { text: string; keywordText?: string }[] = [];
     const h = harness({
@@ -774,5 +818,17 @@ describe('evidence ranking selection and persistence', () => {
     expect(rerank.usd).toBeCloseTo(stageWorstCaseUsd(c.model, c.caps, c.cachePrefixTokens), 5);
     expect((await usage()).quota_counted).toBe(true);
     expect(h.llm.calls.filter(c => c.stage === 'rerank')).toHaveLength(1);
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence rerank unavailable')).toMatchObject({ stage: 'rerank', outcome: 'timeout' });
+  });
+  it('a failed retrieval records not_run for rerank and a content-free retrieval stage', async () => {
+    const h = harness({ evidenceScope: { output: success } }, actual => ({ ...actual,
+      search: async (...args) => { await actual.search(...args); throw new Error('SENTINEL_UPSTREAM'); },
+    }), 'er-t-h50-v1');
+    expect((await h.request()).statusCode).toBe(503);
+    const [row] = await db.select().from(evidenceSearches);
+    expect(row!.data).toMatchObject({ rerankOutcome: 'not_run' });
+    expect(h.logs.map(l => JSON.parse(l)).find(l => l.msg === 'evidence search did not finish')).toMatchObject({ stage: 'retrieval', outcome: 'failed' });
+    expect(h.logs.join('')).not.toContain('SENTINEL_UPSTREAM');
+    expect(h.llm.calls.map(c => c.stage)).toEqual(['scope']);
   });
 });

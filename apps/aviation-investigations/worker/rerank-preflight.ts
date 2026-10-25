@@ -32,14 +32,14 @@ export async function runRerankPreflight(provider: LlmProvider, countText: TextC
   if (!provider.countRerankTokens) throw new Error('rerank token counter unavailable');
   const rows: PreflightRow[] = [];
   for (const name of RERANK_PREFLIGHT_CONFIGS) {
-    const c = evidenceRankingConfig(name).rerank!, r = rerankPreflightRequests(c);
+    const ranking = evidenceRankingConfig(name), c = ranking.rerank!, r = rerankPreflightRequests(c);
     const ctx = (): StageCtx => ({ signal: AbortSignal.timeout(30_000), timeoutMs: 30_000, maxInputTokens: c.caps.input, maxOutputTokens: c.caps.output });
     const add = (request: string, tokens: number, limit: number) => rows.push({ stage: 'rerank', model: c.model, request: `${name}: ${request}`, tokens, limit, ok: tokens <= limit });
-    const fixed = await provider.countRerankTokens(r.fixed, ctx(), c);
+    const fixed = await provider.countRerankTokens(r.fixed, ctx(), ranking);
     add('fixed prompt + schema', fixed, c.caps.input);
     add('cached prefix', Math.max(0, fixed - await countText(c.model, renderRerankUser(r.fixed))), c.cachePrefixTokens);
-    for (const w of r.worst) add(w.label, await provider.countRerankTokens(w.input, ctx(), c), c.caps.input);
-    add('representative full-depth input (cost estimate)', await provider.countRerankTokens(r.typical, ctx(), c), c.caps.input);
+    for (const w of r.worst) add(w.label, await provider.countRerankTokens(w.input, ctx(), ranking), c.caps.input);
+    add('representative full-depth input (cost estimate)', await provider.countRerankTokens(r.typical, ctx(), ranking), c.caps.input);
     add('output at full depth', (await countText(c.model, r.output)) - (await countText(c.model, '.')) + 1, c.caps.output);
   }
   return rows;

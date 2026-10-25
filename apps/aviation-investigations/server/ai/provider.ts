@@ -1,11 +1,11 @@
-import type { RerankInput, RerankOutput } from './prompts/rerank.r1.js';
-import type { RerankConfig } from '../evidence/ranking-config.js';
 /**
  * The app-owned language-model interface (DESIGN §9). Each pipeline stage takes a
  * bounded, typed input and returns a Zod-validated object with normalized usage,
  * provider, model and prompt version. Operators pick one provider per process
  * (`AI_LLM_PROVIDER`); there is no per-request routing or failover.
  */
+import type { RerankInput, RerankOutput } from './prompts/rerank.r1.js';
+import type { EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { z } from 'zod';
 import type { EvidenceScopeInput, EvidenceScopeOutput } from './prompts/scope.e1.js';
 import { PHASE_GROUPS, type PhaseGroup } from '../../shared/codes.js';
@@ -456,8 +456,8 @@ export interface LlmProvider {
   /** Separate evidence contract; legacy scope.v2 is unchanged. */
   evidenceScope?(input: EvidenceScopeInput, ctx: StageCtx): Promise<StageResult<EvidenceScopeOutput>>;
   countEvidenceScopeTokens?(input: EvidenceScopeInput, ctx: StageCtx): Promise<number>;
-  rerank?(input: RerankInput, ctx: StageCtx, config: RerankConfig): Promise<StageResult<RerankOutput>>;
-  countRerankTokens?(input: RerankInput, ctx: StageCtx, config: RerankConfig): Promise<number>;
+  rerank?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<StageResult<RerankOutput>>;
+  countRerankTokens?(input: RerankInput, ctx: StageCtx, config: EvidenceRankingConfig): Promise<number>;
   scope(input: ScopeInput, ctx: StageCtx): Promise<StageResult<ScopeOutput>>;
   compose(input: ComposeInput, ctx: StageCtx): Promise<StageResult<ComposeOutput>>;
   check(input: CheckInput, ctx: StageCtx): Promise<StageResult<CheckOutput>>;

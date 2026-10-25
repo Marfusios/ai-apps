@@ -1,10 +1,10 @@
-import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser, type RerankInput, type RerankOutput } from './prompts/rerank.r1.js';
-import type { RerankConfig } from '../evidence/ranking-config.js';
 /**
  * Deterministic provider for tests (`AI_LLM_PROVIDER=fake`, NODE_ENV=test only).
  * It applies the same input bounds, context caps, pre-send token cap and output
  * schemas as the real adapter, so a pipeline test fails where production would.
  */
+import { RerankInputSchema, RerankOutputSchema, RERANK_SYSTEM, RERANK_VERSION, renderRerankUser, type RerankInput, type RerankOutput } from './prompts/rerank.r1.js';
+import { assertEvidenceRanking, type EvidenceRankingConfig } from '../evidence/ranking-config.js';
 import { EVIDENCE_SCOPE_CAPS } from './pricing.js';
 import { EvidenceScopeInputSchema, EvidenceScopeOutputSchema, EVIDENCE_SCOPE_SYSTEM, EVIDENCE_SCOPE_VERSION, renderEvidenceScopeUser, type EvidenceScopeInput, type EvidenceScopeOutput } from './prompts/scope.e1.js';
 import type { z } from 'zod';
@@ -262,7 +262,10 @@ export function createFakeProvider(script: FakeScript = {}): FakeProvider {
     count: script.counts?.check,
   });
   const rerankers = new Map<string, ReturnType<typeof stage<RerankInput, RerankOutput>>>();
-  function reranker(c: RerankConfig) {
+  function reranker(ranking: EvidenceRankingConfig) {
+    assertEvidenceRanking(ranking);
+    const c = ranking.rerank;
+    if (!c) throw new Error('reranking is disabled in this configuration');
     const key = JSON.stringify(c);
     let r = rerankers.get(key);
     if (!r) {

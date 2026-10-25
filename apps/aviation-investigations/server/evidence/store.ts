@@ -6,10 +6,10 @@ import type { BriefReader } from '../briefs/store.js';
 import type { DbOrTx } from '../db/client.js';
 import { evidenceSearches } from '../db/schema/evidence.js';
 import type { ProjectionContext } from '../projection/cases.js';
-import type { RankedEvidenceCase } from './project.js';
+import { suggestedHighlights, type RankedEvidenceCase } from './project.js';
 
 import type { ExecutedTexts, LexicalSource, ScopeOutcome, RerankOutcome } from './pipeline.js';
-import type { evidenceRankingIdentity } from './ranking-config.js';
+import type { evidenceRankingIdentity, HighlightPolicy } from './ranking-config.js';
 
 export interface SearchData {
   /** Private execution facts. Absent only on pre-ranking-config saved searches. */
@@ -36,17 +36,18 @@ export const EVIDENCE_DATA_MAX_BYTES = 8 * 1024 * 1024;
 export function assertSearchDataBudget(data: SearchData): void {
   // Pretty-print overhead conservatively exceeds PostgreSQL jsonb's separator spaces.
   // Always reserve the longest fixed note: selecting a note cannot change whether
-  // an identical result fits, including optional suggestion metadata.
+  // an identical result fits, including optional suggestion/highlight decoration.
   if (Buffer.byteLength(JSON.stringify({ ...data, note: 'operational_advice' }, null, 1), 'utf8') > EVIDENCE_DATA_MAX_BYTES) throw new Error('evidence storage budget exceeded');
 }
 /** Validate the ordinary result first. Optional model metadata cannot make it unstoreable.
  * If annotations exceed the byte budget, keep the executed-query marks and no suggestion.
  * Canonical paragraphs and cause variants are never truncated to make room for metadata. */
-export function withSuggestion(data: SearchData, suggestion: EvidenceSuggestion | null): SearchData {
+export function withSuggestion(data: SearchData, suggestion: EvidenceSuggestion | null, highlights: HighlightPolicy = 'suggested-or-executed'): SearchData {
   assertSearchDataBudget(data);
   if (!suggestion) return data;
   try {
-    const decorated = { ...data, suggestion };
+    const decorated = { ...data, suggestion,
+      ...(highlights === 'suggested-or-executed' ? { cases: data.cases?.map(c => suggestedHighlights(c, suggestion.terms)) } : {}) };
     assertSearchDataBudget(decorated);
     return decorated;
   } catch { return data; }

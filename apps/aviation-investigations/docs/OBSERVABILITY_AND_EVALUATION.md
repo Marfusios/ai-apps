@@ -527,6 +527,19 @@ configuration version/sha256, executed lexical/vector texts, lexical source and
 outcomes are private saved-search facts with the normal ownership and 24-hour expiry.
 Only the baseline is permitted on live. In dev alternatives, scope terms may change
 lexical ranking; they never apply suggested filters. Baseline isolation tests remain.
+The baseline retains Task 23 suggestion highlights; alternatives use executed lexical
+words. Both policies and the rendered rerank-input identity are covered by the hash.
+
+Scope and rerank share a content-free failure mapping. Unbilled failures have distinct
+`count_failed`, `rate_limited`, `overloaded`, and `unbilled_provider_error` outcomes.
+The provider-count cap and local input bound yield `input_too_large`. `stopped` means
+no dispatch after a lifecycle/abort guard; an in-flight cancellation is `aborted`.
+Billed/uncertain failures use `timeout`, `refusal`, `truncated`, `invalid_output`, or
+`provider_error`. `skipped_uncertain_allowance` means an enabled reranker was bypassed
+along with scope: only embedding may be charged. Other rerank outcomes are `not_run`
+(an earlier stage failed), `disabled`, `empty`, and `applied`. The scope-failure warning
+uses `stage: scope`, `outcome: no_suggestion`, and its fixed failure category; rerank
+fallbacks and fatal failures also retain their actual stage, without provider content.
 
 Evaluation calls this same pipeline with injected providers and the production spend
 gate, without HTTP or quotas. Keep the experiment's allocation wrapper and recovery

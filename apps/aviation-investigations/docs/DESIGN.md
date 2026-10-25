@@ -414,8 +414,9 @@ deterministic lexical cutoffs; kNN remains approximate). Delivery is separately 
 and at most eight concurrent Elasticsearch requests. In the live/default baseline all
 three channels use the original question with no suggested filters. Explicit edits apply exactly the submitted
 filters. Omitted terms inherit both of the parent's executed query texts byte for byte;
-supplied terms explicitly replace both. Highlights/counts always use the executed
-lexical words and declared synonyms, and describe occurrences, not question satisfaction. A
+supplied terms explicitly replace both. The baseline keeps suggestion-based highlights
+when it retains a suggestion, otherwise executed words. Other configurations highlight
+executed lexical words only. Counts and declared synonyms describe occurrences, not question satisfaction. A
 search stores its ranking and projection, generation, both concrete indices and seeds.
 A new edited search uses the current publication. An existing search's free pages never
 change or call a provider. Prune/cleanup preserve its references until the 24-hour expiry.
@@ -455,8 +456,8 @@ threshold is required; final server, excerpt/UI, security, budget and lifecycle 
 remain required. Track C/N supplies regressions only. Metamorphic tests vary every model
 output while holding all three retrieval channels, default cohort, ranking, excerpt selection and pagination fixed in the baseline.
 The ordinary result is projected and byte-checked before the optional suggestion is added;
-suggestions never replace the executed-query highlights.
-If optional suggestion metadata would exceed the storage budget, it is omitted and the
+the baseline then marks suggested terms, while other versions keep executed-word marks.
+If optional suggestion metadata and its baseline highlights would exceed the storage budget, they are omitted and the
 original query's highlights remain. Canonical text and selection never change to make room.
 
 Provider token-count preflight is separate from model-quality confirmation. The old
@@ -915,7 +916,11 @@ offer Sonnet 5.5 at depth 50 (`s50`) for evaluation. Missing, empty, invalid,
 failed, skipped or non-search scope results fall back to question text. Both
 BM25 channels use the selected lexical text; kNN always uses the question.
 Explicit edited terms replace both texts; a filter-only edit inherits both.
-All edits skip scope, including when a reranker is selected.
+All edits skip scope, including when a reranker is selected. If no complete appended
+term survives the joined-text bound, the lexical source is `fallback_question`; the
+question-only baseline retains its original unbounded lexical question. The hashed
+highlight policy is `suggested-or-executed` only for `er-q-v1`, and `executed-lexical`
+for every alternative. The baseline therefore preserves Task 23 display behavior.
 
 One `rankEvidence` function serves HTTP and evaluation. Its injected spend gate is
 the HTTP admission adapter or `ledgerRankingSpendGate` (the production evaluation
@@ -924,6 +929,9 @@ wrapper around that gate. It returns configuration version/sha256, executed lexi
 and vector texts, lexical source, stage outcomes/usage, and ranked cases.
 Those execution facts stay in private saved-search data; `evidence.v2` is unchanged.
 Evaluation caches must include this identity, dataset/indices and the exact inputs.
+Every configuration includes the rerank user-turn template and `rerank-input.v1`
+identity, including the hash of a fixed synthetic input rendered through production
+masking, truncation and escaping. The adapter validates the entire registered config.
 
 After retrieval, `rerank.r1` sends at most 50 or 100 unique cases using request-local
 labels. The event year, first aircraft category/make/model plus additional-aircraft
@@ -963,11 +971,11 @@ releases the unused amount. One attempt per stage, no model or generated-summary
 A failed scope is charged for known usage or its own worst case when uncertain;
 retrieval continues with no suggestion or note. Only a search without results refunds its unit.
 If a principal has used its daily uncertain-charge allowance, admission skips evidence
-scope instead of refusing the search. Its suggestion and note are null; the full $0.0025
-reservation, normal embedding settlement and all remaining limits stay in force.
-Named uncertain rerank calls also count toward this allowance. A dev reranker still
-runs when scope is skipped; the configured full reservation and global budgets
-remain mandatory. The allowance resets at UTC midnight. This exception is confined to evidence search;
+scope and any configured reranker instead of refusing the search. Its suggestion and
+note are null; an enabled reranker records `skipped_uncertain_allowance` and neither
+optional stage makes a call or charge. The configured full reservation, embedding
+settlement and all remaining limits stay in force. Named uncertain rerank calls also
+count toward this allowance. The allowance resets at UTC midnight. This exception is confined to evidence search;
 the disabled generated-summary pipeline still refuses at that allowance.
 
 Rerank input/output caps are 55,000/2,000 at depth 50 and 95,000/4,000 at depth 100;

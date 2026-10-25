@@ -1,6 +1,6 @@
 /** One admitted evidence search. No path here can call compose or check. */
 import { and, eq, inArray } from 'drizzle-orm';
-import { rankEvidence, vectorText, type LexicalSource } from './pipeline.js';
+import { rankEvidence, RankingFailure, vectorText, type LexicalSource, type RankingPhase } from './pipeline.js';
 import { evidenceRankingConfig } from './ranking-config.js';
 import { admittedRankingSpendGate } from './spend.js';
 import { cases, evidenceSearches } from '../db/schema/index.js';
@@ -23,7 +23,7 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
   const llm = ai.llm!, policy = ai.policy!;
   const config = ai.evidenceRanking ?? evidenceRankingConfig();
   const meter = admittedRankingSpendGate(admission);
-  let active: 'ranking' | 'storage' = 'ranking';
+  let active: RankingPhase | 'storage' = 'scope';
   let finalData: SearchData = { ...row.data, note: null, rerankOutcome: config.rerank ? 'not_run' : 'disabled' };
   let execution: Partial<SearchData> = {};
   let outcome: 'results' | 'failed' = 'failed';
@@ -40,7 +40,7 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
       }
       const legacyText = row.data.query.source === 'question' ? row.data.question : row.data.query.terms;
       const result = await rankEvidence(config, {
-        question: row.data.question, filters: row.data.appliedFilters, dataset: pinned, signal, skipScope: admission.skipScope,
+        question: row.data.question, filters: row.data.appliedFilters, dataset: pinned, signal, uncertainAllowanceReached: admission.skipScope,
         ...(row.data.edited ? { edited: {
           executed: row.data.executed ?? { lexical: legacyText.replace(/\s+/gu, ' ').trim(), vector: vectorText(legacyText) },
           lexicalSource: row.data.lexicalSource ?? (row.data.query.source === 'question' ? 'question' : 'terms') as LexicalSource,
@@ -52,14 +52,22 @@ export async function runEvidence(ctx: ApiContext, row: EvidenceRow, pinned: Pin
           .where(and(eq(evidenceSearches.id, row.id), eq(evidenceSearches.status, 'running')));
         if (!still.length) throw new EvidenceFailure('stopped');
         signal.throwIfAborted();
+      }, {
+        onStage: stage => { active = stage; },
+        onFallback: ({ stage, outcome }) => {
+          if (stage === 'scope') ctx.log.warn({ stage, outcome: 'no_suggestion', failure: outcome }, 'evidence suggestion unavailable');
+          else ctx.log.warn({ stage, outcome }, 'evidence rerank unavailable');
+        },
       });
       execution = { executed: result.executed, lexicalSource: result.lexicalSource, rankingConfig: result.configuration,
         scopeOutcome: result.scopeOutcome, rerankOutcome: result.rerankOutcome };
-      finalData = withSuggestion({ ...finalData, ...execution, ranking: result.ranking, cases: result.cases, note: result.note }, result.suggestion);
+      active = 'storage';
+      finalData = withSuggestion({ ...finalData, ...execution, ranking: result.ranking, cases: result.cases, note: result.note }, result.suggestion, config.query.highlights);
       // Validate the exact public page before keeping its quota unit or storing success.
       pageOf({ ...row, status: 'results', data: finalData }, 1);
       outcome = 'results'; // A rerank abort preserves the already retrieved order.
     } catch (error) {
+      if (error instanceof RankingFailure && error.stage !== 'spend') active = error.stage === 'retrieve' ? 'retrieval' : error.stage;
       failed = true;
       outcome = 'failed';
       finalData = { ...row.data, rerankOutcome: config.rerank ? 'not_run' : 'disabled', ...execution };

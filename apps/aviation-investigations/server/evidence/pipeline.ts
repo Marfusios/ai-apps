@@ -1,5 +1,5 @@
-import type { RerankInput } from '../ai/prompts/rerank.r1.js';
 /** The sole scope → retrieve → rerank entry point for HTTP and evaluation. No HTTP or quota identity. */
+import type { RerankInput } from '../ai/prompts/rerank.r1.js';
 import type { EvidenceNote, EvidenceSuggestion } from '../../shared/contracts/evidence.js';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import { fitQueryText } from '../briefs/retriever.js';
@@ -13,18 +13,26 @@ import { stageSpan } from '../observability/tracing.js';
 import { assertEvidenceRanking, evidenceRankingIdentity, type EvidenceRankingConfig } from './ranking-config.js';
 import type { EvidenceRetriever, EvidenceRetrievalResult } from './retrieve.js';
 import { applyRerank, buildRerankInput } from './rerank.js';
+import { RankingStopped, rankingFailureOutcome, type RankingFailureOutcome } from './outcomes.js';
 import { RankingSpendError, type RankingCall, type RankingSpendGate } from './spend.js';
 
 export type LexicalSource = 'question' | 'terms' | 'question+terms' | 'fallback_question';
 export interface ExecutedTexts { lexical: string; vector: string }
-export type RerankOutcome = 'not_run' | 'disabled' | 'empty' | 'applied' | 'timeout' | 'aborted' | 'invalid_output' | 'refusal' | 'truncated' | 'provider_error' | 'input_too_large';
-export type ScopeOutcome = 'used' | 'non_search' | 'skipped' | 'timeout' | 'invalid_output' | 'provider_error';
+export type RerankOutcome = 'not_run' | 'disabled' | 'empty' | 'applied' | 'skipped_uncertain_allowance' | RankingFailureOutcome;
+export type ScopeOutcome = 'used' | 'non_search' | 'skipped' | RankingFailureOutcome;
+export type RankingPhase = 'scope' | 'retrieval' | 'rerank';
+export interface RankingObserver {
+  onStage?: (stage: RankingPhase) => void;
+  onFallback?: (failure: { stage: 'scope' | 'rerank'; outcome: RankingFailureOutcome }) => void;
+}
 export interface RankingInput {
   question: string;
   filters: BriefFilters;
   /** Edits inherit these texts exactly; explicit edited terms replace both. */
   edited?: { executed: ExecutedTexts; lexicalSource: LexicalSource };
+  /** Explicit evaluator skip, distinct from the allowance that skips both optional stages. */
   skipScope?: boolean;
+  uncertainAllowanceReached?: boolean;
   dataset: PinnedDataset;
   signal: AbortSignal;
 }
@@ -49,6 +57,15 @@ export function rankingTexts(question: string, terms: string | null, config: Evi
   if (config.lexicalText === 'question') return { executed: { lexical: normal(question), vector }, lexicalSource: 'question' };
   if (!terms?.trim()) return { executed: { lexical: normal(question), vector }, lexicalSource: 'fallback_question' };
   const lexical = vectorText(config.lexicalText === 'terms' ? terms : `${question}${config.query.join}${terms}`);
+  if (config.lexicalText === 'question+terms') {
+    const q = normal(question);
+    const suffix = lexical.startsWith(q + ' ') ? lexical.slice(q.length + 1) : '';
+    const survives = [...normal(terms).matchAll(/[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*/gu)]
+      .some(word => word.index + word[0].length <= suffix.length);
+    // No whole appended word survived the bound. Drop any partial word too.
+    // The question-only baseline above deliberately keeps its unbounded lexical text.
+    if (!survives) return { executed: { lexical: vector, vector }, lexicalSource: 'fallback_question' };
+  }
   return { executed: { lexical, vector }, lexicalSource: config.lexicalText };
 }
 const resultLine = (stage: RankingCall['stage'], result: StageResult<unknown>): SpendLine => ({
@@ -65,15 +82,27 @@ const failedLine = (call: RankingCall, error: unknown, started: boolean): SpendL
 };
 
 export async function rankEvidence(config: EvidenceRankingConfig, input: RankingInput, providers: RankingProviders,
-  spend: RankingSpendGate, beforePaidCall: () => Promise<void> = async () => {}): Promise<RankingResult> {
+  spend: RankingSpendGate, beforePaidCall: () => Promise<void> = async () => {},
+  observer: RankingObserver = {}): Promise<RankingResult> {
   assertEvidenceRanking(config);
-  if ((!input.edited && !input.skipScope && !providers.llm.evidenceScope) ||
-      providers.llm.models.scope !== config.scope.model || providers.embeddingModel !== config.embedding.model ||
-      (config.rerank && !providers.llm.rerank)) throw new RankingFailure('scope', []);
+  const skipScope = input.skipScope || input.uncertainAllowanceReached;
+  if ((!input.edited && !skipScope && !providers.llm.evidenceScope) ||
+      providers.llm.models.scope !== config.scope.model) throw new RankingFailure('scope', []);
+  if (providers.embeddingModel !== config.embedding.model) throw new RankingFailure('retrieve', []);
+  if (config.rerank && !input.uncertainAllowanceReached && !providers.llm.rerank) throw new RankingFailure('rerank', []);
 
   const { llm, retriever, embeddingModel } = providers;
   const usage: SpendLine[] = [];
   const configuration = evidenceRankingIdentity(config);
+  // Observability cannot change dispatch, ordering or accounting, even if a logger fails.
+  const enter = (stage: RankingPhase) => { try { observer.onStage?.(stage); } catch { /* metadata only */ } };
+  const fallback = (stage: 'scope' | 'rerank', outcome: RankingFailureOutcome) => {
+    try { observer.onFallback?.({ stage, outcome }); } catch { /* metadata only */ }
+  };
+  const guard = async () => {
+    try { input.signal.throwIfAborted(); await beforePaidCall(); input.signal.throwIfAborted(); }
+    catch { throw new RankingStopped(); }
+  };
   const reserve = async (call: RankingCall) => { try { return await spend.reserve(call); } catch { throw new RankingFailure('spend', [...usage]); } };
   const settle = async (ticket: unknown, lines: SpendLine[]) => {
     usage.push(...lines);
@@ -82,8 +111,14 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
   async function metered<T>(call: RankingCall & { stage: 'scope' | 'rerank' }, run: () => Promise<StageResult<T>>): Promise<StageResult<T>> {
     const ticket = await reserve(call);
     let started = false, result: StageResult<T> | undefined, failure: unknown;
-    try { await beforePaidCall(); input.signal.throwIfAborted(); started = true; result = await run(); }
-    catch (err) { failure = err; }
+    try { await guard(); started = true; result = await run(); }
+    catch (err) {
+      failure = !started || err instanceof StageError ? err : new StageError('unexpected', {
+        stage: call.stage, provider: call.provider, model: call.model,
+        promptVersion: call.stage === 'scope' ? config.scope.version : config.rerank!.prompt.version,
+        billing: { kind: 'uncertain' },
+      });
+    }
     if (result) {
       const u = result.usage;
       const validUsage = u && ['inputTokens', 'outputTokens', 'cacheWriteTokens', 'cacheReadTokens'].every(k =>
@@ -102,8 +137,9 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
   }
   let suggestion: EvidenceSuggestion | null = null, note: EvidenceNote | null = null;
   let scopeOutcome: ScopeOutcome = 'skipped';
+  enter('scope');
   input.signal.throwIfAborted();
-  if (!input.edited && !input.skipScope) {
+  if (!input.edited && !skipScope) {
     try {
       const r = await stageSpan('evidence.scope', { stage: 'scope', model: llm.models.scope, provider: llm.name, promptVersion: config.scope.version }, async span => {
         const result = await metered({ stage: 'scope', provider: llm.name, model: llm.models.scope,
@@ -116,19 +152,22 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
       else { scopeOutcome = 'non_search'; note = planned.intent === 'out_of_scope' ? 'scope' : planned.intent === 'operational_advice' ? 'operational_advice' : null; }
     } catch (error) {
       if (error instanceof RankingFailure) throw error;
-      scopeOutcome = error instanceof StageError ? error.category === 'timeout' ? 'timeout' : error.category === 'invalid_output' ? 'invalid_output' : 'provider_error' : 'invalid_output';
+      scopeOutcome = rankingFailureOutcome(error, input.signal);
+      fallback('scope', scopeOutcome);
+      if (error instanceof RankingStopped) throw new RankingFailure('scope', [...usage]);
       input.signal.throwIfAborted();
     }
   }
   const { executed, lexicalSource } = input.edited ?? rankingTexts(input.question, suggestion?.terms ?? null, config);
-  input.signal.throwIfAborted(); await beforePaidCall(); input.signal.throwIfAborted();
+  enter('retrieval');
+  try { await guard(); } catch { throw new RankingFailure('retrieve', [...usage]); }
   const embedding: RankingCall = { stage: 'embed', provider: 'openai', model: embeddingModel, worstCaseUsd: embeddingWorstCaseUsd(embeddingModel) };
   const ticket = await reserve(embedding);
   const embedLines: SpendLine[] = [];
   let result: EvidenceRetrievalResult | undefined, retrieveError: unknown, accepting = true;
   try {
     // Admission can have waited; no paid embedding after deletion/shutdown while it waited.
-    await beforePaidCall(); input.signal.throwIfAborted();
+    await guard();
     result = await stageSpan('evidence.retrieve', { stage: 'retrieve', retrievalVersion: config.retrieval.version }, async span => {
       const found = await retriever.search(input.dataset, { text: executed.vector, keywordText: executed.lexical, filters: input.filters },
         AbortSignal.any([input.signal, AbortSignal.timeout(config.retrievalTimeoutMs)]), u => {
@@ -150,28 +189,28 @@ export async function rankEvidence(config: EvidenceRankingConfig, input: Ranking
   if (!result || retrieveError) throw new RankingFailure('retrieve', [...usage]);
   if (result.cases.length !== result.ranking.length || new Set(result.cases.map(c => c.case.ntsbNo)).size !== result.cases.length ||
       result.cases.some((c, i) => c.case.ntsbNo !== result!.ranking[i]!.ntsbNo)) throw new RankingFailure('retrieve', [...usage]);
-  let rerankOutcome: RerankOutcome = config.rerank ? 'empty' : 'disabled';
+  let rerankOutcome: RerankOutcome = config.rerank ? input.uncertainAllowanceReached ? 'skipped_uncertain_allowance' : 'empty' : 'disabled';
   const r = config.rerank;
-  if (r && result.cases.length) {
-    if (input.signal.aborted) rerankOutcome = 'aborted';
+  if (r && !input.uncertainAllowanceReached && result.cases.length) {
+    enter('rerank');
+    if (input.signal.aborted) { rerankOutcome = 'stopped'; fallback('rerank', rerankOutcome); }
     else {
       let request: RerankInput | undefined;
-      try { request = buildRerankInput(executed.vector, result.cases, r); } catch { rerankOutcome = 'input_too_large'; }
+      try { request = buildRerankInput(executed.vector, result.cases, r); } catch { rerankOutcome = 'input_too_large'; fallback('rerank', rerankOutcome); }
       if (request) {
         try {
           result = await stageSpan('evidence.rerank', { stage: 'rerank', provider: llm.name, model: r.model, depth: r.depth, promptVersion: r.prompt.version }, async span => {
             try {
               const response = await metered({ stage: 'rerank', provider: llm.name, model: r.model,
                 worstCaseUsd: stageWorstCaseUsd(r.model, r.caps, r.cachePrefixTokens) }, () => llm.rerank!(request,
-                { signal: AbortSignal.any([input.signal, AbortSignal.timeout(r.timeoutMs)]), timeoutMs: r.timeoutMs, maxInputTokens: r.caps.input, maxOutputTokens: r.caps.output }, r));
+                { signal: AbortSignal.any([input.signal, AbortSignal.timeout(r.timeoutMs)]), timeoutMs: r.timeoutMs, maxInputTokens: r.caps.input, maxOutputTokens: r.caps.output }, config));
               span.setAttrs({ ...response.usage, usd: stageCostUsd(response.model, response.usage) });
               const ordered = applyRerank(result!, response.output, request.cases.map(c => c.id));
               rerankOutcome = 'applied'; span.setAttrs({ outcome: rerankOutcome }); return ordered;
             } catch (error) {
               if (error instanceof RankingFailure || error instanceof RankingSpendError) throw error;
-              rerankOutcome = input.signal.aborted ? 'aborted' : error instanceof StageError ?
-                error.category === 'timeout' ? 'timeout' : error.category === 'refusal' ? 'refusal' : error.category === 'truncated' ? 'truncated' :
-                  error.category === 'invalid_output' ? 'invalid_output' : 'provider_error' : 'invalid_output';
+              rerankOutcome = rankingFailureOutcome(error, input.signal);
+              fallback('rerank', rerankOutcome);
               const line = usage.findLast(l => l.stage === 'rerank');
               span.setAttrs({ ...(line?.tokens ?? {}), usd: line?.usd ?? 0, outcome: rerankOutcome }); return result!;
             }

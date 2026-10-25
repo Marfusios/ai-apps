@@ -59,8 +59,9 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    and never treat no note as assurance. In the live/default baseline suggestions remain unapplied; filter-only edits
    retain both executed parent query texts. Server-owned statistics hints carry no filters; comparison
    hints name only the matched IDs. All successful searches return 201 results.
-   At the daily uncertain-charge limit, evidence searches skip scope while retaining
-   the full reservation, embedding accounting and other limits; they are not refused
+   At the daily uncertain-charge limit, evidence searches skip scope and any reranker
+   (`skipped_uncertain_allowance`) while retaining the full reservation, embedding
+   accounting and other limits; they are not refused
    solely for that limit. Generated summaries keep their old refusal rule.
    Restart with the new environment settings, then use `pnpm worker ai-switch --on`
    only after clearance. A restore hold still blocks payment until reconciliation.
@@ -546,6 +547,8 @@ To evaluate on dev, select a version in that environment's settings, run the fre
 `pnpm worker ai-preflight` and require no OVER row, then recreate the app container.
 The Compose service passes the setting through. Scope/embedding models are fixed
 by the evidence ranking object; incompatible model overrides fail its price check.
+Only the baseline retains suggestion-based highlights (executed words if absent);
+every alternative highlights executed lexical words. This policy is part of the hash.
 The conservative reservations are $0.0025 without rerank, $0.0090 for Haiku/50,
 $0.0140 for Haiku/100 and $0.1332 for Sonnet/50. Confirm budget capacity before
 authorizing any paid test; preflight does not generate.
@@ -558,7 +561,11 @@ An allocation runner can instead wrap production gates through
 admission, accounting and recovery rules. Do not replace the production gate with
 an unmetered fake outside offline tests. Cache keys/reports include the returned
 configuration identity, exact question/edited texts, filters and pinned dataset/index
-identity. Errors expose fixed categories; spend lines survive downstream failures.
+identity. The hash also covers the rerank user-turn template and rendered input
+fixture. Direct adapter callers pass the complete registered ranking config.
+Errors expose fixed categories; spend lines survive downstream failures. An evaluator
+can set `skipScope` without disabling reranking; `uncertainAllowanceReached` skips
+both optional stages, matching HTTP admission.
 
 To roll back, set `AVIATION_EVIDENCE_RANKING=er-q-v1`, run preflight and recreate
 the app. New searches use the baseline; saved pages retain their order and old
@@ -570,7 +577,7 @@ Non-baseline live deployment additionally requires a reviewed code allowlist cha
 evaluation/gate approval and the controller's `evidence.v3` disclosure. This server
 work changes no public response contract and grants none of those clearances.
 
-## Retrieval version
+### Retrieval version
 
 AI evidence is retrieved under one frozen configuration, chosen by
 `AVIATION_RETRIEVAL_VERSION` in the settings file (README, "Evidence retrieval";

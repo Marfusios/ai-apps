@@ -1,6 +1,3 @@
-import { runRerankPreflight } from './rerank-preflight.js';
-import { evidenceReservation } from '../server/evidence/pricing.js';
-import type { EvidenceRankingConfig } from '../server/evidence/ranking-config.js';
 /**
  * `pnpm worker ai-preflight`: a free check that every language-model request of a brief
  * fits its hard cap (`STAGE_CAPS`, DESIGN §9) with the configured provider and models.
@@ -27,6 +24,9 @@ import type { EvidenceRankingConfig } from '../server/evidence/ranking-config.js
  * `preflightRequests` is pure, so the offline unit test sizes the same requests with the
  * local tokenizer (tests/unit/ai-preflight.test.ts).
  */
+import { runRerankPreflight } from './rerank-preflight.js';
+import { evidenceReservation } from '../server/evidence/pricing.js';
+import type { EvidenceRankingConfig } from '../server/evidence/ranking-config.js';
 import { FACET_VALUES } from '../shared/contracts/search.js';
 import { BRIEF_FILTER_FACETS } from '../shared/contracts/briefs.js';
 import { EVIDENCE_SCOPE_CAPS } from '../server/ai/pricing.js';

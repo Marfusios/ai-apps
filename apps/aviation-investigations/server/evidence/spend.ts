@@ -1,5 +1,5 @@
-import type { LlmProviderName } from '../ai/provider.js';
 /** Per-stage admission shared by HTTP's existing reservation and ledger-backed evaluation. */
+import type { LlmProviderName } from '../ai/provider.js';
 import type { Db } from '../db/client.js';
 import type { Admission } from '../quota/admit.js';
 import type { QuotaBudgets } from '../quota/policy.js';

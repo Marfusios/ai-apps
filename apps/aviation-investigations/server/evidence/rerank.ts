@@ -1,10 +1,12 @@
-import { PHASE_LABEL } from '../../shared/codes.js';
 /** Bounded, extractive model input only. Displayed evidence is never truncated or rewritten. */
+import { PHASE_LABEL } from '../../shared/codes.js';
 import type { EvidenceCase } from '../../shared/contracts/evidence.js';
 import { countTokens } from '../ai/tokens.js';
 import { RerankInputSchema, renderRerankUser, validateRerankOutput, type RerankCase, type RerankInput } from '../ai/prompts/rerank.r1.js';
 import type { RerankConfig } from './ranking-config.js';
 import type { EvidenceRetrievalResult } from './retrieve.js';
+
+export const RERANK_INPUT_VERSION = 'rerank-input.v1';
 
 const segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
 const maskIds = (text: string): string => text.replace(/\b[A-Z]{3}\d{2}[A-Z]{2}\d{3}[A-Z]?\b/gi, '[investigation]');
@@ -67,4 +69,31 @@ export function applyRerank(result: EvidenceRetrievalResult, raw: unknown, label
     ranking: indices.map(i => result.ranking[i]!),
     cases: indices.map((i, rank) => ({ ...result.cases[i]!, rank: rank + 1 })),
   };
+}
+
+/** Render a fixed, synthetic set through the same preparation as production. Its hash
+ * binds masking, sentence boundaries, field order/metadata and truncation to the
+ * configuration identity (including renderer escaping and its user-turn prefix). */
+export function rerankInputIdentityFixture(config: RerankConfig): string {
+  const short = 'See CEN19FA001 and sea08la057A. Engine examination found no fault. ';
+  const long = short + 'The pilot reported <power> loss & a precautionary landing. '.repeat(100);
+  const make = 'Fixture CEN19FA001 Manufacturer. ';
+  const ordinary: RerankSourceCase = {
+    case: { date: '2019-12-31', aircraft: [
+      { category: { code: 'AIR', label: 'Airplane' }, make, model: 'Model 1. ' + 'Modified model. '.repeat(100) },
+      { category: { code: 'HELI', label: 'Helicopter' }, make: 'Fixture', model: 'Model 2' },
+    ], definingPhases: ['takeoff', 'initial_climb', 'approach'] },
+    probableCauses: [{ text: short }, { text: long }],
+    excerpts: [{ text: long }, { text: 'After this work, the engine ran. ' + 'Extra context. '.repeat(100) }, { text: 'A CEN19FA001 reference. 😀 ' + long }],
+  };
+  const manyVariants: RerankSourceCase = {
+    ...ordinary,
+    probableCauses: Array.from({ length: 16 }, (_, i) => ({ text: `Variant ${i + 1}. ${long}` })),
+  };
+  const missing: RerankSourceCase = {
+    case: { date: null, aircraft: [], definingPhases: [] },
+    probableCauses: [{ text: 'An undetermined loss of power.' }],
+    excerpts: [{ text: 'CEN19FA001 ' + 'long-sentence '.repeat(400) }],
+  };
+  return renderRerankUser(buildRerankInput('Find CEN19FA001-related records: <question> & "quotes". 😀', [ordinary, manyVariants, missing], config));
 }
