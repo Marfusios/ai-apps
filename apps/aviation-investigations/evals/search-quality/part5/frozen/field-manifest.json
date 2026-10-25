@@ -1,0 +1,161 @@
+{
+  "version": "task24-fields-c2-freeze-v1",
+  "frozenAt": "2026-10-25T13:16:01.982Z",
+  "codeCommit": "936a2110b3e8d982a4f6ee26c340faa23a8c469c",
+  "protocolSha256": "607c422c2a42383324a9cd3cce6d3b4121a5df150b339c6c9b3f9ac149e7542d",
+  "settings": {
+    "model": "claude-haiku-5-5",
+    "version": "scope.e3",
+    "systemSha256": "901abbf596ebd86ea32afb5c241c51cace149d89958ab1a8a75398930c041b04",
+    "wireSha256": "cb20cf6bc65ecd99328518c75e1513e716b92b59a272f5d86a9f022d8ddc85c9",
+    "caps": {
+      "input": 10000,
+      "output": 2500
+    },
+    "timeoutMs": 10000,
+    "thinking": "off",
+    "effort": "low",
+    "retries": 0,
+    "price": {
+      "kind": "llm",
+      "provider": "anthropic",
+      "input": 0.1,
+      "output": 0.5,
+      "cacheWrite": 0.125,
+      "cacheRead": 0.01,
+      "longContext": {
+        "thresholdTokens": 100000,
+        "input": 0.5,
+        "output": 2.5,
+        "cacheWrite": 0.625,
+        "cacheRead": 0.05
+      }
+    },
+    "worstCaseUsd": 0.0024125,
+    "reservationUsd": 0.002413,
+    "guards": {
+      "year": "year-explicit.v1",
+      "category": "category-explicit.v1",
+      "categories": [
+        "AIR",
+        "HELI",
+        "GLI",
+        "BALL",
+        "ULTR",
+        "PLFT"
+      ]
+    },
+    "phase": "fields_c2",
+    "phaseCapMicros": 5000000,
+    "attempts": 1600,
+    "shuffleSeed": 2026102507
+  },
+  "files": {
+    "evals/search-quality/fields.ts": "72f1e5188166a7b1a75cde336988e096eeb4e71e7f7ddbb1866a034403ce2170",
+    "evals/search-quality/field-score.ts": "d41f2a4f0bb9868bef6021b2b19f3d3896c1258c788d1de33de80472c8eb20a0",
+    "evals/search-quality/frozen.ts": "f4a611a2f60ad0869c254ecd436114b74111423251285ae3cb092070c48a679c",
+    "evals/search-quality/money.ts": "9a329eccbc09469b7e6cd091d5ac2df7e94836d2226c3cb39ebc57bcf52625ae",
+    "evals/search-quality/config.ts": "996918e249d493f0398374a8f12b74a2776ca887724b992b7a40a0f67b3ef6bf",
+    "evals/search-quality/types.ts": "a7d5e888a13603ce0ad68823a7e10d43b9d7c9bf5521e988d954d64833581c00",
+    "shared/state-eligibility.ts": "079771657f20c8300ad4357d14fd0495b3590c0c0594339be8c67e174d3368bb",
+    "shared/vocab.ts": "d16b81ff34e1be4a853dafc4180f9b5b70f54ea49f5678e7f02b3f6828a88775",
+    "shared/codes.ts": "02fa08d63a1b7ea3e60673c39f6dfc64acb11dc94396919a11ac0d6c5051203d",
+    "shared/contracts/briefs.ts": "48870e420ac5ca654a6c65f1238b596db14043ba84393d257d225e2f2b04c7a7",
+    "shared/contracts/evidence.ts": "a7db7e16ee276cd9f8fb302313673846b73f8692e115d9ae1becda20cbe230be",
+    "shared/contracts/search.ts": "25fded21963af500b5f2a6b778a6bbd94d63aaada71fc8461db18fd63e991d0c",
+    "shared/contracts/common.ts": "08135c0b602282c92985e093dabc123bffc64ae6d148ff88cb3ad37eb2ae37df",
+    "shared/config.ts": "8eac5d168e316fc01a446f641c608f64cd76b337ed0597ed9397d43501e1c0dc",
+    "server/ai/anthropic.ts": "5ee3eed652b2be9bd7867f50ca96bec1955aca019073ad80cb242bead819205d",
+    "server/ai/provider.ts": "00a7e47b75d24cecb8dac1e056b057504c8db9bc5d228e2c329bcfe8e0cc4eaa",
+    "server/ai/pricing.ts": "9d841a208f4f9bbeae65e5517baca42b29235d44afb3d6dd6546e7490c822a3f",
+    "server/ai/prompts/scope.e1.ts": "3fc179ccee841756a0a094dc9b1ce6b4cb6a7d1dcc33ced01822b86a604fdde6",
+    "server/ai/prompts/untrusted.ts": "1b2ea3ec8a7b8efbe4cbca5939a83690b8172ecf0f18d698f2c370c9e5ace93b",
+    "worker/index/spend-gate.ts": "ce5314a3a9f452b5f1ba72eac28c6daaa3d323660766b4f7977b03c40db6f34e",
+    "server/quota/spend.ts": "6bf98e4f75c102df6c57ff86e5012c6a4c9aa8d54fef87c346f3276cb438058e",
+    "server/quota/settle.ts": "b3fbe373524a8e5b395800c88feb8af720445755fd2d807728a39a065db235ed",
+    "server/quota/pacing.ts": "02f86cbb6dea40578e25d860e0ca89a2f688dc7c0ae2fe275f5b23982ffc7c9b",
+    "server/quota/policy.ts": "6d13b9ba48e5f5fa24925148f0136695f989004280d6a88593be7f60cdfa25b4",
+    "server/quota/hold.ts": "78ce19c81f0fe75458245c734b8cf1e105739add448a75a435caa47be6b9107e",
+    "server/db/client.ts": "7c1707bbb49b9bd195183598fe901bebef1b4e5ac669c75a991c3f5fb100ca7f",
+    "pnpm-lock.yaml": "16b13bb77b04dc42b9fa323a0a7a4c841a10137455f011dde8898c44dbd51047",
+    "shared/explicit-filter-text.ts": "a974b391002e00cf997463944e0d5f94737fa4677e3c94efebdc1fa0d515e647",
+    "shared/year-eligibility.ts": "b10f037cc9d93154f357741f5c8bd9603534533c594615b79c4a7ad73dcd6e7c",
+    "shared/category-eligibility.ts": "34f155bb01ae14bc918e93dcea83fdfd010dbc73f57c6794b9a38d8c0f9810fe",
+    "evals/search-quality/part5/feasibility.py": "cf2f1f112e095f07ee050bf86cedf42de6e8826b723b2b54648a6cadf316f845",
+    "evals/search-quality/part5/construct-fields.py": "683e1dc6fa0f83679c1a4cf5d9298ab1e8b477ff5dc88dc7e2d3de8a285e8fc0",
+    "evals/search-quality/part5/aircraft-snapshot.ts": "664fc5d82fe7439e6d1922db2bd742845af7195213af8a45b51d0a817715de04",
+    "evals/search-quality/part5/verify-data.ts": "e8631b3038bef3d573b6e2c114c4de63684772fe14db1a424b5a8f4da068a551",
+    "evals/search-quality/part5/frozen.ts": "7a4c1e5dc490ed9958c9a40843c0cd5e0ac29b11dc8b5098e081ba380b83a48b",
+    "evals/search-quality/part5/freeze.ts": "ac95e80e05c12e18c5e59ff81291b5e9f5860abc38148cf914fea4da4de8fade",
+    "evals/search-quality/part5/fields.ts": "4a0a3a76113d77addbb22a73bdc7d0e3ad75d71f1414b3d5c728adf99b38f049",
+    "evals/search-quality/part5/field-score.ts": "2895b1d063f9ee50c263b942d6df09c4280879425aafcb4822c412d4a7bce32f",
+    "tests/unit/year-category-eligibility.test.ts": "727778619ed2e7523e1feb86c569924d6d8cf835c2d2546154c1501ade25aaf4",
+    "tests/unit/task24-c2.test.ts": "aef29c2f3a87f5334015a30bd3b5fb2d0961352a4fe0808616404d5d8f4d41a5",
+    "tests/unit/task24-allocation.test.ts": "105e73162f0854aedffedf26b1c173ae93bd6f98c819ac16a7859832b2c08530",
+    "evals/search-quality/part5/frozen/fields.json": "7dfdf59ab386bee17645f3c3f073dcd3af700aa1ef6cda7c6ab7aa5f8ae3eca6",
+    "evals/search-quality/part5/frozen/exclusions.json": "c25da9a322810ceec45fa3272af73ed17d1c6bfde62a2e8365699a8195927f6b",
+    "evals/search-quality/part5/frozen/power.json": "7646c7dc1c238e53f342fad2c6f6d204a77eaeb3677f3d91ef8688c7dcad3e08",
+    "evals/search-quality/part5/frozen/feasibility.json": "19851162c780e3d5c507d6cca5b51c5baa063be47b15941239f3744ff9eeb48f",
+    "evals/search-quality/part5/frozen/feasibility-relaxed-exposure.json": "cc516e51c20b5063dc6cf7bade8284502bbd3ade1ed0a222d05e53cd4a4ae512",
+    "evals/search-quality/part5/frozen/construction.json": "77874933c617dd1628798a905067b6b1a48c037654d6f9f71a164e605c1fc724",
+    "evals/search-quality/part5/frozen/gold-verification.json": "311756208182487cfb0e8273ad83549903df517e8889afa55cd311fb659de834"
+  },
+  "preflight": {
+    "goldVerified": true,
+    "measured": [
+      {
+        "id": "t24-c2-category-control-328",
+        "tokens": 5723
+      },
+      {
+        "id": "t24-c2-category-control-355",
+        "tokens": 5725
+      },
+      {
+        "id": "t24-c2-category-control-220",
+        "tokens": 5734
+      },
+      {
+        "id": "t24-c2-yearRange-control-376",
+        "tokens": 5724
+      },
+      {
+        "id": "t24-c2-category-control-335",
+        "tokens": 5722
+      }
+    ],
+    "ledger": {
+      "total": {
+        "reservations": 2894,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 1859745,
+        "ledgerMicros": 1859745
+      },
+      "fields_c2": {
+        "reservations": 0,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 0,
+        "ledgerMicros": 0
+      },
+      "confirmation2": {
+        "reservations": 0,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 0,
+        "ledgerMicros": 0
+      },
+      "narrative": {
+        "reservations": 0,
+        "open": 0,
+        "openMicros": 0,
+        "chargedMicros": 0,
+        "ledgerMicros": 0
+      },
+      "monthlyIngestionUsd": 50
+    },
+    "pricesChecked": "2026-10-25",
+    "priceSource": "https://platform.claude.com/docs/en/models/haiku-5-5/overview (unchanged Part 4 checked price snapshot)"
+  }
+}
