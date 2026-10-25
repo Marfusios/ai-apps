@@ -41,6 +41,9 @@ Commit reviewed construction before invoking `freeze-fields.ts --env-files FILES
 --keys-file FILE`. It performs only free Anthropic token counts and a development
 ledger preflight, then writes an immutable source/data/settings manifest. Commit that
 manifest before paid execution. Do not overwrite it after observing responses.
+The completed C freeze belongs to its recorded commit. A later server merge can make
+its runtime-file hashes differ at HEAD; that must refuse a fresh field dispatch. Use
+the recorded commit for an audit, and the retained observations for a free rescore.
 
 ## Explicit field execution
 
@@ -68,3 +71,45 @@ attempt. Missing billed observations, lost locks, inconsistent accounting or dep
 failures stop the run; an incomplete run cannot clear a field. No field result can
 clear A/B. Paid A/B execution separately requires the controller's GATE 24-R clearance
 and the reviewed production ranking entry point.
+
+## Ranking runner
+
+`ab.ts` calls `server/evidence/pipeline.ts` through `ab-production.ts`. The adapter
+adds timing and durable observations and injects the common Task 24 gate; it does not
+implement retrieval or reranking. Every question gets three independent scope/search
+attempts, with empty execution filters and the original question as the vector query.
+The six-arm core must fit as a whole. Optional depth and Sonnet blocks are admitted by
+the registered development-only rule and full-block reservation cost. Confirmation
+requires the single frozen development winner and runs exactly 288 searches.
+
+`ab-score.ts` measures full-gold R@20/R@10 and ranking P/nDCG at 6/10, averaging samples
+within questions before paired connected-group bootstrap. It applies the registered
+5-point primary improvement, secondary margins, latency/cost/fallback limits and
+stronger confirmation lower bounds. It never selects from an incomplete arm.
+
+`freeze-ab.ts` performs read-only gold/index checks and free provider counts, and pins
+the code, server commit, all configuration hashes, input/output bounds, price source,
+source/index identities, dataset hashes and random seeds. It needs the registered
+protocol and field-design files as explicit arguments, plus the full server commit.
+The manifest remains marked pending controller review. Paid execution additionally
+requires a gate certificate and its matching GATE 24-R report; neither is created by
+construction. A dry run loads no provider keys and sends no requests.
+
+```sh
+node --import tsx evals/search-quality/ab.ts
+node --import tsx evals/search-quality/ab.ts --phase selection --env-files FILES --keys-file FILE --gate-certificate CERT --gate-report REPORT --confirm-cost
+node --import tsx evals/search-quality/ab.ts --phase confirmation --selection-file SELECTION --env-files FILES --keys-file FILE --gate-certificate CERT --gate-report REPORT --confirm-cost
+```
+
+Stage timings include the shared pipeline's preparation and ledger overhead; embedding
+time is nested inside retrieval time and must not be added twice. Cache counts, actual
+settled charges, complete cold reservations, fused pools, final ranks, executed query
+texts, scope/rerank outcomes and configuration identities are retained in ignored run
+outputs. A full-search/safety failure or three consecutive infrastructure failures
+stops an incomplete run. Resume cannot replace a paid or uncertain observation.
+
+`frozen/narrative-plan.json` fixes the optional eight-question, two-provider first-page
+diagnostic, its rubrics and calibrated Track N identities. Its actual case union and
+complete-record chunk inventory can only be constructed after qualifying A/B
+confirmation. That entire inventory must fit the separate $5 allocation before any
+judge call; otherwise skip it in full. No narrative calls are part of construction.
