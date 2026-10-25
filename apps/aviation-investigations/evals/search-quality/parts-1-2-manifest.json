@@ -1,0 +1,31 @@
+{
+  "version": "task-24-parts-1-2-freeze-v1",
+  "frozenAt": "2026-10-25T09:46:28.710016+00:00",
+  "baseCommit": "ad5a21342bdc6d1463e668bdb55f15f5efb1d3c6",
+  "branch": "search-quality-eval",
+  "scope": "Parts 1 and 2 only: preregister study; re-score frozen historical outputs; design fresh field test.",
+  "paidCalls": 0,
+  "paidSpendUsd": 0,
+  "gate24R": "not reviewed; awaiting controller report",
+  "freshQuestionSets": "construction and pre-paid freezing required; designs registered, no new questions claimed",
+  "files": {
+    "apps/aviation-investigations/evals/search-quality/rescore-filters.py": "91d3370c34545f271e58d19140b7d3774506ba3c5f2098621be34cc115b33d70",
+    "apps/aviation-investigations/evals/search-quality/filter-rescore.json": "dd89b1b775c51a13d2d5eaa22fa4b399a8dfe4f4d0e04c1568acb9a0941164d3"
+  },
+  "selectionDataset": {
+    "path": "apps/aviation-investigations/evals/retrieval/coded/dataset.json",
+    "sha256": "5d1746bd04af8602c18babf2ae6cca6b3e1fd2760f6d72852df86ba240b8b3a4"
+  },
+  "checks": [
+    "Independent dev1 rescore matches all stored field/aggregate counts and Wilson intervals",
+    "23E2 field gold absence verified on all 227 rows",
+    "Report relative links and source hash formats checked",
+    "Python source compiled without application imports",
+    "python3 scripts/check_repo.py passed"
+  ],
+  "reports": {
+    "task-24-protocol.md": "c187753a2bec9cbe32e39186a486c0deb616984d1842bd2768a6c1356feb4a7e",
+    "task-24-filters-rescore.md": "82948acf42d90f02fa63361004ccfd19789b1aa250f0b55f29a06a233b42c3fb"
+  },
+  "reportLocation": "Controller-managed ignored reports; document names and hashes only."
+}
