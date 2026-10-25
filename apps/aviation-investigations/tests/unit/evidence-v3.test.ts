@@ -46,7 +46,7 @@ describe('independent automatic state policy', () => {
   it('has distinct immutable identities and rejects altered policies', () => {
     expect(Object.isFrozen(autoFilterPolicy('state-explicit.v1.1'))).toBe(true);
     expect(autoFilterIdentity(autoFilterPolicy()).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
-    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.1')).sha256).toBe('cb570aa5fde7eb03ef5dbc8198cd1e773d4ece79a0b50d2de50305454aa9a631');
+    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.1')).sha256).toBe('b63a7a979a1188b700143640a64e6c061efd3893ab4b475c4d53c929945e4e33');
     expect(() => automaticState({ ...autoFilterPolicy('state-explicit.v1.1'), field: null } as never, question, rawSuggestion.filters, false, false)).toThrow('unregistered');
   });
   it('fingerprints the guard behaviour, including a regex change without a version bump', () => {
@@ -55,7 +55,7 @@ describe('independent automatic state policy', () => {
       ? { states: [...emitted], reason: 'applied' } : eligibleEmittedStates(q, emitted));
     expect(policy.behaviour?.sha256).toBe(stateGuardFingerprint());
     expect(changed).not.toBe(stateGuardFingerprint());
-    expect(autoFilterIdentity({ ...policy, behaviour: { version: 'state-probes.v2', sha256: changed } } as never).sha256)
+    expect(autoFilterIdentity({ ...policy, behaviour: { version: 'state-probes.v3', sha256: changed } } as never).sha256)
       .not.toBe(autoFilterIdentity(policy).sha256);
   });
   it('rejects an altered automatic policy before any scope call or spend reservation', async () => {
@@ -179,6 +179,16 @@ describe('read-time undo availability', () => {
 });
 
 describe('one-use free undo predicate', () => {
+  it.each(['terms', 'question+terms'] as const)('never exempts a legacy v2 parent with recorded %s', lexicalSource => {
+    const saved = row(); saved.data.version = 'evidence.v2'; saved.data.query = { source: 'question' };
+    saved.data.automaticFilters = null; saved.data.lexicalSource = lexicalSource;
+    saved.data.executed = { lexical: lexicalSource === 'terms' ? 'power loss' : question + ' power loss', vector: question };
+    const request = edit({ filters: saved.data.appliedFilters, keywords: 'question' });
+    expect(pageOf(saved, 1, now)?.undo).toBe('none');
+    expect(canUndo(saved, request, now)).toBe(false);
+    saved.data.version = 'evidence.v3'; // the same facts qualify only for the new contract
+    expect(canUndo(saved, request, now)).toBe(true);
+  });
   it('recognizes only the database expiry marker, including wrapped driver errors', () => {
     const expired = { code: '55000', constraint: 'evidence_undo_parent_unexpired' };
     expect(isExpiredUndoClaim(expired)).toBe(true);

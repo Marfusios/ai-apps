@@ -992,8 +992,12 @@ The page reports server-derived facts:
 - An edit may send `keywords: 'question'` to restore the original question in both
   lexical and vector channels. It cannot also send explicit `terms`.
 - `freeUndo` confirms whether this search consumed no visitor quota unit.
+- `undo` is the current `available | used | none` hint, computed from the parent's
+  claim on each read. It is never stored in the immutable result. Edits, legacy v2
+  rows and questions without automatic additions report `none`; admission remains
+  authoritative if another tab consumes the claim.
 
-A quota-free undo requires an owned, unexpired, completed original question search,
+A quota-free undo requires an owned, unexpired, completed original v3 question search,
 no explicit edited terms, and no changes except removal of automatic additions.
 Filters must equal the parent's filters or remove its entire automatic state field;
 removing one member of a multi-state OR is a narrowing edit and costs a unit. Setting

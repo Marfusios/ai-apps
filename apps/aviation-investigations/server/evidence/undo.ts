@@ -1,6 +1,6 @@
 /** A free undo removes original automatic additions; it cannot change anything else. */
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
-import type { CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
+import { EVIDENCE_CONTRACT_VERSION, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
 import { canonicalConfig } from '../search/retrieval-config.js';
 import { disclosedQuery } from './disclosure.js';
 import type { EvidenceRow } from './store.js';
@@ -23,7 +23,7 @@ export function isExpiredUndoClaim(err: unknown): boolean {
 }
 
 export function canUndo(parent: EvidenceRow, edit: Extract<CreateEvidenceRequest, { kind: 'edited' }>, now: Date): boolean {
-  if (parent.status !== 'results' || parent.expiresAt <= now || parent.data.edited || parent.freeUndoReservationId != null || edit.terms !== undefined) return false;
+  if (parent.data.version !== EVIDENCE_CONTRACT_VERSION || parent.status !== 'results' || parent.expiresAt <= now || parent.data.edited || parent.freeUndoReservationId != null || edit.terms !== undefined) return false;
   const query = disclosedQuery(parent.data);
   if (query.source !== 'question') return false;
   const removedTerms = edit.keywords === 'question' && query.keywords.kind !== 'question';

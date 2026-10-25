@@ -1412,7 +1412,7 @@ publish` it (for the local `aviation_dev`, the fixture corpus is enough).
 | Endpoint | Response | Caching |
 | --- | --- | --- |
 | `GET /api/health` | `{status, database, search}` states only; 200, or 503 when either check fails; one probe shared for 2 s | `no-store`; rate limited except over loopback |
-| `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage, the Turnstile site key once the anonymous gate is configured | `public, max-age=300`, ETag |
+| `GET /api/config` | `ConfigResponse`: snapshot date, dataset revision, coverage, enabled `aiAutomaticFilters`, the Turnstile site key once the anonymous gate is configured | `public, max-age=300`, ETag |
 | `GET /api/search` | `SearchResponse` | `public, max-age=60`, keyed by the full URL |
 | `GET /api/cases/:ntsbNo` | `CaseDetail` from PostgreSQL; 404 for unknown numbers | `public, max-age=300`, ETag |
 | `GET /api/dashboard?cohort=default\|all` | `DashboardResponse`, computed once per dataset revision and cohort | `public, max-age=300`, ETag |
