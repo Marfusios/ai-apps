@@ -18,7 +18,8 @@
  *    as an exhausted quota); then the principal's quota (trial searches, account
  *    daily/monthly searches), its uncertain charges today (`uncertain_limit`: calls of
  *    unknown usage, each charged at its own worst case, add up to one reservation;
- *    DESIGN §9, "Uncertain calls"), the anonymous share, and the total and anonymous
+ *    DESIGN §9, "Uncertain calls"; evidence may instead skip advisory scope), the
+ *    anonymous share, and the total and anonymous
  *    in-flight limits (two in total, one anonymous).
  * 6. Reserve the request's maximum cost, take one unit of quota, and acquire a lease
  *    (`LEASE_TTL_MS`, 120 s) with a fencing token. Commit before any provider call.
@@ -101,6 +102,9 @@ export interface AdmissionInput {
   requestHash: string;
   /** Per-request reservation in USD (`startupAiCheck().reservationUsd`). */
   reservationUsd: number;
+  /** Evidence search alone may skip its advisory scope after uncertain charges reach
+   * the daily limit. Budgets, quotas and the full reservation remain enforced. */
+  uncertainAction?: 'refuse' | 'skip_scope';
   /** Content-free id copied to the ledger lines. */
   requestId?: string;
   now?: Date;
@@ -131,6 +135,8 @@ export interface Admission {
   principal: Principal;
   principalHash: string;
   accountingDay: string;
+  /** Admission's server-owned decision, never chosen by a scope response or the client. */
+  skipScope?: true;
 }
 
 /** A retry of an admitted request (same principal, key and body): its state, never a new run. */
@@ -394,7 +400,8 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
           ? await trialQuota(tx, policy, principal, now, account ? countsOf(counts, account.day).requests : 0)
           : accountQuota(policy, principal, counts, account!, now);
       if (quota) return quota;
-      if ((await uncertainChargedMicros(tx, pHash, utcDay(now))) >= reservation * UNCERTAIN_DAILY_RESERVATIONS) {
+      const uncertainLimit = (await uncertainChargedMicros(tx, pHash, utcDay(now))) >= reservation * UNCERTAIN_DAILY_RESERVATIONS;
+      if (uncertainLimit && a.uncertainAction !== 'skip_scope') {
         return { ok: false, reason: 'uncertain_limit', retryAt: nextUtcMidnight(now) };
       }
       if (anonymous && !budget.anonymousOk) {
@@ -456,6 +463,7 @@ export async function admitPaidRequest(db: Db, a: AdmissionInput): Promise<Admis
         principal,
         principalHash: pHash,
         accountingDay,
+        ...(uncertainLimit ? { skipScope: true as const } : {}),
       };
     });
   } catch (err) {

@@ -26,9 +26,11 @@ import type { ApiContext } from './context.js';
 const NOT_FOUND = 'No AI search with that link is available. AI searches expire after 24 hours.';
 const notFound = (reply: FastifyReply) => sendError(reply, 404, 'not_found', { message: NOT_FOUND });
 const send = (reply: FastifyReply, row: EvidenceRow): FastifyReply => {
-  const response = row.status === 'scope_reply' ? { kind: 'scope_reply', reply: row.data.reply } : { kind: 'results', search: pageOf(row, 1) };
-  const valid = CreateEvidenceResponseSchema.parse(response);
-  return reply.code(valid.kind === 'results' ? 201 : 200).type(JSON_TYPE).send(evidenceJson(valid));
+  const search = pageOf(row, 1);
+  // Legacy policy replies have no results to replay. Do not relabel them or dispatch again.
+  if (!search) return notFound(reply);
+  const valid = CreateEvidenceResponseSchema.parse({ kind: 'results', search });
+  return reply.code(201).type(JSON_TYPE).send(evidenceJson(valid));
 };
 
 /** A replay is read by the current owner, never by the original billing principal alone. */
@@ -65,6 +67,10 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const parsed = CreateEvidenceRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, 'bad_request', { issues: issuesOf(parsed.error.issues) });
     const body = parsed.data;
+    // Reject text jsonb cannot represent before identity, admission or any provider
+    // call. This request-only guard leaves the evaluated scope.e3 wire schema intact.
+    const text = body.kind === 'question' ? body.question : body.terms;
+    if (text !== undefined && (text.includes('\0') || Buffer.from(text, 'utf8').toString('utf8') !== text)) return sendError(reply, 400, 'bad_request');
     const ai = ctx.ai, svc = ctx.evidence;
     if (!ai?.startup.enabled || !ai.policy || !ai.trials || !ai.llm?.evidenceScope || !ai.startup.models || !svc || svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const runtime = { ai: { ...ai, policy: ai.policy, llm: ai.llm, trials: ai.trials } };
@@ -96,7 +102,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     let admitted;
     try {
       admitted = await admitPaidRequest(ctx.db, { policy: ai.policy, principal: payer.principal, networkId: payer.networkId,
-        idempotencyKey: body.idempotencyKey, requestHash, reservationUsd, requestId: `evidence:${randomUUID()}`, now: ai.now(),
+        idempotencyKey: body.idempotencyKey, requestHash, reservationUsd, uncertainAction: 'skip_scope', requestId: `evidence:${randomUUID()}`, now: ai.now(),
         ...(payer.account ? { precondition: (tx) => lockLiveAccount(tx, payer.account!) } : {}) });
     } catch (err) {
       if (err instanceof UnknownPrincipalError) return sendError(reply, 403, 'challenge_required');
@@ -148,7 +154,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
           data: { question: body.kind === 'question' ? body.question : source!.data.question, edited: body.kind === 'edited',
             version: EVIDENCE_CONTRACT_VERSION,
             query: body.kind === 'question' ? { source: 'question' } : body.terms === undefined ? source!.data.query : { source: 'edited', terms: body.terms },
-            appliedFilters: body.kind === 'edited' ? body.filters : {}, suggestion: null, hint: null,
+            appliedFilters: body.kind === 'edited' ? body.filters : {}, suggestion: null, hint: null, note: null,
             context: { dataset: pinned.dataset, citationTextVersion: pinned.manifest.citationTextVersion,
               fieldNormalizationVersion: pinned.fieldNormalizationVersion, mappingVerified: pinned.manifest.mappingVerified } },
         });
