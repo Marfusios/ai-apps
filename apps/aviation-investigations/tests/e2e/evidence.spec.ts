@@ -277,7 +277,7 @@ async function configure(page: Page, config: { ranking: string; autoFilters: str
   await page.addInitScript(`sessionStorage.setItem('casebook-mock-evidence', ${JSON.stringify(JSON.stringify(config))})`);
 }
 
-const STATE_TERMS_AI = { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.1' };
+const STATE_TERMS_AI = { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.2' };
 const STATE_TERMS = 'Carb icing on approach in Texas';
 
 for (const [width, theme] of [

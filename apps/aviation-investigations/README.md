@@ -1303,7 +1303,7 @@ replays the started brief).
 The evidence routes are answered by `web/mock/evidence.ts` (`evidence.v3`), standing in for one
 ranking configuration and automatic-filter policy, like a server (`createHandlers({ evidence })`;
 in the dev mock mode and the end-to-end tests, session storage `casebook-mock-evidence` as JSON
-`{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.1"}`; the live defaults otherwise):
+`{"ranking": "er-qt-h50-v1", "autoFilters": "state-explicit.v1.2"}`; the live defaults otherwise):
 retrieval over the fixture index from the question's own words, plus or instead of the suggested
 terms as the configuration says, with a state the question names applied through the server's own
 guard and the leading cases put in order by a fixed stand-in for a reranker's grades (an edit:

@@ -81,8 +81,8 @@ function undo(server: MockEvidence, from: EvidencePage, filters: BriefFilters, r
 /** The configurations the tests use: the live baseline, and the ones the evaluation may pick. */
 const CONFIGS: Record<string, MockEvidenceConfig> = {
   baseline: MOCK_EVIDENCE_BASELINE,
-  questionTermsAiOrderState: { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.1' },
-  termsState: { ranking: 'er-t-v1', autoFilters: 'state-explicit.v1.1' },
+  questionTermsAiOrderState: { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.2' },
+  termsState: { ranking: 'er-t-v1', autoFilters: 'state-explicit.v1.2' },
   questionAiOrder: { ranking: 'er-q-h100-v1', autoFilters: 'none' },
 };
 
@@ -454,7 +454,7 @@ describe('the one free undo follows the server’s rule (server/evidence/undo.ts
     expect(free.query).toEqual(parent.query);
     expect(undoReply(server, free, {}, true, 9).search.freeUndo).toBe(false);
     // Keywords restored when the question added no terms: nothing to remove.
-    const baseline = new MockEvidence({ config: { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.1' } });
+    const baseline = new MockEvidence({ config: { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.2' } });
     const texas = results(baseline, MOCK_EVIDENCE_QUESTIONS.stateTerms, 10);
     expect(texas.query).toEqual({ source: 'question', keywords: { kind: 'question' } });
     const noTerms = baseline.create({ kind: 'edited', from: texas.id, filters: { state: ['TX'] }, keywords: 'question', idempotencyKey: KEY(11), turnstileToken: 'token' });

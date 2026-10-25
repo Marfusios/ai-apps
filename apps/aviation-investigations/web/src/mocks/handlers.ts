@@ -82,7 +82,7 @@ export interface HandlerOptions {
   evidence?: MockEvidenceConfig;
   /**
    * What `/api/config` reports as `aiAutomaticFilters` (default: as the evidence policy says,
-   * `['state']` with `state-explicit.v1.1`, else none).
+   * `['state']` with `state-explicit.v1.2`, else none).
    */
   aiAutomaticFilters?: ConfigResponse['aiAutomaticFilters'];
 }
@@ -176,7 +176,7 @@ export function createHandlers({
   deletionNeedsReauth = deletionReauthFlag(),
   accountCheck = false,
   evidence: evidenceConfig = evidenceConfigFlag(),
-  aiAutomaticFilters = evidenceConfig.autoFilters === 'state-explicit.v1.1' ? ['state'] : [],
+  aiAutomaticFilters = evidenceConfig.autoFilters === 'state-explicit.v1.2' ? ['state'] : [],
 }: HandlerOptions = {}) {
   const wait = async (): Promise<void> => {
     if (latencyMs > 0) await delay(latencyMs);

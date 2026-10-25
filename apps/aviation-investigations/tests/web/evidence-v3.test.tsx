@@ -65,7 +65,7 @@ const SLOW = { timeout: 5000 };
 const TOKEN = 'XXXX.DUMMY.TOKEN.XXXX';
 
 /** A state applied automatically, the suggested terms searched beside the question, the leading results in AI order. */
-const STATE_TERMS_AI: MockEvidenceConfig = { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.1' };
+const STATE_TERMS_AI: MockEvidenceConfig = { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.2' };
 /** The suggested terms searched instead of the question in keyword search; nothing applied automatically. */
 const TERMS_ONLY: MockEvidenceConfig = { ranking: 'er-t-v1', autoFilters: 'none' };
 
@@ -241,7 +241,7 @@ describe('what AirCase added on its own is said as such (contract evidence.v3)',
   });
 
   it('with nothing added, the suggestion keeps today’s note and its terms, whatever order AI gave', async () => {
-    freshApi({ evidence: { ranking: 'er-q-h50-v1', autoFilters: 'state-explicit.v1.1' } });
+    freshApi({ evidence: { ranking: 'er-q-h50-v1', autoFilters: 'state-explicit.v1.2' } });
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
     expect([search.automaticFilters, search.query, search.order, search.marks]).toEqual([null, { source: 'question', keywords: { kind: 'question' } }, 'ai_relevance', 'search_words']);
     const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });

@@ -119,7 +119,7 @@ export const MOCK_EVIDENCE_QUESTIONS = {
   single: 'What happened in DFW08TA066',
   /**
    * A state the question names, a suggested phase and terms: with the guarded automatic state
-   * (`state-explicit.v1.1`), Texas is applied and the phase stays a suggestion; with terms in
+   * (`state-explicit.v1.2`), Texas is applied and the phase stays a suggestion; with terms in
    * keyword search, "carb icing" is searched too and is no longer suggested.
    */
   stateTerms: 'Carb icing on approach in Texas',
@@ -134,7 +134,7 @@ export const MOCK_EVIDENCE_QUESTIONS = {
 export interface MockEvidenceConfig {
   /** What keyword search reads, and whether AI puts the leading results in order. */
   ranking: EvidenceRankingVersion;
-  /** Whether a state the question names is applied (`state-explicit.v1.1`) or only suggested (`none`). */
+  /** Whether a state the question names is applied (`state-explicit.v1.2`) or only suggested (`none`). */
   autoFilters: EvidenceAutoFilterVersion;
 }
 
@@ -843,7 +843,7 @@ export class MockEvidence {
     // A state the question names, applied only by the guarded policy and the server's own guard.
     let suggested = scope;
     let automaticFilters: EvidenceAutomaticFilters | null = null;
-    if (scope && this.config.autoFilters === 'state-explicit.v1.1' && (scope.filters.state ?? []).length > 0) {
+    if (scope && this.config.autoFilters === 'state-explicit.v1.2' && (scope.filters.state ?? []).length > 0) {
       const { states } = eligibleEmittedStates(body.question, scope.filters.state ?? []);
       if (states.length > 0) {
         automaticFilters = { state: states as EvidenceAutomaticFilters['state'] };

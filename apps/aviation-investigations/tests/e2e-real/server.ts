@@ -15,7 +15,7 @@
  *
  * A second app on the same dataset and database, http://127.0.0.1:E2E_REAL_V3_PORT (default
  * E2E_REAL_PORT + 3), serves the evidence.v3 policies the evaluation may pick instead of the live
- * defaults: a state the question names applied automatically (`state-explicit.v1.1`), the
+ * defaults: a state the question names applied automatically (`state-explicit.v1.2`), the
  * suggested terms searched beside the question and the leading results ordered by the fake
  * reranker (`er-qt-h50-v1`), for tests/e2e-real/evidence-v3.spec.ts. Like two replicas, the two
  * apps share the quota and search tables.
@@ -65,7 +65,7 @@ const env = {
 const config = loadConfig({ files: [], env });
 const v3Config = loadConfig({
   files: [],
-  env: { ...env, APP_URL: v3Url, AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.1', AVIATION_EVIDENCE_RANKING: 'er-qt-h50-v1' },
+  env: { ...env, APP_URL: v3Url, AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.2', AVIATION_EVIDENCE_RANKING: 'er-qt-h50-v1' },
 });
 
 await resetControls();
@@ -120,7 +120,7 @@ async function serve(appConfig: typeof config, listenPort: number) {
 
 // The v3 app first: the main app's health check, which Playwright waits for, then answers for both.
 const v3App = await serve(v3Config, v3Port);
-console.log(`e2e evidence.v3 server on ${v3Url} (state-explicit.v1.1, er-qt-h50-v1)`);
+console.log(`e2e evidence.v3 server on ${v3Url} (state-explicit.v1.2, er-qt-h50-v1)`);
 const app = await serve(config, port);
 console.log(`e2e server on ${appUrl}, AI evidence search on (offline fakes)`);
 

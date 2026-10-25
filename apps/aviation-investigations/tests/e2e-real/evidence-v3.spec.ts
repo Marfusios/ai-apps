@@ -2,7 +2,7 @@
  * The evidence view's `evidence.v3` disclosures end to end (UI_DESIGN §4.9): the production build
  * against the real server's second app (tests/e2e-real/server.ts, E2E_REAL_V3_PORT), whose evidence
  * policies are the ones the evaluation may pick (a state the question names applied automatically,
- * `state-explicit.v1.1`; the suggested terms searched beside the question and the leading results
+ * `state-explicit.v1.2`; the suggested terms searched beside the question and the leading results
  * ordered by the fake reranker, `er-qt-h50-v1`), over the fixture corpus with offline fakes for every
  * provider. Covered: the automatic state and the added terms, each said and removable; AI's order in
  * the count line; the suggestion keeping only what was not used; the one free undo, which the server
