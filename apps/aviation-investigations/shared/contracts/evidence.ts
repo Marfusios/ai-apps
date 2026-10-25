@@ -23,6 +23,12 @@ export const MAX_TERMS_CHARS = 300;
 export const EVIDENCE_HEADING = 'Investigations retrieved for your search';
 export const EVIDENCE_NOTICE =
   'AirCase matched your words and filters. It has not checked timing, causes or things that did not happen: read the excerpts.';
+/**
+ * The research-only boundary (gate answer 2: unconditional, like EVIDENCE_NOTICE): shown with the
+ * notice on every surface that shows an evidence search's results, whatever the scope stage did.
+ */
+export const EVIDENCE_BOUNDARY =
+  'AirCase is a research tool for published NTSB investigations, not a source of operational flight or maintenance advice.';
 
 /** Required label beside model suggestions; accepting filters never accepts terms. */
 export const EVIDENCE_SUGGESTION_LABEL = 'Suggested filters and terms — not applied';

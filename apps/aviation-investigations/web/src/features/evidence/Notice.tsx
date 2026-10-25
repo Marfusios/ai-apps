@@ -1,19 +1,26 @@
 import { Info } from 'lucide-react';
 import type { EvidenceNote } from '../../../../shared/contracts/evidence';
 import { cx } from '../../lib/cx';
-import { EVIDENCE_NOTE_TEXT, EVIDENCE_NOTICE } from './display';
+import { EVIDENCE_BOUNDARY, EVIDENCE_NOTE_TEXT, EVIDENCE_NOTICE } from './display';
 
 /**
- * The contract's fixed notice (`EVIDENCE_NOTICE`): on every surface that shows an evidence
- * search's results (the sheet, the drawer, Compare, print and phones). Ink on `raised` with an
- * ink rule: a standing condition of the results, not an error and not a data caution. A note,
- * never a live region: it is there from the first paint.
+ * The contract's fixed notice (`EVIDENCE_NOTICE`) and, under it, the research-only boundary
+ * (`EVIDENCE_BOUNDARY`): on every surface that shows an evidence search's results (the sheet, the
+ * drawer, Compare, print and phones), whatever the scope stage did (gate answer 2: both are
+ * unconditional; a capability note only adds to them). Ink on `raised` with an ink rule: a standing
+ * condition of the results, not an error and not a data caution. A note, never a live region: it is
+ * there from the first paint.
  */
 export function EvidenceNotice({ className }: { className?: string }) {
   return (
-    <p role="note" data-evidence-notice="" className={cx('rounded-chip border border-hairline border-l-[3px] border-l-ink bg-raised px-3 py-2 text-ui text-ink', className)}>
-      {EVIDENCE_NOTICE}
-    </p>
+    <div data-evidence-notice-box="" className={cx('rounded-chip border border-hairline border-l-[3px] border-l-ink bg-raised px-3 py-2 text-ui text-ink', className)}>
+      <p role="note" data-evidence-notice="">
+        {EVIDENCE_NOTICE}
+      </p>
+      <p data-evidence-boundary="" className="mt-1 text-muted">
+        {EVIDENCE_BOUNDARY}
+      </p>
+    </div>
   );
 }
 

@@ -8,6 +8,7 @@ import {
   CreateEvidenceRequestSchema,
   CreateEvidenceResponseSchema,
   EVIDENCE_NOTICE,
+  EVIDENCE_BOUNDARY,
   EvidenceExcerptSchema,
   EvidencePageSchema,
   EvidenceHintSchema,
@@ -109,6 +110,9 @@ describe('evidence.v2 contract', () => {
     expect(EVIDENCE_NOTICE).toMatch(/timing/);
     expect(EVIDENCE_NOTICE).toMatch(/causes/);
     expect(EVIDENCE_NOTICE).toMatch(/did not happen/);
+    // The research-only boundary is fixed text too, shown with the notice whatever the note.
+    expect(EVIDENCE_BOUNDARY).toContain('research tool');
+    expect(EVIDENCE_BOUNDARY).toContain('not a source of operational flight or maintenance advice');
   });
 });
 

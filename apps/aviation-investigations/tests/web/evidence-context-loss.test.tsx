@@ -11,7 +11,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { paragraphSpans } from '../../server/evidence/project';
-import { EVIDENCE_HEADING, EVIDENCE_NOTICE } from '../../shared/contracts/evidence';
+import { EVIDENCE_BOUNDARY, EVIDENCE_HEADING, EVIDENCE_NOTICE } from '../../shared/contracts/evidence';
 import { LONG_TEXT_CHARS } from '../../web/src/features/evidence/Excerpt';
 import {
   CONTEXT_LOSS_EXAMPLES,
@@ -94,6 +94,9 @@ describe('context-loss counterexamples on the initial surfaces (whole paragraphs
     renderApp(`/ai/${CONTEXT_LOSS_SEARCH_ID}`);
     await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
     expect(screen.getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
+    // The page has no capability note (note: null), yet the research-only boundary shows (gate answer 2).
+    expect(document.querySelector('[data-evidence-note]')).toBeNull();
+    expect(document.querySelector('[data-evidence-boundary]')?.textContent).toBe(EVIDENCE_BOUNDARY);
     for (const example of CONTEXT_LOSS_EXAMPLES) {
       const card = document.querySelector(`article[data-card="${example.ntsbNo}"]`) as HTMLElement;
       expect(card, example.ntsbNo).toBeTruthy();
@@ -112,6 +115,7 @@ describe('context-loss counterexamples on the initial surfaces (whole paragraphs
       const dialog = await screen.findByRole('dialog', {}, SLOW);
       const section = await within(dialog).findByRole('region', { name: EVIDENCE_HEADING }, SLOW);
       expect(within(section).getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
+      expect(section.querySelector('[data-evidence-boundary]')?.textContent).toBe(EVIDENCE_BOUNDARY);
       // On screen; printing with the drawer open prints the sheet behind it, whose card shows it too.
       expectWholeParagraph(section, example, { prints: false });
       expectWholeParagraph(document.querySelector(`article[data-card="${example.ntsbNo}"]`) as HTMLElement, example);
@@ -128,6 +132,7 @@ describe('context-loss counterexamples on the initial surfaces (whole paragraphs
       return found;
     }, SLOW);
     expect(within(top).getByRole('note').textContent).toBe(EVIDENCE_NOTICE);
+    expect(top.querySelector('[data-evidence-boundary]')?.textContent).toBe(EVIDENCE_BOUNDARY);
     for (const [i, example] of CONTEXT_LOSS_EXAMPLES.entries()) {
       const row = await waitFor(() => {
         const found = screen.queryByRole('article', { name: `${example.ntsbNo}, strip ${i + 1}` })?.querySelector<HTMLElement>('[data-strip-evidence]');
@@ -146,6 +151,7 @@ describe('context-loss counterexamples on the initial surfaces (whole paragraphs
     renderApp(`/ai/${CONTEXT_LOSS_SEARCH_ID}`);
     await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
     expect(hiddenInPrint(screen.getByRole('note'))).toBe(false);
+    expect(hiddenInPrint(document.querySelector('[data-evidence-boundary]') as HTMLElement)).toBe(false);
     for (const example of CONTEXT_LOSS_EXAMPLES) {
       const card = document.querySelector(`article[data-card="${example.ntsbNo}"]`) as HTMLElement;
       expectWholeParagraph(card, example);

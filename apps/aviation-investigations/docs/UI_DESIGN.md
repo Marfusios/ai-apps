@@ -1024,7 +1024,11 @@ note above them; counting and comparison questions get results with a hint.
    the question, never model text; it prints, and it never replaces the notice.
 6. **"Investigations retrieved for your search"** (`EVIDENCE_HEADING`) and under it, always,
    `EVIDENCE_NOTICE` in an ink-ruled note: "AirCase matched your words and filters. It has not checked
-   timing, causes or things that did not happen: read the excerpts."
+   timing, causes or things that did not happen: read the excerpts." Its second line, also always and in
+   the same box, is the research-only boundary (`EVIDENCE_BOUNDARY`): "AirCase is a research tool for
+   published NTSB investigations, not a source of operational flight or maintenance advice." Both show on
+   the sheet, the drawer, Compare, print and phones whatever the scope stage did (gate answer 2); a
+   capability note only adds to them.
 7. A count line: "21 retrieved · highest-ranked first · not every matching investigation" (DESIGN §5;
    at the ceiling it adds "the most one search ranks"; none for an empty result), and the key to the
    marks: "Marked in the excerpts: the suggested terms · their synonyms" (or "your words" when the

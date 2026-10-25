@@ -20,6 +20,7 @@ import {
   EVIDENCE_HEADING,
   EVIDENCE_NOTE_TEXT,
   EVIDENCE_NOTICE,
+  EVIDENCE_BOUNDARY,
   EvidencePageSchema,
   type EvidenceCase,
   type EvidencePage,
@@ -1239,7 +1240,7 @@ describe('a result surface shows NTSB text, coded data, fixed copy and the reade
 
   /** What a page may show: its NTSB fields and coded data, said by the deterministic display rules, and fixed copy. */
   function allowed(page: EvidencePage): string {
-    const parts: string[] = [EVIDENCE_HEADING, EVIDENCE_NOTICE, countLine(page.total), showingLine(page.cases.length, page.total), allShownLine(page.total)];
+    const parts: string[] = [EVIDENCE_HEADING, EVIDENCE_NOTICE, EVIDENCE_BOUNDARY, countLine(page.total), showingLine(page.cases.length, page.total), allShownLine(page.total)];
     parts.push(showMoreLabel(page.cases.length, page.total, 10), '(free)', 'Marked in the excerpts:', page.suggestion ? LEGEND.suggested : LEGEND.yours, LEGEND.synonym, '; dotted:', '·', expiryLine(page.expiresAt));
     for (const c of page.cases) {
       const row = c.case;

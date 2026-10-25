@@ -13,6 +13,7 @@ import {
   EVIDENCE_HEADING,
   EVIDENCE_NOTE_TEXT,
   EVIDENCE_NOTICE,
+  EVIDENCE_BOUNDARY,
   EVIDENCE_SUGGESTION_LABEL,
   type EvidenceExcerpt,
   type EvidencePage,
@@ -24,7 +25,7 @@ import { formatDate } from '../../../../shared/format';
 import { formatCount, numberWord } from '../../lib/format';
 import { canonicalFilters } from '../ai/unsettled';
 
-export { EVIDENCE_HEADING, EVIDENCE_NOTE_TEXT, EVIDENCE_NOTICE };
+export { EVIDENCE_BOUNDARY, EVIDENCE_HEADING, EVIDENCE_NOTE_TEXT, EVIDENCE_NOTICE };
 
 // ---------------------------------------------------------------------------
 // Builder copy (Task 23), for the owner's review.
