@@ -14,11 +14,11 @@
  * leaves the machine. Generated briefs stay off (`AI_BRIEFS_ENABLED=false`).
  *
  * A second app on the same dataset and database, http://127.0.0.1:E2E_REAL_V3_PORT (default
- * E2E_REAL_PORT + 3), serves the evidence.v3 policies the evaluation may pick instead of the live
- * defaults: a state the question names applied automatically (`state-explicit.v1.2`), the
- * suggested terms searched beside the question and the leading results ordered by the fake
- * reranker (`er-qt-h50-v1`), for tests/e2e-real/evidence-v3.spec.ts. Like two replicas, the two
- * apps share the quota and search tables.
+ * E2E_REAL_PORT + 3), serves the evidence.v3 configuration live runs instead of the server's
+ * defaults: the question alone in keyword search, in match order (`er-q-v1`), and a state the
+ * question names applied automatically by the guarded policy (`state-explicit.v1.2`), for
+ * tests/e2e-real/evidence-v3.spec.ts. Like two replicas, the two apps share the quota and search
+ * tables.
  *
  * It resets aviation_test's corpus and control tables, so do not run it alongside
  * `pnpm test:integration`.
@@ -37,7 +37,7 @@ import { deleteIndices, fixtureEmbedder, FIXTURE_EMBEDDING, publishFixtureDatase
 import { APP_DIR } from '../support/extract-dir.js';
 import { FakeSiteverify } from '../support/fake-siteverify.js';
 import { resetControls, testDb, testEs, testEsReader } from '../integration/helpers.js';
-import { e2eEvidenceScope, e2eRerank } from './evidence-fakes.js';
+import { e2eEvidenceScope } from './evidence-fakes.js';
 
 const port = Number(process.env.E2E_REAL_PORT) || 5181;
 const appUrl = `http://127.0.0.1:${port}`;
@@ -65,7 +65,7 @@ const env = {
 const config = loadConfig({ files: [], env });
 const v3Config = loadConfig({
   files: [],
-  env: { ...env, APP_URL: v3Url, AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.2', AVIATION_EVIDENCE_RANKING: 'er-qt-h50-v1' },
+  env: { ...env, APP_URL: v3Url, AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.2', AVIATION_EVIDENCE_RANKING: 'er-q-v1' },
 });
 
 await resetControls();
@@ -83,7 +83,7 @@ const siteverify = new FakeSiteverify(() => new Date(), { hostname: '127.0.0.1',
 async function serve(appConfig: typeof config, listenPort: number) {
   const ai = createAiRuntime(appConfig, {
     db,
-    llm: createFakeProvider({ evidenceScope: e2eEvidenceScope, rerank: e2eRerank }),
+    llm: createFakeProvider({ evidenceScope: e2eEvidenceScope }),
     turnstile: { fetch: siteverify.fetch, retryDelayMs: 0 },
     // Every browser of the parallel workers is one network, 127.0.0.1: new trials are not limited.
     trialLimits: { perNetworkHour: 10_000, perNetworkDay: 10_000, globalDay: 10_000 },
@@ -120,7 +120,7 @@ async function serve(appConfig: typeof config, listenPort: number) {
 
 // The v3 app first: the main app's health check, which Playwright waits for, then answers for both.
 const v3App = await serve(v3Config, v3Port);
-console.log(`e2e evidence.v3 server on ${v3Url} (state-explicit.v1.2, er-qt-h50-v1)`);
+console.log(`e2e evidence.v3 server on ${v3Url} (what live runs: er-q-v1, state-explicit.v1.2)`);
 const app = await serve(config, port);
 console.log(`e2e server on ${appUrl}, AI evidence search on (offline fakes)`);
 
