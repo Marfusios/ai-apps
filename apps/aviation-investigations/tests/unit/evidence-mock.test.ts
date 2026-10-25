@@ -1,9 +1,11 @@
 /**
  * The mock evidence searches (web/mock/evidence.ts) that the component and end-to-end tests of
- * the evidence view read: every page and response they can produce is valid under the contract
- * (`evidence.v2`), every excerpt is a verbatim slice of its fixture section at its paragraph
- * span, the suggestion never changes what is retrieved, and between them the samples cover
- * every state the interface shows.
+ * the evidence view read: every page and response they can produce, in every configuration the
+ * mock stands in for, is valid under the contract (`evidence.v3`), every excerpt is a verbatim
+ * slice of its fixture section at its paragraph span, an unapplied suggestion never changes what
+ * is retrieved, what each configuration applies on its own is disclosed as the server discloses
+ * it, the one free undo follows the server's rule, and between them the samples cover every state
+ * the interface shows.
  */
 import { describe, expect, it } from 'vitest';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
@@ -11,7 +13,16 @@ import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { CreateEvidenceResponseSchema, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
 import { isNarrativeHeading, wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
 import casesJson from '../../web/mock/cases.json' with { type: 'json' };
-import { MOCK_EVIDENCE_QUESTIONS, MockEvidence, evidenceCases, questionWords } from '../../web/mock/evidence.js';
+import {
+  MOCK_EVIDENCE_BASELINE,
+  MOCK_EVIDENCE_QUESTIONS,
+  MockEvidence,
+  aiOrder,
+  evidenceCases,
+  parseMockEvidenceConfig,
+  questionWords,
+  type MockEvidenceConfig,
+} from '../../web/mock/evidence.js';
 
 const CASES = casesJson as unknown as Record<string, CaseDetail>;
 const KEY = (n: number): string => `evidence-key-${String(n).padStart(4, '0')}`;
@@ -41,27 +52,55 @@ function results(server: MockEvidence, question: string, n = 1): EvidencePage {
 }
 
 /** An edited search of `from`: exactly `filters`, and `terms` when given. */
-function edit(server: MockEvidence, from: EvidencePage, filters: BriefFilters, terms: string | undefined, n: number): EvidencePage {
-  const reply = server.create({ kind: 'edited', from: from.id, filters, ...(terms !== undefined ? { terms } : {}), idempotencyKey: KEY(n), turnstileToken: 'token' });
+function edit(server: MockEvidence, from: EvidencePage, filters: BriefFilters, terms: string | null | undefined, n: number): EvidencePage {
+  const reply = server.create({ kind: 'edited', from: from.id, filters, ...(terms !== undefined && terms !== null ? { terms } : {}), idempotencyKey: KEY(n), turnstileToken: 'token' });
   expect(reply.status).toBe(201);
   const body = CreateEvidenceResponseSchema.parse(reply.body);
   if (body.kind !== 'results') throw new Error('expected results');
   return body.search;
 }
 
+/**
+ * An edit of `from` that sends `filters` and, with `restore`, the question's own keywords (when
+ * `from` added terms to keyword search): the reply and its page.
+ */
+function undoReply(server: MockEvidence, from: EvidencePage, filters: BriefFilters, restore: boolean, n: number) {
+  const added = from.query.source === 'question' && from.query.keywords.kind !== 'question';
+  const body = { kind: 'edited', from: from.id, filters, ...(restore && added ? { keywords: 'question' as const } : {}), idempotencyKey: KEY(n), turnstileToken: 'token' } as const;
+  const exempt = server.quotaExempt(body);
+  const reply = server.create(body);
+  expect(reply.status).toBe(201);
+  const answer = CreateEvidenceResponseSchema.parse(reply.body);
+  return { reply, exempt, search: answer.search };
+}
+
+function undo(server: MockEvidence, from: EvidencePage, filters: BriefFilters, restore: boolean, n: number): EvidencePage {
+  return undoReply(server, from, filters, restore, n).search;
+}
+
+/** The configurations the tests use: the live baseline, and the ones the evaluation may pick. */
+const CONFIGS: Record<string, MockEvidenceConfig> = {
+  baseline: MOCK_EVIDENCE_BASELINE,
+  questionTermsAiOrderState: { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.1' },
+  termsState: { ranking: 'er-t-v1', autoFilters: 'state-explicit.v1.1' },
+  questionAiOrder: { ranking: 'er-q-h100-v1', autoFilters: 'none' },
+};
+
 /** Where each case's excerpts are: what retrieval chose, whatever words they mark. */
 const placement = (cases: readonly EvidenceCase[]) => cases.map((c) => [c.rank, c.case.ntsbNo, c.excerpts.map((e) => `${e.sectionKey}@${e.paragraph.start}`)]);
 
-describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
-  // Nothing blocks a search: every sample question gets results.
-  const searches = Object.entries(MOCK_EVIDENCE_QUESTIONS);
+describe('mock evidence pages are valid evidence.v3 and NTSB text only', () => {
+  // Nothing blocks a search: every sample question gets results, in every configuration.
+  const searches = Object.entries(CONFIGS).flatMap(([config, c]) => Object.entries(MOCK_EVIDENCE_QUESTIONS).map(([name, question]) => [`${config}, ${name}`, question, c] as const));
 
-  it.each(searches)('%s: every page validates, and every excerpt is the section text at its paragraph span', (_name, question) => {
-    const server = new MockEvidence();
+  it.each(searches)('%s: every page validates, and every excerpt is the section text at its paragraph span', (_name, question, config) => {
+    const server = new MockEvidence({ config });
     const first = results(server, question);
-    // With its suggestion applied too, filters and words (the edited pages the interface makes).
+    // With its suggestion applied too, filters and words (the edited pages the interface makes),
+    // and with what AirCase added taken out again.
     const applied = first.suggestion ? [edit(server, first, first.suggestion.filters, undefined, 2), edit(server, first, first.suggestion.filters, first.suggestion.terms, 3)] : [];
-    for (const page of [first, ...applied]) {
+    const undone = first.automaticFilters || (first.query.source === 'question' && first.query.keywords.kind !== 'question') ? [undo(server, first, {}, true, 4)] : [];
+    for (const page of [first, ...applied, ...undone]) {
       for (const c of readAll(server, page)) {
         const detail = CASES[c.case.ntsbNo] as CaseDetail;
         expect(detail, c.case.ntsbNo).toBeDefined();
@@ -90,7 +129,9 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
     const seed = results(server, MOCK_EVIDENCE_QUESTIONS.seed, 101);
     expect(seed.pages).toBeGreaterThanOrEqual(3);
     expect(seed.cases).toHaveLength(EVIDENCE_PAGE_SIZE);
-    expect([seed.query, seed.appliedFilters, seed.hint, seed.note]).toEqual([{ source: 'question' }, {}, null, null]);
+    expect([seed.query, seed.appliedFilters, seed.hint, seed.note]).toEqual([{ source: 'question', keywords: { kind: 'question' } }, {}, null, null]);
+    // The baseline: nothing applied on its own, the match order, the suggested terms marked.
+    expect([seed.automaticFilters, seed.order, seed.marks, seed.freeUndo]).toEqual([null, 'match', 'suggested_terms', false]);
     // A suggestion of filters and words, not applied: the question's results are every case of the cohort.
     const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb, 102);
     expect(carb.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'carb icing' });
@@ -192,11 +233,13 @@ describe('the suggestion is advisory only', () => {
     const filtersOnly = edit(server, carb, { phase: ['approach'] }, undefined, 2);
     expect([filtersOnly.question, filtersOnly.query, filtersOnly.appliedFilters, filtersOnly.suggestion, filtersOnly.hint]).toEqual([
       carb.question,
-      { source: 'question' },
+      { source: 'question', keywords: { kind: 'question' } },
       { phase: ['approach'] },
       null,
       null,
     ]);
+    // An edit has no suggestion, so it marks its own words; it applies nothing on its own and is no undo.
+    expect([filtersOnly.marks, filtersOnly.automaticFilters, filtersOnly.freeUndo]).toEqual(['search_words', null, false]);
     // Ranked by the question's words within the filter, the excerpts marking them.
     expect(placement(readAll(server, filtersOnly))).toEqual(placement(evidenceCases({ phase: ['approach'] }, questionWords(carb.question))));
     expect(filtersOnly.cases.every((c) => c.relevance.filters.join() === 'phase')).toBe(true);
@@ -278,5 +321,156 @@ describe('the mock evidence server', () => {
     expect(lost.lost).toBe(true);
     const replay = server.create({ kind: 'question', question: 'Power loss, lost response', idempotencyKey: KEY(11), turnstileToken: 'token' });
     expect([replay.status, replay.replayed]).toEqual([201, true]);
+  });
+});
+
+describe('every configuration says what it applied on its own (evidence.v3)', () => {
+  it('the baseline searches the question alone, in match order, and marks the suggested terms while there are some', () => {
+    const server = new MockEvidence();
+    const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb);
+    expect(carb.query).toEqual({ source: 'question', keywords: { kind: 'question' } });
+    expect([carb.automaticFilters, carb.order, carb.marks, carb.freeUndo]).toEqual([null, 'match', 'suggested_terms', false]);
+    // A named state is only suggested: nothing is applied without the guarded policy.
+    const texas = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms, 2);
+    expect([texas.automaticFilters, texas.appliedFilters]).toEqual([null, {}]);
+    expect(texas.suggestion).toEqual({ filters: { phase: ['approach'], state: ['TX'] }, terms: 'carb icing' });
+    // No suggestion: the question's own words are marked.
+    expect(results(server, MOCK_EVIDENCE_QUESTIONS.noSuggestion, 3).marks).toBe('search_words');
+  });
+
+  it('a state the question names is applied by the guarded policy, searched with the added terms, in AI order; what was used is not suggested again', () => {
+    const server = new MockEvidence({ config: CONFIGS.questionTermsAiOrderState });
+    const page = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms);
+    expect(page.automaticFilters).toEqual({ state: ['TX'] });
+    expect(page.appliedFilters).toEqual({ state: ['TX'] });
+    expect(page.query).toEqual({ source: 'question', keywords: { kind: 'question+terms', terms: 'carb icing' } });
+    expect([page.order, page.marks, page.freeUndo]).toEqual(['ai_relevance', 'search_words', false]);
+    // The phase stays a suggestion; the state and the terms were used, so they are not suggested.
+    expect(page.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: null });
+    // Every case meets the state, and its relevance facts say so.
+    const cases = readAll(server, page);
+    expect(cases.length).toBeGreaterThan(0);
+    expect(cases.every((c) => c.case.state?.code === 'TX' && c.relevance.filters.includes('state'))).toBe(true);
+    // Two states named together are applied as one filter, either state.
+    const two = results(server, MOCK_EVIDENCE_QUESTIONS.twoStates, 2);
+    expect(two.automaticFilters).toEqual({ state: ['CA', 'NV'] });
+    expect(readAll(server, two).every((c) => ['CA', 'NV'].includes(c.case.state?.code ?? ''))).toBe(true);
+    // A suggestion with nothing left is no suggestion.
+    expect(results(server, MOCK_EVIDENCE_QUESTIONS.seed, 3).suggestion).toBeNull();
+  });
+
+  it('terms instead of the question in keyword search, and a guard that abstains', () => {
+    const server = new MockEvidence({ config: CONFIGS.termsState });
+    const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb);
+    expect(carb.query).toEqual({ source: 'question', keywords: { kind: 'terms', terms: 'carb icing' } });
+    expect([carb.automaticFilters, carb.order, carb.marks]).toEqual([null, 'match', 'search_words']);
+    expect(carb.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: null });
+    // "Georgia" alone is ambiguous (the server's guard): suggested, never applied.
+    const georgia = results(server, 'Engine failure in Georgia', 2);
+    expect(georgia.automaticFilters).toBeNull();
+    expect(georgia.suggestion?.filters.state).toEqual(['GA']);
+  });
+
+  it('AI order reorders only the leading cases, by a fixed stand-in for the grades, and keeps every case', () => {
+    const server = new MockEvidence({ config: CONFIGS.questionAiOrder });
+    const page = results(server, MOCK_EVIDENCE_QUESTIONS.seed);
+    expect(page.order).toBe('ai_relevance');
+    const ai = readAll(server, page);
+    const match = evidenceCases({}, questionWords(MOCK_EVIDENCE_QUESTIONS.seed), MOCK_EVIDENCE_QUESTIONS.seed);
+    expect(ai.map((c) => c.rank)).toEqual(ai.map((_c, i) => i + 1));
+    expect(new Set(ai.map((c) => c.case.ntsbNo))).toEqual(new Set(match.map((c) => c.case.ntsbNo)));
+    expect(ai.map((c) => c.case.ntsbNo)).not.toEqual(match.map((c) => c.case.ntsbNo));
+    // Past the depth the match order stands.
+    const deep = aiOrder(match, 'engine', 5);
+    expect(deep.slice(5).map((c) => c.case.ntsbNo)).toEqual(match.slice(5).map((c) => c.case.ntsbNo));
+    // Nothing to grade: the match order.
+    expect(results(server, 'Engine power loss, nothing found', 2).order).toBe('match');
+    // An edit is ordered by AI too.
+    expect(edit(server, page, { phase: ['approach'] }, undefined, 3).order).toBe('ai_relevance');
+  });
+
+  it('session storage names a configuration as JSON; anything else is the baseline', () => {
+    expect(parseMockEvidenceConfig(JSON.stringify(CONFIGS.questionTermsAiOrderState))).toEqual(CONFIGS.questionTermsAiOrderState);
+    expect(parseMockEvidenceConfig(null)).toEqual(MOCK_EVIDENCE_BASELINE);
+    expect(parseMockEvidenceConfig('{"ranking":"er-x","autoFilters":"state-explicit.v1"}')).toEqual(MOCK_EVIDENCE_BASELINE);
+    expect(parseMockEvidenceConfig('not json')).toEqual(MOCK_EVIDENCE_BASELINE);
+  });
+});
+
+describe('the one free undo follows the server’s rule (server/evidence/undo.ts)', () => {
+  const v3 = () => new MockEvidence({ config: CONFIGS.questionTermsAiOrderState });
+
+  it('removing the whole automatic state, the added terms, or both is free, once per search', () => {
+    for (const [filters, restore] of [
+      [{}, false],
+      [{ state: ['TX'] }, true],
+      [{}, true],
+    ] as [BriefFilters, boolean][]) {
+      const server = v3();
+      const parent = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms);
+      const first = undoReply(server, parent, filters, restore, 2);
+      expect([first.exempt, first.reply.quotaExempt, first.search.freeUndo]).toEqual([true, true, true]);
+      // What it searched: the question's own keywords once restored, else the parent's; nothing automatic.
+      expect(first.search.query).toEqual(restore ? { source: 'question', keywords: { kind: 'question' } } : parent.query);
+      expect([first.search.automaticFilters, first.search.appliedFilters]).toEqual([null, filters]);
+      // A replay of its key is the same search, and spends nothing.
+      const replay = server.create({ kind: 'edited', from: parent.id, filters, ...(restore ? { keywords: 'question' as const } : {}), idempotencyKey: KEY(2), turnstileToken: 'token' });
+      expect([replay.replayed, (replay.body as { search: EvidencePage }).search.id]).toEqual([true, first.search.id]);
+      // Any later undo of the same search uses one.
+      const again = undoReply(server, parent, filters, restore, 3);
+      expect([again.exempt, again.reply.quotaExempt, again.search.freeUndo]).toEqual([false, false, false]);
+    }
+  });
+
+  it('every other edit uses one: a narrower state, a no-op, keywords with no added terms, words of their own, another filter, an edit’s edit', () => {
+    const server = v3();
+    const two = results(server, MOCK_EVIDENCE_QUESTIONS.twoStates, 1);
+    // One of two states left narrows the search.
+    expect(undoReply(server, two, { state: ['NV'] }, false, 2).search.freeUndo).toBe(false);
+    const parent = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms, 3);
+    const charged = (body: Record<string, unknown>, n: number) => {
+      const request = { kind: 'edited', from: parent.id, idempotencyKey: KEY(n), turnstileToken: 'token', ...body } as Parameters<MockEvidence['create']>[0];
+      expect(server.quotaExempt(request)).toBe(false);
+      const reply = server.create(request);
+      expect([reply.status, reply.quotaExempt]).toEqual([201, false]);
+      return CreateEvidenceResponseSchema.parse(reply.body).search;
+    };
+    // Nothing removed.
+    charged({ filters: { state: ['TX'] } }, 4);
+    // The parent's own terms sent as words, even the same ones.
+    charged({ filters: {}, terms: 'carb icing' }, 5);
+    // A filter added beside the removal.
+    charged({ filters: { phase: ['approach'] } }, 6);
+    charged({ filters: { state: ['TX'], phase: ['approach'] }, keywords: 'question' }, 7);
+    // Still free after all of those: none of them was an undo.
+    const free = undoReply(server, parent, {}, false, 8).search;
+    expect(free.freeUndo).toBe(true);
+    // An edit is never an undo's parent, even one that kept the question and its added terms.
+    expect(free.query).toEqual(parent.query);
+    expect(undoReply(server, free, {}, true, 9).search.freeUndo).toBe(false);
+    // Keywords restored when the question added no terms: nothing to remove.
+    const baseline = new MockEvidence({ config: { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.1' } });
+    const texas = results(baseline, MOCK_EVIDENCE_QUESTIONS.stateTerms, 10);
+    expect(texas.query).toEqual({ source: 'question', keywords: { kind: 'question' } });
+    const noTerms = baseline.create({ kind: 'edited', from: texas.id, filters: { state: ['TX'] }, keywords: 'question', idempotencyKey: KEY(11), turnstileToken: 'token' });
+    expect(noTerms.quotaExempt).toBe(false);
+    // …and the state removed with it is still an undo only without them.
+    expect(baseline.create({ kind: 'edited', from: texas.id, filters: {}, keywords: 'question', idempotencyKey: KEY(12), turnstileToken: 'token' }).quotaExempt).toBe(false);
+    expect(baseline.create({ kind: 'edited', from: texas.id, filters: {}, idempotencyKey: KEY(13), turnstileToken: 'token' }).quotaExempt).toBe(true);
+  });
+
+  it('a search that is gone, or someone else’s, cannot be undone', () => {
+    let visitor: 'trial' | 'account' = 'trial';
+    let now = new Date('2026-10-25T10:00:00.000Z');
+    const server = new MockEvidence({ config: CONFIGS.questionTermsAiOrderState, visitor: () => visitor, now: () => now });
+    const parent = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms);
+    const body = { kind: 'edited', from: parent.id, filters: {}, keywords: 'question', idempotencyKey: KEY(2), turnstileToken: 'token' } as const;
+    visitor = 'account';
+    expect(server.quotaExempt(body)).toBe(false);
+    expect(server.create(body).status).toBe(404);
+    visitor = 'trial';
+    now = new Date(now.getTime() + EVIDENCE_TTL_MS);
+    expect(server.quotaExempt({ ...body, idempotencyKey: KEY(3) })).toBe(false);
+    expect(server.create({ ...body, idempotencyKey: KEY(3) }).status).toBe(404);
   });
 });
