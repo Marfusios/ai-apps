@@ -966,14 +966,25 @@ remain those evaluated for Task 24; automatic filters are an independent, frozen
 policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
 identity includes the outputs of a fixed, versioned guard-probe set; a changed response
 to any probe changes the hash even without a guard version bump. Live accepts
-`none` and the reviewed `state-explicit.v1.1`; the default stays `none` and an operator
+`none` and the reviewed `state-explicit.v1.2`; the default stays `none` and an operator
 must explicitly enable state in the environment settings. The independent live
-ranking allowlist remains `er-q-v1` only. `state-explicit.v1.1` uses
+ranking allowlist remains `er-q-v1` only. `state-explicit.v1.2` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
 It requires the complete explicit event-state set and abstains on ambiguous places,
 negation, unsafe contexts or unsupported attribution. After NFKC, a full state name
 followed by city/county/river or any other guarded place suffix also abstains.
-This adds only rejections to the evaluated v1 state guard. Other fields stay advisory.
+The v1.2 rule also abstains, after NFKC and without case sensitivity, on another/other/
+previous/prior/earlier/later/similar/same/second/related/like followed by an event noun
+(accident, crash, event, incident, occurrence, mishap, investigation or case, including
+plurals), with up to two intervening word or hyphenated-word tokens. `titles`,
+`headline` and `headlines` also abstain. The private reason is `other_event`.
+For example, "discuss another accident in Alaska" does not establish the requested
+event's state; "accidents in Alaska related to icing" still does. These are only
+additional rejections: v1.2 is a strict subset of v1.1, which is a subset of v1.
+The controller's replay of 1,040 recorded C field answers retained the same
+367 TP / 0 FP / 33 FN, with zero applications lost. This is retrospective coverage
+of those answers, not a recall guarantee for new questions. v1.1 was never deployed
+and is no longer an accepted setting. Other fields stay advisory.
 Edits never apply automatic filters. Accepted state values become retrieval filters
 before all three channels run and are removed from the remaining suggestion.
 

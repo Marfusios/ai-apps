@@ -314,9 +314,21 @@ backup exclusion and 24-hour expiry.
 ## Evidence.v3 automatic-state and free-undo boundary (pending review)
 
 The automatic-state policy is frozen/hashed separately from the evaluated rankings.
-Its sole live allowlist entry remains `none`. The v1.1 state guard accepts only a
-complete explicit model-emitted event-state set; new state-named-place rejection
-can only reduce v1's applied set. No other scope filter is applied automatically.
+Live allows `none` (the default and rollback) and `state-explicit.v1.2`; v1.1 was
+never deployed and is no longer accepted. The guard accepts only a complete explicit
+model-emitted event-state set. State-named-place rejection reduces v1's applied set;
+v1.2 adds a further `other_event` rejection after NFKC for other-event references or
+title/headline wording. The case-insensitive rule allows at most two intervening
+word or hyphenated-word tokens between its reference word and event noun (DESIGN).
+It rejects "discuss another accident in Alaska" and "titles include accidents in
+Alaska", while retaining "cases in Texas involving other aircraft". The rule is
+a strict subset of v1.1, so it cannot introduce a new automatic application.
+The controller replayed all 1,040 recorded C field answers: v1.1 and v1.2 both
+produced 367 TP / 0 FP / 33 FN, with no applications lost. This is retrospective
+evidence limited to those answers, not proof of complete semantic safety or future
+recall. No other scope filter is applied automatically; live ranking remains
+`er-q-v1` only. The old v1/v1.1 guard regressions remain intact, alongside independent
+new-rule probes, actual-source mutation tests and a frozen-v1.1 subset sanity test.
 Scope's evaluated schema remains non-nullable and unchanged despite nullable terms
 in the public remaining suggestion. Private policy/reason/ledger metadata is never
 spread into the strict public page.

@@ -580,28 +580,39 @@ work supplies the v3 contract below but grants none of those release clearances.
 ### Evidence automatic filters and v3 rollout
 
 `AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default) or
-`state-explicit.v1.1`. Both are allowed on dev and live following the state policy's
+`state-explicit.v1.2`. Both are allowed on dev and live following the state policy's
 field confirmation and review. Unknown values fail startup. The default stays
-`none`: to enable state on live, set `AVIATION_EVIDENCE_AUTO_FILTERS=state-explicit.v1.1`
+`none`: to enable state on live, set `AVIATION_EVIDENCE_AUTO_FILTERS=state-explicit.v1.2`
 in that environment's settings and run `pnpm app:up` with those settings.
 This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
 it does not change any evaluated ranking hash. The Docker service passes it through.
 The live ranking allowlist remains **`er-q-v1` only**.
 Each saved search records both configuration identities. No reindex is needed.
+v1.1 was never deployed and is no longer accepted; replace an unreleased v1.1
+setting with v1.2 before startup. v1.2 adds only a rejection for another-event or
+title attribution after NFKC: for example, "discuss another accident in Alaska",
+"similar to the crash in Alaska" and "titles include accidents in Alaska" cannot
+apply state. "Accidents in Alaska related to icing" and "cases in Texas involving
+other aircraft" remain eligible. See DESIGN for the bounded, case-insensitive rule.
+Its accepted set is a strict subset of v1.1 (and a subset of v1). The controller's
+replay of all 1,040 recorded C field answers lost zero applications: both versions
+gave 367 TP / 0 FP / 33 FN. That result covers the recorded answers, not all future
+wording; it does not widen the ranking or other-field allowlists.
 `GET /api/config` reports `aiAutomaticFilters: []` for `none` and `['state']` for
 the state policy. Client copy follows this field, not a fixed claim about states.
 A policy change changes the response ETag even on the same dataset; the existing
 public cache lifetime is five minutes.
-The automatic-policy identity includes `state-probes.v3` outputs. Current hashes:
+The automatic-policy identity includes `state-probes.v4` outputs. Current hashes:
 
 | Policy | SHA-256 |
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
-| `state-explicit.v1.1` | `b63a7a979a1188b700143640a64e6c061efd3893ab4b475c4d53c929945e4e33` |
+| `state-explicit.v1.2` | `1d39528180f30696b60d254b7275c97704d8dc6e03ba6122256670f1c6bb8531` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs; `none`
 records no active guard. Do not relabel older cached results with these identities.
-The eleven ranking identities are unchanged.
+The v1.2 policy binds `state-probes.v4` (301 probes, including independent witnesses
+for every other-event/title alternative). The eleven ranking identities are unchanged.
 
 
 Apply migration 0025 before serving v3. Its known local-test-only round-2 and round-3 versions are
