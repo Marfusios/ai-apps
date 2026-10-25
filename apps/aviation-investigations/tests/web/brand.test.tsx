@@ -174,7 +174,7 @@ describe('the About page (UI_DESIGN §4.8)', () => {
     // The AI line follows the AI status (Task 23): the mock's visitor has AI searches.
     await waitFor(() =>
       expect(screen.getByRole('main').textContent).toContain(
-        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.',
+        'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state your question names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.',
       ),
     );
     expect(screen.getByRole('main').textContent).not.toContain('AI features are not available yet.');

@@ -38,11 +38,14 @@ import {
 } from '../features/explore/url-state';
 
 /**
- * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23; Builder copy for the owner's
- * review): what an AI search does, never a promise to explain or group the results. It searches
- * the question alone (contract `evidence.v3`), so the nudge says when the filters set here stay behind.
+ * The quiet AI nudge under the results (UI_DESIGN §4.2, Task 23, Task 24; Builder copy for the
+ * owner's review): what an AI search does, never a promise to explain or group the results. It
+ * searches with the question alone (contract `evidence.v3`), applying a US state the question names
+ * explicitly (removable) and only suggesting the rest, so the nudge also says when the filters set
+ * here stay behind.
  */
-export const AI_NUDGE = 'Ask in plain English: AirCase searches with your question, and AI suggests filters you can choose to apply.';
+export const AI_NUDGE =
+  'Ask in plain English: AirCase searches with your question. A US state it names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
 export const AI_NUDGE_FILTERS = 'It searches the question alone, not the filters set here.';
 
 interface ExploreLocationState {

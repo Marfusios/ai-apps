@@ -10,9 +10,13 @@ import { formatChartDate, formatCount } from '../lib/format';
 
 /** The About page's line on AI while it is off (UI_DESIGN §4.8, owner decision of 2026-10-24). */
 export const AI_OFF_LINE = 'AI features are not available yet.';
-/** …and once AI searches are offered (Task 23): what the evidence view does, in plain words (the advisory-only design). */
+/**
+ * …and once AI searches are offered (Task 23; Task 24): what the evidence view does, in plain words:
+ * a US state the question names explicitly is applied (and can be removed); everything else the AI
+ * suggests stays a suggestion.
+ */
 export const AI_ON_LINE =
-  'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words, and AI suggests filters you can choose to apply.';
+  'Ask in plain English: AirCase shows the investigations it retrieved for your question, in their own words. A US state your question names explicitly is applied automatically, and you can remove it; everything else AI suggests stays a suggestion.';
 
 /** `tabTitle` is the browser tab's whole title, the route's shared one (shared/page-titles.ts). */
 export function TextPage({ eyebrow, title, tabTitle, children }: { eyebrow: string; title: string; tabTitle: string; children: ReactNode }) {
