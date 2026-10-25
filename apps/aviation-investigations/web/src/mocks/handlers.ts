@@ -205,7 +205,7 @@ export function createHandlers({
     }
   };
   const admit = <T,>(reply: MockReply<T>): Response => {
-    // A started brief (202) or a search with results (201) uses one; a static reply (200) does not.
+    // A started brief (202) or an evidence search (201: always results) uses one; a brief's static reply (200) does not.
     if (reply.status < 300 && !reply.replayed) admitted(reply.status === 202 || reply.status === 201);
     // The server may have acted, but the answer never arrives.
     if (reply.lost) return HttpResponse.error();

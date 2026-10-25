@@ -15,8 +15,9 @@
  *   US state, "since 2015") and the rest into search words. It is never applied; when there is
  *   one, the excerpts mark its words, else the query's own. The server, not the scope stage, reads
  *   an explicit counting request (the dashboard hint) or comparison request with case numbers (the
- *   compare hint) from the question; both still get results. Policy replies (out of scope,
- *   operational advice) are the server's own templates (server/briefs/static-replies.ts).
+ *   compare hint) from the question; both still get results. Nothing blocks a search: a question
+ *   about something else, or asking for operational advice, gets its results with one of the
+ *   contract's fixed capability notes (`EVIDENCE_NOTE_TEXT`) and no suggestion.
  * - **Projection**: the probable-cause statements in section order; up to three whole
  *   paragraphs (runs of text between line breaks) of the factual and analysis sections with
  *   the most matches of the marked words, highlighted as `literal` (the word itself) or
@@ -24,9 +25,9 @@
  *   counted from those excerpts; the channels that would find it.
  *
  * Questions with these words get the other outcomes (as in web/mock/briefs.ts):
- * - "poem", "recipe", "stock" or "bitcoin": out of scope; "what should i do", "right now" or
- *   "should i fly": operational advice; "how many", "how often" or "trend": the dashboard hint;
- *   "compare" or "versus" with case numbers: the compare hint;
+ * - "poem", "recipe", "stock" or "bitcoin": the scope note; "what should i do", "right now" or
+ *   "should i fly": the operational-advice note; "how many", "how often" or "trend": the
+ *   dashboard hint; "compare" or "versus" with case numbers: the compare hint;
  * - "scope failure": the scope stage fails, so the search has no suggestion (results still come);
  * - "nothing": no investigation retrieved;
  * - "expire": the search is created, then reads of it answer 404 (it expired);
@@ -45,15 +46,15 @@ import {
   type CreateEvidenceResponse,
   type EvidenceCase,
   type EvidenceExcerpt,
+  type EvidenceNote,
   type EvidencePage,
   type EvidenceRelevance,
 } from '../../shared/contracts/evidence.js';
-import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters, type ScopeReply } from '../../shared/contracts/briefs.js';
+import { BRIEF_FILTER_FACETS, type BriefFilterFacet, type BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail, Section } from '../../shared/contracts/cases.js';
 import type { ErrorResponse } from '../../shared/contracts/common.js';
 import { SECTION_LABEL, defaultSearchRequest, type CaseRow, type SearchRequest } from '../../shared/contracts/search.js';
 import { US_STATE } from '../../shared/vocab.js';
-import { operationalReply, outOfScopeReply } from '../../server/briefs/static-replies.js';
 import { AVIATION_SYNONYMS } from '../../shared/aviation-analysis.js';
 import { searchCorpus, type MockCorpus } from './engine.js';
 import type { MockReader, MockReply } from './briefs.js';
@@ -82,7 +83,9 @@ export const MOCK_EVIDENCE_QUESTIONS = {
   multibyte: 'Spatial disorientation and loss of control',
   /** The scope stage failed: the question's own results, no suggestion. */
   noSuggestion: 'Bird strike damage, scope failure',
+  /** About something else: its results anyway, with the scope note. */
   outOfScope: 'Write a poem about clouds',
+  /** Asking for operational advice: its results anyway, with the operational-advice note. */
   operational: 'What should I do right now, my engine is running rough',
   /** An explicit counting request: results, and the dashboard hint. */
   statistics: 'How many helicopter accidents happened in Texas',
@@ -192,26 +195,26 @@ export function questionWords(question: string): string {
   return words.join(' ').slice(0, MAX_TERMS_CHARS).trim() || question.trim().slice(0, MAX_TERMS_CHARS);
 }
 
-/** The policy replies an evidence search can get instead of results (no search is made). */
-export type EvidenceScopeReply = Extract<ScopeReply, { kind: 'out_of_scope' | 'operational_advice' }>;
-
-/** A policy reply instead of a search (the server's own templates), or null for a case search. */
-export function scopeReplyFor(question: string): EvidenceScopeReply | null {
+/**
+ * The capability note a question's intent selects (a stand-in for the validated scope intent):
+ * a fixed reminder of what AirCase is, shown above the results, which still come. Null for a case
+ * search.
+ */
+export function noteFor(question: string): EvidenceNote | null {
   const q = question.toLowerCase();
-  if (/\b(poem|recipe|stock|bitcoin)\b/.test(q)) return outOfScopeReply() as EvidenceScopeReply;
-  if (/what should i do|right now|should i fly/.test(q)) return operationalReply() as EvidenceScopeReply;
+  if (/\b(poem|recipe|stock|bitcoin)\b/.test(q)) return 'scope';
+  if (/what should i do|right now|should i fly/.test(q)) return 'operational_advice';
   return null;
 }
 
 /**
  * The non-blocking hint of an explicit counting or comparison request (results still come), read
- * from the question by the server, never from the scope stage: a counting hint carries the
- * search's applied filters (none for a question search), and a case number alone, without a
+ * from the question by the server, never from the scope stage; a case number alone, without a
  * comparison request, is no comparison.
  */
 export function hintFor(question: string): Hint | null {
   const q = question.toLowerCase();
-  if (/how many|how often|\btrend/.test(q)) return { kind: 'corpus_statistics', filters: {} };
+  if (/how many|how often|\btrend/.test(q)) return { kind: 'corpus_statistics' };
   const numbers = [...new Set(question.toUpperCase().match(/\b[A-Z]{3}\d{2}[A-Z]{2}\d{3}\b/g) ?? [])].slice(0, 4);
   if (/\b(compare|comparing|versus|vs)\b/.test(q) && numbers.length > 0) {
     return { kind: 'case_comparison', found: numbers.filter((n) => n in CASES), notFound: numbers.filter((n) => !(n in CASES)) };
@@ -452,6 +455,7 @@ interface MockSearch {
   appliedFilters: BriefFilters;
   suggestion: Suggestion | null;
   hint: Hint | null;
+  note: EvidenceNote | null;
   cases: EvidenceCase[];
   createdAt: Date;
   owner: MockReader;
@@ -530,6 +534,7 @@ export class MockEvidence {
       appliedFilters: search.appliedFilters,
       suggestion: search.suggestion,
       hint: search.hint,
+      note: search.note,
       generation: GENERATION,
       createdAt: stamp(search.createdAt),
       expiresAt: stamp(new Date(search.createdAt.getTime() + EVIDENCE_TTL_MS)),
@@ -540,7 +545,7 @@ export class MockEvidence {
     };
   }
 
-  private start(fields: Pick<MockSearch, 'question' | 'query' | 'appliedFilters' | 'suggestion' | 'hint'>, edited: boolean): MockSearch {
+  private start(fields: Pick<MockSearch, 'question' | 'query' | 'appliedFilters' | 'suggestion' | 'hint' | 'note'>, edited: boolean): MockSearch {
     // Retrieval reads the question's own words, or the user's; the suggestion only marks the excerpts.
     const words = fields.query.source === 'edited' ? fields.query.terms : questionWords(fields.question);
     const cases = /\bnothing\b/i.test(fields.question) && !edited ? [] : evidenceCases(fields.appliedFilters, words, fields.suggestion?.terms ?? words);
@@ -556,7 +561,7 @@ export class MockEvidence {
     return search;
   }
 
-  /** `POST /api/evidence`: 201 with page 1 of a new search, or 200 with a static reply. */
+  /** `POST /api/evidence`: 201 with page 1 of a new search (nothing blocks a search). */
   create(body: CreateEvidenceRequest): MockReply<CreateEvidenceResponse> {
     const request = body.kind === 'question' ? `q:${body.question}` : `e:${body.from}:${JSON.stringify(body.filters)}:${body.terms ?? ''}`;
     if (this.unfinished.has(body.idempotencyKey)) return error(409, 'conflict', 'This request was accepted earlier but did not start. Ask again.');
@@ -572,7 +577,7 @@ export class MockEvidence {
       if (!from) return NOT_FOUND();
       // Exactly the filters sent; the user's words when sent, else the earlier search's query. No scope stage.
       const query: Query = body.terms !== undefined ? { source: 'edited', terms: body.terms } : from.query;
-      const search = this.start({ question: from.question, query, appliedFilters: body.filters, suggestion: null, hint: null }, true);
+      const search = this.start({ question: from.question, query, appliedFilters: body.filters, suggestion: null, hint: null, note: null }, true);
       this.keys.set(body.idempotencyKey, { request, id: search.id });
       return { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
     }
@@ -585,12 +590,12 @@ export class MockEvidence {
       this.unfinished.add(body.idempotencyKey);
       return { status: 0, body: null, lost: true };
     }
-    const reply = scopeReplyFor(body.question);
-    if (reply) return { status: 200, body: { kind: 'scope_reply', reply } };
-    // A failed scope stage costs only the suggestion: the question's results, and the server's own hint.
-    const suggestion = /\bscope failure\b/.test(q) ? null : suggestFor(body.question);
+    // Nothing blocks a search: a policy intent only selects a note (and suggests nothing); a failed
+    // scope stage costs only the suggestion. The hint is the server's own reading of the question.
+    const note = noteFor(body.question);
+    const suggestion = note !== null || /\bscope failure\b/.test(q) ? null : suggestFor(body.question);
     const hint = hintFor(body.question);
-    const search = this.start({ question: body.question, query: { source: 'question' }, appliedFilters: {}, suggestion, hint }, false);
+    const search = this.start({ question: body.question, query: { source: 'question' }, appliedFilters: {}, suggestion, hint, note }, false);
     this.keys.set(body.idempotencyKey, { request, id: search.id });
     const created: MockReply<CreateEvidenceResponse> = { status: 201, body: { kind: 'results', search: this.page(search, 1) } };
     if (/\bexpire/.test(q)) search.expired = true;

@@ -10,7 +10,7 @@ import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { CreateEvidenceResponseSchema, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
 import casesJson from '../../web/mock/cases.json' with { type: 'json' };
-import { MOCK_EVIDENCE_QUESTIONS, MockEvidence, evidenceCases, questionWords, scopeReplyFor } from '../../web/mock/evidence.js';
+import { MOCK_EVIDENCE_QUESTIONS, MockEvidence, evidenceCases, questionWords } from '../../web/mock/evidence.js';
 
 const CASES = casesJson as unknown as Record<string, CaseDetail>;
 const KEY = (n: number): string => `evidence-key-${String(n).padStart(4, '0')}`;
@@ -52,7 +52,8 @@ function edit(server: MockEvidence, from: EvidencePage, filters: BriefFilters, t
 const placement = (cases: readonly EvidenceCase[]) => cases.map((c) => [c.rank, c.case.ntsbNo, c.excerpts.map((e) => `${e.sectionKey}@${e.paragraph.start}`)]);
 
 describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
-  const searches = Object.entries(MOCK_EVIDENCE_QUESTIONS).filter(([, q]) => scopeReplyFor(q) === null);
+  // Nothing blocks a search: every sample question gets results.
+  const searches = Object.entries(MOCK_EVIDENCE_QUESTIONS);
 
   it.each(searches)('%s: every page validates, and every excerpt is the section text at its paragraph span', (_name, question) => {
     const server = new MockEvidence();
@@ -86,7 +87,7 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
     const seed = results(server, MOCK_EVIDENCE_QUESTIONS.seed, 101);
     expect(seed.pages).toBeGreaterThanOrEqual(3);
     expect(seed.cases).toHaveLength(EVIDENCE_PAGE_SIZE);
-    expect([seed.query, seed.appliedFilters, seed.hint]).toEqual([{ source: 'question' }, {}, null]);
+    expect([seed.query, seed.appliedFilters, seed.hint, seed.note]).toEqual([{ source: 'question' }, {}, null, null]);
     // A suggestion of filters and words, not applied: the question's results are every case of the cohort.
     const carb = results(server, MOCK_EVIDENCE_QUESTIONS.carb, 102);
     expect(carb.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'carb icing' });
@@ -122,7 +123,7 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
     // Hints, with results: an explicit counting request (with the applied filters: none), an
     // explicit comparison request; a case number alone is neither.
     const statistics = results(server, MOCK_EVIDENCE_QUESTIONS.statistics, 206);
-    expect(statistics.hint).toEqual({ kind: 'corpus_statistics', filters: {} });
+    expect(statistics.hint).toEqual({ kind: 'corpus_statistics' });
     expect(statistics.total).toBeGreaterThan(0);
     const comparison = results(server, MOCK_EVIDENCE_QUESTIONS.comparison, 207);
     expect(comparison.hint).toEqual({ kind: 'case_comparison', found: ['DFW08TA066', 'NYC08LA106'], notFound: ['ZZZ99ZZ999'] });
@@ -137,13 +138,19 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
     expect(bare?.probableCauses.length).toBeGreaterThan(0);
   });
 
-  it('policy replies come from the server templates, for out of scope and operational advice only', () => {
+  it('nothing blocks a search: a question about something else, or asking for advice, gets its results and a fixed note', () => {
     const server = new MockEvidence();
-    const kinds = (['outOfScope', 'operational', 'statistics', 'comparison'] as const).map((name, i) => {
-      const { body } = ask(server, MOCK_EVIDENCE_QUESTIONS[name], 300 + i);
-      return body.kind === 'scope_reply' ? body.reply.kind : body.kind;
+    const notes = (['outOfScope', 'operational', 'statistics', 'comparison', 'carb'] as const).map((name, i) => {
+      const page = results(server, MOCK_EVIDENCE_QUESTIONS[name], 300 + i);
+      expect(ask(server, MOCK_EVIDENCE_QUESTIONS[name], 300 + i).reply.status).toBe(201);
+      expect(page.total).toBeGreaterThan(0);
+      return page.note;
     });
-    expect(kinds).toEqual(['out_of_scope', 'operational_advice', 'results', 'results']);
+    expect(notes).toEqual(['scope', 'operational_advice', null, null, null]);
+    // A note comes with no suggestion, and an edit carries no note.
+    const operational = results(server, MOCK_EVIDENCE_QUESTIONS.operational, 320);
+    expect(operational.suggestion).toBeNull();
+    expect(edit(server, operational, {}, 'engine rough running', 321).note).toBeNull();
   });
 });
 
