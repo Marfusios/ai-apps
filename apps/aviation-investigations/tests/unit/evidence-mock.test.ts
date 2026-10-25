@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import type { BriefFilters } from '../../shared/contracts/briefs.js';
 import type { CaseDetail } from '../../shared/contracts/cases.js';
 import { CreateEvidenceResponseSchema, EVIDENCE_PAGE_SIZE, EVIDENCE_TTL_MS, EvidencePageSchema, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence.js';
+import { isNarrativeHeading, wholeNarrativeParagraphs } from '../../shared/narrative-paragraphs.js';
 import casesJson from '../../web/mock/cases.json' with { type: 'json' };
 import { MOCK_EVIDENCE_QUESTIONS, MockEvidence, evidenceCases, questionWords } from '../../web/mock/evidence.js';
 
@@ -71,9 +72,8 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
           expect(section?.revision).toBe(e.revision);
           expect(section?.text.slice(e.paragraph.start, e.paragraph.end)).toBe(e.text);
           expect(e.seed.end).toBeLessThanOrEqual(section?.text.length ?? 0);
-          // A whole paragraph: it starts after a line break (or at the start) and ends before one.
-          expect(e.paragraph.start === 0 || section?.text[e.paragraph.start - 1] === '\n' || /\s/.test(section?.text[e.paragraph.start - 1] ?? '')).toBe(true);
-          expect(e.text).not.toContain('\n');
+          // A whole paragraph, as the server cuts them (hard wraps joined, a heading kept with what follows).
+          expect(wholeNarrativeParagraphs(section?.text ?? '')).toContainEqual({ start: e.paragraph.start, end: e.paragraph.end });
         }
       }
     }
@@ -102,6 +102,11 @@ describe('mock evidence pages are valid evidence.v2 and NTSB text only', () => {
     expect(marked('synonym')).toContain('carburetor');
     expect(marked('literal')).toContain('icing');
     expect(marked('literal').every((w) => w === 'carb' || w === 'icing')).toBe(true);
+    // A paragraph that keeps its heading line (and so a line break), as real narratives have.
+    const headed = all(MOCK_EVIDENCE_QUESTIONS.seed)
+      .flatMap((c) => c.excerpts)
+      .find((e) => e.text.includes('\n') && isNarrativeHeading(e.text.split('\n')[0] ?? ''));
+    expect(headed).toBeDefined();
     // A highlight after multi-byte characters: the offsets are UTF-16 code units.
     const multibyte = all(MOCK_EVIDENCE_QUESTIONS.multibyte).flatMap((c) => c.excerpts);
     const after = multibyte.find((e) => {
