@@ -8,6 +8,7 @@ import scopeReplays from '../support/evidence-scope-replays.json' with { type: '
 import { evidenceReservation } from '../../server/evidence/pricing.js';
 import { stageWorstCaseUsd, EVIDENCE_SCOPE_CAPS } from '../../server/ai/pricing.js';
 import { request as httpRequest } from 'node:http';
+import * as generationClaims from '../../server/db/generations.js';
 import * as quotaAdmission from '../../server/quota/admit.js';
 import { paragraphSpans } from '../../server/evidence/project.js';
 import { EVIDENCE_DATA_MAX_BYTES } from '../../server/evidence/store.js';
@@ -473,7 +474,7 @@ describe('evidence fix-round regressions', () => {
     expect(second!.data.cases!.length).toBeLessThanOrEqual(10);
     expect(second!.data).not.toHaveProperty('ranking');
     expect(second!.resultTotal).toBe(page.total);
-    expect(pageOf(second!, 2)).toEqual((await h.get(page.id, 2)).json());
+    expect(pageOf(second!, 2, now())).toEqual((await h.get(page.id, 2)).json());
     expect(await readOwnedSearch(db, page.id, readers, now(), false, { caseNo: 'ZZZ99LA999' })).toBeNull();
     const context = await readOwnedSearch(db, page.id, readers, now(), false, { caseNo: page.cases[0]!.case.ntsbNo });
     expect(context!.data).not.toHaveProperty('cases');
@@ -751,7 +752,7 @@ describe('evidence ranking selection and persistence', () => {
     const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
       (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
       SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
-        status, (data - 'executed' - 'lexicalSource' - 'rankingConfig' - 'scopeOutcome' - 'rerankOutcome') ||
+        status, (data - 'addedTerms' - 'executed' - 'lexicalSource' - 'rankingConfig' - 'scopeOutcome' - 'rerankOutcome') ||
           jsonb_build_object('query', ${JSON.stringify(query)}::jsonb, 'edited', ${kind === 'edited'}::boolean), created_at, expires_at
       FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
     nextMinute();
@@ -844,6 +845,55 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
   const undoBody = (id: string, changes: Record<string, unknown> = {}) => ({ kind: 'edited', question: undefined, from: id, filters: {}, ...changes });
   const stored = async (id: string) => (await db.select().from(evidenceSearches).where(eq(evidenceSearches.id, id)))[0]!;
 
+  it('refreshes undo on creation, pagination, replay and handover without changing stored results or spending', async () => {
+    const h = harness(undefined, undefined, 'er-qt-v1'), key = randomUUID();
+    const parent = searchOf(await h.request({}, key)), trialCookie = h.cookie();
+    const original = await stored(parent.id);
+    expect(parent.undo).toBe('available'); expect(parent.automaticFilters).toBeNull();
+    expect(parent.query).toMatchObject({ source: 'question', keywords: { kind: 'question+terms' } });
+    expect(parent.pages).toBeGreaterThan(1);
+    expect((await h.get(parent.id)).json().undo).toBe('available');
+    expect(searchOf(await h.request({}, key)).undo).toBe('available');
+    nextMinute();
+    const undoKey = randomUUID(), body = undoBody(parent.id, { keywords: 'question' });
+    const child = searchOf(await h.request(body, undoKey));
+    expect(child).toMatchObject({ freeUndo: true, undo: 'none' });
+    const afterUndo = await spent();
+    expect((await h.get(child.id)).json().undo).toBe('none');
+    expect(searchOf(await h.request(body, undoKey)).undo).toBe('none');
+    for (const n of [1, 2]) expect((await h.get(parent.id, n)).json().undo).toBe('used');
+    expect(searchOf(await h.request({}, key))).toEqual({ ...parent, undo: 'used' });
+    const claimed = await stored(parent.id);
+    expect(claimed.data).toEqual(original.data); expect(claimed.data).not.toHaveProperty('undo');
+    expect((await stored(child.id)).data).not.toHaveProperty('undo');
+    expect(claimed.freeUndoReservationId).toBe((await stored(child.id)).reservationId);
+    // An account replay moves the read owner but keeps the same used claim and payer.
+    await h.account();
+    expect(searchOf(await h.request({}, key))).toEqual({ ...parent, undo: 'used' });
+    expect((await h.get(parent.id)).json().undo).toBe('used');
+    expect((await h.get(parent.id, 1, trialCookie)).statusCode).toBe(404);
+    expect(await stored(parent.id)).toMatchObject({ readOwnerKind: 'account', billingPrincipal: original.billingPrincipal,
+      freeUndoReservationId: claimed.freeUndoReservationId, data: original.data });
+    expect(await spent()).toEqual(afterUndo);
+    expect(h.llm.calls).toHaveLength(1); expect(h.embed).toHaveBeenCalledTimes(2);
+  });
+  it('returns none for a question without applied additions, even with an unapplied suggestion', async () => {
+    const h = harness(), parent = searchOf(await h.request());
+    expect(parent.suggestion).not.toBeNull();
+    expect(parent).toMatchObject({ undo: 'none', automaticFilters: null, query: { source: 'question', keywords: { kind: 'question' } } });
+    expect((await h.get(parent.id)).json().undo).toBe('none');
+  });
+  it('does not expose an available undo after the parent expires', async () => {
+    const h = withState(), parent = searchOf(await h.request({ question: stateQuestion }));
+    clock = new Date(new Date(parent.expiresAt).getTime() - 1);
+    expect((await h.get(parent.id)).json().undo).toBe('available');
+    clock = new Date(parent.expiresAt);
+    const before = await spent();
+    expect((await h.get(parent.id)).statusCode).toBe(404);
+    expect((await h.request(undoBody(parent.id))).statusCode).toBe(404);
+    expect(await spent()).toEqual(before);
+  });
+
   it('applies only guarded state before retrieval, removes it from suggestions and persists both identities', async () => {
     const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
     const h = harness({ evidenceScope: { output: { ...stateScope, filters: { state: ['CA'], yearFrom: 2019 } } } },
@@ -885,12 +935,13 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     const body = undoBody(page.id, { filters: removal === 'terms' ? page.appliedFilters : {}, ...(removal === 'state' ? {} : { keywords: 'question' }) });
     const key = randomUUID(), before = await spent();
     const child = searchOf(await h.request(body, key));
-    expect(child.freeUndo).toBe(true); expect(child.automaticFilters).toBeNull(); expect(child.suggestion).toBeNull();
+    expect(child.freeUndo).toBe(true); expect(child.undo).toBe('none'); expect(child.automaticFilters).toBeNull(); expect(child.suggestion).toBeNull();
     expect(child.query).toEqual(removal === 'state' ? page.query : { source: 'question', keywords: { kind: 'question' } });
     expect(child.appliedFilters).toEqual(removal === 'terms' ? { state: ['CA'] } : {});
     expect((await usage())).toMatchObject({ quota_counted: false, status: 'settled' });
     const childRow = await stored(child.id), parent = await stored(page.id);
     expect(parent.freeUndoReservationId).toBe(childRow.reservationId);
+    expect(page.undo).toBe('available'); expect((await h.get(page.id)).json().undo).toBe('used');
     const lines = await db.execute(sql`SELECT stage FROM cost_ledger WHERE reservation_id = ${childRow.reservationId}`);
     expect(lines.rows).toEqual([{ stage: 'embed' }]); expect((await spent()).lines).toBe(before.lines + 1);
     const after = await spent(); nextMinute();
@@ -1010,19 +1061,137 @@ describe('evidence.v3 automatic state, disclosure and one-use undo', () => {
     expect(failed!.status).toBe('failed'); expect(failed!.data).not.toHaveProperty('cases');
     expect(failed!.data).toMatchObject({ query: { source: 'question', keywords: { kind: 'question' } },
       appliedFilters: {}, automaticFilters: null, autoFilterReason: 'applied', lexicalSource: 'terms',
+      diagnostics: { automaticFilters: { state: ['CA'] }, appliedFilters: { state: ['CA'] } },
       executed: { lexical: 'engine', vector: stateQuestion } });
+  });
+  it('switches a question+terms parent back to question words in both channels and saved execution', async () => {
+    const plans: Parameters<EvidenceRetriever['search']>[1][] = [];
+    const h = harness({ evidenceScope: { output: stateScope } }, r => ({ ...r, search: async (...args) => {
+      plans.push(args[1]); return r.search(...args);
+    } }), 'er-qt-v1', { autoFilters: 'state-explicit.v1.1' });
+    const page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    expect((await stored(page.id)).data).toMatchObject({ lexicalSource: 'question+terms', addedTerms: 'engine',
+      executed: { lexical: stateQuestion + ' engine', vector: stateQuestion } });
+    const child = searchOf(await h.request(undoBody(page.id, { filters: page.appliedFilters, keywords: 'question' })));
+    expect(child.freeUndo).toBe(true);
+    expect(child.query).toEqual({ source: 'question', keywords: { kind: 'question' } });
+    expect((await stored(child.id)).data).toMatchObject({ lexicalSource: 'question', addedTerms: null,
+      executed: { lexical: stateQuestion, vector: stateQuestion } });
+    expect(plans[1]).toMatchObject({ keywordText: stateQuestion, text: stateQuestion });
+    expect(h.llm.calls).toHaveLength(1);
+  });
+  it('keeps a pre-run abandoned claim consumed; the same key next makes an ordinary charged admission', async () => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion })); nextMinute();
+    const key = randomUUID(), body = undoBody(page.id), calls = h.llm.calls.length;
+    vi.spyOn(generationClaims, 'claimBriefEvidence').mockRejectedValueOnce(new Error('synthetic index claim failure'));
+    expect((await h.request(body, key)).statusCode).toBe(503);
+    const claim = (await stored(page.id)).freeUndoReservationId;
+    expect(claim).not.toBeNull();
+    expect((await db.execute(sql`SELECT status, quota_counted, charged_usd::float AS charged FROM reservations WHERE id = ${claim}`)).rows)
+      .toEqual([{ status: 'settled', quota_counted: false, charged: 0 }]);
+    clock = new Date(clock.getTime() + 2); // the idempotency CHECK retains at least one millisecond
+    expect((await db.execute(sql`SELECT count(*)::int AS n FROM idempotency WHERE idempotency_key = ${key} AND expires_at > ${now()}`)).rows[0]?.n).toBe(0);
+    expect((await db.execute(sql`SELECT count(*)::int AS n FROM evidence_searches WHERE reservation_id = ${claim}`)).rows[0]?.n).toBe(0);
+    expect(h.llm.calls).toHaveLength(calls); expect(h.embed).toHaveBeenCalledTimes(1);
+    nextMinute();
+    const admitted = vi.spyOn(quotaAdmission, 'admitPaidRequest');
+    const child = searchOf(await h.request(body, key));
+    expect(child.freeUndo).toBe(false); expect((await usage()).quota_counted).toBe(true);
+    expect((await stored(child.id)).reservationId).not.toBe(claim);
+    expect((await stored(page.id)).freeUndoReservationId).toBe(claim);
+    expect(admitted.mock.calls[0]![1].quotaExemption).toBeUndefined();
+    expect(h.embed).toHaveBeenCalledTimes(2);
+  });
+  it('two different principals race for the same parent claim without principal-in-flight serializing them', async () => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion })), trialCookie = h.cookie();
+    await h.account(); nextMinute();
+    const realAdmit = quotaAdmission.admitPaidRequest;
+    let entered = 0, release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    const admissions: Awaited<ReturnType<typeof realAdmit>>[] = [];
+    vi.spyOn(quotaAdmission, 'admitPaidRequest').mockImplementation(async (db, input) => {
+      expect(input.quotaExemption).toBeDefined(); // both routes saw an unclaimed, owned parent
+      entered++; await ready;
+      const admitted = await realAdmit(db, input); admissions.push(admitted); return admitted;
+    });
+    const key = randomUUID();
+    const requests = [trialCookie, h.cookie()].map(cookie => h.app.inject({ method: 'POST', url: '/api/evidence',
+      remoteAddress: '127.0.0.1', headers: { origin: `https://${host}`, cookie },
+      payload: { ...undoBody(page.id), idempotencyKey: key, turnstileToken: h.verify.issue() } }).then(r => r));
+    try {
+      await vi.waitFor(() => expect(entered).toBe(2)); release();
+      const responses = await Promise.all(requests);
+      // Handover may make the old trial's later source read 404; admission must not be
+      // refused by principalInFlight, nor may it waive quota twice across identities.
+      expect(responses.every(r => [201, 404].includes(r.statusCode))).toBe(true);
+      expect(admissions.every(a => a.ok && !a.replay)).toBe(true);
+      const accepted = admissions.filter((a): a is quotaAdmission.Admission => a.ok && !a.replay);
+      expect(new Set(accepted.map(a => a.principalHash)).size).toBe(2);
+      expect(accepted.filter(a => a.quotaExempt)).toHaveLength(1);
+      expect((await stored(page.id)).freeUndoReservationId).toBe(accepted.find(a => a.quotaExempt)!.reservationId);
+    } finally { release(); await Promise.allSettled(requests); }
+  });
+  it('keeps automatic state diagnostics even when retrieval fails before producing a result', async () => {
+    const h = harness({ evidenceScope: { output: stateScope } }, r => ({ ...r, search: async (...args) => {
+      await r.search(...args); throw new Error('synthetic retrieval failure');
+    } }), 'er-t-v1', { autoFilters: 'state-explicit.v1.1' });
+    expect((await h.request({ question: stateQuestion })).statusCode).toBe(503);
+    const [failed] = await db.select().from(evidenceSearches);
+    expect(failed!.status).toBe('failed');
+    expect(failed!.data).toMatchObject({ automaticFilters: null, appliedFilters: {},
+      diagnostics: { automaticFilters: { state: ['CA'] }, appliedFilters: { state: ['CA'] } } });
+    expect(h.logs.join('')).not.toContain('diagnostics'); expect((await usage()).status).toBe('settled');
+  });
+  it.each(['overwrite', 'edited', 'failed', 'counted', 'closed', 'wrong-owner', 'wrong-payer', 'expired'] as const)
+    ('the database itself refuses an invalid claim: %s', async invalid => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion }));
+    const original = await stored(page.id);
+    const originalData = original.data as Record<string, unknown>;
+    // New fixture rows rather than weakening the immutable result guard.
+    const [parent] = await migrator.insert(evidenceSearches).values({ ...original, id: randomUUID(),
+      ...(invalid === 'expired' ? { createdAt: new Date(Date.now() - 86400_000), expiresAt: new Date(Date.now() - 1000) } : {}),
+      ...(invalid === 'wrong-payer' ? { billingPrincipal: 'f'.repeat(64) } : {}),
+      status: invalid === 'failed' ? 'failed' : 'results',
+      data: { ...originalData, edited: invalid === 'edited' },
+    }).returning();
+    const reservation = async (counted = false, closed = false, hash = original.readOwner) => {
+      const r = await migrator.execute(sql`INSERT INTO reservations
+        (category, principal_kind, principal_hash, usd, status, lease_expires_at, accounting_day, quota_counted, created_at, settled_at, charged_usd, uncertain)
+        VALUES ('interactive', ${original.readOwnerKind}, ${hash}, 0.0025, 'open',
+          now() + interval '2 minutes', current_date, ${counted}, now(), NULL, NULL, NULL) RETURNING id`);
+      const id = Number(r.rows[0]!.id);
+      if (closed) await migrator.execute(sql`UPDATE reservations SET status = 'settled', settled_at = now(), charged_usd = 0, uncertain = false WHERE id = ${id}`);
+      return id;
+    };
+    if (invalid === 'overwrite') {
+      const valid = await reservation();
+      await db.execute(sql`UPDATE evidence_searches SET free_undo_reservation_id = ${valid} WHERE id = ${parent!.id}`);
+    }
+    const id = await reservation(invalid === 'counted', invalid === 'closed', invalid === 'wrong-owner' ? 'e'.repeat(64) : original.readOwner);
+    const error = await db.execute(sql`UPDATE evidence_searches SET free_undo_reservation_id = ${id} WHERE id = ${parent!.id}`).then(() => null, e => e);
+    expect(error?.cause).toMatchObject({ code: '55000', message: 'evidence undo claim is immutable' });
+    expect((await stored(parent!.id)).freeUndoReservationId).not.toBe(id);
+  });
+  it('a missing version cannot use SQL null logic to finalize changed query facts', async () => {
+    const h = withState(), page = searchOf(await h.request({ question: stateQuestion })), original = await stored(page.id);
+    const data = { ...original.data as Record<string, unknown> }; delete data.version;
+    const [row] = await migrator.insert(evidenceSearches).values({ ...original, id: randomUUID(), status: 'running', data }).returning();
+    const error = await db.execute(sql`UPDATE evidence_searches SET status = 'results', data = data ||
+      jsonb_build_object('query', jsonb_build_object('source', 'question', 'keywords', jsonb_build_object('kind', 'question')),
+        'appliedFilters', '{}'::jsonb, 'automaticFilters', null) WHERE id = ${row!.id}`).then(() => null, e => e);
+    expect(error?.cause).toMatchObject({ code: '55000', message: 'evidence query is immutable' });
   });
   it('reads an actual v2 row as v3 with its pinned results and no invented automatic additions', async () => {
     const h = harness(), page = searchOf(await h.request());
     const legacy = await migrator.execute(sql`INSERT INTO evidence_searches
       (read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index, status, data, created_at, expires_at)
       SELECT read_owner, read_owner_kind, billing_principal, billing_kind, reservation_id, generation_id, cases_index, passages_index,
-        status, (data - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'marks' - 'freeUndo' - 'executed' - 'lexicalSource' - 'rankingConfig') ||
+        status, (data - 'addedTerms' - 'automaticFilters' - 'autoFilterPolicy' - 'autoFilterReason' - 'marks' - 'freeUndo' - 'executed' - 'lexicalSource' - 'rankingConfig') ||
           jsonb_build_object('version', 'evidence.v2', 'query', jsonb_build_object('source', 'question')), created_at, expires_at
       FROM evidence_searches WHERE id = ${page.id} RETURNING id`);
     const before = await spent();
     const read = EvidencePageSchema.parse((await h.get(String(legacy.rows[0]!.id))).json());
-    expect(read).toMatchObject({ version: 'evidence.v3', automaticFilters: null, freeUndo: false, order: 'match', marks: 'suggested_terms', query: page.query });
+    expect(read).toMatchObject({ version: 'evidence.v3', automaticFilters: null, freeUndo: false, undo: 'none', order: 'match', marks: 'suggested_terms', query: page.query });
     expect(read.cases).toEqual(page.cases); expect(await spent()).toEqual(before);
   });
 });

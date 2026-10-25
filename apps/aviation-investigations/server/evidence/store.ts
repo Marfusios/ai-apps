@@ -16,6 +16,9 @@ import type { evidenceRankingIdentity, HighlightPolicy } from './ranking-config.
 export interface SearchData {
   /** Private execution facts. Absent only on pre-ranking-config saved searches. */
   executed?: ExecutedTexts;
+  addedTerms?: string | null;
+  /** Failed attempts retain what ran, separately from immutable public admission facts. */
+  diagnostics?: { automaticFilters: EvidenceAutomaticFilters | null; appliedFilters: BriefFilters };
   autoFilterPolicy?: ReturnType<typeof autoFilterIdentity>;
   autoFilterReason?: AutoFilterReason;
   automaticFilters?: EvidenceAutomaticFilters | null;
@@ -75,7 +78,8 @@ export async function readOwnedSearch(db: DbOrTx, id: string, readers: readonly 
     'automaticFilters', ${source}->'automaticFilters', 'freeUndo', ${source}->'freeUndo', 'marks', ${source}->'marks',
     'rankingConfig', ${source}->'rankingConfig', 'scopeOutcome', ${source}->'scopeOutcome', 'rerankOutcome', ${source}->'rerankOutcome',
     'context', ${source}->'context', 'version', ${source}->'version', 'query', ${source}->'query',
-    'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'note', ${source}->'note')`;
+    'appliedFilters', ${source}->'appliedFilters', 'suggestion', ${source}->'suggestion', 'hint', ${source}->'hint', 'note', ${source}->'note') || CASE WHEN ${source} ? 'addedTerms'
+      THEN jsonb_build_object('addedTerms', ${source}->'addedTerms') ELSE '{}'::jsonb END`;
   const data = page === undefined ? sql<SearchData>`${header}` : sql<SearchData>`${header} || jsonb_build_object('cases',
     jsonb_path_query_array(${source}, ${`$.cases[${(page - 1) * EVIDENCE_PAGE_SIZE} to ${page * EVIDENCE_PAGE_SIZE - 1}]`}::jsonpath))`;
   // No query returns the ranking or all pages to Node. The DB checks case membership too.
@@ -98,16 +102,22 @@ export async function finishSearch(db: DbOrTx, id: string, status: 'results' | '
   const rows = await db.update(evidenceSearches).set({ status, data }).where(and(eq(evidenceSearches.id, id), eq(evidenceSearches.status, 'running'))).returning({ id: evidenceSearches.id });
   return rows.length === 1;
 }
-export function pageOf(row: EvidenceRow, page: number): EvidencePage | null {
-  if (row.status !== 'results' || !['evidence.v2', EVIDENCE_CONTRACT_VERSION].includes(row.data.version) || !row.data.query || !row.data.cases) return null;
+export function pageOf(row: EvidenceRow, page: number, now: Date): EvidencePage | null {
+  if (row.expiresAt <= now || row.status !== 'results' || !['evidence.v2', EVIDENCE_CONTRACT_VERSION].includes(row.data.version) || !row.data.query || !row.data.cases) return null;
   const total = row.resultTotal ?? row.data.cases.length, pages = Math.ceil(total / EVIDENCE_PAGE_SIZE);
   if (page < 1 || page > Math.max(1, pages)) return null;
   if (row.resultPage !== undefined && row.resultPage !== page) return null;
   const query = disclosedQuery(row.data);
+  // Read the claim column, never a saved result field: another tab or a handover
+  // may have consumed the undo since this result was stored. Admission still
+  // rechecks the claim under its lock; this is only a snapshot for the client.
+  const undo = row.data.version !== EVIDENCE_CONTRACT_VERSION || row.data.edited || query.source !== 'question' ||
+    (!row.data.automaticFilters?.state.length && query.keywords.kind === 'question')
+    ? 'none' : row.freeUndoReservationId == null ? 'available' : 'used';
   const marks = row.data.marks ?? (row.data.suggestion?.terms && (!row.data.rankingConfig || row.data.rankingConfig.version === 'er-q-v1') ? 'suggested_terms' : 'search_words');
   return EvidencePageSchema.parse({ version: EVIDENCE_CONTRACT_VERSION, id: row.id, question: row.data.question,
     query, appliedFilters: row.data.appliedFilters, suggestion: remainingSuggestion(query, row.data.suggestion),
-    automaticFilters: row.data.automaticFilters ?? null, freeUndo: row.data.freeUndo ?? false, marks,
+    automaticFilters: row.data.automaticFilters ?? null, freeUndo: row.data.freeUndo ?? false, undo, marks,
     order: row.data.rerankOutcome === 'applied' ? 'ai_relevance' : 'match',
     // Earlier v2 results have no note and may have stored filters on a statistics
     // hint. Retain their actual query/results; never manufacture a retrospective note.

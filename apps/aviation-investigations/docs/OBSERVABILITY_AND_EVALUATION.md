@@ -557,6 +557,9 @@ separate evaluation and gate review; sizing is not an approval to spend or deplo
 Automatic filtering has its own frozen identity, separate from every evaluated ranking
 configuration. Saved searches record `autoFilterPolicy` (version/sha256),
 `automaticFilters` and `autoFilterReason`; only the applied state set is public.
+The fitted `addedTerms` suffix is saved once and drives disclosure. Failed attempts
+retain actual automatic state/filters in private diagnostics, never logs or traces.
+The automatic policy binds `state-probes.v1` outputs as well as the guard version.
 Cache identities for an automatic-filter experiment must include both policy identities,
 the question, explicit edit and pinned corpus. The scope.e3 wire schema is unchanged.
 `none` remains the default and sole live-allowed automatic-filter policy.

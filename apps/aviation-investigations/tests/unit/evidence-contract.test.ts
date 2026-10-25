@@ -41,7 +41,7 @@ const page = {
   id: '0b6f2c1e-8d4a-4c51-9f0e-1a2b3c4d5e6f',
   question: 'carburetor icing on approach',
   query: { source: 'question', keywords: { kind: 'question' } },
-  automaticFilters: null, order: 'match', marks: 'suggested_terms', freeUndo: false,
+  automaticFilters: null, order: 'match', marks: 'suggested_terms', freeUndo: false, undo: 'none',
   appliedFilters: {},
   suggestion: { filters: { phase: ['approach'] }, terms: 'carburetor icing' },
   hint: null,

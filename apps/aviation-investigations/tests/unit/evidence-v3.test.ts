@@ -14,7 +14,9 @@ import { evaluationRankingSpendGate } from '../../server/evidence/spend.js';
 import { createMemorySpendGate } from '../../worker/index/spend-gate.js';
 import type { EvidenceRetriever } from '../../server/evidence/retrieve.js';
 import type { PinnedDataset } from '../../server/dataset.js';
-import { evidenceCases } from '../../web/mock/evidence.js';
+import { syntheticEvidenceCases } from '../support/evidence-cases.js';
+import { stateGuardFingerprint } from '../../server/evidence/auto-filter-probes.js';
+import { eligibleEmittedStates } from '../../shared/state-eligibility.js';
 
 const now = new Date('2026-10-25T12:00:00Z');
 const question = 'Find engine failures in California';
@@ -43,9 +45,27 @@ describe('independent automatic state policy', () => {
   });
   it('has distinct immutable identities and rejects altered policies', () => {
     expect(Object.isFrozen(autoFilterPolicy('state-explicit.v1.1'))).toBe(true);
-    expect(autoFilterIdentity(autoFilterPolicy()).sha256).toBe('774bdd396d1b1aa32764f75a6458cae5690372d422cb601fa0f6fb271c8643c8');
-    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.1')).sha256).toBe('69fc897400e4bb92e66cf47109d44b6731abbcfffae2fbd2725b13e90558a255');
+    expect(autoFilterIdentity(autoFilterPolicy()).sha256).toBe('f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715');
+    expect(autoFilterIdentity(autoFilterPolicy('state-explicit.v1.1')).sha256).toBe('1c587b2f70bd100a1ad5981d33991561614f16fd7adcd9e6840c78229adcfb4c');
     expect(() => automaticState({ ...autoFilterPolicy('state-explicit.v1.1'), field: null } as never, question, rawSuggestion.filters, false, false)).toThrow('unregistered');
+  });
+  it('fingerprints the guard behaviour, including a regex change without a version bump', () => {
+    const policy = autoFilterPolicy('state-explicit.v1.1');
+    const changed = stateGuardFingerprint((q, emitted) => q === 'Find events in Kansas City.'
+      ? { states: [...emitted], reason: 'applied' } : eligibleEmittedStates(q, emitted));
+    expect(policy.behaviour?.sha256).toBe(stateGuardFingerprint());
+    expect(changed).not.toBe(stateGuardFingerprint());
+    expect(autoFilterIdentity({ ...policy, behaviour: { version: 'state-probes.v1', sha256: changed } } as never).sha256)
+      .not.toBe(autoFilterIdentity(policy).sha256);
+  });
+  it('rejects an altered automatic policy before any scope call or spend reservation', async () => {
+    const llm = createFakeProvider({ evidenceScope: { output: { intent: 'case_search', ...rawSuggestion } } });
+    const search = vi.fn(async () => ({ cases: [], ranking: [] })), memory = createMemorySpendGate(1);
+    await expect(rankEvidence(evidenceRankingConfig(), { question, filters: {}, dataset: {} as PinnedDataset,
+      signal: new AbortController().signal, autoFilters: { ...autoFilterPolicy(), field: 'state' } as never,
+    }, { llm, retriever: { available: async () => true, search }, embeddingModel: 'text-embedding-3-small' },
+    evaluationRankingSpendGate(() => memory, 'bad-policy'))).rejects.toThrow('unregistered');
+    expect(llm.calls).toHaveLength(0); expect(memory.records).toHaveLength(0); expect(search).not.toHaveBeenCalled();
   });
   it('applies only a cleared complete state set from a valid question search', () => {
     const p = autoFilterPolicy('state-explicit.v1.1');
@@ -59,7 +79,7 @@ describe('independent automatic state policy', () => {
 
 describe('v3 execution facts', () => {
   it.each(EVIDENCE_RANKING_VERSIONS)('%s discloses its actual words, order and marks without leaking execution metadata', async version => {
-    const config = evidenceRankingConfig(version), cases = evidenceCases({}, 'engine').slice(0, 2);
+    const config = evidenceRankingConfig(version), cases = syntheticEvidenceCases(2);
     const llm = createFakeProvider({ evidenceScope: { output: { intent: 'case_search', ...rawSuggestion } },
       rerank: input => ({ output: { grades: input.cases.map(c => ({ id: c.id, grade: 2 })) } }),
     });
@@ -70,10 +90,10 @@ describe('v3 execution facts', () => {
     expect(search).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ filters: { state: ['CA'] } }), expect.anything(), expect.anything(), expect.anything());
     expect(out.suggestion?.filters).toEqual({ yearFrom: 2019 });
     const saved = row();
-    saved.data = { ...saved.data, ...out, query: questionQuery(question, out.lexicalSource, out.executed),
+    saved.data = { ...saved.data, ...out, query: questionQuery(out.lexicalSource, out.addedTerms),
       rankingConfig: out.configuration, marks: 'search_words' };
     saved.data = withSuggestion(saved.data, remainingSuggestion(disclosedQuery(saved.data), out.suggestion), config.query.highlights);
-    const page = pageOf(saved, 1)!;
+    const page = pageOf(saved, 1, now)!;
     expect(page.query).toEqual({ source: 'question', keywords: config.lexicalText === 'question' ? { kind: 'question' } : { kind: config.lexicalText, terms: 'power loss' } });
     expect(page.automaticFilters).toEqual({ state: ['CA'] }); expect(page.appliedFilters).toEqual({ state: ['CA'] });
     expect(page.order).toBe(config.rerank ? 'ai_relevance' : 'match');
@@ -84,27 +104,45 @@ describe('v3 execution facts', () => {
     expect(page).not.toHaveProperty('executed'); expect(page).not.toHaveProperty('rankingConfig');
   });
   it.each(['timeout', 'network', 'rate_limited', 'overloaded', 'count_failed', 'cap_exceeded', 'refusal', 'truncated', 'invalid_output'] as const)('%s rerank fallback discloses match order', async fail => {
-    const config = evidenceRankingConfig('er-t-h50-v1'), cases = evidenceCases({}, 'engine').slice(0, 1);
+    const config = evidenceRankingConfig('er-t-h50-v1'), cases = syntheticEvidenceCases(1);
     const script: FakeScript = { evidenceScope: { output: { intent: 'case_search', ...rawSuggestion } }, rerank: { fail } };
     const out = await rankEvidence(config, { question, filters: {}, dataset: {} as PinnedDataset, signal: new AbortController().signal },
       { llm: createFakeProvider(script), retriever: { available: async () => true, search: async () => ({ cases, ranking: cases.map(c => ({ ntsbNo: c.case.ntsbNo, seeds: [], channels: [] })) }) }, embeddingModel: 'text-embedding-3-small' },
       evaluationRankingSpendGate(() => createMemorySpendGate(1), 'fallback'));
-    const saved = row(); saved.data = { ...saved.data, ...out, query: questionQuery(question, out.lexicalSource, out.executed), marks: 'search_words' };
-    expect(pageOf(saved, 1)?.order).toBe('match');
+    const saved = row(); saved.data = { ...saved.data, ...out, query: questionQuery(out.lexicalSource, out.addedTerms), marks: 'search_words' };
+    expect(pageOf(saved, 1, now)?.order).toBe('match');
   });
   it('discloses legacy v2 keywords from executed text and does not invent automatic filters', () => {
     const saved = row(); saved.data.version = 'evidence.v2'; saved.data.query = { source: 'question' };
     delete saved.data.automaticFilters; delete saved.data.freeUndo; delete saved.data.marks;
     saved.data.lexicalSource = 'question+terms'; saved.data.executed = { lexical: question + ' power loss', vector: question };
     saved.data.rankingConfig = evidenceRankingIdentity(evidenceRankingConfig('er-qt-v1'));
-    const page = pageOf(saved, 1)!;
-    expect(page).toMatchObject({ version: 'evidence.v3', automaticFilters: null, order: 'match', marks: 'search_words', freeUndo: false,
+    const page = pageOf(saved, 1, now)!;
+    expect(page).toMatchObject({ version: 'evidence.v3', automaticFilters: null, order: 'match', marks: 'search_words', freeUndo: false, undo: 'none',
       query: { source: 'question', keywords: { kind: 'question+terms', terms: 'power loss' } } });
     expect(EvidencePageSchema.safeParse(page).success).toBe(true);
   });
   it('retains only the portion of appended terms actually searched, and omits redundant suggestions', () => {
-    expect(questionQuery(question, 'question+terms', { vector: question, lexical: question + ' power' })).toEqual({ source: 'question', keywords: { kind: 'question+terms', terms: 'power' } });
-    expect(remainingSuggestion(questionQuery(question, 'terms', { vector: question, lexical: 'power' }), { terms: 'power loss', filters: {} })).toBeNull();
+    expect(questionQuery('question+terms', 'power')).toEqual({ source: 'question', keywords: { kind: 'question+terms', terms: 'power' } });
+    expect(remainingSuggestion(questionQuery('terms', 'power'), { terms: 'power loss', filters: {} })).toBeNull();
+  });
+  it.each(['terms', 'question+terms'] as const)('discloses recorded %s even when the saved question/executed texts disagree', source => {
+    const saved = row();
+    saved.data.lexicalSource = source; saved.data.addedTerms = 'power loss';
+    saved.data.question = 'Different whitespace and question';
+    saved.data.executed = { lexical: 'something inconsistent', vector: 'different again' };
+    saved.data.query = { source: 'question', keywords: { kind: 'question' } };
+    expect(pageOf(saved, 1, now)?.query).toEqual({ source: 'question', keywords: { kind: source, terms: 'power loss' } });
+  });
+  it('records the fitted added suffix at query construction, including partially fitted terms', () => {
+    const full = rankingTexts(question, ' power  loss ', evidenceRankingConfig('er-qt-v1'));
+    expect(full.addedTerms).toBe('power loss');
+    const q = 'engine '.repeat(990).trim(), inputTerms = 'power loss '.repeat(100);
+    const clipped = rankingTexts(q, inputTerms, evidenceRankingConfig('er-qt-v1'));
+    expect(clipped.addedTerms?.length).toBeGreaterThan(0);
+    expect(clipped.addedTerms!.length).toBeLessThan(inputTerms.trim().length);
+    expect(clipped.executed.lexical).toBe(q + ' ' + clipped.addedTerms);
+    expect(questionQuery(clipped.lexicalSource, clipped.addedTerms)).toEqual({ source: 'question', keywords: { kind: 'question+terms', terms: clipped.addedTerms } });
   });
   it('a partial first appended word is a question fallback', () => {
     const q = 'engine '.repeat(994).trim();
@@ -112,7 +150,31 @@ describe('v3 execution facts', () => {
     const texts = rankingTexts(q, terms, evidenceRankingConfig('er-qt-v1'));
     expect(texts.lexicalSource).toBe('fallback_question');
     expect(texts.executed.lexical).toBe(texts.executed.vector);
-    expect(questionQuery(q, texts.lexicalSource, texts.executed)).toEqual({ source: 'question', keywords: { kind: 'question' } });
+    expect(questionQuery(texts.lexicalSource, texts.addedTerms)).toEqual({ source: 'question', keywords: { kind: 'question' } });
+  });
+});
+
+describe('read-time undo availability', () => {
+  it.each(['state', 'terms', 'question+terms', 'neither'] as const)('reports the current claim for %s additions', addition => {
+    const saved = row();
+    saved.data.automaticFilters = addition === 'state' ? { state: ['CA'] } : null;
+    saved.data.query = { source: 'question', keywords: addition === 'terms' || addition === 'question+terms'
+      ? { kind: addition, terms: 'power loss' } : { kind: 'question' } };
+    const immutable = structuredClone(saved.data);
+    expect(pageOf(saved, 1, now)?.undo).toBe(addition === 'neither' ? 'none' : 'available');
+    saved.freeUndoReservationId = 2;
+    expect(pageOf(saved, 1, now)?.undo).toBe(addition === 'neither' ? 'none' : 'used');
+    expect(saved.data).toEqual(immutable); expect(saved.data).not.toHaveProperty('undo');
+  });
+  it('an edited child has no further undo even when it inherits the question and added terms', () => {
+    const saved = row(); saved.data.edited = true; saved.data.freeUndo = true; saved.data.automaticFilters = null;
+    expect(pageOf(saved, 1, now)).toMatchObject({ freeUndo: true, undo: 'none' });
+  });
+  it('an expired parent has no page, including exactly at its expiry', () => {
+    const saved = row();
+    expect(pageOf(saved, 1, new Date(saved.expiresAt.getTime() - 1))?.undo).toBe('available');
+    expect(pageOf(saved, 1, saved.expiresAt)).toBeNull();
+    expect(pageOf(saved, 1, new Date(saved.expiresAt.getTime() + 1))).toBeNull();
   });
 });
 

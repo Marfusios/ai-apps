@@ -1844,22 +1844,29 @@ log what keeps any part off (setting names only). The tables are in migration 00
 
 ### AI evidence view
 
-The backend contract is `evidence.v2` (`shared/contracts/evidence.ts`). Original-question
-retrieval runs independently of the advisory `scope.e3` generator. Its suggested filters
-and terms are **not applied**. Render them as text under `EVIDENCE_SUGGESTION_LABEL`;
-never render model text as HTML. All surfaces keep `EVIDENCE_NOTICE`. This beta has no
+The backend contract is `evidence.v3` (`shared/contracts/evidence.ts`): it discloses
+executed keywords, automatic state filters, ordering and mark source, plus `freeUndo`
+for the created search and the current `undo: available | used | none` hint.
+The hint is read from the claim column on every page read or replay, never stored
+in the immutable result; admission remains authoritative if another tab uses it.
+With the default question-only ranking and no automatic filters, `scope.e3` filters
+and terms remain unapplied suggestions. Render remaining suggestions as text under
+`EVIDENCE_SUGGESTION_LABEL`; never render model text as HTML. All surfaces keep `EVIDENCE_NOTICE`. This beta has no
 specific unchecked readings or generated factual prose.
 
 `POST /api/evidence` accepts either:
 
-- `{kind: "question", question, idempotencyKey, turnstileToken?}`: one optional-suggestion
-  scope attempt, then one query embedding and retrieval over the default cohort with
-  **no model-applied filters**. Scope error, timeout, invalid or over-cap output returns
+- `{kind: "question", question, idempotencyKey, turnstileToken?}`: at most one scope attempt,
+  then one query embedding and retrieval using the configured ranking and automatic
+  filter policy (defaults: question words and no automatic filters). Scope error,
+  timeout, invalid or over-cap output returns
   ordinary results with `suggestion: null`, `note: null` and settles any scope spend.
-- `{kind: "edited", from, filters, terms?, idempotencyKey, turnstileToken?}`: an owned,
+- `{kind: "edited", from, filters, terms?, keywords?: "question", idempotencyKey, turnstileToken?}`: an owned,
   unexpired search's original question, with exactly the user-supplied filters. Omitted
   `terms` retains the parent's executed query; present `terms` explicitly accepts or
-  types a replacement. Applying suggested filters alone never accepts suggested terms.
+  types a replacement; `keywords: "question"` instead restores the original question's
+  words and cannot be combined with `terms`. Applying suggested filters alone never
+  accepts suggested terms.
   A removed filter stays removed. Edits skip scope, have `note: null`, and use the
   current publication.
 
@@ -1867,8 +1874,10 @@ Questions and edited terms containing NUL or lone UTF-16 surrogates are rejected
 400 before identity, admission or provider calls; valid astral characters are accepted.
 
 A synchronous 201 returns `{kind: "results", search: EvidencePage}`. The page records
-`query: {source: "question"} | {source: "edited", terms}`, `appliedFilters`, nullable
-`suggestion: {filters, terms}`, nullable `hint` and nullable `note`. It has no
+`query: {source: "question", keywords} | {source: "edited", terms}`; `keywords` identifies
+`question`, `question+terms` or `terms`, with the added terms when used. It also reports
+`appliedFilters`, nullable `suggestion: {filters, terms}`, nullable `hint` and nullable
+`note`. It has no
 `interpretation` or `edited` response field. A filter-only edit may still have
 `query.source: "question"`. A validated scope intent selects only a fixed capability note:
 `out_of_scope` → `note: "scope"`; `operational_advice` → `note: "operational_advice"`;
@@ -1889,11 +1898,12 @@ normal validation, identity, quota and budget checks remain enforced.
 
 `retrieval.v2` fuses passage BM25, passage similarity and cases narrative BM25, 200
 candidates per channel with the existing fusion and tie ordering. All three channels,
-cohort, ranking, excerpts and pagination use only the executed query and user filters.
+cohort, ranking, excerpts and pagination use the executed query and applied filters,
+including any disclosed state accepted by the configured automatic policy.
 The baseline keeps Task 23 highlights and occurrence labels: suggested terms when
 a suggestion is retained, otherwise executed query words. Non-baseline configurations
 use executed lexical words. These occurrences do not establish question satisfaction.
-`evidence.v2` maps at most 100 cases with eight concurrent requests inside the shared deadline.
+`evidence.v3` maps at most 100 cases with eight concurrent requests inside the shared deadline.
 It stores that ranking, concrete
 indices, canonical generation, retrieval seed spans, channels and result projection.
 It has 10 cases/page and at most 10 pages; `total` is the saved candidate count, not
@@ -2378,15 +2388,19 @@ The default/live allowlist remains `er-q-v1` (question-only retrieval, no rerank
 Dev alternatives use validated scope terms in BM25 and/or a bounded Haiku/Sonnet
 reranker. See [Evidence ranking](docs/RUNBOOK.md#evidence-ranking) for configurations,
 reservations, evaluation entry points and rollback. The server records executed
-lexical/vector texts and the configuration hash privately; `evidence.v2` is unchanged.
+lexical/vector texts and the configuration hash privately; `evidence.v3` exposes the
+corresponding keyword and ordering disclosures.
 The hashed highlight policy preserves Task 23 suggestion highlights for the baseline;
 every alternative uses executed lexical words. The web client discloses applied terms and
-AI ordering (`evidence.v3`, "Web client" above and UI_DESIGN §4.9); any alternative still
-needs its evaluation and clearance before it is allowed on live.
+AI ordering (`evidence.v3`, "Web client" above and UI_DESIGN §4.9); independent clearance is
+still required before any alternative is allowed on live.
 
 
 Evidence.v3 adds server-owned disclosures for executed keywords, automatically applied
-state, ordering, mark source and a one-use quota-free undo. Automatic filtering is
+state, ordering, mark source and a one-use quota-free undo. The page's `undo` is
+`available` for an unexpired original v3 question with automatic additions and no
+claim, `used` after its claim is consumed, and `none` for edits, v2 rows or questions
+without additions; expired searches return 404. Automatic filtering is
 independent of ranking: `AVIATION_EVIDENCE_AUTO_FILTERS=none` is the default and only
 live-allowed policy; the guarded state option is available on dev. See
 [the v3 rollout](docs/RUNBOOK.md#evidence-automatic-filters-and-v3-rollout) for migration

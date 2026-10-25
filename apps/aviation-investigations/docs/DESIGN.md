@@ -963,7 +963,9 @@ The evaluated scope.e3 prompt/schema/settings are unchanged.
 
 The public response is `evidence.v3`. The ranking configurations and their hashes
 remain those evaluated for Task 24; automatic filters are an independent, frozen
-policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Live accepts
+policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
+identity includes the outputs of a fixed, versioned guard-probe set; a changed response
+to any probe changes the hash even without a guard version bump. Live accepts
 only `none` until an explicit reviewed allowlist change. `state-explicit.v1.1` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
 It requires the complete explicit event-state set and abstains on ambiguous places,
@@ -976,7 +978,9 @@ before all three channels run and are removed from the remaining suggestion.
 The page reports server-derived facts:
 
 - Question `query.keywords` is `question`, `terms` or `question+terms`; the latter
-  two include only the actual executed terms (300 characters maximum). Fallbacks
+  two include only the recorded added terms (300 characters maximum), captured when the
+  lexical query is fitted. Disclosure reads that record, never re-normalizes the question
+  or hides terms when execution records disagree. Fallbacks
   report `question`. Edited queries still carry explicit terms; filter-only edits
   retain their parent's query and both executed texts.
 - `automaticFilters` contains the applied state set, or null. It is always null
@@ -997,8 +1001,12 @@ removing one member of a multi-state OR is a narrowing edit and costs a unit. Se
 addition must be removed. All other edits cost one unit.
 
 One atomic, write-once claim on the **parent** binds the exemption to its admission's
-reservation. The claim survives failure of the later search and handover; an idempotent
-retry replays the same outcome. A different key cannot get another free undo, and an
+reservation. The claim survives failure of the later search and handover. Once a search
+row exists, an idempotent retry replays that result or failure. If admission is abandoned
+before a search row exists (shutdown, failed dataset/index claim, write error or missing
+source), cleanup expires its idempotency slot but keeps the undo claim consumed. Even a
+same-key retry is then an ordinary quota-counted admission, if all gates permit it.
+A different key cannot get another free undo, and an
 edited child cannot be an undo source. A refusal before reservation consumes no claim.
 The exemption remains available at the visitor's daily/monthly quota limit. Turnstile,
 network/principal attempt limits, concurrency, restore hold, kill switches, all budgets,
@@ -1009,6 +1017,12 @@ question can allow at most one additional quota-free attempt, still money-gated.
 Migration 0025 adds the parent's private claim and permits an original v3 question's
 final storage to record actual keywords and only its automatic state change. Questions,
 explicit edits, policy identity, accounting facts and completed results remain immutable.
+The claim trigger independently requires an unexpired parent, a quota-free open
+reservation belonging to its current read owner, and an original reservation matching
+its immutable billing principal/kind. A signed-in undo of a still-owned trial parent
+hands it over in the same claim transaction before binding the account reservation.
+Failed rows retain the actual attempted automatic state/filters in private diagnostics,
+separate from their immutable public admission facts.
 Parent ownership is rechecked under its row lock in admission, after the account lifecycle
 lock and before shared bucket/spend locks; the child write rechecks it again. Old v2 rows
 are read as v3 using their actual recorded metadata, with no invented automatic state or

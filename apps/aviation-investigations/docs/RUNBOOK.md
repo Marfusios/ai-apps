@@ -584,8 +584,21 @@ work supplies the v3 contract below but grants none of those release clearances.
 fail startup. This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
 it does not change any evaluated ranking hash. The Docker service passes it through.
 Each saved search records both configuration identities. No reindex is needed.
+The automatic-policy identity includes `state-probes.v1` outputs. Current hashes:
 
-Apply migration 0025 before serving v3. Deploy the matching evidence.v3 web client;
+| Policy | SHA-256 |
+| --- | --- |
+| `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
+| `state-explicit.v1.1` | `1c587b2f70bd100a1ad5981d33991561614f16fd7adcd9e6840c78229adcfb4c` |
+
+The state policy hashes its fixed probes' inputs and actual guard outputs; `none`
+records no active guard. Do not relabel older cached results with these identities.
+The eleven ranking identities are unchanged.
+
+
+Apply migration 0025 before serving v3. Its known local-test-only round-2 version is
+reapplied transactionally by the migrator without removing existing undo claims; other
+unknown migration drift is still refused. Its columns/grants and snapshot are unchanged. Deploy the matching evidence.v3 web client;
 the older client and MSW fixtures require the controller's parallel update. The
 server now discloses lexical keywords, automatic state, actual order and mark source,
 remaining suggestions, and the `freeUndo` result. v2 stored pages upgrade on read;
@@ -597,7 +610,9 @@ schema or old private result data to disable this policy.
 Free undo is allowed once per original question, even at a visitor quota limit.
 Its attempt, concurrency, Turnstile and money checks are unchanged. The parent claim
 is taken atomically at admission and is not reset after a downstream failure; retries
-with the same key replay that request, while a new key is an ordinary charged edit.
+with the same key replay its result/failure once a search row exists. A pre-run abandon
+expires the idempotency slot without restoring the undo claim, so even a same-key retry
+is an ordinary quota-counted admission (or is refused at the quota limit).
 Confirm quota_counted=false for the free request and normal ledger settlement. No
 public request field can ask for free quota directly. A release still needs the ranking
 and automatic-filter allowlist decisions; this implementation enables neither on live.

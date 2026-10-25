@@ -182,6 +182,15 @@ export const TIME_ZONE: Vocabulary = {
   YST: 'Yukon standard time',
 };
 
+/** The fifty states plus DC, distinct from the broader NTSB location vocabulary below. */
+export const US_STATE_CODES = Object.freeze([
+  'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN',
+  'KS', 'KY', 'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ',
+  'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA',
+  'WI', 'WV', 'WY',
+] as const);
+export type StateCode = typeof US_STATE_CODES[number];
+
 /**
  * `events.ev_state`: the dictionary's US states, territories and US-administered
  * waters (the code list also holds some foreign countries; those are not states
