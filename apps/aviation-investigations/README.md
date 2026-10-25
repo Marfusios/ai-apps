@@ -1328,7 +1328,9 @@ Nevada" name states. Every answer, in each configuration, is checked against the
 ranking, filter or excerpt, what each configuration discloses, and the free-undo rule.
 `/api/config` reports `aiLimits` (`MOCK_AI_LIMITS` in `web/mock/ai-status.ts`: 10 a day
 anonymous, 50 per account, 20 in an account's first 3 days, 600 a month; briefs on, so the
-brief pages stay testable; `createHandlers({ aiLimits })` changes them).
+brief pages stay testable; `createHandlers({ aiLimits })` changes them) and `aiAutomaticFilters`
+(`["state"]` when the mock's evidence policy applies states, else `[]`; `createHandlers({
+aiAutomaticFilters })` sets it), which words Explore's AI nudge and the About page's AI line.
 A unit test fails when the committed mock files are out of date.
 
 `pnpm test:e2e` starts `pnpm dev:web` in mock mode on `E2E_PORT` (default 5180).

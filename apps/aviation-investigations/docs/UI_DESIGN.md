@@ -482,12 +482,15 @@ Facet order:
     (fatal in bold ink)
   - probable cause in serif, with matched terms highlighted in `blue-wash` with
     a blue underline
-- A quiet magenta-bordered nudge at the end, with its own Ask AI button. Task 23, reworded in Task
-  24 (Builder copy): "Ask in plain English: AirCase searches with your question. A US state it
-  names explicitly is applied automatically, and you can remove it; everything else AI suggests
-  stays a suggestion." and, while filters are set, "It searches the question alone, not the filters
-  set here." (an AI search reads the question alone; it never groups or explains results). It
-  replaced "Want these grouped and explained? Ask the AI with these filters."
+- A quiet magenta-bordered nudge at the end, with its own Ask AI button. Task 23, worded in Task 24
+  for the server's evidence policy (`/api/config` `aiAutomaticFilters`; Builder copy): "Ask in plain
+  English: AirCase searches with your question, and AI suggests filters you can choose to apply."
+  while the policy applies nothing on its own (and while the configuration is unknown), or "Ask in
+  plain English: AirCase searches with your question. A US state it names explicitly is applied
+  automatically, and you can remove it; everything else AI suggests stays a suggestion." when it
+  applies states; and, while filters are set, "It searches the question alone, not the filters set
+  here." (an AI search reads the question alone; it never groups or explains results). It replaced
+  "Want these grouped and explained? Ask the AI with these filters."
 
 Keyword results are complete matches with a real total. They are not "examples".
 
@@ -947,10 +950,13 @@ then state the processed cohort (DESIGN §5).
   what AirCase is (an aviation casebook for flight instructors and safety
   analysts), what it does today (keyword search with filters, a page for each case,
   Compare for up to four cases, the dashboard; AI features are not available yet while the AI
-  status says AI is off, and once AI searches are offered (Task 23, reworded in Task 24) "Ask in
-  plain English: AirCase shows the investigations it retrieved for your question, in their own
-  words. A US state your question names explicitly is applied automatically, and you can remove it;
-  everything else AI suggests stays a suggestion."; while the status is unknown, neither),
+  status says AI is off, and once AI searches are offered (Task 23) "Ask in plain English: AirCase
+  shows the investigations it retrieved for your question, in their own words, and AI suggests
+  filters you can choose to apply.", or, when the server's evidence policy applies states
+  (`aiAutomaticFilters`, Task 24), "Ask in plain English: AirCase shows the investigations it
+  retrieved for your question, in their own words. A US state your question names explicitly is
+  applied automatically, and you can remove it; everything else AI suggests stays a suggestion.";
+  while the status or the configuration is unknown, neither),
   where the data comes from (the NTSB database, with the snapshot and coverage), what
   it is not (not an NTSB service, no operational advice), and, under "Built by", that
   it is built by Mariusz Kotas, with his website mkotas.cz (a link, in a new tab) and
@@ -984,9 +990,10 @@ sign-in started from the page moves the search to the account, like a brief.
 /api/evidence`, `kind: 'question'`) with the usual Turnstile, idempotency, visitor and quota
 handling; results open the page with page 1 already read. Explore's filters do not carry over (the
 contract's question request has none): the nudge under the results says so — "Ask in plain English:
-AirCase searches with your question. A US state it names explicitly is applied automatically, and
-you can remove it; everything else AI suggests stays a suggestion." and, with filters set, "It
-searches the question alone, not the filters set here." Nothing blocks a search
+AirCase searches with your question, and AI suggests filters you can choose to apply." (or, when the
+server's evidence policy applies states, `aiAutomaticFilters`: "… A US state it names explicitly is
+applied automatically, and you can remove it; everything else AI suggests stays a suggestion.", §4.2)
+and, with filters set, "It searches the question alone, not the filters set here." Nothing blocks a search
 (gate answer 2 of 2026-10-25): every question opens its results and uses one AI search. A question
 about something else, or asking for operational advice, gets its results with a fixed capability
 note above them; counting and comparison questions get results with a hint.
