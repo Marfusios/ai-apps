@@ -16,12 +16,13 @@ import { evidenceSearches } from '../db/schema/evidence.js';
 import { caseSections } from '../db/schema/corpus.js';
 import { readCaseDetail } from '../db/queries/case-views.js';
 import { evidenceReservation } from '../evidence/pricing.js';
+import { evidenceRequestHashes } from '../evidence/idempotency.js';
 import { runEvidence } from '../evidence/run.js';
 import { insertSearch, pageOf, readOwnedSearch, takeOverSearch, type EvidenceRow } from '../evidence/store.js';
 import { crossSite } from '../http/origin.js';
 import { issuesOf, JSON_TYPE, sendError } from '../http/reply.js';
 import { admitPaidRequest, forgetIdempotency, releaseQuota, setResultRef, type Admission } from '../quota/admit.js';
-import { canonicalRequestHash, principalHash, UnknownPrincipalError } from '../quota/policy.js';
+import { principalHash, UnknownPrincipalError } from '../quota/policy.js';
 import { settle } from '../quota/settle.js';
 import { setLockTimeout } from '../quota/locks.js';
 import { billing, checkAnonymousRetry, readersOf, sendRejection, visitor } from './briefs.js';
@@ -78,8 +79,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
     const ai = ctx.ai, svc = ctx.evidence;
     if (!ai?.startup.enabled || !ai.policy || !ai.trials || !ai.llm?.evidenceScope || !ai.startup.models || !svc || svc.shutdown.aborted) return sendError(reply, 503, 'unavailable');
     const runtime = { ai: { ...ai, policy: ai.policy, llm: ai.llm, trials: ai.trials } };
-    const { turnstileToken: _token, idempotencyKey: _key, ...content } = body;
-    const requestHash = canonicalRequestHash({ version: EVIDENCE_CONTRACT_VERSION, ...content });
+    const { current: requestHash, legacyV2 } = evidenceRequestHashes(body);
     let who = await visitor(ctx, request);
     // Replay before availability/budget checks, with a fresh anonymous Turnstile token.
     for (const reader of readersOf(who)) {
@@ -87,7 +87,7 @@ export function evidenceRoutes(app: FastifyInstance, ctx: ApiContext, appUrl: st
         WHERE principal_hash = ${reader.hash} AND idempotency_key = ${body.idempotencyKey} AND expires_at > ${ai.now()}`);
       const prior = earlier.rows[0] as { request_hash: string; result_ref: string | null } | undefined;
       if (prior) {
-        if (prior.request_hash !== requestHash) return sendError(reply, 409, 'conflict');
+        if (prior.request_hash !== requestHash && prior.request_hash !== legacyV2) return sendError(reply, 409, 'conflict');
         const id = /^evidence:([0-9a-f-]{36})$/.exec(prior.result_ref ?? '')?.[1];
         return id ? replay(ctx, request, reply, id, body) : sendError(reply, 429, 'in_flight');
       }

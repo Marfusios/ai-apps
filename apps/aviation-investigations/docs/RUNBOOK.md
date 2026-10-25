@@ -48,7 +48,7 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    Require no OVER rows. Evidence has separate 10,000/2,500 input/output caps; measured
    5,701 fixed / 5,674 cached input, 6,192 Latin / 7,190 dense input and 1,118 output.
    Check the derived reservation: $0.0024325 worst case → $0.0025 reserved.
-   Keep evidence.v2 and the evaluated scope.e3 prompt/schema/model/settings frozen.
+   Keep evidence.v3 and the evaluated scope.e3 prompt/schema/model/settings frozen.
    The gate accepted recorded confirmation for fixed capability notes instead of blocking
    policy replies; no new paid suggestion threshold is required. This is not a pass of
    the earlier scope quality gate. Require the final server, excerpt/UI, security, budget
@@ -56,7 +56,9 @@ Generated summaries remain gated; keep **`AI_BRIEFS_ENABLED=false`** and
    validated out_of_scope/operational_advice select the fixed scope/operational_advice
    notes. All other outputs, failures, edits and skipped scope have no note. Render
    EVIDENCE_NOTE_TEXT, keep the research boundary and EVIDENCE_NOTICE unconditional,
-   and never treat no note as assurance. In the live/default baseline suggestions remain unapplied; filter-only edits
+   and never treat no note as assurance. With the default automatic policy (`none`),
+   suggestions remain unapplied; the opt-in state policy below applies only guarded
+   state and discloses it. Filter-only edits
    retain both executed parent query texts. Server-owned statistics hints carry no filters; comparison
    hints name only the matched IDs. All successful searches return 201 results.
    At the daily uncertain-charge limit, evidence searches skip scope and any reranker
@@ -573,56 +575,76 @@ configuration. New edits inherit the parent's executed lexical/vector texts unle
 the visitor supplies replacement terms, then use the selected ranking version.
 No reindex or data migration is needed.
 
-Non-baseline live deployment additionally requires a reviewed code allowlist change,
-evaluation/gate approval and the controller's `evidence.v3` disclosure. This server
-work supplies the v3 contract below but grants none of those release clearances.
+Non-baseline live deployment requires evaluation/gate approval, a reviewed ranking
+allowlist change and the matching `evidence.v3` client disclosures. The live ranking
+allowlist currently permits only `er-q-v1`.
 
 ### Evidence automatic filters and v3 rollout
 
 `AVIATION_EVIDENCE_AUTO_FILTERS` selects `none` (empty/default) or
-`state-explicit.v1.2`. Both are allowed on dev and live following the state policy's
+`state-explicit.v1.3`. Both are allowed on dev and live following the state policy's
 field confirmation and review. Unknown values fail startup. The default stays
-`none`: to enable state on live, set `AVIATION_EVIDENCE_AUTO_FILTERS=state-explicit.v1.2`
-in that environment's settings and run `pnpm app:up` with those settings.
+`none`. To enable it, deploy the matching v3 client and complete these steps:
+
+1. In `live.env`, set `AVIATION_EVIDENCE_AUTO_FILTERS=state-explicit.v1.3` and keep
+   `AVIATION_EVIDENCE_RANKING=er-q-v1`.
+2. Run `pnpm worker ai-preflight` with those same environment settings **before**
+   `pnpm app:up`. Require successful configuration validation and no OVER rows.
+   This catches an invalid policy before the app is recreated.
+3. Run `pnpm app:up` with those settings, then check that `/api/config` reports
+   `aiAutomaticFilters: ['state']` after its cache expires. Confirm that an applied
+   state is disclosed and can be removed without a visitor quota unit.
+4. Monitor the private `autoFilterReason` mix and the ratio of free-undo claims to
+   state-applied original searches. Removals are the live precision signal, not a
+   labelled precision estimate: a claim may also remove added keywords or precede
+   a failed search. Keep these diagnostics and question text out of logs/traces.
+
 This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
 it does not change any evaluated ranking hash. The Docker service passes it through.
 The live ranking allowlist remains **`er-q-v1` only**.
 Each saved search records both configuration identities. No reindex is needed.
-v1.1 was never deployed and is no longer accepted; replace an unreleased v1.1
-setting with v1.2 before startup. v1.2 adds only a rejection for another-event or
-title attribution after NFKC: for example, "discuss another accident in Alaska",
-"similar to the crash in Alaska" and "titles include accidents in Alaska" cannot
-apply state. "Accidents in Alaska related to icing" and "cases in Texas involving
-other aircraft" remain eligible. See DESIGN for the bounded, case-insensitive rule.
-Its accepted set is a strict subset of v1.1 (and a subset of v1). The controller's
-replay of all 1,040 recorded C field answers lost zero applications: both versions
-gave 367 TP / 0 FP / 33 FN. That result covers the recorded answers, not all future
-wording; it does not widen the ranking or other-field allowlists.
+v1.1 and v1.2 were never deployed and are no longer accepted. Replace any unreleased
+older setting with `none` or v1.3 before preflight. v1.3 is built on v1.1, adding five
+rejections for other-event wording, references before the first mention, title/text
+language, locations attributed to destinations/departures/attributes, and definite
+singular events at a state mention. It removes v1.2's overbroad `like` alternative:
+"I'd like to see accidents in Alaska" remains eligible. See DESIGN for the bounded
+rules and deliberate abstentions. Its accepted set is a strict subset of v1.1
+(and a subset of v1). The 1,040-answer offline replay gives 365 TP / 0 FP / 35 FN
+for the guard, two applications lost from v1.1. The pipeline's separate case-search
+intent requirement yields 363 TP / 0 FP / 37 FN. Neither result proves semantic
+attribution for future wording; other fields and rankings remain restricted.
 `GET /api/config` reports `aiAutomaticFilters: []` for `none` and `['state']` for
-the state policy. Client copy follows this field, not a fixed claim about states.
+the state policy. The field is optional for cached pre-deploy configs: missing means
+unknown, so the client uses cautious "suggests filters" wording. Client copy follows
+this field, not a fixed claim about states.
 A policy change changes the response ETag even on the same dataset; the existing
 public cache lifetime is five minutes.
-The automatic-policy identity includes `state-probes.v4` outputs. Current hashes:
+The automatic-policy identity includes `state-probes.v5` outputs. Current hashes:
 
 | Policy | SHA-256 |
 | --- | --- |
 | `none` | `f586929efd8c2254ec18d3ac2141d2be48fad1125b3708160686b31a67766715` |
-| `state-explicit.v1.2` | `1d39528180f30696b60d254b7275c97704d8dc6e03ba6122256670f1c6bb8531` |
+| `state-explicit.v1.3` | `8e1491adf18797055438498cd49bec694ec265d3698b8ea0049ee34c4575f6de` |
 
 The state policy hashes its fixed probes' inputs and actual guard outputs; `none`
 records no active guard. Do not relabel older cached results with these identities.
-The v1.2 policy binds `state-probes.v4` (301 probes, including independent witnesses
-for every other-event/title alternative). The eleven ranking identities are unchanged.
+The v1.3 policy binds `state-probes.v5` (499 probes, including all review challenges
+and witnesses for every new regex alternative). The eleven ranking identities are unchanged.
 
 
 Apply migration 0025 before serving v3. Its known local-test-only round-2 and round-3 versions are
 reapplied transactionally by the migrator without removing existing undo claims; other
-unknown migration drift is still refused. Its columns/grants and snapshot are unchanged. Deploy the matching evidence.v3 web client;
-the older client and MSW fixtures require the controller's parallel update. The
-server now discloses lexical keywords, automatic state, actual order and mark source,
-remaining suggestions, and the `freeUndo` result. v2 stored pages upgrade on read;
-pre-v2 pages remain unavailable. To roll back automatic state on live, set
-`AVIATION_EVIDENCE_AUTO_FILTERS=none` in the live settings, then run `pnpm app:up`
+unknown migration drift is still refused. Its columns/grants and snapshot are unchanged.
+Deploy the matching evidence.v3 web client for keyword, automatic-state, ordering,
+mark-source, suggestion and undo disclosures. v2 stored pages upgrade on read;
+pre-v2 pages remain unavailable. Unexpired v2 retries of the identical compatible
+body replay the existing result (including running/failed searches), with the usual
+ownership and Turnstile checks and no new quota or provider call. Different bodies
+still conflict; v3-only `keywords` can never be discarded to match a v2 hash.
+Old tabs reject v3 page responses until reloaded; reload them after deployment.
+To roll back automatic state on live, set `AVIATION_EVIDENCE_AUTO_FILTERS=none`
+in the live settings, run `pnpm worker ai-preflight`, then run `pnpm app:up`
 with those settings. New question-search pages disclose no automatic filters;
 Explore and About switch wording through `aiAutomaticFilters: []`, subject to the
 five-minute config cache above. Saved pages retain their own facts; new edits use

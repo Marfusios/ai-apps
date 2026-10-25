@@ -1,4 +1,4 @@
-/** Operator-only ranking selection. Not part of the public evidence.v2 contract. */
+/** Operator-only ranking selection. Not part of the public evidence.v3 contract. */
 export const EVIDENCE_RANKING_VERSIONS = [
   'er-q-v1', 'er-t-v1', 'er-qt-v1',
   'er-q-h50-v1', 'er-t-h50-v1', 'er-qt-h50-v1',

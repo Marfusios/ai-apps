@@ -66,13 +66,12 @@ describe('explicit event-state eligibility', () => {
   });
 });
 
-describe('v1.2 other-event and title attribution', () => {
+describe('bounded other-event and title attribution retained in v1.3', () => {
   it.each([
     ['Find investigations that discuss another accident in Alaska.', ['AK']],
     ['Find investigations similar to the crash in Alaska.', ['AK']],
     ['Find investigations whose titles include accidents in Alaska.', ['AK']],
     ['Find investigations about a previous fatal accident in Texas.', ['TX']],
-    ['Find investigations like the accident in Alaska.', ['AK']],
     ['Find investigations about a prior well-documented fatal crash in Alaska.', ['AK']],
     ['Find investigations with a headline about accidents in Alaska.', ['AK']],
     ['Find investigations with headlines about accidents in Alaska.', ['AK']],
@@ -85,7 +84,6 @@ describe('v1.2 other-event and title attribution', () => {
   it.each([
     ['Find accidents in Alaska related to icing.', ['AK']],
     ['Find cases in Texas involving other aircraft.', ['TX']],
-    ['Find accidents like this in Alaska.', ['AK']],
     ['Tell me about accidents in Alaska.', ['AK']],
     ['Find accidents in Alaska. Discuss another very old fatal accident.', ['AK']],
     ['Find accidents in Alaska. The headlinesman was interviewed.', ['AK']],

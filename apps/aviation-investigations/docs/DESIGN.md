@@ -966,25 +966,40 @@ remain those evaluated for Task 24; automatic filters are an independent, frozen
 policy selected by `AVIATION_EVIDENCE_AUTO_FILTERS` (`none` by default). Its canonical
 identity includes the outputs of a fixed, versioned guard-probe set; a changed response
 to any probe changes the hash even without a guard version bump. Live accepts
-`none` and the reviewed `state-explicit.v1.2`; the default stays `none` and an operator
+`none` and the reviewed `state-explicit.v1.3`; the default stays `none` and an operator
 must explicitly enable state in the environment settings. The independent live
-ranking allowlist remains `er-q-v1` only. `state-explicit.v1.2` uses
+ranking allowlist remains `er-q-v1` only. `state-explicit.v1.3` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
-It requires the complete explicit event-state set and abstains on ambiguous places,
-negation, unsafe contexts or unsupported attribution. After NFKC, a full state name
-followed by city/county/river or any other guarded place suffix also abstains.
-The v1.2 rule also abstains, after NFKC and without case sensitivity, on another/other/
-previous/prior/earlier/later/similar/same/second/related/like followed by an event noun
-(accident, crash, event, incident, occurrence, mishap, investigation or case, including
-plurals), with up to two intervening word or hyphenated-word tokens. `titles`,
-`headline` and `headlines` also abstain. The private reason is `other_event`.
-For example, "discuss another accident in Alaska" does not establish the requested
-event's state; "accidents in Alaska related to icing" still does. These are only
-additional rejections: v1.2 is a strict subset of v1.1, which is a subset of v1.
-The controller's replay of 1,040 recorded C field answers retained the same
-367 TP / 0 FP / 33 FN, with zero applications lost. This is retrospective coverage
-of those answers, not a recall guarantee for new questions. v1.1 was never deployed
-and is no longer an accepted setting. Other fields stay advisory.
+It requires agreement with the complete explicitly named state set. Its finite
+rules reject recognized ambiguous places, negation, unsafe wording and attribution
+patterns; they cannot establish event attribution for arbitrary natural language.
+After NFKC, a full state name followed by city/county/river or another guarded place
+suffix abstains. v1.3 preserves every v1.1 rule and adds five case-insensitive rejections:
+
+- Another/other/previous/prior/earlier/later/similar/same/second/related followed by
+  an event noun, with up to two intervening word or hyphenated-word tokens, or
+  `titles`/`headline(s)` anywhere (`other_event`).
+- Reference or comparison wording before the first state mention, including
+  cite/discuss/mention, before/after, and `like` followed by a demonstrative or
+  article (`referenced_event`). A qualified postal mention starts at its city.
+- Title, heading, caption, word/phrase/text or naming language anywhere (`title_text`).
+- Destination, departure, maintenance, credential or other listed attribute wording
+  immediately before any state mention, with up to five intervening words
+  (`attributed_elsewhere`).
+- The/that/this followed by a singular event noun, with up to two intervening words,
+  immediately before a location qualifier and state mention (`referenced_event`).
+
+The exact patterns are versioned in `shared/state-eligibility.ts`. For example,
+"I'd like to see accidents in Alaska" and "accidents in Alaska related to icing"
+remain eligible. "Accidents after takeoff in Alaska", "accidents like this in Alaska"
+and "Show me related accidents in Alaska" deliberately remain suggestions.
+v1.3 is a strict subset of v1.1, which is a subset of v1; it is not based on v1.2's
+overbroad `like` alternative. The offline replay of 1,040 recorded C answers gives
+365 TP / 0 FP / 35 FN for the guard, two fewer applications than v1.1. The pipeline's
+separate `case_search` intent requirement gives 363 TP / 0 FP / 37 FN. These are
+retrospective results on recorded answers, not semantic safety or future recall
+guarantees. v1.1 and v1.2 were never deployed and are no longer accepted settings.
+Other fields stay advisory.
 Edits never apply automatic filters. Accepted state values become retrieval filters
 before all three channels run and are removed from the remaining suggestion.
 
