@@ -11,6 +11,7 @@ const Rows = z
       sourceCheckSucceeded: z.boolean(),
       canaryPassed: z.boolean(),
       unresolved: z.boolean(),
+      recertification: z.boolean().optional(),
     }),
   )
   .max(2000);
@@ -23,7 +24,9 @@ export async function readImportStatus(
   try {
     // Drizzle nests a transaction as a savepoint on the overview's existing snapshot.
     const r = await db.transaction((tx) =>
-      tx.execute(sql`select import_status_rows() as rows,import_status_attention() as attention`),
+      tx.execute(
+        sql`select import_status_rows() as rows,import_status_attention() as attention`,
+      ),
     );
     return projectImports(
       Rows.parse(r.rows[0]?.rows),

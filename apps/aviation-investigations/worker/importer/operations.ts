@@ -19,11 +19,18 @@ import {
   fenced,
   manifest,
   withImportSession,
-  type Artifact,
+  artifact,
+  unresolvedArtifacts,
+  unresolvedPreartifactReviews,
+  type ReviewIdentity,
   type AcceptedSnapshot,
   type ImportSession,
 } from './store.js';
-import { acknowledgePreartifact, preartifactFingerprint, recordRebaseline } from './durable.js';
+import {
+  acknowledgePreartifact,
+  preartifactFingerprint,
+  recordRebaseline,
+} from './durable.js';
 import {
   productionEffects,
   type ImportEffects,
@@ -61,16 +68,7 @@ export async function assertNoActiveWork(
   space: ManagedSpace,
   inspect: () => Promise<void>,
 ): Promise<void> {
-  for (const name of ['extraction.json', 'status-dev.json', 'status-live.json']) {
-    const exists = await lstat(join(space.root, name)).then(
-      () => true,
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return false;
-        throw error;
-      },
-    );
-    if (exists) throw new ImportFailure('cleanup');
-  }
+  await assertNoSpool(space);
   if ((await space.registered()).some((name) => name.endsWith('.part')))
     throw new ImportFailure('cleanup');
   const names = await readdir(join(space.root, 'extracts')).catch(
@@ -82,6 +80,18 @@ export async function assertNoActiveWork(
   if (names.length > 1024 || names.some((name) => name.includes('.staging-')))
     throw new ImportFailure('cleanup');
   await inspect();
+}
+async function assertNoSpool(space: ManagedSpace): Promise<void> {
+  for (const name of ['extraction.json', 'status-dev.json', 'status-live.json']) {
+    const exists = await lstat(join(space.root, name)).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return false;
+        throw error;
+      },
+    );
+    if (exists) throw new ImportFailure('cleanup');
+  }
 }
 const AcknowledgementSchema = z.strictObject({
   version: z.literal('preartifact-ack.v1'),
@@ -115,7 +125,14 @@ export async function acknowledgeWithResources(
     evidence.runFingerprint !== (await preartifactFingerprint(db, runId))
   )
     throw new ImportFailure('integrity');
-  await acknowledgePreartifact(db, session, runId, evidence.runFingerprint, evidenceSha256, apply);
+  await acknowledgePreartifact(
+    db,
+    session,
+    runId,
+    evidence.runFingerprint,
+    evidenceSha256,
+    apply,
+  );
 }
 
 async function baselineObservation(
@@ -154,37 +171,36 @@ export async function rebaselineWithResources(
   applied: boolean;
   resolvedArtifact: string | null;
   resolvedPendingRun: string | null;
+  resolvedReviews: ReviewIdentity[];
 }> {
   Sha256.parse(publicationHash);
   const effects = { ...productionEffects, ...overrides };
   // A database-outage spool may contain an uncommitted review. Replay it in an ordinary
   // run before an operator can adopt a baseline; adoption must not erase that outcome.
-  for (const name of ['status-dev.json', 'status-live.json', 'extraction.json']) {
-    const exists = await lstat(join(resources.space.root, name)).then(
-      () => true,
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return false;
-        throw error;
-      },
-    );
-    if (exists) throw new ImportFailure('cleanup');
-  }
+  await assertNoSpool(resources.space);
   const current = await manifest(resources.db);
-  if (!current || digest(current) !== publicationHash) throw new ImportFailure('baseline_changed');
+  if (!current || digest(current) !== publicationHash)
+    throw new ImportFailure('baseline_changed');
   const unknown = await resources.db.execute(
     sql`select 1 from index_switch_attempts where outcome in ('pending','unknown') limit 1`,
   );
   if (unknown.rows.length) throw new ImportFailure('alias_unknown', false);
   const state = await control(resources.db);
-  const latches = await resources.db.execute(
-    sql`select * from import_artifacts where needs_review and resolved_at is null order by created_at limit 2`,
-  );
-  if (latches.rows.length > 1) throw new ImportFailure('verification');
-  const abandoned = latches.rows[0] as unknown as Artifact | undefined;
-  if (abandoned && ['accounting', 'restore_hold', 'import_cap'].includes(abandoned.reason ?? ''))
-    throw new ImportFailure('accounting');
+  const latches = await unresolvedArtifacts(resources.db);
+  if (latches.length > 1) throw new ImportFailure('verification');
+  const abandoned =
+    latches[0] ??
+    (state.pending?.artifactId
+      ? await artifact(resources.db, state.pending.artifactId)
+      : undefined);
+  // SQL distinguishes an aged accounting refusal from unresolved monetary history.
+  if (abandoned?.reason === 'restore_hold') throw new ImportFailure('restore_hold');
   if (state.pending?.artifactId && state.pending.artifactId !== abandoned?.id)
     throw new ImportFailure('interrupted', false);
+  const reviews = await unresolvedPreartifactReviews(resources.db);
+  const resolvedReviews = reviews.map(({ id, fingerprint }) => ({ id, fingerprint }));
+  // A malformed/unavailable source must be fixed before its exact review can be adopted.
+  const observation = await resources.source.inspect();
   const generation = (
     await resources.db.execute(
       sql`select archive_sha256 from dataset_generations where id=${current.generationId}`,
@@ -195,7 +211,12 @@ export async function rebaselineWithResources(
   if (seed) {
     if (seed.sha256 !== archive) throw new ImportFailure('integrity');
     await seedArchive(resources.space, seed.path, seed.sha256);
-    await effects.extractSnapshot(resources.space, seed.sha256, environment, session.assertLocked);
+    await effects.extractSnapshot(
+      resources.space,
+      seed.sha256,
+      environment,
+      session.assertLocked,
+    );
   }
   const snapshot = await effects.readSnapshot(resources.space, archive);
   const reports = join(resources.space.root, 'reports', environment);
@@ -206,7 +227,7 @@ export async function rebaselineWithResources(
     readOnly: !apply,
   });
   if (!verified.ok || verified.conflict) throw new ImportFailure('verification');
-  await effects.verifyBaseline(resources.db, snapshot, current);
+  await effects.verifyBaseline(resources.db, snapshot, current, false);
   const comparison = compareSnapshots(snapshot.facts, snapshot.facts, effects.now());
   const probes = await effects.probeCandidate(
     resources.db,
@@ -234,10 +255,11 @@ export async function rebaselineWithResources(
     code: config.code,
     validation: {
       genericReport: String(stamp.verification_report_sha256),
-      verifier: verified.verifierVersion,
+      verifier: String(stamp.verifier_version),
       probes: probes.hash,
     },
     ...(state.pending ? { resolvedPendingRun: state.pending.runId } : {}),
+    resolvedReviews,
   };
   const evidence = {
     publication: current,
@@ -247,11 +269,14 @@ export async function rebaselineWithResources(
     code: config.code,
     abandonedArtifact: abandoned?.id ?? null,
     pending: state.pending,
+    resolvedReviews,
+    observation,
   };
   await resources.space.json(join(reports, `rebaseline-${digest(evidence)}.json`), evidence);
   await fenced(resources.db, session, async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(7311905022)`);
-    if (!sameManifest(await manifest(tx), current)) throw new ImportFailure('baseline_changed');
+    if (!sameManifest(await manifest(tx), current))
+      throw new ImportFailure('baseline_changed');
     // Dry-run executes the same guarded adoption and rolls it back to its savepoint.
     await tx.execute(sql`savepoint importer_rebaseline_preview`);
     await recordRebaseline(
@@ -270,6 +295,7 @@ export async function rebaselineWithResources(
     applied: apply,
     resolvedArtifact: abandoned?.id ?? null,
     resolvedPendingRun: state.pending?.runId ?? null,
+    resolvedReviews,
   };
 }
 
@@ -278,7 +304,12 @@ export async function recoveryCommand(
   environment: 'dev' | 'live',
   options:
     | { command: 'acknowledge-preartifact'; run: string; evidence: string; apply: boolean }
-    | { command: 'rebaseline'; publication: string; apply: boolean; seed?: RunOptions['seed'] },
+    | {
+        command: 'rebaseline';
+        publication: string;
+        apply: boolean;
+        seed?: RunOptions['seed'];
+      },
 ): Promise<void> {
   const appConfig = environmentConfig(config, environment);
   const db = createDb(appConfig.databaseIngestUrl!, {
@@ -320,7 +351,12 @@ export async function recoveryCommand(
         );
         await privateDirectory(join(space.root, 'reports', environment));
         await space.json(
-          join(space.root, 'reports', environment, `rebaseline-${options.publication}-result.json`),
+          join(
+            space.root,
+            'reports',
+            environment,
+            `rebaseline-${options.publication}-result.json`,
+          ),
           result,
         );
       }

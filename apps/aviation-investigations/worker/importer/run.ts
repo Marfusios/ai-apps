@@ -2,7 +2,7 @@
 import { join } from 'node:path';
 import { createDb, closeDb } from '../../server/db/client.js';
 import { createEsClient } from '../../server/search/es.js';
-import { ImportFailure, safeLog, type ImportStep } from './contracts.js';
+import { ImportFailure, safeLog } from './contracts.js';
 import { environmentConfig, type ImporterConfig } from './config.js';
 import { ManagedSpace } from './files.js';
 import { AvallSource, refreshOwed, sameObservation } from './source.js';
@@ -54,10 +54,11 @@ async function dispatch(context: ImportContext): Promise<RunReport> {
       context,
       context.options.noChange ? 'same_archive' : 'metadata_unchanged',
     );
-  await steps.acquire(context);
+  if ((await steps.acquire(context)) === 'unchanged')
+    return steps.unchanged(context, 'same_archive');
   await steps.extract(context);
-  if ((await steps.register(context)) === 'unchanged')
-    return steps.unchanged(context, 'same_content');
+  const registered = await steps.register(context);
+  if (registered !== 'candidate') return steps.unchanged(context, registered);
   await steps.compare(context);
   if (context.artifact!.publication) {
     await steps.resumePublished(context);
@@ -78,7 +79,10 @@ async function dispatch(context: ImportContext): Promise<RunReport> {
     join(context.reports, `${context.artifact!.id}-accounting.json`),
     await accountingReport(context.db, context.artifact!.id),
   );
-  await context.space.json(join(context.reports, `${context.artifact!.id}-result.json`), result);
+  await context.space.json(
+    join(context.reports, `${context.artifact!.id}-result.json`),
+    result,
+  );
   return result;
 }
 
@@ -95,7 +99,7 @@ export async function runWithResources(
     (options.recertify && options.noChange)
   )
     throw new ImportFailure('configuration');
-  const context = {
+  const context: ImportContext = {
     ...resources,
     config,
     options,
@@ -103,12 +107,13 @@ export async function runWithResources(
     started: Date.now(),
     reports: join(resources.space.root, 'reports', options.environment),
     runId: '',
-    step: 'check' as ImportStep,
+    step: 'check',
     artifact: null,
     pending: null,
     blocked: false,
     sourceChecked: false,
-  } as ImportContext;
+    recertifying: false,
+  };
   try {
     return await withImportSession(resources.db, async (session) => {
       context.session = session;
@@ -116,8 +121,16 @@ export async function runWithResources(
     });
   } catch (error) {
     const success = await committedSuccess(resources.db, context.runId).catch(() => null);
-    if (success) return steps.report(context, 'published', null);
-    const failure = classify(error);
+    if (success)
+      return steps.report(
+        context,
+        success.kind === 'publication' ? 'published' : 'unchanged',
+        null,
+      );
+    const classified = classify(error);
+    const failure = context.recertifying
+      ? new ImportFailure(classified.reason, false, 'deferred')
+      : classified;
     await withImportSession(resources.db, async (session) => {
       // Re-read after acquiring a fresh fence: another worker or a lost COMMIT may already have resolved this run.
       if (await committedSuccess(resources.db, context.runId)) return;
@@ -158,11 +171,15 @@ export async function runWithResources(
     process.stdout.write(
       `${safeLog(context.step, context.blocked ? 'deferred' : failure.result, failure.reason)}\n`,
     );
+    failure.logged = true;
     throw failure;
   }
 }
 
-export async function runImport(config: ImporterConfig, options: RunOptions): Promise<RunReport> {
+export async function runImport(
+  config: ImporterConfig,
+  options: RunOptions,
+): Promise<RunReport> {
   const appConfig = environmentConfig(config, options.environment);
   const db = createDb(appConfig.databaseIngestUrl!, {
     max: 10,

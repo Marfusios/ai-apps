@@ -5261,6 +5261,20 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "work_kind": {
+          "name": "work_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'import'"
+        },
+        "attempt_started": {
+          "name": "attempt_started",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {},

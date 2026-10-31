@@ -20,7 +20,10 @@ export async function applicationAvailable(
     const response = await http(new URL('/api/config', config.applicationUrl), {
       redirect: 'error',
       signal: AbortSignal.timeout(15_000),
-      headers: { 'Cache-Control': 'no-cache', 'User-Agent': 'AirCase-snapshot-canary/1.0' },
+      headers: {
+        'Cache-Control': 'no-cache',
+        'User-Agent': 'AirCase-snapshot-canary/1.0',
+      },
     });
     await response.body?.cancel();
     if (response.status !== 200) throw new ImportFailure('source_unavailable', false);
@@ -62,9 +65,9 @@ export async function workerIdentity(expected: string, cwd: string): Promise<voi
       maxBuffer: 1024 * 1024,
     });
     if (head.stdout.trim() !== expected || status.stdout.trim())
-      throw new ImportFailure('configuration');
+      throw new ImportFailure('configuration', false);
   } catch {
-    throw new ImportFailure('configuration');
+    throw new ImportFailure('configuration', false);
   }
 }
 /** The actual public GET read paths. No cookies, identity, AI endpoints or provider clients. */
@@ -114,14 +117,17 @@ export function applicationProbe(
       try {
         const c = ConfigResponseSchema.parse(JSON.parse(await read('/api/config')));
         // Cache propagation is retried by the orchestrator; no rollback based on a stale response.
-        if (c.datasetRevision !== revision) throw new ImportFailure('source_unavailable', false);
+        if (c.datasetRevision !== revision)
+          throw new ImportFailure('source_unavailable', false);
         if (
           c.coverage.defaultCohort !== expectedCounts.eligible ||
           c.coverage.defaultCohort + c.coverage.otherRecords !== expectedCounts.cases
         )
           throw new ImportFailure('probe');
         const search = SearchResponseSchema.parse(JSON.parse(await read('/api/search')));
-        const dashboard = DashboardResponseSchema.parse(JSON.parse(await read('/api/dashboard')));
+        const dashboard = DashboardResponseSchema.parse(
+          JSON.parse(await read('/api/dashboard')),
+        );
         const detail = CaseDetailSchema.parse(JSON.parse(await read('/api/cases/DFW08TA066')));
         if (
           [
@@ -132,7 +138,10 @@ export function applicationProbe(
         ) {
           throw new ImportFailure('source_unavailable', false);
         }
-        if (search.total !== expectedCounts.eligible || dashboard.total !== expectedCounts.eligible)
+        if (
+          search.total !== expectedCounts.eligible ||
+          dashboard.total !== expectedCounts.eligible
+        )
           throw new ImportFailure('probe');
         const page = await read('/cases/DFW08TA066'),
           sitemap = await read('/sitemap.xml');

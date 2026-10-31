@@ -1,7 +1,6 @@
 /** State path: baseline → detect/acquire → extract/register → compare → load/verify → plan/index
  * → validate/publish → canary/accept → retention. A latch or pending fetch always precedes detection. */
 import { join } from 'node:path';
-import { sql } from 'drizzle-orm';
 import { APP_DIR } from '../config.js';
 import { CASES_INDEX_VERSION } from '../index/cases-index.js';
 import { cacheOnlyEmbedder, embeddingUsdPerMillion } from '../index/embed.js';
@@ -11,7 +10,7 @@ import { compareSnapshots } from './compare.js';
 import { checkApproval } from './approval.js';
 import { ImportFailure, POLICY_VERSION, safeLog, sameManifest } from './contracts.js';
 import { checkExtraction, privateDirectory } from './files.js';
-import { privateJson, recoverExtraction, seedArchive } from './extraction.js';
+import { recoverExtraction, seedArchive } from './extraction.js';
 import { digest } from './provenance.js';
 import { refreshOwed, sameObservation } from './source.js';
 import { matchingDev } from './facts.js';
@@ -20,7 +19,9 @@ import {
   PendingSchema,
   recordSuccess,
   setPending,
-  setPendingTransaction,
+  recordLegacy,
+  linkPendingArtifact,
+  resolveAbandonedFetch,
 } from './durable.js';
 import {
   accept,
@@ -29,12 +30,19 @@ import {
   budgetRemaining,
   control,
   findContent,
-  fenced,
   linkGeneration,
   manifest,
   registerArtifact,
   registerCandidate,
-  resumeArtifact,
+  admitArtifact,
+  startAttempt,
+  startRecertification,
+  unresolvedArtifacts,
+  unresolvedPreartifactReviews,
+  outstandingArtifacts,
+  originalFetch,
+  reusableReference,
+  latestCanary,
   saveCertificate,
   updateRun,
   accountingReport,
@@ -44,14 +52,15 @@ import {
 import { replayOutage } from './recovery.js';
 import { activate, protectBaseline } from './lifecycle.js';
 import { validateRecord } from './strict-es.js';
-import type { ImportContext, RunReport } from './runtime.js';
-import type { ImportStep, ManifestIdentity } from './contracts.js';
+import { requireState, type ImportContext, type RunReport } from './runtime.js';
+import type { ImportStep } from './contracts.js';
 
 export function currentArtifact(context: ImportContext): Artifact {
   if (!context.artifact) throw new ImportFailure('integrity');
   return context.artifact;
 }
 export async function stage(context: ImportContext, step: ImportStep): Promise<void> {
+  requireState(context, 'session');
   context.step = step;
   context.session.assertLocked();
   await updateRun(context.db, context.session, context.runId, {
@@ -65,6 +74,7 @@ export async function stage(context: ImportContext, step: ImportStep): Promise<v
 }
 
 export async function initialize(context: ImportContext): Promise<void> {
+  requireState(context, 'session');
   await privateDirectory(context.space.root);
   await privateDirectory(context.reports);
   await replayOutage(context.db, context.session, context.space, context.options.environment);
@@ -76,22 +86,23 @@ export async function initialize(context: ImportContext): Promise<void> {
   await recoverExtraction(context.space);
   const state = await control(context.db);
   context.pending = state.pending ? PendingSchema.parse(state.pending) : null;
-  const latched = await context.db.execute(sql`select * from import_artifacts
-    where needs_review and resolved_at is null order by created_at limit 1`);
-  const prior = await context.db
-    .execute(sql`select reason from import_runs r where result='needs_review' and artifact_id is null
-    and acknowledged_at is null and not exists(select 1 from import_attestations t
-      where t.kind='rebaseline' and t.accepted->>'resolvedPendingRun' in (r.id::text,r.pending_run_id::text)) order by checked_at limit 1`);
-  if (latched.rows.length || context.pending?.needsReview || prior.rows.length) {
+  const latched = await unresolvedArtifacts(context.db);
+  const prior = await unresolvedPreartifactReviews(context.db);
+  if (latched.length || context.pending?.needsReview || prior.length) {
     context.blocked = true;
-    if (latched.rows[0]) context.artifact = latched.rows[0] as unknown as Artifact;
+    context.artifact = latched[0] ?? null;
     // A newer upstream advertisement is recorded without downloading or moving the candidate.
     try {
       await observePending(context.db, context.session, await context.source.inspect());
     } catch {
       /* original review remains authoritative */
     }
-    throw new ImportFailure(context.artifact?.reason ?? context.pending?.reason ?? 'verification');
+    throw new ImportFailure(
+      context.artifact?.reason ??
+        context.pending?.reason ??
+        prior[0]?.reason ??
+        'verification',
+    );
   }
 }
 
@@ -103,6 +114,7 @@ export async function preflight(context: ImportContext): Promise<void> {
 }
 
 export async function establishBaseline(context: ImportContext): Promise<void> {
+  requireState(context, 'session');
   const state = await control(context.db);
   const current = await manifest(context.db);
   if (!current) throw new ImportFailure('baseline_required');
@@ -126,36 +138,33 @@ export async function establishBaseline(context: ImportContext): Promise<void> {
       observation: seed.observation,
       code: context.config.code,
     };
-    await fenced(context.db, context.session, async (tx) => {
-      await tx.execute(sql`insert into import_attestations(kind,publication,accepted,evidence_sha256)
-        values('legacy',${JSON.stringify(current)}::jsonb,${JSON.stringify(context.accepted)}::jsonb,${digest(context.accepted)})`);
-      await tx.execute(
-        sql`select import_accept(${context.session.fence}::uuid,${JSON.stringify(context.accepted)}::jsonb,false)`,
-      );
-    });
+    await recordLegacy(context.db, context.session, context.accepted);
   } else {
     context.accepted = state.accepted;
-    context.baseline = await context.effects.readSnapshot(context.space, state.accepted.archive);
+    context.baseline = await context.effects.readSnapshot(
+      context.space,
+      state.accepted.archive,
+    );
     if (
       context.baseline.csvHash !== state.accepted.csvHash ||
       context.baseline.facts.digest !== state.accepted.content
     ) {
       throw new ImportFailure('integrity');
     }
-    await context.effects.verifyBaseline(context.db, context.baseline, state.accepted.manifest);
+    await context.effects.verifyBaseline(
+      context.db,
+      context.baseline,
+      state.accepted.manifest,
+      false,
+    );
   }
   // Upgrade recovery for 0027 candidates: preserve their original identity and never fetch a replacement first.
   if (!context.pending) {
-    const outstanding = await context.db.execute(sql`select * from import_artifacts
-      where environment=${context.options.environment} and canary is null and resolved_at is null order by created_at limit 2`);
-    if (outstanding.rows.length > 1) throw new ImportFailure('accounting');
-    if (outstanding.rows[0]) {
-      const saved = outstanding.rows[0] as unknown as Artifact;
-      const runs = await context.db
-        .execute(sql`select id,source,to_char(checked_at at time zone 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as checked from import_runs where artifact_id=${saved.id}::uuid order by checked_at limit 1`);
-      const original = runs.rows[0];
-      if (!original?.source) throw new ImportFailure('accounting');
+    const outstanding = await outstandingArtifacts(context.db, context.options.environment);
+    if (outstanding.length > 1) throw new ImportFailure('accounting');
+    if (outstanding[0]) {
+      const saved = outstanding[0];
+      const original = await originalFetch(context.db, saved.id);
       context.pending = PendingSchema.parse({
         archive: saved.archive_sha256,
         content: saved.content_sha256,
@@ -179,13 +188,24 @@ export async function establishBaseline(context: ImportContext): Promise<void> {
     throw new ImportFailure('baseline_changed');
 }
 
-export async function detect(context: ImportContext): Promise<'pending' | 'unchanged' | 'acquire'> {
+export async function detect(
+  context: ImportContext,
+): Promise<'pending' | 'unchanged' | 'acquire'> {
+  requireState(context, 'session', 'accepted');
   if (context.pending) {
     if (context.options.noChange || context.options.recertify)
       throw new ImportFailure('interrupted', false);
     context.observation = context.pending.observation;
     context.sourceChecked = false;
     return 'pending';
+  }
+  if (context.options.forcedDev) {
+    const completed = await findContent(
+      context.db,
+      context.options.environment,
+      context.accepted.content,
+    );
+    if (completed?.canary) throw new ImportFailure('configuration', false);
   }
   if (context.options.recertify) {
     context.observation = context.accepted.observation;
@@ -207,6 +227,12 @@ export async function detect(context: ImportContext): Promise<'pending' | 'uncha
   const state = await control(context.db);
   if (
     !context.options.forcedDev &&
+    state.lastFetched?.state === 'reviewed_abandoned' &&
+    sameObservation(context.observation, state.lastFetched.observation)
+  )
+    return 'unchanged';
+  if (
+    !context.options.forcedDev &&
     sameObservation(context.observation, context.accepted.observation) &&
     !refreshOwed(state.lastRemoteFetchAt, context.effects.now())
   )
@@ -214,15 +240,18 @@ export async function detect(context: ImportContext): Promise<'pending' | 'uncha
   return 'acquire';
 }
 
-export async function acquire(context: ImportContext): Promise<void> {
-  if (context.pending) return;
+export async function acquire(context: ImportContext): Promise<'pending' | 'unchanged'> {
+  requireState(context, 'session', 'accepted', 'observation');
+  if (context.pending) return 'pending';
   await stage(context, 'acquire');
   const acquired = context.options.forcedDev
     ? { sha256: context.accepted.archive, fetchedAt: context.effects.now().toISOString() }
     : await context.source.acquire(context.observation, context.space);
   context.pending = {
     archive: acquired.sha256,
-    observation: context.options.forcedDev ? context.accepted.observation : context.observation,
+    observation: context.options.forcedDev
+      ? context.accepted.observation
+      : context.observation,
     fetchedAt: acquired.fetchedAt,
     runId: context.runId,
     artifactId: null,
@@ -234,9 +263,15 @@ export async function acquire(context: ImportContext): Promise<void> {
   // No refresh clock can advance without the fetched identity that must be resolved next.
   await setPending(context.db, context.session, context.pending, !context.options.forcedDev);
   await context.effects.fault('fetched');
+  if (await resolveAbandonedFetch(context.db, context.session)) {
+    context.pending = null;
+    return 'unchanged';
+  }
+  return 'pending';
 }
 
 export async function extract(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'pending');
   await stage(context, 'extract');
   const pending = context.pending!;
   if (!pending.artifactId) {
@@ -257,8 +292,12 @@ export async function extract(context: ImportContext): Promise<void> {
   await context.effects.fault('extracted');
 }
 
-export async function register(context: ImportContext): Promise<'unchanged' | 'candidate'> {
+export async function register(
+  context: ImportContext,
+): Promise<'same_archive' | 'same_content' | 'candidate'> {
+  requireState(context, 'session', 'candidate', 'accepted', 'current');
   const { db, session, options, pending } = context;
+  if (!pending) throw new ImportFailure('integrity');
   let saved = await findContent(db, options.environment, context.candidate.facts.digest);
   if (
     !options.forcedDev &&
@@ -270,12 +309,21 @@ export async function register(context: ImportContext): Promise<'unchanged' | 'c
     await accept(db, session, { ...context.accepted, observation: pending!.observation });
     context.accepted = { ...context.accepted, observation: pending!.observation };
     context.pending = null;
-    return 'unchanged';
+    return context.candidate.archive === context.accepted.archive
+      ? 'same_archive'
+      : 'same_content';
+  }
+  if (await resolveAbandonedFetch(db, session)) {
+    context.pending = null;
+    return 'same_content';
   }
   if (saved?.resolved_at || saved?.rollback || saved?.needs_review)
     throw new ImportFailure(saved.reason ?? 'baseline_changed');
   if (saved?.archive_sha256 && saved.archive_sha256 !== context.candidate.archive) {
-    context.candidate = await context.effects.readSnapshot(context.space, saved.archive_sha256);
+    context.candidate = await context.effects.readSnapshot(
+      context.space,
+      saved.archive_sha256,
+    );
   }
   saved ??= await registerArtifact(
     db,
@@ -287,11 +335,7 @@ export async function register(context: ImportContext): Promise<'unchanged' | 'c
   );
   context.artifact = saved;
   pending!.artifactId = saved.id;
-  await fenced(db, session, async (tx) => {
-    await setPendingTransaction(tx, session, pending!);
-    await tx.execute(sql`update import_runs set artifact_id=${saved.id}::uuid where id in (${context.runId}::uuid,${pending!.runId}::uuid)
-      and artifact_id is null`);
-  });
+  await linkPendingArtifact(db, session, pending, context.runId, saved.id);
   await context.effects.fault('registered');
   if (
     saved.canary ||
@@ -311,12 +355,13 @@ export async function register(context: ImportContext): Promise<'unchanged' | 'c
       context.effects.deployedImage,
       context.effects.now(),
     );
-  await resumeArtifact(db, session, saved.id);
+  await admitArtifact(db, session, saved.id);
   await protectBaseline(db, session, saved.id, context.accepted.manifest);
   return 'candidate';
 }
 
 export async function compare(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'baseline', 'candidate', 'accepted', 'pending');
   const saved = currentArtifact(context);
   context.comparison = compareSnapshots(
     context.baseline.facts,
@@ -345,8 +390,10 @@ export async function compare(context: ImportContext): Promise<void> {
 }
 
 export async function load(context: ImportContext): Promise<void> {
-  await stage(context, 'load');
+  requireState(context, 'session', 'candidate');
   const saved = currentArtifact(context);
+  await startAttempt(context.db, context.session, context.runId, saved.id);
+  await stage(context, 'load');
   if (!saved.generation_id) {
     await checkExtraction(context.candidate.dir, context.candidate.hashes);
     await context.effects.loadFromExtract(context.db, context.candidate.dir, {
@@ -359,15 +406,18 @@ export async function load(context: ImportContext): Promise<void> {
   await context.effects.fault('loaded');
 }
 export async function verify(context: ImportContext): Promise<void> {
+  requireState(context, 'generation');
   await stage(context, 'verify');
   const result = await context.effects.verifyCorpus(context.db, context.generation, {
     outDir: context.reports,
     maxReportBytes: context.space.limits.report,
+    readOnly: context.recertifying,
   });
   if (!result.ok || result.conflict) throw new ImportFailure('verification');
   context.genericReport = result.reportSha256;
 }
 export async function plan(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'generation', 'comparison');
   await stage(context, 'plan');
   const saved = currentArtifact(context);
   const { embeddingModel: model, embeddingDimensions: dims } = context.appConfig.ai.openai;
@@ -380,7 +430,7 @@ export async function plan(context: ImportContext): Promise<void> {
   });
   if (!context.plan.cache.available) throw new ImportFailure('interrupted', false);
   if (context.options.cacheOnly && context.plan.toEmbed.inputs !== 0)
-    throw new ImportFailure('import_cap');
+    throw new ImportFailure('cache_miss', false);
   const ledger = createLedgerSpendGate(context.db, {
     import: { artifactId: saved.id, fence: context.session.fence },
     budgets: context.appConfig.ai.budgets,
@@ -427,20 +477,18 @@ async function reusable(
   context: ImportContext,
   kind: 'cases' | 'passages',
 ): Promise<{ index: string; buildId: string } | null> {
+  requireState(context, 'session');
   context.session.assertLocked();
   const alias = `${context.appConfig.elasticsearch.indexPrefix}-${kind}`;
-  const result = await reconcileAlias(context.es, context.db, alias, { lockTimeoutMs: 5000 });
+  const result = await reconcileAlias(context.es, context.db, alias, {
+    lockTimeoutMs: 5000,
+  });
   if (result.unresolved.length) throw new ImportFailure('alias_unknown', false);
   const saved = currentArtifact(context);
-  const rows = await context.db
-    .execute(sql`select r.index_name,r.build_id from import_index_refs r join index_builds b on b.build_id=r.build_id
-    where r.artifact_id=${saved.id}::uuid and r.generation_id=${Number(saved.generation_id)} and b.alias=${alias}
-    and r.released_at is null and b.deletion_requested_at is null and b.deleted_at is null order by r.created_at desc`);
-  if (rows.rows.length > 1) throw new ImportFailure('integrity');
-  const row = rows.rows[0];
-  return row ? { index: String(row.index_name), buildId: String(row.build_id) } : null;
+  return reusableReference(context.db, saved.id, Number(saved.generation_id), alias);
 }
 export async function indexCases(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'generation');
   await stage(context, 'index_cases');
   const saved = currentArtifact(context);
   context.cases =
@@ -462,6 +510,7 @@ export async function indexCases(context: ImportContext): Promise<void> {
   await context.effects.fault('cases_built');
 }
 export async function indexPassages(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'generation', 'plan', 'embedding', 'gate');
   await stage(context, 'index_passages');
   const saved = currentArtifact(context);
   const cacheOnly = context.options.cacheOnly || context.plan.toEmbed.inputs === 0;
@@ -497,6 +546,19 @@ export async function indexPassages(context: ImportContext): Promise<void> {
   await context.effects.fault('passages_built');
 }
 export async function validate(context: ImportContext): Promise<void> {
+  requireState(
+    context,
+    'session',
+    'generation',
+    'cases',
+    'passages',
+    'candidate',
+    'comparison',
+    'embedding',
+    'accepted',
+    'genericReport',
+    'approvedReasons',
+  );
   await stage(context, 'validate');
   const saved = currentArtifact(context);
   const pair = {
@@ -554,6 +616,7 @@ export async function validate(context: ImportContext): Promise<void> {
   await saveCertificate(context.db, context.session, context.certificate);
 }
 export async function publish(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'certificate', 'embedding');
   await stage(context, 'publish');
   context.publication = await activate(
     context.db,
@@ -579,6 +642,8 @@ export async function publish(context: ImportContext): Promise<void> {
 }
 /** A publication committed before an interruption is revalidated under the running worker before canary acceptance. */
 export async function resumePublished(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'candidate', 'comparison');
+  await startAttempt(context.db, context.session, context.runId, currentArtifact(context).id);
   context.publication = currentArtifact(context).publication!;
   context.generation = context.publication.generationId;
   await verify(context);
@@ -596,15 +661,22 @@ export async function resumePublished(context: ImportContext): Promise<void> {
   );
 }
 export async function canary(context: ImportContext, recertification = false): Promise<void> {
+  requireState(context, 'session', 'accepted');
+  if (recertification) requireState(context, 'baseline');
+  else requireState(context, 'candidate', 'publication');
   await stage(context, 'canary');
   const snapshot = recertification ? context.baseline : context.candidate;
   const publication = recertification ? context.accepted.manifest : context.publication;
   if (context.artifact && !recertification) {
-    await context.space.json(join(context.reports, `${context.artifact.id}-publication.json`), {
-      publication,
-      sha256: digest(publication),
-    });
+    await context.space.json(
+      join(context.reports, `${context.artifact.id}-publication.json`),
+      {
+        publication,
+        sha256: digest(publication),
+      },
+    );
   }
+  if (!snapshot || !publication) throw new ImportFailure('integrity');
   const rows = snapshot.facts.normalized.cases;
   const app = context.effects.applicationProbe(
     context.config[context.options.environment]!,
@@ -647,6 +719,14 @@ export async function canary(context: ImportContext, recertification = false): P
 
 /** Free re-certification validates the serving pair without a load, provider, attempt increment or cap reset. */
 export async function recertify(context: ImportContext): Promise<void> {
+  requireState(context, 'session', 'accepted', 'baseline');
+  context.recertifying = true;
+  await startRecertification(
+    context.db,
+    context.session,
+    context.runId,
+    context.accepted.archive,
+  );
   const saved = await findContent(
     context.db,
     context.options.environment,
@@ -663,7 +743,12 @@ export async function recertify(context: ImportContext): Promise<void> {
       : null;
   context.generation = context.accepted.manifest.generationId;
   await verify(context);
-  await context.effects.verifyBaseline(context.db, context.baseline, context.accepted.manifest);
+  await context.effects.verifyBaseline(
+    context.db,
+    context.baseline,
+    context.accepted.manifest,
+    false,
+  );
   const comparison = compareSnapshots(
     context.baseline.facts,
     context.baseline.facts,
@@ -683,6 +768,7 @@ export async function recertify(context: ImportContext): Promise<void> {
   await canary(context, true);
 }
 export async function cleanup(context: ImportContext): Promise<void> {
+  requireState(context, 'session');
   // Do not downgrade an already committed successful run to the intermediate cleanup step.
   context.step = 'cleanup';
   await context.effects.retainDatabase(context.db, context.es, context.session);
@@ -722,12 +808,10 @@ export async function unchanged(
   context: ImportContext,
   reason: NonNullable<RunReport['reason']>,
 ): Promise<RunReport> {
+  requireState(context, 'session', 'accepted');
   if (!sameManifest(await manifest(context.db), context.accepted.manifest))
     throw new ImportFailure('baseline_changed');
-  const latest = await context.db
-    .execute(sql`select canary from import_attestations where canary is not null
-    and canary->>'content'=${context.accepted.content} order by created_at desc limit 1`);
-  const saved = latest.rows[0]?.canary as Canary | undefined;
+  const saved = await latestCanary(context.db, context.accepted.content);
   const refresh =
     context.options.recertify ||
     (!context.options.noChange &&
@@ -741,7 +825,7 @@ export async function unchanged(
   if (refresh) {
     await recertify(context);
     await cleanup(context);
-    return report(context, 'published', null);
+    return report(context, 'unchanged', reason);
   }
   if (!context.options.noChange) await cleanup(context);
   await updateRun(context.db, context.session, context.runId, {

@@ -34,7 +34,10 @@ function formatter(zone: string): Intl.DateTimeFormat {
   }
   return value;
 }
-export function localClock(at: Date, zone: string): { day: string; hour: number; minute: number } {
+export function localClock(
+  at: Date,
+  zone: string,
+): { day: string; hour: number; minute: number } {
   const parts = Object.fromEntries(
     formatter(zone)
       .formatToParts(at)
@@ -76,6 +79,7 @@ export interface StatusRow {
   sourceCheckSucceeded: boolean;
   canaryPassed: boolean;
   unresolved: boolean;
+  recertification?: boolean;
 }
 /** Pure projection. Busy/failure rows cannot refresh lastCheck; latched review survives later checks. */
 export function projectImports(
@@ -84,7 +88,9 @@ export function projectImports(
   now: Date,
   unresolved = false,
 ): AdminImports {
-  const sorted = [...rows].sort((a, b) => b.public.checkedAt.localeCompare(a.public.checkedAt));
+  const sorted = [...rows].sort((a, b) =>
+    b.public.checkedAt.localeCompare(a.public.checkedAt),
+  );
   const lastCheck =
     sorted.find((r) => r.sourceCheckSucceeded && r.public.finishedAt !== null)?.public ?? null;
   const lastSuccess =
@@ -103,7 +109,11 @@ export function projectImports(
     lastSuccessfulImport: lastSuccess,
     attentionRequired: unresolved || sorted.some((r) => r.unresolved),
     overdue:
-      enabled && (!lastCheck || now.getTime() - Date.parse(lastCheck.checkedAt) > 36 * 3_600_000),
-    recentRuns: sorted.slice(0, 20).map((r) => r.public),
+      enabled &&
+      (!lastCheck || now.getTime() - Date.parse(lastCheck.checkedAt) > 36 * 3_600_000),
+    recentRuns: sorted
+      .filter((r) => !(r.recertification && r.public.result === 'unchanged'))
+      .slice(0, 20)
+      .map((r) => r.public),
   });
 }

@@ -28,7 +28,9 @@ function providerTransport(counter: { calls: number }, status = 200): typeof fet
     counter.calls++;
     if (status !== 200)
       return new Response(
-        JSON.stringify({ error: { type: 'server_error', message: 'PRIVATE_SENTINEL_PROVIDER' } }),
+        JSON.stringify({
+          error: { type: 'server_error', message: 'PRIVATE_SENTINEL_PROVIDER' },
+        }),
         { status, headers: { 'Content-Type': 'application/json' } },
       );
     const input = (JSON.parse(String(options?.body)) as { input: string[] }).input;
@@ -70,12 +72,20 @@ it.each(['settlement', 'cache'] as const)(
       await missFixture(fixture);
       const provider = { calls: 0 };
       let lost = false;
-      const originalQuery = fixture.resources.db.$client.query.bind(fixture.resources.db.$client);
+      const originalQuery = fixture.resources.db.$client.query.bind(
+        fixture.resources.db.$client,
+      );
       if (boundary === 'cache') {
         fixture.resources.db.$client.query = (async (...args: unknown[]) => {
           const text =
-            typeof args[0] === 'string' ? args[0] : ((args[0] as { text?: string })?.text ?? '');
-          const result = await Reflect.apply(originalQuery, fixture.resources.db.$client, args);
+            typeof args[0] === 'string'
+              ? args[0]
+              : ((args[0] as { text?: string })?.text ?? '');
+          const result = await Reflect.apply(
+            originalQuery,
+            fixture.resources.db.$client,
+            args,
+          );
           if (!lost && /insert into "embedding_cache"/i.test(text)) {
             lost = true;
             throw new Error('PRIVATE_SENTINEL_CACHE_COMMIT');
@@ -138,8 +148,11 @@ it.each(['settlement', 'cache'] as const)(
       expect(retained.every((row) => row.import_artifact_id === saved.id)).toBe(true);
       expect(provider.calls).toBe(boundary === 'cache' ? 1 : 2);
       expect(
-        (await fixture.resources.db.execute(sql`select count(*)::int as n from import_artifacts`))
-          .rows[0]?.n,
+        (
+          await fixture.resources.db.execute(
+            sql`select count(*)::int as n from import_artifacts`,
+          )
+        ).rows[0]?.n,
       ).toBe(1);
       expect(
         (
@@ -156,18 +169,26 @@ it('defers the monthly allowance without a review and resumes under the same art
     await missFixture(fixture);
     fixture.resources.appConfig.ai.budgets.ingestionMonthlyUsd = 0;
     const provider = { calls: 0 };
-    await expect(
-      fixture.run({ paidEmbedder: fakePaid(provider) }, { cacheOnly: false }),
-    ).rejects.toMatchObject({ reason: 'monthly_budget', review: false });
+    for (let day = 0; day < 5; day++) {
+      await expect(
+        fixture.run({ paidEmbedder: fakePaid(provider) }, { cacheOnly: false }),
+      ).rejects.toMatchObject({ reason: 'monthly_budget', review: false });
+      const pending = (await control(fixture.resources.db)).pending!;
+      expect((await artifact(fixture.resources.db, pending.artifactId!)).attempts).toBe(0);
+    }
     const pending = (await control(fixture.resources.db)).pending!;
     expect(provider.calls).toBe(0);
-    expect((await artifact(fixture.resources.db, pending.artifactId!)).needs_review).toBe(false);
+    expect((await artifact(fixture.resources.db, pending.artifactId!)).needs_review).toBe(
+      false,
+    );
     expect((await readImportStatus(fixture.app, null)).attentionRequired).toBe(false);
     fixture.resources.appConfig.ai.budgets.ingestionMonthlyUsd = 20;
     expect(
       await fixture.run({ paidEmbedder: fakePaid(provider) }, { cacheOnly: false }),
     ).toMatchObject({ result: 'published' });
-    expect((await artifact(fixture.resources.db, pending.artifactId!)).id).toBe(pending.artifactId);
+    expect((await artifact(fixture.resources.db, pending.artifactId!)).id).toBe(
+      pending.artifactId,
+    );
   }));
 
 it('redacts an actual provider failure and keeps all three uncertain attempts tagged on resume', async () =>

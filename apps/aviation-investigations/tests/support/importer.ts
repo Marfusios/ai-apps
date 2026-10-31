@@ -29,18 +29,25 @@ import { certificationClient, validateRecord } from '../../worker/importer/stric
 import { runWithResources } from '../../worker/importer/run.js';
 import { runCanary } from '../../worker/importer/probes.js';
 import {
-  accept,
-  fenced,
   manifest,
   withImportSession,
   type AcceptedSnapshot,
 } from '../../worker/importer/store.js';
 import { digest } from '../../worker/importer/provenance.js';
-import type { ImportEffects, ImportResources, RunOptions } from '../../worker/importer/runtime.js';
+import { recordLegacy } from '../../worker/importer/durable.js';
+import type {
+  ImportEffects,
+  ImportResources,
+  RunOptions,
+} from '../../worker/importer/runtime.js';
 import type { ImporterConfig } from '../../worker/importer/config.js';
 import type { SourceObservation } from '../../worker/importer/contracts.js';
 
-export const EMBEDDING = { model: 'text-embedding-3-small', dims: 1536, usdPerMillionTokens: 0 };
+export const EMBEDDING = {
+  model: 'text-embedding-3-small',
+  dims: 1536,
+  usdPerMillionTokens: 0,
+};
 export const OLD_OBSERVATION = { advertisedAtLocal: '2026-10-01T07:36:33', bytes: 10 };
 export const NEW_OBSERVATION = { advertisedAtLocal: '2026-10-31T07:36:33', bytes: 11 };
 export interface ImportFixture {
@@ -67,7 +74,11 @@ export async function importerFixture(
   body: (fixture: ImportFixture) => Promise<void>,
 ): Promise<void> {
   const appConfig = testConfig();
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(appConfig.elasticsearch.url).hostname))
+  if (
+    !['127.0.0.1', 'localhost', '[::1]'].includes(
+      new URL(appConfig.elasticsearch.url).hostname,
+    )
+  )
     throw new Error('local fixture ES required');
   await withScratchEnvironment(localAdminUrl(), 'importerflow', async (urls) => {
     const db = createDb(urls.ingest, { max: 12 }),
@@ -142,11 +153,7 @@ export async function importerFixture(
         code: 'a'.repeat(40),
       };
       await withImportSession(db, async (session) => {
-        await accept(db, session, baseline);
-        await fenced(db, session, (tx) =>
-          tx.execute(sql`insert into import_attestations(kind,publication,accepted,evidence_sha256)
-          values('legacy',${JSON.stringify(baseline.manifest)}::jsonb,${JSON.stringify(baseline)}::jsonb,${digest(baseline)})`),
-        );
+        await recordLegacy(db, session, baseline);
       });
       const config: ImporterConfig = {
         version: 'snapshot-importer.v1',

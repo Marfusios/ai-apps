@@ -31,7 +31,12 @@ import type {
   PendingFetch,
 } from './store.js';
 import type { Comparison } from './compare.js';
-import type { ImportStep, ManifestIdentity, SourceObservation } from './contracts.js';
+import {
+  ImportFailure,
+  type ImportStep,
+  type ManifestIdentity,
+  type SourceObservation,
+} from './contracts.js';
 
 export interface RunOptions {
   environment: 'dev' | 'live';
@@ -115,27 +120,39 @@ export interface ImportContext extends ImportResources {
   effects: ImportEffects;
   started: number;
   reports: string;
-  session: ImportSession;
+  session?: ImportSession;
   runId: string;
   step: ImportStep;
   blocked: boolean;
   sourceChecked: boolean;
+  recertifying: boolean;
   artifact: Artifact | null;
   pending: PendingFetch | null;
-  accepted: AcceptedSnapshot;
-  baseline: ExtractedSnapshot;
-  candidate: ExtractedSnapshot;
-  observation: SourceObservation;
-  current: ManifestIdentity;
-  comparison: Comparison;
-  approvedReasons: string[];
-  generation: number;
-  genericReport: string;
-  plan: Awaited<ReturnType<typeof planPassages>>;
-  embedding: { model: string; dims: number; usdPerMillionTokens: number };
-  gate: SpendGate;
-  cases: { index: string; buildId: string };
-  passages: { index: string; buildId: string };
-  certificate: Certificate;
-  publication: ManifestIdentity;
+  accepted?: AcceptedSnapshot;
+  baseline?: ExtractedSnapshot;
+  candidate?: ExtractedSnapshot;
+  observation?: SourceObservation;
+  current?: ManifestIdentity;
+  comparison?: Comparison;
+  approvedReasons?: string[];
+  generation?: number;
+  genericReport?: string;
+  plan?: Awaited<ReturnType<typeof planPassages>>;
+  embedding?: { model: string; dims: number; usdPerMillionTokens: number };
+  gate?: SpendGate;
+  cases?: { index: string; buildId: string };
+  passages?: { index: string; buildId: string };
+  certificate?: Certificate;
+  publication?: ManifestIdentity;
+}
+
+/** Steps must prove every prerequisite before accessing it; missing state is a closed integrity failure. */
+export function requireState<K extends keyof ImportContext>(
+  context: ImportContext,
+  ...keys: K[]
+): asserts context is ImportContext & { [P in K]-?: NonNullable<ImportContext[P]> } {
+  for (const key of keys) {
+    if (context[key] === undefined || context[key] === null)
+      throw new ImportFailure('integrity');
+  }
 }

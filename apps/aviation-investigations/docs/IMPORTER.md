@@ -10,7 +10,11 @@ endpoint. It refuses redirects, ambiguous listing rows, changed download metadat
 unexpected content encoding and oversized streams. The source's advertised date is
 kept without a timezone: the listing supplies none. An unchanged advertisement can
 skip retrieval for at most seven days after a successful unconditional byte fetch.
-An unknown fetch time means retrieval is owed. A local seed/hash or a listing read
+An unknown fetch time means retrieval is owed. An explicitly abandoned advertisement
+is the exception: it stays resolved until its advertised date or size changes. A changed
+advertisement may be fetched once, but already abandoned bytes or canonical content
+remain resolved and receive no new attempts or allowance, including pre-registration
+failures. A local seed/hash or a listing read
 does not advance that clock. A fixed journal reminder starts **2027-03-01 UTC**;
 automatic acquisition stops at **2027-04-05T00:00:00Z**. The accepted dataset remains
 servable. An Enterprise API adapter needs its own reviewed completeness contract;
@@ -111,7 +115,10 @@ open and expired-outstanding reservations across attempts and month boundaries.
 The tag is inserted in the production reservation transaction; there is no separate
 cap ledger or accounting compaction. Plan admission includes up to three provider
 attempts. Every attempt also reserves under normal monthly/ingestion budgets.
-Cache-only mode cannot call a provider and refuses cache misses. At or after
+Cache-only mode cannot call a provider. Cache misses defer as `cache_miss`; run without
+that option to admit paid misses through the normal gates, or explicitly abandon the
+candidate with rebaseline. Neither a cache miss nor a short monthly allowance is a data
+latch. At or after
 **89 days (2,136 hours on database time)** from the immutable database
 first-reservation time, the artifact refuses even a cache-only resume: the one-day
 margin precedes the 90-day ledger pruning boundary. Restoring a
@@ -119,11 +126,17 @@ database latches the importer separately; global spend reconciliation does not c
 that latch. A restore needs reviewed importer/accounting reconciliation before any
 further import, not an automated reset or a new artifact identity.
 
-An artifact gets one automatic attempt plus at most three transient resumptions.
+An artifact gets at most four completed or failed work attempts. Temporary deferrals
+do not increment that counter. A worker that disappears during work is counted once
+when the next fenced run recovers it; completed publications and non-deferred failures
+also count. Extraction before registration has its separate durable four-try bound.
 Data, integrity, accounting and contract failures latch; a new run row or a
-repackaging does not reset them. The pre-registration gap also has a durable four-try
-bound. A short monthly allowance, dev not yet certified, non-200/network source
-response or unavailable app is `deferred`, not a data review. Unknown failures are
+repackaging does not reset them. A short monthly allowance, dev not yet certified, non-200/network source
+response or unavailable app is `deferred`, not a data review. The fixed
+`source_unavailable` reason covers both NTSB availability and app HTTP availability;
+the private step log and the preflight/canary context distinguish them. A dirty worker
+checkout is a deferred `configuration` refusal and can resume after correcting the
+checkout. Unknown failures are
 `failed/interrupted` and use the same bounded retry history; loss of the fence or
 session cancels with `lock_lost`. A lost settlement or cache-write acknowledgement
 never loses the original reservation tag or creates a fresh allowance.
@@ -245,12 +258,14 @@ create new generations after that logical artifact has already completed. Once
 configured and reviewed, run an ordinary cycle or one environment explicitly:
 
 ```sh
-pnpm importer cycle --config "$IMPORT_CONFIG" --cache-only
+pnpm importer cycle --config "$IMPORT_CONFIG"
 pnpm importer run --config "$IMPORT_CONFIG" --env dev
 ```
 
-`cycle` requires installation evidence and enabled schedule intent. Omit
-`--cache-only` only when paid misses are intended; all reservations still use the cap.
+`cycle` requires installation evidence and enabled schedule intent. Normal monthly
+updates can have cache misses; these commands permit them only within the existing
+plan, artifact and monthly budget gates. Add `--cache-only` only to require a fully
+cached update; otherwise it defers without using a work attempt.
 For a named comparative exception, write a 0600 approval JSON with the exact `archive`,
 `environment`, full `baseline`, `policy`, full worker `code`, comparison `report` hash
 and the exact `cases` array and sorted `reasons` from the bounded private comparison
@@ -262,7 +277,7 @@ force flag. An altered baseline/report/code or an unreviewable reason refuses:
 ```sh
 pnpm importer approve --config "$IMPORT_CONFIG" --env dev \
   --artifact "$ARCHIVE_SHA256" --approval "$APPROVAL_JSON"
-pnpm importer run --config "$IMPORT_CONFIG" --env dev --cache-only
+pnpm importer run --config "$IMPORT_CONFIG" --env dev
 pnpm importer rollback --config "$IMPORT_CONFIG" --env dev \
   --artifact "$ARCHIVE_SHA256" --publication-sha256 "$PUBLICATION_IDENTITY_SHA256"
 ```
@@ -283,7 +298,12 @@ pnpm importer recertify --config "$IMPORT_CONFIG" --env dev
 This makes no provider call, load, new generation, attempt increment or allowance
 reset. It verifies projected provenance, the current generic verifier, strict
 candidate probes and the full ten-minute application canary; any intervening full
-manifest change refuses. Original publication certificates and attestations remain.
+manifest change refuses. Generic verification is read-only: the serving generation’s
+verification stamp is never rewritten by re-certification. A failure records a deferred
+check and invalidates older dev proof without latching the serving artifact. Repeating
+re-certification after fixing the cause recovers the proof. Success records `unchanged`,
+with its canary in an attestation; it does not change last successful import or add a
+publication to the recent-run window. Original publication certificates remain.
 Existing integrity/accounting/restore reviews refuse this operation. With live
 configured, the ordinary dev cycle takes this path when its certificate is absent,
 older than 23 hours, or from another code/image/publication. Live then uses the fresh
@@ -313,13 +333,26 @@ required and does not count as a remote refresh.
 
 One reviewed abandoned data candidate or pre-registration pending fetch may be
 resolved by this operation while keeping its failure reason, attempts, original
-certificate and ledger history. The existing validated serving baseline is adopted;
+certificate and ledger history. A registered pending candidate that is waiting for dev
+can also be abandoned; such a pending dev refusal is visible as attention. `import_cap`
+and an 89-day age refusal may be abandoned because adoption spends nothing and never
+resets accounting. The age limit continues to prohibit resuming the candidate.
+The existing validated serving baseline is adopted;
 the rejected candidate is never implicitly promoted. A resolved artifact cannot
 resume under a new identity. Unknown aliases/publication outcomes, outstanding
 extraction/outage spool, multiple unresolved candidates, an active failed publication
-that has not been rolled back, and accounting/import-cap/restore reviews refuse.
-Manual data repair and restored accounting still need a separate reviewed procedure;
-these commands cannot clear those holds.
+that has not been rolled back, unresolved accounting (apart from the age-only refusal),
+and actual restore holds refuse. Restored accounting still requires the reviewed
+[restore checks](RUNBOOK.md#paid-operations-after-a-restore); these commands cannot clear those holds.
+
+Rebaseline can also resolve exact pre-download reviews after a manual publication,
+verifier upgrade, incorrect seed, corrected listing format/UTF-8, or a replayed restore
+spool after the actual restore holds have been reconciled. It rechecks the listing,
+current serving provenance, verification and probes. The dry-run report lists each
+original run UUID and immutable-row fingerprint. PostgreSQL verifies that list and
+writes the resolution attestation inside the guarded function on apply; the ingestion
+role cannot insert a resolution attestation. Blocked daily runs retain the original
+reason. No run history, reservation, original retry count or restore hold is reset.
 
 ### Acknowledge a proved pre-artifact setup failure
 

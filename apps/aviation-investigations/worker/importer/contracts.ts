@@ -35,10 +35,10 @@ export function sourceReminder(now: Date): string | null {
     : null;
 }
 export const REMOTE_REFRESH_MS = 7 * 24 * 60 * 60_000;
-export const IMPORT_AGE_MS = 89 * 24 * 60 * 60_000;
 
 const TEMPORARY_REASONS = new Set<ImportReason>([
   'source_unavailable',
+  'cache_miss',
   'monthly_budget',
   'busy',
   'backup_window',
@@ -50,6 +50,7 @@ const TEMPORARY_REASONS = new Set<ImportReason>([
 
 /** Error messages and causes deliberately cannot carry upstream data. */
 export class ImportFailure extends Error {
+  logged = false;
   constructor(
     readonly reason: ImportReason,
     readonly review = !TEMPORARY_REASONS.has(reason),
@@ -62,7 +63,9 @@ export class ImportFailure extends Error {
   }
 }
 export function safeFailure(error: unknown): ImportFailure {
-  return error instanceof ImportFailure ? error : new ImportFailure('interrupted', false, 'failed');
+  return error instanceof ImportFailure
+    ? error
+    : new ImportFailure('interrupted', false, 'failed');
 }
 export function safeLog(
   step: ImportStep,
@@ -88,3 +91,19 @@ export function sameManifest(a: ManifestIdentity | null, b: ManifestIdentity | n
     a.publishedAt === b.publishedAt
   );
 }
+
+export const ManifestSchema = z.strictObject({
+  generationId: z.number().int().positive(),
+  casesIndex: z.string().min(1).max(255),
+  passagesIndex: z.string().min(1).max(255),
+  publishedAt: z.iso.datetime(),
+});
+export const CanarySchema = z.strictObject({
+  publication: ManifestSchema,
+  archive: Sha256,
+  content: Sha256,
+  code: z.string().regex(/^[0-9a-f]{40}$/),
+  deployedCode: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  probes: Sha256,
+  checkedAt: z.iso.datetime(),
+});

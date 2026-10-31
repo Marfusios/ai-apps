@@ -10,6 +10,7 @@ export async function verifyBaseline(
   db: Db,
   snapshot: ExtractedSnapshot,
   baseline: ManifestIdentity,
+  requireCurrentVerifier = true,
 ): Promise<void> {
   await checkExtraction(snapshot.dir, snapshot.hashes);
   const g = (
@@ -25,7 +26,7 @@ export async function verifyBaseline(
     g.citation_text_version !== facts.citationTextVersion ||
     g.field_normalization_version !== facts.fieldNormalizationVersion ||
     g.verification_status !== 'ok' ||
-    g.verifier_version !== VERIFIER_VERSION
+    (requireCurrentVerifier && g.verifier_version !== VERIFIER_VERSION)
   )
     throw new ImportFailure('baseline_required');
   const rows = await db.execute(

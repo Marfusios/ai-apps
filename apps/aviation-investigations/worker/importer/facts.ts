@@ -7,23 +7,10 @@ import { environmentConfig, type ImporterConfig } from './config.js';
 import { ImportFailure, Sha256, sameManifest } from './contracts.js';
 import { checkDevCanary } from './approval.js';
 import { deployedImage } from './application.js';
-import { manifest, type Artifact, type Canary } from './store.js';
+import { manifest, latestCanary, type Artifact, type Canary } from './store.js';
 
-export const ManifestSchema = z.strictObject({
-  generationId: z.number().int().positive(),
-  casesIndex: z.string().min(1).max(255),
-  passagesIndex: z.string().min(1).max(255),
-  publishedAt: z.iso.datetime(),
-});
-export const CanarySchema = z.strictObject({
-  publication: ManifestSchema,
-  archive: Sha256,
-  content: Sha256,
-  code: z.string().regex(/^[0-9a-f]{40}$/),
-  deployedCode: z.string().regex(/^sha256:[0-9a-f]{64}$/),
-  probes: Sha256,
-  checkedAt: z.iso.datetime(),
-});
+export { ManifestSchema, CanarySchema } from './contracts.js';
+import { ManifestSchema, CanarySchema } from './contracts.js';
 const DevFactsSchema = z.strictObject({
   canary: CanarySchema.nullable(),
   current: ManifestSchema.nullable(),
@@ -31,7 +18,11 @@ const DevFactsSchema = z.strictObject({
 });
 export type DevFacts = z.infer<typeof DevFactsSchema>;
 export const FactRequestSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('canary'), environment: z.literal('dev'), content: Sha256 }),
+  z.strictObject({
+    kind: z.literal('canary'),
+    environment: z.literal('dev'),
+    content: Sha256,
+  }),
   z.strictObject({ kind: z.literal('retention'), environment: z.enum(['dev', 'live']) }),
 ]);
 export type FactRequest = z.infer<typeof FactRequestSchema>;
@@ -41,7 +32,11 @@ export const FactMessageSchema = z.strictObject({
   request: FactRequestSchema,
 });
 const FactReplySchema = z.discriminatedUnion('ok', [
-  z.strictObject({ type: z.literal('import-facts-reply'), id: z.uuid(), ok: z.literal(false) }),
+  z.strictObject({
+    type: z.literal('import-facts-reply'),
+    id: z.uuid(),
+    ok: z.literal(false),
+  }),
   z.strictObject({
     type: z.literal('import-facts-reply'),
     id: z.uuid(),
@@ -83,14 +78,12 @@ export async function readHostFacts(
   try {
     if (request.kind === 'retention') return retainedArchives(db);
     const before = await manifest(db);
-    const rows =
-      await db.execute(sql`select t.canary from import_attestations t left join import_artifacts a on a.id=t.artifact_id
-      where t.canary->>'content'=${request.content} and (a.id is null or (not a.needs_review and a.resolved_at is null and a.rollback is null))
-      order by t.created_at desc limit 1`);
+    const canary = await latestCanary(db, request.content);
     const observedImage = await deployedImage(config.dev);
-    if (!sameManifest(before, await manifest(db))) throw new ImportFailure('dev_failed', false);
+    if (!sameManifest(before, await manifest(db)))
+      throw new ImportFailure('dev_failed', false);
     return DevFactsSchema.parse({
-      canary: rows.rows[0]?.canary ?? null,
+      canary,
       current: before,
       observedImage,
     });
@@ -163,7 +156,9 @@ export function workerHostFacts(): HostFacts {
   }
   return {
     async canary(content) {
-      return DevFactsSchema.parse(await request({ kind: 'canary', environment: 'dev', content }));
+      return DevFactsSchema.parse(
+        await request({ kind: 'canary', environment: 'dev', content }),
+      );
     },
     async retention(environment) {
       return z

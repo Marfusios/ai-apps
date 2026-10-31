@@ -2,7 +2,13 @@
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db, DbOrTx } from '../../server/db/client.js';
-import { ImportFailure, IMPORT_REASONS, Sha256, SourceSchema, sameManifest } from './contracts.js';
+import {
+  ImportFailure,
+  IMPORT_REASONS,
+  Sha256,
+  SourceSchema,
+  sameManifest,
+} from './contracts.js';
 import { digest } from './provenance.js';
 import {
   artifact,
@@ -114,9 +120,9 @@ export async function recordSuccess(
         sql`update import_artifacts set canary=${JSON.stringify(success.canary)}::jsonb where id=${saved.id}::uuid`,
       );
     }
-    await tx.execute(sql`insert into import_attestations(run_id,artifact_id,kind,publication,accepted,canary,evidence_sha256)
-      values(${success.runId}::uuid,${success.artifactId}::uuid,${success.kind},${JSON.stringify(publication)}::jsonb,
-        ${JSON.stringify(success.accepted)}::jsonb,${JSON.stringify(success.canary)}::jsonb,${success.evidence})`);
+    await tx.execute(sql`select import_record_attestation(${session.fence}::uuid,
+      ${success.runId}::uuid,${success.artifactId}::uuid,${success.kind},${JSON.stringify(publication)}::jsonb,
+      ${JSON.stringify(success.accepted)}::jsonb,${JSON.stringify(success.canary)}::jsonb,${success.evidence})`);
     await tx.execute(
       sql`select import_accept(${session.fence}::uuid,${JSON.stringify(success.accepted)}::jsonb,false)`,
     );
@@ -125,11 +131,11 @@ export async function recordSuccess(
     );
     await updateRunTransaction(tx, success.runId, {
       step: 'complete',
-      result: 'published',
+      result: success.kind === 'publication' ? 'published' : 'unchanged',
       artifactId: success.artifactId,
       observedSha256: success.accepted.archive,
       sourceCheckSucceeded: success.sourceChecked,
-      canaryPassed: true,
+      canaryPassed: success.kind === 'publication',
     });
   });
 }
@@ -137,9 +143,11 @@ export async function recordSuccess(
 /** An acknowledgement/report failure after commit cannot turn committed acceptance into a review. */
 export async function committedSuccess(db: Db, runId: string | null): Promise<Success | null> {
   if (!runId) return null;
-  const result = await db.execute(sql`select t.*,r.source_check_succeeded from import_attestations t
+  const result =
+    await db.execute(sql`select t.*,r.source_check_succeeded from import_attestations t
     join import_runs r on r.id=t.run_id where t.run_id=${runId}::uuid
-    and r.canary_passed and r.result='published' and t.kind in ('publication','recertification')`);
+    and ((t.kind='publication' and r.canary_passed and r.result='published')
+      or (t.kind='recertification' and not r.canary_passed and r.result='unchanged'))`);
   const row = result.rows[0];
   if (!row) return null;
   const accepted = row.accepted as AcceptedSnapshot;
@@ -188,10 +196,44 @@ export async function recordRebaseline(
   pendingRun: string | null,
 ): Promise<void> {
   await assertFence(tx, session);
-  const result =
-    await tx.execute(sql`insert into import_attestations(artifact_id,kind,publication,accepted,evidence_sha256)
-    values(${artifactId}::uuid,'rebaseline',${JSON.stringify(accepted.manifest)}::jsonb,
-      ${JSON.stringify(accepted)}::jsonb,${digest(evidence)}) returning id`);
-  await tx.execute(sql`select import_rebaseline(${session.fence}::uuid,${String(result.rows[0]?.id)}::uuid,
-    ${artifactId}::uuid,${pendingRun}::uuid)`);
+  await tx.execute(sql`select import_rebaseline(${session.fence}::uuid,
+    ${JSON.stringify(accepted)}::jsonb,${digest(evidence)},${artifactId}::uuid,${pendingRun}::uuid)`);
+}
+
+export async function recordLegacy(
+  db: Db,
+  session: ImportSession,
+  accepted: AcceptedSnapshot,
+): Promise<void> {
+  await fenced(db, session, async (tx) => {
+    await tx.execute(sql`select import_record_attestation(${session.fence}::uuid,null::uuid,null::uuid,
+      'legacy',${JSON.stringify(accepted.manifest)}::jsonb,${JSON.stringify(accepted)}::jsonb,null::jsonb,${digest(accepted)})`);
+    await tx.execute(
+      sql`select import_accept(${session.fence}::uuid,${JSON.stringify(accepted)}::jsonb,false)`,
+    );
+  });
+}
+
+export async function linkPendingArtifact(
+  db: Db,
+  session: ImportSession,
+  pending: PendingFetch,
+  runId: string,
+  artifactId: string,
+): Promise<void> {
+  await fenced(db, session, async (tx) => {
+    await setPendingTransaction(tx, session, pending);
+    await tx.execute(sql`update import_runs set artifact_id=${artifactId}::uuid
+      where id in (${runId}::uuid,${pending.runId}::uuid) and artifact_id is null`);
+  });
+}
+
+/** A changed advertisement cannot give already abandoned bytes/content a new retry or money allowance. */
+export async function resolveAbandonedFetch(db: Db, session: ImportSession): Promise<boolean> {
+  return fenced(db, session, async (tx) => {
+    const result = await tx.execute(
+      sql`select import_resolve_abandoned_fetch(${session.fence}::uuid) as resolved`,
+    );
+    return result.rows[0]?.resolved === true;
+  });
 }

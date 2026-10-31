@@ -51,9 +51,14 @@ it('persists a same-tuple replacement before registration and never calls it met
       review: false,
       result: 'failed',
     });
-    expect((await control(fixture.resources.db)).pending?.archive).toBe(fixture.candidate.archive);
+    expect((await control(fixture.resources.db)).pending?.archive).toBe(
+      fixture.candidate.archive,
+    );
     expect((await control(fixture.resources.db)).lastRemoteFetchAt).not.toBeNull();
-    await expect(fixture.run()).rejects.toMatchObject({ reason: 'source_reissued', review: true });
+    await expect(fixture.run()).rejects.toMatchObject({
+      reason: 'source_reissued',
+      review: true,
+    });
     expect(fixture.acquire).toHaveBeenCalledTimes(1);
     const pending = (await control(fixture.resources.db)).pending!;
     expect(pending.needsReview).toBe(true);
@@ -83,12 +88,18 @@ it.each(['registered', 'cases_built', 'published'] as const)(
         await fixture.owner.execute(
           sql`alter table index_builds enable trigger index_builds_guard`,
         );
-        const deletion = await deleteUnusedIndices(fixture.resources.es, fixture.resources.db, {
-          olderThanHours: 48,
-          yes: true,
-        });
+        const deletion = await deleteUnusedIndices(
+          fixture.resources.es,
+          fixture.resources.db,
+          {
+            olderThanHours: 48,
+            yes: true,
+          },
+        );
         expect(deletion.deleted).toEqual([]);
-        expect(deletion.refused.some((row) => row.reason.includes('import candidate'))).toBe(true);
+        expect(deletion.refused.some((row) => row.reason.includes('import candidate'))).toBe(
+          true,
+        );
       }
       expect(await fixture.run()).toMatchObject({
         result: 'published',
@@ -96,7 +107,11 @@ it.each(['registered', 'cases_built', 'published'] as const)(
         reservationUsd: 0,
       });
       expect(fixture.acquire).toHaveBeenCalledTimes(1);
-      expect(await counts(fixture)).toEqual({ generations: 2, reservations: 0, artifacts: 1 });
+      expect(await counts(fixture)).toEqual({
+        generations: 2,
+        reservations: 0,
+        artifacts: 1,
+      });
       const after = await artifact(fixture.resources.db, before.id);
       expect(after.id).toBe(before.id);
       expect(after.attempts).toBeGreaterThanOrEqual(before.attempts);
@@ -113,10 +128,20 @@ it.each(['accepted', 'before_report'] as const)(
         generationId: 2,
       });
       const status = await readImportStatus(fixture.app, null);
-      expect(status.lastSuccessfulImport).toMatchObject({ generationId: 2, result: 'published' });
+      expect(status.lastSuccessfulImport).toMatchObject({
+        generationId: 2,
+        result: 'published',
+      });
       expect(status.attentionRequired).toBe(false);
-      expect(await fixture.run()).toMatchObject({ result: 'unchanged', generationId: 2 });
-      expect(await counts(fixture)).toEqual({ generations: 2, reservations: 0, artifacts: 1 });
+      expect(await fixture.run()).toMatchObject({
+        result: 'unchanged',
+        generationId: 2,
+      });
+      expect(await counts(fixture)).toEqual({
+        generations: 2,
+        reservations: 0,
+        artifacts: 1,
+      });
     }),
 );
 
@@ -128,7 +153,11 @@ it('requires a baseline review after a greater-than-62-day advertisement gap', a
     });
     await expect(fixture.run()).rejects.toMatchObject({ reason: 'baseline_required' });
     expect((await control(fixture.resources.db)).pending?.needsReview).toBe(true);
-    expect(await counts(fixture)).toEqual({ generations: 1, reservations: 0, artifacts: 1 });
+    expect(await counts(fixture)).toEqual({
+      generations: 1,
+      reservations: 0,
+      artifacts: 1,
+    });
   }));
 
 it('does not acquire or latch when the separately running app is unavailable; recovery proceeds', async () =>
@@ -150,14 +179,29 @@ it('daily code/image upgrade re-certifies the current pair without resetting cer
     await fixture.run();
     const before = (await fixture.resources.db.execute(sql`select * from import_artifacts`))
       .rows[0]!;
+    await fixture.owner.execute(
+      sql`update dataset_generations set verifier_version='previous-verifier' where id=2`,
+    );
+    const stamp = (
+      await fixture.resources.db.execute(
+        sql`select verifier_version,verification_report_sha256,verified_at::text from dataset_generations where id=2`,
+      )
+    ).rows[0];
     fixture.config.code = 'c'.repeat(40);
     fixture.config.dev.image = 'sha256:' + 'd'.repeat(64);
     fixture.config.live = { ...fixture.config.dev };
     expect(await fixture.run()).toMatchObject({
-      result: 'published',
+      result: 'unchanged',
       generationId: 2,
       cacheMisses: 0,
     });
+    expect(
+      (
+        await fixture.resources.db.execute(
+          sql`select verifier_version,verification_report_sha256,verified_at::text from dataset_generations where id=2`,
+        )
+      ).rows[0],
+    ).toEqual(stamp);
     const after = await artifact(fixture.resources.db, String(before.id));
     expect(after.certificate).toEqual(before.certificate);
     expect(after.attempts).toBe(before.attempts);
@@ -165,7 +209,11 @@ it('daily code/image upgrade re-certifies the current pair without resetting cer
       code: fixture.config.code,
       deployedCode: fixture.config.dev.image,
     });
-    expect(await counts(fixture)).toEqual({ generations: 2, reservations: 0, artifacts: 1 });
+    expect(await counts(fixture)).toEqual({
+      generations: 2,
+      reservations: 0,
+      artifacts: 1,
+    });
     expect(
       (
         await fixture.resources.db.execute(
@@ -196,8 +244,14 @@ it('re-certification refuses publication changes during the full canary and exis
       ),
     ).rejects.toMatchObject({ reason: 'baseline_changed' });
     expect((await readImportStatus(fixture.app, null)).attentionRequired).toBe(true);
-    await expect(fixture.run({}, { recertify: true })).rejects.toMatchObject({ review: true });
-    expect(await counts(fixture)).toEqual({ generations: 2, reservations: 0, artifacts: 1 });
+    await expect(fixture.run({}, { recertify: true })).rejects.toMatchObject({
+      review: true,
+    });
+    expect(await counts(fixture)).toEqual({
+      generations: 2,
+      reservations: 0,
+      artifacts: 1,
+    });
   }));
 
 it.each(['rollback', 'manual'] as const)(
@@ -226,7 +280,9 @@ it.each(['rollback', 'manual'] as const)(
                 state.manifest.passagesIndex,
               )
                 .then(async () =>
-                  (await import('../../worker/importer/store.js')).manifest(fixture.resources.db),
+                  (await import('../../worker/importer/store.js')).manifest(
+                    fixture.resources.db,
+                  ),
                 )
                 .then((value) => value!);
         const args = [
@@ -252,7 +308,9 @@ it.each(['rollback', 'manual'] as const)(
         kind === 'rollback' ? fixture.original : fixture.candidate,
         kind === 'rollback' ? OLD_OBSERVATION : NEW_OBSERVATION,
       );
-      expect(await fixture.run({}, { noChange: true })).toMatchObject({ result: 'unchanged' });
+      expect(await fixture.run({}, { noChange: true })).toMatchObject({
+        result: 'unchanged',
+      });
     }),
 );
 
@@ -318,7 +376,11 @@ it('maps a repackaged unresolved live fetch back to the original artifact, cap a
       archive: fixture.candidate.archive,
     });
     expect(fixture.acquire).not.toHaveBeenCalled();
-    expect(await counts(fixture)).toEqual({ generations: 2, reservations: 0, artifacts: 1 });
+    expect(await counts(fixture)).toEqual({
+      generations: 2,
+      reservations: 0,
+      artifacts: 1,
+    });
     expect(await artifact(fixture.resources.db, originalId)).toMatchObject({
       attempts: 2,
       archive_sha256: fixture.candidate.archive,
@@ -341,7 +403,10 @@ it('bounds pre-registration failures and clears every linked attempt only throug
       });
     }
     expect((await control(fixture.resources.db)).pending?.attempts).toBe(4);
-    await expect(fixture.run()).rejects.toMatchObject({ review: true, reason: 'interrupted' });
+    await expect(fixture.run()).rejects.toMatchObject({
+      review: true,
+      reason: 'interrupted',
+    });
     const pending = (await control(fixture.resources.db)).pending!;
     expect((await readImportStatus(fixture.app, null)).attentionRequired).toBe(true);
     expect(fixture.acquire).toHaveBeenCalledTimes(1);
@@ -389,7 +454,9 @@ it('defers live admission until the same dev publication is ready and refuses a 
       reason: 'dev_failed',
     });
     const pending = (await control(fixture.resources.db)).pending!;
-    expect((await artifact(fixture.resources.db, pending.artifactId!)).needs_review).toBe(false);
+    expect((await artifact(fixture.resources.db, pending.artifactId!)).needs_review).toBe(
+      false,
+    );
     fixture.resources.hostFacts.canary = async () => ({
       current: fixture.baseline.manifest,
       observedImage: fixture.config.dev.image,
@@ -414,7 +481,9 @@ it('defers live admission until the same dev publication is ready and refuses a 
         ).rejects.toMatchObject({ reason: 'dev_failed' }),
       ),
     );
-    expect(await fixture.run({}, { environment: 'live' })).toMatchObject({ result: 'published' });
+    expect(await fixture.run({}, { environment: 'live' })).toMatchObject({
+      result: 'published',
+    });
     expect(fixture.acquire).toHaveBeenCalledTimes(1);
   }));
 
@@ -432,7 +501,11 @@ it.each(['integrity', 'accounting'] as const)(
         review: true,
         reason,
       });
-      expect(await counts(fixture)).toEqual({ generations: 2, reservations: 0, artifacts: 1 });
+      expect(await counts(fixture)).toEqual({
+        generations: 2,
+        reservations: 0,
+        artifacts: 1,
+      });
     }),
 );
 
@@ -461,7 +534,8 @@ it('protects a latched candidate without an age limit and releases it only after
       expect((await stat(fixture.candidate.dir)).isDirectory()).toBe(true);
       expect(
         (
-          await fixture.resources.db.execute(sql`select count(*)::int as n from import_index_refs
+          await fixture.resources.db
+            .execute(sql`select count(*)::int as n from import_index_refs
       where artifact_id=${saved.id}::uuid and released_at is null`)
         ).rows[0]?.n,
       ).toBeGreaterThan(0);
@@ -494,11 +568,14 @@ it('protects a latched candidate without an age limit and releases it only after
       );
       expect(
         (
-          await fixture.resources.db.execute(sql`select count(*)::int as n from import_index_refs
+          await fixture.resources.db
+            .execute(sql`select count(*)::int as n from import_index_refs
       where artifact_id=${saved.id}::uuid and released_at is null`)
         ).rows[0]?.n,
       ).toBe(0);
-      await expect(stat(fixture.candidate.dir)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(fixture.candidate.dir)).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
       expect((await artifact(fixture.resources.db, saved.id)).attempts).toBe(saved.attempts);
     });
   }));
@@ -518,12 +595,16 @@ it.each(['accounting', 'unknown_alias', 'spool', 'publication_changed'] as const
           condition === 'accounting' ? 'accounting' : 'probe',
         );
         if (condition === 'unknown_alias')
-          await fixture.resources.db.execute(sql`insert into index_switch_attempts(alias,index_name)
+          await fixture.resources.db
+            .execute(sql`insert into index_switch_attempts(alias,index_name)
         values('synthetic-unknown','synthetic-unknown-index')`);
         if (condition === 'spool')
-          await fixture.resources.space.json(`${fixture.resources.space.root}/status-dev.json`, {
-            reason: 'integrity',
-          });
+          await fixture.resources.space.json(
+            `${fixture.resources.space.root}/status-dev.json`,
+            {
+              reason: 'integrity',
+            },
+          );
         const effects =
           condition === 'publication_changed'
             ? {
@@ -555,7 +636,9 @@ it.each(['accounting', 'unknown_alias', 'spool', 'publication_changed'] as const
           ),
         ).rejects.toThrow();
         expect((await control(fixture.resources.db)).accepted).toEqual(before);
-        expect((await artifact(fixture.resources.db, pending.artifactId!)).resolved_at).toBeNull();
+        expect(
+          (await artifact(fixture.resources.db, pending.artifactId!)).resolved_at,
+        ).toBeNull();
       });
     }),
 );

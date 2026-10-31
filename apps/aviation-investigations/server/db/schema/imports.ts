@@ -79,10 +79,14 @@ export const importRuns = pgTable('import_runs', {
   sourceCheckSucceeded: boolean('source_check_succeeded').notNull().default(false),
   canaryPassed: boolean('canary_passed').notNull().default(false),
   /** Historical report snapshot only; never used for budget admission or ledger compaction. */
-  reportedCostUsd: numeric('reported_cost_usd', { precision: 12, scale: 6 }).notNull().default('0'),
+  reportedCostUsd: numeric('reported_cost_usd', { precision: 12, scale: 6 })
+    .notNull()
+    .default('0'),
   observedSha256: text('observed_sha256'),
   successPublication: jsonb('success_publication'),
   pendingRunId: uuid('pending_run_id'),
+  workKind: text('work_kind').notNull().default('import'),
+  attemptStarted: boolean('attempt_started').notNull().default(false),
   acknowledgedAt: ts('acknowledged_at'),
   acknowledgementSha256: text('acknowledgement_sha256'),
 });

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fstatSync, lstatSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { readImporterConfig } from './config.js';
-import { ImportFailure, safeLog, safeFailure, SourceSchema } from './contracts.js';
+import { ImportFailure, safeLog, SourceSchema } from './contracts.js';
 import { runImport } from './run.js';
 import { operatorCommand } from './commands.js';
 import { ManagedSpace } from './files.js';
@@ -35,7 +35,11 @@ async function main(): Promise<void> {
       apply: { type: 'boolean' },
     },
   });
-  if (!values.config || !['dev', 'live'].includes(values.env ?? '') || positionals.length !== 1)
+  if (
+    !values.config ||
+    !['dev', 'live'].includes(values.env ?? '') ||
+    positionals.length !== 1
+  )
     throw new ImportFailure('configuration');
   const config = await readImporterConfig(values.config),
     environment = values.env as 'dev' | 'live';
@@ -68,62 +72,58 @@ async function main(): Promise<void> {
     Math.max(1, deadline - Date.now() - 120_000),
   ).unref();
   setTimeout(() => process.exit(124), Math.max(1, deadline - Date.now() - 90_000)).unref();
-  if (positionals[0] === 'record-skip' && environment === 'live') {
-    await recordSkippedLive(config);
-    return;
-  }
-  if (positionals[0] === 'run' || positionals[0] === 'recertify') {
+  const seed = () => {
     if (
       Boolean(values['seed-archive']) !== Boolean(values.sha256) ||
       Boolean(values['seed-archive']) !== Boolean(values['seed-advertised-at'])
     )
       throw new ImportFailure('configuration');
+    return values['seed-archive']
+      ? {
+          path: values['seed-archive'],
+          sha256: values.sha256!,
+          observation: SourceSchema.parse({
+            advertisedAtLocal: values['seed-advertised-at'],
+            bytes: lstatSync(values['seed-archive']).size,
+          }),
+        }
+      : undefined;
+  };
+  if (positionals[0] === 'record-skip' && environment === 'live') {
+    await recordSkippedLive(config);
+    return;
+  }
+  if (positionals[0] === 'run' || positionals[0] === 'recertify') {
     const report = await runImport(config, {
       environment,
       cacheOnly: positionals[0] === 'recertify' || values['cache-only'] === true,
       recertify: positionals[0] === 'recertify',
       noChange: values['no-change'],
       forcedDev: values['forced-dev'],
-      seed: values['seed-archive']
-        ? {
-            path: values['seed-archive'],
-            sha256: values.sha256!,
-            observation: SourceSchema.parse({
-              advertisedAtLocal: values['seed-advertised-at'],
-              bytes: lstatSync(values['seed-archive']).size,
-            }),
-          }
-        : undefined,
+      seed: seed(),
     });
-    await new ManagedSpace(config.root).json(join(config.root, `last-${environment}.json`), report);
+    await new ManagedSpace(config.root).json(
+      join(config.root, `last-${environment}.json`),
+      report,
+    );
     process.stdout.write(`${safeLog('complete', report.result, report.reason)}\n`);
     return;
   }
   if (positionals[0] === 'rebaseline' && values['publication-sha256']) {
-    if (
-      Boolean(values['seed-archive']) !== Boolean(values.sha256) ||
-      Boolean(values['seed-archive']) !== Boolean(values['seed-advertised-at'])
-    )
-      throw new ImportFailure('configuration');
     await recoveryCommand(config, environment, {
       command: 'rebaseline',
       publication: values['publication-sha256'],
       apply: values.apply === true,
-      seed: values['seed-archive']
-        ? {
-            path: values['seed-archive'],
-            sha256: values.sha256!,
-            observation: SourceSchema.parse({
-              advertisedAtLocal: values['seed-advertised-at'],
-              bytes: lstatSync(values['seed-archive']).size,
-            }),
-          }
-        : undefined,
+      seed: seed(),
     });
     process.stdout.write(`${safeLog('complete', 'deferred', null)}\n`);
     return;
   }
-  if (positionals[0] === 'acknowledge-preartifact' && values.run && values['evidence-sha256']) {
+  if (
+    positionals[0] === 'acknowledge-preartifact' &&
+    values.run &&
+    values['evidence-sha256']
+  ) {
     await recoveryCommand(config, environment, {
       command: 'acknowledge-preartifact',
       run: values.run,
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
 main()
   .catch((error) => {
     const e = classify(error);
-    process.stdout.write(`${safeLog('check', e.result, e.reason)}\n`);
+    if (!e.logged) process.stdout.write(`${safeLog('check', e.result, e.reason)}\n`);
     process.exitCode = 1;
   })
   .finally(() => {
