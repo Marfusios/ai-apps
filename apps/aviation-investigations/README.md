@@ -2447,7 +2447,12 @@ Tunnel with an explicit `APP_VERSION`, and only peers in its pinned edge subnet
 are trusted as proxies (`TRUSTED_PROXY_CIDRS`). On `dev` every `app:up`, `app:migrate`
 and `ingest` rebuilds the image from the checkout; on `live` each release tag is built
 once and never rebuilt implicitly, so a rollback to an earlier tag starts the image it
-was built as (RUNBOOK, "Deploying an environment").
+was built as (RUNBOOK, "Deploying an environment"). For the importer's private dev canary,
+`AVIATION_DEV_RELEASE_IMAGE=true` with `APP_VERSION` reuses an existing verified release
+by immutable image ID, without building or pulling; see [Dev canary app](docs/RUNBOOK.md#dev-canary-app).
+With an importer installed, every backup/restore sets `AVIATION_MAINTENANCE_LOCK` to its
+maintenance lock file; bounded contention exits 75 without starting the operation
+([Maintenance lock](docs/RUNBOOK.md#maintenance-lock)).
 
 Configuration comes from env files outside the repository, named in
 `AVIATION_ENV_FILES`; Compose uses them for interpolation only and each container
