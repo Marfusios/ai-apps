@@ -722,10 +722,14 @@ again there before relying on them.
 ## Ingestion
 
 The automatic snapshot worker is documented in [IMPORTER.md](IMPORTER.md), including
-migration 0027, the no-change/forced-dev exercises, the fixed $0.50 artifact cap,
-concrete-index protection, named approval/rollback and the installation gate. It is
-disabled by default. Do not enable its timer before backup mutual exclusion and actual
-PG/ES/filesystem headroom have been measured. The manual commands below remain useful
+migrations 0027–0028, the no-change/forced-dev exercises, the fixed $0.50 artifact
+cap and 89-day resumption boundary, concrete-index protection, named approvals,
+rollback/rebaseline, free re-certification and the installation gate. Rebaseline is
+the explicit dry-run-first recovery step after rollback or a manual publication;
+it never clears an accounting or restore hold. The importer is disabled by default. Do not enable its timer before mutual exclusion with AirCase's
+own manual and scheduled database backups, a separately running pinned dev app, and
+actual PG/ES/filesystem headroom have been verified. Langfuse backup I/O belongs in
+the headroom assessment; its mutex is optional. The manual commands below remain useful
 for reviewed operator work; only the PostgreSQL manifest selects the serving pair.
 
 Extraction needs the Docker CLI to start its sandbox containers, so it runs on the
