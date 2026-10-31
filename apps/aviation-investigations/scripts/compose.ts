@@ -25,10 +25,13 @@
  * tag was built as. A tag whose image is gone, or was built from another commit, is refused
  * (`liveImagePlan`). `--rebuild` as the first argument rebuilds the tag on purpose, from
  * its clean tagged commit only.
+ * AVIATION_DEV_RELEASE_IMAGE=true instead uses an existing, verified release image on
+ * dev, pinned by image ID with no build or pull (docs/RUNBOOK.md, "Dev canary app").
+ * AVIATION_MAINTENANCE_LOCK wraps backup/restore in the importer's host flock.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readDotenvAllowlisted } from '../shared/env-files.js';
 import { APP_DIR } from './local-env.js';
@@ -44,12 +47,15 @@ export const MIN_COMPOSE_VERSION = [2, 24, 0] as const;
 export const NAMES = [
   'APP_ENV',
   'APP_VERSION',
+  'AVIATION_DEV_RELEASE_IMAGE',
   'TUNNEL_TOKEN',
   'EDGE_SUBNET',
   'AVIATION_TRACING_ENABLED',
   'AVIATION_IMPORTS_ENABLED',
   'AVIATION_DATA_DIR',
   'AVIATION_BACKUP_DIR',
+  'AVIATION_MAINTENANCE_LOCK',
+  'AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS',
   'SHARED_POSTGRES_NETWORK',
   'SHARED_ELASTICSEARCH_NETWORK',
   'DATABASE_URL',
@@ -65,7 +71,7 @@ export type Values = Partial<Record<Name, string>>;
 /** What the wrapper knows about a live release tag's image and the checkout (`liveImagePlan`). */
 export interface LiveImageFacts {
   /** `ai-aviation/app:<tag>` on this host, with the commit it records (null: none recorded); null: no such image. */
-  image: { revision: string | null } | null;
+  image: { revision: string | null; id?: string } | null;
   /** The commit the git tag named APP_VERSION points to, or null when there is no such tag. */
   tagCommit: string | null;
   /** The checkout's HEAD commit (null when unknown) and whether tracked files have changes. */
@@ -156,6 +162,55 @@ const BACKUP_FILE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.dump$/;
 
 export class UsageError extends Error {}
 
+export const MAINTENANCE_BUSY_EXIT = 75;
+export const MAINTENANCE_BUSY_MESSAGE = 'AirCase maintenance lock timed out; backup/restore was not started.';
+export const MAINTENANCE_WAIT_SECONDS = 1500;
+export interface MaintenanceLock {
+  path: string;
+  waitSeconds: number;
+}
+
+/** Never creates a second lock file. The importer and all maintenance use the same inode. */
+export function maintenanceLock(values: Values, uid = process.getuid?.()): MaintenanceLock | undefined {
+  const path = values.AVIATION_MAINTENANCE_LOCK;
+  if (!path) return undefined;
+  const invalidPath = 'AVIATION_MAINTENANCE_LOCK must be an absolute, existing regular file owned by this user, mode 0600, not a symlink';
+  if (!isAbsolute(path) || path.includes('\0') || uid === undefined) throw new UsageError(invalidPath);
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.uid !== uid || (stat.mode & 0o7777) !== 0o600) throw new Error();
+  } catch {
+    throw new UsageError(invalidPath);
+  }
+  try {
+    const parent = lstatSync(dirname(path));
+    if (!parent.isDirectory() || parent.uid !== uid || (parent.mode & 0o022) !== 0) throw new Error();
+  } catch {
+    throw new UsageError('AVIATION_MAINTENANCE_LOCK parent must be a directory owned by this user with no group or other write permission, not a symlink');
+  }
+  const raw = values.AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS || String(MAINTENANCE_WAIT_SECONDS);
+  if (!/^\d{1,5}$/.test(raw) || Number(raw) > 86400) {
+    throw new UsageError('AVIATION_MAINTENANCE_LOCK_WAIT_SECONDS must be an integer from 0 to 86400');
+  }
+  return { path, waitSeconds: Number(raw) };
+}
+
+/** Argument arrays only: neither credentials nor shell evaluation enter the command line. */
+export function maintenanceInvocation(command: string, args: string[], lock?: MaintenanceLock): { command: string; args: string[] } {
+  return lock
+    ? { command: 'flock', args: ['-w', String(lock.waitSeconds), '-E', String(MAINTENANCE_BUSY_EXIT), '--', lock.path, command, ...args] }
+    : { command, args };
+}
+
+/** A canary reuses an existing release; even a clean tagged checkout must never build it. */
+export function devReleaseImage(facts?: LiveImageFacts): string {
+  if (!facts?.tagCommit) throw new UsageError('dev release mode needs APP_VERSION to name an existing git tag');
+  if (!facts.image) throw new UsageError('dev release mode needs an existing local release image; no image will be built or pulled');
+  if (facts.image.revision !== facts.tagCommit) throw new UsageError('dev release image revision does not match the APP_VERSION git tag');
+  if (!facts.image.id || !/^sha256:[0-9a-f]{64}$/.test(facts.image.id)) throw new UsageError('dev release image has no valid immutable image ID');
+  return facts.image.id;
+}
+
 /** True for a version string at least `min` (major.minor.patch, optional leading v and suffix). */
 export function versionAtLeast(version: string, min: readonly number[] = MIN_COMPOSE_VERSION): boolean {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version.trim());
@@ -202,14 +257,17 @@ export interface Plan {
   tunnel: boolean;
   files: string[];
   tail: string[];
+  maintenanceLock?: MaintenanceLock;
+  pinnedImageId?: string;
 }
 
 /**
  * Validate the configuration for `command` and choose the Compose files and arguments.
  * `processEnv` and `fileEnvs` (one record per env file, highest priority first) hold the
- * allowlisted names only. Throws UsageError naming the problem, never a value.
+ * allowlisted names only. `devTagExists` comes from a Git lookup of the effective dev
+ * image tag, including the default `dev`. Throws UsageError naming the problem, never a value.
  */
-export function planCompose(command: Command, rawArgs: string[], processEnv: Values, fileEnvs: Values[], live?: LiveImageFacts): Plan {
+export function planCompose(command: Command, rawArgs: string[], processEnv: Values, fileEnvs: Values[], live?: LiveImageFacts, devTagExists = false): Plan {
   const rebuild = rawArgs[0] === REBUILD;
   if (rebuild && !IMAGE_COMMANDS.includes(command)) throw new UsageError(`${REBUILD} applies to app:up, app:migrate and ingest only`);
   const args = rebuild ? rawArgs.slice(1) : rawArgs;
@@ -235,9 +293,18 @@ export function planCompose(command: Command, rawArgs: string[], processEnv: Val
   }
 
   const usesImage = IMAGE_COMMANDS.includes(command);
-  if (appEnv === 'live' && usesImage) {
+  const devReleaseSetting = values.AVIATION_DEV_RELEASE_IMAGE;
+  if (devReleaseSetting && !['true', 'false'].includes(devReleaseSetting)) throw new UsageError('AVIATION_DEV_RELEASE_IMAGE must be true or false');
+  const devRelease = devReleaseSetting === 'true';
+  if (devRelease && appEnv !== 'dev') throw new UsageError('AVIATION_DEV_RELEASE_IMAGE applies only to APP_ENV=dev');
+  if (devRelease && rebuild) throw new UsageError('dev release mode refuses --rebuild');
+  if (devRelease && command === 'app-up' && args.length > 0) throw new UsageError('app:up in dev release mode takes no extra arguments');
+  if (appEnv === 'dev' && usesImage && !devRelease && devTagExists) {
+    throw new UsageError('ordinary dev builds cannot overwrite an existing git tag; unset APP_VERSION or use AVIATION_DEV_RELEASE_IMAGE=true');
+  }
+  if ((appEnv === 'live' || devRelease) && usesImage) {
     const version = values.APP_VERSION;
-    if (!version || version === 'dev') throw new UsageError('live needs an explicit APP_VERSION other than dev (a release tag)');
+    if (!version || version === 'dev') throw new UsageError('release mode needs an explicit APP_VERSION other than dev (a release tag)');
     if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(version)) throw new UsageError('APP_VERSION is not a valid image tag (maximum 80 characters)');
   }
   const dbUrl = DATABASE_URL_OF[command];
@@ -256,15 +323,18 @@ export function planCompose(command: Command, rawArgs: string[], processEnv: Val
     checkEdgeSubnet(values.EDGE_SUBNET);
   }
   const tracing = ['true', '1'].includes(values.AVIATION_TRACING_ENABLED ?? '');
+  if (devRelease && command === 'app-up' && (tunnel || tracing)) throw new UsageError('dev release canary must use loopback with tunnel and tracing off');
   const files = ['compose.yaml'];
   if (tunnel) files.push('compose.tunnel.yaml');
   if (tracing && (command === 'app-up' || command === 'ingest')) files.push('compose.tracing.yaml');
+  const pinnedImageId = devRelease && usesImage ? devReleaseImage(live) : undefined;
+  if (pinnedImageId) files.push('compose.dev-release.yaml');
 
   // dev: always the checkout's code. live: a tag is built once, from its tagged commit (liveImagePlan).
   const livePlan = appEnv === 'live' && usesImage && live ? liveImagePlan(values.APP_VERSION!, rebuild, live) : null;
-  const build = appEnv === 'dev' || rebuild || livePlan === 'build' ? ['--build'] : [];
+  const build = !pinnedImageId && (appEnv === 'dev' || rebuild || livePlan === 'build') ? ['--build'] : [];
   // `up` would build a missing image itself; a live image that is used as it is never is.
-  const upBuild = livePlan === 'use' ? ['--no-build'] : build;
+  const upBuild = pinnedImageId || livePlan === 'use' ? ['--no-build'] : build;
   let tail: string[];
   switch (command) {
     case 'app-up':
@@ -292,7 +362,8 @@ export function planCompose(command: Command, rawArgs: string[], processEnv: Val
       tail = ['build', 'extract-image', ...args];
       break;
   }
-  return { appEnv, tunnel, files, tail };
+  const lock = command === 'backup' || command === 'restore' ? maintenanceLock(values) : undefined;
+  return { appEnv, tunnel, files, tail, ...(lock ? { maintenanceLock: lock } : {}), ...(pinnedImageId ? { pinnedImageId } : {}) };
 }
 
 function main(): number {
@@ -323,20 +394,29 @@ function main(): number {
   const head = git('rev-parse', 'HEAD');
   const appEnvOf = processEnv.APP_ENV ?? fileEnvs.find((f) => f.APP_ENV)?.APP_ENV;
   const appVersion = processEnv.APP_VERSION ?? fileEnvs.find((f) => f.APP_VERSION)?.APP_VERSION;
+  const devRelease = (processEnv.AVIATION_DEV_RELEASE_IMAGE ?? fileEnvs.find((f) => f.AVIATION_DEV_RELEASE_IMAGE)?.AVIATION_DEV_RELEASE_IMAGE) === 'true';
+  let devTagExists = false;
+  if (appEnvOf === 'dev' && !devRelease && IMAGE_COMMANDS.includes(command)) {
+    if (!head) throw new UsageError('ordinary dev builds require a Git checkout to check release tags');
+    // No commit peeling: even a tag of another object is an existing tag we must not overwrite.
+    devTagExists = git('rev-parse', '-q', '--verify', `refs/tags/${appVersion || 'dev'}`) !== null;
+  }
   let live: LiveImageFacts | undefined;
-  if (appEnvOf === 'live' && ['app-up', 'migrate', 'ingest'].includes(command) && appVersion && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(appVersion)) {
-    const inspected = spawnSync('docker', ['image', 'inspect', `ai-aviation/app:${appVersion}`, '--format', '{{ index .Config.Labels "org.opencontainers.image.revision" }}'], { encoding: 'utf8' });
-    const revision = inspected.stdout.trim();
+  if ((appEnvOf === 'live' || (appEnvOf === 'dev' && devRelease)) && IMAGE_COMMANDS.includes(command) && appVersion && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/.test(appVersion)) {
+    const inspected = spawnSync('docker', ['image', 'inspect', `ai-aviation/app:${appVersion}`, '--format', '{{.Id}} {{ index .Config.Labels "org.opencontainers.image.revision" }}'], { encoding: 'utf8' });
+    const [id, revision = ''] = inspected.stdout.trim().split(/\s+/);
     live = {
-      image: inspected.status === 0 ? { revision: /^[0-9a-f]{40}$/.test(revision) ? revision : null } : null,
+      image: inspected.status === 0 ? { id, revision: /^[0-9a-f]{40}$/.test(revision) ? revision : null } : null,
       tagCommit: git('rev-parse', '-q', '--verify', `refs/tags/${appVersion}^{commit}`),
       head,
       dirty: checkoutDirty(APP_DIR),
     };
   }
-  const plan = planCompose(command, args, processEnv, fileEnvs, live);
+  const plan = planCompose(command, args, processEnv, fileEnvs, live, devTagExists);
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env, APP_ENV: plan.appEnv };
+  // The override has no build section and refers to this inspected ID, not a mutable tag.
+  if (plan.pinnedImageId) childEnv.AVIATION_DEV_RELEASE_IMAGE_ID = plan.pinnedImageId;
   // Recorded in the image it builds (compose.yaml, x-app-image): the commit the image was built from.
   if (head) childEnv.AVIATION_GIT_REVISION = head;
   // Compose lets a variable exported empty override the env files; the checks above used the
@@ -379,9 +459,20 @@ function main(): number {
     ...(envFiles.length ? [...envFiles].reverse() : ['/dev/null']).flatMap((f) => ['--env-file', f]),
     ...plan.files.flatMap((f) => ['-f', f]),
   ];
-  const mode = [plan.tunnel ? 'tunnel' : null, plan.files.includes('compose.tracing.yaml') ? 'tracing' : null].filter(Boolean);
-  console.error(`ai-aviation-${plan.appEnv}: ${command}${mode.length ? ` (${mode.join(', ')})` : ''}`);
-  const r = spawnSync('docker', [...base, ...plan.tail], { cwd: APP_DIR, stdio: 'inherit', env: childEnv });
+  const mode = [
+    plan.tunnel ? 'tunnel' : null,
+    plan.files.includes('compose.tracing.yaml') ? 'tracing' : null,
+    plan.pinnedImageId ? `release-image ${plan.pinnedImageId.slice(0, 19)}` : null,
+  ].filter(Boolean);
+  const banner = `ai-aviation-${plan.appEnv}: ${command}${mode.length ? ` (${mode.join(', ')})` : ''}`;
+  // A busy lock emits exactly the fixed refusal; no action banner before acquiring it.
+  if (!plan.maintenanceLock) console.error(banner);
+  const invocation = maintenanceInvocation('docker', [...base, ...plan.tail], plan.maintenanceLock);
+  const r = spawnSync(invocation.command, invocation.args, { cwd: APP_DIR, stdio: 'inherit', env: childEnv });
+  if (plan.maintenanceLock && r.status === MAINTENANCE_BUSY_EXIT) console.error(MAINTENANCE_BUSY_MESSAGE);
+  // After a successful locked operation, retain the target environment in the operator's journal.
+  if (plan.maintenanceLock && r.status === 0) console.error(banner);
+  if (r.error) throw new UsageError('could not start the Compose invocation; check Docker and flock availability');
   return r.status ?? 1;
 }
 
