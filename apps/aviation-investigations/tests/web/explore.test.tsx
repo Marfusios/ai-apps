@@ -79,16 +79,37 @@ describe('Privacy', () => {
       expect(text).toContain(cookie);
     }
     expect(text).toContain('Backups: daily, kept 14 days on the same computer.');
-    // Task 25: a search's rating (the AI searches paragraph, traces, retention, backups and why), and the admin page.
-    expect(text).toContain('If you rate an AI search, AirCase keeps the rating, without your question, to measure search quality.');
-    expect(text).toContain('Search traces (timings, counts, AI cost and errors, and a search’s rating if you give one) hold no search words or identities.');
+    // Task 25, after the security review (condition 2): what is kept of a rating, where and how long,
+    // the search-usage records, the backups and why; and the admin page.
+    expect(text).toContain(
+      'Search traces (timings, counts, AI cost and errors, and a search’s rating if you give one) hold no search words or identities; for the 24 hours a search is kept, AirCase can match it to its trace.',
+    );
     expect(text).toContain(
       'and nothing else from Google. The site’s operator can see each account’s name, e-mail address, sign-up and last sign-in times and AI search counts on a private admin page.',
     );
-    expect(text).toContain('AI searches and their retry records: 24 hours.Ratings: 24 hours with their AI search; after that only daily totals remain, which can’t be linked to you.');
     expect(text).toContain(
-      'They hold counters, free-search and cost records and daily rating totals, never accounts, sessions or AI searches, so deleted accounts can’t return.',
+      'Two records stay, under a one-way code: the account’s AI search counts, so signing up again doesn’t reset its limits, and cost and search-usage records without content.',
     );
+    expect(text).toContain(
+      'If you rate an AI search, AirCase keeps the rating with that search for its 24 hours and adds it to the search’s trace; it also counts it in daily totals that aren’t linked to you or your search, to measure search quality.',
+    );
+    expect(text).not.toContain('without your question');
+    expect(text).not.toContain('only daily totals remain');
+    const keptHeading = [...main.querySelectorAll('h2')].find((h) => h.textContent === 'How long data is kept');
+    const keptList = keptHeading?.nextElementSibling;
+    expect(keptList?.tagName).toBe('UL');
+    const kept = [...(keptList?.querySelectorAll('li') ?? [])].map((li) => (li.textContent ?? '').replace(/\s+/g, ' ').trim());
+    expect(kept).toEqual([
+      'AI searches, with their ratings, and their retry records: 24 hours.',
+      'Daily rating totals, not linked to you or a search: kept with no set end.',
+      'Free-search records: 30 days.',
+      'Sessions: 7 days, or until you sign out.',
+      'Accounts: until you delete them.',
+      'Usage counters (a deleted account’s too): until 7 days after their minute, hour, day or month ends.',
+      'Cost and search-usage records, without content (a deleted account’s too): 90 days.',
+      'Traces, with any rating on them: 30 days.',
+      'Backups: daily, kept 14 days on the same computer. They hold counters, free-search, cost and search-usage records and daily rating totals, never accounts, sessions or AI searches, so deleted accounts can’t return. Trace backups are kept 7 days. A backup can keep data for those days after it is deleted from the site.',
+    ]);
     expect(text).toContain(
       'Running and securing the site, and measuring search quality (Cloudflare, Turnstile, limits, counters, logs, traces, ratings, backups), relies on our legitimate interest in a safe, working, affordable site; accounts and AI searches rely on providing the service you asked for.',
     );

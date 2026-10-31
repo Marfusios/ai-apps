@@ -944,11 +944,15 @@ then state the processed cohort (DESIGN §5).
 - **Privacy page:** plain-language processing notice, linked from the footer
   and the sign-in dialog. The owner approved the final text on 24 October 2026
   (Owner), amended on 31 October 2026 to say Claude also orders the investigations found and (Task 25, in the
-  controller's wording until the owner approves it) that a rating of an AI search is kept, without the
-  question, to measure search quality (§4.11): on the search's trace, 24 hours with the search and then
-  only as daily totals that can't be linked to the visitor, in backups as those totals, under the
-  legitimate interest in measuring search quality; and that the operator can see each account's name,
-  e-mail address, sign-up and last sign-in times and AI search counts on a private admin page (§4.12).
+  controller's wording after the security review, pending the owner's approval) what is kept of a rating
+  of an AI search, where and for how long (§4.11): with the search for its 24 hours; on the search's
+  trace, kept 30 days, which AirCase can match to the search while the search is kept; and in daily
+  totals linked to no one and no search, kept with no set end; that cost and search-usage records
+  without content, a deleted account's too, are kept 90 days; that the daily backups (14 days) hold
+  those records and totals, trace backups are kept 7 days, and a backup can keep data for those days
+  after it is deleted from the site; measuring search quality as a legitimate interest; and that the
+  operator can see each account's name, e-mail address, sign-up and last sign-in times and AI search
+  counts on a private admin page (§4.12).
   It was checked statement by statement against the code and is the
   authority on what the site keeps (who is responsible, the site's four cookies,
   what the server, accounts and AI searches keep, the processors, retention,
@@ -1257,7 +1261,8 @@ the chosen one clicked again sends nothing. The page keeps what it sent, per sea
 sign-out forgets it. A rating that did not save says "Your rating didn't save." with Try again (the
 rating the server has stays chosen); a search that is gone says "This search is no longer available,
 so it can't be rated." It does not print. The privacy notice says "If you rate an AI search, AirCase
-keeps the rating, without your question, to measure search quality." (§4.8).
+keeps the rating with that search for its 24 hours and adds it to the search's trace; it also counts
+it in daily totals that aren't linked to you or your search, to measure search quality." (§4.8).
 
 ### 4.12 Admin (Task 25, Proposed)
 
@@ -1692,11 +1697,19 @@ counting rules.
   useful?", "Useful", "Not useful", "Saving…", "Thanks — noted.", "Your rating didn't save." and "This
   search is no longer available, so it can't be rated." (§4.11); the admin page's copy and layout, its
   plain words for the ranking and automatic-filter identifiers among them (§4.12). And the privacy
-  notice's Task 25 wording, the controller's until the owner approves it (§4.8): "If you rate an AI
-  search, AirCase keeps the rating, without your question, to measure search quality."; the traces
-  sentence "(timings, counts, AI cost and errors, and a search's rating if you give one)"; "The site's
-  operator can see each account's name, e-mail address, sign-up and last sign-in times and AI search
-  counts on a private admin page."; "Ratings: 24 hours with their AI search; after that only daily
-  totals remain, which can't be linked to you."; backups holding "daily rating totals"; and "Running and
-  securing the site, and measuring search quality (… traces, ratings, backups), relies on our legitimate
-  interest…".
+  notice's Task 25 wording, the controller's after the security review (condition 2), pending the
+  owner's approval (§4.8): the traces sentence "Search traces (timings, counts, AI cost and errors, and
+  a search's rating if you give one) hold no search words or identities; for the 24 hours a search is
+  kept, AirCase can match it to its trace."; the deletion paragraph's "Two records stay, under a one-way
+  code: the account's AI search counts, so signing up again doesn't reset its limits, and cost and
+  search-usage records without content."; "If you rate an AI search, AirCase keeps the rating with that
+  search for its 24 hours and adds it to the search's trace; it also counts it in daily totals that
+  aren't linked to you or your search, to measure search quality."; "The site's operator can see each
+  account's name, e-mail address, sign-up and last sign-in times and AI search counts on a private
+  admin page."; the retention items "AI searches, with their ratings, and their retry records: 24
+  hours.", "Daily rating totals, not linked to you or a search: kept with no set end.", "Cost and
+  search-usage records, without content (a deleted account's too): 90 days.", "Traces, with any rating
+  on them: 30 days." and the backups item (counters, free-search, cost and search-usage records and
+  daily rating totals; "Trace backups are kept 7 days. A backup can keep data for those days after it
+  is deleted from the site."); and "Running and securing the site, and measuring search quality (…
+  traces, ratings, backups), relies on our legitimate interest…".

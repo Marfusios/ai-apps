@@ -8,10 +8,15 @@ const cookie = 'font-mono text-[0.85em]';
 
 /**
  * The privacy notice (UI_DESIGN §4.8, DESIGN §7), approved by the owner on 24 October 2026 and
- * amended on 31 October 2026 to say that Claude also orders the investigations found, and (Task 25,
- * the controller's wording until the owner approves it) that a rating of an AI search is kept without
- * the question, what it is kept for and how long, and that the operator sees each account's details
- * and AI search counts on a private admin page.
+ * amended on 31 October 2026 to say that Claude also orders the investigations found. The Task 25
+ * statements are the controller's wording after the security review (condition 2), pending the
+ * owner's approval before they are published: a rating kept with its search for the search's 24
+ * hours and on the search's trace (30 days, which AirCase can match to the search while the search
+ * is kept), daily rating totals linked to no one and kept with no set end, cost and search-usage
+ * records without content for 90 days (a deleted account's too), trace backups for 7 days and
+ * application backups for 14, which can outlast a deletion, measuring search quality as a
+ * legitimate interest, and the operator's view of each account's details and AI search counts on a
+ * private admin page.
  * Publishing it (`PRIVACY_NOTICE.final`, shared/privacy.ts) is what lets live turn Google sign-in
  * on. Every statement was checked against the code: change the text, and its date, in the same
  * commit as any change to what the site keeps or who receives it. It keeps the Turnstile
@@ -78,7 +83,8 @@ export function Privacy() {
         address only in memory, to limit how many requests one network can send, and never saves it. Logs hold only
         technical events, such as each request’s type, result and duration. Keyword searches, case pages and the
         dashboard are not stored or tied to you. Search traces (timings, counts, AI cost and errors, and a search’s
-        rating if you give one) hold no search words or identities.
+        rating if you give one) hold no search words or identities; for the 24 hours a search is kept, AirCase can match
+        it to its trace.
       </p>
 
       <h2>Accounts</h2>
@@ -93,7 +99,7 @@ export function Privacy() {
         You can delete your account on the Account page, after confirming with Google if you signed in over 5 minutes
         ago. This signs you out everywhere and at once removes your name, e-mail address, Google link and your account’s
         AI searches. Two records stay, under a one-way code: the account’s AI search counts, so signing up again doesn’t
-        reset its limits, and cost records without content.
+        reset its limits, and cost and search-usage records without content.
       </p>
 
       <h2>AI searches</h2>
@@ -102,8 +108,9 @@ export function Privacy() {
         terms and puts the investigations found in order of relevance, and to OpenAI, which turns it into numbers (an “embedding”) for finding passages of similar meaning.
         Neither gets anything else about you, but please keep personal details out of your questions. Results are NTSB
         text and data, not AI-written summaries. Your question, filters and results are kept 24 hours, then deleted;
-        only your browser or account can open them. If you rate an AI search, AirCase keeps the rating, without your
-        question, to measure search quality.
+        only your browser or account can open them. If you rate an AI search, AirCase keeps the rating with that search
+        for its 24 hours and adds it to the search’s trace; it also counts it in daily totals that aren’t linked to you
+        or your search, to measure search quality.
       </p>
       <p>
         To stop abuse and share free searches fairly, we count AI searches per browser, account and network, under keyed
@@ -131,17 +138,18 @@ export function Privacy() {
 
       <h2>How long data is kept</h2>
       <ul className={list}>
-        <li>AI searches and their retry records: 24 hours.</li>
-        <li>Ratings: 24 hours with their AI search; after that only daily totals remain, which can’t be linked to you.</li>
+        <li>AI searches, with their ratings, and their retry records: 24 hours.</li>
+        <li>Daily rating totals, not linked to you or a search: kept with no set end.</li>
         <li>Free-search records: 30 days.</li>
         <li>Sessions: 7 days, or until you sign out.</li>
         <li>Accounts: until you delete them.</li>
         <li>Usage counters (a deleted account’s too): until 7 days after their minute, hour, day or month ends.</li>
-        <li>Cost records: 90 days.</li>
-        <li>Traces: 30 days.</li>
+        <li>Cost and search-usage records, without content (a deleted account’s too): 90 days.</li>
+        <li>Traces, with any rating on them: 30 days.</li>
         <li>
-          Backups: daily, kept 14 days on the same computer. They hold counters, free-search and cost records and daily
-          rating totals, never accounts, sessions or AI searches, so deleted accounts can’t return.
+          Backups: daily, kept 14 days on the same computer. They hold counters, free-search, cost and search-usage
+          records and daily rating totals, never accounts, sessions or AI searches, so deleted accounts can’t return.
+          Trace backups are kept 7 days. A backup can keep data for those days after it is deleted from the site.
         </li>
       </ul>
 
