@@ -954,8 +954,10 @@ is possible. Deletion/shutdown checks precede each paid stage. A successful sear
 counts once, independent of order or fallback; saved pages never call a provider.
 The `evidence.rerank` span contains only model, depth, usage, cost, duration and outcome.
 
-Public use of any non-baseline configuration needs evaluation, gate clearance, and
-the controller's `evidence.v3` UI disclosure for added terms and AI ordering.
+Public use of a non-baseline configuration needs a reviewed live-allowlist change and
+the `evidence.v3` UI disclosure for added terms and AI ordering. Live allows `er-q-v1`
+and, by the owner's decision of 31 October 2026, `er-q-h50-v1` (the Haiku rerank of
+the top 50), whose confirmation was inconclusive rather than cleared.
 Changing the environment setting cannot bypass the live allowlist.
 The evaluated scope.e3 prompt/schema/settings are unchanged.
 
@@ -968,7 +970,7 @@ identity includes the outputs of a fixed, versioned guard-probe set; a changed r
 to any probe changes the hash even without a guard version bump. Live accepts
 `none` and the reviewed `state-explicit.v1.3`; the default stays `none` and an operator
 must explicitly enable state in the environment settings. The independent live
-ranking allowlist remains `er-q-v1` only. `state-explicit.v1.3` uses
+ranking allowlist is `er-q-v1` and `er-q-h50-v1`. `state-explicit.v1.3` uses
 only a valid scope.e3 case-search result's state set, on original question searches.
 It requires agreement with the complete explicitly named state set. Its finite
 rules reject recognized ambiguous places, negation, unsafe wording and attribution

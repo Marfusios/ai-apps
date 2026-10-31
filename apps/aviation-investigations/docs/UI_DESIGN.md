@@ -939,7 +939,7 @@ then state the processed cohort (DESIGN §5).
     deleted.
 - **Privacy page:** plain-language processing notice, linked from the footer
   and the sign-in dialog. The owner approved the final text on 24 October 2026
-  (Owner); it was checked statement by statement against the code and is the
+  (Owner), amended on 31 October 2026 to say Claude also orders the investigations found; it was checked statement by statement against the code and is the
   authority on what the site keeps (who is responsible, the site's four cookies,
   what the server, accounts and AI searches keep, the processors, retention,
   legal bases and rights). It names Cloudflare Turnstile (Task 22 review W-14):

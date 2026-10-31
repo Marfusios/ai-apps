@@ -283,8 +283,8 @@ a promise of zero vulnerabilities.
 The HTTP `rankEvidence` pipeline optionally uses validated scope terms in
 fixed BM25 query bodies and adds `rerank.r1`. Its separate automatic-state policy
 defaults to `none`; any accepted automatic state is disclosed by evidence.v3.
-The live allowlist contains only the baseline, with original-question retrieval and
-no reranker. Public `evidence.v3` discloses executed keywords, automatic filters,
+The live allowlist contains the baseline and `er-q-h50-v1`: original-question retrieval,
+and optionally the bounded Haiku rerank of the top 50 (owner's decision, 31 October 2026). Public `evidence.v3` discloses executed keywords, automatic filters,
 ordering, marks and undo availability; experiment metadata stays private.
 A future live alternative requires evaluation, a gate and the new UI disclosure.
 
@@ -326,8 +326,8 @@ application where v1.1 abstained. The 1,040-answer offline C replay gives
 365 TP / 0 FP / 35 FN for the guard (two applications lost from v1.1), and
 363 TP / 0 FP / 37 FN after the pipeline's separate case-search intent requirement.
 This finite rule set and recorded replay do not prove semantic attribution or future
-recall. No other scope filter is applied automatically; live ranking remains
-`er-q-v1` only. Old v1/v1.1 regressions remain intact; 499 versioned probes include
+recall. No other scope filter is applied automatically; live rankings are
+`er-q-v1` and `er-q-h50-v1`. Old v1/v1.1 regressions remain intact; 499 versioned probes include
 the 31 abstentions, 11 positives and three deliberate abstentions from review, and
 witnesses for every new regex alternative. Actual-source mutation tests isolate
 overlapping rules to test each alternative, alongside a frozen-v1.1 subset check.

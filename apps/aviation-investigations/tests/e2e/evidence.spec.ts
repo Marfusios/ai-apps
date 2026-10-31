@@ -457,17 +457,17 @@ test('a free undo that fails after the server took it: the notice does not promi
 });
 
 // ---------------------------------------------------------------------------
-// What live runs: the question alone, highest-ranked first, the suggested terms marked, a named state applied
+// The reviewed state policy, off on live: the question alone, highest-ranked first, the suggested terms marked, a named state applied
 
-const RELEASE = { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.3' };
+const STATE_POLICY = { ranking: 'er-q-v1', autoFilters: 'state-explicit.v1.3' };
 const STATE_MARKED = 'Carb icing on approach in Missouri';
 
 for (const [width, theme] of [
   [1280, 'day'],
   [390, 'night'],
 ] as const) {
-  test(`what live runs: the state chip, the suggested terms marked and suggested, highest-ranked first, and the state's free undo (${width}px, ${theme})`, async ({ page }) => {
-    await configure(page, RELEASE);
+  test(`the reviewed state policy: the state chip, the suggested terms marked and suggested, highest-ranked first, and the state's free undo (${width}px, ${theme})`, async ({ page }) => {
+    await configure(page, STATE_POLICY);
     await open(page, { width, theme });
     await ask(page, STATE_MARKED);
     const parent = page.url();
@@ -489,7 +489,7 @@ for (const [width, theme] of [
     await expect(suggestion.getByRole('button', { name: /^Apply these filters\s*·\s*uses 1$/ })).toBeVisible();
     await expect(suggestion.getByRole('button', { name: /^Apply filters and terms\s*·\s*uses 1$/ })).toBeVisible();
     await fitsTheWidth(page);
-    await shot(page, `release-search-${width}-${theme}`);
+    await shot(page, `state-policy-search-${width}-${theme}`);
 
     // Removing the state: the free undo, an edit with no filters and no words.
     await missouri.click();
@@ -506,13 +506,39 @@ for (const [width, theme] of [
     await expect(page.locator('[data-undo-charged]')).toHaveCount(0);
     await expect(edited.locator('[data-automatic]')).toHaveCount(0);
     await expect(page.locator('[data-count-line]')).toHaveText(/^\d+ retrieved · highest-ranked first/);
-    await shot(page, `release-undone-${width}-${theme}`);
+    await shot(page, `state-policy-undone-${width}-${theme}`);
 
     // Back on the first search: its undo is used, so removing the state again uses one.
     await page.goBack();
     await expect(page).toHaveURL(parent);
     await page.getByRole('region', { name: 'Your search', exact: true }).getByRole('button', { name: /^Location: Missouri/ }).click();
     await expect(page.getByRole('region', { name: 'Your search', exact: true }).getByRole('button', { name: 'Search again · uses 1' })).toBeVisible();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// What live runs: the question alone, the leading results in AI order, the reader's words marked, nothing applied on its own
+
+const RELEASE = { ranking: 'er-q-h50-v1', autoFilters: 'none' };
+
+for (const [width, theme] of [
+  [1280, 'day'],
+  [390, 'night'],
+] as const) {
+  test(`what live runs: the leading results in AI order, the reader's words marked, a named state only suggested (${width}px, ${theme})`, async ({ page }) => {
+    await configure(page, RELEASE);
+    await open(page, { width, theme });
+    await ask(page, STATE_MARKED);
+    const yours = page.getByRole('region', { name: 'Your search', exact: true });
+    await expect(yours).toBeVisible();
+    await expect(yours.locator('[data-automatic], [data-added-terms], [data-keywords-note]')).toHaveCount(0);
+    await expect(page.locator('[data-count-line]')).toHaveText(/^\d+ retrieved · leading results ordered by AI for relevance · not every matching investigation$/);
+    await expect(page.locator('[data-legend]')).toHaveText(/^Marked in the excerpts: your words · .*their synonyms$/);
+    const suggestion = page.getByRole('region', { name: SUGGESTION });
+    await expect(suggestion.getByRole('list', { name: 'Suggested filters' })).toContainText('Location: Missouri');
+    await expect(suggestion.getByRole('button', { name: /^Apply these filters\s*·\s*uses 1$/ })).toBeVisible();
+    await fitsTheWidth(page);
+    await shot(page, `release-search-${width}-${theme}`);
   });
 }
 

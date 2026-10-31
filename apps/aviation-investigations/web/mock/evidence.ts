@@ -8,7 +8,8 @@
  * - **Configuration**: like the server, one mock stands in for one ranking configuration
  *   (`AVIATION_EVIDENCE_RANKING`) and one automatic-filter policy (`AVIATION_EVIDENCE_AUTO_FILTERS`),
  *   the server's defaults (`er-q-v1`, `none`) unless `MockEvidenceOptions.config` names others
- *   (live runs `er-q-v1` with the state policy, `MOCK_EVIDENCE_RELEASE`). The
+ *   (live runs the Haiku rerank of the top 50 with no automatic filter, `MOCK_EVIDENCE_RELEASE`;
+ *   the reviewed state policy, off on live, is `MOCK_EVIDENCE_STATE_POLICY`). The
  *   configuration decides what keyword search reads (the question, the suggested terms, or both:
  *   `query.keywords`), whether AI puts the leading results in order (`order`), whose words are
  *   marked (`marks`), and whether a state the question names is applied (`automaticFilters`).
@@ -151,10 +152,15 @@ export interface MockEvidenceConfig {
 export const MOCK_EVIDENCE_BASELINE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: DEFAULT_EVIDENCE_AUTO_FILTERS };
 
 /**
- * What live runs (Task 24's release): the question alone, in match order, the suggested terms
+ * What live runs (since 31 October 2026): the question alone, the leading results put in order by
+ * the Haiku rerank, the reader's words marked, and no filter applied on its own.
+ */
+export const MOCK_EVIDENCE_RELEASE: MockEvidenceConfig = { ranking: 'er-q-h50-v1', autoFilters: 'none' };
+/**
+ * The reviewed state policy, off on live: the question alone, in match order, the suggested terms
  * marked, and a state the question names applied by the guarded policy.
  */
-export const MOCK_EVIDENCE_RELEASE: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: 'state-explicit.v1.3' };
+export const MOCK_EVIDENCE_STATE_POLICY: MockEvidenceConfig = { ranking: DEFAULT_EVIDENCE_RANKING, autoFilters: 'state-explicit.v1.3' };
 
 /**
  * Session storage (dev mock mode and end-to-end tests): the configuration the mock API stands in

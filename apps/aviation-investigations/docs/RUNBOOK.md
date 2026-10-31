@@ -535,8 +535,13 @@ but useless (the first paid end-to-end test stopped this way at scope).
 
 `AVIATION_EVIDENCE_RANKING` selects evidence-view behaviour independently of
 `AVIATION_RETRIEVAL_VERSION` (generated briefs). Empty means `er-q-v1`.
-Unknown values fail configuration. Today live permits **only `er-q-v1`**; a
-different value fails startup rather than silently reverting.
+Unknown values fail configuration. Live permits **`er-q-v1` and `er-q-h50-v1`** (the
+Haiku rerank of the top 50 cases); any other value fails startup rather than silently
+reverting. Live runs `AVIATION_EVIDENCE_RANKING=er-q-h50-v1` since 31 October 2026.
+Rollback: set `er-q-v1` and run `app:up`; nothing is migrated, and saved searches keep
+their own stored order. After a change, watch the private `rerankOutcome` mix, the
+`evidence.rerank` spans and the spend ledger's cost per search (about $0.003 with
+the rerank, against $0.009 reserved).
 
 | Versions | Lexical text | Reranker |
 | --- | --- | --- |
@@ -575,9 +580,10 @@ configuration. New edits inherit the parent's executed lexical/vector texts unle
 the visitor supplies replacement terms, then use the selected ranking version.
 No reindex or data migration is needed.
 
-Non-baseline live deployment requires evaluation/gate approval, a reviewed ranking
-allowlist change and the matching `evidence.v3` client disclosures. The live ranking
-allowlist currently permits only `er-q-v1`.
+Adding a ranking to the live allowlist needs a reviewed code change and the matching
+`evidence.v3` client disclosures. `er-q-h50-v1` was added by the owner's decision of
+31 October 2026: its Task 24 confirmation was inconclusive (every endpoint positive,
+intervals too wide), not cleared, and it only reorders the retrieved cases.
 
 ### Evidence automatic filters and v3 rollout
 
@@ -601,7 +607,7 @@ field confirmation and review. Unknown values fail startup. The default stays
 
 This setting is independent of `AVIATION_EVIDENCE_RANKING`; changing
 it does not change any evaluated ranking hash. The Docker service passes it through.
-The live ranking allowlist remains **`er-q-v1` only**.
+The live ranking allowlist is `er-q-v1` and `er-q-h50-v1`.
 Each saved search records both configuration identities. No reindex is needed.
 v1.1 and v1.2 were never deployed and are no longer accepted. Replace any unreleased
 older setting with `none` or v1.3 before preflight. v1.3 is built on v1.1, adding five

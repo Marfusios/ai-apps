@@ -79,7 +79,7 @@ describe('Privacy', () => {
       expect(text).toContain(cookie);
     }
     expect(text).toContain('Backups: daily, kept 14 days on the same computer.');
-    expect(text).toContain('Last updated: 24 October 2026');
+    expect(text).toContain('Last updated: 31 October 2026');
     expect(text).not.toContain('Draft notice');
     expect(within(main).getByRole('link', { name: 'uoou.gov.cz' }).getAttribute('href')).toBe('https://uoou.gov.cz');
     const mail = within(main).getAllByRole('link', { name: 'm@mkotas.cz' });

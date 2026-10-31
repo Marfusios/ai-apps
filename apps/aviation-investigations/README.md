@@ -2396,7 +2396,8 @@ local-services mode.
 
 
 Task 24 adds a separate `AVIATION_EVIDENCE_RANKING` setting for evidence searches.
-The default/live allowlist remains `er-q-v1` (question-only retrieval, no rerank).
+The default is `er-q-v1` (question-only retrieval, no rerank); live also allows
+`er-q-h50-v1`, the Haiku rerank of the top 50 (owner's decision, 31 October 2026).
 Dev alternatives use validated scope terms in BM25 and/or a bounded Haiku/Sonnet
 reranker. See [Evidence ranking](docs/RUNBOOK.md#evidence-ranking) for configurations,
 reservations, evaluation entry points and rollback. The server records executed

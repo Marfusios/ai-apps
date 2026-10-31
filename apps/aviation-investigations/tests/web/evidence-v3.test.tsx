@@ -17,7 +17,7 @@ import type { AiStatusResponse } from '../../shared/contracts/ai';
 import type { BriefFilters } from '../../shared/contracts/briefs';
 import { CreateEvidenceResponseSchema, EVIDENCE_BOUNDARY, EVIDENCE_HEADING, EVIDENCE_NOTICE, type EvidenceCase, type EvidencePage } from '../../shared/contracts/evidence';
 import { AI_STATUS_SAMPLES } from '../../web/mock/ai-status';
-import { MOCK_EVIDENCE_QUESTIONS, MOCK_EVIDENCE_RELEASE, type MockEvidenceConfig } from '../../web/mock/evidence';
+import { MOCK_EVIDENCE_QUESTIONS, MOCK_EVIDENCE_RELEASE, MOCK_EVIDENCE_STATE_POLICY, type MockEvidenceConfig } from '../../web/mock/evidence';
 import { UNDO_USED_NOTICE } from '../../web/src/features/evidence/undo';
 import { COPY } from '../../web/src/features/ai/AiNoticeBox';
 import { ClientConfigSchema } from '../../web/src/api';
@@ -355,9 +355,9 @@ describe('what AirCase added on its own is said as such (contract evidence.v3)',
   });
 });
 
-describe('what live runs (`MOCK_EVIDENCE_RELEASE`): the question alone, highest-ranked first, the suggested terms marked, a named state applied', { timeout: 20_000 }, () => {
+describe('the reviewed state policy, off on live (`MOCK_EVIDENCE_STATE_POLICY`): the question alone, highest-ranked first, the suggested terms marked, a named state applied', { timeout: 20_000 }, () => {
   it('the state is a blue chip “from your question” and nothing else was added; the excerpts mark the suggested terms; the count line says highest-ranked first', async () => {
-    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    freshApi({ evidence: MOCK_EVIDENCE_STATE_POLICY });
     const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateMarked);
     expect([search.automaticFilters, search.query, search.order, search.marks, search.undo]).toEqual([
       { state: ['MO'] },
@@ -389,7 +389,7 @@ describe('what live runs (`MOCK_EVIDENCE_RELEASE`): the question alone, highest-
   });
 
   it('the suggestion has its note for a search AirCase added to, with the suggested filter and terms; Apply keeps the state', async () => {
-    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    freshApi({ evidence: MOCK_EVIDENCE_STATE_POLICY });
     installTurnstile();
     const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
     expect(search.suggestion).toEqual({ filters: { phase: ['approach'] }, terms: 'carb icing' });
@@ -416,7 +416,7 @@ describe('what live runs (`MOCK_EVIDENCE_RELEASE`): the question alone, highest-
   });
 
   it('removing the state is the one free undo: an edit with no filters and no words that uses none of the visitor’s searches; once used, removing it again uses one', async () => {
-    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    freshApi({ evidence: MOCK_EVIDENCE_STATE_POLICY });
     installTurnstile();
     const { router, search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateTerms);
     await waitFor(() => expect(banner()).toContain('AI searches left: 9 of 10'), SLOW);
@@ -436,6 +436,40 @@ describe('what live runs (`MOCK_EVIDENCE_RELEASE`): the question alone, highest-
     await screen.findByRole('heading', { level: 2, name: EVIDENCE_HEADING }, SLOW);
     removeTexas();
     expect(await within(yours()).findByRole('button', { name: /^Search again\s*·\s*uses 1$/ }, SLOW)).toBeTruthy();
+  });
+});
+
+describe('what live runs (`MOCK_EVIDENCE_RELEASE`): the question alone, the leading results in AI order, the reader’s words marked, nothing applied on its own', { timeout: 20_000 }, () => {
+  it('the count line says AI ordered the leading results; the marks are the reader’s words; nothing was added, so nothing is free to undo', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.carb);
+    expect([search.automaticFilters, search.query, search.order, search.marks, search.undo]).toEqual([
+      null,
+      { source: 'question', keywords: { kind: 'question' } },
+      'ai_relevance',
+      'search_words',
+      'none',
+    ]);
+    const count = document.querySelector('[data-count-line]')?.textContent ?? '';
+    expect(count).toBe(`${search.total} retrieved · leading results ordered by AI for relevance · not every matching investigation`);
+    expect(count).toBe(countLine(search.total, 'ai_relevance'));
+    const legend = document.querySelector('[data-legend]') as HTMLElement;
+    expect(legend.getAttribute('data-legend')).toBe('yours');
+    expect(visibleText(legend)).toBe(`Marked in the excerpts: ${LEGEND.yours} · ${LEGEND.synonym}`);
+    expect(yours().querySelector('[data-added-terms], [data-keywords-note], [data-automatic]')).toBeNull();
+    const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+    expect(suggestion.querySelector('[data-suggestion-note]')?.textContent).toBe(SUGGESTION_NOTE);
+    expect(suggestion.textContent).toContain('“carb icing”');
+  });
+
+  it('a state the question names stays a suggestion: no chip of its own, and applying it uses one', async () => {
+    freshApi({ evidence: MOCK_EVIDENCE_RELEASE });
+    const { search } = await openSearch(MOCK_EVIDENCE_QUESTIONS.stateMarked);
+    expect([search.automaticFilters, search.appliedFilters, search.undo]).toEqual([null, {}, 'none']);
+    expect(within(yours()).queryByRole('button', { name: /added automatically/ })).toBeNull();
+    const suggestion = screen.getByRole('region', { name: SUGGESTION_LABEL });
+    expect(within(suggestion).getByRole('list', { name: 'Suggested filters' }).textContent).toContain('Location: Missouri');
+    expect(within(suggestion).getByRole('button', { name: new RegExp(`^${APPLY_FILTERS}\\s*·\\s*uses 1$`) })).toBeTruthy();
   });
 });
 

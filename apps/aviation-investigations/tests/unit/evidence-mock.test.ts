@@ -17,6 +17,7 @@ import {
   MOCK_EVIDENCE_BASELINE,
   MOCK_EVIDENCE_QUESTIONS,
   MOCK_EVIDENCE_RELEASE,
+  MOCK_EVIDENCE_STATE_POLICY,
   MockEvidence,
   aiOrder,
   evidenceCases,
@@ -83,6 +84,7 @@ function undo(server: MockEvidence, from: EvidencePage, filters: BriefFilters, r
 const CONFIGS: Record<string, MockEvidenceConfig> = {
   baseline: MOCK_EVIDENCE_BASELINE,
   release: MOCK_EVIDENCE_RELEASE,
+  statePolicy: MOCK_EVIDENCE_STATE_POLICY,
   questionTermsAiOrderState: { ranking: 'er-qt-h50-v1', autoFilters: 'state-explicit.v1.3' },
   termsState: { ranking: 'er-t-v1', autoFilters: 'state-explicit.v1.3' },
   questionAiOrder: { ranking: 'er-q-h100-v1', autoFilters: 'none' },
@@ -399,9 +401,9 @@ describe('every configuration says what it applied on its own (evidence.v3)', ()
   });
 });
 
-describe('what live runs: the question alone, in match order, the suggested terms marked, a named state applied', () => {
+describe('the reviewed state policy, off on live: the question alone, in match order, the suggested terms marked, a named state applied', () => {
   it('discloses the state only; the suggestion keeps the rest and its terms', () => {
-    const server = new MockEvidence({ config: MOCK_EVIDENCE_RELEASE });
+    const server = new MockEvidence({ config: MOCK_EVIDENCE_STATE_POLICY });
     const page = results(server, MOCK_EVIDENCE_QUESTIONS.stateTerms);
     expect([page.automaticFilters, page.appliedFilters, page.query]).toEqual([{ state: ['TX'] }, { state: ['TX'] }, { source: 'question', keywords: { kind: 'question' } }]);
     expect([page.order, page.marks, page.freeUndo, page.undo]).toEqual(['match', 'suggested_terms', false, 'available']);
@@ -418,7 +420,7 @@ describe('what live runs: the question alone, in match order, the suggested term
   });
 
   it('“undo fails”: the free undo is admitted, takes the claim and fails; a replay fails the same; trying again uses one', () => {
-    const server = new MockEvidence({ config: MOCK_EVIDENCE_RELEASE });
+    const server = new MockEvidence({ config: MOCK_EVIDENCE_STATE_POLICY });
     const page = results(server, `${MOCK_EVIDENCE_QUESTIONS.stateTerms}, undo fails`);
     expect(page.undo).toBe('available');
     const body = { kind: 'edited', from: page.id, filters: {}, idempotencyKey: KEY(2), turnstileToken: 'token' } as const;
@@ -432,6 +434,19 @@ describe('what live runs: the question alone, in match order, the suggested term
     expect(server.quotaExempt(again)).toBe(false);
     const charged = server.create(again);
     expect([charged.status, charged.quotaExempt, CreateEvidenceResponseSchema.parse(charged.body).search.freeUndo]).toEqual([201, false, false]);
+  });
+});
+
+describe('what live runs: the question alone, the leading results in AI order, the reader’s words marked, nothing applied on its own', () => {
+  it('discloses AI order only; a state the question names stays in the suggestion; nothing to undo', () => {
+    const server = new MockEvidence({ config: MOCK_EVIDENCE_RELEASE });
+    const page = results(server, MOCK_EVIDENCE_QUESTIONS.carb);
+    expect([page.automaticFilters, page.appliedFilters, page.query]).toEqual([null, {}, { source: 'question', keywords: { kind: 'question' } }]);
+    expect([page.order, page.marks, page.freeUndo, page.undo]).toEqual(['ai_relevance', 'search_words', false, 'none']);
+    expect(page.suggestion?.terms).toBe('carb icing');
+    const named = results(server, MOCK_EVIDENCE_QUESTIONS.stateMarked, 3);
+    expect([named.automaticFilters, named.appliedFilters, named.undo]).toEqual([null, {}, 'none']);
+    expect(named.suggestion?.filters.state).toEqual(['MO']);
   });
 });
 

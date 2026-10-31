@@ -1,7 +1,7 @@
 /** Server-only v3 disclosure, policy and free-undo rules. No provider network. */
 import { describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../shared/config.js';
-import { EVIDENCE_RANKING_VERSIONS } from '../../shared/evidence-ranking.js';
+import { EVIDENCE_RANKING_VERSIONS, LIVE_EVIDENCE_RANKINGS } from '../../shared/evidence-ranking.js';
 import { CreateEvidenceRequestSchema, EvidencePageSchema, type CreateEvidenceRequest } from '../../shared/contracts/evidence.js';
 import { autoFilterIdentity, autoFilterPolicy, automaticState } from '../../server/evidence/auto-filters.js';
 import { disclosedQuery, questionQuery, remainingSuggestion } from '../../server/evidence/disclosure.js';
@@ -46,11 +46,11 @@ describe('independent automatic state policy', () => {
       expect(() => loadConfig({ files: [], env: { APP_ENV, AVIATION_EVIDENCE_AUTO_FILTERS: policy } })).toThrow('AVIATION_EVIDENCE_AUTO_FILTERS');
     }
   });
-  it('enabling automatic state on live still permits only the baseline ranking', () => {
+  it('enabling automatic state on live still permits only the live ranking allowlist', () => {
     for (const version of EVIDENCE_RANKING_VERSIONS) {
       const live = () => loadConfig({ files: [], env: { APP_ENV: 'live',
         AVIATION_EVIDENCE_AUTO_FILTERS: 'state-explicit.v1.3', AVIATION_EVIDENCE_RANKING: version } });
-      if (version === 'er-q-v1') expect(live().ai.evidenceRanking).toBe(version);
+      if (LIVE_EVIDENCE_RANKINGS.includes(version)) expect(live().ai.evidenceRanking).toBe(version);
       else expect(live).toThrow('AVIATION_EVIDENCE_RANKING is not cleared for live');
     }
   });
